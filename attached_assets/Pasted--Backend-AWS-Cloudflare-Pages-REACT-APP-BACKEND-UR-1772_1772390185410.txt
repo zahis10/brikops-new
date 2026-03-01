@@ -1,0 +1,49 @@
+אנחנו הולכים על: קודם Backend ב-AWS, אחרי שהוא רץ מעדכנים ב-Cloudflare Pages את REACT_APP_BACKEND_URL ל-https://api.brikops.com.
+
+בבקשה תתחילו עכשיו עם הכנת הקוד (בתוך Replit) ותספקו "Proof Package" קצר בסוף.
+
+A) PDFService + S3 (חובה)
+1) ודאו שכל יצירה/שמירה של PDF (דוחות/נספחים/קבצים שנוצרים) לא נשמרת על דיסק מקומי בפרוד, אלא ל-S3:
+   - bucket: brikops-prod-files
+   - FILES_STORAGE_BACKEND=s3
+2) בכל מקום שצריך להחזיר לינק לקובץ – להחזיר presigned URL עם תפוגה (למשל 10-30 דקות) ולא URL פתוח.
+3) ודאו שיש כיסוי גם לנתיבים: backend/reports/ וכל "PDF output" אחר (אם קיים).
+
+B) Dockerfile + Runtime (חובה)
+1) תאמתו שה-Dockerfile ב-backend/Dockerfile מתאים ל-AWS (ECS/EB/App Runner):
+   - PORT נקבע מ-$PORT עם ברירת מחדל 8080 (כמו שיש)
+   - /health זמין ומהיר
+   - /api/ready מחזיר 503 אם DB לא זמין (ל-ALB readiness)
+2) ודאו שכל התלויות ל-PDF (pango/cairo וכו') נשארות מותקנות ומוכחות בפרוד (בדיקה אמיתית שמייצרת PDF).
+3) הוסיפו הערה/תיעוד קצר: איך מריצים את ה-container מקומית (docker run) כולל PORT.
+
+C) .env.production.template (חובה)
+צרו קובץ backend/.env.production.template שמכיל את כל המשתנים הנדרשים לפרוד (ללא ערכים רגישים), כולל:
+- MONGO_URL
+- DB_NAME
+- JWT_SECRET
+- JWT_SECRET_VERSION
+- APP_ID
+- APP_MODE=prod
+- PUBLIC_APP_URL=https://app.brikops.com
+- FILES_STORAGE_BACKEND=s3
+- AWS_S3_BUCKET=brikops-prod-files
+- CORS_ORIGINS=https://app.brikops.com
+- WHATSAPP_ENABLED / WA_* (אם מופעל)
+- SMS_ENABLED / TWILIO_* (אם מופעל)
+- SMTP_* (אם מופעל)
+- Feature toggles: BILLING_V1_ENABLED, ENABLE_ONBOARDING_V2, ENABLE_QUICK_LOGIN=false, ENABLE_DEBUG_ENDPOINTS=false
+הערה: לא להוסיף AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY — נשתמש ב-IAM role ב-AWS.
+
+D) תיעוד פריסה AWS (לבקשה ממני – הכי פשוט)
+בבקשה תציעו את הדרך הכי פשוטה לפרוס קונטיינר אחד:
+1) אם אפשר – להעדיף AWS Elastic Beanstalk (Docker single container) או App Runner (פחות צעדים).
+2) אם אתם מתעקשים ECS Fargate – תנו לי צ’ק-ליסט קצר ומדויק למסכים ב-AWS Console: ECR, build+push, ECS service, ALB, listeners, target group health path (/health), Secrets Manager, ודומיין api.brikops.com עם HTTPS (ACM).
+
+Proof Package (חובה בסוף)
+- הוכחה שהפקת PDF עובדת בפרוד קונטיינר (לוג + קובץ שנשמר ל-S3 + presigned URL שנפתח).
+- הוכחה ש-/health מחזיר ok.
+- הוכחה ש-/api/ready מחזיר 200 כש-DB תקין ו-503 כשמנתקים DB (סימולציה/דגל).
+- רשימת הקבצים ששונו + לינקים/קטעי קוד רלוונטיים.
+
+זה שינוי רגיש (auth/files/pdf/billing/whatsapp), אז בלי לסגור משימה בלי Proof.

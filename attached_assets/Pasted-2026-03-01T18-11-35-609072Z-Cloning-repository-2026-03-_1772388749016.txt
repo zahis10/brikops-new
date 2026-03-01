@@ -1,0 +1,49 @@
+2026-03-01T18:11:35.609072Z	Cloning repository...
+2026-03-01T18:11:36.393156Z	From https://github.com/zahis10/brikops-new
+2026-03-01T18:11:36.393621Z	 * branch            c8f319411c2089937799022269d28870098052d8 -> FETCH_HEAD
+2026-03-01T18:11:36.393736Z	
+2026-03-01T18:11:36.449544Z	HEAD is now at c8f3194 Add Cloudflare Pages _headers and _redirects
+2026-03-01T18:11:36.449846Z	
+2026-03-01T18:11:36.624048Z	
+2026-03-01T18:11:36.624462Z	Using v2 root directory strategy
+2026-03-01T18:11:36.638259Z	Success: Finished cloning repository files
+2026-03-01T18:11:38.606956Z	Checking for configuration in a Wrangler configuration file (BETA)
+2026-03-01T18:11:38.607533Z	
+2026-03-01T18:11:39.706585Z	No Wrangler configuration file found. Continuing.
+2026-03-01T18:11:39.890029Z	Detected the following tools from environment: nodejs@18.20.8, pip@25.1.1, python@3.13.3, yarn@4.9.1
+2026-03-01T18:11:39.890408Z	Installing nodejs 18.20.8
+2026-03-01T18:11:40.788699Z	Trying to update node-build... ok
+2026-03-01T18:11:40.867116Z	To follow progress, use 'tail -f /tmp/node-build.20260301181140.798.log' or pass --verbose
+2026-03-01T18:11:40.930291Z	Downloading node-v18.20.8-linux-x64.tar.gz...
+2026-03-01T18:11:41.082897Z	-> https://nodejs.org/dist/v18.20.8/node-v18.20.8-linux-x64.tar.gz
+2026-03-01T18:11:43.373726Z	
+2026-03-01T18:11:43.374042Z	WARNING: node-v18.20.8-linux-x64 is in LTS Maintenance mode and nearing its end of life.
+2026-03-01T18:11:43.374121Z	It only receives *critical* security updates, *critical* bug fixes and documentation updates.
+2026-03-01T18:11:43.374171Z	
+2026-03-01T18:11:43.37421Z	Installing node-v18.20.8-linux-x64...
+2026-03-01T18:11:43.948992Z	Installed node-v18.20.8-linux-x64 to /opt/buildhome/.asdf/installs/nodejs/18.20.8
+2026-03-01T18:11:43.949343Z	
+2026-03-01T18:11:45.272863Z	npm warn EBADENGINE Unsupported engine {
+2026-03-01T18:11:45.273187Z	npm warn EBADENGINE   package: 'corepack@0.34.6',
+2026-03-01T18:11:45.273248Z	npm warn EBADENGINE   required: { node: '^20.10.0 || ^22.11.0 || >=24.0.0' },
+2026-03-01T18:11:45.273326Z	npm warn EBADENGINE   current: { node: 'v18.20.8', npm: '10.8.2' }
+2026-03-01T18:11:45.273364Z	npm warn EBADENGINE }
+2026-03-01T18:11:45.392515Z	
+2026-03-01T18:11:45.392768Z	changed 1 package in 694ms
+2026-03-01T18:11:45.402268Z	Reshimming asdf nodejs...
+2026-03-01T18:11:47.671705Z	Preparing yarn@4.9.1 for immediate activation...
+2026-03-01T18:11:47.888024Z	Installing project dependencies: yarn
+2026-03-01T18:11:48.08534Z	! Corepack is about to download https://registry.yarnpkg.com/yarn/-/yarn-1.22.22.tgz
+2026-03-01T18:11:48.55386Z	yarn install v1.22.22
+2026-03-01T18:11:48.642447Z	[1/4] Resolving packages...
+2026-03-01T18:11:48.998619Z	[2/4] Fetching packages...
+2026-03-01T18:12:11.925046Z	error react-router-dom@7.13.0: The engine "node" is incompatible with this module. Expected version ">=20.0.0". Got "18.20.8"
+2026-03-01T18:12:11.941823Z	error Found incompatible module.
+2026-03-01T18:12:11.942098Z	info Visit https://yarnpkg.com/en/docs/cli/install for documentation about this command.
+2026-03-01T18:12:12.000929Z	Error: Exit with error code: 1
+2026-03-01T18:12:12.001301Z	    at ChildProcess.<anonymous> (/snapshot/dist/run-build.js)
+2026-03-01T18:12:12.001452Z	    at Object.onceWrapper (node:events:652:26)
+2026-03-01T18:12:12.001559Z	    at ChildProcess.emit (node:events:537:28)
+2026-03-01T18:12:12.001634Z	    at ChildProcess._handle.onexit (node:internal/child_process:291:12)
+2026-03-01T18:12:12.011614Z	Failed: build command exited with code: 1
+2026-03-01T18:12:13.561178Z	Failed: error occurred while running build command
