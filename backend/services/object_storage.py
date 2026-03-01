@@ -126,7 +126,7 @@ def resolve_url(url):
     return generate_url(url) if url else url
 
 
-def resolve_urls_in_doc(doc, fields=("file_url", "thumbnail_url", "attachment_url")):
+def resolve_urls_in_doc(doc, fields=("file_url", "thumbnail_url", "attachment_url", "pdf_url")):
     """Resolve S3 refs to presigned URLs in a dict, in-place. Returns the same dict."""
     if not doc or not isinstance(doc, dict):
         return doc
