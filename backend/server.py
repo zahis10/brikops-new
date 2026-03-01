@@ -587,9 +587,13 @@ uploads_dir = Path(__file__).parent / 'uploads'
 uploads_dir.mkdir(exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
-reports_dir = Path(__file__).parent / 'reports'
-reports_dir.mkdir(exist_ok=True)
-app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
+from services.object_storage import is_s3_mode as _is_s3_mode
+if not _is_s3_mode():
+    reports_dir = Path(__file__).parent / 'reports'
+    reports_dir.mkdir(exist_ok=True)
+    app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
+else:
+    logger.info("[SPA] S3 mode — skipping /reports StaticFiles mount")
 
 frontend_build = Path(__file__).parent.parent / 'frontend' / 'build'
 if not frontend_build.exists():

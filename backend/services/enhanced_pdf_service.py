@@ -121,12 +121,11 @@ class EnhancedPDFService:
                 ]
             }
             
-            # Generate PDF
             filename = f"inspection_{inspection_id}.pdf"
-            pdf_path = self.template.generate_report(report_data, filename)
+            stored_ref = self.template.generate_report(report_data, filename)
             
-            logger.info(f'Generated inspection report: {pdf_path}')
-            return f"/reports/{filename}"
+            logger.info(f'Generated inspection report: {stored_ref}')
+            return stored_ref
         
         except Exception as e:
             logger.error(f'Failed to generate report: {str(e)}')

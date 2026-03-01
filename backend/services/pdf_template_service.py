@@ -203,60 +203,32 @@ class HebrewPDFTemplate:
             output_filename: Output PDF filename
             
         Returns:
-            Path to generated PDF file
+            Stored ref (s3://... or /reports/...) for the generated PDF
         """
-        output_path = os.path.join(self.output_dir, output_filename)
+        import io as _io
+        from services.object_storage import save_bytes, is_s3_mode
+        
         styles = self._create_styles()
         
-        # Create document with custom page template
-        doc = SimpleDocTemplate(
-            output_path,
-            pagesize=A4,
-            rightMargin=self.MARGIN_RIGHT,
-            leftMargin=self.MARGIN_LEFT,
-            topMargin=self.MARGIN_TOP + 1.5*cm,  # Extra space for header
-            bottomMargin=self.MARGIN_BOTTOM + 1*cm  # Extra space for footer
-        )
-        
-        # Build story (content)
         story = []
-        
-        # 1. Cover Page
         story.extend(self._build_cover_page(report_data, styles))
         story.append(PageBreak())
-        
-        # 2. Regulatory Background
         story.extend(self._build_regulatory_section(report_data, styles))
         story.append(PageBreak())
-        
-        # 3. Property Description
         story.extend(self._build_property_description(report_data, styles))
         story.append(PageBreak())
-        
-        # 4. Findings Summary
         story.extend(self._build_findings_summary(report_data, styles))
         story.append(PageBreak())
-        
-        # 5. Detailed Findings
         story.extend(self._build_detailed_findings(report_data, styles))
-        
-        # 6. Financial Summary
         story.extend(self._build_financial_summary(report_data, styles))
         story.append(PageBreak())
-        
-        # 7. Citations Appendix (NEW)
         story.extend(self._build_citations_appendix(report_data, styles))
         story.append(PageBreak())
-        
-        # 8. Audit Trail Appendix (NEW)
         story.extend(self._build_audit_appendix(report_data, styles))
         story.append(PageBreak())
-        
-        # 9. Closing Notes
         story.extend(self._build_closing_section(report_data, styles))
         
-        # Build PDF with header/footer
-        total_pages = len(story) // 10 + 1  # Rough estimate
+        total_pages = len(story) // 10 + 1
         
         def add_page_elements(canvas_obj, doc):
             page_num = doc.page
@@ -265,10 +237,28 @@ class HebrewPDFTemplate:
                 report_data.get('contact_info', {})
             )
         
+        buf = _io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=A4,
+            rightMargin=self.MARGIN_RIGHT,
+            leftMargin=self.MARGIN_LEFT,
+            topMargin=self.MARGIN_TOP + 1.5*cm,
+            bottomMargin=self.MARGIN_BOTTOM + 1*cm
+        )
         doc.build(story, onFirstPage=add_page_elements, onLaterPages=add_page_elements)
+        pdf_bytes = buf.getvalue()
         
-        logger.info(f'Generated PDF report: {output_path}')
-        return output_path
+        if is_s3_mode():
+            stored_ref = save_bytes(pdf_bytes, f"reports/{output_filename}", "application/pdf")
+            logger.info(f'Generated PDF report → S3: {stored_ref} ({len(pdf_bytes)} bytes)')
+            return stored_ref
+        else:
+            output_path = os.path.join(self.output_dir, output_filename)
+            with open(output_path, 'wb') as f:
+                f.write(pdf_bytes)
+            logger.info(f'Generated PDF report → local: {output_path} ({len(pdf_bytes)} bytes)')
+            return output_path
     
     def _build_cover_page(self, data: Dict, styles) -> List:
         """Build cover page with title, client info, and legal disclaimer"""

@@ -268,10 +268,21 @@ class PDFService:
             temp_doc.build(build_story())
             total_pages_holder[0] = temp_doc.page
 
-            final_doc = make_doc(filepath)
-            final_doc.build(build_story())
+            from services.object_storage import save_bytes, is_s3_mode
 
-            return f"/reports/{filename}"
+            final_buf = io.BytesIO()
+            final_doc = make_doc(final_buf)
+            final_doc.build(build_story())
+            pdf_bytes = final_buf.getvalue()
+
+            if is_s3_mode():
+                stored_ref = save_bytes(pdf_bytes, f"reports/{filename}", "application/pdf")
+                logger.info(f'PDF → S3: {stored_ref} ({len(pdf_bytes)} bytes)')
+                return stored_ref
+            else:
+                with open(filepath, 'wb') as f:
+                    f.write(pdf_bytes)
+                return f"/reports/{filename}"
 
         except Exception as e:
             logger.error(f'PDF generation error: {str(e)}', exc_info=True)

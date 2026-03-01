@@ -43,7 +43,12 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Single-process mode**: Backend serves pre-built static frontend.
 
 ### Cloud Deployment Prep
--   **Target Architecture**: Frontend on Cloudflare Pages, Backend API on AWS App Runner, Files on S3.
+-   **Target Architecture**: Frontend on Cloudflare Pages, Backend API on AWS ECS Fargate, Files on S3.
+-   **Frontend**: Live at `brikops-new.pages.dev` (Cloudflare Pages). Build: `yarn install && yarn build`, root=`frontend`, output=`build`, NODE_VERSION=20. `_redirects` (SPA fallback) and `_headers` (cache + security headers) in `frontend/public/`.
+-   **Backend**: Dockerfile at `backend/Dockerfile` (python:3.11-slim, HEALTHCHECK on `/health`). No AWS credentials in container — IAM Task Role provides boto3 credentials.
+-   **PDF Services**: S3-aware via `object_storage.save_bytes()`. In S3 mode, PDFs written to `s3://reports/{filename}` and resolved to presigned URLs via `resolve_urls_in_doc(pdf_url)`. In local mode, existing `backend/reports/` behavior preserved.
+-   **GitHub**: `zahis10/brikops-new` (main branch). Clean repo at `/home/runner/brikops-clean/`.
+-   **Env Template**: `backend/.env.production.template` lists all required env vars grouped by category.
 
 ## External Dependencies
 
