@@ -1,0 +1,151 @@
+{
+  "trades": {
+    "electrical": "חשמלאי",
+    "plumbing": "אינסטלטור",
+    "painting": "צבעי",
+    "carpentry_kitchen": "נגרות/מטבח",
+    "carpentry": "נגרות/מטבח",
+    "bathroom_cabinets": "ארונות אמבטיה",
+    "finishes": "גמרים",
+    "structural": "שלד",
+    "masonry": "שלד",
+    "aluminum": "אלומיניום",
+    "metalwork": "מסגרות",
+    "flooring": "ריצוף",
+    "hvac": "מיזוג",
+    "glazing": "חלונות/זכוכית",
+    "windows": "חלונות/זכוכית",
+    "doors": "דלתות",
+    "general": "כללי"
+  },
+  "categories": {
+    "electrical": "חשמל",
+    "plumbing": "אינסטלציה",
+    "hvac": "מיזוג",
+    "painting": "צביעה",
+    "flooring": "ריצוף",
+    "carpentry": "נגרות",
+    "carpentry_kitchen": "נגרות/מטבח",
+    "masonry": "בנייה",
+    "windows": "חלונות",
+    "doors": "דלתות",
+    "general": "כללי",
+    "bathroom_cabinets": "ארונות אמבטיה",
+    "finishes": "גמרים",
+    "structural": "שלד",
+    "aluminum": "אלומיניום",
+    "metalwork": "מסגרות",
+    "glazing": "חלונות/זכוכית"
+  },
+  "statuses": {
+    "open": "פתוח",
+    "assigned": "שויך",
+    "in_progress": "בביצוע",
+    "waiting_verify": "ממתין לאימות",
+    "pending_contractor_proof": "ממתין להוכחת קבלן",
+    "pending_manager_approval": "ממתין לאישור מנהל",
+    "returned_to_contractor": "הוחזר לקבלן",
+    "closed": "סגור",
+    "reopened": "נפתח מחדש"
+  },
+  "priorities": {
+    "low": "נמוך",
+    "medium": "בינוני",
+    "high": "גבוה",
+    "critical": "קריטי"
+  },
+  "roles": {
+    "owner": "בעלים",
+    "admin": "מנהל מערכת",
+    "project_manager": "מנהל פרויקט",
+    "work_manager": "צוות ניהולי",
+    "management_team": "צוות ניהולי",
+    "contractor": "קבלן",
+    "viewer": "צופה"
+  },
+  "subRoles": {
+    "site_manager": "מנהל אתר",
+    "execution_engineer": "מהנדס ביצוע",
+    "safety_assistant": "עוזר בטיחות",
+    "safety_officer": "ממונה בטיחות",
+    "work_manager": "מנהל עבודה"
+  },
+  "teamTab": {
+    "title": "חברי צוות",
+    "filterAll": "הכל",
+    "filterManagement": "צוות ניהולי",
+    "filterContractors": "קבלנים",
+    "filterPM": "מנהל פרויקט",
+    "searchPlaceholder": "חיפוש לפי שם, טלפון או חברה...",
+    "noMembers": "אין חברי צוות",
+    "noMembersHint": "לחץ \"הוסף איש צוות\" להתחיל",
+    "noResults": "לא נמצאו תוצאות",
+    "addMember": "הוסף איש צוות",
+    "invites": "הזמנות",
+    "members": "חברי צוות",
+    "phone": "טלפון",
+    "trade": "מקצוע",
+    "company": "חברה",
+    "subRole": "תת-תפקיד"
+  },
+  "myProjects": {
+    "title": "הפרויקטים שלי",
+    "searchPlaceholder": "חיפוש פרויקט...",
+    "emptyState": "אין לך פרויקטים עדיין",
+    "emptyStateHint": "פנה למנהל המערכת כדי לקבל גישה לפרויקט",
+    "lastProject": "המשך לפרויקט האחרון",
+    "enterProject": "היכנס",
+    "newProject": "פרויקט חדש",
+    "backToProjects": "חזרה לפרויקטים",
+    "code": "קוד",
+    "address": "כתובת",
+    "projectStatus": {
+      "active": "פעיל",
+      "draft": "טיוטה",
+      "suspended": "מושהה",
+      "completed": "הושלם"
+    }
+  },
+  "routing": {
+    "noAccess": "אין לך הרשאה לפרויקט הזה",
+    "redirectingToTasks": "מעבר למשימות שלך"
+  },
+  "unitHome": {
+    "loadError": "שגיאה בטעינת פרטי דירה",
+    "notFound": "דירה לא נמצאה",
+    "back": "חזרה",
+    "defects": "ליקויים",
+    "defectsDesc": "צפייה וניהול ליקויים בדירה",
+    "plans": "תוכניות",
+    "plansDesc": "תוכניות ומסמכים לפי תחום",
+    "kpiOpen": "פתוחות",
+    "kpiInProgress": "בטיפול",
+    "kpiClosed": "סגורות",
+    "sections": "תפריט דירה"
+  },
+  "unitPlans": {
+    "title": "תוכניות",
+    "back": "חזרה לדירה",
+    "loadError": "שגיאה בטעינת תוכניות",
+    "uploadError": "שגיאה בהעלאת קובץ",
+    "uploadSuccess": "הקובץ הועלה בהצלחה",
+    "deleteSuccess": "הקובץ נמחק",
+    "noPlans": "אין תוכניות עדיין",
+    "noPlansHint": "לחץ על כפתור ההעלאה כדי להוסיף תוכנית",
+    "upload": "העלאת קובץ",
+    "allDisciplines": "הכל",
+    "uploadedBy": "הועלה ע\"י",
+    "downloadFile": "הורד",
+    "viewFile": "צפה",
+    "note": "הערה",
+    "notePlaceholder": "הערה (אופציונלי)",
+    "disciplines": {
+      "electrical": "חשמל",
+      "plumbing": "אינסטלציה",
+      "architecture": "אדריכלות",
+      "construction": "קונסטרוקציה",
+      "hvac": "מיזוג",
+      "fire_protection": "כיבוי אש"
+    }
+  }
+}

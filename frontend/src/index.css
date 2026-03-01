@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&family=Rubik:wght@400;500;700;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  direction: rtl;
+}
+
+body {
+  margin: 0;
+  font-family: 'Heebo', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #F8FAFC;
+}
+
+iframe[src*="emergent"],
+div[class*="emergent"],
+a[href*="emergent"],
+#emergent-badge,
+.emergent-badge {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Rubik', sans-serif;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+@layer base {
+  :root {
+    /* LIGHT THEME - High contrast for readability */
+    --background: 210 40% 98%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 217.2 91.2% 59.8%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
+  
+  /* Force light theme colors for form elements */
+  input, select, textarea {
+    color: #1e293b !important; /* text-slate-800 */
+    background-color: #ffffff !important;
+  }
+  
+  input::placeholder, textarea::placeholder {
+    color: #94a3b8 !important; /* text-slate-400 */
+  }
+  
+  select option {
+    color: #1e293b !important;
+    background-color: #ffffff !important;
+  }
+  
+  label {
+    color: #334155 !important; /* text-slate-700 */
+  }
+  
+  /* Keep native select appearance on ALL devices for maximum compatibility */
+  select {
+    -webkit-appearance: menulist !important;
+    -moz-appearance: menulist !important;
+    appearance: menulist !important;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+    font-size: 16px !important;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes highlightFlash {
+  0% { background-color: rgb(251 191 36 / 0.3); }
+  50% { background-color: rgb(251 191 36 / 0.15); }
+  100% { background-color: transparent; }
+}
+
+.highlight-flash {
+  animation: highlightFlash 3s ease-out;
+}

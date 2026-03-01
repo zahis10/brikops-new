@@ -1,0 +1,1506 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { billingService, orgMemberService, invoiceService, projectService } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'sonner';
+import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight } from 'lucide-react';
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from '../components/ui/select';
+import {
+  getBillingStatusLabel, getBillingStatusColor,
+  getAccessLabel, getSetupStateLabel, getSetupStateColor,
+  getTierLabel, getPlanLabel, formatCurrency,
+  getInvoiceStatusLabel, getInvoiceStatusColor,
+} from '../utils/billingLabels';
+import { getPlanBadge } from '../utils/billingPlanCatalog';
+
+const ORG_ROLE_LABELS = {
+  owner: 'בעלים',
+  org_admin: 'מנהל ארגון',
+  billing_admin: 'אחראי חיוב',
+  member: 'חבר',
+  project_manager: 'מנהל פרויקט',
+};
+
+const ASSIGNABLE_ROLES = [
+  { value: 'member', label: 'חבר' },
+  { value: 'org_admin', label: 'מנהל ארגון' },
+  { value: 'billing_admin', label: 'אחראי חיוב' },
+];
+
+const ROLE_DESCRIPTIONS = {
+  owner: 'גישה מלאה לכל פעולות הארגון והחיוב',
+  org_admin: 'ניהול חברי ארגון וצפייה בנתוני חיוב',
+  billing_admin: 'ניהול הגדרות חיוב ותוכניות בפרויקטים',
+  member: 'חבר ארגון ללא הרשאות חיוב',
+  project_manager: 'ניהול פרויקטים ללא הרשאות חיוב ארגוניות',
+};
+
+const SUBSCRIPTION_STATUS_LABELS = {
+  active: 'פעיל',
+  trial: 'ניסיון',
+  past_due: 'חוב פתוח',
+  expired: 'פג תוקף',
+  suspended: 'מושעה',
+  none: '—',
+};
+
+const SUBSCRIPTION_STATUS_COLORS = {
+  active: 'bg-emerald-100 text-emerald-700',
+  trial: 'bg-blue-100 text-blue-700',
+  past_due: 'bg-red-100 text-red-700',
+  expired: 'bg-red-100 text-red-700',
+  suspended: 'bg-red-100 text-red-700',
+  none: 'bg-slate-100 text-slate-500',
+};
+
+const CYCLE_LABELS = {
+  monthly: 'חודשי',
+  yearly: 'שנתי',
+};
+
+function getRoleLabel(role) {
+  return ORG_ROLE_LABELS[role] || '—';
+}
+
+function formatDate(isoStr) {
+  if (!isoStr) return '—';
+  try { return new Date(isoStr).toLocaleDateString('he-IL'); } catch { return '—'; }
+}
+
+export default function OrgBillingPage() {
+  const { orgId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState(null);
+  const [membersDenied, setMembersDenied] = useState(false);
+  const [changingRole, setChangingRole] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const responsibilityRef = useRef(null);
+
+  const [invoices, setInvoices] = useState([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [markingPaid, setMarkingPaid] = useState(null);
+  const [expandedInvoice, setExpandedInvoice] = useState(null);
+  const [expandedDetail, setExpandedDetail] = useState(null);
+  const [invoiceConfirm, setInvoiceConfirm] = useState(null);
+
+  const [renewalCycle, setRenewalCycle] = useState('monthly');
+  const [renewalPreview, setRenewalPreview] = useState(null);
+  const [renewalLoading, setRenewalLoading] = useState(false);
+
+  const [paymentRequestLoading, setPaymentRequestLoading] = useState(false);
+  const [paymentRequestResult, setPaymentRequestResult] = useState(null);
+  const [markPaidLoading, setMarkPaidLoading] = useState(false);
+
+  const [paymentRequests, setPaymentRequests] = useState([]);
+  const [paymentRequestsLoading, setPaymentRequestsLoading] = useState(false);
+  const [paymentRequestsFilter, setPaymentRequestsFilter] = useState('open');
+  const [paymentRequestsExpanded, setPaymentRequestsExpanded] = useState(false);
+  const [highlightRequestId, setHighlightRequestId] = useState(null);
+  const highlightRetried = useRef(false);
+
+  const [paymentConfigBank, setPaymentConfigBank] = useState('');
+  const [paymentConfigBit, setPaymentConfigBit] = useState('');
+  const [paymentConfigSaving, setPaymentConfigSaving] = useState(false);
+  const [paymentConfigExpanded, setPaymentConfigExpanded] = useState(false);
+
+  const [customerMarkPaidLoading, setCustomerMarkPaidLoading] = useState(false);
+  const [receiptUploading, setReceiptUploading] = useState(false);
+  const receiptFileRef = useRef(null);
+  const [rejectModalRequest, setRejectModalRequest] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [sourceProjectName, setSourceProjectName] = useState(null);
+  const [sourceProjectId, setSourceProjectId] = useState(null);
+  const [rejectLoading, setRejectLoading] = useState(false);
+  const [adminApproveLoading, setAdminApproveLoading] = useState(null);
+
+  const isSA = user?.platform_role === 'super_admin';
+  const isOwner = data?.owner_user_id === user?.id;
+  const canManageBilling = data?.can_manage_billing || false;
+  const isPM = data?.is_org_pm || false;
+  const canViewRequests = isSA || canManageBilling || isPM;
+  const canEditRoles = isSA || isOwner;
+  const canMutateInvoices = isSA || isOwner || (data && members.find(m => m.user_id === user?.id && m.role === 'billing_admin'));
+
+  const sub = data?.subscription;
+  const subStatus = sub?.subscription_status || 'none';
+  const needsUpgrade = subStatus === 'expired' || subStatus === 'past_due';
+  const isTrial = subStatus === 'trial';
+  const isActive = subStatus === 'active';
+  const isSuspended = sub?.read_only_reason === 'suspended';
+
+  const currentPeriod = (() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  })();
+
+  const loadInvoices = useCallback(async () => {
+    if (!orgId) return;
+    setInvoicesLoading(true);
+    try {
+      const result = await invoiceService.list(orgId);
+      setInvoices(result.invoices || []);
+    } catch {
+      setInvoices([]);
+    } finally {
+      setInvoicesLoading(false);
+    }
+  }, [orgId]);
+
+  const loadPreview = useCallback(async () => {
+    if (!orgId) return;
+    setPreviewLoading(true);
+    try {
+      const result = await invoiceService.preview(orgId, currentPeriod);
+      setPreview(result);
+    } catch {
+      setPreview(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [orgId, currentPeriod]);
+
+  useEffect(() => {
+    if (orgId && data) {
+      loadInvoices();
+      loadPreview();
+    }
+  }, [orgId, data, loadInvoices, loadPreview]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      await invoiceService.generate(orgId, currentPeriod);
+      toast.success('חשבונית הופקה בהצלחה');
+      await loadInvoices();
+      await loadPreview();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בהפקת חשבונית');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleMarkPaid = async (invoiceId) => {
+    setInvoiceConfirm(null);
+    setMarkingPaid(invoiceId);
+    try {
+      await invoiceService.markPaid(orgId, invoiceId);
+      toast.success('חשבונית סומנה כשולם');
+      await loadInvoices();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בסימון חשבונית');
+    } finally {
+      setMarkingPaid(null);
+    }
+  };
+
+  const loadInvoiceDetail = async (invoiceId) => {
+    if (expandedInvoice === invoiceId) {
+      setExpandedInvoice(null);
+      setExpandedDetail(null);
+      return;
+    }
+    setExpandedInvoice(invoiceId);
+    try {
+      const detail = await invoiceService.get(orgId, invoiceId);
+      setExpandedDetail(detail);
+    } catch {
+      setExpandedDetail(null);
+    }
+  };
+
+  const formatPeriod = (ym) => {
+    if (!ym) return '—';
+    const [y, m] = ym.split('-');
+    return `${m}/${y}`;
+  };
+
+  useEffect(() => {
+    if (!orgId) return;
+    setLoading(true);
+    billingService.orgBilling(orgId)
+      .then(setData)
+      .catch(err => {
+        if (err.response?.status === 404) {
+          setError(null);
+          setData(null);
+        } else {
+          setError(err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב');
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [orgId]);
+
+  const loadMembers = useCallback(async () => {
+    if (!orgId) return;
+    setMembersLoading(true);
+    setMembersError(null);
+    setMembersDenied(false);
+    try {
+      const result = await orgMemberService.listMembers(orgId);
+      setMembers(result.members || []);
+    } catch (err) {
+      if (err.response?.status === 403) {
+        setMembersDenied(true);
+        setMembers([]);
+      } else {
+        setMembersError('שגיאה בטעינת חברי ארגון');
+      }
+    } finally {
+      setMembersLoading(false);
+    }
+  }, [orgId]);
+
+  useEffect(() => { loadMembers(); }, [loadMembers]);
+
+  useEffect(() => {
+    if (!loading && !membersLoading && location.hash === '#responsibility' && responsibilityRef.current) {
+      setTimeout(() => {
+        responsibilityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 300);
+    }
+  }, [loading, membersLoading, location.hash]);
+
+  useEffect(() => {
+    if (!loading && location.hash === '#requests') {
+      setPaymentRequestsExpanded(true);
+    }
+  }, [loading, location.hash]);
+
+  const handleRoleChange = (member, newRole) => {
+    if (newRole === member.role) return;
+    setConfirmDialog({ member, newRole });
+  };
+
+  const confirmRoleChange = async () => {
+    if (!confirmDialog) return;
+    const { member, newRole } = confirmDialog;
+    setConfirmDialog(null);
+    setChangingRole(member.user_id);
+    try {
+      await orgMemberService.changeRole(orgId, member.user_id, newRole);
+      toast.success(`התפקיד של ${member.name || 'המשתמש'} שונה ל${getRoleLabel(newRole)}`);
+      await loadMembers();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה בשינוי תפקיד');
+    } finally {
+      setChangingRole(null);
+    }
+  };
+
+  const loadRenewalPreview = useCallback(async (cycle) => {
+    if (!orgId) return;
+    setRenewalLoading(true);
+    try {
+      const result = await billingService.previewRenewal(orgId, cycle);
+      setRenewalPreview(result);
+    } catch {
+      setRenewalPreview(null);
+    } finally {
+      setRenewalLoading(false);
+    }
+  }, [orgId]);
+
+  useEffect(() => {
+    if (data && !isSuspended) {
+      loadRenewalPreview(renewalCycle);
+    }
+  }, [data, isSuspended, renewalCycle, loadRenewalPreview]);
+
+  const handleCycleChange = (cycle) => {
+    setRenewalCycle(cycle);
+  };
+
+  const handleHandoffCopy = () => {
+    const billingUrl = `${window.location.origin}/billing/org/${orgId}`;
+    const orgName = data?.org_name || '';
+    const message = `שלום, אני צריך שדרוג/חידוש רישיון עבור הארגון "${orgName}".\nקישור לעמוד החיוב: ${billingUrl}`;
+    navigator.clipboard.writeText(message).then(() => {
+      toast.success('ההודעה הועתקה — שלח לבעלי הארגון');
+    }).catch(() => {
+      toast.error('לא הצלחנו להעתיק — נסה ידנית');
+    });
+  };
+
+  const CYCLE_HE = { monthly: 'חודשי', yearly: 'שנתי' };
+
+  const buildTemplateA = (result) => {
+    const orgName = data?.org_name || '';
+    const billingUrl = `${window.location.origin}/billing/org/${orgId}`;
+    const cycleHe = CYCLE_HE[renewalCycle] || renewalCycle;
+    return `שלום,\nכדי להפעיל/לחדש מנוי BrikOps לארגון: ${orgName}\nבחרתי: ${cycleHe}\nתוקף לאחר התשלום: עד ${result.requested_paid_until_display}\nסכום לתשלום: ₪${result.amount_ils}\n\nקישור לעמוד החיוב:\n${billingUrl}\n\nלאחר התשלום אנא שלחו אסמכתא למייל billing@brikops.com ונפעיל מיידית.\nתודה`;
+  };
+
+  const buildTemplateC = (result) => {
+    const orgName = data?.org_name || '';
+    const billingUrl = `${window.location.origin}/billing/org/${orgId}`;
+    const cycleHe = CYCLE_HE[renewalCycle] || renewalCycle;
+    return `היי,\nצריך לאשר שדרוג/חידוש מנוי BrikOps לארגון ${orgName}.\n\n• מסלול: ${cycleHe}\n• סכום: ₪${result.amount_ils}\n• תוקף לאחר תשלום: עד ${result.requested_paid_until_display}\n\nקישור לעמוד החיוב:\n${billingUrl}\n\nאפשר לאשר לי לאחר תשלום/העברה כדי שאפעיל את הרישיון.\nתודה!`;
+  };
+
+  const handlePaymentRequest = async () => {
+    setPaymentRequestLoading(true);
+    try {
+      const result = await billingService.createPaymentRequest(orgId, renewalCycle);
+      setPaymentRequestResult(result);
+      if (result.existing_open) {
+        toast('כבר קיימת בקשת תשלום פתוחה', { icon: 'ℹ️' });
+        setPaymentRequestsExpanded(true);
+      } else if (result.existing) {
+        toast.success('בקשה קיימת נטענה');
+      } else {
+        toast.success('הבקשה נרשמה בהצלחה');
+        loadPaymentRequests(paymentRequestsFilter);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה ביצירת בקשת תשלום');
+    } finally {
+      setPaymentRequestLoading(false);
+    }
+  };
+
+  const handleCopyPaymentMessage = (template) => {
+    if (!paymentRequestResult) return;
+    const message = template === 'C' ? buildTemplateC(paymentRequestResult) : template === 'B' ? buildTemplateB(paymentRequestResult) : buildTemplateA(paymentRequestResult);
+    navigator.clipboard.writeText(message).then(() => {
+      toast.success('ההודעה הועתקה ללוח');
+    }).catch(() => {
+      toast.error('לא הצלחנו להעתיק — נסה ידנית');
+    });
+  };
+
+  const handleMarkPaidAction = async () => {
+    setMarkPaidLoading(true);
+    try {
+      const result = await billingService.markPaid(orgId, {
+        requestId: paymentRequestResult?.request_id,
+        cycle: renewalCycle,
+      });
+      const paidUntil = result?.paid_until ? new Date(result.paid_until).toLocaleDateString('he-IL') : '';
+      toast.success(paidUntil ? `התשלום אושר — הרישיון עודכן עד ${paidUntil}.` : 'התשלום אושר — הרישיון עודכן');
+      setPaymentRequestResult(null);
+      const updated = await billingService.orgBilling(orgId);
+      setData(updated);
+      loadPaymentRequests(paymentRequestsFilter);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      if (err.response?.status === 403) {
+        toast.error('אין לך הרשאה לבצע פעולה זו.');
+      } else {
+        toast.error(typeof detail === 'string' ? detail : 'שגיאה בסימון תשלום');
+      }
+    } finally {
+      setMarkPaidLoading(false);
+    }
+  };
+
+  const handleCustomerMarkPaid = async () => {
+    if (!paymentRequestResult?.request_id) return;
+    setCustomerMarkPaidLoading(true);
+    try {
+      await billingService.customerMarkPaid(orgId, paymentRequestResult.request_id);
+      toast.success('הבקשה עודכנה: ממתין לאישור.');
+      loadPaymentRequests(paymentRequestsFilter);
+      setPaymentRequestResult(prev => prev ? { ...prev, _customerMarked: true } : prev);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה בסימון תשלום');
+    } finally {
+      setCustomerMarkPaidLoading(false);
+    }
+  };
+
+  const handleReceiptUpload = async (requestId, file) => {
+    if (!file) return;
+    setReceiptUploading(true);
+    try {
+      await billingService.uploadReceipt(orgId, requestId, file);
+      toast.success('האסמכתא הועלתה בהצלחה.');
+      loadPaymentRequests(paymentRequestsFilter);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה בהעלאת אסמכתא');
+    } finally {
+      setReceiptUploading(false);
+    }
+  };
+
+  const handleViewReceipt = async (requestId) => {
+    try {
+      const result = await billingService.getReceiptUrl(orgId, requestId);
+      if (result.url) window.open(result.url, '_blank');
+    } catch (err) {
+      toast.error('לא ניתן לצפות באסמכתא');
+    }
+  };
+
+  const handleAdminApprove = async (pr) => {
+    setAdminApproveLoading(pr.id);
+    try {
+      const result = await billingService.markPaid(orgId, { requestId: pr.id });
+      const paidUntil = result?.paid_until ? new Date(result.paid_until).toLocaleDateString('he-IL') : '';
+      toast.success(paidUntil ? `התשלום אושר — הרישיון עודכן עד ${paidUntil}.` : 'התשלום אושר — הרישיון עודכן');
+      loadPaymentRequests(paymentRequestsFilter);
+      const updated = await billingService.orgBilling(orgId);
+      setData(updated);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה באישור תשלום');
+    } finally {
+      setAdminApproveLoading(null);
+    }
+  };
+
+  const handleAdminReject = async () => {
+    if (!rejectModalRequest) return;
+    setRejectLoading(true);
+    try {
+      await billingService.rejectPaymentRequest(orgId, rejectModalRequest.id, rejectReason);
+      toast.success('הבקשה נדחתה.');
+      setRejectModalRequest(null);
+      setRejectReason('');
+      loadPaymentRequests(paymentRequestsFilter);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה בדחיית בקשה');
+    } finally {
+      setRejectLoading(false);
+    }
+  };
+
+  const handlePmPaymentRequest = async () => {
+    setPaymentRequestLoading(true);
+    try {
+      const result = await billingService.createPaymentRequest(orgId, renewalCycle);
+      setPaymentRequestResult(result);
+      if (result.existing_open) {
+        toast('כבר קיימת בקשת תשלום פתוחה', { icon: 'ℹ️' });
+        setPaymentRequestsExpanded(true);
+      } else {
+        const message = buildTemplateC(result);
+        navigator.clipboard.writeText(message).then(() => {
+          toast.success('הבקשה נרשמה וההודעה הועתקה — שלח לבעלי הארגון');
+        }).catch(() => {
+          toast.success('הבקשה נרשמה');
+        });
+        loadPaymentRequests(paymentRequestsFilter);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה ביצירת בקשת תשלום');
+    } finally {
+      setPaymentRequestLoading(false);
+    }
+  };
+
+  const loadPaymentRequests = useCallback(async (filter) => {
+    if (!orgId || !canViewRequests) return;
+    setPaymentRequestsLoading(true);
+    try {
+      const statusParam = filter === 'open' ? 'requested,sent,pending_review' : filter === 'all' ? '' : filter === 'pending_review' ? 'pending_review' : filter;
+      const result = await billingService.listPaymentRequests(orgId, statusParam);
+      setPaymentRequests(result.requests || []);
+      if (filter === 'open' && (result.requests || []).length > 0) {
+        setPaymentRequestsExpanded(true);
+      }
+    } catch {
+      setPaymentRequests([]);
+    } finally {
+      setPaymentRequestsLoading(false);
+    }
+  }, [orgId, canViewRequests]);
+
+  useEffect(() => {
+    if (data && canViewRequests) {
+      loadPaymentRequests(paymentRequestsFilter);
+    }
+  }, [data, canViewRequests, paymentRequestsFilter, loadPaymentRequests]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const hlId = params.get('highlight');
+    const hasRequestsHash = location.hash === '#requests';
+    if (hlId || hasRequestsHash) {
+      setPaymentRequestsExpanded(true);
+      if (hlId) {
+        setHighlightRequestId(hlId);
+        highlightRetried.current = false;
+      }
+    }
+  }, [location.search, location.hash]);
+
+  useEffect(() => {
+    if (!highlightRequestId || paymentRequestsLoading) return;
+    if (paymentRequests.length === 0 && highlightRetried.current) return;
+    const found = paymentRequests.find(pr => pr.id === highlightRequestId);
+    if (!found && !highlightRetried.current) {
+      highlightRetried.current = true;
+      setPaymentRequestsFilter('all');
+      return;
+    }
+    if (found) {
+      setTimeout(() => {
+        const el = document.querySelector(`[data-request-id="${highlightRequestId}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('highlight-flash');
+          setTimeout(() => {
+            el.classList.remove('highlight-flash');
+            setHighlightRequestId(null);
+          }, 3000);
+        }
+      }, 200);
+    }
+  }, [highlightRequestId, paymentRequests, paymentRequestsLoading]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const pid = params.get('project_id');
+    if (pid) {
+      setSourceProjectId(pid);
+      projectService.get(pid).then(p => {
+        if (p?.name) setSourceProjectName(p.name);
+      }).catch(() => {});
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    if (data && location.hash === '#billing') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [data, location.hash]);
+
+  useEffect(() => {
+    if (data?.payment_config) {
+      setPaymentConfigBank(data.payment_config.bank_details || '');
+      setPaymentConfigBit(data.payment_config.bit_phone || '');
+    }
+  }, [data]);
+
+  const handleSavePaymentConfig = async () => {
+    setPaymentConfigSaving(true);
+    try {
+      await billingService.updatePaymentConfig(orgId, {
+        bank_details: paymentConfigBank,
+        bit_phone: paymentConfigBit,
+      });
+      toast.success('הגדרות תשלום נשמרו');
+      const updated = await billingService.orgBilling(orgId);
+      setData(updated);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בשמירת הגדרות');
+    } finally {
+      setPaymentConfigSaving(false);
+    }
+  };
+
+  const hasPaymentOptions = data?.payment_config?.has_payment_options;
+
+  const buildTemplateB = (result) => {
+    const orgName = data?.org_name || '';
+    const billingUrl = `${window.location.origin}/billing/org/${orgId}`;
+    const cycleHe = CYCLE_HE[renewalCycle] || renewalCycle;
+    const bankLine = paymentConfigBank ? `1) העברה בנקאית: ${paymentConfigBank}` : '';
+    const bitLine = paymentConfigBit ? `${bankLine ? '2' : '1'}) Bit: ${paymentConfigBit}` : '';
+    const paymentLines = [bankLine, bitLine].filter(Boolean).join('\n');
+    return `שלום,\nמצורפת בקשת תשלום להפעלת/חידוש מנוי BrikOps עבור הארגון: ${orgName}\n\n• מסלול: ${cycleHe}\n• תקופת רישיון לאחר אישור התשלום: עד ${result.requested_paid_until_display}\n• סכום: ₪${result.amount_ils}\n• קישור חיוב/פרטים: ${billingUrl}\n\nאפשרויות תשלום:\n${paymentLines}\n\nלאחר התשלום, אנא שלחו אסמכתא (צילום/מספר עסקה) ונעדכן את הרישיון מיידית.\nתודה,\nצוות BrikOps\nsupport@brikops.com`;
+  };
+
+  if (loading) return <div className="flex justify-center items-center h-64"><div className="text-slate-500">טוען...</div></div>;
+  if (error) return <div className="max-w-2xl mx-auto p-6"><div className="bg-red-50 text-red-700 p-4 rounded-lg">{error}</div></div>;
+  if (!data) return (
+    <div className="max-w-2xl mx-auto p-6 text-center" dir="rtl">
+      <div className="text-slate-400 py-12">
+        <p className="text-lg mb-2">נתוני חיוב אינם זמינים</p>
+        <button onClick={() => navigate(-1)} className="text-amber-600 hover:text-amber-700 text-sm">חזרה</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-3xl mx-auto p-4 space-y-6" dir="rtl">
+      <div className="flex items-center gap-2 text-sm text-slate-500">
+        <button onClick={() => navigate(-1)} className="hover:text-slate-700">חזרה</button>
+        <ChevronRight className="w-4 h-4" />
+        <span className="font-medium text-slate-700">חיוב ארגון</span>
+      </div>
+
+      {sourceProjectId && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
+          <div className="text-sm text-blue-800">
+            {sourceProjectName
+              ? <span>הגעת מפרויקט: <strong>{sourceProjectName}</strong></span>
+              : <span>הגעת מפרויקט</span>
+            }
+          </div>
+          <button
+            onClick={() => navigate(`/projects/${sourceProjectId}`)}
+            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            חזרה לפרויקט
+          </button>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-slate-800">{data.org_name}</h1>
+          <span className={`text-sm font-medium px-3 py-1 rounded-full ${
+            SUBSCRIPTION_STATUS_COLORS[subStatus] || 'bg-slate-100 text-slate-500'
+          }`}>
+            {SUBSCRIPTION_STATUS_LABELS[subStatus] || '—'}
+          </span>
+        </div>
+
+        {sub && (
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-slate-500 mb-1">מצב מנוי</div>
+              <div className="font-semibold">
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
+                  SUBSCRIPTION_STATUS_COLORS[subStatus] || 'bg-slate-100 text-slate-500'
+                }`}>
+                  {SUBSCRIPTION_STATUS_LABELS[subStatus] || '—'}
+                </span>
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-slate-500 mb-1">מצב גישה</div>
+              <div className="font-semibold">
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
+                  sub.effective_access === 'full_access'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  {getAccessLabel(sub.effective_access)}
+                </span>
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              {subStatus === 'trial' && sub.trial_end_at ? (
+                <>
+                  <div className="text-slate-500 mb-1">ניסיון עד</div>
+                  <div className="font-medium text-blue-600">{formatDate(sub.trial_end_at)}</div>
+                </>
+              ) : sub.paid_until ? (() => {
+                const paidDate = new Date(sub.paid_until);
+                const now = new Date();
+                const daysLeft = Math.ceil((paidDate - now) / 86400000);
+                const isExpired = subStatus === 'expired' || subStatus === 'past_due';
+                const isWarning = !isExpired && daysLeft <= 14;
+                return (
+                  <>
+                    <div className="text-slate-500 mb-1">{isExpired ? 'שולם עד' : 'בתוקף עד'}</div>
+                    <div className={`font-medium ${
+                      isExpired ? 'text-red-600' : isWarning ? 'text-amber-600' : 'text-emerald-600'
+                    }`}>
+                      {paidDate.toLocaleDateString('he-IL')}
+                      {isExpired && ' (פג תוקף)'}
+                      {isWarning && ` (${daysLeft} ימים)`}
+                    </div>
+                  </>
+                );
+              })() : (
+                <>
+                  <div className="text-slate-500 mb-1">בתוקף עד</div>
+                  <div className="font-medium text-slate-500">—</div>
+                </>
+              )}
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-slate-500 mb-1">סה״כ חודשי</div>
+              <div className="font-bold text-lg text-slate-900">{formatCurrency(sub.total_monthly)}</div>
+            </div>
+            {sub.billing_cycle && (
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="text-slate-500 mb-1">מחזור חיוב</div>
+                <div className="font-medium text-slate-700">{CYCLE_LABELS[sub.billing_cycle] || sub.billing_cycle}</div>
+              </div>
+            )}
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-slate-500 mb-1">חידוש אוטומטי</div>
+              <div className="font-medium text-slate-700">{sub.auto_renew ? 'כן' : 'לא'}</div>
+            </div>
+          </div>
+        )}
+
+        {isActive && !canManageBilling && (
+          <div className="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-slate-500" />
+            <div>
+              <span className="font-medium">צפייה בלבד — אין הרשאה לניהול חיוב</span>
+              {data.owner_name && (
+                <span className="block text-xs text-slate-500 mt-1">בעלים: {data.owner_name}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {needsUpgrade && canManageBilling && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+            <span className="shrink-0 mt-0.5">⚠</span>
+            <span>{sub?.read_only_reason === 'payment_expired'
+              ? 'התשלום פג תוקף. יש לחדש את המנוי כדי לשחזר גישה מלאה.'
+              : 'תקופת הניסיון הסתיימה. יש לשדרג למנוי בתשלום.'
+            }</span>
+          </div>
+        )}
+
+        {needsUpgrade && !canManageBilling && (
+          <div className="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-slate-500" />
+            <div>
+              <span className="font-medium">הרישיון פג — פנה לבעלי הארגון</span>
+              {data.owner_name && (
+                <span className="block text-xs text-slate-500 mt-1">בעלים: {data.owner_name}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {isTrial && canManageBilling && sub?.trial_end_at && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+            <span className="shrink-0 mt-0.5">⏳</span>
+            <span>תקופת ניסיון עד {formatDate(sub.trial_end_at)} — שדרגו למנוי בתשלום להמשך גישה מלאה.</span>
+          </div>
+        )}
+
+        {isSuspended && (
+          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+            <span className="shrink-0 mt-0.5">⛔</span>
+            <span>המנוי הושעה — פנה לתמיכה.</span>
+          </div>
+        )}
+      </div>
+
+      {!isSuspended && canManageBilling && !isSA && (
+        <div className="bg-white rounded-xl border border-amber-200 p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-slate-800">{(needsUpgrade || isTrial) ? 'שדרוג / חידוש' : 'חידוש מנוי מראש'}</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-slate-600">מחזור:</span>
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+              <button
+                onClick={() => handleCycleChange('monthly')}
+                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                  renewalCycle === 'monthly'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                חודשי
+              </button>
+              <button
+                onClick={() => handleCycleChange('yearly')}
+                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                  renewalCycle === 'yearly'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                שנתי
+              </button>
+            </div>
+          </div>
+          {renewalLoading ? (
+            <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
+          ) : renewalPreview ? (
+            <div className="bg-amber-50 rounded-lg p-4 space-y-2">
+              <div className="text-sm text-amber-800">
+                <span className="font-medium">הרישיון יהיה בתוקף עד: </span>
+                <span className="font-bold">{renewalPreview.new_paid_until_display}</span>
+              </div>
+              {renewalPreview.auto_renew_default && (
+                <div className="text-xs text-amber-700">חידוש אוטומטי</div>
+              )}
+            </div>
+          ) : null}
+          <button
+            onClick={handlePaymentRequest}
+            disabled={paymentRequestLoading}
+            className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {paymentRequestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            שלח בקשת תשלום
+          </button>
+          {paymentRequestResult && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
+                <span>הבקשה נרשמה</span>
+              </div>
+              <div className="text-xs text-slate-600 space-y-1">
+                <div>מזהה בקשה: <span className="font-mono text-xs">{paymentRequestResult.request_id?.slice(0, 8)}...</span></div>
+                <div>תוקף לאחר תשלום: <span className="font-bold">{paymentRequestResult.requested_paid_until_display}</span></div>
+                <div>סכום: <span className="font-bold">₪{paymentRequestResult.amount_ils}</span></div>
+              </div>
+              <button
+                onClick={() => handleCopyPaymentMessage('A')}
+                className="w-full bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                העתק הודעת תשלום
+              </button>
+              {hasPaymentOptions && (
+                <button
+                  onClick={() => handleCopyPaymentMessage('B')}
+                  className="w-full bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+                >
+                  <Copy className="w-4 h-4" />
+                  העתק הודעה מפורטת (עם אפשרויות תשלום)
+                </button>
+              )}
+            </div>
+          )}
+          {paymentRequestResult && !isSA && (
+            <div className="border-t border-slate-200 pt-4 space-y-3">
+              {paymentRequestResult._customerMarked ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                  כבר סומן כשולם — ממתין לאישור
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleCustomerMarkPaid}
+                    disabled={customerMarkPaidLoading}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {customerMarkPaidLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    סימנתי ששילמתי
+                  </button>
+                  <p className="text-xs text-slate-500 text-center">הרישיון מתעדכן רק לאחר אישור אדמין.</p>
+                </>
+              )}
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  ref={receiptFileRef}
+                  className="hidden"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleReceiptUpload(paymentRequestResult.request_id, file);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={() => receiptFileRef.current?.click()}
+                  disabled={receiptUploading}
+                  className="w-full bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {receiptUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  העלה אסמכתא
+                </button>
+                <p className="text-xs text-slate-400 text-center">אופציונלי — מסייע לאישור מהיר יותר.</p>
+              </div>
+            </div>
+          )}
+          {isSA && (
+            <div className="border-t border-slate-200 pt-4">
+              <button
+                onClick={handleMarkPaidAction}
+                disabled={markPaidLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {markPaidLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                אשר תשלום
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!isSuspended && !canManageBilling && isPM && !data?.is_owner && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-slate-800">{(needsUpgrade || isTrial) ? 'בקשת שדרוג' : 'בקשת חידוש מנוי'}</h2>
+          <p className="text-sm text-slate-600">
+            אין לך הרשאה לניהול חיוב. שלח בקשה לבעלי הארגון לחידוש הרישיון.
+          </p>
+          {data.owner_name && (
+            <div className="text-xs text-slate-500">בעלים: {data.owner_name}</div>
+          )}
+          <button
+            onClick={handlePmPaymentRequest}
+            disabled={paymentRequestLoading}
+            className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {paymentRequestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+            בקש שדרוג מבעלים
+          </button>
+          {paymentRequestResult && !canManageBilling && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-2">
+              <div className="text-sm text-emerald-700 font-medium">הבקשה נרשמה</div>
+              <div className="text-xs text-slate-600">
+                מזהה: <span className="font-mono">{paymentRequestResult.request_id?.slice(0, 8)}...</span>
+              </div>
+              <button
+                onClick={() => handleCopyPaymentMessage('C')}
+                className="w-full bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                העתק הודעה לבעלים
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {canViewRequests && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <button
+            onClick={() => setPaymentRequestsExpanded(!paymentRequestsExpanded)}
+            className="flex items-center justify-between w-full"
+          >
+            <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              בקשות תשלום
+              {paymentRequests.length > 0 && (
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{paymentRequests.length}</span>
+              )}
+            </h2>
+            {paymentRequestsExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+          </button>
+          {paymentRequestsExpanded && (
+            <div className="space-y-3">
+              <div className="flex gap-2 flex-wrap">
+                {(isSA ? ['open', 'pending_review', 'paid', 'rejected', 'canceled', 'all'] : ['open', 'pending_review', 'paid', 'canceled', 'all']).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setPaymentRequestsFilter(f)}
+                    className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${
+                      paymentRequestsFilter === f
+                        ? 'bg-amber-500 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {{ open: 'פתוחות', pending_review: 'ממתין לאישור', paid: 'אושר ושולם', rejected: 'נדחה', canceled: 'בוטל', all: 'הכל' }[f]}
+                  </button>
+                ))}
+              </div>
+              {isPM && !canManageBilling && (
+                <div className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                  צפייה בלבד — מוצגות רק הבקשות שפתחת.
+                </div>
+              )}
+              {paymentRequestsLoading ? (
+                <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
+              ) : paymentRequests.length === 0 ? (
+                <div className="text-sm text-slate-400 py-2">אין בקשות תשלום</div>
+              ) : (
+                <div className="space-y-2">
+                  {paymentRequests.map(pr => {
+                    const statusColors = { requested: 'bg-amber-100 text-amber-700', sent: 'bg-blue-100 text-blue-700', pending_review: 'bg-amber-100 text-amber-800', paid: 'bg-emerald-100 text-emerald-700', rejected: 'bg-red-100 text-red-700', canceled: 'bg-slate-100 text-slate-500' };
+                    const statusLabels = { requested: 'ממתין לתשלום', sent: 'נשלח', pending_review: 'ממתין לאישור', paid: 'אושר ושולם', rejected: 'נדחה', canceled: 'בוטל' };
+                    const statusHelpers = { requested: 'לאחר התשלום סמן \'סימנתי ששילמתי\' (אפשר לצרף אסמכתא כדי לזרז).', pending_review: 'סימנת ששילמת. האישור יתבצע לאחר בדיקה. אפשר לצרף אסמכתא כדי לזרז.', paid: 'התשלום אושר והרישיון עודכן.', rejected: 'הבקשה נדחתה. לפרטים פנה לתמיכה.', canceled: 'הבקשה בוטלה.' };
+                    const cycleLabels = { monthly: 'חודשי', yearly: 'שנתי' };
+                    const fmtDate = (dt) => { if (!dt) return '—'; const d = new Date(dt); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; };
+                    return (
+                      <div key={pr.id} data-request-id={pr.id} className="bg-slate-50 rounded-lg p-3 text-sm space-y-2 transition-colors duration-500">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${statusColors[pr.status] || 'bg-slate-100 text-slate-500'}`}>
+                              {statusLabels[pr.status] || pr.status}
+                            </span>
+                            <span className="text-xs text-slate-500">{cycleLabels[pr.cycle] || pr.cycle}</span>
+                            <span className="text-xs font-medium text-slate-700">₪{pr.amount_ils}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-slate-400">מס׳ בקשה (לתמיכה):</span>
+                            <span className="text-xs text-slate-500 font-mono">{pr.id?.slice(-8)}</span>
+                            <button
+                              onClick={() => { navigator.clipboard.writeText(pr.id); toast.success('מזהה בקשה הועתק'); }}
+                              className="text-slate-400 hover:text-slate-600 p-0.5"
+                              title="העתק מזהה מלא"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span>{pr.requester_name || '—'}</span>
+                          <span>נוצר בתאריך: <bdi dir="ltr">{fmtDate(pr.created_at)}</bdi></span>
+                        </div>
+                        {pr.requested_paid_until && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-emerald-600 font-medium">מבוקש להאריך עד: <bdi dir="ltr">{fmtDate(pr.requested_paid_until)}</bdi></span>
+                          </div>
+                        )}
+                        {pr.note && <div className="text-xs text-slate-400">{pr.note}</div>}
+                        {pr.customer_paid_note && <div className="text-xs text-slate-400">הערת לקוח: {pr.customer_paid_note}</div>}
+                        {pr.rejection_reason && <div className="text-xs text-red-600">סיבת דחייה: {pr.rejection_reason}</div>}
+                        {statusHelpers[pr.status] && (
+                          <div className="text-xs text-slate-400 italic">{statusHelpers[pr.status]}</div>
+                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {pr.has_receipt && (
+                            <button onClick={() => handleViewReceipt(pr.id)} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                              <Eye className="w-3 h-3" /> הצג אסמכתא
+                            </button>
+                          )}
+                          {!isSA && !pr.has_receipt && (pr.status === 'requested' || pr.status === 'pending_review') && (
+                            <>
+                              <input
+                                type="file"
+                                id={`receipt-${pr.id}`}
+                                className="hidden"
+                                accept=".pdf,.jpg,.jpeg,.png"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleReceiptUpload(pr.id, file);
+                                  e.target.value = '';
+                                }}
+                              />
+                              <button
+                                onClick={() => document.getElementById(`receipt-${pr.id}`)?.click()}
+                                disabled={receiptUploading}
+                                className="text-xs text-slate-600 hover:text-slate-800 flex items-center gap-1"
+                              >
+                                <Upload className="w-3 h-3" /> העלה אסמכתא
+                              </button>
+                            </>
+                          )}
+                          {isSA && (pr.status === 'requested' || pr.status === 'pending_review') && (
+                            <>
+                              <button
+                                onClick={() => handleAdminApprove(pr)}
+                                disabled={adminApproveLoading === pr.id}
+                                className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-full flex items-center gap-1 disabled:opacity-50"
+                              >
+                                {adminApproveLoading === pr.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                אשר תשלום
+                              </button>
+                              <button
+                                onClick={() => { setRejectModalRequest(pr); setRejectReason(''); }}
+                                className="text-xs bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded-full"
+                              >
+                                דחה בקשה
+                              </button>
+                            </>
+                          )}
+                          {canManageBilling && !isSA && (pr.status === 'requested' || pr.status === 'sent') && (
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await billingService.cancelPaymentRequest(orgId, pr.id);
+                                  toast.success('הבקשה בוטלה');
+                                  loadPaymentRequests(paymentRequestsFilter);
+                                } catch (err) {
+                                  toast.error(err.response?.data?.detail || 'שגיאה בביטול הבקשה');
+                                }
+                              }}
+                              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1 rounded-full"
+                            >
+                              בטל בקשה
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isSA && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <button
+            onClick={() => setPaymentConfigExpanded(!paymentConfigExpanded)}
+            className="flex items-center justify-between w-full"
+          >
+            <h2 className="text-lg font-semibold text-slate-800">פרטי תשלום (BrikOps)</h2>
+            {paymentConfigExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+          </button>
+          {paymentConfigExpanded && (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">
+                הגדר פרטי חשבון בנק ו/או Bit. לאחר ההגדרה, הודעת התשלום המפורטת (תבנית B) תהיה זמינה להעתקה.
+              </p>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-700">פרטי חשבון בנק</label>
+                <textarea
+                  value={paymentConfigBank}
+                  onChange={(e) => setPaymentConfigBank(e.target.value)}
+                  placeholder="שם בנק, סניף, מספר חשבון..."
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm text-right resize-none"
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-700">מספר Bit</label>
+                <input
+                  type="text"
+                  value={paymentConfigBit}
+                  onChange={(e) => setPaymentConfigBit(e.target.value)}
+                  placeholder="050-1234567"
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm text-right"
+                />
+              </div>
+              <button
+                onClick={handleSavePaymentConfig}
+                disabled={paymentConfigSaving}
+                className="bg-amber-500 hover:bg-amber-600 text-white font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {paymentConfigSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                שמור
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+        <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
+          <span className="font-medium">איך מחושב החיוב בארגון:</span>{' '}
+          סה״כ החיוב הארגוני מחושב כסכום החיוב החודשי של כל הפרויקטים הפעילים בארגון.
+        </div>
+
+        <h2 className="text-lg font-semibold text-slate-800">פרויקטים ({data.projects?.length || 0})</h2>
+        {data.projects?.length > 0 ? (
+          <div className="space-y-3">
+            {data.projects.map(pb => {
+              const badge = getPlanBadge(pb.plan_id);
+              return (
+                <div key={pb.project_id} className="bg-slate-50 rounded-lg p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-slate-700">{pb.project_name || pb.project_id}</span>
+                      {pb.setup_state && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${getSetupStateColor(pb.setup_state)}`}>
+                          {getSetupStateLabel(pb.setup_state)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm font-bold text-slate-900 flex-shrink-0">{formatCurrency(pb.monthly_total)}/חודש</span>
+                  </div>
+                  {pb.plan_id && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">חבילה:</span>
+                      <span className="text-xs font-medium text-slate-700">{getPlanLabel(pb.plan_id)}</span>
+                      {badge && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                          pb.plan_id === 'plan_pro' ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'
+                        }`}>
+                          {badge}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-3 gap-2 text-xs text-slate-500">
+                    <div>עלות חבילה: <span className="font-medium text-slate-700">{formatCurrency(pb.project_fee_snapshot)}</span></div>
+                    <div>מדרגת יחידות: <span className="font-medium text-slate-700">{formatCurrency(pb.tier_fee_snapshot)}</span></div>
+                    <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-sm text-slate-400">אין פרויקטים עם חיוב</div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <FileText className="w-5 h-5 text-amber-500" />
+          <h2 className="text-lg font-semibold text-slate-800">חיובים חודשיים</h2>
+        </div>
+
+        {previewLoading ? (
+          <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
+        ) : preview && (
+          <div className="bg-amber-50 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-amber-800">תקופה נוכחית: {formatPeriod(preview.period_ym)}</span>
+              <span className="text-lg font-bold text-amber-900">{formatCurrency(preview.total_amount)}</span>
+            </div>
+            <div className="text-xs text-amber-700">
+              תאריך יעד לתשלום: {preview.due_at ? new Date(preview.due_at).toLocaleDateString('he-IL') : '—'}
+            </div>
+            <div className="text-xs text-amber-700">
+              {preview.line_items?.length || 0} פרויקטים פעילים
+            </div>
+            {canMutateInvoices && !invoices.find(inv => inv.period_ym === currentPeriod) && (
+              <button
+                onClick={handleGenerate}
+                disabled={generating}
+                className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+              >
+                {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                הפקת חשבונית לתקופה {formatPeriod(currentPeriod)}
+              </button>
+            )}
+          </div>
+        )}
+
+        {invoicesLoading ? (
+          <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
+        ) : invoices.length > 0 ? (
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-slate-600">היסטוריית חשבוניות</h3>
+            {invoices.map(inv => (
+              <div key={inv.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => loadInvoiceDetail(inv.id)}
+                  className="w-full bg-slate-50 hover:bg-slate-100 p-3 flex items-center justify-between text-sm"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-slate-700">{formatPeriod(inv.period_ym)}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${getInvoiceStatusColor(inv.status)}`}>
+                      {getInvoiceStatusLabel(inv.status)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-slate-800">{formatCurrency(inv.total_amount)}</span>
+                    {expandedInvoice === inv.id ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                  </div>
+                </button>
+                {expandedInvoice === inv.id && (
+                  <div className="border-t border-slate-200 p-3 space-y-3">
+                    {expandedDetail?.line_items?.length > 0 ? (
+                      <div className="space-y-2">
+                        {expandedDetail.line_items.map((li, idx) => (
+                          <div key={idx} className="bg-white rounded p-2 text-xs border border-slate-100 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-slate-700">{li.project_name_snapshot || '—'}</span>
+                              <span className="font-bold text-slate-800">{formatCurrency(li.monthly_total_snapshot)}</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-slate-500">
+                              <span>חבילה: {getPlanLabel(li.plan_id_snapshot)}</span>
+                              <span>מדרגה: {getTierLabel(li.tier_code_snapshot)}</span>
+                              <span>יחידות: {li.contracted_units_snapshot}</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-slate-400">
+                              <span>עלות חבילה: {formatCurrency(li.project_fee_snapshot)}</span>
+                              <span>עלות מדרגה: {formatCurrency(li.tier_fee_snapshot)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-400 text-center py-2">
+                        {expandedDetail ? 'אין פריטים' : <Loader2 className="w-4 h-4 animate-spin mx-auto text-amber-500" />}
+                      </div>
+                    )}
+                    <div className="text-xs text-slate-500 space-y-1">
+                      {inv.issued_at && <div>הונפק: {new Date(inv.issued_at).toLocaleDateString('he-IL')}</div>}
+                      {inv.due_at && <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>}
+                      {inv.paid_at && <div>שולם: {new Date(inv.paid_at).toLocaleDateString('he-IL')}</div>}
+                    </div>
+                    {canMutateInvoices && (inv.status === 'issued' || inv.status === 'past_due') && (
+                      <button
+                        onClick={() => setInvoiceConfirm(inv.id)}
+                        disabled={markingPaid === inv.id}
+                        className="w-full border-2 border-dashed border-amber-300 hover:border-amber-400 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-800 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+                      >
+                        {markingPaid === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                        סימון כשולם (סימולציה)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-slate-400 text-center py-2">אין חשבוניות עדיין</div>
+        )}
+      </div>
+
+      <div id="responsibility" ref={responsibilityRef} className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Users className="w-5 h-5 text-amber-500" />
+          <h2 className="text-lg font-semibold text-slate-800">אחריות חיוב בארגון</h2>
+        </div>
+
+        <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-800 space-y-1">
+          <p className="font-medium">מי יכול לנהל חיוב?</p>
+          <p>בעלים וגם בעלי תפקיד <strong>אחראי חיוב</strong> או <strong>מנהל ארגון</strong> יכולים לערוך הגדרות חיוב בפרויקטים.</p>
+          {canEditRoles && (
+            <p className="text-blue-600">ניתן לשנות תפקידים ישירות מהרשימה למטה.</p>
+          )}
+        </div>
+
+        {membersLoading ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
+          </div>
+        ) : membersError ? (
+          <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm flex items-center justify-between">
+            <span>{membersError}</span>
+            <button onClick={loadMembers} className="text-red-600 hover:text-red-800 font-medium text-sm">נסה שוב</button>
+          </div>
+        ) : membersDenied ? (
+          <div className="text-sm text-slate-400 py-4 text-center">
+            רשימת חברי הארגון זמינה לבעלים ולמנהלי הארגון בלבד.
+          </div>
+        ) : members.length === 0 ? (
+          <div className="text-sm text-slate-400 py-4 text-center">אין חברים בארגון</div>
+        ) : (
+          <div className="space-y-2">
+            {members.map(m => (
+              <div key={m.user_id} className="bg-slate-50 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-700 text-sm truncate">{m.name || '—'}</div>
+                    {m.phone && (
+                      <div className="text-xs text-slate-400" dir="ltr">{m.phone}</div>
+                    )}
+                  </div>
+                  <div className="flex-shrink-0">
+                    {m.is_owner ? (
+                      <div className="flex items-center gap-1 text-sm text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span className="font-medium">בעלים</span>
+                      </div>
+                    ) : canEditRoles ? (
+                      changingRole === m.user_id ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+                      ) : (
+                        <Select
+                          value={m.role}
+                          onValueChange={(val) => handleRoleChange(m, val)}
+                        >
+                          <SelectTrigger className="w-[140px] text-xs h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent position="popper" className="z-[9999]">
+                            {ASSIGNABLE_ROLES.map(r => (
+                              <SelectItem key={r.value} value={r.value}>
+                                {r.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )
+                    ) : (
+                      <span className="text-sm text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg">
+                        {getRoleLabel(m.role)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-xs text-slate-400">
+                  {ROLE_DESCRIPTIONS[m.is_owner ? 'owner' : m.role] || ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {invoiceConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4" dir="rtl">
+            <h3 className="text-lg font-bold text-slate-800">סימון חשבונית כשולם</h3>
+            <div className="bg-amber-50 text-amber-800 text-sm rounded-lg p-3 space-y-1">
+              <p className="font-medium">סימולציה בלבד — ללא תשלום בפועל</p>
+              <p className="text-xs">פעולה זו מסמנת את החשבונית כשולם למטרות בדיקה. לא מתבצע חיוב אמיתי.</p>
+            </div>
+            <p className="text-sm text-slate-600">לאשר סימון החשבונית כשולם?</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleMarkPaid(invoiceConfirm)}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-medium py-2 px-4 rounded-lg text-sm"
+              >
+                אישור
+              </button>
+              <button
+                onClick={() => setInvoiceConfirm(null)}
+                className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDialog && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4" dir="rtl">
+            <h3 className="text-lg font-bold text-slate-800">שינוי תפקיד בארגון</h3>
+            <p className="text-sm text-slate-600">
+              לשנות את התפקיד של <strong>{confirmDialog.member.name || 'המשתמש'}</strong> מ<strong>{getRoleLabel(confirmDialog.member.role)}</strong> ל<strong>{getRoleLabel(confirmDialog.newRole)}</strong>?
+            </p>
+            {(confirmDialog.newRole === 'billing_admin' || confirmDialog.newRole === 'org_admin') && (
+              <div className="bg-amber-50 text-amber-800 text-xs rounded-lg p-3">
+                <strong>שימו לב:</strong> הרשאה זו מאפשרת {confirmDialog.newRole === 'billing_admin' ? 'ניהול הגדרות חיוב בפרויקטים' : 'ניהול חברי ארגון וצפייה בנתוני חיוב'}.
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={confirmRoleChange}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-medium py-2 px-4 rounded-lg text-sm"
+              >
+                אישור
+              </button>
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {rejectModalRequest && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4" dir="rtl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-800">דחיית בקשת תשלום</h3>
+              <button onClick={() => setRejectModalRequest(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="text-sm text-slate-600">
+              מזהה: <span className="font-mono">{rejectModalRequest.id?.slice(0, 8)}...</span>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700">סיבת דחייה</label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="לדוגמה: לא התקבלה אסמכתא / לא נמצא תשלום / סכום שגוי"
+                className="w-full border border-slate-300 rounded-lg p-2 text-sm text-right resize-none"
+                rows={3}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAdminReject}
+                disabled={rejectLoading}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {rejectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                דחה
+              </button>
+              <button
+                onClick={() => setRejectModalRequest(null)}
+                className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="text-center text-xs text-slate-300 mt-6">build 2026-02-28-v5</div>
+    </div>
+  );
+}

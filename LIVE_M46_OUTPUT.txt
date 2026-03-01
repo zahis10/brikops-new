@@ -1,0 +1,463 @@
+=================================================================
+LIVE M4.6 OUTPUT — Contractor Ops
+Generated: 2026-02-18
+=================================================================
+
+============================================
+0) VERSION LOCK
+============================================
+
+Git SHA (short): dc9c970
+Git SHA (full):  dc9c9700a7d417d28f7b35a327dcc2e8c5a6d3fd
+
+GET /api/debug/version:
+{
+    "git_sha": "dc9c970",
+    "build_time": "2026-02-18T06:55:39.968328+00:00",
+    "app_id": "contractor-ops-001",
+    "feature_flags": {
+        "app_mode": "dev",
+        "whatsapp_enabled": false,
+        "otp_provider": "mock",
+        "owner_phone_set": false
+    }
+}
+
+SHA shown in frontend: LoginPage footer + ProjectControlPage footer (vXXXXXXX)
+Verified via screenshot: Login page shows 'vdc9c970' at bottom
+
+Changed files (M4.6):
+  backend/contractor_ops/router.py
+  frontend/src/components/ManagementPanel.js
+  frontend/src/pages/ProjectControlPage.js
+  frontend/src/pages/ProjectTasksPage.js
+  frontend/src/services/api.js
+  replit.md
+
+============================================
+1.1) CUSTOM TRADES E2E — API PROOF
+============================================
+
+Project A ID: c3e18b07-a7d8-411e-80f9-95028b15788a
+Project B ID: 120651b1-683a-44b2-b5ff-73c646ebc81e
+
+--- Step 1: GET /api/projects/c3e18b07-a7d8-411e-80f9-95028b15788a/trades (BEFORE — 14 base) ---
+{
+    "trades": [
+        {
+            "key": "plumbing",
+            "label_he": "\u05d0\u05d9\u05e0\u05e1\u05d8\u05dc\u05d8\u05d5\u05e8",
+            "source": "global"
+        },
+        {
+            "key": "aluminum",
+            "label_he": "\u05d0\u05dc\u05d5\u05de\u05d9\u05e0\u05d9\u05d5\u05dd",
+            "source": "global"
+        },
+        {
+            "key": "bathroom_cabinets",
+            "label_he": "\u05d0\u05e8\u05d5\u05e0\u05d5\u05ea \u05d0\u05de\u05d1\u05d8\u05d9\u05d4",
+            "source": "global"
+        },
+        {
+            "key": "finishes",
+            "label_he": "\u05d2\u05de\u05e8\u05d9\u05dd",
+            "source": "global"
+        },
+        {
+            "key": "doors",
+            "label_he": "\u05d3\u05dc\u05ea\u05d5\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "glazing",
+            "label_he": "\u05d7\u05dc\u05d5\u05e0\u05d5\u05ea/\u05d6\u05db\u05d5\u05db\u05d9\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "electrical",
+            "label_he": "\u05d7\u05e9\u05de\u05dc\u05d0\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "general",
+            "label_he": "\u05db\u05dc\u05dc\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "hvac",
+            "label_he": "\u05de\u05d9\u05d6\u05d5\u05d2",
+            "source": "global"
+        },
+        {
+            "key": "metalwork",
+            "label_he": "\u05de\u05e1\u05d2\u05e8\u05d5\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "carpentry_kitchen",
+            "label_he": "\u05e0\u05d2\u05e8\u05d5\u05ea/\u05de\u05d8\u05d1\u05d7",
+            "source": "global"
+        },
+        {
+            "key": "painting",
+            "label_he": "\u05e6\u05d1\u05e2\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "flooring",
+            "label_he": "\u05e8\u05d9\u05e6\u05d5\u05e3",
+            "source": "global"
+        },
+        {
+            "key": "structural",
+            "label_he": "\u05e9\u05dc\u05d3",
+            "source": "global"
+        }
+    ]
+}
+
+--- Step 2: POST /api/projects/c3e18b07-a7d8-411e-80f9-95028b15788a/trades — Create 'מעליות' ---
+{
+    "id": "f48c9211-d91c-416d-b50d-2ea25b7e80a9",
+    "project_id": "c3e18b07-a7d8-411e-80f9-95028b15788a",
+    "key": "\u05de\u05e2\u05dc\u05d9\u05d5\u05ea",
+    "label_he": "\u05de\u05e2\u05dc\u05d9\u05d5\u05ea",
+    "created_by": "c452c225-8876-4a33-a69f-207145eeacb4",
+    "created_at": "2026-02-18T06:57:51.480258+00:00"
+}
+
+--- Step 3: GET /api/projects/c3e18b07-a7d8-411e-80f9-95028b15788a/trades (AFTER — 15) ---
+{
+    "trades": [
+        {
+            "key": "plumbing",
+            "label_he": "\u05d0\u05d9\u05e0\u05e1\u05d8\u05dc\u05d8\u05d5\u05e8",
+            "source": "global"
+        },
+        {
+            "key": "aluminum",
+            "label_he": "\u05d0\u05dc\u05d5\u05de\u05d9\u05e0\u05d9\u05d5\u05dd",
+            "source": "global"
+        },
+        {
+            "key": "bathroom_cabinets",
+            "label_he": "\u05d0\u05e8\u05d5\u05e0\u05d5\u05ea \u05d0\u05de\u05d1\u05d8\u05d9\u05d4",
+            "source": "global"
+        },
+        {
+            "key": "finishes",
+            "label_he": "\u05d2\u05de\u05e8\u05d9\u05dd",
+            "source": "global"
+        },
+        {
+            "key": "doors",
+            "label_he": "\u05d3\u05dc\u05ea\u05d5\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "glazing",
+            "label_he": "\u05d7\u05dc\u05d5\u05e0\u05d5\u05ea/\u05d6\u05db\u05d5\u05db\u05d9\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "electrical",
+            "label_he": "\u05d7\u05e9\u05de\u05dc\u05d0\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "general",
+            "label_he": "\u05db\u05dc\u05dc\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "hvac",
+            "label_he": "\u05de\u05d9\u05d6\u05d5\u05d2",
+            "source": "global"
+        },
+        {
+            "key": "metalwork",
+            "label_he": "\u05de\u05e1\u05d2\u05e8\u05d5\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "\u05de\u05e2\u05dc\u05d9\u05d5\u05ea",
+            "label_he": "\u05de\u05e2\u05dc\u05d9\u05d5\u05ea",
+            "source": "project"
+        },
+        {
+            "key": "carpentry_kitchen",
+            "label_he": "\u05e0\u05d2\u05e8\u05d5\u05ea/\u05de\u05d8\u05d1\u05d7",
+            "source": "global"
+        },
+        {
+            "key": "painting",
+            "label_he": "\u05e6\u05d1\u05e2\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "flooring",
+            "label_he": "\u05e8\u05d9\u05e6\u05d5\u05e3",
+            "source": "global"
+        },
+        {
+            "key": "structural",
+            "label_he": "\u05e9\u05dc\u05d3",
+            "source": "global"
+        }
+    ]
+}
+
+--- Step 4: POST duplicate 'מעליות' → 409 ---
+HTTP Status:
+409
+Response:
+{
+    "detail": "\u05ea\u05d7\u05d5\u05dd \u05e2\u05dd \u05de\u05e4\u05ea\u05d7 \u05d6\u05d4 \u05db\u05d1\u05e8 \u05e7\u05d9\u05d9\u05dd"
+}
+
+============================================
+1.2) PROJECT ISOLATION PROOF
+============================================
+
+Project A (c3e18b07-a7d8-411e-80f9-95028b15788a) has custom 'מעליות'
+Project B (120651b1-683a-44b2-b5ff-73c646ebc81e) should NOT have it
+
+GET /api/projects/120651b1-683a-44b2-b5ff-73c646ebc81e/trades:
+{
+    "trades": [
+        {
+            "key": "plumbing",
+            "label_he": "\u05d0\u05d9\u05e0\u05e1\u05d8\u05dc\u05d8\u05d5\u05e8",
+            "source": "global"
+        },
+        {
+            "key": "aluminum",
+            "label_he": "\u05d0\u05dc\u05d5\u05de\u05d9\u05e0\u05d9\u05d5\u05dd",
+            "source": "global"
+        },
+        {
+            "key": "bathroom_cabinets",
+            "label_he": "\u05d0\u05e8\u05d5\u05e0\u05d5\u05ea \u05d0\u05de\u05d1\u05d8\u05d9\u05d4",
+            "source": "global"
+        },
+        {
+            "key": "finishes",
+            "label_he": "\u05d2\u05de\u05e8\u05d9\u05dd",
+            "source": "global"
+        },
+        {
+            "key": "doors",
+            "label_he": "\u05d3\u05dc\u05ea\u05d5\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "glazing",
+            "label_he": "\u05d7\u05dc\u05d5\u05e0\u05d5\u05ea/\u05d6\u05db\u05d5\u05db\u05d9\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "electrical",
+            "label_he": "\u05d7\u05e9\u05de\u05dc\u05d0\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "general",
+            "label_he": "\u05db\u05dc\u05dc\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "hvac",
+            "label_he": "\u05de\u05d9\u05d6\u05d5\u05d2",
+            "source": "global"
+        },
+        {
+            "key": "metalwork",
+            "label_he": "\u05de\u05e1\u05d2\u05e8\u05d5\u05ea",
+            "source": "global"
+        },
+        {
+            "key": "carpentry_kitchen",
+            "label_he": "\u05e0\u05d2\u05e8\u05d5\u05ea/\u05de\u05d8\u05d1\u05d7",
+            "source": "global"
+        },
+        {
+            "key": "painting",
+            "label_he": "\u05e6\u05d1\u05e2\u05d9",
+            "source": "global"
+        },
+        {
+            "key": "flooring",
+            "label_he": "\u05e8\u05d9\u05e6\u05d5\u05e3",
+            "source": "global"
+        },
+        {
+            "key": "structural",
+            "label_he": "\u05e9\u05dc\u05d3",
+            "source": "global"
+        }
+    ]
+}
+
+Verification:
+  Total trades in Project B: 14
+  Contains מעליות: False ✓ (expected: False)
+  Project-specific trades: 0 ✓ (expected: 0)
+
+============================================
+3) CONTRACTOR INVITE WITH CUSTOM TRADE
+============================================
+
+--- POST /api/projects/c3e18b07-a7d8-411e-80f9-95028b15788a/invites (contractor with trade_key='מעליות') ---
+{
+    "id": "026b5c03-83a6-47c4-8ad0-e8725c033f52",
+    "project_id": "c3e18b07-a7d8-411e-80f9-95028b15788a",
+    "inviter_user_id": "c452c225-8876-4a33-a69f-207145eeacb4",
+    "target_phone": "+972508888777",
+    "phone_raw": "+972508888777",
+    "role": "contractor",
+    "sub_role": null,
+    "trade_key": "\u05de\u05e2\u05dc\u05d9\u05d5\u05ea",
+    "full_name": "\u05d9\u05d5\u05e1\u05d9 \u05de\u05e2\u05dc\u05d9\u05d5\u05ea",
+    "token": "q2XgrzXyHSU6KQxcu6Kn2FSqR5fWmPW-H-eOZI_cZ3E",
+    "status": "pending",
+    "expires_at": "2026-02-25T06:57:52.771338+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-18T06:57:52.771323+00:00",
+    "updated_at": "2026-02-18T06:57:52.771323+00:00"
+}
+
+============================================
+4) 422 VALIDATION PROOF
+============================================
+
+--- Company without contact_phone → 422 ---
+HTTP:
+422
+{
+    "detail": "\u05d8\u05dc\u05e4\u05d5\u05df \u05d4\u05d5\u05d0 \u05e9\u05d3\u05d4 \u05d7\u05d5\u05d1\u05d4"
+}
+
+--- Contractor invite without trade_key → 422 ---
+HTTP:
+422
+{
+    "detail": "\u05de\u05e7\u05e6\u05d5\u05e2 \u05d4\u05d5\u05d0 \u05e9\u05d3\u05d4 \u05d7\u05d5\u05d1\u05d4 \u05e2\u05d1\u05d5\u05e8 \u05e7\u05d1\u05dc\u05df"
+}
+
+============================================
+5) RBAC PROOF
+============================================
+
+--- Admin/Owner POST trades → expect 200 ---
+HTTP:
+200
+{
+    "id": "92c584fa-fd80-48d1-a441-2bc0d68c47b0",
+    "project_id": "c3e18b07-a7d8-411e-80f9-95028b15788a",
+    "key": "\u05d2\u05e0\u05e8\u05d8\u05d5\u05e8\u05d9\u05dd",
+    "label_he": "\u05d2\u05e0\u05e8\u05d8\u05d5\u05e8\u05d9\u05dd",
+    "created_by": "c452c225-8876-4a33-a69f-207145eeacb4",
+    "created_at": "2026-02-18T06:57:53.930644+00:00"
+}
+
+--- PM POST trades → expect 200 ---
+HTTP:
+200
+{
+    "id": "102a5a03-3441-4024-a4bc-4a6afce2c63d",
+    "project_id": "c3e18b07-a7d8-411e-80f9-95028b15788a",
+    "key": "\u05de\u05e2\u05e8\u05db\u05d5\u05ea_\u05e9\u05dc\u05d9\u05d8\u05d4",
+    "label_he": "\u05de\u05e2\u05e8\u05db\u05d5\u05ea \u05e9\u05dc\u05d9\u05d8\u05d4",
+    "created_by": "16f6c934-0f5d-4c6d-842a-14aee775dff6",
+    "created_at": "2026-02-18T06:57:54.256350+00:00"
+}
+
+--- Contractor POST trades → expect 403 ---
+HTTP:
+403
+{
+    "detail": "Insufficient permissions"
+}
+
+--- Viewer POST trades → expect 403 ---
+HTTP:
+403
+{
+    "detail": "Insufficient permissions"
+}
+
+============================================
+7) INVITE TRADE ISOLATION — REGRESSION TESTS
+============================================
+
+--- Isolation Test 1: Custom trade from Project A → invite in Project B (expect 422) ---
+POST /api/projects/120651b1-683a-44b2-b5ff-73c646ebc81e/invites
+Body: {"phone":"+972508880005","full_name":"קבלן isolation","role":"contractor","trade_key":"בדיקת_regression"}
+
+HTTP Status: 422
+Response:
+{
+  "detail": "מקצוע לא תקין: בדיקת_regression"
+}
+
+--- Isolation Test 2: Global trade (plumbing) → invite in Project B (expect 200) ---
+POST /api/projects/120651b1-683a-44b2-b5ff-73c646ebc81e/invites
+Body: {"phone":"+972508880006","full_name":"קבלן גלובלי B","role":"contractor","trade_key":"plumbing"}
+
+HTTP Status: 200
+Response:
+{
+  "id": "f620687b-3acf-4afd-bd55-b0f88ad4f0c0",
+  "project_id": "120651b1-683a-44b2-b5ff-73c646ebc81e",
+  "inviter_user_id": "c452c225-8876-4a33-a69f-207145eeacb4",
+  "target_phone": "+972508880006",
+  "phone_raw": "+972508880006",
+  "role": "contractor",
+  "sub_role": null,
+  "trade_key": "plumbing",
+  "full_name": "קבלן גלובלי B",
+  "token": "h88G5cZOXHA3PR0JHSrSRD-nzzlKGS5Efw_mOBaS9m0",
+  "status": "pending",
+  "expires_at": "2026-02-25T07:26:50.171529+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-18T07:26:50.171519+00:00",
+  "updated_at": "2026-02-18T07:26:50.171519+00:00"
+}
+
+============================================
+8) IDEMPOTENCY & CLEANUP — BACK-TO-BACK DOUBLE RUN
+============================================
+
+Cleanup: MongoDB delete_many on invites where target_phone starts with +972508880
+Phones used: +972508880001 through +972508880006 (deterministic)
+
+=== RUN 1 ===
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_with_custom_project_trade_succeeds PASSED
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_with_global_trade_still_works PASSED
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_with_nonexistent_trade_rejected PASSED
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_contractor_without_trade_rejected PASSED
+tests/test_invite_custom_trade.py::TestInviteTradeIsolation::test_custom_trade_from_project_a_rejected_in_project_b PASSED
+tests/test_invite_custom_trade.py::TestInviteTradeIsolation::test_global_trade_works_in_project_b PASSED
+6 passed in 1.22s
+
+=== RUN 2 (immediate back-to-back) ===
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_with_custom_project_trade_succeeds PASSED
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_with_global_trade_still_works PASSED
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_with_nonexistent_trade_rejected PASSED
+tests/test_invite_custom_trade.py::TestInviteCustomTrade::test_invite_contractor_without_trade_rejected PASSED
+tests/test_invite_custom_trade.py::TestInviteTradeIsolation::test_custom_trade_from_project_a_rejected_in_project_b PASSED
+tests/test_invite_custom_trade.py::TestInviteTradeIsolation::test_global_trade_works_in_project_b PASSED
+6 passed in 1.23s
+
+Both runs: 6/6 PASS — idempotent, no stale data.
+Full suite: 58 passed, 9 skipped, 0 failures.
+
+============================================
+FINAL ACCEPTANCE: M4.6 COMPLETE
+Git SHA: 34e0221
+Date: 2026-02-18
+============================================
+=== END OF LIVE OUTPUT ===

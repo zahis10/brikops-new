@@ -1,0 +1,82 @@
+{
+  "trades": {
+    "electrical": "Electrician",
+    "plumbing": "Plumber",
+    "painting": "Painter",
+    "carpentry_kitchen": "Carpentry/Kitchen",
+    "carpentry": "Carpentry/Kitchen",
+    "bathroom_cabinets": "Bathroom Cabinets",
+    "finishes": "Finishes",
+    "structural": "Structural",
+    "masonry": "Structural",
+    "aluminum": "Aluminum",
+    "metalwork": "Metalwork",
+    "flooring": "Flooring",
+    "hvac": "HVAC",
+    "glazing": "Windows/Glass",
+    "windows": "Windows/Glass",
+    "doors": "Doors",
+    "general": "General"
+  },
+  "categories": {
+    "electrical": "Electrical",
+    "plumbing": "Plumbing",
+    "hvac": "HVAC",
+    "painting": "Painting",
+    "flooring": "Flooring",
+    "carpentry": "Carpentry",
+    "carpentry_kitchen": "Carpentry/Kitchen",
+    "masonry": "Masonry",
+    "windows": "Windows",
+    "doors": "Doors",
+    "general": "General",
+    "bathroom_cabinets": "Bathroom Cabinets",
+    "finishes": "Finishes",
+    "structural": "Structural",
+    "aluminum": "Aluminum",
+    "metalwork": "Metalwork",
+    "glazing": "Glazing"
+  },
+  "statuses": {
+    "open": "Open",
+    "assigned": "Assigned",
+    "in_progress": "In Progress",
+    "waiting_verify": "Waiting Verification",
+    "pending_contractor_proof": "Pending Contractor Proof",
+    "pending_manager_approval": "Pending Manager Approval",
+    "closed": "Closed",
+    "reopened": "Reopened"
+  },
+  "priorities": {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "critical": "Critical"
+  },
+  "roles": {
+    "owner": "Owner",
+    "admin": "Admin",
+    "project_manager": "Project Manager",
+    "management_team": "Management Team",
+    "contractor": "Contractor",
+    "viewer": "Viewer"
+  },
+  "myProjects": {
+    "title": "My Projects",
+    "searchPlaceholder": "Search project...",
+    "emptyState": "You don't have any projects yet",
+    "emptyStateHint": "Contact your system administrator to get access to a project",
+    "lastProject": "Continue to last project",
+    "enterProject": "Enter",
+    "newProject": "New Project",
+    "backToProjects": "Back to Projects",
+    "code": "Code",
+    "address": "Address",
+    "projectStatus": {
+      "active": "Active",
+      "draft": "Draft",
+      "suspended": "Suspended",
+      "completed": "Completed"
+    }
+  }
+}

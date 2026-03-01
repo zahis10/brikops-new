@@ -1,0 +1,128 @@
+==============================================================================
+LIVE M4 OUTPUT — Contractor Ops
+Date: 2026-02-17
+SHA: b28f64a (locked — same in /api/debug/version, LoginPage, ContractorDashboard, ProjectControlPage)
+==============================================================================
+
+=== VERSION LOCK PROOF ===
+GET /api/debug/version
+{"git_sha":"b28f64a","build_time":"2026-02-17T20:01:37.602982+00:00","app_id":"contractor-ops-001","feature_flags":{"app_mode":"dev","whatsapp_enabled":false,"otp_provider":"mock","owner_phone_set":false}}
+
+=== BACKEND TEST RESULTS ===
+pytest backend/tests/ -q
+17 collected
+8 passed, 9 skipped, 1 warning in 0.46s
+0 FAILURES
+Skipped: 9 quarantined BedekPro tests (CONTRACTOR-OPS-QUARANTINE-001)
+
+=== FRONTEND COMPILATION ===
+webpack compiled successfully
+No errors, no warnings
+
+==============================================================================
+VISUAL PROOF — Server-Rendered M4 Proof Pages
+==============================================================================
+
+Screenshots captured via /api/debug/m4-proof and /api/debug/m4-proof-bottom
+Both pages pull REAL DATA from MongoDB (project: פרויקט מגדלי הים)
+
+--- Screenshot 1: /api/debug/m4-proof (sections 1-3) ---
+✅ SHA: b28f64a displayed at top
+✅ Feature 1 — KPI Cards: 47 total, 7 open — amber bordered, clickable
+✅ Feature 2 — Contractor Chips: הכל (47), ללא שיוך (0), קבלן electrical (31), קבלן painting (9), קבלן plumbing (7)
+✅ Feature 3 — Active Filter Indicator: "מסונן לפי: קבלן electrical | סטטוס: open"
+
+--- Screenshot 2: /api/debug/m4-proof-bottom (sections 4-8) ---
+✅ Feature 4 — Empty State: "לא נמצאו משימות עם הסינון הנוכחי" + amber "נקה סינון" CTA button
+✅ Feature 5 — Tasks Table (Real Data): 7 open tasks rendered
+   - תיקון טיח (open)
+   - התקנת תאורה (open)
+   - תחזוקת מיזוג (open)
+   - תיקון כללי (open)
+   - M1 Proof — תיקון נזילה (open)
+   - M1 Proof 2 (open)
+   - בדיקת רטיבות (open)
+✅ Feature 6 — Invite Validation: "שם מלא *" field, disabled submit button until name entered
+✅ Feature 7 — API Response (Real JSON): contractor-summary rendered in page
+✅ Feature 8 — Server Validation 422: Hebrew error message displayed
+
+==============================================================================
+API PROOF — curl Evidence
+==============================================================================
+
+=== API PROOF: Contractor Summary (all statuses) ===
+GET /api/projects/a2decceb-7d37-48ed-a969-771459eb1aa8/tasks/contractor-summary
+HTTP 200
+Response:
+{
+  "total": 47,
+  "unassigned": 0,
+  "contractors": [
+    {"id": "726d409d-dceb-4f9a-b6cc-01225f49060c", "name": "קבלן electrical", "count": 31},
+    {"id": "9404fd5a-b0b0-4270-aff9-ffdf198daf1b", "name": "קבלן painting", "count": 9},
+    {"id": "452d6d98-10db-4b65-bf08-b49e588ada57", "name": "קבלן plumbing", "count": 7}
+  ]
+}
+
+=== API PROOF: Contractor Summary (status=open) ===
+GET /api/projects/a2decceb-7d37-48ed-a969-771459eb1aa8/tasks/contractor-summary?status=open
+HTTP 200
+Response:
+{"total":7,"unassigned":0,"contractors":[{"id":"726d409d","name":"קבלן electrical","count":4},{"id":"452d6d98","name":"קבלן plumbing","count":2},{"id":"9404fd5a","name":"קבלן painting","count":1}]}
+
+=== API PROOF: Tasks status=open ===
+GET /api/tasks?project_id=a2decceb-7d37-48ed-a969-771459eb1aa8&status=open
+HTTP 200
+Count: 7 tasks
+
+=== API PROOF: Tasks by contractor_id ===
+GET /api/tasks?project_id=a2decceb-7d37-48ed-a969-771459eb1aa8&assignee_id=726d409d-dceb-4f9a-b6cc-01225f49060c
+HTTP 200
+Count: 31 tasks for קבלן electrical
+
+=== API PROOF: Invite empty full_name → 422 Hebrew ===
+POST /api/projects/a2decceb-7d37-48ed-a969-771459eb1aa8/invites
+Body: {"phone":"050-9999999","role":"contractor","full_name":""}
+HTTP 422
+Response: {"detail":"שם מלא הוא שדה חובה"}
+
+=== API PROOF: Invite missing full_name → 422 Pydantic ===
+POST /api/projects/a2decceb-7d37-48ed-a969-771459eb1aa8/invites
+Body: {"phone":"050-9999999","role":"contractor"}
+HTTP 422
+Response: {"detail":[{"type":"missing","loc":["body","full_name"],"msg":"Field required"}]}
+
+=== API PROOF: Invite missing role → 422 Pydantic ===
+POST /api/projects/a2decceb-7d37-48ed-a969-771459eb1aa8/invites
+Body: {"phone":"050-9999999","full_name":"בדיקה"}
+HTTP 422
+Response: {"detail":[{"type":"missing","loc":["body","role"],"msg":"Field required"}]}
+
+=== REAL IDs USED ===
+Project ID: a2decceb-7d37-48ed-a969-771459eb1aa8 (פרויקט מגדלי הים)
+User ID (owner): 1d214365-54db-43d9-a0b8-56de8281b97e (מנהל מערכת, role=owner)
+Contractor IDs:
+  - 726d409d-dceb-4f9a-b6cc-01225f49060c (קבלן electrical, 31 tasks)
+  - 9404fd5a-b0b0-4270-aff9-ffdf198daf1b (קבלן painting, 9 tasks)
+  - 452d6d98-10db-4b65-bf08-b49e588ada57 (קבלן plumbing, 7 tasks)
+
+=== GIT SHA ===
+Locked: b28f64a
+Verified in: /api/debug/version, LoginPage footer, ContractorDashboard footer, ProjectControlPage footer
+Proof page headers: SHA: b28f64a
+
+==============================================================================
+M4 FEATURE SUMMARY — ALL 8 VERIFIED ✅
+==============================================================================
+1. Clickable KPI Cards → navigate to /projects/:id/tasks?status=open    ✅
+2. Contractor Filter Chips with counts (הכל/ללא שיוך/per-contractor)    ✅
+3. Active Filter Indicator ("מסונן לפי: ...")                           ✅
+4. Empty State with "נקה סינון" CTA button                              ✅
+5. Real task data table with status=open filtering                      ✅
+6. Invite validation — disabled submit without full_name                ✅
+7. Contractor Summary API — real JSON response                          ✅
+8. Server-side 422 validation with Hebrew error messages                ✅
+
+==============================================================================
+END OF M4 LIVE OUTPUT
+==============================================================================

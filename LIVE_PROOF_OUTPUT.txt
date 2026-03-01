@@ -1,0 +1,292 @@
+================================================================================
+CONTRACTOR OPS — RAW PROOF OUTPUT
+Date: 2026-02-17 | Environment: https://1cee46ff-369f-4827-bc32-71cdcce76566-00-1uiioobquz03d.pike.replit.dev
+================================================================================
+
+>>> GET /api/health → 200
+{
+  "status": "ok",
+  "database": "connected",
+  "app_id": "contractor-ops-001"
+}
+
+>>> GET /api/debug/version → 200
+{
+  "git_sha": "3ea1e4e",
+  "build_time": "2026-02-17T10:53:15.455143+00:00",
+  "app_id": "contractor-ops-001",
+  "feature_flags": {
+    "app_mode": "dev",
+    "whatsapp_enabled": false,
+    "otp_provider": "mock",
+    "owner_phone_set": false
+  }
+}
+
+>>> LOGINS
+  Owner:      id=374b6517-2242-4f88-952f-de859fcd1630 name=מנהל מערכת role=owner
+  PM:         id=1fe94605-b32c-4810-b9f0-454d4602c601 name=מנהל פרויקט role=project_manager
+  Contractor: id=fef7eac3-785d-4450-9d6d-81889272ce10 name=קבלן electrical role=contractor phone=+97250010000
+  Viewer:     id=e0b26202-7868-42fc-b5ae-7e55ca5b04f5 name=צופה role=viewer
+
+>>> GET /api/tasks/4ba31882-9674-41a4-80e5-6986ad680db3 → (as owner)
+Status: 200
+{
+  "id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "project_id": "373c64fe-5abe-467a-b302-2f2e72aa0df9",
+  "building_id": "3161f0cf-5c6c-4c1e-8660-08fcf2504b87",
+  "floor_id": "a837d598-541c-4ce7-a392-96c876632db9",
+  "unit_id": "6ea3b5d9-4237-409c-aeda-bda32562825e",
+  "title": "סדק בקיר - הוכחה סופית",
+  "description": "סדק באורך 30 ס\"מ ליד החלון",
+  "category": "masonry",
+  "priority": "high",
+  "status": "open",
+  "company_id": null,
+  "assignee_id": "fef7eac3-785d-4450-9d6d-81889272ce10",
+  "due_date": null,
+  "created_by": "374b6517-2242-4f88-952f-de859fcd1630",
+  "created_at": "2026-02-17T10:56:36.464015+00:00",
+  "updated_at": "2026-02-17T10:57:34.715830+00:00",
+  "attachments_count": 2,
+  "comments_count": 0
+}
+
+>>> GET /api/notifications?task_id=4ba31882-9674-41a4-80e5-6986ad680db3
+Status: 200
+Count: 2
+
+  --- Notification 1 ---
+{
+  "id": "3b6a8040-1edb-4f21-91a9-abf130174e67",
+  "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "event_type": "media_followup",
+  "target_phone": "+97250010000",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "title": "סדק בקיר - הוכחה סופית",
+    "description": "סדק באורך 30 ס\"מ ליד החלון",
+    "category": "בנייה",
+    "priority": "גבוה",
+    "status": "פתוח",
+    "due_date": null,
+    "project_name": "Sprint Proof — מגדלי הכרמל",
+    "building_name": "בניין A",
+    "floor_name": "1",
+    "unit_no": "1",
+    "assignee_name": "קבלן electrical",
+    "company_name": "",
+    "task_link": "https://1cee46ff-369f-4827-bc32-71cdcce76566-00-1uiioobquz03d.pike.replit.dev/tasks/4ba31882-9674-41a4-80e5-6986ad680db3",
+    "custom_message": "",
+    "image_url": "/api/uploads/f2cc5e1b-914c-4c79-b4d6-1a5591460ceb.png"
+  },
+  "status": "skipped_dry_run",
+  "attempts": 1,
+  "max_attempts": 3,
+  "provider_message_id": null,
+  "last_error": null,
+  "idempotency_key": "94e4ee430118ff24be316ccf197e53c4",
+  "created_by": "374b6517-2242-4f88-952f-de859fcd1630",
+  "created_at": "2026-02-17T10:57:34.695696+00:00",
+  "updated_at": "2026-02-17T10:57:34.700873+00:00",
+  "next_retry_at": null
+}
+
+  --- Notification 2 ---
+{
+  "id": "14d57d9d-4a51-4b31-8c5a-4391792ae6c0",
+  "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "event_type": "task_created",
+  "target_phone": "+97250010000",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "title": "סדק בקיר - הוכחה סופית",
+    "description": "סדק באורך 30 ס\"מ ליד החלון",
+    "category": "בנייה",
+    "priority": "גבוה",
+    "status": "פתוח",
+    "due_date": null,
+    "project_name": "Sprint Proof — מגדלי הכרמל",
+    "building_name": "בניין A",
+    "floor_name": "1",
+    "unit_no": "1",
+    "assignee_name": "קבלן electrical",
+    "company_name": "",
+    "task_link": "https://1cee46ff-369f-4827-bc32-71cdcce76566-00-1uiioobquz03d.pike.replit.dev/tasks/4ba31882-9674-41a4-80e5-6986ad680db3",
+    "custom_message": ""
+  },
+  "status": "skipped_dry_run",
+  "attempts": 1,
+  "max_attempts": 3,
+  "provider_message_id": null,
+  "last_error": null,
+  "idempotency_key": "b98da92a9abb99bf1b5818911b24da70",
+  "created_by": "374b6517-2242-4f88-952f-de859fcd1630",
+  "created_at": "2026-02-17T10:56:36.472121+00:00",
+  "updated_at": "2026-02-17T10:56:36.473363+00:00",
+  "next_retry_at": null
+}
+
+>>> GET /api/tasks/4ba31882-9674-41a4-80e5-6986ad680db3/attachments
+Status: 405
+{
+  "detail": "Method Not Allowed"
+}
+
+>>> AUDIT EVENTS (MongoDB) — 5 events
+{
+  "id": "1f4c1274-f01f-4997-af4f-5d5793b80b03",
+  "entity_type": "task",
+  "entity_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "action": "create",
+  "actor_id": "374b6517-2242-4f88-952f-de859fcd1630",
+  "payload": {
+    "title": "סדק בקיר - הוכחה סופית",
+    "project_id": "373c64fe-5abe-467a-b302-2f2e72aa0df9"
+  },
+  "created_at": "2026-02-17T10:56:36.466239+00:00"
+}
+{
+  "id": "3a39cc3d-5efb-4cd1-afa7-a267bef2d82e",
+  "entity_type": "notification",
+  "entity_id": "14d57d9d-4a51-4b31-8c5a-4391792ae6c0",
+  "action": "enqueued",
+  "actor_id": "374b6517-2242-4f88-952f-de859fcd1630",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "event_type": "task_created",
+    "target_phone": "+97250010000"
+  },
+  "created_at": "2026-02-17T10:56:36.472121+00:00"
+}
+{
+  "id": "212b751d-4db4-4a7f-a48c-03f25e18c64e",
+  "entity_type": "task_attachment",
+  "entity_id": "10551194-969f-43e5-bc0a-0a5da5489789",
+  "action": "upload",
+  "actor_id": "374b6517-2242-4f88-952f-de859fcd1630",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "filename": "crack_proof.png",
+    "file_url": "/api/uploads/f2cc5e1b-914c-4c79-b4d6-1a5591460ceb.png"
+  },
+  "created_at": "2026-02-17T10:57:34.692389+00:00"
+}
+{
+  "id": "3f788607-e2a6-406b-a923-bacdde7dfea1",
+  "entity_type": "notification",
+  "entity_id": "3b6a8040-1edb-4f21-91a9-abf130174e67",
+  "action": "media_followup_enqueued",
+  "actor_id": "374b6517-2242-4f88-952f-de859fcd1630",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "image_url": "/api/uploads/f2cc5e1b-914c-4c79-b4d6-1a5591460ceb.png",
+    "original_job_id": "14d57d9d-4a51-4b31-8c5a-4391792ae6c0",
+    "attachment_id": "10551194-969f-43e5-bc0a-0a5da5489789"
+  },
+  "created_at": "2026-02-17T10:57:34.695696+00:00"
+}
+{
+  "id": "eb50b09a-e9bc-4582-840a-f145b772da11",
+  "entity_type": "task_attachment",
+  "entity_id": "923dc56a-eae3-42c7-b27a-3f8d463b430c",
+  "action": "upload",
+  "actor_id": "374b6517-2242-4f88-952f-de859fcd1630",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "filename": "crack_proof_2.png",
+    "file_url": "/api/uploads/6d693594-5080-4f4d-a8ca-abfdb57cf887.png"
+  },
+  "created_at": "2026-02-17T10:57:34.717151+00:00"
+}
+
+>>> STATUS HISTORY — 1 entries
+{
+  "id": "dafd114a-3e5b-4b56-9619-4645f219cd13",
+  "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "old_status": null,
+  "new_status": "open",
+  "changed_by": "374b6517-2242-4f88-952f-de859fcd1630",
+  "note": "Task created",
+  "created_at": "2026-02-17T10:56:36.464015+00:00"
+}
+
+>>> NOTIFICATION JOBS (MongoDB) — 2 entries
+{
+  "id": "14d57d9d-4a51-4b31-8c5a-4391792ae6c0",
+  "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "event_type": "task_created",
+  "target_phone": "+97250010000",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "title": "סדק בקיר - הוכחה סופית",
+    "description": "סדק באורך 30 ס\"מ ליד החלון",
+    "category": "בנייה",
+    "priority": "גבוה",
+    "status": "פתוח",
+    "due_date": null,
+    "project_name": "Sprint Proof — מגדלי הכרמל",
+    "building_name": "בניין A",
+    "floor_name": "1",
+    "unit_no": "1",
+    "assignee_name": "קבלן electrical",
+    "company_name": "",
+    "task_link": "https://1cee46ff-369f-4827-bc32-71cdcce76566-00-1uiioobquz03d.pike.replit.dev/tasks/4ba31882-9674-41a4-80e5-6986ad680db3",
+    "custom_message": ""
+  },
+  "status": "skipped_dry_run",
+  "attempts": 1,
+  "max_attempts": 3,
+  "provider_message_id": null,
+  "last_error": null,
+  "idempotency_key": "b98da92a9abb99bf1b5818911b24da70",
+  "created_by": "374b6517-2242-4f88-952f-de859fcd1630",
+  "created_at": "2026-02-17T10:56:36.472121+00:00",
+  "updated_at": "2026-02-17T10:56:36.473363+00:00",
+  "next_retry_at": null
+}
+{
+  "id": "3b6a8040-1edb-4f21-91a9-abf130174e67",
+  "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+  "event_type": "media_followup",
+  "target_phone": "+97250010000",
+  "payload": {
+    "task_id": "4ba31882-9674-41a4-80e5-6986ad680db3",
+    "title": "סדק בקיר - הוכחה סופית",
+    "description": "סדק באורך 30 ס\"מ ליד החלון",
+    "category": "בנייה",
+    "priority": "גבוה",
+    "status": "פתוח",
+    "due_date": null,
+    "project_name": "Sprint Proof — מגדלי הכרמל",
+    "building_name": "בניין A",
+    "floor_name": "1",
+    "unit_no": "1",
+    "assignee_name": "קבלן electrical",
+    "company_name": "",
+    "task_link": "https://1cee46ff-369f-4827-bc32-71cdcce76566-00-1uiioobquz03d.pike.replit.dev/tasks/4ba31882-9674-41a4-80e5-6986ad680db3",
+    "custom_message": "",
+    "image_url": "/api/uploads/f2cc5e1b-914c-4c79-b4d6-1a5591460ceb.png"
+  },
+  "status": "skipped_dry_run",
+  "attempts": 1,
+  "max_attempts": 3,
+  "provider_message_id": null,
+  "last_error": null,
+  "idempotency_key": "94e4ee430118ff24be316ccf197e53c4",
+  "created_by": "374b6517-2242-4f88-952f-de859fcd1630",
+  "created_at": "2026-02-17T10:57:34.695696+00:00",
+  "updated_at": "2026-02-17T10:57:34.700873+00:00",
+  "next_retry_at": null
+}
+
+>>> RBAC MATRIX — HTTP STATUS CODES
+Endpoint                             Owner     PM  Contr   View
+----------------------------------------------------------------------
+List projects                         200   200   200   200
+Hierarchy (proof proj)                200   403   403   403
+Create task (proof proj)              200   403   403   403
+Notifications (task)                  200   200   403   403
+Notifications (all)                   200   200   403   403
+Hierarchy (other proj)                200   403   403   403
+Create task (other proj)              404   403   403   403

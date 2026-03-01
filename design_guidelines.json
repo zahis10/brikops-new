@@ -1,0 +1,134 @@
+{
+  "identity": {
+    "name": "E1",
+    "role": "Anti-AI Designer",
+    "philosophy": "Fusion over Imitation. Emotion First. Content is King."
+  },
+  "brand": {
+    "name": "BedekPro",
+    "company_name": "צ.ע בניה ויזמות",
+    "tone": "Professional, Authoritative, Efficient, Trustworthy",
+    "language": "Hebrew (RTL)"
+  },
+  "theme": {
+    "mode": "light",
+    "strategy": "Professional Construction & Legal",
+    "background": "bg-slate-50",
+    "surface": "bg-white"
+  },
+  "typography": {
+    "font_family_heading": "Rubik, sans-serif",
+    "font_family_body": "Heebo, sans-serif",
+    "scale": {
+      "h1": "text-4xl font-bold tracking-tight text-slate-900",
+      "h2": "text-3xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-2xl font-semibold text-slate-800",
+      "body": "text-base font-normal text-slate-600 leading-relaxed",
+      "small": "text-sm font-medium text-slate-500"
+    },
+    "import_url": "https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&family=Rubik:wght@400;500;700;900&display=swap"
+  },
+  "colors": {
+    "primary": {
+      "DEFAULT": "#0F172A",
+      "foreground": "#F8FAFC",
+      "description": "Deep Navy - Trust & Authority"
+    },
+    "secondary": {
+      "DEFAULT": "#F1F5F9",
+      "foreground": "#0F172A",
+      "description": "Slate Gray - Professional Backgrounds"
+    },
+    "accent": {
+      "DEFAULT": "#F97316",
+      "foreground": "#FFFFFF",
+      "description": "Safety Orange - Action Required / Draft"
+    },
+    "success": {
+      "DEFAULT": "#10B981",
+      "foreground": "#FFFFFF",
+      "description": "Approval Green"
+    },
+    "destructive": {
+      "DEFAULT": "#EF4444",
+      "foreground": "#FFFFFF",
+      "description": "Rejection Red"
+    },
+    "muted": {
+      "DEFAULT": "#F8FAFC",
+      "foreground": "#64748B"
+    }
+  },
+  "layout": {
+    "direction": "rtl",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "spacing": {
+      "section_gap": "gap-8",
+      "card_padding": "p-6"
+    },
+    "strategies": {
+      "tenant_mobile": {
+        "nav": "Bottom Navigation Bar (Fixed)",
+        "structure": "Single column, stacked cards, large touch targets (min 44px)",
+        "wizard": "Step-by-step flow with progress indicator"
+      },
+      "reviewer_desktop": {
+        "nav": "Sidebar Navigation (Right-aligned)",
+        "structure": "Dense Data Grid / Split View",
+        "review_mode": "Split Screen: Right Panel = Findings Form, Left Panel = Media Viewer"
+      }
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8 rounded-md shadow-sm transition-all active:scale-95",
+      "secondary": "bg-secondary text-secondary-foreground hover:bg-secondary/80 h-11 px-8 rounded-md",
+      "ghost": "hover:bg-accent hover:text-accent-foreground"
+    },
+    "cards": {
+      "base": "bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200",
+      "interactive": "cursor-pointer hover:border-primary/50 transition-colors"
+    },
+    "inputs": {
+      "base": "flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 text-right"
+    },
+    "status_badges": {
+      "draft": "bg-slate-100 text-slate-700 border-slate-200",
+      "submitted": "bg-blue-50 text-blue-700 border-blue-200",
+      "in_review": "bg-orange-50 text-orange-700 border-orange-200",
+      "approved": "bg-green-50 text-green-700 border-green-200",
+      "rejected": "bg-red-50 text-red-700 border-red-200"
+    }
+  },
+  "assets": {
+    "images": {
+      "hero_interior": "https://images.unsplash.com/photo-1753911371680-f004f101a74a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHw0fHxtb2Rlcm4lMjBhcGFydG1lbnQlMjBpbnRlcmlvciUyMGJyaWdodCUyMGVtcHR5fGVufDB8fHx8MTc3MTEzNjA0Nnww&ixlib=rb-4.1.0&q=85",
+      "construction_engineer": "https://images.unsplash.com/photo-1659353587228-5dbbebb5d98f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwyfHxjb25zdHJ1Y3Rpb24lMjBlbmdpbmVlciUyMGNoZWNraW5nJTIwYmx1ZXByaW50JTIwdGFibGV0fGVufDB8fHx8MTc3MTEzNjA0OHww&ixlib=rb-4.1.0&q=85",
+      "keys_handover": "https://images.unsplash.com/photo-1763621605783-307c1743e308?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwzfHxoYW5kaW5nJTIwb3ZlciUyMGhvdXNlJTIwa2V5cyUyMGNsb3NlJTIwdXB8ZW58MHx8fHwxNzcxMTM2MDUzfDA&ixlib=rb-4.1.0&q=85",
+      "empty_state": "https://images.unsplash.com/photo-1762810951632-68c9f197cf33?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBhcGFydG1lbnQlMjBpbnRlcmlvciUyMGJyaWdodCUyMGVtcHR5fGVufDB8fHx8MTc3MTEzNjA0Nnww&ixlib=rb-4.1.0&q=85"
+    },
+    "icons": "lucide-react"
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: Add 'dir=\"rtl\"' to the root html tag or body tag immediately.",
+    "Install 'lucide-react' for icons.",
+    "Use 'date-fns' with Hebrew locale for all date formatting.",
+    "Ensure all flex containers that need directionality use 'flex-row' (which automatically reverses in RTL) or explicit 'flex-row-reverse' if visual order needs to oppose DOM order.",
+    "For the Reviewer Dashboard, create a layout with a fixed Right Sidebar.",
+    "For the Tenant Mobile view, hide the sidebar and use a Bottom Navigation Bar.",
+    "Use the 'hero_interior' image for the Login/Register page background with a heavy overlay.",
+    "Use 'construction_engineer' for the 'Expert Review' promo card.",
+    "Use 'keys_handover' for the 'New Inspection' card.",
+    "Implement a 'Wizard' component for the inspection flow: Property Details -> Room Selection -> Media Upload -> Review.",
+    "Ensure all text inputs have 'text-right' class.",
+    "Use 'Sonner' for notifications, positioned 'top-center' or 'top-left' (since it's RTL, top-left is the 'end' side usually, or top-center is safe)."
+  ],
+  "universal_guidelines": [
+    "Do not use gradients for backgrounds; use solid colors or subtle noise textures.",
+    "Use 24px-32px padding inside cards.",
+    "Always add hover states to interactive elements.",
+    "Use 'data-testid' for all interactive elements.",
+    "Avoid 'Inter' font; use 'Rubik' for headings and 'Heebo' for body.",
+    "Never use pure black (#000000); use Slate 900 (#0F172A)."
+  ]
+}

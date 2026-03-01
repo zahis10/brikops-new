@@ -1,0 +1,35 @@
+.App {
+  min-height: 100vh;
+}
+
+.status-badge {
+  @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border;
+}
+
+.status-draft {
+  @apply bg-slate-100 text-slate-700 border-slate-200;
+}
+
+.status-submitted {
+  @apply bg-blue-50 text-blue-700 border-blue-200;
+}
+
+.status-in_review {
+  @apply bg-orange-50 text-orange-700 border-orange-200;
+}
+
+.status-needs_more_media {
+  @apply bg-yellow-50 text-yellow-700 border-yellow-200;
+}
+
+.status-approved {
+  @apply bg-green-50 text-green-700 border-green-200;
+}
+
+.status-reported {
+  @apply bg-purple-50 text-purple-700 border-purple-200;
+}
+
+.btn-primary {
+  @apply bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8 rounded-md shadow-sm transition-all active:scale-95;
+}

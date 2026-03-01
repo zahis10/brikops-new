@@ -1,0 +1,58 @@
+======================================================================
+PHONE NORMALIZATION - E2E TEST
+Run ID: 10
+Base URL: http://localhost:8000/api
+Sample phones: local=0501000001, short=501000001, e164=+972501000001
+======================================================================
+  [1] PASS: Create project
+
+--- Phase 1: Create invite with LOCAL number (050XXXXXXX) ---
+  [2] PASS: Invite with local 050... accepted
+  [3] PASS: target_phone is E.164
+  [4] PASS: target_phone normalized correctly
+  [5] PASS: phone_raw preserved
+
+--- Phase 2: Create invite with SHORT number (50XXXXXXX) ---
+  [6] PASS: Invite with short 50... accepted
+  [7] PASS: Short number -> E.164
+
+--- Phase 3: Create invite with DASHED number (050-XXX-XXXX) ---
+  [8] PASS: Invite with dashed number accepted
+  [9] PASS: Dashed -> E.164 (stripped separators)
+
+--- Phase 4: Create invite with E.164 number (backward compat) ---
+  [10] PASS: Invite with +972... accepted (backward compat)
+  [11] PASS: E.164 stored as-is
+
+--- Phase 5: Duplicate invite blocked across formats ---
+  [12] PASS: Duplicate with same local format -> blocked
+  [13] PASS: Duplicate with E.164 of same number -> blocked
+  [14] PASS: Duplicate with short format of same number -> blocked
+
+--- Phase 6: Invalid phone -> 422 ---
+  [15] PASS: Letters -> 422
+  [16] PASS: Landline 02 -> 422
+  [17] PASS: Too short -> 422
+  [18] PASS: Empty -> 422
+
+--- Phase 7: Register with DIFFERENT format -> auto-link ---
+  [19] PASS: Register with short format (50XXX) accepted
+  [20] PASS: User phone_e164 is canonical E.164
+  [21] PASS: Auto-link flag or invite accepted (verified in Phase 8)
+
+--- Phase 8: Verify invite status changed to accepted ---
+  [22] PASS: List invites -> 200
+  [23] PASS: PM invite status -> accepted
+
+--- Phase 9: OTP endpoints accept local format ---
+  [24] PASS: OTP with local format -> accepted (200 or rate-limited)
+  [25] PASS: OTP with short format -> accepted
+  [26] PASS: OTP with invalid -> 422
+
+--- Phase 10: All stored phones are E.164 ---
+  [27] PASS: All invite target_phones are E.164
+
+======================================================================
+RESULTS: 27 passed, 0 failed, 27 total
+======================================================================
+ALL TESTS PASSED

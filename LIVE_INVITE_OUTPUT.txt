@@ -1,0 +1,1470 @@
+======================================================================
+INVITE SYSTEM — FULL E2E PROOF
+Timestamp: 2026-02-17T18:27:40.747199Z
+Test Suffix: 90954
+Base URL: http://localhost:8000/api
+======================================================================
+
+
+======================================================================
+PHASE 0: SETUP
+======================================================================
+  PASS  Admin registered/logged in
+
+============================================================
+>>> Create proof project
+POST http://localhost:8000/api/projects
+Request: {
+  "name": "פרויקט הוכחה 90954",
+  "code": "PRF-90954",
+  "address": "רחוב הבדיקות 1, תל אביב"
+}
+Status: 200
+Response: {
+  "id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "name": "פרויקט הוכחה 90954",
+  "code": "PRF-90954",
+  "description": null,
+  "status": "active",
+  "client_name": null,
+  "start_date": null,
+  "end_date": null,
+  "created_by": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "created_at": "2026-02-17T18:27:41.297722+00:00",
+  "updated_at": "2026-02-17T18:27:41.297722+00:00"
+}
+============================================================
+  PASS  Project created
+
+  Project ID: 73093db3-519f-4a49-879b-211464b5b1bd
+  Project Name: פרויקט הוכחה 90954
+
+============================================================
+>>> Create second project (for cross-project isolation)
+POST http://localhost:8000/api/projects
+Request: {
+  "name": "פרויקט אחר 90954",
+  "code": "OTH-90954",
+  "address": "רחוב אחר 2"
+}
+Status: 200
+Response: {
+  "id": "192a2ccf-97d3-4ab5-89b9-148f7a41a6cc",
+  "name": "פרויקט אחר 90954",
+  "code": "OTH-90954",
+  "description": null,
+  "status": "active",
+  "client_name": null,
+  "start_date": null,
+  "end_date": null,
+  "created_by": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "created_at": "2026-02-17T18:27:41.305308+00:00",
+  "updated_at": "2026-02-17T18:27:41.305308+00:00"
+}
+============================================================
+
+
+======================================================================
+PHASE 1: Admin invites PM by phone → PM registers → auto-linked
+======================================================================
+
+============================================================
+>>> Admin creates PM invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954001",
+  "role": "project_manager",
+  "full_name": "PM חדש 90954"
+}
+Status: 200
+Response: {
+  "id": "62c96691-63f8-49cc-868e-ca8f4e0661ea",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "target_phone": "+972590954001",
+  "phone_raw": "+972590954001",
+  "role": "project_manager",
+  "sub_role": null,
+  "full_name": "PM חדש 90954",
+  "token": "MKWKB2qw86EJHgiwvPCkQ18eQ73iILU2DoDQFQagbdM",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:41.315604+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:41.315595+00:00",
+  "updated_at": "2026-02-17T18:27:41.315595+00:00"
+}
+============================================================
+  PASS  Admin invite PM: 200
+  PASS  Invite has id
+  PASS  Invite has token
+  PASS  Invite status=pending
+
+--- PM registers with invited phone ---
+  PASS  PM registered with token
+
+============================================================
+>>> Verify invite accepted
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Status: 200
+Response: [
+  {
+    "id": "62c96691-63f8-49cc-868e-ca8f4e0661ea",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+    "target_phone": "+972590954001",
+    "phone_raw": "+972590954001",
+    "role": "project_manager",
+    "sub_role": null,
+    "full_name": "PM חדש 90954",
+    "token": "MKWKB2qw86EJHgiwvPCkQ18eQ73iILU2DoDQFQagbdM",
+    "status": "accepted",
+    "expires_at": "2026-02-24T18:27:41.315604+00:00",
+    "accepted_by_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+    "accepted_at": "2026-02-17T18:27:41.585585+00:00",
+    "created_at": "2026-02-17T18:27:41.315595+00:00",
+    "updated_at": "2026-02-17T18:27:41.585585+00:00"
+  }
+]
+============================================================
+  PASS  Invite status changed to accepted
+
+============================================================
+>>> Verify PM membership created
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/memberships
+Status: 200
+Response: [
+  {
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+    "created_at": "2026-02-17T18:27:41.585585+00:00",
+    "id": "8db675d4-f0c2-40fd-a426-82285627860c",
+    "role": "project_manager",
+    "sub_role": null,
+    "user_name": "PM חדש 90954",
+    "user_phone": null
+  },
+  {
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+    "created_at": "2026-02-17T18:27:41.297722+00:00",
+    "id": "a6618f78-7831-4a98-b7e5-640f7cc61aed",
+    "role": "owner",
+    "user_name": "Proof Admin 90954",
+    "user_phone": null
+  }
+]
+============================================================
+  PASS  PM has project membership
+  PASS  PM membership role=project_manager
+
+
+======================================================================
+PHASE 2: PM invites management_team (with sub_role) → registers → auto-linked
+======================================================================
+
+============================================================
+>>> PM creates management_team invite with sub_role=site_manager
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954002",
+  "role": "management_team",
+  "sub_role": "site_manager",
+  "full_name": "מנהל אתר 90954"
+}
+Status: 200
+Response: {
+  "id": "4559733f-3c15-4bf4-958b-3eb11dc2e8d2",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+  "target_phone": "+972590954002",
+  "phone_raw": "+972590954002",
+  "role": "management_team",
+  "sub_role": "site_manager",
+  "full_name": "מנהל אתר 90954",
+  "token": "J2vjAGTbbpVTA94N58O9qweBBNk0ZD-f4-ee3Z8QN20",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:41.874793+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:41.874785+00:00",
+  "updated_at": "2026-02-17T18:27:41.874785+00:00"
+}
+============================================================
+  PASS  PM invite management_team: 200
+  PASS  Invite has sub_role=site_manager
+
+--- Management team member registers with invited phone ---
+  PASS  Management registered with token
+
+--- Delta: new sub-roles (work_manager, safety_officer) ---
+
+============================================================
+>>> PM creates management_team invite with sub_role=work_manager
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954070",
+  "role": "management_team",
+  "sub_role": "work_manager",
+  "full_name": "מנהל עבודה 90954"
+}
+Status: 200
+Response: {
+  "id": "3101243c-32e1-4c87-a0c9-bc7c20f073b5",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+  "target_phone": "+972590954070",
+  "phone_raw": "+972590954070",
+  "role": "management_team",
+  "sub_role": "work_manager",
+  "full_name": "מנהל עבודה 90954",
+  "token": "PnMQ1U4fLrB3fjLb-dujeNvUXXRPLHsZSa0aIsLbTYI",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:42.437929+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:42.437916+00:00",
+  "updated_at": "2026-02-17T18:27:42.437916+00:00"
+}
+============================================================
+  PASS  Invite with sub_role=work_manager: 200
+  PASS  Invite has sub_role=work_manager
+
+============================================================
+>>> PM creates management_team invite with sub_role=safety_officer
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954071",
+  "role": "management_team",
+  "sub_role": "safety_officer",
+  "full_name": "ממונה בטיחות 90954"
+}
+Status: 200
+Response: {
+  "id": "4c601860-fff4-47b6-b57f-7f0d45c48a9b",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+  "target_phone": "+972590954071",
+  "phone_raw": "+972590954071",
+  "role": "management_team",
+  "sub_role": "safety_officer",
+  "full_name": "ממונה בטיחות 90954",
+  "token": "lTVYwQkIO9b26gWHR183ZqNEWJZeWTALd1xq9ClPwkk",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:42.448291+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:42.448282+00:00",
+  "updated_at": "2026-02-17T18:27:42.448282+00:00"
+}
+============================================================
+  PASS  Invite with sub_role=safety_officer: 200
+  PASS  Invite has sub_role=safety_officer
+
+
+======================================================================
+PHASE 3: Management team invites contractor → registers → auto-linked
+======================================================================
+
+============================================================
+>>> Management team creates contractor invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954003",
+  "role": "contractor",
+  "full_name": "קבלן חדש 90954"
+}
+Status: 200
+Response: {
+  "id": "9ce3b7c0-7c79-43f0-829e-bd6421e989e4",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "30ed0d30-fdf5-48b2-b34b-5634499c4fbf",
+  "target_phone": "+972590954003",
+  "phone_raw": "+972590954003",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": "קבלן חדש 90954",
+  "token": "jbILXwrl4iEI6AtoGbAqkIW-QpP8JFLf7jkI0qAh1l8",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:42.459413+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:42.459404+00:00",
+  "updated_at": "2026-02-17T18:27:42.459404+00:00"
+}
+============================================================
+  PASS  Management invite contractor: 200
+
+--- Contractor registers with invited phone ---
+  PASS  Contractor registered with token
+
+
+======================================================================
+PHASE 4: RBAC MATRIX — invite permissions per role
+======================================================================
+
+============================================================
+>>> RBAC: Admin (owner) creates invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954011",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "12ae2581-269f-43e6-8567-825e5dc67605",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "target_phone": "+972590954011",
+  "phone_raw": "+972590954011",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "MoWBriGI5ns_Jd2C6bi5P1OsN6RdTKt1efnOI5RNLbs",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.580585+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.580574+00:00",
+  "updated_at": "2026-02-17T18:27:43.580574+00:00"
+}
+============================================================
+
+============================================================
+>>> RBAC: Admin (owner) lists invites
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Status: 200
+Response: [
+  {
+    "id": "12ae2581-269f-43e6-8567-825e5dc67605",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+    "target_phone": "+972590954011",
+    "phone_raw": "+972590954011",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": null,
+    "token": "MoWBriGI5ns_Jd2C6bi5P1OsN6RdTKt1efnOI5RNLbs",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:43.580585+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:43.580574+00:00",
+    "updated_at": "2026-02-17T18:27:43.580574+00:00"
+  },
+  {
+    "id": "9ce3b7c0-7c79-43f0-829e-bd6421e989e4",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "30ed0d30-fdf5-48b2-b34b-5634499c4fbf",
+    "target_phone": "+972590954003",
+    "phone_raw": "+972590954003",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": "קבלן חדש 90954",
+    "token": "jbILXwrl4iEI6AtoGbAqkIW-QpP8JFLf7jkI0qAh1l8",
+    "status": "accepted",
+    "expires_at": "2026-02-24T18:27:42.459413+00:00",
+    "accepted_by_user_id": "06f770a3-d1c8-4c70-8add-61b52b7a06a7",
+    "accepted_at": "2026-02-17T18:27:42.730317+00:00",
+    "created_at": "2026-02-17T18:27:42.459404+00:00",
+    "updated_at": "2026-02-17T18:27:42.730317+00:00"
+  },
+  {
+    "id": "4c601860-fff4-47b6-b57f-7f0d45c48a9b",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+    "target_phone": "+972590954071",
+    "phone_raw": "+972590954071",
+    "role": "management_team",
+    "sub_role": "safety_officer",
+    "full_name": "ממונה בטיחות 90954",
+    "token": "lTVYwQkIO9b26gWHR183ZqNEWJZeWTALd1xq9ClPwkk",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:42.448291+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:42.448282+00:00",
+    "updated_at": "2026-02-17T18:27:42.448282+00:00"
+  },
+  {
+    "i
+... (truncated)
+============================================================
+  PASS  Admin (owner) CAN create invite
+
+============================================================
+>>> RBAC: PM creates invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954012",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "4db2832a-5456-44df-beb8-b1b66afd8d34",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+  "target_phone": "+972590954012",
+  "phone_raw": "+972590954012",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "oBc4NBPk827ha6txILNJndIWw-RbNUnyFfZYjCMS3aU",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.602666+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.602656+00:00",
+  "updated_at": "2026-02-17T18:27:43.602656+00:00"
+}
+============================================================
+
+============================================================
+>>> RBAC: PM lists invites
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Status: 200
+Response: [
+  {
+    "id": "4db2832a-5456-44df-beb8-b1b66afd8d34",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+    "target_phone": "+972590954012",
+    "phone_raw": "+972590954012",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": null,
+    "token": "oBc4NBPk827ha6txILNJndIWw-RbNUnyFfZYjCMS3aU",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:43.602666+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:43.602656+00:00",
+    "updated_at": "2026-02-17T18:27:43.602656+00:00"
+  },
+  {
+    "id": "12ae2581-269f-43e6-8567-825e5dc67605",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+    "target_phone": "+972590954011",
+    "phone_raw": "+972590954011",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": null,
+    "token": "MoWBriGI5ns_Jd2C6bi5P1OsN6RdTKt1efnOI5RNLbs",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:43.580585+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:43.580574+00:00",
+    "updated_at": "2026-02-17T18:27:43.580574+00:00"
+  },
+  {
+    "id": "9ce3b7c0-7c79-43f0-829e-bd6421e989e4",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "30ed0d30-fdf5-48b2-b34b-5634499c4fbf",
+    "target_phone": "+972590954003",
+    "phone_raw": "+972590954003",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": "קבלן חדש 90954",
+    "token": "jbILXwrl4iEI6AtoGbAqkIW-QpP8JFLf7jkI0qAh1l8",
+    "status": "accepted",
+    "expires_at": "2026-02-24T18:27:42.459413+00:00",
+    "accepted_by_user_id": "06f770a3-d1c8-4c70-8add-61b52b7a06a7",
+    "accepted_at": "2026-02-17T18:27:42.730317+00:00",
+    "created_at": "2026-02-17T18:27:42.459404+00:00",
+    "updated_at": "2026-02-17T18:27:42.730317+00:00"
+  },
+  {
+    "id": "4c601860-fff4-47b6-b57f-7f0d
+... (truncated)
+============================================================
+  PASS  PM CAN create invite
+
+============================================================
+>>> RBAC: Management Team creates invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954013",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "04b208e1-94bb-409c-a4a6-46175bf8a59f",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "30ed0d30-fdf5-48b2-b34b-5634499c4fbf",
+  "target_phone": "+972590954013",
+  "phone_raw": "+972590954013",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "TQP0F8avrjBj8_o-7QKn-fZUyPRrMW8pxTbpICYyJcY",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.620896+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.620887+00:00",
+  "updated_at": "2026-02-17T18:27:43.620887+00:00"
+}
+============================================================
+
+============================================================
+>>> RBAC: Management Team lists invites
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Status: 200
+Response: [
+  {
+    "id": "04b208e1-94bb-409c-a4a6-46175bf8a59f",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "30ed0d30-fdf5-48b2-b34b-5634499c4fbf",
+    "target_phone": "+972590954013",
+    "phone_raw": "+972590954013",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": null,
+    "token": "TQP0F8avrjBj8_o-7QKn-fZUyPRrMW8pxTbpICYyJcY",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:43.620896+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:43.620887+00:00",
+    "updated_at": "2026-02-17T18:27:43.620887+00:00"
+  },
+  {
+    "id": "4db2832a-5456-44df-beb8-b1b66afd8d34",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+    "target_phone": "+972590954012",
+    "phone_raw": "+972590954012",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": null,
+    "token": "oBc4NBPk827ha6txILNJndIWw-RbNUnyFfZYjCMS3aU",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:43.602666+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:43.602656+00:00",
+    "updated_at": "2026-02-17T18:27:43.602656+00:00"
+  },
+  {
+    "id": "12ae2581-269f-43e6-8567-825e5dc67605",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+    "target_phone": "+972590954011",
+    "phone_raw": "+972590954011",
+    "role": "contractor",
+    "sub_role": null,
+    "full_name": null,
+    "token": "MoWBriGI5ns_Jd2C6bi5P1OsN6RdTKt1efnOI5RNLbs",
+    "status": "pending",
+    "expires_at": "2026-02-24T18:27:43.580585+00:00",
+    "accepted_by_user_id": null,
+    "accepted_at": null,
+    "created_at": "2026-02-17T18:27:43.580574+00:00",
+    "updated_at": "2026-02-17T18:27:43.580574+00:00"
+  },
+  {
+    "id": "9ce3b7c0-7c79-43f0-829e-bd6421e989e4",
+    "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+    "inv
+... (truncated)
+============================================================
+  PASS  Management Team CAN create invite
+
+============================================================
+>>> RBAC: Contractor creates invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954014",
+  "role": "contractor"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין משתמשים"
+}
+============================================================
+
+============================================================
+>>> RBAC: Contractor lists invites
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Status: 403
+Response: {
+  "detail": "אין הרשאה"
+}
+============================================================
+  PASS  Contractor CANNOT create invite
+
+============================================================
+>>> RBAC: Viewer creates invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954015",
+  "role": "contractor"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין משתמשים"
+}
+============================================================
+
+============================================================
+>>> RBAC: Viewer lists invites
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Status: 403
+Response: {
+  "detail": "אין הרשאה"
+}
+============================================================
+  PASS  Viewer CANNOT create invite
+
+============================================================
+>>> Create invite for cancel test
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954020",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "0e3032d2-c116-4d09-8870-bd0af7110676",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "target_phone": "+972590954020",
+  "phone_raw": "+972590954020",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "ftEKVSRzdjw9dTm4Pm5NbA3JDoN3FlU3h2PNkYWaFwI",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.666887+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.666878+00:00",
+  "updated_at": "2026-02-17T18:27:43.666878+00:00"
+}
+============================================================
+
+============================================================
+>>> Cancel invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites/0e3032d2-c116-4d09-8870-bd0af7110676/cancel
+Status: 200
+Response: {
+  "success": true,
+  "message": "הזמנה בוטלה"
+}
+============================================================
+  PASS  Cancel invite: 200
+
+============================================================
+>>> Cancel already-cancelled invite (should fail)
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites/0e3032d2-c116-4d09-8870-bd0af7110676/cancel
+Status: 400
+Response: {
+  "detail": "Can only cancel pending invites"
+}
+============================================================
+  PASS  Cannot cancel already-cancelled invite
+
+============================================================
+>>> Create invite for resend test
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954021",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "7c12cae5-27ea-45eb-8bbe-cf2a2120997c",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "target_phone": "+972590954021",
+  "phone_raw": "+972590954021",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "jXI0O7hVasnup1kbBlVVYqDcTI3Nst99qpkvlMhcrwI",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.688672+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.688665+00:00",
+  "updated_at": "2026-02-17T18:27:43.688665+00:00"
+}
+============================================================
+
+============================================================
+>>> Resend invite
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites/7c12cae5-27ea-45eb-8bbe-cf2a2120997c/resend
+Status: 200
+Response: {
+  "success": true,
+  "message": "הזמנה נשלחה מחדש"
+}
+============================================================
+  PASS  Resend invite: 200
+
+
+======================================================================
+PHASE 5: Cross-Project Isolation (PM of project A → project B = 403)
+======================================================================
+
+============================================================
+>>> PM of project A tries to create invite in project B
+POST http://localhost:8000/api/projects/192a2ccf-97d3-4ab5-89b9-148f7a41a6cc/invites
+Request: {
+  "phone": "+972590954030",
+  "role": "contractor"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין משתמשים"
+}
+============================================================
+  PASS  Cross-project invite blocked (403)
+
+============================================================
+>>> PM of project A tries to list invites in project B
+GET http://localhost:8000/api/projects/192a2ccf-97d3-4ab5-89b9-148f7a41a6cc/invites
+Status: 403
+Response: {
+  "detail": "אין הרשאה"
+}
+============================================================
+  PASS  Cross-project list blocked (403)
+
+
+======================================================================
+PHASE 6: Duplicate invite + hierarchy violations
+======================================================================
+
+============================================================
+>>> Create invite (first)
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954040",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "ed3ae937-864d-431d-8773-d291cd165982",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "target_phone": "+972590954040",
+  "phone_raw": "+972590954040",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "jpHdynB9Yk5c9T0NEyh5nZtEiCeci8YhTw3Lit5ef_Q",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.716200+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.716189+00:00",
+  "updated_at": "2026-02-17T18:27:43.716189+00:00"
+}
+============================================================
+  PASS  First invite: 200
+
+============================================================
+>>> Create duplicate invite (should be blocked)
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954040",
+  "role": "contractor"
+}
+Status: 400
+Response: {
+  "detail": "הזמנה ממתינה כבר קיימת עבור טלפון ותפקיד זה"
+}
+============================================================
+  PASS  Duplicate invite blocked
+
+============================================================
+>>> Management tries to invite PM (hierarchy violation)
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954041",
+  "role": "project_manager"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין project_manager"
+}
+============================================================
+  PASS  Management CANNOT invite PM
+
+
+======================================================================
+PHASE 6B: Expired invite — force-expire via DB, verify NOT auto-linked
+======================================================================
+
+============================================================
+>>> Create invite to be force-expired
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954060",
+  "role": "contractor",
+  "full_name": "Expired Test 90954"
+}
+Status: 200
+Response: {
+  "id": "14de4ada-5fd4-4bc3-856b-a41c3c923605",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "14ed369f-d544-4ed8-9c34-38fd3924541e",
+  "target_phone": "+972590954060",
+  "phone_raw": "+972590954060",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": "Expired Test 90954",
+  "token": "HTloBAvFtA4qRFcAsH17UQ8FTNvm02XRHUgPM7qTzKw",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:43.736630+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:43.736621+00:00",
+  "updated_at": "2026-02-17T18:27:43.736621+00:00"
+}
+============================================================
+  PASS  Expired-test invite created: 200
+  Invite ID: 14de4ada-5fd4-4bc3-856b-a41c3c923605
+  Force-expired invite in DB: expires_at=2026-02-07T18:27:43.747359 (modified=1)
+  PASS  DB update: invite expires_at set to past
+
+--- Register with expired invite phone ---
+
+============================================================
+>>> Register with expired invite phone
+POST http://localhost:8000/api/auth/register
+Request: {
+  "email": "proof_expired_90954@test.com",
+  "password": "testpass123",
+  "name": "Expired User 90954",
+  "role": "contractor",
+  "phone_e164": "+972590954060"
+}
+Status: 200
+Response: {
+  "id": "ba308b96-5cc0-4a90-8297-b0e77f4463e8",
+  "email": "proof_expired_90954@test.com",
+  "name": "Expired User 90954",
+  "phone": null,
+  "role": "contractor",
+  "company_id": null,
+  "specialties": null,
+  "phone_e164": "+972590954060",
+  "user_status": null,
+  "created_at": "2026-02-17T18:27:44.024761+00:00"
+}
+============================================================
+  PASS  Registration succeeds (200)
+  PASS  auto_linked_projects is EMPTY (expired invite skipped)
+  Invite status after registration: expired
+  PASS  Invite status changed to 'expired'
+  PASS  Audit event 'invite_expired' recorded
+  Audit event: action=expired, actor=system, reason=passive_expiry_on_login, ts=2026-02-17T18:27:44.028348+00:00
+
+
+======================================================================
+PHASE 7: Available PMs endpoint (Fix 3.1 verification)
+======================================================================
+
+============================================================
+>>> GET available-pms (full list)
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/available-pms
+Status: 200
+Response: [
+  {
+    "id": "1d214365-54db-43d9-a0b8-56de8281b97e",
+    "email": "admin@contractor-ops.com",
+    "name": "מנהל מערכת",
+    "phone": "050-0000001",
+    "role": "owner",
+    "phone_e164": "+972500000001",
+    "user_status": "active",
+    "company_id": null,
+    "created_at": "2026-02-17T13:12:01.790166+00:00"
+  },
+  {
+    "id": "02b76bff-3947-4329-a1ea-9b2783e94887",
+    "email": "pm@contractor-ops.com",
+    "name": "מנהל פרויקט",
+    "phone": "050-0000002",
+    "role": "project_manager",
+    "phone_e164": "+972500000002",
+    "user_status": "active",
+    "company_id": null,
+    "created_at": "2026-02-17T13:12:02.061811+00:00"
+  },
+  {
+    "id": "726d409d-dceb-4f9a-b6cc-01225f49060c",
+    "email": "contractor1@contractor-ops.com",
+    "name": "קבלן electrical",
+    "phone": "050-0001000",
+    "role": "contractor",
+    "company_id": "e7f4a3b1-6ce8-4165-be9a-a697a3f25e2e",
+    "specialties": [
+      "electrical",
+      "general"
+    ],
+    "phone_e164": "+97250010000",
+    "user_status": "active",
+    "created_at": "2026-02-17T13:12:02.335376+00:00"
+  },
+  {
+    "id": "452d6d98-10db-4b65-bf08-b49e588ada57",
+    "email": "contractor2@contractor-ops.com",
+    "name": "קבלן plumbing",
+    "phone": "050-0001001",
+    "role": "contractor",
+    "company_id": "293f8865-1ec9-46b4-9702-a500fe923758",
+    "specialties": [
+      "plumbing",
+      "general"
+    ],
+    "phone_e164": "+97250010101",
+    "user_status": "active",
+    "created_at": "2026-02-17T13:12:02.596761+00:00"
+  },
+  {
+    "id": "9404fd5a-b0b0-4270-aff9-ffdf198daf1b",
+    "email": "contractor3@contractor-ops.com",
+    "name": "קבלן painting",
+    "phone": "050-0001002",
+    "role": "contractor",
+    "company_id": "5950f41e-c633-4f8b-b4dc-ada5dba348d9",
+    "specialties": [
+      "painting",
+      "general"
+    ],
+    "phone_e164": "+97250010202",
+    "user_status": "active",
+    "created_at": "2026-02-17T13:12:02.853678+00:00"
+  },
+  {
+    "id": "586beddd-c464-40ae-a660-6bd59b27fbe1",
+    "email": "viewer@cont
+... (truncated)
+============================================================
+  PASS  Available PMs returns 200
+  PASS  Available PMs returns users (non-empty)
+  Available PMs count: 119
+
+  First 5 PMs (real data):
+    - id=1d214365-54db-43d9-a0b8-56de8281b97e, name=מנהל מערכת, role=owner, user_status=active
+    - id=02b76bff-3947-4329-a1ea-9b2783e94887, name=מנהל פרויקט, role=project_manager, user_status=active
+    - id=726d409d-dceb-4f9a-b6cc-01225f49060c, name=קבלן electrical, role=contractor, user_status=active
+    - id=452d6d98-10db-4b65-bf08-b49e588ada57, name=קבלן plumbing, role=contractor, user_status=active
+    - id=9404fd5a-b0b0-4270-aff9-ffdf198daf1b, name=קבלן painting, role=contractor, user_status=active
+
+============================================================
+>>> GET available-pms with search filter
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/available-pms
+Status: 200
+Response: [
+  {
+    "id": "748e297d-d7b2-46c6-8a52-16e3a2c3c83a",
+    "name": "Proof Admin ca41a9",
+    "phone": null,
+    "role": "owner",
+    "company_id": null,
+    "specialties": null,
+    "user_status": "active",
+    "created_at": "2026-02-17T16:48:23.968389+00:00",
+    "email": "proof_admin_ca41a9@test.com"
+  },
+  {
+    "id": "1ce6a22a-5a78-443a-a91a-89b2eb49e175",
+    "name": "PM חדש ca41a9",
+    "phone": null,
+    "role": "project_manager",
+    "company_id": null,
+    "specialties": null,
+    "user_status": "active",
+    "created_at": "2026-02-17T16:48:24.587798+00:00",
+    "email": "proof_pm_ca41a9@test.com",
+    "phone_e164": "+9725ca41a9001",
+    "updated_at": "2026-02-17T16:48:24.589642+00:00"
+  },
+  {
+    "id": "7717e6f0-445d-4557-a7ca-f7033bee80ce",
+    "name": "מנהל אתר ca41a9",
+    "phone": null,
+    "role": "viewer",
+    "company_id": null,
+    "specialties": null,
+    "user_status": "active",
+    "created_at": "2026-02-17T16:48:25.139411+00:00",
+    "email": "proof_mgmt_ca41a9@test.com",
+    "phone_e164": "+9725ca41a9002"
+  },
+  {
+    "id": "b0ede222-81dc-46e5-9e5e-93552f0e0153",
+    "name": "קבלן חדש ca41a9",
+    "phone": null,
+    "role": "contractor",
+    "company_id": null,
+    "specialties": null,
+    "user_status": "active",
+    "created_at": "2026-02-17T16:48:25.690100+00:00",
+    "email": "proof_cont_ca41a9@test.com",
+    "phone_e164": "+9725ca41a9003"
+  },
+  {
+    "id": "1828653d-a2e9-4122-83d2-febbed2b12f0",
+    "name": "צופה ca41a9",
+    "phone": null,
+    "role": "viewer",
+    "company_id": null,
+    "specialties": null,
+    "user_status": "active",
+    "created_at": "2026-02-17T16:48:26.213367+00:00",
+    "email": "proof_viewer_ca41a9@test.com"
+  },
+  {
+    "id": "1c9080c9-c921-4a5f-b149-77068838d2fd",
+    "name": "Proof Admin 040936",
+    "phone": null,
+    "role": "owner",
+    "company_id": null,
+    "specialties": null,
+    "user_status": "active",
+    "created_at": "2026-02-17T16:50:15.938407+00:00",
+    "email": "proof_admin_040936@test.com
+... (truncated)
+============================================================
+  PASS  Available PMs search works
+  Search 'proof' returned: 41 results
+
+============================================================
+>>> GET available-pms (as PM — should also work)
+GET http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/available-pms
+Status: 200
+Response: [
+  {
+    "id": "1d214365-54db-43d9-a0b8-56de8281b97e",
+    "email": "admin@contractor-ops.com",
+    "name": "מנהל מערכת",
+    "phone": "050-0000001",
+    "role": "owner",
+    "phone_e164": "+972500000001",
+    "user_status": "active",
+    "company_id": null,
+    "created_at": "2026-02-17T13:12:01.790166+00:00"
+  },
+  {
+    "id": "02b76bff-3947-4329-a1ea-9b2783e94887",
+    "email": "pm@contractor-ops.com",
+    "name": "מנהל פרויקט",
+    "phone": "050-0000002",
+    "role": "project_manager",
+    "phone_e164": "+972500000002",
+    "user_status": "active",
+    "company_id": null,
+    "created_at": "2026-02-17T13:12:02.061811+00:00"
+  },
+  {
+    "id": "726d409d-dceb-4f9a-b6cc-01225f49060c",
+    "email": "contractor1@contractor-ops.com",
+    "name": "קבלן electrical",
+    "phone": "050-0001000",
+    "role": "contractor",
+    "company_id": "e7f4a3b1-6ce8-4165-be9a-a697a3f25e2e",
+    "specialties": [
+      "electrical",
+      "general"
+    ],
+    "phone_e164": "+97250010000",
+    "user_status": "active",
+    "created_at": "2026-02-17T13:12:02.335376+00:00"
+  },
+  {
+    "id": "452d6d98-10db-4b65-bf08-b49e588ada57",
+    "email": "contractor2@contractor-ops.com",
+    "name": "קבלן plumbing",
+    "phone": "050-0001001",
+    "role": "contractor",
+    "company_id": "293f8865-1ec9-46b4-9702-a500fe923758",
+    "specialties": [
+      "plumbing",
+      "general"
+    ],
+    "phone_e164": "+97250010101",
+    "user_status": "active",
+    "created_at": "2026-02-17T13:12:02.596761+00:00"
+  },
+  {
+    "id": "9404fd5a-b0b0-4270-aff9-ffdf198daf1b",
+    "email": "contractor3@contractor-ops.com",
+    "name": "קבלן painting",
+    "phone": "050-0001002",
+    "role": "contractor",
+    "company_id": "5950f41e-c633-4f8b-b4dc-ada5dba348d9",
+    "specialties": [
+      "painting",
+      "general"
+    ],
+    "phone_e164": "+97250010202",
+    "user_status": "active",
+    "created_at": "2026-02-17T13:12:02.853678+00:00"
+  },
+  {
+    "id": "586beddd-c464-40ae-a660-6bd59b27fbe1",
+    "email": "viewer@cont
+... (truncated)
+============================================================
+  PASS  PM can also access available-pms
+
+  Root Cause (Bug 3.1): Endpoint used whitelist filter user_status={'$in':['active',None]}
+  Fix: Changed to blacklist user_status={'$nin':['rejected','suspended','pending_pm_approval']}
+  Also: Added 'project_manager' to allowed roles (was owner/admin only)
+
+
+======================================================================
+PHASE 8: RBAC Hierarchy — role-specific invite capabilities
+======================================================================
+
+============================================================
+>>> Hierarchy: PM invites management_team
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954051",
+  "role": "management_team",
+  "sub_role": "execution_engineer"
+}
+Status: 200
+Response: {
+  "id": "986016d2-177d-4089-8547-3edfbab2ca4b",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+  "target_phone": "+972590954051",
+  "phone_raw": "+972590954051",
+  "role": "management_team",
+  "sub_role": "execution_engineer",
+  "full_name": null,
+  "token": "KnXXxInNSDo6zodqhKp_Ma7KkjJPKjGBh5HjGrDIDmI",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:44.099072+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:44.099058+00:00",
+  "updated_at": "2026-02-17T18:27:44.099058+00:00"
+}
+============================================================
+  PASS  PM invites management_team
+
+============================================================
+>>> Hierarchy: PM invites contractor
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954052",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "e43469fa-364b-4186-ba79-14fe262ae27a",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "1376d4d9-28ee-4f0d-85af-4640396bded3",
+  "target_phone": "+972590954052",
+  "phone_raw": "+972590954052",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "WeM5LrL9P2hpdVyh7wqwg0-YoVZP-ubCNWbXhXon9Nc",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:44.110299+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:44.110290+00:00",
+  "updated_at": "2026-02-17T18:27:44.110290+00:00"
+}
+============================================================
+  PASS  PM invites contractor
+
+============================================================
+>>> Hierarchy: PM CANNOT invite PM
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954053",
+  "role": "project_manager"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין project_manager"
+}
+============================================================
+  PASS  PM CANNOT invite PM
+
+============================================================
+>>> Hierarchy: Management invites contractor
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954054",
+  "role": "contractor"
+}
+Status: 200
+Response: {
+  "id": "4539f6c5-46de-4a74-8272-e093eb5929ba",
+  "project_id": "73093db3-519f-4a49-879b-211464b5b1bd",
+  "inviter_user_id": "30ed0d30-fdf5-48b2-b34b-5634499c4fbf",
+  "target_phone": "+972590954054",
+  "phone_raw": "+972590954054",
+  "role": "contractor",
+  "sub_role": null,
+  "full_name": null,
+  "token": "ntdxPR8I9TKFbQWrCcprxzSFk4Qaz6QTLm6IDr7E358",
+  "status": "pending",
+  "expires_at": "2026-02-24T18:27:44.127007+00:00",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-02-17T18:27:44.126998+00:00",
+  "updated_at": "2026-02-17T18:27:44.126998+00:00"
+}
+============================================================
+  PASS  Management invites contractor
+
+============================================================
+>>> Hierarchy: Management CANNOT invite PM
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954055",
+  "role": "project_manager"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין project_manager"
+}
+============================================================
+  PASS  Management CANNOT invite PM
+
+============================================================
+>>> Hierarchy: Management CANNOT invite management_team
+POST http://localhost:8000/api/projects/73093db3-519f-4a49-879b-211464b5b1bd/invites
+Request: {
+  "phone": "+972590954056",
+  "role": "management_team",
+  "sub_role": "safety_assistant"
+}
+Status: 403
+Response: {
+  "detail": "אין לך הרשאה להזמין management_team"
+}
+============================================================
+  PASS  Management CANNOT invite management_team
+
+
+======================================================================
+AUDIT TRAIL — Real Events from MongoDB
+======================================================================
+
+  Total invite audit events for project: 36
+  Event type breakdown: {"created": 15, "notification_queued": 15, "accepted": 3, "cancelled": 1, "resend": 1, "expired": 1}
+  PASS  Audit: invite 'created' events exist
+  PASS  Audit: invite 'accepted' events exist
+  PASS  Audit: invite 'notification_queued' events exist
+  PASS  Audit: invite 'cancelled' events exist
+  PASS  Audit: invite 'expired' events exist
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # | Action                 | Actor                                | Entity ID                            | Timestamp                 
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    1 | created                | 14ed369f-d544-4ed8-9c34-38fd3924541e | 62c96691-63f8-49cc-868e-ca8f4e0661ea | 2026-02-17T18:27:41.316391+00:00
+      | payload: {"phone": "+972590954001", "role": "project_manager"}
+    2 | notification_queued    | 14ed369f-d544-4ed8-9c34-38fd3924541e | 62c96691-63f8-49cc-868e-ca8f4e0661ea | 2026-02-17T18:27:41.317028+00:00
+      | payload: {"phone": "+972590954001", "channel": "dry_run", "dry_run": true}
+    3 | accepted               | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 62c96691-63f8-49cc-868e-ca8f4e0661ea | 2026-02-17T18:27:41.587427+00:00
+      | payload: {"role": "project_manager", "auto_linked": true}
+    4 | created                | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 4559733f-3c15-4bf4-958b-3eb11dc2e8d2 | 2026-02-17T18:27:41.875432+00:00
+      | payload: {"phone": "+972590954002", "role": "management_team"}
+    5 | notification_queued    | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 4559733f-3c15-4bf4-958b-3eb11dc2e8d2 | 2026-02-17T18:27:41.875931+00:00
+      | payload: {"phone": "+972590954002", "channel": "dry_run", "dry_run": true}
+    6 | accepted               | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 4559733f-3c15-4bf4-958b-3eb11dc2e8d2 | 2026-02-17T18:27:42.150814+00:00
+      | payload: {"role": "management_team", "auto_linked": true}
+    7 | created                | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 3101243c-32e1-4c87-a0c9-bc7c20f073b5 | 2026-02-17T18:27:42.438596+00:00
+      | payload: {"phone": "+972590954070", "role": "management_team"}
+    8 | notification_queued    | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 3101243c-32e1-4c87-a0c9-bc7c20f073b5 | 2026-02-17T18:27:42.439215+00:00
+      | payload: {"phone": "+972590954070", "channel": "dry_run", "dry_run": true}
+    9 | created                | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 4c601860-fff4-47b6-b57f-7f0d45c48a9b | 2026-02-17T18:27:42.448797+00:00
+      | payload: {"phone": "+972590954071", "role": "management_team"}
+   10 | notification_queued    | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 4c601860-fff4-47b6-b57f-7f0d45c48a9b | 2026-02-17T18:27:42.449317+00:00
+      | payload: {"phone": "+972590954071", "channel": "dry_run", "dry_run": true}
+   11 | created                | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 9ce3b7c0-7c79-43f0-829e-bd6421e989e4 | 2026-02-17T18:27:42.460055+00:00
+      | payload: {"phone": "+972590954003", "role": "contractor"}
+   12 | notification_queued    | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 9ce3b7c0-7c79-43f0-829e-bd6421e989e4 | 2026-02-17T18:27:42.460626+00:00
+      | payload: {"phone": "+972590954003", "channel": "dry_run", "dry_run": true}
+   13 | accepted               | 06f770a3-d1c8-4c70-8add-61b52b7a06a7 | 9ce3b7c0-7c79-43f0-829e-bd6421e989e4 | 2026-02-17T18:27:42.731875+00:00
+      | payload: {"role": "contractor", "auto_linked": true}
+   14 | created                | 14ed369f-d544-4ed8-9c34-38fd3924541e | 12ae2581-269f-43e6-8567-825e5dc67605 | 2026-02-17T18:27:43.581321+00:00
+      | payload: {"phone": "+972590954011", "role": "contractor"}
+   15 | notification_queued    | 14ed369f-d544-4ed8-9c34-38fd3924541e | 12ae2581-269f-43e6-8567-825e5dc67605 | 2026-02-17T18:27:43.581962+00:00
+      | payload: {"phone": "+972590954011", "channel": "dry_run", "dry_run": true}
+   16 | created                | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 4db2832a-5456-44df-beb8-b1b66afd8d34 | 2026-02-17T18:27:43.603334+00:00
+      | payload: {"phone": "+972590954012", "role": "contractor"}
+   17 | notification_queued    | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 4db2832a-5456-44df-beb8-b1b66afd8d34 | 2026-02-17T18:27:43.603917+00:00
+      | payload: {"phone": "+972590954012", "channel": "dry_run", "dry_run": true}
+   18 | created                | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 04b208e1-94bb-409c-a4a6-46175bf8a59f | 2026-02-17T18:27:43.621476+00:00
+      | payload: {"phone": "+972590954013", "role": "contractor"}
+   19 | notification_queued    | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 04b208e1-94bb-409c-a4a6-46175bf8a59f | 2026-02-17T18:27:43.622107+00:00
+      | payload: {"phone": "+972590954013", "channel": "dry_run", "dry_run": true}
+   20 | created                | 14ed369f-d544-4ed8-9c34-38fd3924541e | 0e3032d2-c116-4d09-8870-bd0af7110676 | 2026-02-17T18:27:43.667501+00:00
+      | payload: {"phone": "+972590954020", "role": "contractor"}
+   21 | notification_queued    | 14ed369f-d544-4ed8-9c34-38fd3924541e | 0e3032d2-c116-4d09-8870-bd0af7110676 | 2026-02-17T18:27:43.668085+00:00
+      | payload: {"phone": "+972590954020", "channel": "dry_run", "dry_run": true}
+   22 | cancelled              | 14ed369f-d544-4ed8-9c34-38fd3924541e | 0e3032d2-c116-4d09-8870-bd0af7110676 | 2026-02-17T18:27:43.675263+00:00
+   23 | created                | 14ed369f-d544-4ed8-9c34-38fd3924541e | 7c12cae5-27ea-45eb-8bbe-cf2a2120997c | 2026-02-17T18:27:43.689238+00:00
+      | payload: {"phone": "+972590954021", "role": "contractor"}
+   24 | notification_queued    | 14ed369f-d544-4ed8-9c34-38fd3924541e | 7c12cae5-27ea-45eb-8bbe-cf2a2120997c | 2026-02-17T18:27:43.689735+00:00
+      | payload: {"phone": "+972590954021", "channel": "dry_run", "dry_run": true}
+   25 | resend                 | 14ed369f-d544-4ed8-9c34-38fd3924541e | 7c12cae5-27ea-45eb-8bbe-cf2a2120997c | 2026-02-17T18:27:43.696476+00:00
+   26 | created                | 14ed369f-d544-4ed8-9c34-38fd3924541e | ed3ae937-864d-431d-8773-d291cd165982 | 2026-02-17T18:27:43.716781+00:00
+      | payload: {"phone": "+972590954040", "role": "contractor"}
+   27 | notification_queued    | 14ed369f-d544-4ed8-9c34-38fd3924541e | ed3ae937-864d-431d-8773-d291cd165982 | 2026-02-17T18:27:43.717346+00:00
+      | payload: {"phone": "+972590954040", "channel": "dry_run", "dry_run": true}
+   28 | created                | 14ed369f-d544-4ed8-9c34-38fd3924541e | 14de4ada-5fd4-4bc3-856b-a41c3c923605 | 2026-02-17T18:27:43.737261+00:00
+      | payload: {"phone": "+972590954060", "role": "contractor"}
+   29 | notification_queued    | 14ed369f-d544-4ed8-9c34-38fd3924541e | 14de4ada-5fd4-4bc3-856b-a41c3c923605 | 2026-02-17T18:27:43.737825+00:00
+      | payload: {"phone": "+972590954060", "channel": "dry_run", "dry_run": true}
+   30 | expired                | system                               | 14de4ada-5fd4-4bc3-856b-a41c3c923605 | 2026-02-17T18:27:44.028348+00:00
+      | payload: {"phone": "+972590954060", "role": "contractor", "reason": "passive_expiry_on_login", "expires_at": "2026-02-07T18:27:43.747359"}
+   31 | created                | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 986016d2-177d-4089-8547-3edfbab2ca4b | 2026-02-17T18:27:44.099780+00:00
+      | payload: {"phone": "+972590954051", "role": "management_team"}
+   32 | notification_queued    | 1376d4d9-28ee-4f0d-85af-4640396bded3 | 986016d2-177d-4089-8547-3edfbab2ca4b | 2026-02-17T18:27:44.100476+00:00
+      | payload: {"phone": "+972590954051", "channel": "dry_run", "dry_run": true}
+   33 | created                | 1376d4d9-28ee-4f0d-85af-4640396bded3 | e43469fa-364b-4186-ba79-14fe262ae27a | 2026-02-17T18:27:44.110934+00:00
+      | payload: {"phone": "+972590954052", "role": "contractor"}
+   34 | notification_queued    | 1376d4d9-28ee-4f0d-85af-4640396bded3 | e43469fa-364b-4186-ba79-14fe262ae27a | 2026-02-17T18:27:44.111463+00:00
+      | payload: {"phone": "+972590954052", "channel": "dry_run", "dry_run": true}
+   35 | created                | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 4539f6c5-46de-4a74-8272-e093eb5929ba | 2026-02-17T18:27:44.127641+00:00
+      | payload: {"phone": "+972590954054", "role": "contractor"}
+   36 | notification_queued    | 30ed0d30-fdf5-48b2-b34b-5634499c4fbf | 4539f6c5-46de-4a74-8272-e093eb5929ba | 2026-02-17T18:27:44.128737+00:00
+      | payload: {"phone": "+972590954054", "channel": "dry_run", "dry_run": true}
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  PASS  At least 6 distinct audit event types
+
+
+  Script-tracked audit events (cross-reference):
+
+  Event #1:
+    event: invite_created
+    actor: admin (14ed369f-d544-4ed8-9c34-38fd3924541e)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    target_phone: +972590954001
+    role: project_manager
+    timestamp: 2026-02-17T18:27:41.319391
+
+  Event #2:
+    event: invite_accepted
+    actor: pm (1376d4d9-28ee-4f0d-85af-4640396bded3)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    phone: +972590954001
+    timestamp: 2026-02-17T18:27:41.854663
+
+  Event #3:
+    event: membership_created
+    actor: system (auto-link)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    user_id: 1376d4d9-28ee-4f0d-85af-4640396bded3
+    role: project_manager
+    timestamp: 2026-02-17T18:27:41.854671
+
+  Event #4:
+    event: invite_created
+    actor: pm (1376d4d9-28ee-4f0d-85af-4640396bded3)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    target_phone: +972590954002
+    role: management_team
+    sub_role: site_manager
+    timestamp: 2026-02-17T18:27:41.877516
+
+  Event #5:
+    event: invite_accepted
+    actor: mgmt (30ed0d30-fdf5-48b2-b34b-5634499c4fbf)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    phone: +972590954002
+    timestamp: 2026-02-17T18:27:42.427583
+
+  Event #6:
+    event: membership_created
+    actor: system (auto-link)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    user_id: 30ed0d30-fdf5-48b2-b34b-5634499c4fbf
+    role: management_team
+    sub_role: site_manager
+    timestamp: 2026-02-17T18:27:42.427592
+
+  Event #7:
+    event: invite_created
+    actor: mgmt (30ed0d30-fdf5-48b2-b34b-5634499c4fbf)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    target_phone: +972590954003
+    role: contractor
+    timestamp: 2026-02-17T18:27:42.462306
+
+  Event #8:
+    event: invite_accepted
+    actor: contractor (06f770a3-d1c8-4c70-8add-61b52b7a06a7)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    phone: +972590954003
+    timestamp: 2026-02-17T18:27:43.017515
+
+  Event #9:
+    event: permission_denied
+    actor: Contractor
+    action: create_invite
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    timestamp: 2026-02-17T18:27:43.647231
+
+  Event #10:
+    event: permission_denied
+    actor: Viewer
+    action: create_invite
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    timestamp: 2026-02-17T18:27:43.660295
+
+  Event #11:
+    event: invite_cancelled
+    actor: admin (14ed369f-d544-4ed8-9c34-38fd3924541e)
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    invite_id: 0e3032d2-c116-4d09-8870-bd0af7110676
+    timestamp: 2026-02-17T18:27:43.676772
+
+  Event #12:
+    event: permission_denied
+    actor: pm (1376d4d9-28ee-4f0d-85af-4640396bded3)
+    action: cross_project_invite
+    project_id: 192a2ccf-97d3-4ab5-89b9-148f7a41a6cc
+    timestamp: 2026-02-17T18:27:43.704636
+
+  Event #13:
+    event: invite_expired
+    actor: system
+    project_id: 73093db3-519f-4a49-879b-211464b5b1bd
+    invite_id: 14de4ada-5fd4-4bc3-856b-a41c3c923605
+    reason: passive_expiry_on_login
+    timestamp: 2026-02-17T18:27:44.028348+00:00
+
+
+======================================================================
+RBAC MATRIX TABLE
+======================================================================
+
+  | Role                | Create Invite | List Invites |
+  |---------------------|---------------|--------------|
+  | Admin (owner)       |           200 |          200 |
+  | PM                  |           200 |          200 |
+  | Management Team     |           200 |          200 |
+  | Contractor          |           403 |          403 |
+  | Viewer              |           403 |          403 |
+  | Cross-Project PM    |           403 |          403 |
+
+
+======================================================================
+SUMMARY
+======================================================================
+  Total checks: 54
+  Passed: 54
+  Failed: 0
+  Audit events captured: 13
+  Timestamp: 2026-02-17T18:27:44.168081Z
+
+  VERDICT: ALL CHECKS PASSED ✓

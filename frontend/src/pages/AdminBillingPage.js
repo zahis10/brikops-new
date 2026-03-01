@@ -1,0 +1,889 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { billingService, stepupService, isStepupError, invoiceService } from '../services/api';
+import { toast } from 'sonner';
+import {
+  ArrowRight, Building2, Clock, ShieldCheck, ShieldOff,
+  CalendarPlus, Gift, Ban, Unlock, RefreshCw, Loader2,
+  FileText, User, KeyRound, X, Package, Database, Play,
+  CheckCircle2, AlertTriangle, ChevronDown, ChevronUp
+} from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { Card } from '../components/ui/card';
+
+import {
+  getBillingStatusLabel, getBillingStatusColor,
+  getAccessLabel, getTierLabel, getPlanLabel, formatCurrency,
+  getInvoiceStatusLabel, getInvoiceStatusColor,
+} from '../utils/billingLabels';
+import { getPlanCatalog, getPlanBadge } from '../utils/billingPlanCatalog';
+
+const ACCESS_LABELS = {
+  full_access: { label: 'גישה מלאה', color: 'bg-green-100 text-green-700', icon: ShieldCheck },
+  read_only: { label: 'צפייה בלבד', color: 'bg-red-100 text-red-700', icon: ShieldOff },
+};
+
+import { getActionLabel } from '../utils/actionLabels';
+
+const AdminBillingPage = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const goBack = () => {
+    if (location.state?.from) navigate(location.state.from);
+    else navigate('/projects');
+  };
+  const [orgs, setOrgs] = useState([]);
+  const [audit, setAudit] = useState([]);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const loadGenRef = useRef(0);
+  const hasDataRef = useRef(false);
+  const [actionModal, setActionModal] = useState(null);
+  const [actionDate, setActionDate] = useState('');
+  const [actionNote, setActionNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [stepup, setStepup] = useState(null);
+  const [stepupCode, setStepupCode] = useState('');
+  const [stepupLoading, setStepupLoading] = useState(false);
+  const [plans, setPlans] = useState([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [showPlans, setShowPlans] = useState(false);
+  const [migrationResult, setMigrationResult] = useState(null);
+  const [migrationLoading, setMigrationLoading] = useState(false);
+  const [showMigration, setShowMigration] = useState(false);
+  const [showOrgs, setShowOrgs] = useState(false);
+  const [applyingMigration, setApplyingMigration] = useState(false);
+  const [orgInvoices, setOrgInvoices] = useState({});
+  const [openRequests, setOpenRequests] = useState({ open_count: 0, requests: [] });
+  const [openRequestsExpanded, setOpenRequestsExpanded] = useState(false);
+
+  const loadOrgInvoices = useCallback(async (orgList, gen) => {
+    const results = {};
+    await Promise.allSettled(
+      orgList.map(async (org) => {
+        try {
+          const res = await invoiceService.list(org.id);
+          const invs = res.invoices || [];
+          if (invs.length > 0) results[org.id] = invs[0];
+        } catch {}
+      })
+    );
+    if (gen === loadGenRef.current) {
+      setOrgInvoices(results);
+    }
+  }, []);
+
+  const formatLoadError = (err) => {
+    const status = err.response?.status;
+    let detail = err.response?.data?.detail;
+    if (detail && typeof detail === 'object') {
+      detail = detail.message || JSON.stringify(detail).slice(0, 80);
+    }
+    if (status && detail) return `שגיאה ברענון (HTTP ${status}): ${detail}`;
+    if (status) return `שגיאה ברענון (HTTP ${status})`;
+    if (err.message) return `שגיאה ברענון: ${err.message}`;
+    return 'שגיאה ברענון נתוני חיוב';
+  };
+
+  const loadingRef = useRef(false);
+  const loadData = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    const gen = ++loadGenRef.current;
+    const isFirstLoad = !hasDataRef.current;
+    if (isFirstLoad) {
+      setInitialLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+    setLoadError(null);
+    try {
+      const [orgsData, auditData, openReqs] = await Promise.all([
+        billingService.listOrgs(),
+        billingService.auditLog(),
+        billingService.openPaymentRequestsSummary().catch(() => ({ open_count: 0, requests: [] })),
+      ]);
+      if (gen !== loadGenRef.current) return;
+      hasDataRef.current = true;
+      setOrgs(orgsData);
+      setAudit(auditData);
+      setOpenRequests(openReqs);
+      if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
+      if (orgsData.length > 0) loadOrgInvoices(orgsData, gen);
+    } catch (err) {
+      if (gen !== loadGenRef.current) return;
+      if (isStepupError(err)) {
+        startStepup(() => loadData());
+        return;
+      }
+      const errMsg = formatLoadError(err);
+      if (isFirstLoad) {
+        setLoadError(errMsg);
+      } else {
+        toast.error(errMsg);
+      }
+    } finally {
+      if (gen === loadGenRef.current) {
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
+      loadingRef.current = false;
+    }
+  }, [loadOrgInvoices]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const loadPlans = useCallback(async () => {
+    setPlansLoading(true);
+    try {
+      const data = await billingService.plans();
+      setPlans(data);
+    } catch (err) {
+      if (err.response?.status === 404) {
+        setPlans([]);
+      } else if (isStepupError(err)) {
+        startStepup(() => loadPlans());
+      } else {
+        toast.error('שגיאה בטעינת תוכניות');
+      }
+    } finally {
+      setPlansLoading(false);
+    }
+  }, []);
+
+  const runDryRun = useCallback(async () => {
+    setMigrationLoading(true);
+    try {
+      const data = await billingService.migrationDryRun();
+      setMigrationResult(data);
+    } catch (err) {
+      if (err.response?.status === 404) {
+        setMigrationResult(null);
+        toast.info('תכונת חיוב v1 אינה מופעלת');
+      } else if (isStepupError(err)) {
+        startStepup(() => runDryRun());
+      } else {
+        toast.error('שגיאה בהרצת סימולציה');
+      }
+    } finally {
+      setMigrationLoading(false);
+    }
+  }, []);
+
+  const applyMigration = async () => {
+    setApplyingMigration(true);
+    try {
+      const data = await billingService.migrationApply();
+      setMigrationResult(prev => ({ ...prev, ...data, applied: true }));
+      toast.success(`הועברו ${data.applied_count} פרויקטים`);
+    } catch (err) {
+      if (isStepupError(err)) {
+        startStepup(() => applyMigration());
+      } else {
+        toast.error(err.response?.data?.detail || 'שגיאה בהפעלת מיגרציה');
+      }
+    } finally {
+      setApplyingMigration(false);
+    }
+  };
+
+  const handleDeactivatePlan = async (planId) => {
+    try {
+      await billingService.deactivatePlan(planId);
+      toast.success('תוכנית הושבתה');
+      loadPlans();
+    } catch (err) {
+      if (isStepupError(err)) {
+        startStepup(() => handleDeactivatePlan(planId));
+      } else {
+        toast.error('שגיאה בהשבתת תוכנית');
+      }
+    }
+  };
+
+  const handleAction = async () => {
+    if (!actionNote.trim()) {
+      toast.error('חובה לציין הערה');
+      return;
+    }
+    if ((actionModal.action === 'extend_trial' || actionModal.action === 'activate' || actionModal.action === 'comp') && !actionDate) {
+      toast.error('חובה לבחור תאריך');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const until = actionDate ? new Date(actionDate).toISOString() : undefined;
+      await billingService.override({
+        org_id: actionModal.orgId,
+        action: actionModal.action,
+        until,
+        note: actionNote,
+      });
+      toast.success('הפעולה בוצעה בהצלחה');
+      setActionModal(null);
+      setActionDate('');
+      setActionNote('');
+      loadData();
+    } catch (err) {
+      if (isStepupError(err)) {
+        startStepup(() => handleAction());
+      } else {
+        const detail = err.response?.data?.detail;
+        toast.error(typeof detail === 'object' ? detail.message : (detail || 'שגיאה'));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startStepup = async (retryAction) => {
+    setStepupLoading(true);
+    try {
+      const result = await stepupService.requestChallenge();
+      setStepup({ challengeId: result.challenge_id, maskedEmail: result.masked_email, retryAction });
+      setStepupCode('');
+      toast.success(`קוד אימות נשלח ל-${result.masked_email}`);
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'שגיאה בשליחת קוד אימות';
+      toast.error(typeof detail === 'object' ? detail.message : detail);
+    } finally {
+      setStepupLoading(false);
+    }
+  };
+
+  const handleStepupVerify = async () => {
+    if (!stepup || !stepupCode.trim()) return;
+    setStepupLoading(true);
+    try {
+      await stepupService.verifyChallenge(stepup.challengeId, stepupCode);
+      toast.success('אימות הצליח');
+      const retry = stepup.retryAction;
+      setStepup(null);
+      setStepupCode('');
+      if (retry) retry();
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'קוד לא תקין';
+      toast.error(typeof detail === 'object' ? detail.message : detail);
+    } finally {
+      setStepupLoading(false);
+    }
+  };
+
+  const formatDate = (iso) => {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch { return iso; }
+  };
+
+  const formatDateTime = (iso) => {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch { return iso; }
+  };
+
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+      </div>
+    );
+  }
+
+  if (loadError && !hasDataRef.current) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4" dir="rtl">
+        <AlertTriangle className="w-10 h-10 text-amber-500" />
+        <p className="text-slate-700 text-sm">{loadError}</p>
+        <Button variant="outline" size="sm" onClick={loadData}>
+          <RefreshCw className="w-4 h-4 ml-1" />
+          נסה שוב
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50" dir="rtl">
+      <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={goBack} className="text-slate-500 hover:text-slate-700">
+            <ArrowRight className="w-5 h-5" />
+          </button>
+          <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Building2 className="w-5 h-5 text-amber-500" />
+            ניהול חיוב ומנויים
+          </h1>
+        </div>
+        <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => navigate('/admin/users', { state: { from: '/admin/billing' } })}>
+          <User className="w-4 h-4 ml-1" />
+          משתמשים
+        </Button>
+        <Button variant="outline" size="sm" onClick={loadData} disabled={refreshing}>
+          <RefreshCw className={`w-4 h-4 ml-1 ${refreshing ? 'animate-spin' : ''}`} />
+          רענון
+        </Button>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+        {(() => {
+          const activeOrgs = orgs.filter(o => o.effective_access === 'full_access').length;
+          const totalMonthly = orgs.reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
+          const nowUtc = new Date();
+          const utcYear = nowUtc.getUTCFullYear();
+          const utcMonth = nowUtc.getUTCMonth();
+          let paidThisMonth = 0;
+          Object.values(orgInvoices).forEach(inv => {
+            if (inv && inv.status === 'paid' && inv.paid_at) {
+              const d = new Date(inv.paid_at);
+              if (d.getUTCFullYear() === utcYear && d.getUTCMonth() === utcMonth) {
+                paidThisMonth += (inv.total_amount || 0);
+              }
+            }
+          });
+          return (
+            <section className="grid grid-cols-4 gap-3">
+              <Card className="p-3 text-center">
+                <div className="text-xs text-slate-500">סה״כ ארגונים</div>
+                <div className="text-xl font-bold text-slate-800">{orgs.length}</div>
+              </Card>
+              <Card className="p-3 text-center">
+                <div className="text-xs text-slate-500">ארגונים פעילים</div>
+                <div className="text-xl font-bold text-emerald-700">{activeOrgs}</div>
+              </Card>
+              <Card className="p-3 text-center">
+                <div className="text-xs text-slate-500">צפי MRR</div>
+                <div className="text-xl font-bold text-slate-800">{formatCurrency(totalMonthly)}</div>
+              </Card>
+              <Card className="p-3 text-center">
+                <div className="text-xs text-slate-500">שולם החודש</div>
+                <div className="text-xl font-bold text-emerald-700">{formatCurrency(paidThisMonth)}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5">(לפי חשבונית אחרונה)</div>
+              </Card>
+            </section>
+          );
+        })()}
+
+        <section className="bg-white rounded-xl border border-slate-200 p-4">
+          <button
+            onClick={() => setOpenRequestsExpanded(!openRequestsExpanded)}
+            className="flex items-center justify-between w-full"
+          >
+            <h2 className="text-base font-bold text-slate-700 flex items-center gap-2">
+              <Clock className="w-4 h-4" />
+              בקשות תשלום פתוחות
+              {openRequests.open_count > 0 && (
+                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{openRequests.open_count}</span>
+              )}
+            </h2>
+            {openRequestsExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+          {openRequestsExpanded && (
+            <div className="mt-3 space-y-2">
+              {openRequests.requests.length === 0 ? (
+                <div className="text-sm text-slate-400 py-2">אין בקשות פתוחות</div>
+              ) : (
+                openRequests.requests.map(req => {
+                  const statusColors = { requested: 'bg-amber-100 text-amber-700', sent: 'bg-blue-100 text-blue-700', pending_review: 'bg-amber-100 text-amber-800' };
+                  const statusLabels = { requested: 'ממתין לתשלום', sent: 'נשלח', pending_review: 'ממתין לאישור' };
+                  const cycleLabels = { monthly: 'חודשי', yearly: 'שנתי' };
+                  const fmtDate = (dt) => {
+                    if (!dt) return '—';
+                    const d = new Date(dt);
+                    const dd = String(d.getDate()).padStart(2, '0');
+                    const mm = String(d.getMonth() + 1).padStart(2, '0');
+                    const yyyy = d.getFullYear();
+                    return `${dd}/${mm}/${yyyy}`;
+                  };
+                  return (
+                    <div key={req.id} className="bg-slate-50 rounded-lg p-3 text-sm space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${statusColors[req.status] || 'bg-slate-100 text-slate-500'}`}>
+                            {statusLabels[req.status] || req.status}
+                          </span>
+                          <span className="font-medium text-slate-700 truncate">{req.org_name}</span>
+                          {req.amount_ils > 0 && (
+                            <>
+                              <span className="text-slate-400 text-xs flex-shrink-0">•</span>
+                              <span className="text-slate-600 text-xs font-medium flex-shrink-0">
+                                <bdi dir="ltr">₪{req.amount_ils.toLocaleString('he-IL')}</bdi>
+                              </span>
+                            </>
+                          )}
+                          <span className="text-slate-400 text-xs flex-shrink-0">•</span>
+                          <span className="text-slate-500 text-xs flex-shrink-0">{cycleLabels[req.cycle] || req.cycle}</span>
+                          {req.has_receipt && (
+                            <span className="text-xs text-emerald-600 flex-shrink-0">📎</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-3">
+                          <span className="text-emerald-600 font-medium">להאריך עד: <bdi dir="ltr">{fmtDate(req.requested_paid_until)}</bdi></span>
+                          <span className="text-slate-400">נוצר: <bdi dir="ltr">{fmtDate(req.created_at)}</bdi></span>
+                        </div>
+                        <button
+                          onClick={() => navigate(`/billing/org/${req.org_id}?highlight=${req.id}#requests`)}
+                          className="text-xs text-amber-600 hover:text-amber-700 font-medium whitespace-nowrap"
+                        >
+                          פתח חיוב ארגון
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <button
+            onClick={() => { const next = !showOrgs; setShowOrgs(next); if (next && orgs.length > 0) loadOrgInvoices(orgs); }}
+            className="w-full text-base font-bold text-slate-700 mb-3 flex items-center gap-2 hover:text-slate-900"
+          >
+            <Building2 className="w-4 h-4" />
+            ארגונים ({orgs.length})
+            {showOrgs ? <ChevronUp className="w-4 h-4 mr-auto" /> : <ChevronDown className="w-4 h-4 mr-auto" />}
+          </button>
+          {showOrgs && (
+            <div className="space-y-3">
+              {orgs.map(org => {
+                const accessInfo = ACCESS_LABELS[org.effective_access] || ACCESS_LABELS.read_only;
+                const AccessIcon = accessInfo.icon;
+                const sub = org.subscription || {};
+                return (
+                  <Card key={org.id} className="p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h3 className="font-bold text-slate-800">{org.name}</h3>
+                        <p className="text-xs text-slate-500">
+                          {org.owner?.name || '—'} | {org.owner?.email || (org.owner?.phone_e164 ? <bdi className="font-mono" dir="ltr">{org.owner.phone_e164}</bdi> : '—')}
+                        </p>
+                      </div>
+                      <div className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${accessInfo.color}`}>
+                        <AccessIcon className="w-3 h-3" />
+                        {accessInfo.label}
+                      </div>
+                    </div>
+
+                    {org.read_only_reason && (
+                      <div className={`mb-2 px-2 py-1.5 rounded border text-xs flex items-center gap-1.5 ${
+                        org.read_only_reason === 'suspended'
+                          ? 'bg-red-50 border-red-200 text-red-800'
+                          : 'bg-amber-50 border-amber-200 text-amber-800'
+                      }`}>
+                        <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${
+                          org.read_only_reason === 'suspended' ? 'text-red-500' : 'text-amber-500'
+                        }`} />
+                        <span>{
+                          org.read_only_reason === 'payment_expired' ? 'גישה מוגבלת — התשלום פג תוקף' :
+                          org.read_only_reason === 'trial_expired' ? 'גישה מוגבלת — תקופת הניסיון הסתיימה' :
+                          org.read_only_reason === 'suspended' ? 'גישה מוגבלת — המנוי הושעה' :
+                          'גישה מוגבלת'
+                        }</span>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-slate-600 mb-3">
+                      <div>
+                        <span className="text-slate-400">סטטוס מנוי: </span>
+                        <span className="font-medium">{getBillingStatusLabel(sub.status)}</span>
+                      </div>
+                      {sub.status === 'trialing' && (
+                        <div>
+                          <span className="text-slate-400">סוף ניסיון: </span>
+                          <span className="font-medium">{formatDate(sub.trial_end_at)}</span>
+                        </div>
+                      )}
+                      {sub.status === 'active' && (
+                        <div>
+                          <span className="text-slate-400">שולם עד: </span>
+                          <span className={`font-medium ${org.read_only_reason === 'payment_expired' ? 'text-red-600' : ''}`}>
+                            {sub.paid_until ? formatDate(sub.paid_until) : '—'}
+                          </span>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-slate-400">מחובר עד: </span>
+                        <span className="font-medium">{formatDate(sub.manual_override?.comped_until)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {sub.status === 'active' ? (
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setActionModal({ orgId: org.id, action: 'activate', orgName: org.name })}
+                          className="text-xs text-emerald-600 border-emerald-300"
+                        >
+                          <Play className="w-3 h-3 ml-1" />
+                          הפעלת מנוי
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setActionModal({ orgId: org.id, action: 'extend_trial', orgName: org.name })}
+                          className="text-xs"
+                        >
+                          <CalendarPlus className="w-3 h-3 ml-1" />
+                          הארכת ניסיון
+                        </Button>
+                      )}
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={() => setActionModal({ orgId: org.id, action: 'comp', orgName: org.name })}
+                        className="text-xs"
+                      >
+                        <Gift className="w-3 h-3 ml-1" />
+                        מתנה עד תאריך
+                      </Button>
+                      {sub.manual_override?.is_suspended ? (
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setActionModal({ orgId: org.id, action: 'unsuspend', orgName: org.name })}
+                          className="text-xs text-green-600 border-green-300"
+                        >
+                          <Unlock className="w-3 h-3 ml-1" />
+                          ביטול חסימה
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setActionModal({ orgId: org.id, action: 'suspend', orgName: org.name })}
+                          className="text-xs text-red-600 border-red-300"
+                        >
+                          <Ban className="w-3 h-3 ml-1" />
+                          חסימה
+                        </Button>
+                      )}
+                    </div>
+                    {orgInvoices[org.id] && (() => {
+                      const latestInv = orgInvoices[org.id];
+                      const period = latestInv.period_ym ? `${latestInv.period_ym.split('-')[1]}/${latestInv.period_ym.split('-')[0]}` : '—';
+                      return (
+                        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-600">
+                          <FileText className="w-3.5 h-3.5 text-slate-400" />
+                          <span>חשבונית אחרונה: {period}</span>
+                          <span className={`px-1.5 py-0.5 rounded-full ${getInvoiceStatusColor(latestInv.status)}`}>
+                            {getInvoiceStatusLabel(latestInv.status)}
+                          </span>
+                          <span className="font-medium">{formatCurrency(latestInv.total_amount)}</span>
+                        </div>
+                      );
+                    })()}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <button
+            onClick={() => { setShowPlans(!showPlans); if (!showPlans && plans.length === 0) loadPlans(); }}
+            className="w-full text-base font-bold text-slate-700 mb-3 flex items-center gap-2 hover:text-slate-900"
+          >
+            <Package className="w-4 h-4" />
+            תוכניות תמחור
+            {showPlans ? <ChevronUp className="w-4 h-4 mr-auto" /> : <ChevronDown className="w-4 h-4 mr-auto" />}
+          </button>
+          {showPlans && (
+            <div className="space-y-3 mb-4">
+              {plansLoading ? (
+                <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
+              ) : plans.length === 0 ? (
+                <Card className="p-4 text-sm text-slate-400">אין תוכניות — תכונת חיוב אינה מופעלת או לא הוגדרו תוכניות</Card>
+              ) : (
+                plans.map(plan => {
+                  const cat = getPlanCatalog(plan.id);
+                  const badge = getPlanBadge(plan.id);
+                  const isPro = plan.id === 'plan_pro';
+                  return (
+                    <Card key={plan.id} className={`p-4 ${!plan.is_active ? 'opacity-50' : ''} ${isPro && plan.is_active ? 'border-amber-300 border-2' : ''}`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-lg font-bold text-slate-800">{getPlanLabel(plan.id)}</h3>
+                            {badge && (
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                isPro ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'
+                              }`}>
+                                {badge}
+                              </span>
+                            )}
+                          </div>
+                          {cat && <p className="text-xs text-slate-500 mt-0.5">{cat.shortDescription}</p>}
+                          <p className="text-xs text-slate-400 mt-1">מזהה: {plan.id}</p>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {plan.is_active ? (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">פעיל</span>
+                          ) : (
+                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded">מושבת</span>
+                          )}
+                          {plan.is_active && (
+                            <Button size="sm" variant="outline" className="text-xs text-red-600 border-red-300" onClick={() => handleDeactivatePlan(plan.id)}>
+                              השבת
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 mb-2">
+                        <div>עלות חבילה חודשית: <span className="font-medium">{formatCurrency(plan.project_fee_monthly)}</span></div>
+                        <div>גרסה: <span className="font-medium">{plan.version}</span></div>
+                      </div>
+                      {plan.unit_tiers && (
+                        <div className="mt-1 border-t border-slate-100 pt-2">
+                          <div className="text-xs text-slate-500 mb-1">מדרגות יחידות:</div>
+                          <div className="space-y-1">
+                            {plan.unit_tiers.map(t => (
+                              <div key={t.code} className="flex items-center justify-between text-xs bg-slate-50 rounded px-2 py-1">
+                                <span className="text-slate-600">{getTierLabel(t.code)}</span>
+                                <span className="font-medium text-slate-800">{formatCurrency(t.monthly_fee)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })
+              )}
+              <Button variant="outline" size="sm" onClick={loadPlans} disabled={plansLoading}>
+                <RefreshCw className="w-3 h-3 ml-1" />
+                רענון תוכניות
+              </Button>
+            </div>
+          )}
+        </section>
+
+        <section>
+          <button
+            onClick={() => { setShowMigration(!showMigration); }}
+            className="w-full text-base font-bold text-slate-700 mb-3 flex items-center gap-2 hover:text-slate-900"
+          >
+            <Database className="w-4 h-4" />
+            מיגרציה
+            {showMigration ? <ChevronUp className="w-4 h-4 mr-auto" /> : <ChevronDown className="w-4 h-4 mr-auto" />}
+          </button>
+          {showMigration && (
+            <div className="space-y-3 mb-4">
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={runDryRun} disabled={migrationLoading}>
+                  {migrationLoading ? <Loader2 className="w-3 h-3 animate-spin ml-1" /> : <Play className="w-3 h-3 ml-1" />}
+                  הרצת סימולציה
+                </Button>
+                {migrationResult && migrationResult.auto_resolvable_count > 0 && !migrationResult.applied && (
+                  <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" onClick={applyMigration} disabled={applyingMigration}>
+                    {applyingMigration ? <Loader2 className="w-3 h-3 animate-spin ml-1" /> : <CheckCircle2 className="w-3 h-3 ml-1" />}
+                    הפעל מיגרציה
+                  </Button>
+                )}
+              </div>
+              {migrationResult && (
+                <Card className="p-4 space-y-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                    <div className="bg-slate-50 rounded p-2">
+                      <div className="text-slate-500 text-xs">סה״כ פרויקטים</div>
+                      <div className="font-bold text-slate-800">{migrationResult.total_projects}</div>
+                    </div>
+                    <div className="bg-green-50 rounded p-2">
+                      <div className="text-green-600 text-xs">עם org_id</div>
+                      <div className="font-bold text-green-700">{migrationResult.projects_with_org_id}</div>
+                    </div>
+                    <div className="bg-amber-50 rounded p-2">
+                      <div className="text-amber-600 text-xs">חסר org_id</div>
+                      <div className="font-bold text-amber-700">{migrationResult.projects_missing_org_id}</div>
+                    </div>
+                    <div className="bg-blue-50 rounded p-2">
+                      <div className="text-blue-600 text-xs">אוטומטי</div>
+                      <div className="font-bold text-blue-700">{migrationResult.auto_resolvable_count}</div>
+                    </div>
+                    <div className="bg-red-50 rounded p-2">
+                      <div className="text-red-600 text-xs">עמום (דורש ידני)</div>
+                      <div className="font-bold text-red-700">{migrationResult.ambiguous_count}</div>
+                    </div>
+                    {migrationResult.applied_count !== undefined && (
+                      <div className="bg-emerald-50 rounded p-2">
+                        <div className="text-emerald-600 text-xs">הופעלו</div>
+                        <div className="font-bold text-emerald-700">{migrationResult.applied_count}</div>
+                      </div>
+                    )}
+                  </div>
+                  {migrationResult.ambiguous?.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-red-600 flex items-center gap-1 mb-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        פרויקטים עמומים (דורשים הקצאה ידנית)
+                      </h4>
+                      <div className="text-xs text-slate-600 space-y-1">
+                        {migrationResult.ambiguous.map(p => (
+                          <div key={p.project_id} className="bg-red-50 rounded px-2 py-1">
+                            {p.project_name || p.project_id} — יוצר: {p.created_by?.slice(0, 8)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="text-base font-bold text-slate-700 mb-3 flex items-center gap-2">
+            <FileText className="w-4 h-4" />
+            יומן פעולות
+          </h2>
+          {audit.length === 0 ? (
+            <p className="text-sm text-slate-400">אין אירועים</p>
+          ) : (
+            <>
+              <div className="hidden sm:block bg-white rounded-lg border border-slate-200 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-right">תאריך</th>
+                      <th className="px-3 py-2 text-right">פעולה</th>
+                      <th className="px-3 py-2 text-right">משתמש</th>
+                      <th className="px-3 py-2 text-right">הערה</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {audit.slice(0, 50).map(ev => (
+                      <tr key={ev.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2 text-slate-600">{formatDateTime(ev.created_at)}</td>
+                        <td className="px-3 py-2 font-medium text-slate-700">{getActionLabel(ev.action)}</td>
+                        <td className="px-3 py-2 text-slate-600">
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3" />
+                            {ev.actor_name || ev.actor_id?.slice(0, 8)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-500">{ev.payload?.note || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="sm:hidden space-y-2">
+                {audit.slice(0, 50).map(ev => (
+                  <Card key={ev.id} className="p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-700">{getActionLabel(ev.action)}</span>
+                      <span className="text-xs text-slate-400">{formatDateTime(ev.created_at)}</span>
+                    </div>
+                    <div className="text-xs text-slate-600 flex items-center gap-1">
+                      <User className="w-3 h-3" />
+                      {ev.actor_name || ev.actor_id?.slice(0, 8)}
+                    </div>
+                    {ev.payload?.note && (
+                      <div className="text-xs text-slate-500">{ev.payload.note}</div>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      </main>
+
+      {actionModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" dir="rtl">
+            <h3 className="text-lg font-bold text-slate-800 mb-1">
+              {actionModal.action === 'extend_trial' && 'הארכת ניסיון'}
+              {actionModal.action === 'activate' && 'הפעלת מנוי'}
+              {actionModal.action === 'comp' && 'מתנה עד תאריך'}
+              {actionModal.action === 'suspend' && 'חסימת ארגון'}
+              {actionModal.action === 'unsuspend' && 'ביטול חסימה'}
+            </h3>
+            <p className="text-sm text-slate-500 mb-4">{actionModal.orgName}</p>
+
+            {(actionModal.action === 'extend_trial' || actionModal.action === 'activate' || actionModal.action === 'comp') && (
+              <div className="mb-3">
+                <label className="block text-sm text-slate-600 mb-1">עד תאריך *</label>
+                <input
+                  type="date"
+                  value={actionDate}
+                  onChange={e => setActionDate(e.target.value)}
+                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+                />
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm text-slate-600 mb-1">הערה (חובה) *</label>
+              <textarea
+                value={actionNote}
+                onChange={e => setActionNote(e.target.value)}
+                rows={2}
+                className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+                placeholder="סיבה לפעולה..."
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <Button onClick={handleAction} disabled={submitting} className="flex-1">
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אישור'}
+              </Button>
+              <Button variant="outline" onClick={() => { setActionModal(null); setActionDate(''); setActionNote(''); }}>
+                ביטול
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {stepup && (
+        <div className="fixed inset-0 bg-black/60 z-[10000] flex items-center justify-center p-4" onClick={() => setStepup(null)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6" dir="rtl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-amber-500" />
+                אימות נוסף נדרש
+              </h3>
+              <button onClick={() => setStepup(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              קוד אימות נשלח לכתובת: <span className="font-medium">{stepup.maskedEmail}</span>
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-slate-700">קוד אימות *</label>
+                <input
+                  type="text"
+                  value={stepupCode}
+                  onChange={(e) => setStepupCode(e.target.value)}
+                  placeholder="הזן את הקוד שקיבלת"
+                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm text-center font-mono tracking-widest focus:ring-2 focus:ring-amber-500"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleStepupVerify()}
+                />
+              </div>
+              <Button
+                onClick={handleStepupVerify}
+                disabled={stepupLoading || !stepupCode.trim()}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+              >
+                {stepupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אמת וחזור לפעולה'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AdminBillingPage;

@@ -1,0 +1,51 @@
+{
+  "total_users": 16,
+  "active_users": 14,
+  "unique_management_users": {
+    "total": 13,
+    "with_email": 10,
+    "with_password": 10,
+    "with_both": 10,
+    "missing_either": 3
+  },
+  "role_assignments_non_unique": {
+    "total_assignments": 19,
+    "by_role": {
+      "super_admin": {
+        "users_holding_role": 1,
+        "with_email": 1,
+        "with_password": 1
+      },
+      "owner": {
+        "users_holding_role": 12,
+        "with_email": 10,
+        "with_password": 10
+      },
+      "org_admin": {
+        "users_holding_role": 0,
+        "with_email": 0,
+        "with_password": 0
+      },
+      "billing_admin": {
+        "users_holding_role": 1,
+        "with_email": 1,
+        "with_password": 1
+      },
+      "project_manager": {
+        "users_holding_role": 3,
+        "with_email": 3,
+        "with_password": 3
+      },
+      "management_team": {
+        "users_holding_role": 2,
+        "with_email": 1,
+        "with_password": 1
+      }
+    }
+  },
+  "contractors": {
+    "total": 1,
+    "with_email": 0
+  },
+  "viewers_other": 2
+}

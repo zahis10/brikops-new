@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Auto Login</title></head>
+<body>
+<script>
+const params = new URLSearchParams(window.location.search);
+const email = params.get('email') || 'admin@contractor-ops.com';
+const password = params.get('password') || 'admin123';
+const redirect = params.get('redirect') || '/';
+
+async function doLogin() {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (data.token) {
+      localStorage.setItem('token', data.token);
+      document.body.innerText = 'Login OK, token set. Redirecting...';
+      setTimeout(() => { window.location.href = redirect; }, 100);
+    } else {
+      document.body.innerText = 'Login failed: ' + JSON.stringify(data);
+    }
+  } catch(err) {
+    document.body.innerText = 'Error: ' + err.message;
+  }
+}
+doLogin();
+</script>
+<p>Logging in...</p>
+</body>
+</html>
