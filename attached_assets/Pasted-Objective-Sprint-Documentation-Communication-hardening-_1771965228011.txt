@@ -1,0 +1,298 @@
+Objective
+Sprint: Documentation + Communication hardening for BrikOps QC system.
+Priorities: P1 (Manual WhatsApp for rejection), P2 (Media Guardian / Upload polish), P3 (Pre-work documentation stage), P4 (Short video assessment only, optional/deferred).
+
+Important scope rule
+- Keep this sprint focused on documentation/communication hardening.
+- Do not change unrelated business logic, permissions, or QC workflow behavior outside the tasks below.
+- Preserve existing stability improvements: optimistic upload, scroll anchor, local draft preservation, batch upload partial rollback.
+
+==================================================
+P1 — WhatsApp Manual Rejection Notification
+==================================================
+
+T001: Backend — Manual QC rejection WhatsApp endpoint
+- Blocked By: []
+- Details:
+  - New endpoint: POST /api/qc/run/{run_id}/stage/{stage_id}/notify-rejection
+  - Accepts: { recipient_user_id, item_id (optional), message (optional — default template) }
+  - RBAC: PM / approver / management_team only. Contractors blocked.
+  - Logic:
+    a) Validate run_id, stage_id exist and stage/item was actually rejected
+       - If item_id provided: validate item exists in stage and item reviewer status is rejected (or equivalent rejected state)
+       - If no item_id: validate stage is currently rejected
+    b) Validate recipient_user_id is a member of the project (project_memberships)
+    c) Fetch recipient phone_e164 from users collection — if missing, return 400 with clear Hebrew message
+    d) Build message content:
+       - project name
+       - floor
+       - stage title
+       - item title (if item-level)
+       - rejection reason (stage/item level as relevant)
+       - direct link to stage/item in system
+       - first photo URL if available
+    e) Send via existing WhatsAppClient
+       - text only OR template+image if current infra supports it
+    f) Audit event on success: qc_rejection_whatsapp_sent_manual
+       - payload: project_id, run_id, stage_id, item_id, recipient_user_id, recipient_role, has_image, result_status
+    g) Audit event on failure as well (separate action or same action with result_status=failed)
+  - Files: backend/contractor_ops/qc_router.py
+- Acceptance:
+  - 200 on success
+  - 400 if no phone
+  - 403 unauthorized
+  - audit logged (success and failure paths)
+
+T002: Backend — Team contacts (availability only, no raw phones)
+- Blocked By: []
+- Details:
+  - New endpoint: GET /api/qc/run/{run_id}/team-contacts
+  - Returns project team members with:
+    - user_id
+    - name
+    - role
+    - has_whatsapp (boolean based on phone_e164 existence)
+  - MUST NOT return raw phone numbers to frontend
+  - RBAC: PM / approver / management_team only  <-- IMPORTANT (aligned with T001/T003)
+  - Files: backend/contractor_ops/qc_router.py
+- Acceptance:
+  - Returns member list with availability indicator
+  - No raw phones exposed
+  - Approver-only user can fetch it if they can see the CTA
+
+T003: Frontend — Rejection WhatsApp CTA + recipient picker modal
+- Blocked By: [T001, T002]
+- Details:
+  - In StageDetailPage.js add CTA in rejection contexts only:
+    - After stage rejection (near rejection display): "שלח הודעת דחייה ב-WhatsApp"
+    - After item rejection (near reviewer_rejection display): same CTA
+  - CTA visible only to PM / approver / management_team (reuse existing permission checks, do not broaden auth)
+  - On click:
+    - Open modal/bottom sheet
+    - Fetch team contacts from T002
+    - Show list: name + role label (use getRoleLabel) + WhatsApp availability indicator
+    - Members without phone: grayed out + not selectable
+    - If nobody has phone: clear empty-state message + close CTA
+    - Show default message text (editable textarea) prefilled from rejection context
+    - "שלח" button calls T001
+    - Success/error toast in Hebrew
+  - No raw phone input field anywhere
+  - Files:
+    - frontend/src/pages/StageDetailPage.js
+    - optional new component: frontend/src/components/WhatsAppRejectionModal.js
+- Acceptance:
+  - CTA appears only in rejection context
+  - Recipient selection from project team only
+  - No raw phone input
+  - Send works
+  - Clear blocked UX when no phone is available
+
+==================================================
+P2 — Media Guardian / Upload Polish
+==================================================
+
+T004: Frontend — Upload queue indicator per item
+- Blocked By: []
+- Details:
+  - Track upload state per item:
+    uploadingItems = {
+      [itemId]: {
+        total,
+        completed,
+        failed,
+        files: [{ client_id, name, status, error_code? }]
+      }
+    }
+  - Show small indicator near photo area:
+    - "מעלה 2/5..." + spinner
+  - Show subtle per-file status:
+    - success check / failed X
+  - Files: frontend/src/pages/StageDetailPage.js
+- Acceptance:
+  - Visual queue indicator during upload
+  - Per-file status visible
+
+T005: Frontend — Block dangerous actions during upload
+- Blocked By: [T004]
+- Details:
+  - Derive global hasActiveUploads from uploadingItems
+  - While uploads active:
+    - Disable "שלח לאישור" with clear reason: "ממתין לסיום העלאות"
+    - Do not reset localChanges/drafts
+    - beforeunload warning if pending uploads or unsaved changes
+  - Files: frontend/src/pages/StageDetailPage.js
+- Acceptance:
+  - Submit blocked during active uploads
+  - Leave/refresh warning appears
+  - No draft reset regression
+
+T006: Frontend — Per-file retry for failed uploads
+- Blocked By: [T004]
+- Details:
+  - Failed files remain visible with small retry CTA: "נסה שוב"
+  - Retry only that specific file
+  - Successful files remain intact
+  - Preserve scroll anchor / current item focus
+  - Files: frontend/src/pages/StageDetailPage.js
+- Acceptance:
+  - Retry works per failed file
+  - Success files unaffected
+  - Scroll remains stable
+
+T007: Frontend — Micro-copy improvements (Hebrew upload UX)
+- Blocked By: []
+- Details:
+  - Camera button: "צלם עכשיו" / "צלם עוד" (if photos already exist)
+  - Gallery picker button: "בחר תמונות"
+  - Hebrew error messages:
+    - File too large: "הקובץ גדול מדי (מקסימום 10MB)"
+    - Unsupported format: "פורמט לא נתמך. השתמש ב-JPEG, PNG או WebP"
+    - Network error: "שגיאת רשת — נסה שוב"
+  - Files: frontend/src/pages/StageDetailPage.js
+- Acceptance:
+  - Hebrew microcopy applied consistently in upload flow
+
+==================================================
+P3 — Pre-work Documentation ("פתיחת מלאכה")
+==================================================
+
+T008: Backend — Add pre-work documentation stage to QC template
+- Blocked By: []
+- Details:
+  - Add new first stage to FLOOR_TEMPLATE (order 0):
+    {
+      "id": "stage_prework",
+      "title": "פתיחת מלאכה",
+      "order": 0,
+      "pre_work_documentation": true,
+      "items": [
+        {"id": "pw_1", "title": "תיעוד מצב קיים", "order": 1, "required_photo": True, "required_note": False},
+        {"id": "pw_2", "title": "הערות כלליות", "order": 2, "required_photo": False, "required_note": False}
+      ]
+    }
+  - Bump existing stage orders by +1 for template-generated runs
+  - Backward compatibility:
+    - Existing QC runs without this stage must continue to work
+    - Implement safe migration-on-read / ensure-stage-present strategy (no breaking changes to existing runs)
+    - Do not duplicate stage_prework if load occurs multiple times
+  - Files: backend/contractor_ops/qc_router.py
+- Acceptance:
+  - New runs show stage first
+  - Existing runs unaffected
+  - No duplicate pre-work stage generation
+
+T009: Frontend — Pre-work documentation badge + flow
+- Blocked By: [T008]
+- Details:
+  - In FloorDetailPage / StageDetailPage:
+    - Show badge: "תיעוד לפני עבודה"
+    - Stage appears first in flow
+    - Visual distinction (subtle badge/icon), not heavy styling
+  - Reuse existing upload / note / status flow (no custom logic fork)
+  - Files:
+    - frontend/src/pages/FloorDetailPage.js
+    - frontend/src/pages/StageDetailPage.js
+- Acceptance:
+  - Badge visible
+  - Stage is first
+  - Photo+note flow works normally
+
+==================================================
+P4 — Video (Optional, assessment only)
+==================================================
+
+T010: Assessment only — no implementation
+- Blocked By: [T001-T009]
+- Details:
+  - Defer video support implementation for now (per spec)
+  - Provide written assessment only:
+    - storage impact
+    - preview UX
+    - upload duration / mobile reliability
+    - recommended max duration + max file size
+    - supported formats
+    - fallback behavior on slow networks
+  - No code changes
+- Acceptance:
+  - Written assessment delivered (no implementation)
+
+==================================================
+Implementation order (recommended)
+==================================================
+1) T001 + T002 (backend WhatsApp APIs)
+2) T003 (frontend WhatsApp modal/CTA)
+3) T004 + T005 + T006 + T007 (media guardian/upload polish)
+4) T008 + T009 (pre-work stage + UI badge)
+5) T010 (assessment memo only, if time remains)
+
+==================================================
+High-risk release requirements (MANDATORY for this sprint)
+==================================================
+This sprint touches sensitive areas (permissions, uploads, WhatsApp/customer-facing messaging). Do not close tasks without proof.
+
+1) No closure without proof
+- For any sensitive bug/fix:
+  - root cause
+  - fix summary
+  - regression checks
+  - API/UI proof (request/response + screenshots)
+
+2) Guardrails on sensitive screens
+- Frontend:
+  - prevent race conditions / stale refresh overwrites
+  - preserve drafts/localChanges during uploads
+  - cancel/reset-safe behavior
+- Backend:
+  - strict org/project/run/stage scoping validation
+  - RBAC checks at endpoint level
+  - audit logs for success/failure actions
+
+3) Do not close as "user confusion"
+- If behavior is unclear, treat as hypothesis until verified with logs, reproduction, or code proof
+
+4) Release gates before publish
+- Smoke tests + negative tests must pass before customer-facing release
+
+==================================================
+Required proof package (end of sprint)
+==================================================
+A) WhatsApp manual rejection (P1)
+- API proof:
+  - success 200
+  - 400 no phone
+  - 403 unauthorized
+- UI proof:
+  - CTA visible in rejection context
+  - recipient picker from team only
+  - no raw phone input
+  - no-phone disabled/grayed state
+- Audit proof:
+  - success audit event
+  - failure audit event
+
+B) Media guardian (P2)
+- Screenshots/video:
+  - upload queue indicator
+  - per-file fail + retry
+  - submit blocked while uploads active
+- Regression proof:
+  - no scroll jump
+  - no draft reset
+  - successful files preserved after retrying failed file
+
+C) Pre-work stage (P3)
+- New run shows "פתיחת מלאכה" first
+- Existing run still loads (no break)
+- No duplicate pre-work stage on repeated loads
+- Badge shown in floor/stage UI
+
+D) T010 assessment (if done)
+- Written doc only (no code changes)
+
+==================================================
+Notes
+==================================================
+- Reuse shared getRoleLabel() and existing WhatsApp client infrastructure
+- Keep UI Hebrew-first and mobile-first
+- No raw role/status codes in UI
+- No raw phone numbers returned to frontend

@@ -1,0 +1,72 @@
+Approved — the plan is solid and we should start building, with a few important refinements before implementation:
+
+APPROVED WITH ADJUSTMENTS
+
+Overall: ✅ Approved to build
+The 3 issues / 10 tasks breakdown is correct, root causes are clear, and task split is good.
+
+Required refinements before implementation starts:
+
+1) Issue 1 (WhatsApp recipients) — use one centralized allowlist for recipient roles
+Please define a single backend allowlist constant for eligible recipient roles (same constant reused by both endpoints):
+- PM / approver / management_team / admin / owner / super_admin (adjust to actual role names in codebase)
+Explicitly exclude:
+- contractor / viewer / tenant (and any non-management roles)
+
+Important:
+- team-contacts must return only eligible project members (same project/org scope)
+- notify-rejection must re-validate recipient role server-side even if frontend filters it
+- log blocked attempts (403) in audit trail
+
+2) Issue 2 (פתיחת מלאכה) — correction to scope
+This should NOT be embedded in all 7 stages by default.
+Per product requirement, pre-work documentation should be embedded only in relevant trade stages (at minimum: plumbing / electrical / plaster), not as a standalone stage and not globally in every stage.
+
+Please update T004/T005 accordingly:
+- Remove standalone stage_prework for template v3 (new runs)
+- Add pre-work items at the beginning of relevant stages only
+- Keep item-level flag: pre_work_documentation=true
+- Legacy runs with standalone stage_prework must continue to render safely (no duplication)
+
+If you want flexibility, make the target stages configurable via a stage-id allowlist.
+
+3) Issue 3 (נכשל + אושר inconsistency) — approval guard must be server-authoritative
+T006 is correct, but implementation must validate against actual item states in backend (not cached frontend counts).
+Block approve_stage if any blocking condition exists, including:
+- item status=fail
+- reviewer_rejection exists / unresolved rejection
+- any equivalent failure marker in current data model
+
+Return 422 with clear Hebrew/English error and write audit event for blocked approval attempt.
+
+4) T009 Data repair — do it as safe, idempotent repair
+Good to repair the known inconsistent run (e152b343 / ceiling_prep), but please:
+- run a dry-run scan first across all runs for approved + failed/rejected items
+- print report of all affected records
+- apply idempotent repair (approved -> reopened or pending_review per current workflow rule)
+- audit every repaired record
+- print final repair summary
+
+5) T010 Proof package / release gate — mandatory (this is a sensitive change)
+This touches permissions + approvals + customer-facing WhatsApp, so do not close without proof.
+
+Required proof package:
+- Root cause + fix summary per issue (1/2/3)
+- API proof (success + forbidden/unauthorized/validation failures)
+- UI screenshots before/after
+- Audit log evidence (send success, send blocked, approve blocked, repair events)
+- Data repair report (dry-run + applied)
+- Smoke + negative tests
+
+High-risk quality gates (mandatory for this sprint)
+1. No closure without proof
+   - root cause + fix + regression notes + API/UI evidence
+2. Guardrails on sensitive flows
+   - strict backend RBAC and server-side approval guard
+   - audit logs for success/failure/blocked actions
+3. No “user confusion” closure
+   - show exact logic/data cause for inconsistency and prevention
+4. Release gate before customer-facing publish
+   - smoke tests + negative tests + screenshots + audit evidence
+
+Please proceed after updating T004 scope (relevant stages only) and confirming the exact recipient-role allowlist names used in code.

@@ -1,0 +1,50 @@
+מאשר את T001–T007 (Stripe Billing V1) כפי שסיכמת — מצוין ומסונכרן לקיים.
+
+Critical notes (must-do) כדי לא ליצור באגים:
+
+1) NEVER SHORTEN validity (חוק הזהב) — חובה ליישם ב-checkout-session + webhook
+- ב-POST /api/billing/org/{org_id}/checkout-session:
+  אם יש paid_until עתידי (או trial_end_at עתידי) — להגדיר ב-Stripe subscription trial_end כך שהחיוב הראשון יתחיל אחרי התוקף הקיים:
+  effective_start = max(now, paid_until, trial_end_at)
+  ואז subscription_data.trial_end = effective_start (unix timestamp)
+  כך לא “שורפים” למשתמש ימים קיימים.
+- ב-webhook: כל עדכון paid_until חייב להיות:
+  paid_until = max(existing_paid_until, stripe_period_end_utc)
+  (לא לדרוס לערך קטן יותר אם אירועים מגיעים out-of-order)
+
+2) Webhook event set מינימלי (להימנע מכפילות)
+מומלץ להתבסס בעיקר על:
+- invoice.paid (הכי “מקור אמת” לחידוש בפועל)
++ checkout.session.completed רק כדי לקשור metadata/ids ביום הראשון.
+כל אירוע שמעדכן paid_until: להשתמש ב-max() כמו בסעיף 1.
+
+3) manual_override precedence (כבר יש לכם)
+אם manual_override.is_suspended=true → גם אם Stripe active, הגישה צריכה להישאר מוגבלת לפי _resolve_access.
+אם is_comped/comped_until → גם אם אין תשלום, עדיין להעניק גישה עד comped_until.
+=> Stripe לא “מבטל” override; override נשאר מקור אמת עליון.
+
+4) Success/Cancel URLs — לא לקבע preview domain
+ב-Preview/Prod הדומיין משתנה. עדיף לבנות success_url/cancel_url לפי request.origin או BASE_URL env.
+להזריק org_id + query param:
+?checkout=success / ?checkout=cancel
+(כדי שה-frontend יעשה refetch + toast)
+
+5) Data model additions (backward compatible) — מדויק
+השדות החדשים בסאבסקריפשן:
+stripe_customer_id, stripe_subscription_id, billing_cycle, auto_renew, next_charge_at
++ מומלץ: stripe_price_id_current (לא חובה אבל עוזר לדיבוג/שינוי תוכניות)
+לוודא אינדקסים:
+- stripe_subscription_id unique (sparse)
+- stripe_events.event_id unique (idempotency)
+
+6) RBAC עקבי
+בכל 3 endpoints חדשים:
+- checkout-session, portal-session: can_manage_billing בלבד
+- webhook: no-auth, signature verify בלבד
+
+Proof package (מה שמסיים את זה):
+- Screenshot של Stripe Checkout (test mode) שנפתח מהכפתור “לתשלום”
+- Webhook log: invoice.paid processed + stripe_event_id stored
+- JSON: /api/billing/org/{org_id} אחרי תשלום עם:
+  subscription_status=active, paid_until updated, stripe_subscription_id set, auto_renew=true
+- Screenshot של OrgBillingPage: כפתור “לתשלום” פעיל + “בתוקף עד …” מתעדכן

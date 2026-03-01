@@ -1,0 +1,57 @@
+מעולה. מוסיף גם labels בעברית ל-7 ה-stages כדי שה-UI של “מאשרים בפרויקט” יהיה ברור.
+
+A) Stage labels (source of truth ל-UI + validation)
+להגדיר mapping קבוע (code -> label_he):
+- stage_ceiling_prep   -> "הכנה ליציקת תקרה"
+- stage_blocks_row1    -> "בלוקים – שורה ראשונה"
+- stage_plumbing       -> "הכנות אינסטלציה"
+- stage_electrical     -> "הכנות חשמל"
+- stage_plaster        -> "טיח"
+- stage_waterproof     -> "הצפה / אטימות"
+- stage_acoustic       -> "אקוסטיקה"
+
+בבקשה:
+1) ליצור endpoint קטן שמחזיר את הרשימה הזו ל-frontend (כדי שלא יהיה hardcoded כפול):
+   GET /api/qc/meta/stages  -> [{code, label_he}]
+   (או לחשוף את זה בדרך אחרת קיימת בקוד)
+
+B) project_approvers (V1 לפי stages)
+- fields: project_id, user_id, mode("all"|"stages"), stages[] (אם mode=stages), created_by, created_at, revoked_at
+- stages[] חייב להיות מתוך הרשימה למעלה (validate)
+- unique active per (project_id,user_id)
+
+Endpoints (PM + super_admin):
+- GET    /api/projects/:projectId/qc-approvers
+- POST   /api/projects/:projectId/qc-approvers   body: { user_id, mode, stages? }
+- DELETE /api/projects/:projectId/qc-approvers/:userId  (revoke)
+
+C) Approve/Reject endpoints (חסר היום)
+- POST /api/qc/stages/:stageId/approve  body: { note? }
+- POST /api/qc/stages/:stageId/reject   body: { reason }
+
+Rules:
+- stage חייב להיות pending_review אחרת 400
+- super_admin תמיד OK
+- אחרת: check approver לפרויקט + scope:
+  mode=all -> OK
+  mode=stages -> stage.code in approver.stages -> OK
+  אחרת 403
+
+D) UI
+Project Settings -> “מאשרים בפרויקט”
+- רשימה של מאשרים קיימים עם תצוגה:
+  - "מאשר הכל" או "מאשר שלבים: הכנות אינסטלציה, טיח..."
+- Add approver:
+  - לבחור משתמש
+  - לבחור scope:
+    - הכל
+    - שלבים (checkboxes עם labels בעברית מהרשימה למעלה)
+
+במסך QC:
+- אם stage.status = pending_review והמשתמש approver -> להציג Approve/Reject
+- אחרת -> locked + טקסט "אין הרשאת אישור לשלב זה"
+
+E) Audit
+- approver_granted / approver_revoked
+- qc_submitted / qc_approved / qc_rejected
+עם: actor_id, project_id, stage_id, decision, reason/note, timestamp

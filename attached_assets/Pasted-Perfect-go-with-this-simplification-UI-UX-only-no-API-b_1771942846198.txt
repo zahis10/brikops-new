@@ -1,0 +1,60 @@
+Perfect — go with this simplification (UI/UX only, no API/business logic changes).
+
+Goal:
+Remove the redundant custom upload menu and make gallery/files selection a one-tap flow.
+
+Changes to implement (StageItemRow upload UI):
+1) Remove custom UploadBottomSheet completely
+- Delete the bottom sheet / sheetOpen flow
+- Remove related state/refs used only for the sheet (filesRef, galleryRef, etc. if no longer needed)
+
+2) Keep only 2 upload entry points
+A) Primary button (camera-first, field workflow)
+- Label: "צלם עכשיו" (or "צלם עוד" if photos already exist)
+- Opens camera directly via hidden input with:
+  - accept="image/*"
+  - capture="environment"
+- Single capture flow (as today)
+
+B) Secondary button (one-tap OS picker)
+- Label in Hebrew: "בחר תמונות" (or "בחר תמונות/קבצים" if it supports files later)
+- Directly opens hidden input (no app-level menu before it)
+- Hidden input config:
+  - accept="image/*"
+  - multiple
+  - no capture
+- On iOS this should open the native Apple chooser (Camera / Photo Library / Browse) in one tap
+
+3) Simplify component logic / refs
+- Keep only:
+  - cameraRef (direct camera)
+  - pickerRef (gallery/native chooser)
+- Remove sheet state and option handlers
+- Keep input.value reset after selection so the same file(s) can be selected again
+
+4) Visual polish (same pass)
+- Tighter spacing around the split upload CTA
+- Consistent button heights/widths
+- Better RTL alignment and icon spacing
+- Cleaner banner layout when "חובה לצרף תמונה" is shown
+- No duplicate upload UI when the required-photo banner appears (same CTA reused there)
+
+5) Keep all existing behavior intact (must not regress)
+- Batch multi-photo upload still works
+- Optimistic previews still work
+- No scroll jump
+- No local draft reset (status/note stay)
+- Partial failure rollback per file still works
+- uploadLockRef / double-tap protection remains
+
+Acceptance criteria:
+- "צלם עכשיו" = direct camera (one tap)
+- "בחר תמונות" = direct native picker (one tap, no custom sheet first)
+- No redundant app-level menu before iOS picker
+- Existing upload reliability behavior unchanged
+
+Please implement and send screenshots/video for:
+1) Required-photo item (no photo yet)
+2) Existing-photo item ("צלם עוד")
+3) iPhone secondary button opening native picker directly
+4) Multi-photo upload working with no scroll jump

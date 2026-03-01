@@ -1,0 +1,67 @@
+Great progress. Next sprint: WhatsApp Notifications + reliability hardening for Contractor Ops.
+
+Critical boundary:
+- Keep Contractor Ops separate from Bedek Expert.
+- Do NOT add engineering inspection report logic.
+
+Implement in 3 phases:
+
+PHASE A — Manual WhatsApp from task detail (V1)
+1) Add button on Task Detail: "שלח עדכון בוואטסאפ".
+2) Build message payload from task fields:
+   project, building, floor, unit, category, title, priority, due_date, task_link.
+3) Send to assigned contractor phone (company/user phone in E.164).
+4) Save send attempt in `notification_jobs` with status and provider response.
+5) Show success/error toast in UI.
+
+PHASE B — Automatic WhatsApp pipeline (V2)
+1) Create collection `notification_jobs`:
+   { _id, task_id, event_type, target_phone, payload, status, attempts, provider_message_id, last_error, created_at, updated_at }
+2) Enqueue job on:
+   - task created+assigned
+   - status changed to waiting_verify
+   - task closed
+3) Add worker loop with retry policy (max 3 attempts, exponential backoff).
+4) Add idempotency key per (task_id + event_type + assignee + minute bucket) to avoid duplicate sends.
+5) Feature flag:
+   WHATSAPP_ENABLED=true/false
+   If false => dry-run only (log + mark skipped).
+
+PHASE C — Hardening
+1) Validate phone format E.164 before send.
+2) Add webhook endpoint for delivery statuses:
+   update notification_jobs status: sent/delivered/read/failed.
+3) Add audit event for enqueue/send/fail/webhook updates.
+4) Add API endpoint:
+   GET /api/tasks/{id}/notifications
+   to show timeline in task detail.
+5) Add admin endpoint:
+   POST /api/notifications/{id}/retry
+
+Config/env required:
+- WHATSAPP_ENABLED
+- WHATSAPP_PROVIDER
+- WA_ACCESS_TOKEN
+- WA_PHONE_NUMBER_ID
+- WA_TEMPLATE_NEW_DEFECT
+- WA_WEBHOOK_VERIFY_TOKEN
+
+Tests required:
+1) Unit tests:
+   - payload builder
+   - phone validator
+   - idempotency key
+2) Integration tests (mock provider):
+   enqueue -> send -> webhook delivered
+   retry on fail
+   no duplicate send when same event triggered twice quickly
+3) RBAC:
+   only admin/project_manager can trigger manual send.
+4) Return final test summary and coverage for notification module.
+
+Deliverables:
+- routes changed
+- collections/indexes added
+- sample request/response for manual send
+- sample notification timeline response
+- final PASS/FAIL readiness for WhatsApp module.

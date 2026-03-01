@@ -1,0 +1,84 @@
+M9 Billing v1 — Phase 2.1 Polish (UX + Mobile + Plan Selector Fix)
+
+יש 5 תיקונים לפני מעבר לשלב 3. זה לא שינוי לוגיקה עסקית, אלא UX/RBAC display polish.
+
+P0-1) Fix plan selector in ProjectBillingCard (dropdown shows no options)
+Problem:
+- "בחר תוכנית" נפתח בלי אפשרויות.
+Likely cause:
+- ProjectBillingCard fetches plans from /api/admin/billing/plans (SA-only), so org/PM users get empty list.
+Required fix:
+- Add new endpoint: GET /api/billing/plans/active (feature-flagged with BILLING_V1_ENABLED)
+- Return active plans only (id, name, version, project_fee_monthly, tiers)
+- Allow roles: SA, org owner, org_admin, billing_admin, PM, management_team (contractor/viewer optional deny)
+- Update ProjectBillingCard to fetch plans from this endpoint (NOT admin endpoint)
+Acceptance:
+- Dropdown shows בסיסי / מקצועי / XL with all tiers on mobile and desktop.
+
+P0-2) Fix contracted_units input UX (cannot delete default 0)
+Problem:
+- Numeric field is controlled with 0; user cannot clear it smoothly on mobile.
+Required fix:
+- Use string state for edit input (allow "")
+- Parse/validate only on Save (integer >= 1)
+- Add inputMode="numeric"
+- Placeholder instead of hardcoded 0
+Acceptance:
+- User can clear field, type new number, save successfully.
+
+P0-3) Replace internal plan IDs in user-facing UI
+Problem:
+- UI shows "plan_basic" instead of Hebrew label.
+Required fix:
+- Add plan label mapper in billingLabels.js:
+  - plan_basic -> בסיסי
+  - plan_pro -> מקצועי
+  - plan_xl -> XL
+- Use in ProjectBillingCard, OrgBillingPage, AdminBillingPage (admin may keep ID in secondary small text if needed)
+Acceptance:
+- No raw plan_* IDs shown in user-facing cards.
+
+P0-4) Clarify “בקשת העברה לחיוב הארגון” UX
+Problem:
+- Pressing button opens a text input unexpectedly; flow is unclear.
+Required fix:
+- Make handoff request a clear 2-step UI:
+  1) Primary CTA: "בקש העברה לחיוב הארגון"
+  2) Collapsible section titled: "הערה לצוות החיוב (אופציונלי)"
+     placeholder: "לדוגמה: נא להעביר למנהלת הכספים של הארגון"
+  3) Submit button: "שלח בקשה"
+- Show success toast / inline confirmation after send.
+- If user_can_edit_billing=true (owner/org_admin/billing_admin/SA), do NOT show PM handoff CTA in main area (or move to secondary "פעולות נוספות") to avoid duplicate/confusing actions.
+Acceptance:
+- PM flow is clear.
+- Org billing roles see clean edit UI without PM handoff clutter.
+
+P1-5) Admin Billing page mobile cleanup + audit action Hebrew labels
+Problem:
+- /admin/billing on mobile is visually chaotic; audit actions still English.
+Required fix:
+A) Layout cleanup (mobile-first):
+- Add top summary row (KPIs)
+- Separate sections clearly: ארגונים / תוכניות תמחור / מיגרציה / יומן פעולות
+- Default-collapse heavy sections on mobile
+- Plans cards: vertical structured rows instead of scattered chips
+B) Audit table mobile mode:
+- Use card layout or stacked rows on narrow screens
+- Translate action labels via shared helper (billing action label mapper), e.g.:
+  - project_billing_updated -> עדכון חיוב פרויקט
+  - contracted_units_changed -> שינוי יחידות חוזיות
+  - billing_handoff_requested -> בקשת העברה לחיוב
+  - billing_handoff_acknowledged -> אישור קבלת בקשה
+  - project_billing_setup_completed -> השלמת הגדרת חיוב
+Acceptance:
+- Mobile admin billing page is readable and organized.
+- No raw English action names in audit UI.
+
+Notes:
+- No changes to pricing logic, snapshots, RBAC rules, or calculations.
+- Keep all changes behind BILLING_V1_ENABLED.
+- Please provide before/after screenshots for:
+  1) ProjectBillingCard plan selector open with options
+  2) contracted_units field clear + retype flow
+  3) handoff request UX (collapsed + expanded)
+  4) Admin billing mobile page cleaned layout

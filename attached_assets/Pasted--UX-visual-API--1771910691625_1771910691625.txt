@@ -1,0 +1,66 @@
+מעולה, זה בדיוק הספרינט שרציתי ✅
+מאשר את הגישה (UX/visual בלבד, בלי לגעת בלוגיקה / הרשאות / API).
+
+כמה חידודים קטנים לפני שאתה מתחיל, כדי לשמור את זה חד ונקי:
+
+1) Visual-only guardrail (חשוב)
+- לא לשנות API calls, payloads, permission checks, status logic, submit/approve/reject flows
+- אם יש צורך ב-state קטן ל-UI (open/close/collapse/loading visual), זה בסדר
+- בלי שינוי contracts מול backend
+
+2) Mobile-first (קריטי)
+- כל כפתור/CTA מינימום 44px
+- לא להסתמך על hover
+- לבדוק שבמודלים/באנרים אין חפיפות עם safe areas / bottom bar
+- טקסטים ארוכים בעברית לא שוברים layout
+
+3) מודל "הוסף מאשר" (הכי חשוב לי ב-UX)
+- max-height + גלילה פנימית
+- שדה חיפוש sticky
+- footer action קבוע (לא נעלם בגלילה)
+- מצב loading / no results / empty ברור
+- רשימות ארוכות חייבות להיות נוחות במובייל
+
+4) רשימת מאשרים (Approvers Tab)
+- היררכיה ברורה: שם > סוג הרשאה > פירוט stages
+- כפתור הסרה גדול ונוח למובייל + loading/disabled בזמן פעולה
+- legacy invalid contractor warning להישאר ברור אבל לא "צועק" מדי
+- אין role codes טכניים בשום מקום (רק עברית)
+
+5) ApproverInfoCard (מסך Stage)
+- חלוקה ויזואלית ברורה בין:
+  - מנהל פרויקט (ברירת מחדל)
+  - מאשרים נוספים
+- למשתמש לא מורשה: ניסוח קצר וברור (בלי עומס)
+- CTA לניהול מאשרים רק למי שמורשה (PM/owner/admin/super_admin)
+- למי שלא מורשה: counts בלבד (בלי שמות), כמו עכשיו
+
+6) Pending Review Banner
+- קומפקטי במובייל
+- בלי שבירות שורה מכוערות
+- בלי overlap עם sticky/top/bottom bars
+- CTA ברור אך לא אגרסיבי מדי
+
+7) Timeline polish
+- ריווח טוב בין אירועים
+- הפרדה ויזואלית ברורה בין stage events ל-item events
+- CTA "הצג/הסתר היסטוריה" ברור + count אירועים
+- פורמט תאריך/שעה אחיד לכל המסך
+
+8) Microcopy sweep (QC screens)
+- ניסוחים אחידים בכל המסכים:
+  - אישור / דחייה / פתיחה מחדש / דחה סעיף / מאשרי QC
+- בלי מונחים טכניים פנימיים
+- אם role לא מזוהה -> "משתמש" (לא raw code)
+
+9) בדיקות קבלה (UX בלבד) שאני רוצה לראות בסוף
+- אין שינוי בלוגיקה / הרשאות / API (רגרסיה 0)
+- טאב מאשרי QC (PM) נוח במובייל
+- טאב מאשרי QC (management_team read-only) ברור ונקי
+- מודל הוספת מאשר עובד טוב עם רשימה ארוכה
+- Stage עם ApproverInfoCard קריא יותר משמעותית
+- Stage pending_review banner קומפקטי וללא חפיפות
+- Timeline קריא יותר + collapse/expand ברור
+- צילומי מסך של כל המצבים (מובייל)
+
+אם ברור — תתקדם לפי 6 הסעיפים, ותשלח בסוף סיכום קצר עם screenshots + אישור מפורש שלא שונתה לוגיקה.

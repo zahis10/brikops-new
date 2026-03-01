@@ -1,0 +1,57 @@
+M9 Billing v1 — Phase 2.1.1 Hotfix (P0)
+יש 2 פערים פתוחים מהבדיקות במובייל שצריך לסגור לפני Phase 3.
+
+1) Plan selector עדיין ריק ב-ProjectBillingCard
+סימפטום:
+- בדרופדאון נפתח רק placeholder "— בחר תוכנית —"
+- אין plan_basic / plan_pro / plan_xl כאופציות
+
+נדרש טיפול:
+A. Backend/Frontend debug:
+- לוודא ש-GET /api/billing/plans/active באמת רשום ועובד בסביבה שרצה עכשיו
+- לבדוק סטטוס בפועל למשתמש PM/owner (200 ולא 403/404)
+- לבדוק payload shape ולהשוות למה ש-ProjectBillingCard.loadPlans() מצפה
+- להוסיף לוג שגיאה ברור ב-frontend אם טעינת תוכניות נכשלה (status/message)
+
+B. UX fallback:
+- אם activePlans נכשל/ריק → להציג הודעת שגיאה בכרטיס:
+  "לא ניתן לטעון תוכניות כרגע"
+  + כפתור "נסה שוב"
+- לא להשאיר dropdown ריק בלי הסבר
+
+C. Acceptance:
+- PM / management_team / owner / org_admin / billing_admin / SA רואים אופציות:
+  בסיסי / מקצועי / XL
+- contractor / viewer מקבלים חסימה תקינה
+- במובייל iOS Replit Preview אפשר לבחור תוכנית בפועל ולשמור
+
+2) אין אפשרות ברורה להעביר חיובים למישהו אחר בארגון
+הבהרה:
+- כרגע יש handoff request (בקשה לצוות חיוב), אבל אין assign-to-person
+- זה לא מספיק ברור למשתמש
+
+נדרש טיפול מינימלי (בלי שינוי לוגיקה עסקית):
+A. בכרטיס חיוב:
+- אם user_can_edit_billing=true (owner/org_admin/billing_admin):
+  להציג טקסט הסבר:
+  "אתה בעל הרשאת חיוב בארגון. העברה לאדם אחר מתבצעת דרך ניהול חברי ארגון (תפקיד billing_admin / org_admin)."
+- אם PM ואין canEdit:
+  להציג CTA ברור של בקשת handoff (כבר קיים) + ניסוח ברור
+
+B. אם כבר יש UI לניהול תפקידי ארגון:
+- להוסיף קישור/CTA: "ניהול הרשאות חיוב בארגון"
+  (למסך שבו משנים org role ל-billing_admin/org_admin)
+
+C. אם אין UI מתאים עדיין:
+- לפתוח משימה נפרדת Phase 2.2:
+  "Assign billing responsibility to org member" (בחירת משתמש בארגון)
+
+3) בדיקות חובה אחרי תיקון
+- PM: dropdown תוכניות נטען ובחירה נשמרת
+- owner/billing_admin: dropdown נטען + אין בלבול handoff
+- contractor/viewer: אין גישה
+- iPhone/Replit Preview: צילום מסך של dropdown פתוח עם 3 תוכניות
+- צילום מסך של הודעת fallback במקרה כשל טעינה (אפשר לדמות 500)
+
+הערה:
+זה hotfix UX/integration בלבד. לא לשנות חישובי pricing/snapshots/RBAC לוגיקה קיימת מעבר לתיקון טעינת תוכניות/הודעות.

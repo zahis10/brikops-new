@@ -1,0 +1,54 @@
+צריך ממך להריץ Acceptance Tests מלאים ל-Onboarding V2 כי אני לא יכול לבצע את זה לבד כרגע.
+
+חשוב: לא לחשוף/להדפיס סודות (tokens, SMTP_PASS, Twilio auth וכו׳). אם צריך להראות ENV – רק “SET/NOT SET” או 4 ספרות אחרונות.
+
+=== TEST 1: Production Safety (אין שינוי בפרודקשן) ===
+1) ודא שב-PRODUCTION:
+   - ENABLE_ONBOARDING_V2=false
+   - משתמש קיים עם memberships נכנס רגיל ולא נזרק ל-/onboarding
+2) שלח לי הוכחה:
+   - לוג startup שמראה ENABLE_ONBOARDING_V2=false
+   - בדיקה של כניסה למשתמש קיים (סקרינשוט/לוג + ה-redirect path)
+
+=== TEST 2: Scenario A — “פתח חשבון חדש” יוצר Org+Trial (המסלול היחיד) ===
+ב-DEV/Preview (או environment בטוח):
+1) התחברות עם טלפון חדש (לא קיים ב-DB) → OTP → /onboarding → “פתח חשבון חדש”
+2) שלח לי הוכחה ב-DB (עם IDs):
+   - users: id, phone_e164
+   - organizations: id + created_by
+   - subscriptions/trial: org_id + trial_end (7 ימים)
+   - projects: id + organization_id + join_code
+   - org_memberships + project_memberships: role=project_manager
+3) בדיקת כפילות:
+   - נסה ללחוץ create-org שוב לאותו משתמש → חייב להחזיר 409 (ולא ליצור Org נוסף)
+   - שלח תגובת API + הוכחה שאין Org נוסף ב-DB
+
+=== TEST 3: Scenario B — Join (Invite / BRK code) לא יוצר Trial/Org ===
+ב-DEV/Preview:
+A) Invite token:
+1) צור invite לפרויקט קיים כ-PM
+2) התחבר עם טלפון חדש → accept-invite
+3) הוכחות:
+   - נוצר project_membership למשתמש
+   - לא נוצר organization חדש ולא subscription חדש
+B) Join code (BRK-XXXX):
+1) התחבר עם טלפון חדש → join-by-code עם BRK של פרויקט קיים
+2) הוכחות:
+   - נוצר join_request במצב pending
+   - לא נוצר organization/subscription
+3) אם יש מסך “ממתין לאישור” — סקרינשוט/לוג
+
+=== TEST 4: RBAC (הרשאות) אחרי Join ===
+1) משתמש שהצטרף כ-contracter / team:
+   - לא יכול ליצור פרויקט
+   - לא יכול לגשת ל-/api/admin/* או פעולות PM
+2) שלח:
+   - 2-3 קריאות API שמחזירות 403/401 כמו שצריך
+   - audit_events של ניסיונות חסומים (בלי סודות)
+
+=== בסוף ===
+1) תן “Proof Package” קצר:
+   - רשימת endpoints שנקראו + status code
+   - IDs מרכזיים (user_id, org_id, project_id, invite_id/join_request_id)
+   - צילום/לוג אחד לכל תרחיש
+2) אשר שה-Rule נאכף: Trial נוצר רק מ-create-org, לא מ-join.

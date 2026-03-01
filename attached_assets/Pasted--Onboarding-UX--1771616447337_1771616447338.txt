@@ -1,0 +1,167 @@
+אני רוצה שניישם עכשיו Onboarding מסודר + UX יוקרתי (לא מוגזם) + חוקים עסקיים ברורים כדי שלא כל משתמש חדש יפתח Trial בטעות.
+
+✅ דרישה עסקית (קריטי):
+- Trial + יצירת Organization/Project נוצרים *רק* במסלול "פתח חשבון חדש".
+- צוותים/קבלנים *לא* פותחים Org/Trial חדש — הם מצטרפים לפרויקט דרך Invite (token) או Join Code (בקשה לאישור).
+- Join/Accept לעולם לא יוצר trial.
+
+========================
+1) UX/Frontend (RTL, יוקרתי נקי)
+========================
+
+A) מסך Login (OTP) – שיפור תחושה:
+- כותרת: "BrikOps"
+- תת־כותרת: "ניהול ליקויים ומשימות לקבלנים — עם עדכוני WhatsApp/SMS"
+- מיקרו־קופי אבטחה מתחת לכפתור:
+  "נשלח קוד חד־פעמי. לא נשתף את המספר שלך."
+- להוריד כל טקסט דיבאג/גרסה מהמסך בפרודקשן (release sha וכו׳).
+- לינק מתחת לכפתור "שלח קוד":
+  "קיבלת הזמנה לפרויקט? לחץ כאן"
+  הערה: הלינק מוביל למסלול JOIN אבל *אחרי התחברות* (כלומר: שומר intent ואז ממשיך).
+
+B) Onboarding אחרי OTP ראשון:
+טריגר: אחרי verify-otp והתחברות, אם למשתמש אין memberships (לא org_membership ולא project_membership) → להציג Onboarding.
+
+מסך 1: "ברוך הבא ל-BrikOps"
+טקסט: "בחר איך תרצה להמשיך:"
+
+כפתור ראשי:
+"פתח חשבון חדש (ניסיון 7 ימים)"
+תיאור קטן:
+"מתאים למנהלי פרויקטים/חברות שרוצים להתחיל פרויקט חדש."
+Flow:
+- יצירת Organization + Trial 7 ימים (billing על org בלבד)
+- המשתמש org_owner / project_manager
+- ואז Wizard קצר:
+  1) "שם החברה" (placeholder: "לדוגמה: צ.ע בנייה ויזמות")
+  2) "שם הפרויקט" (placeholder: "לדוגמה: מגרש 800")
+  3) אופציונלי: "רוצה להוסיף מבנה בסיסי עכשיו?" כן/לא
+
+כפתור משני:
+"הצטרף לפרויקט קיים"
+תיאור קטן:
+"מתאים לעובדי צוות ולקבלנים שקיבלו הזמנה ממנהל הפרויקט."
+
+מסך 2: "הצטרפות לפרויקט"
+טקסט: "יש לך קישור הזמנה או קוד הצטרפות?"
+שדות:
+- "קישור הזמנה" (placeholder: "הדבק כאן את הקישור")
+- מפריד: "או"
+- "קוד הצטרפות" (placeholder: "BRK-1234")
+כפתור: "שלח בקשת הצטרפות"
+
+מצבים:
+- אם invite token תקין → "הצטרפת בהצלחה" → כניסה לאפליקציה
+- אם קוד → צור join_request בסטטוס pending → הצג:
+  "הבקשה נשלחה וממתינה לאישור מנהל הפרויקט."
+
+עיצוב יוקרתי לא מוגזם:
+- רקע גרדיאנט כהה עדין, קארד לבן נקי, ריווחים גדולים, טיפוגרפיה עברית נקייה (Heebo/Rubik).
+- כפתורים עם radius עדין, shadow עדין, ללא צבעים צורחים.
+
+========================
+2) Backend / Data (חובה)
+========================
+
+A) Invites (מומלץ – קישור ישיר)
+- PM יוצר invite עם:
+  org_id, project_id, role (contractor/management/viewer), optional company_id, optional contractor_trade_key, expiry, single_use
+- Endpoints:
+  1) POST /api/invites  (PM only)
+  2) POST /api/invites/accept  (אחרי OTP login) {token}
+
+כללים:
+- token חד-פעמי + expiry + נשמר ב-DB
+- accept חייב ליצור project_membership למשתמש לפי role
+- accept *לא* יוצר Org ולא Trial
+- audit מלא לכל פעולה
+
+B) Join Code (Fallback – בקשת הצטרפות)
+- לכל פרויקט join_code (BRK-1234) + אפשר גם join_code_pin (אופציונלי בעתיד)
+- Endpoints:
+  1) POST /api/join-requests {join_code}  (משתמש מחובר)
+  2) GET /api/join-requests?project_id=... (PM only)
+  3) POST /api/join-requests/{id}/approve {role, company_id?, contractor_trade_key?}
+  4) POST /api/join-requests/{id}/reject {reason?}
+
+כללים:
+- יצירת join_request בסטטוס pending
+- approve → יוצר project_membership ולא יוצר Trial
+- reject → נשמר reason
+- rate limit בסיסי כדי שלא יהיה spam
+
+C) מסלול "פתח חשבון חדש" בלבד יוצר Trial
+- Endpoint מומלץ:
+  POST /api/onboarding/create-org
+  body: {org_name, project_name, seed_basic_structure: boolean}
+פעולות:
+- create_organization(user_id, org_name)
+- create_trial_subscription(org_id, trial_days=7)
+- create_project(org_id, project_name)
+- create memberships (org + project) כ-PM/owner
+- audit events לכל שלב
+
+========================
+3) Payload examples (מבוקש)
+========================
+
+Invite create:
+POST /api/invites
+{
+  "project_id": "proj_123",
+  "role": "contractor",
+  "company_id": "comp_55",
+  "contractor_trade_key": "plumbing",
+  "expires_in_hours": 72
+}
+Response:
+{ "invite_url": "https://brikops.com/join?token=....", "token": "....", "expires_at": "..." }
+
+Invite accept:
+POST /api/invites/accept
+{ "token": "...." }
+Response:
+{ "success": true, "project_id": "proj_123", "role": "contractor" }
+
+Join request:
+POST /api/join-requests
+{ "join_code": "BRK-1234" }
+Response:
+{ "status": "pending", "message": "הבקשה נשלחה וממתינה לאישור מנהל הפרויקט." }
+
+Create org + trial:
+POST /api/onboarding/create-org
+{
+  "org_name": "צ.ע בנייה ויזמות",
+  "project_name": "מגרש 800",
+  "seed_basic_structure": true
+}
+Response:
+{ "org_id": "...", "project_id": "...", "trial_end": "..." }
+
+========================
+4) Tests / Proof חובה (קריטי)
+========================
+
+תרחיש A – New Account:
+- משתמש חדש עושה OTP → מגיע ל-Onboarding → בוחר "פתח חשבון חדש"
+הוכחות:
+- נוצר org + subscription trial (7 ימים) + project
+- נוצר org_membership + project_membership
+- audit_events קיימים
+- ווידוא: אין join_request ואין invite שימוש
+
+תרחיש B – Join Flow:
+- משתמש חדש עושה OTP → בוחר "הצטרף לפרויקט" → invite accept או join_request
+הוכחות:
+- נוצר project_membership בלבד
+- לא נוצר org חדש ולא trial חדש
+- audit_events קיימים
+- אם join_request: סטטוס pending ואז approve יוצר membership
+
+בסוף עבודה אני צריך:
+- רשימת endpoints סופית + RBAC מי יכול מה
+- דוגמאות payload כמו למעלה
+- הוכחות DB (שאילתות/לוגים) לשני התרחישים שמראים בוודאות שאין Trial שנוצר ב-Join.
+
+שים לב: זה צריך להיות Production-ready, עם audit, expiry לטוקנים, single-use, וללא יצירת trial בטעות במסלול join.

@@ -1,0 +1,47 @@
+זה עדכון גדול וקריטי, בבקשה לבצע בצורה “בטוחה לפרודקשן” עם Feature Flags + Backwards Compatibility + Proof.
+
+מטרת העל:
+- לא לשבור פרודקשן בשום מצב.
+- שינוי ה-onboarding יופעל רק אחרי בדיקות מלאות ב-preview/branch ואז הדלקה הדרגתית בפרודקשן.
+
+דרישות בטיחות (חובה):
+1) Feature Flags
+- להוסיף ENABLE_ONBOARDING_V2 (default: false בפרודקשן, true ב-preview/dev).
+- להוסיף/להשאיר ENABLE_AUTO_TRIAL (default: true בפרודקשן עד שסיימנו בדיקות, ואז נהפוך ל-false יחד עם ONBOARDING_V2).
+- בפרודקשן: כל עוד ENABLE_ONBOARDING_V2=false → ההתנהגות הקיימת חייבת להישאר 1:1 (בלי שינוי).
+
+2) Backwards compatibility
+- לא לשנות endpoints קיימים בצורה שוברת.
+- כל endpoints חדשים רק “additive”.
+- משתמשים קיימים עם memberships חייבים להמשיך להיכנס רגיל בלי לראות onboarding.
+
+3) DB/Migrations בטוחות
+- הוספת join_code לפרויקטים:
+  - backfill לכל projects קיימים בצורה idempotent (ריצה חוזרת לא שוברת).
+  - אינדקס unique על join_code (או מנגנון שמבטיח ייחודיות).
+  - לא למחוק/לשנות data קיימת של billing/subscriptions.
+- Invites/join_requests collections עם indexes מינימליים.
+
+4) Rollback / Recovery
+- לפני הדלקה בפרודקשן: לוודא שאפשר לחזור לגרסה הקודמת בלי migration שוברת.
+- להוסיף לוג startup ברור שמדפיס:
+  ENABLE_ONBOARDING_V2, ENABLE_AUTO_TRIAL, APP_MODE, OTP_PROVIDER, SMS_ENABLED, WHATSAPP_ENABLED (בלי סודות).
+
+5) E2E Proof (חובה לפני שינוי בפרודקשן)
+תרחיש A (New Account):
+- User חדש → OTP → Onboarding → “פתח חשבון חדש”
+- הוכחות ב-DB: org נוצר + trial 7 ימים + project + memberships + audit_events
+- לוודא: JOIN לא יוצר trial
+
+תרחיש B (Join):
+- User חדש → OTP → “הצטרף לפרויקט” (invite accept או join_code request)
+- הוכחות ב-DB: נוצר project_membership בלבד / join_request pending→approve
+- לוודא: אין יצירת org/trial חדש בשום שלב
+
+6) Deployment strategy
+- שלב 1: להעלות קוד עם flags + endpoints חדשים + backfill join_code, אבל להשאיר פרודקשן עם ENABLE_ONBOARDING_V2=false (כלום לא משתנה למשתמשים).
+- שלב 2: לבצע בדיקות מלאות ב-preview + להחזיר לי Proof package (logs + db queries/screenshots).
+- שלב 3: רק אז להדליק בפרודקשן ENABLE_ONBOARDING_V2=true + ENABLE_AUTO_TRIAL=false, ולבצע smoke test.
+
+בקשה:
+תעדכן בסוף מה בדיוק שינית (קבצים/endpoints/collections/indexes) + תן לי Proof מסודר לשני התרחישים לפני שמדליקים בפרודקשן.

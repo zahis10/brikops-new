@@ -1,0 +1,110 @@
+התוכנית הזו הרבה יותר טובה ובטוחה.
+
+אני מאשר להתקדם עכשיו רק עם Phase 1 + Phase 1.5.
+אני לא מאשר עדיין Phase 2/3/4.
+
+Approval scope
+
+מאושר עכשיו:
+	•	Phase 1: hidden foundation only
+	•	Phase 1.5: identity audit only
+
+לא מאושר עכשיו:
+	•	Phase 2: soft rollout
+	•	Phase 3: enforce
+	•	Phase 4: email verification / forgot password / settings UI
+
+Required adjustments before implementation
+
+1) Avoid broad startup writes if possible
+
+אני לא רוצה שבכל restart השרת יבצע כתיבות רוחביות למסמכי users/orgs אם אפשר להימנע.
+
+עדיף אחת מהאפשרויות:
+	•	one-time idempotent migration script
+	•	lazy defaults in code
+	•	explicit admin/dev migration command
+
+אבל לא “server startup mutates production data broadly” אלא אם אין ברירה ויש הוכחה שזה בטוח מאוד.
+
+2) Prepare a future-safe distinction between existing vs new management users
+
+ב-Phase 2 נצטרך להבדיל בין:
+	•	management users existing before rollout
+	•	management users created after rollout
+
+לכן כבר עכשיו תציע/תוסיף דרך מסודרת לזה, למשל:
+	•	complete_account_required
+	•	או identity_cohort
+	•	או timestamp / rollout marker equivalent
+
+אני לא רוצה להגיע ל-Phase 2 בלי יכולת להבדיל בצורה נקייה בין existing לבין new.
+
+3) account-status should compute truth safely, even if gate=off
+
+גם כאשר:
+	•	ENABLE_COMPLETE_ACCOUNT_GATE=off
+
+אני כן רוצה ש-/api/auth/account-status ידע לחשב בצורה נכונה:
+	•	האם המשתמש ניהולי
+	•	האם חסר email
+	•	האם חסר password
+	•	מה היה קורה תיאורטית אם gate היה soft/enforce
+
+אבל בלי לאכוף, ובלי UI changes כרגע.
+
+במילים אחרות:
+	•	no visible behavior change
+	•	yes internal correctness / readiness
+
+4) Billing endpoints are sensitive — add strict proof
+
+billing-contact הוא אזור רגיש.
+
+לכן ב-Phase 1 אני רוצה:
+	•	strict org scoping
+	•	strict RBAC
+	•	negative tests
+
+חובה להוכיח לפחות:
+	•	owner/org_admin/billing_admin/super_admin המורשים בלבד
+	•	viewer blocked
+	•	contractor blocked
+	•	cross-org access blocked
+	•	unauthorized update blocked
+
+Implementation instruction
+
+Proceed now with:
+
+Phase 1
+	•	hidden backend support only
+	•	zero visible user behavior change
+	•	zero login flow change
+	•	zero contractor flow change
+
+Phase 1.5
+	•	read-only audit script and report only
+	•	no user data mutation from audit
+	•	JSON output + console summary
+
+Deliverables after implementation
+
+תחזיר לי רק:
+	1.	exact files changed
+	2.	what changed in each file
+	3.	whether startup writes were used or avoided
+	4.	exact schema/index additions
+	5.	proof that login behavior is unchanged
+	6.	proof that /api/auth/account-status works and still returns requires_completion=false with gate=off
+	7.	billing-contact RBAC/org-scoping proof
+	8.	identity audit output summary
+	9.	known risks / open follow-ups before Phase 2
+
+Important
+
+Do not implement any visible UI yet.
+Do not add blocking modal yet.
+Do not add banner yet.
+Do not enable any gate yet.
+Do not send verification email 

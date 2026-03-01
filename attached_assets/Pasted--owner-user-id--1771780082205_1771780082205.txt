@@ -1,0 +1,56 @@
+מצוין – תודה על הסריקה. מעולה ש-owner_user_id כבר קיים כמקור אמת.
+
+מוסיף עוד דגשים קטנים כדי שנסגור את זה הכי נקי בלי רגרסיות:
+
+PHASE 1 (P0) – לתקן Owner gating בכל המוצר (לסגור את הבאנרים לצוות)
+1) Backend:
+- להוסיף ל-/billing/me שדה is_owner (org.owner_user_id == user_id)
+- להחזיר גם owner_user_id + org_id (לעזרה בדיבוג)
+- להוסיף owner_set_at ל-Organization + למלא ב-create_organization (לאודיט)
+
+2) Frontend:
+- להסיר את הבדיקה השגויה: platform_role === 'super_admin' כ-isOwner
+- להשתמש ב-is_owner שמגיע מ-/billing/me (עם fallback ל-super_admin בלבד)
+- להוסיף caching/refresh נכון כדי שלא יישארו ערכים ישנים אחרי login.
+
+3) Gate UI:
+- TrialBanner + Paywall/Billing UI מוצגים רק ל-is_owner (או super_admin).
+- לכל מי שלא owner: לא להציג בכלל banner billing.
+- אם org לא משלם: להציג הודעה נעימה (לא billing) + להוריד להרשאות צפייה בלבד בפרויקט הזה:
+  כותרת: "הגישה מוגבלת כרגע"
+  טקסט: "כדי להמשיך בעבודה מלאה, פנה למנהל הארגון להפעלת המנוי."
+
+4) Routing / Landing (קשור למה שראינו)
+- אחרי login: לא לזרוק work_manager/management לדף ליקויים (זה לקבלן).
+- contractor -> defects/tasks שלו
+- work_manager/pm/viewer -> דף פתיחה של הפרויקט (Dashboard/Structure)
+
+Acceptance (Phase 1):
+- invited work_manager/PM לא רואה “trial ended” בכלל.
+- רק owner רואה Billing/Trial.
+- super_admin עדיין רואה הכל.
+- work_manager לא נוחת בדף ליקויים.
+
+PHASE 2 (P1) – Transfer Ownership Flow (Owner יחיד)
+5) Backend endpoints:
+- POST /org/transfer/initiate (owner בלבד) -> transfer_request pending עם expires_at (48h)
+- POST /org/transfer/cancel (owner)
+- POST /org/transfer/accept (recipient) -> step-up + typed confirmation -> atomic update owner_user_id
+- to prevent mistakes: allow only 1 active request per org
+- Audit events: initiated/cancelled/accepted/completed (כולל old_owner/new_owner)
+
+6) Messaging:
+- type=ownership_transfer ב-WA ואם נכשל SMS
+- [MSG-DELIVERY] אחיד + cooldown כדי לא להציף
+
+7) Frontend pages:
+- “הגדרות ארגון -> העברת בעלות” (owner בלבד)
+- “אישור העברה” למקבל (step-up + typed confirmation + error states)
+- success page שמסביר: "מהיום רק הבעלים החדש רואה תשלום"
+
+Acceptance (Phase 2):
+- owner יכול להעביר בעלות לנציג החברה בקלות.
+- אחרי העברה: רק הבעלים החדש רואה Billing/Trial, הבעלים הישן נשאר PM בלי billing.
+- הכל מתועד באודיט.
+
+בוא נתחיל מ-Phase 1 קודם (זה יפתור מיד את הבעיה שהצוות רואה trial) ואז נמשיך ל-Phase 2.

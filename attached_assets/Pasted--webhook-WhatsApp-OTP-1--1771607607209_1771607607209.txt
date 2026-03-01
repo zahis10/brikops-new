@@ -1,0 +1,44 @@
+אחי בוא נתקדם בצורה מסודרת — webhook עובד ומגיע לשרת, אבל שליחת WhatsApp ל-OTP נכשלת בפרודקשן עם:
+1) WA: 400 "API access blocked" (code=200)
+2) לפעמים: 400 "(#133010) Account not registered" (כשזה מספר בלי WhatsApp)
+SMS כרגע מכובה עד שיהיה לי מספר/MSG Service ב-Twilio, אז לא לנסות לשלוח Twilio בכלל (רק לוג + 422 ברור).
+
+מבקש שתעשה עכשיו 4 דברים:
+
+A) דיאגנוסטיקה חד-משמעית ל-Meta (מיידי)
+1) הוסף לוג STARTUP בפרודקשן שמדפיס פעם אחת (מסונן): 
+   APP_MODE, OTP_PROVIDER, WHATSAPP_ENABLED, SMS_ENABLED, WA_PHONE_NUMBER_ID (רק 6 ספרות אחרונות), WABA_ID (6 ספרות אחרונות)
+2) הוסף endpoint אדמין זמני /api/debug/whatsapp (מוגן סופר-אדמין) שעושה 2 קריאות:
+   - GET https://graph.facebook.com/v21.0/me (עם WA_ACCESS_TOKEN) כדי לוודא שהטוקן תקף
+   - GET https://graph.facebook.com/v21.0/{WA_PHONE_NUMBER_ID}?fields=display_phone_number,verified_name,code_verification_status,quality_rating,status
+   ומחזיר JSON של התשובות (בלי להחזיר טוקן)
+3) הוסף בדיקה ל-to number: לשלוח תמיד digits בלבד (בלי +, בלי רווחים). לדוגמה +97250… → 97250…
+
+B) טיפול נכון בשגיאות WhatsApp
+1) אם מתקבל error code 133010 ("Account not registered") → זה “אין WhatsApp לנמען”
+   - לדלג מיד על whatsapp_text_fallback
+   - אם SMS_ENABLED=false → להחזיר 422 עם הודעה בעברית: "למספר הזה אין WhatsApp. SMS זמנית לא זמין."
+2) במקרה של "API access blocked" (code=200) → זו חסימה ברמת הרשאות/סטטוס חשבון/אפליקציה.
+   - תדפיס בלוג מלא של ה-error כולל fbtrace_id + message
+   - תחזיר 422 מסודר: "שליחת WhatsApp נחסמה ע״י Meta (API access blocked)."
+
+C) לוודא ש-SMS באמת כבוי (כרגע)
+1) אם SMS_ENABLED=false:
+   - לא לקרוא ל-Twilio בכלל
+   - רק לוג: [OTP] SMS disabled, skipping fallback
+   - ועדיין לשמור audit ב-otp_events/notification_jobs עם reason
+
+D) בדיקות הוכחה (E2E) אחרי הדיפלוי
+1) Test 1: קריאה ל-POST /api/auth/request-otp למספר עם WhatsApp
+   - מצפה: WA send success (200/201 מה-Graph) + לוג [OTP] SUCCESS channel=whatsapp
+2) Test 2: מספר בלי WhatsApp
+   - מצפה: WA נכשל 133010 → 422 ברור (ולא 429/500) + audit נשמר
+3) שלח לי את הפלט של /api/debug/whatsapp + 10 שורות לוג סביב ניסיון השליחה (כולל fbtrace_id)
+
+הערה: כרגע נראה שה-webhook תקין לגמרי (ראינו POSTים 200 מה-Meta).
+התקיעה היא רק ב-outbound send ל-Graph (“API access blocked”), אז הדיבאג למעלה יגיד לנו אם זה:
+- טוקן לא נכון/לא מורשה
+- phone_number_id לא במצב ACTIVE/לא משויך נכון
+- האפליקציה/חשבון בסטטוס שמונע שליחה (dev/live/test recipients)
+
+תתקדם עם זה ותעדכן אותי עם ה-/api/debug/whatsapp output והלוגים.

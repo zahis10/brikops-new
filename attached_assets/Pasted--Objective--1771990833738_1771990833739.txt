@@ -1,0 +1,55 @@
+מעולה, זה התיקון המדויק שאני רוצה. בוא נסגור את זה ככה:
+
+Objective
+להסיר את "פתיחת מלאכה" ככרטיס שלב נפרד ממסך סיכום הקומה. פריטי פתיחת מלאכה צריכים להופיע רק inline בתוך שלבי המקצוע (אינסטלציה / חשמל / טיח).
+
+Root cause (מאושר)
+יש 4 runs קיימים עם orphaned items מסוג pw_1/pw_2 עם stage_id="stage_prework" (כולם pending, בלי הערות/תמונות/שינויים). זה מפעיל legacy detection ומזריק synthetic stage, ולכן המשתמש עדיין רואה כרטיס "פתיחת מלאכה".
+
+Tasks (לביצוע לפי הסדר)
+T001 — Data cleanup (DB)
+- לבצע dry-run ראשון + export של IDs/summary לפני מחיקה
+- למחוק qc_items עם stage_id == "stage_prework" (ה-orphaned בלבד; כרגע אומת שהם כולם pending/empty)
+- להסיר stage_statuses.stage_prework מתוך qc_runs אם קיים (defense-in-depth)
+- audit log: qc_data_cleanup_legacy_prework
+- להדפיס before/after counts + רשימת run_ids שנוקו
+Acceptance:
+- 0 items עם stage_id="stage_prework" ב-DB
+- דוח before/after ברור
+
+T002 — Backend cleanup (qc_router.py)
+- להסיר את כל legacy synthetic stage injection של stage_prework
+- להסיר constant של LEGACY_PREWORK_STAGE_ID אם לא בשימוש
+- להסיר has_legacy_prework detection + injection בשני המסלולים (floor run + run-by-id)
+- להשאיר template v3 + PREWORK_TARGET_STAGES + inline pre-work items ללא שינוי
+- defense-in-depth: אם בעתיד יופיעו בטעות items של stage_prework, לא להזריק מהם stage ולא לקרוס
+Acceptance:
+- API response לא מחזיר stage_prework בתוך stages בשום floor run
+
+T003 — Frontend polish (FloorDetailPage)
+- לעדכן badge logic של stage card:
+  * להסיר תנאי pre_work_documentation של standalone stage
+  * להשאיר רק has_prework_items עבור שלבי המקצוע
+- טקסט badge קבוע: "כולל תיעוד לפני עבודה"
+- לוודא ש-StageDetailPage item-level badge (item.pre_work_documentation) נשאר תקין
+Acceptance:
+- אין כרטיס standalone של "פתיחת מלאכה"
+- בשלבי אינסטלציה/חשמל/טיח מופיע badge "כולל תיעוד לפני עבודה"
+
+T004 — Proof / Verification (חובה)
+- restart server
+- DB proof: 0 stage_prework items
+- API proof (run קיים): stage_ids ללא stage_prework
+- API proof (run קיים): plumbing/electrical/plaster עם has_prework_items=true + inline items
+- API proof (run חדש): 7 stages בלבד, בלי stage_prework, עם inline pre-work items
+- Screenshot: סיכום קומה בלי כרטיס "פתיחת מלאכה"
+- Screenshot: מסך שלב מקצוע עם פריטי pre-work inline + badge item-level
+- Regression: server compile + project isolation tests
+Acceptance:
+- proof package מלא (DB + API + screenshots + regression)
+
+Implementation order
+T001 → T002 → T003 → T004
+
+חשוב:
+לא לסגור את המשימה בלי הוכחות (DB before/after + stage_ids + screenshots). כרגע מבחינתי זה עדיין bug פתוח עד שרואים שאין יותר כרטיס "פתיחת מלאכה" נפרד בפריוויו.

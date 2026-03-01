@@ -1,0 +1,150 @@
+Plan A (Billing Manual V1) — Real Upgrade Flow WITHOUT payment provider + Copy Templates
+
+Objective
+Make “Upgrade” actually work today without PayPlus/Stripe:
+- User chooses monthly/yearly
+- System shows “license valid until” preview (already built)
+- User submits “Payment Request” (handoff) and owner/admin can mark-paid
+- DB remains source of truth (paid_until/status/manual_override)
+- No dead CTAs, no confusion between role_restricted vs payment_expired
+
+Scope
+- No external payment provider
+- Support: bank transfer / Bit / manual confirmation
+- Prepare structure to plug in PayPlus later with minimal changes
+
+========================
+T001 Backend — Create payment request (manual)
+========================
+POST /api/billing/org/{org_id}/payment-request
+RBAC:
+- Allowed: can_manage_billing OR PM (PM can request but cannot mark-paid)
+Body:
+{
+  "cycle": "monthly"|"yearly",
+  "note": "optional",
+  "contact_email": "optional"
+}
+Logic:
+- Use existing preview-renewal to compute requested_paid_until (never shorten)
+- Create a record in new collection: billing_payment_requests
+  fields:
+   - id, org_id, requested_by_user_id, cycle
+   - requested_paid_until (ISO)
+   - amount_ils (monthly=total_monthly, yearly=total_monthly*12 unless discounts added later)
+   - status: "requested"|"sent"|"paid"|"canceled"
+   - created_at, updated_at
+- Audit: billing_payment_request_created (actor, org_id, cycle, requested_paid_until, amount_ils, request_id, ip, ua)
+Return: {request_id, requested_paid_until, requested_paid_until_display, amount_ils}
+
+========================
+T002 Backend — Mark paid (manual activation)
+========================
+POST /api/billing/org/{org_id}/mark-paid
+RBAC: can_manage_billing OR super_admin only
+Body:
+{
+  "request_id": optional,
+  "cycle": optional,
+  "paid_note": optional
+}
+Logic:
+- Determine cycle + compute new_paid_until using preview-renewal logic (never shorten)
+- Update subscription:
+  - status="active" (unless manual_override.suspended)
+  - paid_until = max(existing_paid_until, new_paid_until)
+  - auto_renew=false
+  - next_charge_at=null
+- Update payment_request status to "paid" if request_id provided
+- Audit: billing_mark_paid (actor, org_id, new_paid_until, request_id)
+
+========================
+T003 Frontend — Replace dead Upgrade with real manual flow
+========================
+OrgBillingPage.js
+A) If can_manage_billing:
+- Show upgrade section when expired/trial/past_due OR when user clicks “Upgrade”
+- Cycle selector (already exists)
+- Preview “הרישיון יהיה בתוקף עד …” (already exists)
+- Button: “שלח בקשת תשלום”
+  -> calls POST /payment-request
+  -> shows toast success
+  -> displays copy-to-clipboard message (templates below) with computed values
+- Add owner tool:
+  “סמן כתשלום התקבל” (Mark paid)
+  -> calls POST /mark-paid (optionally with request_id)
+  -> refetch billing -> “בתוקף עד …” updated
+
+B) If PM/role_restricted:
+- No “Upgrade payment” button.
+- Only handoff CTA:
+  “בקש שדרוג מבעלים” -> calls /payment-request (allowed) OR just copies a request message.
+- Show owner name if available.
+
+========================
+T004 Proof package
+========================
+- Screenshot: upgrade section shows cycle + valid-until + “שלח בקשת תשלום”
+- Screenshot: PM sees handoff CTA (no dead upgrade)
+- JSON: /api/billing/org/<org_id> before/after mark-paid shows paid_until updated + subscription_status active
+- Audit: billing_payment_request_created + billing_mark_paid
+
+========================
+Copy-to-Clipboard Templates (Hebrew)
+========================
+Constants:
+- BILLING_EMAIL=billing@brikops.com
+- SUPPORT_EMAIL=support@brikops.com
+- CYCLE_HE: monthly="חודשי", yearly="שנתי"
+- VALID_UNTIL_DATE: use preview new_paid_until_display
+- AMOUNT_ILS: monthly=total_monthly; yearly=total_monthly*12 (unless discounts later)
+- BILLING_URL: current org billing page link
+
+Template A — קצרה
+שלום,
+כדי להפעיל/לחדש מנוי BrikOps לארגון: {ORG_NAME}
+בחרתי: {CYCLE_HE}
+תוקף לאחר התשלום: עד {VALID_UNTIL_DATE}
+סכום לתשלום: ₪{AMOUNT_ILS}
+
+קישור לעמוד החיוב:
+{BILLING_URL}
+
+לאחר התשלום אנא שלחו אסמכתא כאן/למייל billing@brikops.com ונפעיל מיידית.
+תודה 🙏
+
+Template B — מסודרת יותר (עם אפשרויות תשלום)
+שלום,
+מצורפת בקשת תשלום להפעלת/חידוש מנוי BrikOps עבור הארגון: {ORG_NAME}
+
+• מסלול: {CYCLE_HE}
+• תקופת רישיון לאחר אישור התשלום: עד {VALID_UNTIL_DATE}
+• סכום: ₪{AMOUNT_ILS}
+• קישור חיוב/פרטים: {BILLING_URL}
+
+אפשרויות תשלום:
+1) העברה בנקאית: {BANK_DETAILS_OR_TBD}
+2) Bit: {BIT_PHONE_OR_TBD}
+
+לאחר התשלום, אנא שלחו אסמכתא (צילום/מספר עסקה) ונעדכן את הרישיון מיידית.
+תודה,
+צוות BrikOps
+support@brikops.com
+
+Template C — פנימי ל-PM (בקשה לבעלים)
+היי,
+צריך לאשר שדרוג/חידוש מנוי BrikOps לארגון {ORG_NAME}.
+
+• מסלול: {CYCLE_HE}
+• סכום: ₪{AMOUNT_ILS}
+• תוקף לאחר תשלום: עד {VALID_UNTIL_DATE}
+
+קישור לעמוד החיוב:
+{BILLING_URL}
+
+אפשר לאשר לי לאחר תשלום/העברה כדי שאפעיל את הרישיון.
+תודה!
+
+Notes
+- Don’t expose BANK/Bit in UI if you don’t want; leave TBD or hide Template B until values are configured.
+- This makes “Upgrade” actionable now, and later we can replace /payment-request + /mark-paid with PayPlus recurring + IPN while keeping paid_until as DB source of truth.

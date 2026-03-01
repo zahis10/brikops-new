@@ -1,0 +1,51 @@
+כן, להתחיל — אבל לפי סדר עדיפויות קשיח:
+
+✅ קודם כל P0 בלבד (Data Integrity). 
+הגילוי ש-seed.py עושה delete_many({}) על כל הקולקשנים הוא קריטי. אסור שתהיה שום אפשרות שזה ירוץ בפרודקשן, אפילו בטעות.
+
+סדר עבודה מחייב (Step-by-step):
+
+P0-1: חסימת Seed בפרודקשן (הכי דחוף)
+- לוודא ש-seed_super_admin_user() לא רץ בכל startup בפרודקשן.
+- seed בכלל ירוץ רק אם RUN_SEED=true במפורש + ENV=dev (או APP_MODE=dev).
+- אם NODE_ENV=production (או APP_MODE=prod) ו-RUN_SEED=true -> להפיל את האפליקציה עם שגיאה (Fail fast) כדי שלא תהיה מחיקה בטעות.
+- להסיר/לבטל כל backfill/seed אוטומטי על startup בפרודקשן.
+
+Proof נדרש:
+- קטע קוד/דיפ שמראה את ה-guard (production check) + לוג שמראה "Seed skipped (production)".
+- אימות שפרודקשן עולה בלי להריץ seed.
+
+P0-2: DB Identity Logging
+- להוסיף לוג בתחילת עלייה: dbName + usersCount + projectsCount + env/app_mode.
+- (אופציונלי) להציג את זה גם במסך super_admin “System”.
+
+Proof:
+- צילום/לוג מהפרודקשן שמראה DB identity + counts.
+
+P0-3: Review & remove hard deletes (Soft delete only)
+- לסקור את כל delete_one שציינת (plans/proof/companies/debug cleanup):
+  - כל דבר שהוא business data (users/projects/tasks/companies/plans/proofs) -> להפוך ל-soft delete (deletedAt/disabledAt).
+  - debug cleanup: לוודא שהוא gated ל-dev בלבד.
+- לוודא שאין שום deleteMany/deleteOne שמשפיע על production data.
+
+Proof:
+- רשימה קצרה: מה נשאר hard delete (אם בכלל, רק dev/debug), ומה הומר ל-soft delete.
+
+P0-4: איתור “צחי אינסטלטור”
+- להריץ query ב-DB פרודקשן לפי phone/name ולהביא תשובה:
+  - קיים/לא קיים/disabledAt/לא משויך לפרויקט.
+- אם לא קיים: להסביר חד-משמעית למה (איזה תהליך מחק/איזה DB היה בשימוש), ולוודא שזה לא יכול לקרות שוב אחרי P0-1.
+
+רק אחרי שכל P0 נסגר עם הוכחות — ממשיכים:
+
+P1: Join code (Option A מוסכם)
+- UI wording ברור: “קוד הצטרפות” ≠ “קוד פרויקט”.
+- אין fallback ל-SEA-001.
+- ניהול join code בפרויקט: הצג + העתקה + רגנרציה (PM/Admin) + Audit.
+
+P1: Team tab click -> profile
+
+P2: Admin edit user details + RTL fix במסך פרופיל
+P2: Archive/Pause projects (soft) + הסרת contractor companies מרשימת הפרויקטים והעברה ל-settings בתוך פרויקט
+
+תתחיל בביצוע P0-1 עכשיו ותשלח לי עדכון עם diff/Proof לפני שאתה מתקדם לשאר.

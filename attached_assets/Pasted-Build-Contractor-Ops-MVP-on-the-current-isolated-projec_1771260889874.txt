@@ -1,0 +1,106 @@
+Build Contractor Ops MVP on the current isolated project (APP_ID=contractor-ops-001, DB_NAME=contractor_ops).
+
+Critical boundary:
+- This app is NOT Bedek Expert.
+- Do NOT add inspection-report logic, clause extraction, engineering PDF workflows.
+- This app is only for contractor execution/task operations.
+
+Tech/context:
+- Python backend + MongoDB local
+- Existing strict config and JWT hardening already in place
+- Keep security posture as-is (env-required config, issuer/version checks)
+
+Implement:
+
+1) Mongo collections + indexes
+Collections:
+- projects
+- buildings
+- floors
+- units
+- companies
+- users
+- tasks
+- task_updates
+- task_status_history
+- audit_events
+
+Required task fields:
+{
+  project_id, building_id, floor_id, unit_id,
+  title, description, category, priority,
+  status, company_id, assignee_id,
+  due_date, created_by, created_at, updated_at,
+  attachments_count, comments_count
+}
+
+Status enum:
+open -> assigned -> in_progress -> waiting_verify -> closed
+with reopen support (closed -> reopened -> in_progress/closed)
+
+Indexes (must create):
+- tasks: {project_id:1, building_id:1, floor_id:1, unit_id:1, status:1, due_date:1}
+- tasks: {company_id:1, assignee_id:1, status:1}
+- task_updates: {task_id:1, created_at:-1}
+- units: {project_id:1, building_id:1, floor_id:1, unit_no:1} unique
+- audit_events: {entity_type:1, entity_id:1, created_at:-1}
+
+2) RBAC
+Roles:
+- admin
+- project_manager
+- contractor
+- viewer
+
+Permissions:
+- admin/project_manager: full CRUD
+- contractor: read assigned tasks + add updates + change status (limited transitions)
+- viewer: read-only
+
+3) API endpoints (FastAPI)
+Projects hierarchy:
+- POST /api/projects
+- GET /api/projects
+- GET /api/projects/{id}/dashboard   (counts by status + by building)
+- POST /api/projects/{id}/buildings
+- POST /api/buildings/{id}/floors
+- POST /api/floors/{id}/units
+- GET /api/units/{id}/tasks
+
+Tasks:
+- POST /api/tasks
+- GET /api/tasks (filters: project_id, building_id, floor_id, unit_id, status, assignee_id, company_id, q)
+- GET /api/tasks/{id}
+- PATCH /api/tasks/{id} (title/desc/priority/due/company/assignee)
+- POST /api/tasks/{id}/status (enforce valid transitions)
+- POST /api/tasks/{id}/updates (comment + optional attachment)
+- POST /api/tasks/{id}/attachments (image/pdf upload to current upload mechanism)
+- POST /api/tasks/{id}/reopen
+
+Utilities:
+- GET /api/updates/feed?project_id=...
+- GET /api/reports/tasks-summary.pdf?project_id=...
+
+4) Audit logging
+For every create/update/status transition:
+- write audit_events with actor_id, action, entity_type, entity_id, payload, created_at
+
+5) Seed + demo data
+Add script to seed:
+- 1 project
+- 2 buildings
+- 4 floors
+- 20 units
+- 30 tasks across categories and statuses
+
+6) Tests (must pass)
+Add automated tests for one full E2E flow:
+create project -> building/floor/unit -> create task -> assign -> in_progress -> waiting_verify -> closed -> reopen -> closed
+Also test RBAC restrictions for contractor/viewer.
+
+7) Output artifacts
+Return:
+- list of created routes
+- collections/indexes created
+- test results
+- curl examples for 8 core flows

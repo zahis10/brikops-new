@@ -1,0 +1,196 @@
+M9 Billing v1 — Phase 2.2 (Billing Responsibility Delegation UX + Hebrew Cleanup)
+
+Objective
+Close the UX gap from Phase 2.1:
+- Make billing responsibility clear
+- Enable org role assignment from UI (owner/SA)
+- Add navigation from ProjectBillingCard to OrgBillingPage
+- Clean up remaining English text in billing pages
+- No pricing/tiers/calculations/paywall changes
+
+Existing Assets (reuse)
+- PUT /api/orgs/{org_id}/members/{target_user_id}/org-role
+  - Backend endpoint already exists with RBAC (owner/SA only), audit logging, validation
+- billing_roles in GET /api/billing/org/{org_id}
+  - Returns owner/org_admin/billing_admin members only
+- OrgBillingPage
+  - Already shows billing_roles read-only
+- ProjectBillingCard
+  - Already has canEdit / isPM logic and handoff flow
+
+Tasks
+
+T001: Add GET /api/orgs/{org_id}/members endpoint
+Blocked By: []
+Details:
+- Add new endpoint in member_management.py to list ALL org members (not just billing roles)
+- Return: user_id, name, phone, role, is_owner
+- Include the org owner (from organizations.owner_user_id) with is_owner: true
+- RBAC:
+  - Allow: super_admin / owner / org_admin / billing_admin
+  - Deny: PM-only / management_team / contractor / viewer (403)
+- Feature-flagged behind BILLING_V1_ENABLED
+- Add listOrgMembers(orgId) to frontend api.js
+Files:
+- backend/contractor_ops/member_management.py
+- frontend/src/services/api.js
+Acceptance:
+- API returns full member list with roles
+- RBAC enforced correctly
+
+T002: Add changeOrgRole(orgId, userId, role) to frontend API
+Blocked By: []
+Details:
+- Add frontend API method wrapping existing PUT /api/orgs/{org_id}/members/{target_user_id}/org-role
+Files:
+- frontend/src/services/api.js
+Acceptance:
+- Frontend can call org role change endpoint
+
+T003: Billing Responsibility section in OrgBillingPage
+Blocked By: [T001, T002]
+Details:
+- Replace existing minimal billing_roles section with a full card:
+  "אחריות חיוב בארגון"
+- Fetch ALL org members via new endpoint
+- Display each member with current org role in Hebrew
+- Owner shown prominently with lock icon (cannot change owner role from dropdown)
+- For owner/SA:
+  - show Radix Select dropdown per member to change role (member / org_admin / billing_admin)
+- For billing_admin/org_admin:
+  - read-only list (no dropdowns)
+- Determine edit permission from:
+  - current user is super_admin OR
+  - current user matches data.owner_user_id
+- Add confirmation dialog before role change with warning text
+- Add short Hebrew explanation of each role's billing permissions
+- On successful role change:
+  - toast success
+  - refresh members list
+- Use Radix Select (z-index 9999, Replit Preview-safe)
+Files:
+- frontend/src/pages/OrgBillingPage.js
+Acceptance:
+- Owner/SA can assign billing_admin from UI
+- Non-authorized users see read-only list
+
+T004: Navigation from ProjectBillingCard to OrgBillingPage
+Blocked By: [T003]
+Details:
+- In ProjectBillingCard when canEdit=true and NOT editing:
+  - Add CTA link/button:
+    "ניהול אחראי חיוב בארגון"
+  - Navigate to /billing/org/{org_id}#responsibility
+  - org_id is available from billing response (data.org_id)
+- In ProjectBillingCard when canEdit=false and isPM:
+  - Keep existing handoff flow unchanged
+  - Add clear Hebrew explanation of what happens after handoff request
+- In OrgBillingPage:
+  - If hash=#responsibility, scroll/focus to the responsibility section
+Files:
+- frontend/src/components/ProjectBillingCard.js
+- frontend/src/pages/OrgBillingPage.js
+Acceptance:
+- Clear navigation path from project billing to org responsibility section
+- PM flow remains clear and unchanged functionally
+
+T005: Hebrew cleanup across billing/admin pages
+Blocked By: []
+Details:
+- AdminBillingPage.js:
+  - "ID:" -> "מזהה:"
+  - "v{version}" -> "גרסה {version}"
+  - Ensure fallback labels do not expose raw English snake_case to regular users
+- OrgBillingPage.js:
+  - Extend ORG_ROLE_LABELS to cover all relevant roles:
+    - member -> "חבר"
+    - project_manager -> "מנהל פרויקט"
+    - org_admin -> "מנהל ארגון"
+    - billing_admin -> "אחראי חיוב"
+  - Unknown role fallback -> generic Hebrew (not raw English)
+- billingLabels.js:
+  - Fallbacks should return "—" (not raw keys)
+- actionLabels.js:
+  - Verify all billing audit actions have Hebrew labels
+Files:
+- frontend/src/pages/AdminBillingPage.js
+- frontend/src/pages/OrgBillingPage.js
+- frontend/src/utils/billingLabels.js
+- frontend/src/utils/actionLabels.js
+Acceptance:
+- No raw English text visible to regular users in billing screens
+
+T006: Mobile polish for OrgBillingPage responsibility section
+Blocked By: [T003]
+Details:
+- Mobile-first layout (~390-430px):
+  - stacked member cards instead of table-like rows
+  - role dropdown does not overflow horizontally
+  - long names/phones wrap gracefully
+- Radix Select z-index 9999 (Replit Preview-safe)
+Files:
+- frontend/src/pages/OrgBillingPage.js
+Acceptance:
+- OrgBillingPage responsibility section usable on mobile (~400px) without horizontal scroll
+
+T007: Tests + Verification
+Blocked By: [T003, T004, T005, T006]
+Details:
+
+Backend/API proof
+- RBAC matrix for GET /api/orgs/{org_id}/members
+  - allow: SA / owner / org_admin / billing_admin
+  - deny: PM-only / management_team / contractor / viewer
+- RBAC matrix for PUT org-role update
+  - allow: owner / SA
+  - deny: all others
+- Audit proof for org_role_changed events
+
+Frontend/UI verification (Playwright)
+- PM view:
+  - sees handoff flow + clear Hebrew explanation
+  - does NOT see billing role assignment controls
+- Owner/SA view:
+  - sees full org member list
+  - can change member -> billing_admin
+- Navigation:
+  - ProjectBillingCard CTA navigates to OrgBillingPage#responsibility
+- Hebrew cleanup:
+  - no visible raw English text in billing screens for regular users
+- Mobile:
+  - screenshot of responsibility section at 400px width
+
+Files:
+- N/A (execution + proof artifacts)
+Acceptance:
+- All RBAC paths verified
+- Screenshot proof of UX and mobile behavior
+
+Execution Order
+T001 + T002 + T005 (parallel) -> T003 -> T004 + T006 (parallel) -> T007
+
+Constraints
+- All behind BILLING_V1_ENABLED
+- No pricing / tiers / calculations / snapshots / paywall changes
+- Reuse existing PUT org-role endpoint (no new write endpoint)
+- Use Radix UI Select for dropdowns (never native <select>)
+- Backward compatible with existing routes/data
+
+Quality / Release Requirements (Mandatory — High/Sensitive: Billing)
+1) No closure without proof
+- Do not close on “looks good”
+- Required: fix summary + regression checks + API proof + UI proof
+
+2) Guardrails on sensitive flows
+- Backend RBAC is source of truth
+- Frontend must not assume permissions
+- Org role changes must be org-scoped and audited
+
+3) No “user confusion” closure without evidence
+- UX confusion may be a symptom, not a closure reason
+- Provide screenshots + verified flow behavior
+
+4) Release gates before customer-facing close
+- Smoke tests: owner / PM / billing_admin / viewer
+- Negative tests: unauthorized role changes, wrong-role access
+- Attach evidence before marking resolved

@@ -1,0 +1,103 @@
+משימה: לתקן OTP בפרוד — כרגע לא נשלח (גם login וגם signup) כנראה בגלל כשל שקט ב-provider + fallback לא מוגדר.
+
+A) Replit Deployments → Secrets (Production) — להוסיף/להשלים
+1) SUPER_ADMIN_PHONES
+- פורמט: CSV של מספרים ב-E.164
+  לדוגמה: "+972501234567,+972521234567"
+- הערה: זה לא אמור להשפיע על OTP ישירות, אבל כרגע ה-bootstrap לא מזהה super admin בפרוד.
+
+2) Twilio SMS fallback (כרגע חסר ולכן אין fallback אמיתי)
+- חייב לפחות אחד:
+  TWILIO_FROM_NUMBER="+1XXXXXXXXXX"
+  או
+  TWILIO_MESSAGING_SERVICE_SID="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+- לוודא שגם קיימים (כבר קיימים לפי הבדיקה שלך):
+  TWILIO_ACCOUNT_SID
+  TWILIO_AUTH_TOKEN
+
+B) בקוד: להפוך כשל OTP ל-"רועש" (לוג+תגובה) ולא שקט
+ב-OTP endpoint (request_otp) להוסיף:
+1) לוג בתחילת הבקשה:
+- request_id
+- phone masked
+- provider configured (OTP_PROVIDER)
+- האם WA secrets קיימים (bool)
+- האם Twilio fallback מוכן (bool)
+
+2) לא לשלוח ב-background בלי catch
+- זמנית: לבצע await לשליחה (עם timeout) כדי שה-errors יופיעו בלוגים
+- אם חייבים background: להוסיף done_callback שמדפיס exception
+
+3) Multi-attempt מסודר:
+- נסה WhatsApp (OTP_PROVIDER=whatsapp)
+- אם נכשל: log exception + נסה Twilio SMS רק אם fallback config מלא
+- אם גם זה לא אפשרי/נכשל: להחזיר 502 עם error_code ברור (בלי לחשוף סודות)
+
+דוגמת FastAPI (עקרון — להתאים לשמות אצלנו):
+
+from fastapi import APIRouter, HTTPException
+import asyncio, os, logging
+logger = logging.getLogger("otp")
+
+def mask(p): 
+    if not p: return ""
+    return p[:4] + "****" + p[-2:]
+
+async def send_whatsapp(phone, code): ...
+async def send_sms_twilio(phone, code): ...
+
+def twilio_ready():
+    return bool(os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN") and (os.getenv("TWILIO_FROM_NUMBER") or os.getenv("TWILIO_MESSAGING_SERVICE_SID")))
+
+@router.post("/auth/request-otp")
+async def request_otp(payload: RequestOtp):
+    phone = normalize_e164(payload.phone)  # חשוב
+    provider = os.getenv("OTP_PROVIDER", "whatsapp")
+    wa_ready = bool(os.getenv("WA_ACCESS_TOKEN") and os.getenv("WA_PHONE_NUMBER_ID"))
+    sms_ready = twilio_ready()
+
+    logger.info("otp.request", extra={"phone": mask(phone), "provider": provider, "wa_ready": wa_ready, "sms_ready": sms_ready})
+
+    code = await create_otp_session(phone)  # יוצר code/session ב-DB (אבל לא לחסום על init)
+
+    # attempt WhatsApp
+    if provider == "whatsapp":
+        try:
+            res = await asyncio.wait_for(send_whatsapp(phone, code), timeout=12)
+            logger.info("otp.sent", extra={"phone": mask(phone), "channel": "whatsapp", "provider_msg_id": getattr(res, "id", None)})
+            return {"status": "sent", "channel": "whatsapp"}
+        except Exception:
+            logger.exception("otp.whatsapp_failed", extra={"phone": mask(phone)})
+
+        # fallback SMS
+        if sms_ready:
+            try:
+                res = await asyncio.wait_for(send_sms_twilio(phone, code), timeout=12)
+                logger.info("otp.sent", extra={"phone": mask(phone), "channel": "sms", "provider_msg_id": getattr(res, "sid", None)})
+                return {"status": "sent", "channel": "sms"}
+            except Exception:
+                logger.exception("otp.sms_failed", extra={"phone": mask(phone)})
+
+        raise HTTPException(status_code=502, detail={"error_code": "OTP_DELIVERY_FAILED"})
+
+    # provider != whatsapp (אם יש)
+    ...
+
+4) נרמול מספרים חובה (E.164)
+- להשתמש ב-phonenumbers ולשמור/לשלוח תמיד +972...
+- להדפיס בלוג את phone_normalized (masked)
+
+5) Rate limit/429
+- אם יש limit: להחזיר 429 עם הודעה, לא “לא קורה כלום”.
+
+C) בדיקות מהירות אחרי תיקון
+1) לפרוס לפרוד
+2) לנסות login עם מספר לא קיים + signup
+3) לבדוק בלוגים:
+- otp.request
+- otp.sent או otp.whatsapp_failed / otp.sms_failed עם stacktrace
+4) אם WhatsApp נכשל – עכשיו נדע למה (הרשאות/Template/HTTP 400/401 וכו')
+
+ד) אופציונלי אבל מומלץ
+להוסיף endpoint פנימי מוגן ל-super_admin:
+GET /debug/otp-status → מחזיר רק readiness flags (wa_ready/sms_ready/provider) בלי סודות.

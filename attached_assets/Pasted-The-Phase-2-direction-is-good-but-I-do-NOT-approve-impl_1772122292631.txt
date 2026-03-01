@@ -1,0 +1,77 @@
+The Phase 2 direction is good, but I do NOT approve implementation yet without these corrections.
+
+Please revise the plan with the following requirements:
+	1.	Define “new management user” explicitly
+I need a deterministic rule for who is treated as NEW in soft rollout.
+Do not leave this ambiguous.
+
+Use a clear condition such as:
+	•	management user with account_complete=false and identity_enrolled_at=null
+	•	created via a management creation path while gate != ‘off’
+
+Also explain how existing management users are distinguished safely from legacy users.
+	2.	Banner CTA must work for existing users
+Right now the blocking modal appears only when requires_completion === true.
+But for existing management users in soft mode:
+
+	•	requires_completion === false
+	•	they only get a banner
+
+So the banner must have a CTA that can open the same complete-account form intentionally, without making it blocking.
+
+Please define this clearly:
+	•	either reusable modal component with forceOpen
+	•	or a separate complete-account drawer/page
+	•	but not an impossible flow
+
+	3.	Replace console.log “audit” with real backend audit events
+Console logs are not enough.
+
+I want real audit events (backend-side if possible) for:
+	•	complete_account_banner_shown
+	•	complete_account_banner_dismissed
+	•	complete_account_submit_started (optional)
+	•	complete_account_success
+
+At minimum:
+	•	actor_id
+	•	event_type/action
+	•	timestamp
+	•	org/project context if relevant
+
+	4.	Confirm ALL management creation paths are covered
+Do not assume only PM creation exists.
+
+I need an explicit list of all user creation/onboarding paths that may create:
+	•	owner
+	•	org_admin
+	•	billing_admin
+	•	project_manager
+	•	management_team
+
+And for each one:
+	•	whether it should set account_complete=false in soft mode
+	•	whether contractors/viewers are excluded
+
+	5.	Banner dismissal behavior must be intentional
+Using sessionStorage is acceptable for Phase 2, but state it explicitly:
+
+	•	dismissal is session-scoped only
+	•	banner can reappear in a new session until account completion
+	•	this is intentional for soft rollout
+
+	6.	Proof package requirements after implementation
+After implementation, return only:
+
+	1.	exact files changed
+	2.	what changed in each file
+	3.	proof: gate=off => no banner, no modal
+	4.	proof: soft mode + existing management user => banner only, no block
+	5.	proof: soft mode + new management user => blocking modal
+	6.	proof: contractor/viewer => no visible change
+	7.	proof: login flow unchanged
+	8.	proof: all management creation paths are covered
+	9.	exact audit events created
+	10.	known risks before any future enforce mode
+
+Do not implement until the plan is revised with these correction

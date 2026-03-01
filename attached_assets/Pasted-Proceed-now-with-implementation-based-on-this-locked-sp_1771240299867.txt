@@ -1,0 +1,80 @@
+Proceed now with implementation based on this locked spec. Do NOT wait for more sample pages and do NOT redesign beyond this scope.
+
+## 1) Goal
+Build BedekPro for professional inspectors (not tenant-self-report flow), with Reporto-like structured findings and a professional Hebrew RTL PDF.
+
+## 2) Required finding structure (must exist in UI + DB + PDF)
+Each finding must include:
+- finding_number (e.g., 1.1)
+- category (professional categories only)
+- title/defect_description (ממצא)
+- location (מיקום)
+- note (הערה) [optional]
+- recommendation (המלצה)
+- standard_reference (תקן) – free text + suggested standards list
+- pricing:
+  - unit_price
+  - quantity
+  - unit_label (e.g., קומפ', מ"ר, יח')
+  - total_price (calculated)
+- images[] (1..N)
+
+## 3) Professional categories (seed list)
+דלת כניסה, אביזרי חשמל, אלומיניום, נגרות-מטבח, טיח וצבע, אינסטלציה, ריצוף, מסגרות-ממ"ד, חניון
+(Keep editable in admin settings)
+
+## 4) Property details section (inspection-level)
+- property_type
+- project/building/floor/apartment
+- client_name
+- occupancy (מאוכלס כן/לא)
+- utility connections (חשמל/מים/גז)
+- room list
+
+## 5) Expert profile (reusable)
+Store once, reuse across reports:
+- full_name
+- certification/education
+- years_experience
+- license/registration (if available)
+- phone/email/address
+- signature image
+- logo
+
+## 6) PDF layout (must match reference style)
+- Hebrew RTL
+- Header/footer on every page with logo + contact info + page numbering "עמוד X מתוך Y"
+- For each finding:
+  - amber/gold bar title (ממצא X.X)
+  - table rows: ממצא | מיקום | המלצה | תקן | מחיר
+  - price row format exactly:
+    "מחיר ליחידה: ₪{unit_price}, כמות: {quantity} {unit_label}, סה\"כ: ₪{total_price}"
+  - image block directly below table
+- Final report includes:
+  1) cover/header section
+  2) property details
+  3) standards/methodology section
+  4) findings pages
+  5) financial summary (totals by category + grand total)
+
+## 7) UX requirements (mobile-first)
+- Fast "Add Finding" flow: Photo -> Category -> Fill structured fields -> Save
+- Sticky "הוספת ממצא" button
+- No hidden mandatory fields
+- Explicit save success + autosave draft
+
+## 8) Acceptance criteria (must prove with screenshots + sample PDF)
+A) Create inspection with full property details
+B) Add 3 findings with all required fields + images
+C) PDF generated with exact 5-row finding table format + amber header bars
+D) Footer/header appears on every page with page numbering
+E) Financial summary totals are correct and match line items
+
+## 9) Delivery format
+Return:
+- list of files changed
+- DB/model changes
+- API changes
+- 5 screenshots proving A-E
+- 1 generated sample PDF path
+No extra scope beyond this ticket.

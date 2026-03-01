@@ -1,0 +1,180 @@
+להלן סט כרטיסים בסגנון Jira (כולל Steps/Expected/Actual + Acceptance Criteria) + הצעות ייעול.  
+מומלץ לטפל לפי סדר P0 → P1 → P2.
+
+====================================================
+P0 — קריטי (Data / פונקציונליות)
+====================================================
+
+[TICKET P0-01] Quick Setup: דירות לא נשמרות / מוצג “0 דירות” אחרי הקמה מהירה
+Priority: P0
+Area: Buildings / Floors / Units
+תיאור:
+אחרי “הקמה מהירה” (בניין/קומות/דירות) המערכת עדיין מציגה 0 דירות, ונראה שהדירות לא נקלטות ב-DB או שה-UI לא עושה refresh.
+Steps to Reproduce:
+1) להיכנס לפרויקט > מבנה > הקמה מהירה
+2) לבחור בניין 1, מספר קומות, מספר דירות לקומה
+3) לסיים/לאשר
+Actual:
+מופיע 0 דירות / הרשימה לא מתעדכנת
+Expected:
+מספר הדירות מתעדכן מייד בהתאם לחישוב, והרשימה מציגה את הדירות שנוצרו.
+Technical Checklist:
+- לוודא שה-API שיוצר Floors/Units מחזיר 200 עם payload שמכיל counts שנוצרו
+- לוודא כתיבה ל-DB עם project_id + building_id נכונים
+- לוודא שה-UI עושה refetch אחרי success (invalidate cache / refresh store)
+- להוסיף לוג/metrics: request_id + floors_created + units_created + duration_ms
+Acceptance Criteria:
+- יצירת 8 קומות × 4 דירות = 32 דירות מוצג מייד במסך (ללא refresh ידני)
+- בדיקת DB: ב-brikops_prod.units יש 32 רשומות עם building_id המתאים
+- אין כפילויות בהרצה חוזרת (Idempotency או חסימה אם כבר נוצר)
+
+[TICKET P0-02] Special Floors: שדה “מס’ דירות” תקוע על 0 ויוצר “03” במקום 3
+Priority: P0
+Area: Quick Setup / Special floors UI
+תיאור:
+בשדה מספר דירות לקומה מופיע 0 “תקוע” ואז בהקלדה של 3 מתקבל 03.
+Steps to Reproduce:
+1) הקמה מהירה > חריגים (קומות עם מספר דירות שונה)
+2) לנסות להזין 3
+Actual:
+מקבל 03 / או נדרש למחוק 0 בצורה לא טבעית
+Expected:
+המספר נשאר 3 (ללא leading zeros), אפשר למחוק ולהקליד בצורה רגילה.
+Fix Notes:
+- input type=number או inputMode="numeric" + pattern
+- onChange: parseInt, strip leading zeros
+- להשתמש ב-placeholder במקום ערך 0 שמוזן לתוך השדה
+Acceptance Criteria:
+- הזנת 3 נשמרת כ-3
+- הזנת 10 נשמרת כ-10
+- לא ניתן להזין ערכים לא חוקיים (שלילי/ריק) ללא הודעת שגיאה ברורה
+
+====================================================
+P1 — חשוב (מוצר/אבטחה/UX)
+====================================================
+
+[TICKET P1-01] Self-serve Signup: שם ארגון חייב להיות חובה (לא רק המלצה)
+Priority: P1
+Area: Auth / Org model / Billing readiness
+תיאור:
+משתמש חדש שנרשם בלי הזמנה חייב להזין Organization Name כדי שנוכל לשייך חיוב/פרויקט/הרשאות.
+Steps:
+1) הרשמה ללא הזמנה
+Actual:
+אפשר להמשיך בלי שם ארגון (או “מומלץ” בלבד)
+Expected:
+שם ארגון required, ללא זה לא ניתן להמשיך.
+Backend Requirements:
+- validation: org_name required
+- ליצור org + לשייך owner/admin
+Acceptance Criteria:
+- אי אפשר להירשם בלי org_name
+- ב-DB: נוצר org עם name, וה-user מקושר אליו כ-owner/admin
+
+[TICKET P1-02] Password Policy: סיסמה חזקה יותר מ-6 ספרות
+Priority: P1
+Area: Auth / Security
+תיאור:
+6 תווים/ספרות מאפשר סיסמאות חלשות כמו 124456.
+Proposal (MVP):
+- מינימום 8 תווים (עדיף 10)
+- לפחות אות אחת + מספר אחד
+- לחסום סיסמאות נפוצות (123456, 111111, password וכו’)
+Steps:
+1) הרשמה עם 123456
+Actual:
+עובר
+Expected:
+נכשל עם הודעה ברורה.
+Acceptance Criteria:
+- סיסמא חלשה נדחית
+- הודעת שגיאה מוצגת ליד השדה
+- בדיקות יחידה ל-validation
+
+[TICKET P1-03] Project Admin Signup: חייב לבחור/להגדיר שם פרויקט בעת ההרשמה
+Priority: P1
+Area: Onboarding / Project creation
+תיאור:
+מנהל פרויקט צריך לבחור שם פרויקט שהוא מנהל (וגם תהיה אפשרות לערוך בהמשך במסך ניהול פרויקט).
+Steps:
+1) הרשמה כמנהל פרויקט
+Actual:
+אין שדה שם פרויקט
+Expected:
+שדה חובה “שם פרויקט”, יוצרים project ומקשרים.
+Acceptance Criteria:
+- לאחר הרשמה נכנס לפרויקט עם השם שנבחר
+- ב-DB: project נוצר, user משויך כ-project_admin
+
+[TICKET P1-04] Trial Banner / Upgrade CTA: באנר אגרסיבי + שגיאה בלחיצה על “שדרוג”
+Priority: P1
+Area: Billing UX / Trial logic
+תיאור:
+אחרי הרשמה מופיע באנר “נותרו X ימי ניסיון…” בצורה לא מזמינה.
+בלחיצה על “שדרוג” מתקבלת הודעה “תקופת ניסיון הסתיימה” למרות שנותרו ימים.
+Steps:
+1) להירשם כמנהל פרויקט
+2) לראות באנר
+3) ללחוץ “שדרוג”
+Actual:
+הודעה סותרת / חוויה לא טובה
+Expected:
+- באנר פחות אגרסיבי (למשל ב-Billing בלבד או dismissible)
+- “שדרוג” מוביל למסך/מודאל נכון או “צור קשר” עקבי
+- אין סתירות מול מצב trial בפועל
+Acceptance Criteria:
+- אם trial_active=true ויש days_left>0: אין “trial ended”
+- CTA מציג את הפעולה הנכונה (בהתאם למדיניות)
+- יכולת להסתיר/לסגור באנר (dismiss)
+
+====================================================
+P2 — שיפורי מוצר/איכות (Nice to have)
+====================================================
+
+[TICKET P2-01] Quick Setup Summary Screen
+Priority: P2
+תיאור:
+אחרי הקמה מהירה להציג מסך סיכום: “נוצרו X קומות, Y דירות” + כפתור “פתח דירות”.
+Acceptance:
+- המשתמש מקבל confirmation ברור, כולל counts (מגיעים מה-server response)
+
+[TICKET P2-02] Data Consistency Guardrails
+Priority: P2
+תיאור:
+להוסיף בדיקות שרת שמונעות מצב “קיימות קומות אבל אין דירות” או “דירות בלי קומה/בניין”.
+Acceptance:
+- validation על relations + לוג שגיאה ברור
+
+====================================================
+הצעות ייעול (כדי שלא תחזרו לבאגים האלה)
+====================================================
+
+1) מקור אמת אחד למבני פרויקט (Server-driven counts)
+- ה-API של quick-setup יחזיר counts שנוצרו + מזהי entities
+- ה-UI יציג “סיכום” לפי response ולא ינחש
+
+2) Idempotency ל-Quick Setup
+- אם לוחצים פעמיים/רשת נופלת: לא ליצור כפילויות
+- אפשר request_id + בדיקה אם כבר בוצע
+
+3) סטנדרטיזציה לשדות מספריים במובייל
+- כל מספר: inputMode="numeric", parseInt, בלי leading zeros
+- placeholder במקום ערך “0” שמוזרק לשדה
+
+4) Billing/Trial כמכונה סדורה (State machine)
+- trial_active, trial_end_at, days_left מחושבים בשרת
+- ה-UI רק מציג, לא מחשב לבד
+- CTA “שדרוג” תמיד עקבי למדיניות (צור קשר/דף תמחור)
+
+5) Security מינימלית בלי לסבך
+- password policy בסיסית + חסימת סיסמאות נפוצות
+- הודעות שגיאה ברורות (UX) + tests
+
+====================================================
+מה אני צריך בסוף מכל טיקט (Proof)
+====================================================
+- צילום/וידאו קצר מהמובייל שמראה את ה-fix עובד
+- לוג/response מה-API עבור P0-01 (counts שנוצרו + refresh הצליח)
+- בדיקות יחידה ל-validation (Org required + password policy)
+
+אם תרצה: אני יכול להפוך את זה ל-Checklist קצר “מה לבדוק בפרוד” אחרי כל Release.

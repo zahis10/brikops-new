@@ -1,0 +1,132 @@
+כותרת: M8 (חובה) — ניקוי UI, Viewer Read-Only, /admin/users, Phone flows, RTL טלפון, תרגום action codes, Project accordion
+
+מיקוד: לבצע רק סעיפים 1–7 (חובה). סעיפים אופציונליים A–E (שינוי תפקיד/חברות קבלן/שליחה לחברה) נשמרים לאחרי M8 או מאחורי feature flag — לא לבצע עכשיו.
+
+------------------------------------------------------------
+1) הסרת Trial Banner מ-/login
+דרישה:
+- ב-/login לפני התחברות: לא להציג trial banner או כל רכיב שיכול להיראות כמו “מצב ניסוי”/billing.
+- לוודא שאין דליפת מידע לפני התחברות (פרויקט/תפקיד/שם פרויקט/שם חברה וכו').
+
+Acceptance:
+- מסך /login נקי מבאנרים/טקסט Trial לפני auth.
+- לאחר התחברות, במקומות הרלוונטיים בלבד ניתן להציג מידע/באנרים.
+
+------------------------------------------------------------
+2) ניקוי כפילויות/דמו + הגדרת Viewer כ-Read-Only (RBAC מלא)
+דרישה UI:
+- להסיר/לנקות כפתורי Demo כפולים/מבלבלים (ובעיקר כל מה שגורם לבלבול בניווט).
+- Viewer = קריאה בלבד: אין יצירה/עריכה/אישור/סגירה, ואין כפתורי פעולה ב-UI (הכול Hidden/Disabled).
+
+דרישה שרת (חובה):
+- כל פעולה אסורה ל-Viewer חייבת להיחסם בשרת עם 403.
+- אין לסמוך רק על הסתרה ב-UI.
+
+Acceptance:
+- Viewer לא רואה כפתורי Create/Edit/Approve/Close.
+- Viewer שמנסה לקרוא endpoints של כתיבה מקבל 403 (להוכיח ב-Proof).
+
+Tests:
+- בדיקות RBAC שמכסות לפחות:
+  - Viewer -> create issue/task = 403
+  - Viewer -> update issue/task = 403
+  - Viewer -> approve/reject/close = 403
+
+------------------------------------------------------------
+3) Super Admin — מודול /admin/users
+דרישה:
+- להוסיף עמוד /admin/users (גישה: super_admin בלבד).
+- יכולות:
+  - חיפוש משתמשים (שם/טלפון/אימייל אם קיים/ID).
+  - שינוי סטטוס משתמש: active/disabled (או מה שקיים אצלנו).
+  - שינוי תפקידים (לפי הרשאות) + שיוך לפרויקטים.
+  - צפייה בפרטי משתמש בסיסיים + רשימת פרויקטים משויכים + תפקיד בכל פרויקט.
+
+Audits (חובה):
+- כל פעולה במודול נרשמת audit event עם:
+  - actor_id, target_user_id, פעולה, old/new, timestamp, reason אם רלוונטי.
+
+Acceptance:
+- משתמש שאינו super_admin מקבל 403 ב-/admin/users ובכל endpoints תואמים.
+- כל שינוי שנעשה דרך המסך מופיע ב-Audit.
+
+Tests:
+- Access tests (super_admin=200, others=403).
+- Audit written tests על שינוי סטטוס/תפקיד/שיוך פרויקט.
+
+------------------------------------------------------------
+4) שינוי / שחזור מספר טלפון (Phone change & recovery) + Audits + Tests
+דרישה:
+- להוסיף זרימה מסודרת לשינוי מספר טלפון למשתמש (לפי הרשאות שקיימות אצלנו).
+- להוסיף זרימה לשחזור/החלפת מספר במקרי צורך (Recovery) לפי המדיניות שלכם.
+- כל שינוי מספר:
+  - חייב Audit מלא: actor_id, target_user_id, old_phone, new_phone, reason, timestamp.
+  - ולידציות: פורמט, uniqueness, וכשנדרש OTP/אימות (בהתאם למה שכבר קיים).
+
+Acceptance:
+- שינוי מספר עובד מקצה לקצה, ללא שבירת login/OTP.
+- audit נכתב תמיד, כולל reason.
+
+Tests:
+- שינוי מספר תקין -> 200 + audit.
+- שינוי מספר עם פורמט שגוי/כבר תפוס -> 400.
+- הרשאות: מי שאסור לו לשנות -> 403.
+
+------------------------------------------------------------
+5) תיקוני RTL להצגת טלפון בכל מקום
+דרישה:
+- שימוש עקבי ב-<bdi dir="ltr"> בכל מקום שמופיע מספר טלפון (כרטיס משתמש, רשימות, מודאלים, audit UI, וכו').
+- לוודא שמספרים +972… מוצגים בכיוון נכון (לא “היפוך” RTL).
+
+Acceptance:
+- בכל המסכים הרלוונטיים המספר מוצג תקין על iOS/Android/דפדפן.
+- לצרף screenshots הוכחה.
+
+------------------------------------------------------------
+6) תרגום Action Codes לעברית בכל מקום שמוצג למשתמש
+דרישה:
+- למפות את כל ה-action codes שמוצגים ב-UI לשמות תצוגה בעברית.
+- במקומות בהם מוצגים audits/billing actions/מערכת אירועים — להציג label עברי ולא code גולמי.
+
+Acceptance:
+- אין “ACTION_CODE_XYZ” גולמי במסכים למשתמשים.
+- מיפוי מרכזי (dictionary אחד) ולא העתקות מפוזרות.
+
+Tests:
+- בדיקה בסיסית שמוודאת שהפונקציה/mapper מחזירה עברית לערכים ידועים.
+- (אופציונלי) snapshot/DOM test למסך audit.
+
+------------------------------------------------------------
+7) Super Admin — Project Accordion (רשימת פרויקטים)
+דרישה:
+- ברשימת פרויקטים לסופר-אדמין: להציג cards עם accordion:
+  - ברירת מחדל: סגור.
+  - פתיחה מציגה פרטי פרויקט/פעולות/חברי צוות (מה שקיים היום).
+- reset מצב accordion בעת מעבר משתמש/בחירת משתמש אחר (כדי שלא “יישאר פתוח” בהקשר שגוי).
+
+Acceptance:
+- ברירת מחדל סגור.
+- בהחלפת משתמש: חוזר למצב סגור.
+- לצרף screenshots הוכחה.
+
+------------------------------------------------------------
+Proof / Deliverables (חובה בסוף M8)
+- RBAC proof: דוגמאות בקשות שמראות 403 ל-Viewer וללא super_admin ב-/admin/users.
+- Audit proof: לפחות 3 אירועים אמיתיים (שינוי סטטוס/תפקיד/טלפון) עם old/new/actor.
+- UI evidence: screenshots ל:
+  - /login ללא trial banner
+  - Viewer role (אין כפתורי פעולה)
+  - /admin/users
+  - RTL phone (מספר מוצג תקין)
+  - Project accordion סגור + reset
+
+------------------------------------------------------------
+English Summary (for quick checklist)
+- Remove trial banner from login page
+- Clean up confusing demo buttons
+- Make viewer role read-only (UI + server 403)
+- Manage users and roles easily (/admin/users for super_admin) + audit
+- Change phone number with audit + tests
+- Fix phone number display direction (<bdi dir="ltr">)
+- Translate action codes to Hebrew everywhere
+- Organize projects list better (accordion + reset)

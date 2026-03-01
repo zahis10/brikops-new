@@ -1,0 +1,69 @@
+צוות Replit — דחוף: השרת נופל בגלל Port conflict ולכן אני לא רואה ב-Preview את שינויי Phase 2.11 (Billing). צריך לייצב את ה-Workflow ולהביא Proof שהקוד החדש באמת פעיל.
+
+Objective
+ה-Workflow קורס מדי פעם בגלל שהפורט תפוס (5000). כתוצאה מזה ה-Preview נשאר על גרסה ישנה/לא עולה, ואני לא יכול לראות את כרטיס הרישיון החדש ואת ה-CTAs המתוקנים.
+
+T001 — Fix workflow startup script (port conflict hardening)
+בעיה:
+הפקודה הנוכחית עושה `fuser -k 5000/tcp` אבל לפעמים התהליך לא נהרג בזמן לפני ש-uvicorn מנסה להאזין → crash bind/port already in use.
+
+נדרש:
+1) להרוג בצורה אמינה כל LISTENERS על הפורט (לא רק fuser), ולהוסיף wait/retry עד שהפורט פנוי בפועל.
+2) להשתמש ב-`exec` כשמריצים uvicorn כדי שלא יישארו תהליכים יתומים.
+3) אם אחרי retry הפורט עדיין תפוס — להדפיס debug מי תופס (lsof) ולצאת עם שגיאה ברורה.
+
+בבקשה להחליף את Command של ה-Workflow (או להכניס לשם script) למשהו בסגנון הבא (אפשר להתאים לקוד שלכם/נתיבים):
+
+--- START WORKFLOW COMMAND (example) ---
+PORT="${PORT:-5000}"
+
+echo "[BOOT] Ensuring port $PORT is free..."
+
+# Kill anything listening on the port (best effort)
+( fuser -k "${PORT}/tcp" 2>/dev/null || true )
+( lsof -ti "tcp:${PORT}" 2>/dev/null | xargs -r kill -9 || true )
+
+# Wait loop: confirm port is actually free before starting
+for i in $(seq 1 25); do
+  if lsof -iTCP:${PORT} -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+    echo "[BOOT] Port $PORT still in use, retry $i/25..."
+    sleep 0.2
+  else
+    echo "[BOOT] Port $PORT is free."
+    break
+  fi
+done
+
+# If still occupied, dump debug and fail
+if lsof -iTCP:${PORT} -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+  echo "[BOOT][ERROR] Port $PORT still in use after retries. Debug:"
+  lsof -iTCP:${PORT} -sTCP:LISTEN -n -P || true
+  exit 1
+fi
+
+echo "[BOOT] Starting server..."
+# IMPORTANT: exec to avoid orphan processes
+exec uvicorn backend.main:app --host 0.0.0.0 --port "${PORT}"
+--- END WORKFLOW COMMAND ---
+
+Acceptance (T001):
+- השרת עולה ונשאר רץ יציב (ללא port already in use) גם אחרי כמה restarts.
+- אין כפילות שרתים/לוגים חוזרים שמעידים על שני תהליכים.
+
+T002 — Proof Phase 2.11 is visible and active
+אחרי שהשרת יציב:
+1) Screenshot מה-Preview של /billing/org/<org_id> שמראה בבירור את ה-License Summary Card החדש (“בתוקף עד”, status, cycle, וכו’).
+2) JSON snippet מה-API באותו Preview domain:
+   GET /api/billing/org/<org_id>
+   שמכיל לפחות את השדות:
+   - subscription_status
+   - can_manage_billing
+   - owner_name
+   (אפשר לצרף גם paid_until/trial_end_at/read_only_reason)
+
+Acceptance (T002):
+- אני רואה ב-Preview את המסך החדש (לא נראה כמו הגרסה הישנה).
+- ה-JSON מוכיח שה-backend החדש פעיל.
+
+חשוב:
+כל עוד השרת קורס — אי אפשר לאמת את Phase 2.11, אז T001 הוא blocker אמיתי ל-Proof.

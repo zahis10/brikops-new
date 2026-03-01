@@ -1,0 +1,35 @@
+יש לי כמה הערות/באגים מהבדיקה של Phase 3 (Team Management) – תכניס בבקשה לתיקונים לפני שנמשיך ל-QC:
+
+1) “המשתמש אינו חבר בארגון” בזמן הסרה (לא הגיוני)
+- כשאני מנסה להסיר משתמש *מהארגון* וגם *מהפרויקט* קופצת הודעה: “המשתמש אינו חבר בארגון”.
+- בפועל המשתמש מופיע ברשימת “חברי צוות”, אז לפחות הסרה מהפרויקט חייבת לעבוד בלי תלות ב-org_membership.
+בדיקות/תיקון:
+  a) לוודא שה-Remove from project endpoint לא דורש org_membership של ה-target בכלל (רק project_membership).
+  b) לוודא שה-UI לא קורא בטעות ל-remove-from-org כשבחרתי remove-from-project.
+  c) אם מדובר בחבר פרויקט “legacy” בלי org_membership (מלפני Option A) – או:
+     - להסתיר פעולה “הסר מהארגון” ולהשאיר “הסר מהפרויקט”, או
+     - לבצע backfill org_membership אוטומטי כמו שעשית ב-accept-invite.
+
+2) שינוי תפקיד – הדרופדאון ריק (“אין אפשרויות”)
+- בכרטיס משתמש, כשאני פותח “בחר תפקיד חדש” אין שום אופציות.
+תיקון:
+  a) לוודא שהרשימה נבנית מקבוע ברור של roles מותרים (ולא מסנן שמחזיר [] בטעות).
+  b) לוודא שזה לא נשבר בגלל תרגומים (tRole) / מפתחות חסרים.
+  c) להוסיף guard: אם אין אופציות – להציג הודעת debug ברורה בלוג/קונסול + לא להציג “שמור”.
+
+3) Super Admin – אותו User Drawer גם במסך “משתמשים”
+- הכרטיס משתמש (Drawer) שעשית בצוות מצוין. אני רוצה בדיוק את אותה חוויה גם כסופר אדמין במסך /admin/users:
+  - לחיצה על משתמש פותחת Drawer עם פרטים + פעולות super_admin (reset, lock/unlock, roles, org membership וכו’ לפי מה שקיים).
+
+4) עדיין יש מילים באנגלית/role codes
+- בתמונות רואים טקסטים באנגלית כמו (execution_engineer) וכנראה עוד role codes.
+תיקון:
+  a) להשלים תרגום ב-he.json ל-work_manager וגם ל-execution_engineer (וכל role/label שמופיע בפרונט).
+  b) לאחד תצוגות roles ל-tRole() בלבד (בלי ROLE_LABELS כפול), ולהפסיק להדפיס role codes בסוגריים.
+
+Acceptance קצר אחרי תיקון:
+- שינוי תפקיד מציג אופציות ועובד בפועל.
+- הסרה מהפרויקט עובדת תמיד אם יש project_membership (גם אם אין org_membership legacy).
+- הסרה מהארגון עובדת רק כשיש org_membership + cascade, אחרת מוסתר/מוצע backfill.
+- אין יותר execution_engineer/work_manager באנגלית ב-UI.
+- Drawer עובד גם ב-/admin/users לסופר אדמין.

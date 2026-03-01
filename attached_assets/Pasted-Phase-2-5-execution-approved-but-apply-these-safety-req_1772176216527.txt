@@ -1,0 +1,44 @@
+Phase 2.5 execution approved, but apply these safety requirements (preferred approach) before implementing.
+
+1) Login redirects MUST be behind a rollback feature flag
+Because changing LoginPage redirects is not strictly additive, we need a safe rollback switch.
+
+Add:
+- ENABLE_REGISTER_MANAGEMENT_REDIRECTS (default: off)
+
+Behavior:
+- When OFF: keep current login behavior unchanged (OTP new-user redirect stays /onboarding, “הרשמה” links stay as-is)
+- When ON: apply T004 changes:
+  - OTP verify “new user” redirect: /onboarding -> /register-management (pass phone in router state)
+  - “אין לך חשבון? הרשמה” links (phone + email tabs) -> /register-management
+
+Rollback must be instant: set flag off + restart.
+
+2) Phone format must accept Israeli local input (05xxxxxxx)
+Do NOT require users to type +972.
+- Frontend: allow 05… input
+- Backend: normalize with normalize_israeli_phone and store only E.164 (+972…)
+- Any phone passed via router state must be normalized before being locked as read-only
+- If phone format invalid -> clear Hebrew error, but 05… must be accepted.
+
+3) Do NOT rely on verify-otp returning user_exists
+Inline OTP flow can remain, but the authoritative “phone already exists” check must be enforced by:
+- POST /api/auth/register-management: if phone already registered -> 400
+Frontend should show: “מספר זה כבר רשום” + button/link to /login.
+If verify-otp also provides a signal, great, but it must not be required.
+
+4) Security/flow constraints remain:
+- join_code is mandatory and is the only project selector
+- no invite auto-linking in the new endpoint
+- no auto-login (no token returned)
+- pending_pm_approval always
+
+Deliverables after implementation (proof package):
+1) Exact files changed + what changed
+2) Proof: 05 format accepted; DB stores phone as +972 E.164
+3) Proof: phone-origin (already verified) -> /register-management skips OTP (no double OTP)
+4) Proof: email-origin registration -> OTP required exactly once
+5) Proof: existing phone -> registration blocked (400) + user routed to /login
+6) Proof: success -> /pending, NO token
+7) Proof: contractor/invite/onboarding/login flows unchanged
+8) Proof: rollback works (flag off restores old LoginPage redirects)

@@ -1,0 +1,88 @@
+אחלה כיוון. מאשר להתקדם, אבל עם Scope נעול וברור כדי למנוע שבירות:
+
+1) מטרת הספרינט (נעול)
+
+להטמיע workflow שבו:
+	•	קבלן לא יכול לסגור ליקוי.
+	•	קבלן מעלה תמונת תיקון → ליקוי עובר ל־pending_manager_approval.
+	•	רק management_team / project_manager / admin|owner יכולים:
+	•	לאשר סגירה (closed)
+	•	או לדחות ולהחזיר לטיפול (in_progress) עם סיבת דחייה חובה.
+
+2) סטטוסים (ליישם בלי לשבור לאחור)
+
+סטטוסים פעילים חדשים:
+open -> in_progress -> pending_contractor_proof -> pending_manager_approval -> closed
+ועוד:
+rejected_reopen (או החזרה ל־in_progress עם reason, לפי מה יותר יציב אצלנו)
+
+חשוב:
+	•	אם יש סטטוסים ישנים ב-DB, תעשה mapping/migration ולא מחיקה אגרסיבית.
+	•	לא לשבור queries ישנים ו-KPI קיימים.
+
+3) RBAC מחייב (לפי ההיררכיה שלנו)
+
+היררכיה:
+	•	owner/admin
+	•	project_manager (רק פרויקטים שהוא member בהם)
+	•	management_team (sub-role: מנהל עבודה / מהנדס ביצוע / עוזר בטיחות)
+	•	contractor
+	•	viewer
+
+הרשאות:
+	•	Contractor: יכול רק להעלות proof photo לליקוי שלו + הערה, לא לסגור.
+	•	Management team / PM / Admin: מאשרים או דוחים סגירה.
+	•	Viewer: קריאה בלבד.
+	•	PM מוגבל לפרויקטים שלו בלבד (חובה בכל endpoint).
+
+4) API נדרש (MVP)
+	1.	POST /tasks/{id}/contractor-proof
+	•	קלט: תמונה(ות), הערה אופציונלית
+	•	פעולה: מעלה תמונה + מעביר ל־pending_manager_approval
+	2.	POST /tasks/{id}/manager-decision
+	•	קלט: decision=approve|reject, reason חובה אם reject
+	•	approve => closed
+	•	reject => in_progress (או rejected_reopen לפי החלטה)
+	3.	שמירה מלאה של audit trail לכל מעבר סטטוס + מי ביצע + מתי + reason.
+
+5) WhatsApp (חובה)
+
+בעת contractor-proof:
+	•	שליחת הודעה לצוות ניהולי/PM עם:
+	•	פרויקט, בניין, קומה, דירה
+	•	מזהה ליקוי
+	•	תיאור קצר
+	•	לינק ישיר לליקוי
+	•	תמונה ראשית (URL מלא https, לא יחסי)
+	•	להשתמש ב-idempotency/retry הקיימים.
+	•	אם אין טלפון תקין: לא להפיל flow, רק audit ברור.
+
+בעת approve/reject:
+	•	הודעת עדכון לקבלן (אושר/נדחה + סיבה אם נדחה).
+
+6) UI (Task Detail + Unit flow)
+	•	Contractor:
+	•	כפתור יחיד: “העלה הוכחת תיקון”
+	•	אין כפתור “סגור ליקוי”
+	•	Management/PM/Admin:
+	•	אם הסטטוס pending_manager_approval:
+	•	כפתור “אשר סגירה”
+	•	כפתור “דחה והחזר לטיפול” + שדה סיבה חובה
+	•	Timeline ברור לכל שלב.
+
+7) Non-regression
+	•	לא לשבור:
+	•	יצירת ליקוי מתוך דירה
+	•	ניווט דירה
+	•	מספור דירות/קומות
+	•	RBAC קיים בפרויקטים
+
+8) DoD (חובה לפני סגירה)
+	•	0 runtime errors
+	•	מטריצת RBAC מלאה (5 תפקידים × פעולות מרכזיות)
+	•	6–8 צילומי מסך אמיתיים
+	•	דוגמאות request/response לכל endpoint חדש
+	•	payload וואטסאפ לדוגמה (כולל image_url מלא)
+	•	תוצאות טסטים + git SHA סופי
+
+אל תמשיך ל-M2 לפני שה-M1 הזה עובר כולו.

@@ -1,0 +1,103 @@
+Sprint Next — Workflow היררכי סגירת ליקויים (ניהולי סוגר, לא קבלן)
+
+1) היררכיית תפקידים (RBAC)
+	•	Admin: גישה מלאה לכל המערכת.
+	•	Project Manager (PM): גישה מלאה לפרויקט/ים שהוקצו לו.
+	•	Management Team (תתי תפקידים):
+	•	מנהל עבודה
+	•	מהנדס ביצוע
+	•	עוזר בטיחות
+	•	Contractor: טיפול בליקויים שהוקצו לו בלבד.
+	•	Viewer: קריאה בלבד.
+
+2) כלל עסקי קריטי
+	•	Contractor לא יכול לסגור ליקוי לעולם.
+	•	Contractor יכול רק:
+	1.	לצפות בליקוי שהוקצה לו
+	2.	להעלות תמונת תיקון + הערה אופציונלית
+	3.	לשלוח “בוצע”
+	•	לאחר פעולה זו, הסטטוס עובר אוטומטית ל:
+pending_manager_approval (ממתין לאישור מנהל)
+
+3) מי רשאי לאשר ולסגור
+	•	ברירת מחדל: Management Team בלבד (כולל תתי התפקידים הנ״ל) יכול:
+	•	לאשר תיקון → closed
+	•	לדחות תיקון → חזרה ל-in_progress + סיבת דחייה חובה
+	•	Admin/PM יכולים override רק אם צריך (אופציונלי בדגל הרשאה).
+
+4) סטטוסים רשמיים (State Machine)
+	1.	open
+	2.	in_progress
+	3.	pending_contractor_proof
+	4.	pending_manager_approval
+	5.	closed
+	6.	rejected_reopen (אופציונלי)
+
+מעברים מותרים:
+	•	פתיחה: open -> in_progress
+	•	הקצאה לקבלן: in_progress -> pending_contractor_proof
+	•	קבלן העלה הוכחה: pending_contractor_proof -> pending_manager_approval
+	•	ניהולי מאשר: pending_manager_approval -> closed
+	•	ניהולי דוחה: pending_manager_approval -> in_progress (עם reason)
+
+5) WhatsApp flow לקבלן
+בעת פתיחת ליקוי/הקצאה:
+	•	נשלחת הודעה עם:
+	•	פרויקט / בניין / קומה / דירה
+	•	תיאור ליקוי
+	•	תמונה ראשית
+	•	לינק ישיר לדף פעולה של הקבלן
+	•	דף הקבלן דרך הלינק מאפשר רק:
+	•	העלאת תמונת “אחרי”
+	•	הערת ביצוע
+	•	שליחה לבדיקה
+	•	אין לקבלן כפתור “סגור ליקוי”.
+
+6) UI נדרש
+בדף ליקוי:
+	•	אם המשתמש Contractor:
+מוצג כפתור יחיד “העלה תמונת תיקון ושלח לאישור”.
+	•	אם המשתמש Management Team/PM/Admin:
+כשסטטוס pending_manager_approval להציג:
+	•	“אשר וסגור”
+	•	“דחה והחזר לטיפול” (+ סיבת דחייה)
+	•	להציג Timeline ברור:
+	•	נפתח
+	•	הוקצה
+	•	הוכחת קבלן התקבלה
+	•	אושר/נדחה ע״י ניהולי
+
+7) Audit Trail חובה
+לשמור אירועים:
+	•	task_created
+	•	assigned_to_contractor
+	•	contractor_proof_uploaded
+	•	moved_to_pending_manager_approval
+	•	manager_approved_closed
+	•	manager_rejected_reopen
+
+כולל: user_id, role, timestamp, task_id, before_status, after_status, reason (אם קיים).
+
+8) API/בדיקות קבלה (Must Pass)
+	•	Contractor:
+	•	יכול POST proof image → 200
+	•	לא יכול close task → 403
+	•	Management Team:
+	•	יכול approve/close → 200
+	•	יכול reject/reopen → 200
+	•	PM/Admin:
+	•	לפי RBAC פרויקטלי (membership) בלבד
+	•	בדיקות E2E:
+	1.	פתיחת ליקוי + שליחת וואטסאפ
+	2.	קבלן מעלה תמונה
+	3.	סטטוס עובר ל-pending_manager_approval
+	4.	ניהולי מאשר וסוגר
+	5.	ניסיון קבלן לסגור ישירות נחסם ב-403
+
+9) תוצרי מסירה
+	•	רשימת endpoints שנוספו/עודכנו
+	•	צילומי מסך flow מלא (8 לפחות)
+	•	2 דוגמאות payload וואטסאפ (assignment + proof follow-up)
+	•	RBAC matrix מעודכן
+	•	תוצאות טסטים
+	•	git SHA סופי

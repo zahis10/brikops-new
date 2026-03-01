@@ -1,0 +1,56 @@
+מעולה, זה root causes ברורים. מאשר להמשיך לפי הממצאים שלך.
+מוסיף גם הצעת ייעול קטנה שתשפר UX ותצמצם עוד latency/באגים.
+
+P0-01 Quick Setup (units=0)
+- לתקן מיפוי קומות: לא להשוות לפי “קומה 1” מול "1". להשתמש ב-floor_number (int) כמפתח אחד אחיד:
+  * או parse מהשם פעם אחת ולשמור number
+  * או להוסיף field number ל-floor ולהשתמש בו בכל המפות
+- חובה להשתמש ב-bulk endpoint ליצירת units (לא one-by-one).
+- בסוף handleGenerate: לעשות refetch + להציג counts.
+Acceptance:
+- 8 קומות × 4 דירות => 32 דירות נוצרות ומוצגות מיד.
+- חריגים עובדים (קומה 1=3, קומה 2=5 וכו’) והסכום נכון.
+- אין כפילויות בלחיצה כפולה (disable button בזמן יצירה / idempotency).
+
+✅ הצעת ייעול (שווה ממש):
+במקום להסתמך על refetch אחרי יצירה — שה-bulk endpoint יחזיר response עם:
+- floors_created, units_created, units_by_floor
+ואז ה-UI מציג מיד “נוצרו X דירות” ומעדכן את הרשימה מה-response (או לפחות את הספירה),
+ורק אחר כך עושה refresh שקט. זה גם מהיר יותר וגם מוריד סיכוי ל-“0 דירות” בגלל cache/latency.
+
+P0-02 Special floors “03”
+- לא להתחיל value=0; להשתמש ב-"" עד הקלדה.
+- onChange: sanitize numeric, parseInt, strip leading zeros, ולאפשר מחיקה.
+Acceptance:
+- הקלדת 3 נשמרת "3" (לא "03"), מחיקה עובדת טבעי.
+
+P1-01 Org name required
+- Frontend required + error UI
+- Backend: לא default "הארגון שלי" אם ריק; להחזיר 400.
+Acceptance:
+- אי אפשר להירשם בלי org_name.
+
+P1-02 Password policy
+- מינימום 8 (עדיף 10) + לפחות אות+מספר, הודעה ברורה.
+Acceptance:
+- "123456" נכשל, "abcd1234" עובר.
+
+P1-03 Project name required
+- שדה חובה “שם פרויקט” בהרשמה (Project Admin)
+- Backend: ליצור project בשם שהוזן (לא auto).
+Acceptance:
+- אחרי הרשמה נכנס לפרויקט עם השם שנבחר.
+
+P1-04 Trial banner / Paywall
+- PaywallModal state-aware:
+  * trial_active && days_left>0 => “נותרו X ימים” + CTA מתאים
+  * trial_expired => “תקופת ניסיון הסתיימה”
+- Banner פחות אגרסיבי + בלי סתירות.
+Acceptance:
+- “שדרוג” בזמן trial לא מציג “הסתיים”.
+
+בסוף:
+- סרטון קצר: quick setup יוצר דירות ומראה ספירה נכונה
+- צילום: חריגים 3 לא הופך ל-03
+- צילום: הרשמה עם org+project name
+- צילום: Paywall בזמן trial

@@ -1,0 +1,88 @@
+M4.10 — KPI Tiles כ-Deep-Links + שמירת Tab ב-URL + טאב “צוות” משודרג
+
+לפני שמתחילים (Audit מה קיים עכשיו)
+	1.	ProjectControlPage – איפה מוגדרים:
+	•	כרטיסי הסיכום (KPI tiles) עם המספרים (דירות/קומות/בניינים/ליקויים/חברות/צוות).
+	•	שורת הטאבים הקיימת (מבנה/צוות/חברות/ליקויים/הגדרות…).
+	2.	מנגנון Tab state:
+	•	האם היום זה נשמר ב־useState פנימי בלבד?
+	•	האם כבר יש שימוש ב־useSearchParams / location.search?
+	3.	API צוות / memberships:
+	•	איזה endpoint מחזיר את אנשי הצוות בפרויקט (כולל role/trade/company/phone/subRole).
+	•	מה כבר קיים ב-RBAC (למשל אם טלפון מוגבל לתפקידי admin/owner/PM).
+
+⸻
+
+חלק 1 — KPI tiles כ-deep-link שמחליף tab ושומר ב-URL
+
+מה רוצים
+	•	כל כרטיס KPI בסקירה יהיה לחיץ.
+	•	לחיצה על הכרטיס תעדכן את ה-URL עם ?tab= (ולא רק state פנימי), כדי ש:
+	•	Refresh ישמור על אותו tab
+	•	שיתוף לינק יביא לאותו tab
+
+דוגמה ל-URL
+	•	/projects/:projectId/control?tab=team
+	•	/projects/:projectId/control?tab=companies
+	•	/projects/:projectId/control?tab=structure
+
+כללי התנהגות
+	•	לא לשבור query params אחרים — אם יש ?tab=...&x=... לשמור אותם.
+	•	ברירת מחדל: אם אין tab ב-URL → overview/structure (מה שאתם בוחרים כ-default).
+	•	כל מעבר tab (גם מהטאבים וגם מה-KPI) צריך לעבור דרך אותו setter שמעדכן searchParams.
+
+איפה בקוד
+	•	frontend/src/pages/ProjectControlPage.js
+	•	להוסיף useSearchParams / useLocation / useNavigate לפי מה שנוח.
+	•	activeTab נקבע מתוך searchParams.get('tab').
+
+⸻
+
+חלק 2 — טאב “צוות” משודרג (רשימה + פילטרים + חיפוש)
+
+מה קיים היום
+	•	כרגע אתה אומר שמופיע רק שם + role (או משהו בסיסי).
+
+מה להוסיף
+	•	עמודת/שורה לכל איש צוות עם:
+	•	שם מלא
+	•	תפקיד (role) בעברית
+	•	תת־תפקיד (ל־management_team) אם קיים
+	•	טלפון (אם מותר לפי הרשאה)
+	•	מקצוע/Trade + חברה (ל־contractor) אם קיים
+	•	Chips לסינון (באותו טאב):
+	•	הכל
+	•	צוות ניהולי
+	•	קבלנים
+	•	מנהל פרויקט
+	•	חיפוש חופשי (שם/טלפון)
+
+RBAC
+	•	אם טלפון לא אמור להיות גלוי לכל תפקיד — להציג:
+	•	admin/owner/PM → טלפון מלא
+	•	אחרים → להסתיר/לטשטש (או לא להציג בכלל)
+
+איפה בקוד
+	•	אם הטאב צוות נמצא בתוך ProjectControlPage או קומפוננט פנימי (כמו ManagementPanel) — שם לבצע.
+	•	חשוב: שכל הלייבלים יעברו דרך i18n (t()), לא hardcoded.
+
+⸻
+
+חלק 3 — Tab persistence ב-URL לכל הטאבים (לא רק KPI)
+	•	לחיצה על טאבים עצמם צריכה גם לעדכן ?tab=....
+	•	Refresh לא מחזיר ל-default אם היה ?tab=....
+
+⸻
+
+הוכחות / בדיקות נדרשות (UAT + Proof)
+	1.	KPI→Tab:
+	•	צילום מסך/וידאו קצר: לוחץ על כרטיס “צוות” → ה-URL מתעדכן ל-?tab=team → רואים טאב צוות.
+	2.	Refresh persistence:
+	•	עושה Refresh כשאתה ב-?tab=companies → נשאר בטאב חברות.
+	3.	צוות — פילטרים:
+	•	צילום מסך: chips + חיפוש עובדים בפועל (למשל “קבלנים” מציג רק contractors).
+	4.	RBAC טלפון:
+	•	בדיקה עם משתמש שאינו admin/owner/PM (contractor/viewer) → טלפון לא מופיע/מטושטש (אם זה מה שהחלטתם).
+	5.	Tests:
+	•	Frontend: לפחות smoke test ידני + לוודא build נקי.
+	•	Backend: אין שינוי חובה, אלא אם חסר מידע ואז להוסיף enrichment ב-API ולהוסיף test.

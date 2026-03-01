@@ -1,0 +1,54 @@
+Implement S3 storage support for BrikOps with SAFE fallback to local storage (no breaking changes).
+
+Context:
+- Bucket already exists: brikops-prod-files
+- Region: eu-central-1
+- ENV secrets will be available:
+  - FILES_STORAGE_BACKEND (local or s3)
+  - AWS_REGION
+  - AWS_S3_BUCKET
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+  - AWS_S3_PRESIGNED_URL_EXPIRES
+- Existing uploads currently save to local filesystem in multiple places.
+
+Goal:
+Add a unified storage layer so BrikOps can use local filesystem OR S3 based on FILES_STORAGE_BACKEND, with minimal code changes and backward compatibility.
+
+Requirements:
+1) Create a new unified storage service (e.g. backend/services/object_storage.py) that supports:
+   - save_fileobj(...)
+   - save_bytes(...)
+   - generate_download_url(key)
+   - delete(key)
+   - backend mode = local or s3 (from FILES_STORAGE_BACKEND)
+2) Local mode must keep current behavior working (rollback-safe).
+3) S3 mode must:
+   - upload objects to S3 bucket
+   - store object key (not local absolute path)
+   - generate time-limited presigned GET URLs (expiry from AWS_S3_PRESIGNED_URL_EXPIRES)
+4) Integrate the unified storage layer into these existing upload flows (without breaking response contracts as much as possible):
+   - backend/services/storage_service.py (task attachments)
+   - backend/contractor_ops/qc_router.py (QC photos)
+   - backend/services/document_vault_service.py (property/inspection PDFs)
+5) Keep compatibility for existing local files records if possible:
+   - if a record/path is old local path, continue serving it through existing local route
+6) Do NOT make buckets public.
+7) Do NOT hardcode credentials.
+8) Add boto3 dependency if missing.
+9) Add clear logging for storage backend in use (local/s3) and upload errors.
+10) Keep all changes small and focused. Do not refactor unrelated logic.
+
+Deliverables:
+- Code changes
+- Summary of changed files
+- Exact ENV variables required
+- Test steps:
+  - local mode upload test
+  - switch to s3 mode upload test
+  - verify file appears in S3
+  - verify presigned URL works
+
+Important:
+- Default behavior should remain safe if FILES_STORAGE_BACKEND=local.
+- We will switch to s3 only after validation.

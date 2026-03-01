@@ -1,0 +1,60 @@
+היי, מצאתי 2 באגים אמיתיים ב-UAT (קריטיים) + Root cause ברור. צריך Hotfix קטן ומדויק.
+
+1) צוות ניהולי לא נכנס לפרויקט (נראה “ריפרש”/לולאת ניווט)
+
+מה קורה בפועל:
+כשאני מתחבר כ־“צוות ניהולי” ולוחץ על פרויקט — לפעמים זה עושה ריפרש מהיר וחוזר לרשימת פרויקטים / לא נכנס לדשבורד.
+
+Root cause:
+ProtectedRoute בודק user.role (גלובלי) דרך allowedRoles && !allowedRoles.includes(user.role) — אבל בפועל הניתוב אמור לעבוד לפי תפקיד בפרויקט (project.my_role).
+בדמו: sitemanager@contractor-ops.com הוא global role = viewer אבל בפרויקט יש לו my_role = management_team → לכן /control נחסם.
+
+מה לתקן:
+	•	להפוך את ה־routes של פרויקט (כמו /projects/:id/control, /projects/:id/tasks, /projects/:id/plans, /projects/:id/units/...) ל-Auth-only ב־ProtectedRoute (רק “מחובר/לא מחובר”), בלי allowedRoles על role גלובלי.
+	•	את הרשאות ה־RBAC להשאיר בשרת (403/404), ובפרונט רק לטפל יפה במקרה חסימה: toast בעברית + redirect ל-/projects.
+	•	אופציונלי: לתקן גם את הדמו כך שה־global role של sitemanager יהיה management_team — אבל זה בונוס, לא פתרון. הפתרון הנכון הוא לא להסתמך על global role בפרויקט.
+
+Acceptance:
+✅ “צוות ניהולי” תמיד נכנס ל-/projects/:id/control כמו מנהל פרויקט.
+
+⸻
+
+2) קבלן רואה ליקויים של כולם (הוא חייב לראות רק את שלו)
+
+מה קורה בפועל:
+כשאני נכנס כקבלן אני רואה ליקויים של כולם. זה לא רלוונטי לקבלן.
+
+מה צריך להיות:
+	•	קבלן: רואה רק ליקויים שמוקצים אליו.
+	•	Admin / Owner / PM / Management_team: רואים את כל הליקויים.
+
+מה לתקן (חובה גם UI וגם Backend):
+	1.	Frontend guard
+ב־ProjectTasksPage אם project.my_role === 'contractor' ו-URL לא מכיל assignee=me → לבצע searchParams.replace ולהוסיף assignee=me אוטומטית (כדי שהקבלן לא יגיע “בטעות” לכללי).
+	2.	Server-side enforcement (הכי חשוב)
+ב־GET /api/projects/:id/tasks:
+
+	•	לזהות את ה־requester role בפרויקט.
+	•	אם הוא contractor → להתעלם ממה שהגיע ב-query ולהחזיר רק tasks עם assignee_id = requester_user_id.
+(גם אם הוא מנסה לקרוא בלי assignee או עם assignee של מישהו אחר.)
+
+Acceptance:
+✅ קבלן רואה תמיד רק את הליקויים שלו.
+✅ צוות ניהולי/PM/Admin רואים את כל הליקויים.
+
+⸻
+
+הוכחות / בדיקות חובה לפני סגירה
+	1.	Version lock: HEAD + /api/debug/version + footer מסונכרנים על אותו SHA
+	2.	UAT צוות ניהולי: Login “צוות ניהולי” → קליק פרויקט → נכנס ל-/control (אין loop)
+	3.	UAT קבלן: Login “קבלן” → קליק פרויקט → נכנס ל-/tasks?assignee=me ורואה רק שלו
+	4.	API proof (שני תפקידים)
+
+	•	כקבלן: GET /api/projects/:id/tasks מחזיר רק assigned_to_me (גם אם לא שולחים assignee)
+	•	כ-PM: אותו endpoint מחזיר הכל
+
+	5.	Tests
+
+	•	test: management_team לא נחסם בגלל global role
+	•	test: contractor cannot see others’ tasks (server-side)
+	•	test: contractor hitting tasks without assignee param still gets only own tasks

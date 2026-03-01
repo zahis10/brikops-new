@@ -1,0 +1,82 @@
+כותרת: M5.next — הקשחת גישת קבלן + שדרוג CTA “תמונת תיקון” בדף ליקוי
+
+יש 2 דרישות:
+
+חלק 1 — הקשחה סופית: קבלן לא רואה ליקויים שלא שלו (שרת + פרונט)
+
+Backend
+	1.	GET /api/tasks/{task_id}
+
+	•	אם requester הוא contractor וה־task לא משויך אליו → להחזיר 404 (לא 403).
+	•	מטרה: לא לחשוף שקיים ליקוי שאינו שלו.
+
+	2.	GET /api/projects/{project_id}/tasks (רשימה)
+
+	•	כבר קיים enforcement שמכפה assignee_id = requester_user_id לקבלן — לא לשנות, רק לוודא שזה קורה גם אם מגיע query אחר.
+
+Frontend
+	3.	ProjectTasksPage
+
+	•	אם my_role === contractor:
+	•	לוודא שכניסה ישירה ל־/projects/:id/tasks בלי פרמטר → עושה replace ל־/projects/:id/tasks?assignee=me (כדי שלא יראה פילטרים לא רלוונטיים).
+	•	לוודא שלא מוצגים צ’יפים/פילטרים של “הכול” או trades אחרים (כמו שכבר התחלתם).
+
+Acceptance (חלק 1)
+	•	קבלן לא יכול לראות בשום דרך ליקוי שלא שלו:
+	•	גם לא דרך רשימה
+	•	גם לא דרך לינק ישיר ל־/tasks/:id
+	•	לינק ישיר לליקוי שלא שלו → מקבל 404 ומוצג מסך/טוסט בעברית “הליקוי לא נמצא”.
+
+⸻
+
+חלק 2 — CTA בולט לקבלן בדף הליקוי: צילום/העלאה → שליחה לאישור
+
+כבר קיים:
+	•	POST /api/tasks/:id/contractor-proof (כולל שינוי סטטוס + audit)
+	•	UI בסיסי ב־TaskDetailPage
+
+צריך לשדרג את ה־UX:
+
+Frontend (TaskDetailPage)
+	1.	עבור contractor בלבד להציג אזור פעולה ברור ובולט:
+
+	•	כותרת: “שליחת תמונת תיקון”
+	•	כפתור גדול: “צלם/העלה תמונת תיקון”
+	•	input type="file" accept="image/*" capture="environment"
+	•	אחרי בחירה:
+	•	preview גדול + “החלף תמונה”
+	•	שדה הערה (אופציונלי)
+	•	כפתור CTA שני: “שלח לאישור מנהל”
+	•	בזמן שליחה:
+	•	loading state על הכפתור
+	•	בהצלחה:
+	•	toast בעברית (“נשלח לאישור מנהל”)
+	•	ניווט חזרה לרשימת הליקויים של הקבלן:
+	•	/projects/:id/tasks?assignee=me
+
+	2.	חשוב: קבלן לא צריך לראות פעולות ניהול אחרות בדף (אישור/דחייה וכו’), רק את ה־proof שלו.
+
+Acceptance (חלק 2)
+	•	קבלן נכנס לליקוי → רואה CTA ברור לצילום/העלאה.
+	•	העלאה מצליחה → סטטוס נהיה pending_manager_approval (כבר קיים) + חזרה לרשימה עם הודעת הצלחה.
+	•	באייפון נפתח צילום מצלמה ולא רק בחירת קובץ (בזכות capture="environment").
+
+⸻
+
+חלק 3 — Tests (Backend)
+
+להוסיף 5 טסטים (או להתאים לקיים):
+	1.	contractor list ignores query → תמיד מחזיר רק שלו
+	2.	contractor GET /tasks/{id} של ליקוי לא משויך → 404
+	3.	contractor POST contractor-proof לליקוי שלו → 200 + status pending approval
+	4.	contractor POST contractor-proof לליקוי לא שלו → 404/403 (מומלץ 404)
+	5.	project_manager/admin יכול לראות שה־proof נשמר (או לפחות ש־attachment קיים)
+
+⸻
+
+Deliverables / Proof
+	•	Pytest output (full suite)
+	•	Version lock (HEAD = /api/debug/version = footer)
+	•	צילום מסך 2 מצבים:
+	1.	קבלן בדף ליקוי עם CTA + preview
+	2.	קבלן מנסה לפתוח ליקוי שלא שלו → “לא נמצא”

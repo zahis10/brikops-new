@@ -1,0 +1,62 @@
+מעולה, מאשר להתקדם ל-QC. לפני Sprint 1 יש באג P0 בדשבורד שצריך לסגור:
+
+P0 – Dashboard links מחזירים ללוגין
+כשאני לוחץ ב”מרכז ניהול” על פריטים ב:
+- "ממתין לאישור"
+- "תקוע אצל קבלנים"
+זה מעיף אותי חזרה לדף הלוגין.
+
+נדרש:
+1) לזהות אם זה 401/403/redirect:
+- לבדוק network tab איזה endpoint נכשל (tasks list / approvals / details).
+- לוודא שהניווט לא לוקח ל-route שמוגן role שלא מתאים.
+2) אם זה 401:
+- כנראה auth token לא נשלח בקריאה החדשה או יש mismatch בין routes/clients.
+- לתקן כך שכל קריאות ה-API משתמשות באותו client עם auth headers.
+3) אם זה 403/RBAC:
+- להבטיח ש-PM/Owner יכולים לפתוח את הפריטים מהדשבורד בלי להיזרק ללוגין.
+- אם זה management_team — להציג הודעה "אין הרשאה" ולא logout.
+4) Acceptance:
+- לחיצה על "ממתין לאישור" פותחת מסך/רשימה מסוננת בלי logout
+- לחיצה על "תקוע אצל קבלנים" פותחת מסך/רשימה מסוננת בלי logout
+- אם אין הרשאה: נשארים מחוברים ומקבלים הודעה עדינה (לא נזרקים ללוגין)
+
+אחרי שסגרת את זה – להתחיל מיד QC Sprint 1 (Floor QC MVP):
+
+QC Sprint 1 – Scope:
+1) UI:
+- בתוך מסך קומה (Floor details) להוסיף Tab: "בקרת ביצוע".
+- מסך QC מציג רשימת שלבים (cards/accordion) עם: title, status, progress X/Y.
+- כניסה לשלב → רשימת סעיפים עם toggle ✅/❌/⏳ + הערה קצרה.
+- כפתור "שמור" (בשלב 1 אין submit/approve/reject ואין תמונות).
+
+2) Template hardcoded (לשלב 1):
+Template “ביצוע – קומה” (7 שלבים):
+- הכנה ליציקת תקרה
+- בלוקים — שורה ראשונה
+- הכנות אינסטלציה בקומה
+- הכנות חשמל בקומה
+- טיח בקומה
+- הצפה/אטימות
+- אישור סומסום אחרי איטום/אקוסטיקה
+5–10 סעיפים לכל שלב.
+
+3) Backend + Data model:
+- qc_templates (schema; seed/hardcoded OK)
+- qc_runs ברמת floor: {project_id, building_id, floor_id, template_id}
+- qc_items/evidence: {run_id, stage_id, item_id, status, note, updated_by, updated_at}
+
+4) API:
+- GET /api/qc/floors/:floor_id/run (create-if-missing)
+- GET /api/qc/run/:run_id
+- PATCH /api/qc/run/:run_id/item
+
+5) RBAC:
+- PM/Owner + management_team יכולים לערוך QC.
+- Contractor/viewer read-only או להסתיר את הטאב (לבחירתך ב-MVP).
+
+Acceptance Sprint 1:
+- נכנס לקומה → טאב QC קיים.
+- מסמן סעיפים+הערה → שמירה → רענון → נשמר.
+- run נוצר אוטומטית בקומה הראשונה.
+- קומה/פרויקט חדשים: UI יציב עם אפסים/ברירות מחדל.

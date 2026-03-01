@@ -1,0 +1,93 @@
+P0 STABILIZATION: Demo login broken + Billing RBAC leakage + wrong paywall banners
+
+Symptoms (from user):
+1) Demo login buttons (קבלן / מנהל פרויקט) no longer work → “Invalid credentials”.
+2) User can login as “מנהל צוות” (not related to org billing) and:
+   - sees “דרישה לתשלום/שדרוג” banners
+   - can click “שלח בקשת תשלום” / create payment requests
+   - sees pending/open requests UI even when not the right role
+3) PM created payment requests should be visible and flow is working, but access must be correct (PM only for his org, read-only).
+4) In one screenshot, payment request amount shows ₪0 — likely wrong amount source or missing total_monthly context.
+
+Objective
+Restore trust: demo login works, and billing actions are strictly role-scoped:
+- Only billing managers (owner/org_admin/billing_admin) can create payment requests for org billing.
+- PM (project_manager) can CREATE request only for their org as handoff, and can VIEW only their own requests read-only.
+- “מנהל צוות” or any unrelated role must NOT be treated as PM and must NOT see billing actions/banners.
+- Super Admin must NOT see customer renewal panel; SA only approves/rejects.
+
+------------------------------------------------------------
+T001: Fix demo login (dev-only, no breaking changes)
+Problem: Quick demo login buttons fail (“Invalid credentials”).
+Fix:
+- Add DEV-only endpoint (APP_MODE=dev) e.g. POST /api/auth/dev-login {role}
+  returns a token for pre-seeded demo users (contractor/pm/viewer).
+- Ensure seed_demo_users() runs on startup in dev/preview to guarantee those accounts exist.
+- Update /login “כניסה מהירה לדמו” buttons to use dev-login endpoint (not OTP/real creds).
+Acceptance:
+- Contractor demo + PM demo login works instantly in Preview every time.
+
+------------------------------------------------------------
+T002: RBAC root fix — stop treating “מנהל צוות” as PM
+Problem: billing routes now allow PM fallback; likely check_org_pm_role is too permissive or role mapping treats team_manager as PM.
+Fix:
+- Make PM check strict: ONLY project_manager membership for that org/projects counts as PM.
+- Explicitly exclude team_manager from PM path.
+- On GET /api/billing/org/{org_id}:
+  allow access only if:
+  - super_admin OR can_manage_billing OR is_project_manager_in_org
+  otherwise 403.
+Acceptance:
+- Team manager cannot open org billing page (or sees explicit 403/read-only denied).
+- PM can open org billing page read-only.
+
+------------------------------------------------------------
+T003: Payment request create permissions (server is source of truth)
+Fix:
+- POST /payment-request RBAC:
+  allow:
+   a) can_manage_billing (owner/org_admin/billing_admin)
+   b) PM (project_manager) in that org (handoff)
+  deny all other roles (including team_manager).
+- Response should include can_manage_billing + is_org_pm + can_request_payment booleans to drive UI.
+Acceptance:
+- Team manager cannot create requests (403).
+- PM can create request and sees only own requests.
+
+------------------------------------------------------------
+T004: Paywall/banner correctness (stop “random upgrade required”)
+Problem: Unrelated users see upgrade/payment banners.
+Fix:
+- TrialBanner/Paywall banners must be org-scoped and role-scoped:
+  - If user is not in org context / lacks membership → don’t show billing paywall banner.
+  - If user is PM read-only → show grey info “צפייה בלבד — אין הרשאה לניהול חיוב” (no upgrade CTA).
+  - Upgrade CTA only for can_manage_billing and only when reason is payment_expired/trial_expired.
+Acceptance:
+- Team manager / unrelated role sees no upgrade banner.
+- PM sees read-only banner only.
+
+------------------------------------------------------------
+T005: Fix amount=₪0 on payment requests
+Problem: payment request card shows ₪0.
+Fix:
+- Ensure amount_ils is computed from org subscription total_monthly (or derived pricing) and persisted on request at creation time.
+- Add validation: if computed amount is 0 → return 400 with clear message in dev (or log warning) to catch miswired org pricing.
+Acceptance:
+- New requests show correct amount (e.g. ₪8,300), not ₪0.
+
+------------------------------------------------------------
+T006: Proof package (required)
+1) Demo login:
+- Screenshot: contractor demo login success + pm demo login success
+2) RBAC:
+- Team manager tries payment-request → 403
+- Team manager opens billing/org → 403 (or no access)
+- PM opens billing/org → read-only
+3) UI:
+- PM sees “בקש שדרוג מבעלים” + own requests only
+- SA sees no “שלח בקשת תשלום” panel (approve/reject only)
+4) Amount:
+- payment request shows non-zero amount and matches subscription total_monthly
+
+No regression:
+- Do not rewrite billing engine; only tighten RBAC + fix demo login + banner gating + amount calc.

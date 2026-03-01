@@ -1,0 +1,77 @@
+מעולה, זה בדיוק הכיוון שרציתי 👍
+הסקירה שלך מדויקת, והתוכנית טובה מאוד.
+
+כמה דגשים חשובים לפני שאתה מתחיל (כדי לשמור על ספרינט נשלט ולא להסתבך):
+
+1) לשמור על Source of Truth נכון ב-Audit
+- תמיד לשמור actor_id (חובה)
+- בנוסף actor_name כ-snapshot לתצוגה (נוחות UI / היסטוריה)
+- לא להסתמך רק על שם
+- כנ"ל ל-photo uploads ול-item updates:
+  uploaded_by_user_id + uploaded_by_name
+  changed_by_user_id + changed_by_name
+
+2) Permission filtering חייב להיות ב-backend (לא רק ב-frontend)
+- PM (implicit approver) -> audit/timeline מלא
+- Approvers -> audit/timeline מלא רק בשלבים שבסקופ שלהם
+- צוות רגיל -> תצוגה מצומצמת (בלי שמות מלאים של אחרים)
+Frontend רק מציג מה שמותר — לא מבצע את ההסתרה העסקית לבד.
+
+3) Reopen flow – כללים ברורים
+- PM בלבד (implicit approver)
+- reason חובה
+- מותר רק מ-approved/rejected
+- סטטוס יעד: reopened (עדיף לשקיפות)
+- אחרי reopen: ניתן לערוך ולהגיש מחדש
+- ליצור גם audit + notification
+
+4) Notifications V1 – לשמור פשוט
+הכיוון שלך מצוין. תתחיל עם:
+- collection אחד
+- endpoints:
+  GET list
+  GET unread-count
+  PATCH mark-read
+  PATCH mark-all-read
+- Bell + dropdown בסיסי (לא צריך מרכז התראות מורכב עכשיו)
+
+5) Timeline V1 – למשוך מה-audit_events (לא לבנות מערכת חדשה)
+- 5–10 אירועים אחרונים מספיק
+- אירועים: submit / approve / reject / reopen
+- אם אפשר גם photo/item update בהמשך, אבל לא לעכב את V1
+
+6) Audit metadata on items/photos – חשוב מאוד
+זה קריטי לניהול בשטח:
+- ליד תמונה: "צולם ע"י {שם} • שעה"
+- ליד סטטוס סעיף: "סומן ע"י {שם} • שעה"
+(לפי הרשאות תצוגה)
+
+7) PM implicit approver – לשמור עקבי בכל מקום
+- authorization checks
+- my-approver-status
+- timeline visibility
+- buttons ב-UI
+שלא יהיה מצב ש-PM יכול לאשר ב-endpoint אבל לא רואה כפתורים, או להפך.
+
+8) עדיפות ביצוע (כדי לצמצם סיכון)
+אני ממליץ לממש בסדר הזה:
+A. Backend reopen + audit enrichment + timeline endpoint
+B. Backend notifications + endpoints
+C. Frontend reopen button/modal + timeline card
+D. Frontend bell/dropdown notifications
+E. Item/photo audit metadata display
+F. בדיקות הרשאות תצוגה + E2E מלא
+
+9) Acceptance קריטי מבחינתי (אל תסגור בלי זה)
+- PM רואה "פתח מחדש" ב-approved/rejected ויכול לבצע reopen עם סיבה
+- אחרי reopen אפשר לערוך ולהגיש שוב
+- נוצרת התראה ב-submit/approve/reject/reopen
+- ב-Stage Detail יש היסטוריית פעולות עם שם+זמן (לפי הרשאה)
+- PM רואה מי צילם ומי סימן
+- משתמש רגיל לא רואה שמות מלאים של כל הצוות
+
+אם הכול ברור — תתחיל לבנות לפי הסדר הזה ותשלח לי בסוף:
+1) רשימת endpoints שנוספו
+2) דוגמאות payloads של notifications/timeline
+3) צילום UI של bell + timeline + reopen modal
+4) הוכחת הרשאות (PM vs user רגיל)

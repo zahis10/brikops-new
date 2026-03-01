@@ -1,0 +1,53 @@
+יש 5 נושאים דחופים בפרודקשן. בבקשה לטפל לפי סדר עדיפות + להחזיר הוכחות בדיקות/לוגים.
+
+P0) מצלמה נפתחת אבל מסך שחור (מובייל)
+Repro:
+- iPhone/Android → יצירת ליקוי → הוספת תמונה → נפתחת מצלמה שחורה ולא ניתן לצלם.
+Fix required:
+- להחליף/לשדרג קומפוננט צילום כך שיעבוד יציב במובייל.
+- חובה fallback: <input type="file" accept="image/*" capture="environment"> עם preview.
+- אם משתמשים ב-getUserMedia: לטפל ב-permissions, constraints, stop tracks, ולהציג הודעת שגיאה ידידותית + מעבר אוטומטי ל-fallback.
+Acceptance:
+- iOS Safari + Chrome Android: אפשר לצלם/להעלות תמונה, רואים preview, ומצליחים לשמור לליקוי.
+
+P1) הזמנה לקבלן לא מגיעה (לא WA ולא OTP/SMS)
+Case:
+- מנהל פרויקט שולח הזמנה לקבלן (מספר לא שמור באנשי קשר) → הקבלן לא מקבל כלום.
+Fix required:
+- לוודא שליחה דרך NotificationEngine כ-job עם audit מלא.
+- אם WhatsApp נכשל מכל סיבה (כולל API blocked / template error / 133010 / timeout) → fallback ל-SMS (Twilio) אוטומטי.
+- להפסיק free-form WA להזמנה: להשתמש ב-WA Template “invite/join” עם variables (קישור + שם פרויקט).
+- להחזיר ל-frontend סטטוס: channel_used + reason + provider_message_id/sid.
+Acceptance:
+- יצירת invite → נשלחת הודעה (WA או SMS) בפועל ומופיעה בקבלה.
+- DB: notification_jobs + whatsapp_events/sms_events נשמרים עם correlation_id.
+- UI: toast “נשלח ב-WhatsApp” או “נשלח ב-SMS” או “נכשל” עם סיבה.
+
+P2) פישוט הוספת קומות/דירות
+Fix required:
+- להוסיף Wizard “הקמה מהירה”:
+  1) מספר קומות
+  2) דירות לכל קומה (ברירת מחדל)
+  3) חריגים (אופציונלי)
+  4) Generate
+- להשאיר גם “הוספה ידנית” למי שרוצה.
+Acceptance:
+- משתמש חדש יכול להקים בניין+קומות+דירות בפחות מדקה.
+
+P3) הבהרה במסך הקומות (לא ברור ששמאל=מס’ דירות)
+Fix required:
+- להוסיף labels ברורים ליד השדות + hint קצר (“מספר דירות בקומה”).
+- לשפר layout כך שלא יתפרש כאילו זה “מספר הקומה”.
+Acceptance:
+- משתמש מבין מה ממלאים בלי הסבר.
+
+P4) Empty state לבניינים
+Fix required:
+- כשאין בניינים: להציג כפתור גדול “הוסף בניין” שמוביל לטופס הוספת בניין.
+Acceptance:
+- משתמש חדש לא נתקע במסך ריק ויכול להתחיל מיד.
+
+בסוף בבקשה להחזיר:
+1) רשימת הקבצים ששונו
+2) בדיקות שביצעתם (מכשיר/דפדפן) + תוצאות
+3) הוכחה בלוגים/DB להזמנה (notification job + WA/SMS event)

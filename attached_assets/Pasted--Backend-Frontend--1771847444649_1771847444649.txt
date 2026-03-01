@@ -1,0 +1,77 @@
+להלן “חבילת תיקון” מלאה ומרוכזת (Backend + Frontend + בדיקות) כדי לסגור אחת ולתמיד את מסך בקרת הביצוע + הסנכרון + באגים שנפלו בדרך.
+
+A) FIX קריטי – Hierarchy נטען אבל הפרונט מפרסר שדה לא נכון
+✅ ה-endpoint מחזיר:
+{ project_id, project_name, buildings: [...] }
+❌ בפרונט כרגע:
+const buildings = Array.isArray(data) ? data : (data?.items || []);
+✅ לתקן לפרסור נכון וחסין:
+const buildings =
+  Array.isArray(data) ? data :
+  Array.isArray(data?.buildings) ? data.buildings :
+  Array.isArray(data?.items) ? data.items :
+  [];
+
+וגם:
+- empty state (“צריך להקים מבנה וקומות”) יוצג רק אם buildings.length === 0 אחרי הפרסור.
+- להוסיף console.warn פעם אחת אם data קיים אבל buildings ריק: keys של response.
+
+B) FIX קריטי – service לא נכון (TypeError) + import נכון
+בדף QC floor selection להפסיק לקרוא:
+buildingService.getHierarchy(projectId)
+ולשנות ל:
+projectService.getHierarchy(projectId)
+ולוודא שה-importים תואמים.
+
+C) UX FIX – batch-status לא מפיל את כל הדף
+המסך עושה 2 קריאות:
+1) hierarchy
+2) /api/qc/floors/batch-status
+✅ להפריד try/catch:
+- hierarchy חייב להיטען ולהציג קומות בכל מצב
+- batch-status נכשל? להציג קומות בלי badges
+- להציג הודעת fallback קטנה: “סטטוסים לא זמינים כרגע — הקומות מוצגות ללא סטטוס”
+- לוג מפורט ל-batch-status: status/path/request_id/count
+
+D) לאימות בסביבת Production (כדי שלא נהיה “לא מסונכרנים” שוב)
+1) להוסיף/להשתמש ב:
+- /api/debug/version (להחזיר git_sha אמיתי + release_sha_env אם יש)
+- /api/debug/db-ping (מחזיר ping_ms)
+2) להשוות תמיד בין Preview לבין brikops.com:
+- אם version/db-ping שונים → זו סביבה אחרת (Testing/Secrets אחרים).
+3) לוודא שה-frontend באמת נפרס (cache-busting):
+- לשנות build marker/asset hash
+- או hard refresh אחרי deploy.
+
+E) בדיקות Backend/Routes (כדי שהפרונט לא “שקט”)
+- לוודא route קיים:
+  GET /api/projects/{project_id}/hierarchy (או הנתיב שלכם)
+  POST /api/qc/floors/batch-status
+- להחזיר תמיד 200 עם [] כשאין נתונים (לא לזרוק error על collections ריקות).
+- לוודא batch-status דורש JWT בלבד כפי שתיארתם (או RBAC אם צריך) ולהחזיר 401/403 ברור.
+
+F) תפעול/DB (לסנכרון אמיתי עם הפרויקט)
+- מקור אמת אחד: buildings/floors של הפרויקט הם ה-source of truth.
+- QC statuses צריכים להיות enrichment לפי floor_id (לא היררכיה נפרדת).
+- אם מוסיפים קומה בפרויקט → מופיעה בבקרת ביצוע אוטומטית כי קוראים מאותו מקור.
+
+G) Performance – לשמר את מה שכבר עשינו
+- Async bcrypt ב-threadpool (לא לחסום event loop)
+- eliminate N+1 queries (batch queries)
+- shared httpx client + timeouts
+- slow logging >800ms עם breakdown (db/external/other)
+
+H) “Definition of Done” (בדיקות סופיות אחרי Deploy)
+1) Login → Projects → כניסה לפרויקט → בקרת ביצוע:
+   ✅ מציג 5 בניינים + 39 קומות (לפי DB)
+2) לנתק זמנית batch-status (או לגרום לו להיכשל):
+   ✅ עדיין רואים קומות + הודעת fallback
+3) בלוגים:
+   ✅ רואים קריאות hierarchy
+   ✅ רואים batch-status (או לפחות error log שלו)
+4) /api/debug/db-ping:
+   ✅ ערך נמוך (יעד 5–20ms ב-US DB)
+5) הוספת קומה בפרויקט:
+   ✅ מופיעה מייד בבקרת ביצוע ללא פעולה ידנית
+
+ברגע שכל זה ירוק – המסך יהיה גם “נכון”, גם מסונכרן עם הפרויקט, וגם עמיד לתקלות בסטטוסים.

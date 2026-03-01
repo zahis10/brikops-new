@@ -1,0 +1,65 @@
+Cloud Migration Readiness Check (AWS + Cloudflare) — please investigate and report
+
+Goal:
+Before we start moving BrikOps off Replit, I need a clear “current state” report + recommended target architecture for:
+- Backend on AWS
+- Frontend on Cloudflare (Pages)
+- DNS on Cloudflare
+- Storage on S3 (bucket already exists: brikops-prod-files)
+
+Please run a full readiness check and reply with a concise report (with evidence/screenshots/logs where relevant):
+
+A) Current runtime + build
+1) Backend:
+- Framework + entrypoint (how it’s started today)
+- Is it already dockerized? If yes, where is Dockerfile and does it build locally?
+- Healthcheck endpoint exists? Which path? (e.g. /api/health)
+- Ports + expected environment variables list (all required env vars)
+
+2) Frontend:
+- Build command (craco/webpack) + output folder
+- How does frontend currently get API base URL? (env var name + where set)
+- Any hardcoded Replit URLs that must be removed?
+
+B) Dependencies / persistence
+3) Database:
+- Confirm MongoDB Atlas usage (connection string env var name)
+- Any local DB assumptions left (e.g. localhost fallbacks)
+
+4) Files / uploads:
+- List all upload paths and current storage locations
+- Confirm S3 integration status:
+  - Which modules still use local filesystem?
+  - Which already support S3/presigned URLs?
+- Recommend the minimum change to make uploads production-safe on AWS (S3 + presigned URLs)
+
+C) AWS backend target recommendation (pick one and justify)
+5) Recommend the best AWS hosting option for our current stack:
+- ECS Fargate vs Elastic Beanstalk vs EC2
+- Include: how to deploy, how to scale, where logs go, how secrets are stored
+
+6) Domain + HTTPS:
+- Proposed domain names: api.brikops.com and app.brikops.com
+- How to handle TLS (ACM) and CORS
+- Cloudflare DNS records required (A/CNAME), and whether we need Cloudflare proxy on/off for API
+
+D) Cloudflare frontend target
+7) Recommend Cloudflare Pages setup:
+- Build command + output
+- ENV vars needed on Pages
+- Routing rules (SPA fallback)
+- Cache settings
+
+E) Cutover plan (safe)
+8) Provide a staged cutover checklist:
+- Staging environment
+- Smoke tests (login, create defect, upload image, WhatsApp send, billing read-only)
+- DNS TTL + rollout steps
+
+Deliverable:
+Return a structured “Migration Readiness Report” with:
+- Current state findings
+- Gaps/risks
+- Recommended target architecture
+- Step-by-step plan (backend, frontend, DNS, storage)
+No actual migration changes yet — investigation + plan only.

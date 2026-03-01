@@ -1,0 +1,57 @@
+Great progress. Let’s do one more UX polish pass on the photo upload flow (UI/UX only, no business logic/API changes).
+
+Main issue:
+When I tap “בחירה מהגלריה” (or gallery option), I get another native iOS picker screen in English. I understand that part may be OS-level, but the current flow feels like a double menu / redundant step.
+
+Please do a polish pass with this goal:
+Reduce friction and make the upload flow feel like a single clear action path.
+
+Requested changes (StageItemRow upload UI only):
+1) Keep ONE consistent interaction pattern (no duplicate menus)
+- Choose one pattern and use it consistently:
+  - Either bottom sheet only
+  - Or inline popover only
+- Don’t show a custom menu and then another custom menu before the OS picker.
+
+2) Keep primary action = camera (fast field workflow)
+- Primary button stays prominent: “צלם עכשיו” (or “צלם עוד” if photos exist)
+- Direct camera open (capture=environment) as today
+
+3) Improve secondary action to reduce “double-step” feeling
+- Secondary button should be labeled clearly in Hebrew (e.g. “העלה תמונות/קבצים”)
+- When possible, taping the secondary action should open the OS picker directly (not another extra app-level step)
+- If we must keep options (Gallery / Files), keep it as a single lightweight sheet and close it immediately before triggering the hidden input
+
+4) iOS-specific polish (important)
+- If iOS Safari still shows a native English picker (OS behavior), adapt the app wording so it doesn’t feel like a repeated action:
+  - Prefer wording like “בחר תמונות” / “העלה תמונות/קבצים”
+  - Avoid wording that implies a direct gallery-only open if iOS will still show its own chooser
+- The point is reducing confusion, even if the OS dialog cannot be removed
+
+5) Visual polish for the upload options UI
+- Tighter spacing (less empty vertical space)
+- Stronger hierarchy: title + short helper text
+- 48–52px touch targets
+- Better RTL alignment and icon spacing
+- Consistent button widths and states (idle/uploading/disabled)
+
+6) Keep current functionality intact (must not regress)
+- Multi-photo upload (batch) still works
+- Optimistic previews still work
+- No scroll jump
+- No local draft reset (status/note selections stay)
+- Partial failure rollback still works per file
+- Upload lock / double-tap protection stays
+
+Acceptance criteria:
+- Camera flow = one clear tap path
+- Gallery/files flow feels minimal and not repetitive
+- No duplicate custom menus
+- If iOS native picker appears in English, app UI around it is still clear and not misleading
+- All existing upload behavior remains stable
+
+Please implement + send screenshots/video of:
+1) No-photo state (required photo item)
+2) Item with existing photos (“צלם עוד” state)
+3) Secondary upload action flow on iPhone (gallery/files)
+4) Batch upload still working without scroll jump

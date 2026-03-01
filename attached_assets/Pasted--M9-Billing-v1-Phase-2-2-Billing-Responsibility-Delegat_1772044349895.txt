@@ -1,0 +1,168 @@
+מעולה. ממשיכים.
+
+M9 Billing v1 — Phase 2.2 (Billing Responsibility Delegation UX + Hebrew Cleanup)
+Objective
+לסגור את פער ה-UX שנותר אחרי Phase 2.1:
+1) להבהיר למשתמשים מי אחראי על החיוב בארגון ואיך מעבירים אחריות
+2) לאפשר הקצאת אחריות חיוב מתוך UI ברור (בלי בלבול)
+3) להשלים ניקוי טקסטים/לייבלים באנגלית שנשארו במסכי Billing/Admin
+4) בלי לשנות לוגיקת תמחור / snapshots / חישובים עסקיים
+
+Scope (חשוב)
+- כן: UX + זרימת הקצאת אחריות + חיבור למסך/ניהול תפקידי ארגון
+- לא: שינוי תמחור, שינוי tiers, שינוי state machine, שינוי paywall, שינוי billing calculations
+
+Current Pain (מה המשתמש רואה)
+- לא ברור איך “מעבירים חיוב למישהו אחר בארגון”
+- יש טקסטים באנגלית/technical IDs במסכים
+- הזרימה קיימת חלקית (PM handoff / org roles), אבל לא ברורה מספיק בתוך ה-UI
+
+Tasks
+
+T001 — Map existing org-role management path (reuse before new code)
+Blocked By: []
+Details:
+- לבדוק מה כבר קיים בפועל ב-API/UI עבור org members + שינוי org role
+- אם כבר יש endpoint/list ל-members של org → לעשות reuse
+- אם אין endpoint קריא לרשימת חברי ארגון + role → להוסיף GET /api/orgs/{org_id}/members (feature-flagged)
+- RBAC:
+  - SA / owner / org_admin יכולים לראות
+  - billing_admin יכול לראות (לצורך שקיפות), כתיבה רק לפי הכללים הקיימים
+  - PM ללא org role / management_team / contractor / viewer → חסום
+Acceptance:
+- יש דרך API אמינה להביא רשימת חברי ארגון + org role נוכחי
+
+T002 — Billing Responsibility section (clear visibility)
+Blocked By: [T001]
+Details:
+- להוסיף ב-OrgBillingPage כרטיס חדש: "אחריות חיוב בארגון"
+- להציג ברור:
+  - Owner של הארגון
+  - Org Admins
+  - Billing Admins
+  - הסבר קצר בעברית מי יכול לבצע פעולות חיוב
+- להציג מצב נוכחי של “מי בפועל יכול לטפל בחיוב עכשיו” (לפי roles קיימים)
+- ניסוח UX ברור ולא טכני
+Acceptance:
+- משתמש מבין תוך 3 שניות מי אחראי לחיוב ואיפה משנים את זה
+
+T003 — In-app delegation action (from billing UI, not hidden)
+Blocked By: [T001, T002]
+Details:
+- ב-ProjectBillingCard (כאשר canEdit=true):
+  - להציג CTA ברור: "ניהול אחראי חיוב בארגון"
+  - לחיצה תעביר למסך OrgBillingPage המתאים (org_id של הפרויקט)
+  - אם יש support ל-deep-link/hash → לפתוח ישירות לסקשן "אחריות חיוב"
+- ב-PM (canEdit=false):
+  - להשאיר את flow של "בקשת העברה לחיוב הארגון"
+  - להוסיף ניסוח ברור מה קורה אחרי השליחה (מי אמור לטפל)
+Acceptance:
+- אין יותר מצב שמשתמש עם הרשאות חיוב לא מבין איפה מעבירים אחריות
+- PM מבין שהוא מגיש בקשה, ולא “מעביר הרשאה” בעצמו
+
+T004 — Org role assignment UX (minimal, safe)
+Blocked By: [T001]
+Details:
+- אם endpoint שינוי role כבר קיים (PUT /api/orgs/{org_id}/members/{user_id}/org-role):
+  - לבנות UI מינימלי ב-OrgBillingPage/section:
+    - רשימת חברי ארגון
+    - role dropdown בעברית (member / org_admin / billing_admin)
+    - כפתור שמירה
+- הרשאות כתיבה:
+  - owner / super_admin בלבד (או לפי הכלל שכבר קיים בפועל)
+- billing_admin/org_admin שאינם מורשים לשנות roles:
+  - רואים רשימה בלבד (read-only)
+- להציג warning ברור לפני שינוי role (למשל: "הרשאה זו מאפשרת ניהול חיובים")
+Acceptance:
+- owner/SA יכולים להקצות billing_admin מתוך ה-UI
+- משתמשים לא מורשים לא רואים פעולת כתיבה או מקבלים disabled ברור
+
+T005 — Hebrew cleanup (Billing/Admin pages)
+Blocked By: []
+Details:
+- לעבור על ProjectBillingCard / OrgBillingPage / AdminBillingPage / Audit labels:
+  - להסיר שאריות אנגלית גולמית (כולל technical text שדלף)
+  - להשתמש ב-label helpers אחידים
+- ודא שאין הצגה גולמית של plan IDs למשתמשים רגילים (admin יכול לראות כטקסט משני)
+- תרגום/ניסוח UX עבור:
+  - handoff messages
+  - setup states
+  - action labels ביומן
+  - info/error empty states
+Acceptance:
+- אין טקסטים אנגליים גולמיים במסכי billing למשתמשים רגילים
+- מסך admin קריא יותר בעברית (גם אם technical IDs נשארים משניים)
+
+T006 — UX polish for mobile (org billing / role assignment)
+Blocked By: [T002, T004, T005]
+Details:
+- mobile-first layout לסקשן "אחריות חיוב":
+  - כרטיסים מוערמים
+  - role dropdown / save button לא נשברים לרוחב
+  - טקסטים ארוכים נשברים יפה
+- לוודא z-index תקין ל-dropdowns (Replit Preview + mobile)
+Acceptance:
+- מסך OrgBillingPage שמיש במובייל ברוחב ~390-430px ללא גלילה אופקית בעייתית
+
+T007 — Tests + Proof (focused)
+Blocked By: [T003, T004, T005, T006]
+Details:
+Backend/API proof:
+- role matrix עבור org member list (אם נוסף endpoint)
+- role matrix עבור org role update (owner/SA allow; others deny)
+- audit proof עבור org_role_changed
+Frontend/UI proof:
+- PM: רואה "בקשת העברה לחיוב הארגון" + הסבר ברור
+- Org billing editor: רואה "ניהול אחראי חיוב בארגון" (ולא PM handoff CTA)
+- Owner/SA: יכול לשנות member → billing_admin מתוך UI
+- Mobile screenshot של section אחריות חיוב
+- Hebrew cleanup screenshots (no raw English)
+Acceptance:
+- proof package קצר וממוקד (לא צריך חבילה כבדה כמו Phase 2)
+- evidence-based, לא "works on my machine"
+
+Deliverables
+- UX ברור לאחריות חיוב בארגון
+- הקצאת billing_admin מתוך UI (owner/SA)
+- ניווט ברור מ-ProjectBillingCard למסך אחריות חיוב
+- ניקוי עברית במסכי billing/admin
+- בדיקות + צילומי מסך
+
+Execution Order
+T001 → (T002 + T005) → (T003 + T004) → T006 → T007
+
+Important Constraints
+- אין שינויי pricing / tiers / calculations / snapshots
+- אין שינוי ל-paywall או trial flow
+- הכל מאחורי BILLING_V1_ENABLED
+- לשמור backward compatibility בנתיבים קיימים
+
+Quality / Release Requirements (Mandatory — High/Sensitive: Billing)
+1) No closure without proof
+- אין לסגור על בסיס "נראה תקין"
+- חובה: root cause (אם היה באג), fix, regression checks, API/UI proof
+
+2) Guardrails on sensitive flows
+- Billing/UI:
+  - explicit RBAC checks (backend source of truth)
+  - frontend does not assume permissions
+  - clear disabled/hidden states למי שלא מורשה
+- Org role changes:
+  - strict org scoping
+  - audit event on every role change
+
+3) No “user confusion” closure without evidence
+- "לא הבין את הזרימה" יכול להיות symptom בלבד
+- חובה לספק UX proof ברור (screenshots + flow verification)
+
+4) Release gates before customer-facing close
+- Smoke tests (owner / PM / billing_admin / viewer)
+- Negative tests (unauthorized role updates, cross-org access)
+- Attach evidence before marking resolved
+
+Notes
+- אם חסר endpoint לרשימת חברי ארגון, להוסיף מינימום endpoint נפרד במקום לעקם endpoints קיימים
+- עדיפות ל-reuse של role endpoint הקיים לפני המצאת זרימה חדשה
+- UX copy בעברית צריך להיות חד-משמעי ולא טכני
+
+Start now with T001 (existing org member list + role update path audit) and then implement per execution order.

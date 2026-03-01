@@ -1,0 +1,81 @@
+
+⸻
+
+M4.3 — Bucket Filtering אמיתי לפי מקצוע (לא רק 3 קבלנים, לא לזרוק הכל ל״כללי״)
+
+מטרה
+
+הסינון חייב להיות לפי מקצוע ביצוע (trade bucket), לא לפי assignee בלבד, ולא לצמצם הכל ל־electrical/plumbing/painting.
+
+כללי Bucket (מחייב)
+	1.	לכל משימה לחשב bucket_key יציב לפי סדר עדיפויות:
+	•	אם יש company_id/contractor_trade מפורש למשימה → לפי ה־trade הזה.
+	•	אחרת אם יש assignee_id שמשויך לקבלן עם מקצוע ידוע → לפי מקצוע הקבלן.
+	•	אחרת לפי category של המשימה (מיפוי category→trade_bucket).
+	•	רק אם הקטגוריה היא באמת “כללי”/general → bucket_key=general.
+	2.	לא להפיל ל-general קטגוריות כמו:
+	•	מטבח/נגרות
+	•	ארונות אמבטיה
+	•	גמרים
+	•	שלד
+	•	אלומיניום
+	•	מסגרות
+כל אחד חייב bucket נפרד.
+
+Buckets נדרשים מינימום (עם תצוגה עברית)
+	•	electrical → חשמלאי
+	•	plumbing → אינסטלטור
+	•	painting → צבעי
+	•	carpentry_kitchen → נגרות/מטבח
+	•	bathroom_cabinets → ארונות אמבטיה
+	•	finishes → גמרים
+	•	structural → שלד
+	•	aluminum → אלומיניום
+	•	metalwork → מסגרות
+	•	general → כללי
+
+אם מופיעה קטגוריה חדשה שלא במיפוי: ליצור bucket דינמי לפי slug של הקטגוריה (ולא להעביר ל־general), אלא אם הקטגוריה עצמה “כללי”.
+
+⸻
+
+Backend
+	1.	פונקציה משותפת אחת: compute_task_bucket(task, memberships, companies)
+	2.	להשתמש בה גם ב:
+	•	GET /projects/{id}/tasks (סינון bucket_key=...)
+	•	GET /projects/{id}/task-buckets (counts)
+	3.	חובה: counts ב־task-buckets == מספר השורות בפועל באותו פילטר.
+	4.	לשמור query params קיימים (status, search, bucket_key, pagination).
+
+Frontend
+	1.	צ’יפים דינמיים מה־API של buckets (לא hardcoded).
+	2.	תצוגה בעברית בלבד; key פנימי נשאר אנגלית.
+	3.	banner: מסונן לפי: <שם bucket בעברית>.
+	4.	שימור פילטר ב־URL ובריענון דף.
+	5.	אם bucket לא מחזיר שורות — empty state ברור + “נקה סינון”.
+
+⸻
+
+Acceptance מחייב
+	1.	כשבוחרים “אינסטלטור” — לא יופיעו משימות נגרות/גמרים/אחר.
+	2.	כשבוחרים “נגרות/מטבח” — יופיעו רק משימות bucket הזה.
+	3.	“כללי” יכיל רק משימות באמת כלליות (לא fallback אוטומטי לכל לא מוכר).
+	4.	counts בצ’יפים תואמים 1:1 לרשימה המסוננת.
+	5.	רענון דף שומר פילטר.
+
+⸻
+
+הוכחות למסירה (חובה)
+	1.	צילום מסך פילטר “אינסטלטור” עם שורות תואמות בלבד.
+	2.	צילום מסך פילטר “נגרות/מטבח” עם שורות תואמות בלבד.
+	3.	דוגמת GET /projects/:id/tasks?bucket_key=plumbing&status=open (request/response אמיתי).
+	4.	דוגמת GET /projects/:id/task-buckets עם counts אמיתיים.
+	5.	טבלת התאמה: bucket_key → display_he (עברית).
+	6.	Git SHA + רשימת קבצים ששונו.
+
+⸻
+
+Tests מהירים (חובה)
+	•	Unit: compute_task_bucket לכל הקטגוריות לעיל + unknown category.
+	•	Integration: task-buckets counts == tasks list count לכל bucket.
+	•	E2E: בחירת chip → רשימה נכונה → refresh נשמר.
+	•	Regression: פילטרים ישנים לא נשברים.

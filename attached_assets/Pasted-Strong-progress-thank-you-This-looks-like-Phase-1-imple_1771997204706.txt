@@ -1,0 +1,105 @@
+Strong progress — thank you. ✅
+This looks like Phase 1 implementation is complete, but Phase 1 is NOT closed yet.
+
+Status:
+- Implementation Complete (submitted)
+- Proof Package Review Pending (required before closure)
+
+What I still need before approving Phase 1 closure (mandatory proof, not summary)
+
+1) API proof matrix (actual requests/responses + HTTP codes)
+Provide real endpoint evidence for Billing v1 endpoints (with `BILLING_V1_ENABLED=true`) and include negative cases.
+
+Required roles/cases:
+- super_admin
+- org owner
+- org_admin
+- billing_admin
+- project_manager
+- management_team
+- contractor
+- viewer
+
+Required endpoint coverage:
+- GET /api/billing/org/{org_id}
+- GET /api/billing/project/{project_id}
+- GET /api/admin/billing/plans
+- POST /api/admin/billing/plans
+- PUT /api/admin/billing/plans/{plan_id}
+- GET /api/admin/billing/migration/dry-run
+- POST /api/admin/billing/migration/apply
+- org role change endpoint
+
+Include:
+- success cases (200)
+- unauthorized/forbidden cases (403)
+- bad input cases (400)
+- feature flag off cases (404 for all Billing v1 endpoints)
+
+2) RBAC proof at endpoint level (not only direct function tests)
+Current 9 tests are a good start, but I need endpoint/integration-level proof for:
+- PM can read project billing
+- PM cannot read org billing (unless org role)
+- contractor/viewer blocked from billing endpoints
+- super_admin override works
+- owner/org_admin/billing_admin org billing access works
+
+3) Migration proof package (mandatory)
+Provide evidence for:
+- dry-run output (counts + orphan/ambiguous list)
+- apply output (what changed)
+- second apply = no-op proof (idempotency)
+- audit event(s) emitted for org_id backfill apply
+- no auto-backfill on startup (evidence/log/code reference)
+
+4) UI proof (authenticated screenshots)
+Provide screenshots for:
+- OrgBillingPage (read-only)
+- ProjectBillingCard (read-only on project page)
+- AdminBillingPage (plans + migration dry-run/apply UI)
+- Feature flag OFF → no Billing v1 UI exposure
+- PM view: project billing visible, org billing blocked/hidden
+(Authenticated browser screenshots only; not code review descriptions)
+
+5) Audit trail proof (actual entries / logs)
+Show evidence for these actions:
+- billing_plan_created / billing_plan_updated
+- project_billing_created / project_billing_updated
+- contracted_units_changed
+- org_role_changed
+- org_id_backfill_applied
+Need actor + org_id/project_id + action + before/after summary (no secrets)
+
+6) Observed units source-of-truth proof
+Document and prove the exact counting rule used by `compute_observed_units()`:
+- what counts
+- what is excluded (archived units/buildings)
+- sample project before/after counts
+- test evidence covering archived/non-archived boundaries
+
+7) Release metadata
+Include:
+- commit hash (actual committed hash)
+- environment tested (Preview/Dev)
+- `BILLING_V1_ENABLED` value during each proof run
+- rollback note (feature flag off path)
+
+Quality / Release Requirements (Mandatory — High/Sensitive)
+1) No closure without proof
+- No closure on implementation summary alone
+- Need implementation evidence + regression/negative tests + API/UI proof
+
+2) Guardrails on sensitive flows
+- Backend org/project scoping must be proven (frontend visibility is not auth)
+- Super admin override must be explicit and auditable
+- Viewer must remain backend-enforced read-only
+
+3) No assumptions / no concept drift
+- Keep Organization vs Company separation strict
+- No hidden startup mutations (backfill/seed) in production startup path
+
+4) Release gates
+- Smoke tests + negative tests before marking Phase 1 complete
+- Attach proof package before closure
+
+Once you send the proof package above, I’ll review and either approve closure or return a targeted fix list.

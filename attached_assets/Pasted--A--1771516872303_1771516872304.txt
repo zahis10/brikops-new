@@ -1,0 +1,74 @@
+היי, מעולה. בוא נתקדם, אבל אני רוצה שזה יהיה סגור עם דגשים ברורים כדי שלא יהיו הפתעות באמצע.
+
+A) החלטות מוצר (קצר וברור)
+	1.	READ_ONLY = מצב צפייה בלבד
+כל פעולה שיוצרת/מעדכנת/מעלה קבצים נחסמת (כולל: ליקויים, תוכניות, הוכחות, שיוכים, שינוי סטטוס, יצירת פרויקט/דירות/קומות).
+צפייה (GET) תמיד מותרת.
+	2.	Paywall אחיד
+כאשר נחסם: מחזירים 402 עם הודעה בעברית + code קבוע (PAYWALL).
+המטרה: פרונט יזהה תמיד את אותו מצב בצורה אחידה.
+	3.	שליטה מלאה לאדמין
+Owner/Admin יכולים:
+
+	•	Extend Trial עד תאריך
+	•	Comped until עד תאריך
+	•	Suspend/Unsuspend
+והכול נרשם באודיט עם note חובה.
+
+B) שינויים בדאטה (חובה)
+	1.	ליצור collections:
+
+	•	organizations
+	•	organization_memberships
+	•	subscriptions
+
+	2.	קישור פרויקטים לארגון
+להוסיף לכל project שדה org_id
+מיגרציה: פרויקטים קיימים → לשייך ל-org של המשתמש שיצר אותם (owner).
+
+C) Access Gate (הדבר הכי חשוב)
+ליצור פונקציה אחת בשרת: get_effective_access(user_id, org_id) → FULL_ACCESS / READ_ONLY
+
+חוקים:
+	•	אם manual_override.suspended=true → READ_ONLY
+	•	אם status=active ו paid_until>=now → FULL_ACCESS
+	•	אם status=trialing ו trial_end_at>=now → FULL_ACCESS
+	•	אם comped_until>=now → FULL_ACCESS
+	•	אחרת READ_ONLY
+
+D) Enforcement בשרת
+	1.	Dependency / middleware שמופעל על כל endpoint “כותב” (POST/PUT/PATCH/DELETE).
+	2.	כל כתיבה ב-READ_ONLY מחזירה 402 + PAYWALL.
+חשוב: לא להסתמך רק על פרונט. זה חייב להיות שרת.
+
+E) Frontend
+	1.	Banner קבוע בזמן Trial: “נשארו X ימים לניסיון”
+	2.	Interceptor גלובלי ל-402 שמעלה מודאל “שדרוג/תשלום” + כפתור “צור קשר”
+	3.	במצב READ_ONLY: כפתורי פעולה/יצירה/העלאה יהיו disabled או מוסתרים + tooltip “נדרש שדרוג”
+
+F) Admin Billing Console
+Route: /admin/billing (רק owner/admin)
+יכולות:
+	•	Extend Trial
+	•	Comped until
+	•	Suspend/Unsuspend
+	•	טבלה Audit events (מי שינה, מה, מתי, note חובה)
+
+G) הוכחות (UAT + Tests) — חובה לפני סגירה
+	1.	משתמש חדש (OTP) → נוצר org + trial_end=+7 ימים + פרויקט ראשון
+	2.	לקצר trial דרך admin → המשתמש נכנס ל-READ_ONLY
+	3.	לנסות פעולה שנחסמת (למשל העלאת הוכחת תמונה / שינוי סטטוס) → 402 + מודאל
+	4.	admin נותן comped_until לעוד שבוע → חוזר FULL_ACCESS
+	5.	admin עושה suspend → חוזר READ_ONLY גם אם paid_until תקין
+	6.	אינטגרציה טסטים: לפחות 8–12 טסטים שמכסים:
+
+	•	write blocked on read_only
+	•	get allowed
+	•	overrides מנצחים
+	•	org isolation (לא נוגע בארגון אחר)
+
+H) שאלה אחת לפני שמתחילים קוד
+ב-READ_ONLY אתה רוצה חסימה מלאה (אין כלום) או צפייה בלבד (ההמלצה שלי)?
+אני בעד צפייה בלבד כדי לשמור נתונים ולתת “טיזר” שמדרבן תשלום.
+
+אם אין התנגדות — תתחיל לבנות לפי הסעיפים A–G, כולל טסטים והוכחות

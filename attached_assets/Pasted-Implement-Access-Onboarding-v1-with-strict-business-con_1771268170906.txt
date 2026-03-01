@@ -1,0 +1,71 @@
+Implement Access & Onboarding v1 with strict business control.
+
+Requirements:
+
+1) Roles and ownership
+- Add system role: owner (single account, configured by OWNER_PHONE in env).
+- Only owner can create new projects.
+- Each project has exactly one project_manager (enforce at DB and API level).
+
+2) Project billing control
+- Add project status: draft, payment_pending, active, suspended.
+- Non-active project cannot create new tasks/defects (read-only allowed).
+
+3) Phone-first authentication
+- Username is phone number (E.164), unique across platform.
+- Add OTP flow:
+  POST /api/auth/request-otp
+  POST /api/auth/verify-otp
+- OTP codes hashed in DB, expiry 5 min, max attempts 5, lockout after abuse.
+
+4) Registration + approval flow
+- Add phone-based registration endpoint:
+  POST /api/auth/register-with-phone
+  payload includes:
+    project_id, full_name, phone_e164, track(management|subcontractor),
+    requested_role, requested_company_id (optional)
+- New registrations go to join_requests with status=pending.
+- User remains pending_pm_approval until manager approves.
+
+5) Manager approval
+- Project manager endpoints:
+  GET /api/projects/{id}/join-requests
+  POST /api/join-requests/{id}/approve
+  POST /api/join-requests/{id}/reject
+- On approve: create/activate project_membership and set user active.
+- On reject: keep user rejected for that project with reason.
+
+6) Company/role during signup
+- During registration, user must pick:
+  - management role (engineer, project_manager_assistant, safety, foreman, etc.)
+  OR
+  - subcontractor role (plumber, electrician, aluminum, etc.)
+- If subcontractor: company selection required.
+- If management: company optional/management company.
+
+7) Optional password
+- After OTP verification and PM approval, allow user to set password.
+- Support login by phone+password OR OTP (feature flag to enforce OTP only if needed).
+
+8) Security/audit
+- Add audit events for:
+  project create, manager assign, join request approve/reject, role changes.
+- Add rate limiting to auth endpoints.
+- Never log OTP or secrets.
+
+9) Tests
+- Add E2E tests:
+  owner creates project -> assigns manager
+  worker registers via phone + OTP -> pending
+  manager approves -> worker active
+  non-owner cannot create project
+  non-manager cannot approve join requests
+  suspended project blocks defect creation
+- keep existing tests green.
+
+10) Deliverables
+- list of new routes
+- schema changes
+- migration/seed updates
+- test summary
+- PASS/FAIL readiness report for Access & Onboarding v1

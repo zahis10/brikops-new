@@ -1,0 +1,70 @@
+היי, יש 3 דברים לטיפול:
+
+1) UX קטן: “+ + תחום” → “הוסף תחום”
+
+במסך התוכניות, למטה מופיע כרגע “+ + תחום”.
+בבקשה לשנות לטקסט ברור אחד: “הוסף תחום” (בלי כפילות של ++).
+(רק למורשים: owner/admin/PM/management_team)
+
+⸻
+
+2) פיצ’ר חדש: “תוכניות פרויקט” נגיש לקבלן (בלי מסכי ניהול)
+
+כרגע קבלן וצוות ניהולי נוחתים ישר על הליקויים. זה בסדר, אבל קבלן חייב גישה לתוכניות הפרויקט בקליק מתוך מסך הליקויים.
+
+Backend
+	•	להוסיף collection חדשה: project_plans (נפרד מ־unit_plans)
+	•	Endpoints:
+	•	GET /api/projects/{project_id}/plans?discipline=...
+הרשאה: _check_project_read_access (כל חבר פרויקט יכול לצפות/להוריד)
+	•	POST /api/projects/{project_id}/plans
+הרשאה: רק owner/admin/project_manager/management_team
+	•	ולידציה: לוודא שייכות פרויקט + להשתמש במנגנון uploads הקיים.
+	•	אותו מודל disciplines (כולל custom אם כבר קיים אצלנו) + תמיכה בסינון.
+
+Frontend
+	•	מסך חדש: ProjectPlansPage
+	•	Route: /projects/:projectId/plans
+	•	UI כמו UnitPlansPage:
+	•	sidebar תחומים אנכי (RTL)
+	•	רשימת קבצים (צפייה/הורדה)
+	•	modal העלאה (רק למורשים)
+	•	להוסיף כפתור בולט “תוכניות” ב־ProjectTasksPage (ב־header ליד החיפוש) שמנווט ל־/projects/:id/plans
+	•	RBAC: קבלן/צופה רואים תוכניות אבל לא רואים כפתור העלאה/הוסף תחום.
+
+ניווט
+	•	לא לשנות נחיתה: קבלן עדיין נוחת על /projects/:id/tasks?assignee=me
+	•	הכפתור “תוכניות” הוא הדרך המהירה לתוכניות.
+
+⸻
+
+3) Landing נכון לצוות ניהולי (management_team) — לדשבורד פרויקט
+
+כרגע management_team מגיע ישר לליקויים. אני רוצה שהוא ינחת כמו ניהול על דף הפרויקט (הדשבורד).
+
+כלל נחיתה לפי role (עדיף לפי project-level membership role)
+	•	contractor → /projects/:id/tasks?assignee=me
+	•	viewer → /projects/:id/tasks
+	•	management_team → /projects/:id/control ✅
+	•	project_manager/admin/owner → /projects/:id/control
+
+לתקן בכל מקום שמחליט ניווט אחרי בחירת פרויקט:
+	•	MyProjectsPage (לחיצה על כרטיס)
+	•	ProjectSwitcher
+	•	כל redirect פנימי אחר
+
+⸻
+
+4) Version Lock + Tests + UAT (הוכחות)
+
+Version Lock
+
+אחרי שמסיימים: לוודא ששלושת המקורות מסונכרנים על אותו SHA:
+	•	git rev-parse --short HEAD
+	•	GET /api/debug/version → git_sha
+	•	Footer בפרונט: v<sha>
+
+Tests
+
+להריץ suite מלא ולדווח:
+	•	Pytest: X passed, 0 failed (ולציין כמה skipped אם יש)

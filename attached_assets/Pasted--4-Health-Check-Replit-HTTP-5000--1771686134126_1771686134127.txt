@@ -1,0 +1,80 @@
+צריך לסגור את כשל ה-4 דקות Health Check: Replit מחכה ל-HTTP על פורט 5000, ולא מקבל מענה.
+בבקשה לבצע בדיוק את הצעדים הבאים:
+
+A) run.sh – חייב להחזיק את הפרוסס בפרונט + לוגים + chmod
+1) ודא שהקובץ קיים: backend/run.sh
+2) ודא הרשאות: chmod +x backend/run.sh
+3) תוכן מומלץ (מחליף את הקיים):
+---
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[run.sh] starting… pwd=$(pwd) time=$(date -Is)"
+cd /home/runner/workspace/backend || exit 1
+
+export PORT="${PORT:-5000}"
+echo "[run.sh] PORT=$PORT NODE_ENV=${NODE_ENV:-} MONGO_URL_set=$([[ -n "${MONGO_URL:-}" ]] && echo yes || echo no)"
+
+# חשוב: לא להריץ עם '&' ואז שהסקריפט יסתיים! חייב exec כדי שהשרת יישאר בחיים
+# בחר אחד לפי הסטאק:
+
+# Node/Express:
+exec node server.js
+
+# או אם זה npm:
+# exec npm run start
+---
+
+B) השרת חייב להאזין על 0.0.0.0 ועל PORT (fallback ל-5000)
+Node/Express (ב-entrypoint, לפני כל DB init חוסם):
+---
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
+app.get("/health", (_req,res)=>res.status(200).send("ok")); // לא נוגע ב-DB
+app.listen(PORT, "0.0.0.0", () => console.log("listening", PORT));
+---
+
+FastAPI/Uvicorn (אם זה פייתון):
+run.sh:
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-5000}"
+והוסף route:
+@app.get("/health")
+def health(): return "ok"
+---
+
+C) אסור שכלום יחסום לפני listen (זה מה שמפיל את ה-deploy)
+כל connect ל-Mongo / יצירת אינדקסים / migrations / seed:
+- להעביר AFTER listen
+- ואם רוצים background: לעשות try/catch + retry, ולא לזרוק בלי טיפול
+
+דוגמה (Node):
+let dbReady=false;
+async function initDb(){
+  try{
+    await mongoose.connect(process.env.MONGO_URL,{serverSelectionTimeoutMS:15000});
+    dbReady=true;
+    console.log("DB ready");
+  }catch(e){
+    console.error("DB init failed", e);
+    dbReady=false;
+    setTimeout(initDb, 5000);
+  }
+}
+initDb();
+
+(אופציונלי) להוסיף /ready שמחזיר 503 עד dbReady=true:
+app.get("/ready",(req,res)=>res.status(dbReady?200:503).send(dbReady?"ready":"starting"));
+
+D) חובה לוודא Secrets בפרוסקשן
+ב-Replit Deployments → Secrets:
+- MONGO_URL (או MONGODB_URI) מוגדר
+- כל משתני חובה אחרים מוגדרים
+אם חסר משתנה – האפליקציה יכולה לקרוס לפני שהיא מאזינה לפורט.
+
+E) לוגים שחייבים לראות אם זה עדיין נופל
+להדפיס בתחילת הפרוסס:
+- "listening on PORT"
+- שגיאות unhandled:
+process.on("unhandledRejection",(e)=>console.error("unhandledRejection",e));
+process.on("uncaughtException",(e)=>{console.error("uncaughtException",e); process.exit(1);});
+
+בסוף: אחרי פריסה, לבדוק ב-Logs שמופיע "listening 5000" ואז curl ל-/health אמור להחזיר 200.

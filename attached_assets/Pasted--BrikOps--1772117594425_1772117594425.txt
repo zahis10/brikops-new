@@ -1,0 +1,140 @@
+אנחנו מחדדים את החלטת המוצר לגבי הרשמה / התחברות / זהות ב-BrikOps.
+
+## החלטת מוצר מעודכנת
+אני לא רוצה לשנות את הכניסה הראשונית למערכת.
+
+### 1) הכניסה הראשונית נשארת כמו היום
+ה-flow הראשוני הקיים נשאר:
+- נוח
+- מהיר
+- נגיש
+- בלי להכביד על המשתמשים בתחילת הדרך
+
+כלומר:
+- לא להעביר את מסך הכניסה הראשי ל-email + password כשלב ראשון
+- לא לשבור את חוויית הכניסה הקיימת
+
+## 2) Email + Password הופכים לחובה רק בשלב ההרשמה / השלמת החשבון למשתמשים ניהוליים
+אחרי שהמשתמש נכנס בפעם הראשונה ומגיע לשלב של:
+- הרשמה
+- השלמת חשבון
+- יצירת ארגון / פרויקט
+- הצטרפות כמשתמש ניהולי / משרדי / PM / admin
+
+אז יהיה חובה להשלים:
+- email
+- password
+
+### זה חל על:
+- organization owner
+- admin
+- super_admin
+- project manager
+- management / office users
+
+### זה לא חל כרגע על:
+- contractors
+- field users / users with contractor-style lightweight flow
+
+## 3) Contractors נשארים כמו היום
+אני רוצה שקבלנים יישארו ב-flow פשוט ונגיש:
+- בלי חובה למייל
+- בלי חובה ליוזר + סיסמה
+- בלי חיכוך מיותר
+
+אם בעתיד נרצה שכבת זהות נוספת לקבלנים — נדון בזה בנפרד.
+אבל כרגע:
+- contractor onboarding stays lightweight
+- no forced email/password for contractors
+
+## 4) המשמעות בפועל
+מודל העבודה צריך להיות:
+
+### שלב ראשון
+התחברות/כניסה ראשונית כמו היום
+
+### שלב שני
+אם המשתמש הוא משתמש ניהולי / ארגוני:
+המערכת תחייב אותו ב־Complete Account / Registration step עם:
+- email חובה
+- password חובה
+
+ורק לאחר השלמה זו החשבון הניהולי ייחשב מסודר/מלא.
+
+## 5) למה זה חשוב
+אני רוצה להשיג שני דברים יחד:
+1. לשמור על כניסה ראשונית פשוטה, נגישה ומהירה
+2. לייצר שכבת זהות מסודרת למשתמשים הניהוליים
+
+הסיבות העסקיות:
+- billing / invoices / transaction summary
+- recovery / password reset
+- יותר אמינות וזהות מסודרת לארגון/PM/admin
+- הפחתת תלות ועלות OTP לאורך זמן
+- בסיס עתידי טוב יותר למערכת הרשאות וחיובים
+
+## 6) Email + Password למשתמשים ניהוליים
+למשתמשים הניהוליים צריך להוסיף:
+- unique email
+- password hash only
+- forgot password
+- reset password via secure token
+- email verification
+- complete account flow for existing management users who still only have phone-first login
+
+אבל שוב:
+- לא ככניסה ראשית
+- אלא כשלב חובה בתוך registration / complete account
+
+## 7) Billing email
+בנוסף, נא להציע מבנה נכון ל־billing email ברמת organization / billing profile:
+- billing_email
+- optional billing_cc_emails
+- invoice contact / finance contact
+
+כדי לאפשר:
+- חשבוניות
+- סיכום עסקה
+- הודעות חיוב / תשלום / חידוש / כשל חיוב
+
+הערה:
+ה-billing email לא חייב להיות זהה ל-user email של ה-PM.
+
+## 8) Backward compatibility
+חשוב מאוד:
+- לא לשבור את הכניסה הקיימת
+- לא לשבור משתמשים מבוססי טלפון
+- לא לשבור contractor flows
+- לא לכפות בבת אחת שינוי רטרואקטיבי הרסני
+
+צריך מסלול מעבר מסודר:
+- management users קיימים ישלימו email + password דרך complete account flow
+- contractors יישארו כרגיל
+- existing phone-first entry remains intact
+
+## 9) Deliverables שאני רוצה ממך
+תחזיר לי:
+1. flow product ברור ומעודכן לפי ההחלטה הזו
+2. schema changes
+3. routes / APIs needed
+4. UI pages / screens needed
+5. transition flow for existing management users
+6. risks / edge cases
+7. recommended implementation order
+
+## 10) Implementation order מומלץ
+1. map current login/onboarding flows
+2. define which roles require complete-account with email/password
+3. add schema changes for email/password/email_verified
+4. add complete-account flow after first entry for management roles
+5. add forgot/reset password
+6. add email verification
+7. add billing email profile
+8. keep contractors unchanged
+
+## 11) Important constraints
+- do not change the initial login UX
+- do not force contractors into email/password
+- do not close task without proof
+- keep backward compatibility
+- return plan first before broad implementation

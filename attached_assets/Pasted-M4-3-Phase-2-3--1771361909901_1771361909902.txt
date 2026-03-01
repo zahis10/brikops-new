@@ -1,0 +1,98 @@
+M4.3 – Phase 2 (חובה): סינון דינמי לפי כל סוג קבלן, לא רק 3 ולא “כללי” כברירת מחדל
+
+מה שנדרש עכשיו:
+
+1) לוגיקת Buckets חדשה (אחידה ל-list ול-summary)
+
+לבנות פונקציה אחת משותפת בשרת: compute_task_bucket(task, project_context)
+שאותה פונקציה משמשת גם ל:
+	•	GET /projects/{id}/tasks?...
+	•	GET /projects/{id}/tasks/summary (או endpoint summary קיים)
+
+קדימות שיוך:
+	1.	אם יש assignee_id/company_id → שיוך לבאקט של אותו קבלן/חברה.
+	2.	אם אין שיוך בפועל → שיוך לפי category/trade_key לבאקט ייעודי (לדוגמה: מטבח, אלומיניום, מסגרות וכו’).
+	3.	רק אם באמת אין התאמה → general.
+
+אסור שסינון לפי קבלן יסתמך על טקסט חופשי/label בלבד.
+חייב להיות מבוסס bucket_key יציב.
+
+⸻
+
+2) רשימת באקטים מלאה ודינמית (לא hardcoded ל-3 קבלנים)
+
+להוסיף/להשתמש במיפוי מקצועות מלא, לפחות:
+	•	electrical → חשמלאי
+	•	plumbing → אינסטלטור
+	•	painting → צבעי
+	•	carpentry_kitchen → נגרות/מטבח
+	•	bathroom_cabinets → ארונות אמבטיה
+	•	finishes → גמרים
+	•	shell → שלד
+	•	aluminum → אלומיניום
+	•	metalwork → מסגרות
+	•	flooring → ריצוף
+	•	hvac → מיזוג
+	•	glazing/windows → חלונות/זכוכית
+	•	general → כללי
+
+אם קיימות חברות/קבלנים בפרויקט עם trade_key נוסף — להציג גם אותם אוטומטית כבאקט נפרד.
+
+⸻
+
+3) API נדרש
+	1.	GET /projects/{id}/task-buckets?status=open
+מחזיר באקטים עם:
+	•	bucket_key
+	•	label_he
+	•	count
+	•	source (assigned/category/general)
+	2.	GET /projects/{id}/tasks?bucket_key=<...>&status=<...>
+מחזיר רק משימות של אותו באקט.
+
+תנאי חובה:
+count בבאקט = מספר שורות שמתקבל בפועל ב־tasks עם אותו filter.
+
+⸻
+
+4) Frontend
+	•	Chips דינמיים מה־API (לא hardcoded).
+	•	שמות עברית בלבד למשתמש (label_he).
+	•	שמירת פילטר ב־URL query params.
+	•	Banner ברור: מסונן לפי: <שם באקט>
+	•	“נקה סינון” מחזיר ל־All.
+	•	אם בוחרים “נגרות/מטבח” — חייבים לראות רק משימות הבאקט הזה.
+
+⸻
+
+5) מה לתקן בנתוני דמו/סיד
+	•	לא להצמיד משימה לקבלן לא קשור.
+	•	עבור קטגוריות ללא קבלן משויך בפועל:
+	•	להישאר unassigned
+	•	אבל להיכנס לבאקט קטגוריאלי נכון (למשל carpentry_kitchen), לא ל־general אוטומטית.
+	•	general רק לקטגוריה כללית אמיתית או חוסר התאמה אמיתי.
+
+⸻
+
+6) Acceptance (חובה לפני סגירה)
+	1.	בחירת chip “אינסטלטור” מציגה רק אינסטלציה (ללא נגרות/אלומיניום וכו’).
+	2.	בחירת chip “נגרות/מטבח” מציגה רק נגרות/מטבח.
+	3.	בחירת chip “מסגרות” מציגה רק מסגרות.
+	4.	counts בכל chip תואם לרשימה בפועל.
+	5.	רענון דף לא מאבד פילטר.
+	6.	אין רגרסיה ב-RBAC ובניווט.
+
+⸻
+
+7) Proof חובה למסירה
+	•	צילום מסך chips עם לפחות 8 באקטים שונים בפרויקט.
+	•	צילום מסך לכל אחד מ־3 פילטרים: חשמלאי / אינסטלטור / נגרות-מטבח (ורק משימות רלוונטיות).
+	•	דוגמת request/response אמיתית:
+	•	GET .../task-buckets
+	•	GET .../tasks?bucket_key=...
+	•	הוכחת התאמה count == rows.
+	•	Git SHA סופי + רשימת קבצים ששונו.
+	•	טסטים:
+	•	Unit לפונקציית compute_task_bucket
+	•	Integration ל־counts מול list
+	•	E2E לסינון ושמירת query params

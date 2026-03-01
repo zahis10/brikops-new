@@ -1,0 +1,87 @@
+מטרה: להשלים WhatsApp + OTP (WhatsApp + SMS גיבוי) מקצה לקצה, כולל אבטחה, DB, לוגים, ו־E2E Proof אמיתי.
+חובה: שהודעה/ליקוי ממנהל/צוות ניהולי תישלח לקבלן ב־WhatsApp (ובמידת הצורך SMS).
+
+1) WhatsApp Webhook — DB + לוגים (חובה)
+	•	לפרק payloadים שמגיעים ל־POST /api/webhooks/whatsapp:
+	•	messages (הודעות נכנסות)
+	•	statuses (sent/delivered/read/failed)
+	•	לשמור ל־MongoDB collection חדש: whatsapp_events
+	•	received_at, provider="meta_whatsapp", type (“message” / “status”), wa_message_id, from, to(phone_number_id), status, raw_payload
+	•	להוסיף לוגים ברורים:
+	•	[WA] incoming_message from=... wa_id=... text=...
+	•	[WA] status_update wa_id=... status=delivered/read/failed
+	•	להחזיר תמיד 200 OK (אחרי שמירה) כדי שמטא לא תעשה retries סתם.
+
+2) Webhook Security (מומלץ לפני פרודקשן אמיתי)
+	•	להוסיף אימות חתימה X-Hub-Signature-256 מול META_APP_SECRET
+	•	ENV חדש: META_APP_SECRET
+	•	אם חתימה לא תקינה → 401 + לוג [WA] signature_invalid
+
+3) OTP Authentication — WhatsApp + SMS גיבוי (חובה)
+
+API endpoints
+	•	POST /api/auth/request-otp
+	•	input: phone (E.164), channel_preference (“whatsapp_first” ברירת מחדל)
+	•	generate קוד 6 ספרות
+	•	לשמור hashed OTP ב־DB עם:
+	•	expires_at (TTL), attempts, last_sent_at, rate_limit
+	•	לשלוח:
+	1.	WhatsApp Template (Authentication/OTP) אם אפשר
+	2.	אם שליחה בוואטסאפ נכשלת / לא נשלח תוך X שניות → לשלוח SMS גיבוי
+	•	POST /api/auth/verify-otp
+	•	input: phone, code
+	•	verify hash + expiry + attempts
+	•	ליצור/לעדכן משתמש ולהחזיר session/JWT כמו היום
+
+Storage
+	•	collection: otp_codes (TTL index על expires_at)
+	•	rate limits:
+	•	מינימום 60 שנ׳ בין שליחות לאותו מספר
+	•	מקסימום 5 ניסיונות אימות לקוד
+
+ENV חדשים
+	•	OTP_TTL_SECONDS (למשל 300)
+	•	OTP_MAX_ATTEMPTS (למשל 5)
+	•	OTP_RATE_LIMIT_SECONDS (למשל 60)
+
+SMS Provider
+	•	להוסיף אינטגרציה SMS (Twilio מומלץ):
+	•	ENV: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER
+	•	פונקציה send_sms(phone, text) עם לוג + שמירה ב־DB (collection: sms_events)
+
+4) Sending Defect → Contractor WhatsApp (הקריטי)
+
+Business logic
+	•	כשמנהל/צוות ניהולי יוצר ליקוי/משימה שמיועדת לקבלן:
+	•	לשלוח WhatsApp לקבלן עם פרטי הליקוי (וגם לינק ישיר למשימה באפליקציה)
+	•	אם WhatsApp נכשל → SMS גיבוי לקבלן
+	•	לשמור log+DB ב־collection notifications:
+	•	notification_id, task_id/defect_id, to_contractor_phone, channel (whatsapp/sms), status (queued/sent/delivered/read/failed), provider_message_id, error
+	•	להוסיף endpoint פנימי/שירות:
+	•	send_defect_notification(defect_id) שמופעל בעת יצירת ליקוי (או שינוי סטטוס/שיוך לקבלן)
+
+WhatsApp sending
+	•	להשתמש ב־WA_ACCESS_TOKEN + WA_PHONE_NUMBER_ID
+	•	template name:
+	•	להשתמש ב־WA_TEMPLATE_NEW_DEFECT אם קיים
+	•	אם אין template מאושר עדיין → fallback לטקסט רגיל רק אם החשבון מאפשר (אבל לרוב צריך template להודעות יזומות).
+	•	אם צריך: ליצור template חדש ב־WhatsApp Manager: new_defect_alert (he) עם placeholders (שם פרויקט, דירה/מיקום, תיאור קצר, קישור).
+
+5) UI — Hide Quick Login in production
+	•	להוסיף PREVIEW_MODE=true/false
+	•	בפרודקשן (PREVIEW_MODE=false) להעלים לגמרי את כפתורי “כניסה מהירה”
+	•	ב־preview בלבד להציג אותם
+
+6) E2E Proof חובה (אמיתי)
+
+תספקו הוכחה מלאה (עם IDs ולוגים) ל־2 זרימות:
+	1.	OTP אמיתי:
+	•	request-otp → מתקבל WhatsApp (ואם מכבים WhatsApp אז מתקבל SMS) → verify-otp → login success
+	2.	ליקוי אמיתי:
+	•	מנהל יוצר ליקוי ומשייך לקבלן → נשלח WhatsApp לקבלן → מתקבל status delivered/read ב־webhook → נרשם ב־DB notifications
+
+בכל זרימה לצרף:
+	•	דוגמאות payloadים
+	•	רשומות DB שנוצרו
+	•	לוגים רלוונטיים
+	•	provider_message_id של WhatsApp / SMS

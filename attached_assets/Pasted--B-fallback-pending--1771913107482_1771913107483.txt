@@ -1,0 +1,85 @@
+מעולה — האבחון שלך מדויק מאוד, במיוחד לגבי שורש בעיה B (ה-fallback ל־pending / '' בפרונט) ✅
+
+מאשר את הכיוון:
+A + B + C
+ו־D (WhatsApp) רק אם נשאר זמן אחרי שהבאגים וה-UX נפתרו.
+
+יש לי כמה חידודים חשובים כדי לסגור את זה נכון ולא חלקית:
+
+1) Fail requires note — לבדוק לפי effective state (אחרי merge), לא רק payload
+ב-PATCH של item, הוולידציה צריכה להיות על המצב הסופי אחרי merge עם ה-item הקיים.
+
+דוגמה:
+- אם item כבר בסטטוס fail
+- והמשתמש שולח PATCH רק עם note ריק
+=> צריך להיחסם (כי בפועל זה נשאר fail בלי הערה)
+
+כלומר:
+- טוענים item קיים
+- merge עם השדות שנשלחו
+- אם effective_status == fail ו-effective_note ריק -> 422 ברור
+
+2) PATCH אמיתי (partial update) — בלי overwrite סמוי
+מסכים לגמרי:
+- backend צריך לעדכן רק שדות שנשלחו
+- לא לאפס status / note / photos אם הם לא נשלחו
+
+וגם לשמור backward compatibility:
+- client ישן ששולח status+note יחד יעבוד כרגיל
+- client חדש ששולח רק note / רק status לא ידרוס שדות אחרים
+
+3) תיקון merge bug בפרונט — החידוד הכי חשוב
+ב-handleToggle / handleNoteChange:
+fallback חייב להיות לפי הסדר הזה:
+1. local draft value (אם קיים)
+2. אחרת current server item value
+3. רק אם באמת אין ערך -> default
+
+לא להשתמש יותר ב-default קשיח pending / '' כשיש כבר ערך אמיתי ב-item.
+
+4) אחרי save — לבדוק race / reload
+תבדוק שאין מצב של:
+- optimistic update
+- ואז response ישן/איטי מהשרת שמחזיר את ה-item אחורה
+
+אם יש race כזה:
+- request id / updated_at guard
+או merge בטוח של local state עם response
+
+5) Productivity UX (C) — מעולה, אבל להישאר client-side
+מאשר את כל C (workbar / quick filters / next item / blocker banner), בתנאי:
+- בלי שינוי API contracts אם לא חייבים
+- בלי שינוי לוגיקה עסקית קיימת
+- רק UX / client-side navigation / local filtering
+
+6) WhatsApp rejection notice (D) — רק אחרי A+B+C
+מסכים עם הכיוון, אבל V1 ידני בלבד (opt-in), לא אוטומטי:
+- preview לפני שליחה
+- audit event חובה
+- rate-limit / idempotency בסיסי למנוע double send
+
+========================================
+E2E proof שאני רוצה בסוף (חובה)
+========================================
+
+A) Bug A — fail requires note
+1. fail בלי הערה -> נחסם ב-UI
+2. fail בלי הערה -> נחסם גם ב-backend (422)
+3. fail + הערה -> נשמר תקין
+
+B) Bug B — merge/overwrite
+1. תמונה + fail + save
+2. חזרה להוסיף הערה + save
+3. לוודא שה-status נשאר fail והתמונה לא נמחקת
+4. שינוי סטטוס לא מוחק note/photo
+5. שינוי note לא מוחק status/photo
+
+C) Productivity UX
+- צילום מסך / וידאו קצר של:
+  - workbar
+  - quick filters
+  - next item navigation
+  - blocker jump to first item
+
+תתקדם לפי הסדר:
+A -> B -> C -> D (אם נשאר זמן)

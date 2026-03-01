@@ -1,0 +1,50 @@
+P0 FIXES – Super Admin Paywall Bypass + Account Settings Entry + Email Sender Leakage
+
+Goal:
+Close 3 P0s:
+(1) Super Admin must NEVER be read-only/paywalled (backend + frontend).
+(2) Account Settings must be reachable reliably (even if no memberships/drawer).
+(3) Email sender must NOT leak SMTP_USER (use SMTP_FROM + SMTP_FROM_NAME).
+
+P0-1: Super Admin paywall/read-only
+Backend (must be source of truth):
+1) In any “effective access” resolver (billing/access layer):
+   - If DB user.platform_role == 'super_admin' => return FULL_ACCESS immediately (no org/billing checks).
+2) In billing info endpoints used by frontend banners:
+   - If super_admin => effective_access='full_access' and read_only_reason=null always.
+3) In paywall middleware (non-GET blocker):
+   - After get_current_user/JWT -> if super_admin => bypass paywall entirely (never return 402).
+
+Frontend:
+4) TrialBanner: if isSuperAdmin => return null (do not show read-only banner).
+5) Also check PaywallModal (if exists): if isSuperAdmin => return null.
+
+Proof required:
+- Logged in as super_admin: no red “read-only” banner on /projects and /billing/org/:id
+- POST action that was blocked before now works (no 402).
+- API proof: billing/access endpoint returns full_access for super_admin.
+
+P0-2: Account Settings not reachable
+Problem: UserDrawer path can be unreachable in /admin/users context.
+Fix:
+- Add “הגדרות חשבון” button in AdminUsersPage user detail panel when selectedUser.id === currentUser.id.
+- Route navigates to /settings/account.
+- Ensure /settings/account is accessible and not blocked by paywall.
+
+Proof required:
+- Screenshot: button visible for self in /admin/users.
+- Screenshot: /settings/account loads and allows change-email + change-password.
+
+P0-3: Email sender leakage (SMTP_USER)
+Fix:
+- In stepup_service.py (and any other mail service), do NOT use SMTP_USER as From.
+- Use SMTP_FROM + SMTP_FROM_NAME from config/env:
+  From: "BrikOps <no-reply@brikops.com>"
+  Reply-To: support@brikops.com (preferred)
+- Ensure sendmail uses SMTP_FROM as envelope sender where relevant.
+
+Proof required:
+- Trigger an email (step-up / reset) and show headers: From uses SMTP_FROM, not personal email.
+
+Release gate (auth + billing are sensitive):
+- No closure without proof: root cause + fix + regression + API/UI evidence.

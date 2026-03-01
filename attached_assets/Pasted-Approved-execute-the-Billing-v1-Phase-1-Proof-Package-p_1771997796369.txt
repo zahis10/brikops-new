@@ -1,0 +1,116 @@
+Approved — execute the Billing v1 Phase 1 Proof Package plan ✅
+
+This is the right direction. Proceed with T001–T008, with the following required additions/clarifications so Phase 1 can be reviewed and closed cleanly in one pass.
+
+Required additions / clarifications before execution
+
+1) T001 (Environment setup) — capture exact test identities and cleanup proof
+- Document which demo users were assigned temporary org_admin / billing_admin roles
+- Capture before/after role state
+- Ensure role assignment changes produce audit events
+- T008 must include cleanup proof (roles reverted) and final state snapshot
+
+2) T002 (API proof matrix) — include exact endpoint list + flag-off 404 for ALL new Billing v1 endpoints
+Required endpoints:
+- GET /api/billing/org/{org_id}
+- GET /api/billing/project/{project_id}
+- GET /api/admin/billing/plans
+- POST /api/admin/billing/plans
+- PUT /api/admin/billing/plans/{plan_id}
+- GET /api/admin/billing/migration/dry-run
+- POST /api/admin/billing/migration/apply
+- org role change endpoint
+For each endpoint include:
+- success cases
+- forbidden (403)
+- bad input (400)
+- feature flag OFF (404)
+Record actual HTTP status + response snippet + actor role.
+
+3) T003 (RBAC proof) — add cross-scope negative cases explicitly
+In addition to current plan, explicitly prove:
+- PM can read ONLY project billing for their project
+- PM cannot read another project’s billing (even if same org, if not a member)
+- PM cannot read org billing unless org role
+- management_team can read project billing but not org billing
+- contractor/viewer blocked from both org and project billing
+- super_admin override on org and project billing endpoints
+(Endpoint-level HTTP proof only, not direct function tests)
+
+4) T004 (Migration proof) — make idempotency evidence explicit
+Must include:
+- dry-run counts (total / missing org_id / auto-resolvable / ambiguous-orphan list)
+- apply output (what changed)
+- second apply output = no-op proof
+- audit events for org_id_backfill_applied
+- code/file reference proving no auto-backfill runs on startup
+If any project is ambiguous, do NOT silently assign — keep it in the report.
+
+5) T005 (Audit trail proof) — include before/after summary fields
+For each required audit action show:
+- actor
+- action
+- org_id/project_id/entity refs
+- timestamp
+- before/after summary (sanitized)
+Required actions:
+- billing_plan_created
+- billing_plan_updated (if update endpoint exists and is tested)
+- project_billing_created
+- project_billing_updated (or contracted_units_changed if separate action)
+- contracted_units_changed
+- org_role_changed
+- org_id_backfill_applied
+
+6) T006 (Observed units proof) — avoid risky changes to shared demo data if possible
+Preferred approach:
+- Use a dedicated test project or a clearly reversible test unit record
+- Prove:
+  - exact counting rule from compute_observed_units()
+  - manual DB/query cross-check
+  - archived exclusion
+  - restore state after test
+If you must modify shared demo data, document exact rollback steps and final restored evidence.
+
+7) T007 (UI screenshots) — include role-specific UI behavior + flag off
+With flag ON:
+- PM: ProjectBillingCard visible on project settings tab
+- PM: OrgBillingPage blocked/hidden unless PM is also org owner/org_admin/billing_admin
+- Org owner or billing_admin: OrgBillingPage visible (read-only)
+- SA: AdminBillingPage plans + migration UI
+With flag OFF:
+- no Billing v1 UI exposure (or graceful empty state) + corresponding API 404 proof
+Include authenticated screenshots only (not code descriptions).
+
+8) T008 (Release metadata) — include commit and proof run details cleanly
+Include in PROOF_PACKAGE.md:
+- code commit hash tested (7bae3fb) and note if proof-doc commit differs
+- environment (Preview/Dev)
+- BILLING_V1_ENABLED value per proof section
+- rollback steps (flag OFF + cleanup complete)
+- final status recommendation: “Phase 1 ready for review” (not auto-closed)
+
+Execution order tweak (recommended)
+- T001 first (as planned)
+- T002/T003/T004/T006 can run in parallel (good)
+- T005 after T002/T004 (needs generated audit events)
+- T007 after T001 and after at least one successful data setup for visible UI
+- T008 last
+
+High/Sensitive quality requirements (mandatory)
+1) No closure without proof
+- root cause/design rationale + implementation evidence + regression/negative tests + API/UI proof
+
+2) Guardrails on sensitive flows
+- backend org/project scoping proven by endpoint evidence
+- frontend visibility is not authorization
+- super_admin override explicit + auditable
+- viewer remains backend-enforced read-only
+
+3) Do not use “user confusion” as closure reason
+- only as hypothesis if evidence is missing (not expected here)
+
+4) Release gates before customer-facing closure
+- smoke tests + negative tests attached in proof package before marking Phase 1 complete
+
+Proceed.

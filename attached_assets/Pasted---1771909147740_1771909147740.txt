@@ -1,0 +1,100 @@
+מעולה, זה בדיוק הסדר שאני רוצה. מאשר את התוכנית ✅
+
+כמה חידודים חשובים לפני שמתחילים (כדי שלא יהיו חורים בלוגיקה/הרשאות):
+
+שלב 1 — חסימת contractor + ניקוי role labels (כמו שהצעת, ראשון)
+==================================================
+
+A) חסימת contractor כמאשר QC — חייב להיות Defense in Depth
+1. לא רק ב-POST add approver:
+   - לחסום contractor גם בכל endpoint של approve/reject/reopen (אם לא חסום כבר)
+   - כלומר גם אם מישהו יכניס ידנית DB record / יעקוף UI — השרת עדיין חוסם אישור בפועל
+2. הודעת שגיאה ברורה בעברית:
+   - "לא ניתן להגדיר קבלן כמאשר QC"
+3. legacy data (אם יש contractor שכבר הוגדר בעבר):
+   - לא להחשיב אותו כמאשר פעיל ברזולבר של ההרשאות (effective approvers)
+   - להחזיר אותו רק אם צריך לצורך תצוגה/דיבוג עם flag (למשל invalid_role=true)
+   - בלי מחיקה אוטומטית שקטה
+4. audit:
+   - אם נחסמה הוספה בגלל role -> audit event יעודי (מומלץ)
+   - חשוב לי שיהיה תיעוד מי ניסה להוסיף ומתי
+
+B) ניקוי role labels (שמות פנימיים לא יופיעו למשתמש)
+1. פונקציה אחידה אחת בלבד למיפוי תפקידים (shared util)
+   - שלא יהיו 2–3 מיפויים שונים בקומפוננטות שונות
+2. fallback:
+   - אם role לא מוכר -> "משתמש"
+   - לא להציג raw code בשום מצב
+3. להחיל בכל המקומות:
+   - רשימת מאשרים
+   - modal הוספת מאשר
+   - באנרים / helper texts
+   - כל מקום שמציג role ליד שם משתמש
+
+C) סינון contractors במודל הוספה
+1. עדיף לא להציג contractors בכלל ברשימת הבחירה
+2. אם כן בוחרים להשאיר לצורכי שקיפות — רק disabled עם הסבר ברור
+3. בכל מקרה, גם אם UI מסנן — השרת נשאר מקור האמת
+
+שלב 2 — שקיפות אישורים לפי שלב (Stage Transparency)
+==================================================
+
+הכיוון טוב מאוד. כמה דיוקים:
+
+A) שדרוג my-approver-status (Backend)
+אשמח שיחזיר לפחות:
+- is_approver
+- is_pm_implicit
+- mode (all/specific/none)
+- reason_code (למשל: ok_pm_default / ok_explicit / out_of_scope / not_configured / role_not_allowed)
+- active_approvers_for_stage (לצורך UI "מי מאשר?" — אפשר גם מבנה מצומצם)
+- can_manage_approvers (bool) כדי שה-frontend לא ינחש לפי role בלבד
+
+B) כרטיס "מי מאשר?" ב-StageDetailPage (Frontend)
+חשוב לי שייתן תשובה ברורה ל-3 שאלות:
+1. מי מאשר את השלב כרגע?
+2. האם לי יש הרשאה לאשר?
+3. אם לא — למה לא?
+
+מבחינת UX:
+- PM/מאשר:
+  "יש לך הרשאת אישור לשלב זה"
+- משתמש לא מורשה:
+  "אין לך הרשאת אישור לשלב זה"
+  + הסבר קצר (reason-based)
+- CTA "ניהול מאשרי QC" רק למורשים (PM/owner/admin/super_admin)
+
+C) לא לחשוף יותר מדי למי שלא צריך
+- למשתמש רגיל אפשר להראות:
+  "ממתין לאישור מנהל הפרויקט / מאשרי QC"
+- ואם מציגים רשימת שמות מאשרים בפועל — לעשות לפי אותן הרשאות צפייה שהגדרנו (לא לפתוח סתם)
+
+שלב 3 — Polish + Audit Verification
+==================================================
+
+מאשר.
+בשלב הזה אני רוצה:
+1. וידוא audit events:
+   - approver_added
+   - approver_revoked
+   - blocked_invalid_role (אם הוספת)
+2. regression:
+   - PM implicit approver עדיין עובד גם בלי רשומת approver מפורשת
+   - management_team נשאר read-only בטאב מאשרים
+   - contractor לא יכול להפוך למאשר ולא לאשר בפועל
+3. screenshots:
+   - PM רואה ניהול מלא
+   - management_team רואה צפייה בלבד
+   - contractor לא מופיע בבחירה
+   - Stage pending_review עם כרטיס "מי מאשר?" במצב מורשה/לא מורשה
+
+סדר ביצוע (כמו שהגדרת — מאושר)
+==================================================
+1) Block contractors from approving tasks + Hide contractors from selection + Shared Hebrew role labels
+2) Show approvers and reasons clearly (my-approver-status + "מי מאשר?" card)
+3) Polish / audit / regression / screenshots
+
+אם הכול ברור — תתחיל בשלב 1 ותשלח לי סיכום E2E קצר עם:
+- מה נחסם בשרת
+- מה הוסתר/שופר ב-UI
+- ואישור שאין פגיעה ב-PM implicit approver

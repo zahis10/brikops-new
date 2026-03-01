@@ -1,0 +1,324 @@
+M9 Billing v1 — Phase 2 (High/Sensitive) | Pricing XL + Hebrew UX + Billing Workflow/Handoff
+
+Objective
+Implement Billing v1 Phase 2 on top of the completed Phase 1 foundation:
+1) add XL pricing support (plan + unit tier),
+2) fix Hebrew billing status labels in UI (e.g. "trialing" -> "ניסיון"),
+3) implement billing workflow/handoff (PM starts project, org billing role completes billing setup),
+4) add authorized write flows for project billing (plan selection + contracted units),
+5) keep org-level payer model and strict org/project scoping.
+
+Context / Non-negotiables
+- Billing payer is the Organization (org), not project members.
+- Each organization may have multiple projects.
+- Each project belongs to one organization context (org unifies all companies/teams in that project).
+- Company != Organization (do not merge/duplicate concepts).
+- Super Admin retains full control across all orgs/projects.
+- Viewer remains strictly read-only (no actions).
+- Phase 2 is still NO payment gateway / NO card charging yet.
+- Contracted units drive billing. Observed units are monitoring-only (warning/insight), not automatic billing changes.
+
+Pricing Model (replace/extend current seed + UI display)
+A) Plans (product level)
+- בסיסי (Basic): project_fee_monthly = 1200
+- מקצועי (Pro): project_fee_monthly = 2000
+- XL: project_fee_monthly = 3500
+
+B) Unit tiers (flat monthly fee by contracted_units, NOT per-unit)
+- tier_s: עד 50 יחידות -> monthly_fee = 900
+- tier_m: 51–200 יחידות -> monthly_fee = 2400
+- tier_l: 201–500 יחידות -> monthly_fee = 4800
+- tier_xl: 501+ יחידות -> monthly_fee = 8500
+
+Formula
+- project monthly_total = project_fee_snapshot + tier_fee_snapshot
+- org subscription total_monthly = sum(project_billing.monthly_total for active/paused? see rule below)
+
+Rule for org total aggregation (implement explicitly)
+- Include project_billing rows with status = active only in total_monthly (default)
+- Exclude paused/archived from billed total
+- Still display paused/archived in org UI with status badge and monthly_total snapshot for reference
+
+Phase 2 Scope (What to Build)
+
+T201 — Pricing seed/update + XL support
+Details:
+- Extend billing_plans seed/default plans to include XL plan and XL unit tier.
+- Ensure tier resolution supports 501+ (max_units = null).
+- Keep pricing snapshots frozen into project_billing on create/update:
+  - project_fee_snapshot
+  - tier_fee_snapshot
+  - pricing_version
+- If existing plans already seeded, implement idempotent update/seed strategy (no duplicate active plans).
+Acceptance:
+- resolve_tier(contracted_units=501) returns tier_xl
+- monthly_total computed correctly for all boundary values (50, 51, 200, 201, 500, 501)
+
+T202 — Hebrew billing status labels + display formatting (UI)
+Details:
+- Replace raw English billing status strings in billing UI with Hebrew labels:
+  - trialing -> ניסיון
+  - active -> פעיל
+  - past_due -> פג תוקף / חוב פתוח (choose one and use consistently)
+  - suspended -> מושעה
+  - canceled -> בוטל
+- If showing effective access state, also localize:
+  - FULL_ACCESS -> גישה מלאה
+  - READ_ONLY -> קריאה בלבד
+- Localize “No plan selected” and similar billing placeholders consistently:
+  - "לא נבחרה תוכנית"
+- Do not scatter mappings in multiple components. Add one shared formatter/helper (frontend utility or central billing UI helper).
+Files likely:
+- frontend/src/components/ProjectBillingCard.js
+- frontend/src/pages/OrgBillingPage.js
+- frontend/src/pages/AdminBillingPage.js (if relevant)
+- shared UI helper (new)
+Acceptance:
+- No raw "trialing" string visible in billing UI
+- Labels are consistent across ProjectBillingCard + OrgBillingPage + AdminBillingPage
+
+T203 — Billing workflow / handoff model (Org pays, PM can start)
+Goal:
+PM can start project/trial and see billing readiness, but billing setup/activation is completed by org billing authority.
+
+Implement minimal Phase 2 workflow (no payment gateway):
+Project billing setup state (use existing fields + minimal additions; avoid overengineering)
+- project_billing.status remains: active | paused | archived
+- Add setup/workflow state field (new) on project_billing OR nested object:
+  - setup_state: trial | pending_handoff | pending_billing_setup | ready | active
+  - recommended minimal flow:
+    - trial (default, no plan selected / no contracted_units)
+    - pending_handoff (PM requested org billing action)
+    - pending_billing_setup (org billing role acknowledged but not completed)
+    - ready (plan + contracted_units set, awaiting manual activation)
+    - active (subscription/org access active and project_billing active)
+- If you prefer fewer states, propose a lean equivalent BEFORE implementing.
+
+Handoff actions (manual in-app, no external payment)
+- PM (project_manager) can:
+  - view project billing page/card
+  - submit handoff request for org billing setup (action only on same project/org)
+  - optionally attach billing contact note/email (non-sensitive text)
+- Org billing roles (owner/org_admin/billing_admin) can:
+  - assign/update plan + contracted_units
+  - set project_billing active/paused
+  - mark handoff acknowledged / complete billing setup
+- Super Admin can do all actions
+- management_team:
+  - read project billing only (no writes)
+- contractor/viewer:
+  - no billing access (existing behavior preserved)
+
+Audit events required for workflow actions
+- billing_handoff_requested
+- billing_handoff_acknowledged (if implemented)
+- project_billing_setup_completed (or equivalent)
+- project_billing_updated (already exists; continue explicit before/after)
+
+Acceptance:
+- PM can request handoff but cannot set org billing plan/contracted_units unless also org billing role/owner
+- owner/org_admin/billing_admin can complete setup
+- all writes produce audit events with actor + org_id + project_id + before/after payload summary
+
+T204 — Authorized project billing write endpoints (Phase 2)
+Add/extend endpoints (behind BILLING_V1_ENABLED):
+1) Project billing update endpoint (org billing role only)
+- PATCH /api/billing/project/{project_id}
+- Allowed: super_admin, org owner, org_admin, billing_admin
+- Blocked: PM (unless also org billing role), management_team, contractor, viewer
+Payload (minimal):
+- plan_id (optional update)
+- contracted_units (optional update)
+- status (active/paused/archived) [optional]
+- setup_state (optional, validated transitions)
+Behavior:
+- Validate project exists and has org_id
+- Validate plan exists/active (if plan_id provided)
+- Recompute tier_code + snapshots + monthly_total when plan_id or contracted_units changes
+- Recompute subscription.total_monthly for org after change
+- Write audit events (project_billing_created/project_billing_updated/contracted_units_changed as appropriate)
+- Idempotent no-op payload should not create noisy audit event (or create one only if you already standardize "no-op" audits)
+
+2) Handoff request endpoint (PM + billing roles + SA)
+- POST /api/billing/project/{project_id}/handoff-request
+- Allowed: super_admin, project_manager, org owner, org_admin, billing_admin
+- Blocked: management_team/contractor/viewer (unless you justify mgmt read/write change explicitly)
+Payload:
+- note (optional short text)
+- target_user_id OR billing_email (optional, at least one if provided in UI)
+Behavior:
+- Set setup_state to pending_handoff (or pending_billing_setup if acknowledged by billing role)
+- Create audit event billing_handoff_requested
+- Must remain project/org scoped
+
+3) Optional ack/complete endpoint (recommended for clearer workflow)
+- POST /api/billing/project/{project_id}/handoff-ack
+- POST /api/billing/project/{project_id}/setup-complete
+(If you prefer to keep this inside PATCH setup_state transitions, okay — but enforce transition validation.)
+
+Acceptance:
+- Strict org/project scoping on every endpoint
+- 400 on project with org_id=None
+- 403 on unauthorized role
+- PM cannot write org billing data
+- subscription.total_monthly updates after project billing changes
+
+T205 — Org role handoff UX hookup (use existing org role endpoint from Phase 1)
+Details:
+- Reuse org role endpoint (owner/SA only) to assign billing_admin/org_admin where needed.
+- In AdminBillingPage and/or OrgBillingPage show current org billing roles list (read-only is enough for this phase if edit UI already exists elsewhere).
+- If edit UI is added here, keep it minimal and audited.
+Acceptance:
+- Clear visibility in UI who can pay/manage billing for org
+- No ambiguity between project role and org role
+
+T206 — ProjectBillingCard / OrgBillingPage UI upgrades (Phase 2 UX)
+ProjectBillingCard (in dedicated "חיוב" tab only; do not render in QC approvers/settings):
+- Show:
+  - org name (or org relation status)
+  - billing status (Hebrew)
+  - setup_state (Hebrew)
+  - plan name (Hebrew)
+  - contracted_units
+  - observed_units
+  - tier label/code
+  - project_fee_snapshot
+  - tier_fee_snapshot
+  - monthly_total
+  - warning badge if observed_units > contracted_units (monitoring only; no auto-bill)
+- Role-based actions:
+  - PM: "בקשת העברה לחיוב הארגון" (handoff request)
+  - org billing roles/owner/SA: edit plan + contracted_units + activate/pause (feature-flagged)
+  - management_team: read-only
+  - contractor/viewer: hidden/no access per existing rules
+
+OrgBillingPage:
+- Show org-wide summary:
+  - subscription status (Hebrew)
+  - total_monthly
+  - list of org projects with per-project billing snapshots
+  - org billing roles (owner/org_admin/billing_admin)
+- Show which projects are pending handoff / pending setup
+
+AdminBillingPage (SA):
+- Keep plans + migration sections from Phase 1
+- Add clear display for XL pricing and version
+- If editing plans exists, version changes must snapshot correctly and NOT retroactively mutate existing project snapshots
+
+Acceptance:
+- "חיוב" tab works cleanly and is only shown when BILLING_V1_ENABLED=true
+- No billing card leaks into "מאשרי QC" tab
+- All visible strings in billing UI are Hebrew/localized where applicable
+
+T207 — Tests (backend + targeted frontend logic)
+Add/extend tests (real HTTP where relevant; not just direct function tests):
+Backend tests (required)
+- Role matrix for PATCH /api/billing/project/{project_id}
+  - allow: SA, owner, org_admin, billing_admin
+  - deny: PM (unless org billing role), management_team, contractor, viewer
+- PM handoff request endpoint allowed; contractor/viewer denied
+- Project with org_id=None -> 400
+- Tier boundary tests include 501+ XL
+- Snapshot pricing test:
+  - assign plan/version -> snapshots stored
+  - update plan pricing later -> existing project snapshot unchanged
+- subscription.total_monthly aggregation updates on create/update/pause/active transitions
+- setup_state transition validation (reject invalid transition)
+- Audit events emitted with before/after for billing writes
+
+Frontend/tests (lightweight acceptable)
+- Status label formatter mapping returns Hebrew labels
+- Billing tab visibility gated by feature flag from /api/debug/version
+- ProjectBillingCard does not render in QC approvers tab (regression)
+
+T208 — Proof package (mandatory before close)
+Deliver proof package for Phase 2 including:
+1) API proof matrix (write/read endpoints by role)
+2) RBAC proof (PM handoff allowed, PM billing write blocked; org roles allowed)
+3) Pricing proof (Basic/Pro/XL + tier_xl boundaries, formulas)
+4) Snapshot proof (plan update does not retro-change existing project_billing snapshots)
+5) Org total aggregation proof (subscription.total_monthly recalculates correctly)
+6) Audit trail proof (handoff request + project billing updated + contracted_units_changed)
+7) UI proof (authenticated screenshots):
+   - PM project billing tab with Hebrew labels
+   - Org owner/org_admin org billing page
+   - SA admin billing page showing XL plan
+   - Flag OFF behavior (billing UI hidden/graceful)
+8) Commit hash (actual committed hash), environment, feature flag state
+
+Files to Touch (expected)
+Backend:
+- backend/contractor_ops/billing.py
+- backend/contractor_ops/billing_plans.py (if pricing/plan logic lives here)
+- backend/contractor_ops/router.py
+- backend/contractor_ops/member_management.py (only if UI needs org-role management hookup changes)
+- backend/contractor_ops/schemas.py (only if adding setup_state schema validation)
+- backend/tests/test_billing_v1.py (+ any new proof/test script)
+
+Frontend:
+- frontend/src/services/api.js
+- frontend/src/contexts/BillingContext.js
+- frontend/src/components/ProjectBillingCard.js
+- frontend/src/pages/OrgBillingPage.js
+- frontend/src/pages/AdminBillingPage.js
+- frontend/src/pages/ProjectControlPage.js (only if tab/action wiring needed)
+- new/shared billing UI formatter helper (recommended)
+
+Implementation Constraints
+- Keep all new endpoints/UI behind BILLING_V1_ENABLED (404/hidden when off)
+- Do not change payment gateway logic (none yet)
+- Do not break existing trial flow or paywall middleware
+- Do not merge Company with Organization concepts
+- Avoid destructive migrations; use explicit, reversible data updates
+- Preserve backward compatibility where reasonable, but prefer correctness on billing writes
+
+Definition of Done (Phase 2)
+- XL plan + XL tier supported end-to-end
+- Billing statuses shown in Hebrew (no raw English statuses in billing UI)
+- PM->Org handoff workflow exists and is audited
+- Org billing roles can configure project billing (plan + contracted_units)
+- PM cannot perform org billing writes unless also org role
+- subscription.total_monthly updates correctly from project_billing active projects
+- Tests pass + proof package delivered
+- Feature flag ON/OFF behavior verified
+
+HIGH/SENSITIVE QUALITY + RELEASE REQUIREMENTS (MANDATORY)
+1) No closure without proof (sensitive issue / billing trust)
+- Do not close based on hypothesis or “looks good”
+- Closure requires root cause (if any), fix, regression tests, API/UI proof, and audit proof for billing writes
+
+2) Guardrails on sensitive screens/flows (billing/org/project scoping)
+- Frontend guardrails:
+  - no stale state / incorrect tab placement regressions
+  - feature-flag gating
+  - role-based action visibility (hide/disable unauthorized actions)
+- Backend guardrails:
+  - strict org/project scoping on all billing endpoints
+  - explicit role checks (owner/org_admin/billing_admin/SA)
+  - 400 on missing org_id for project billing endpoints
+  - auditable write actions with before/after payloads
+
+3) Do not use “user confusion” as closure reason
+- If there is an incident/regression, “user confusion” may be a hypothesis only
+- Billing/RBAC/scoping issues require evidence-based closure
+
+4) Release gates before customer-facing use
+- Smoke tests (happy path):
+  - PM views project billing
+  - PM submits handoff request
+  - org billing role sets plan + contracted_units
+  - monthly_total updates
+  - Hebrew labels display correctly
+- Negative tests:
+  - PM forbidden on org billing write
+  - contractor/viewer denied
+  - wrong org/project access denied
+  - org_id=None project returns 400
+- Attach proof package before marking Phase 2 resolved
+
+Please implement in small commits by task (T201–T208), and after each significant step provide:
+- root cause / change summary
+- files touched
+- tests run
+- API/UI proof snippets/screenshots
+- explicit note if anything is still hypothesis

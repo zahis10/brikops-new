@@ -1,0 +1,100 @@
+טקסט לשליחה ל-Replit – בקשת הוכחות M4.6
+
+סבבה, תודה. לפני שאני מאשר סופית אני צריך Proof מסודר ומדיד (לא רק סיכום). תשלח לי בבקשה לפי הסעיפים הבאים:
+
+0) Version Lock
+	•	Git SHA סופי (HEAD)
+	•	GET /api/debug/version → JSON מלא
+	•	איפה ה-SHA מוצג בפרונט (Footer/Debug)
+	•	רשימת קבצים ששונו (frontend + backend)
+
+⸻
+
+1) Custom Project Trades — הוכחת E2E אמיתית
+
+אני צריך לראות שזה באמת פרויקט-סקופ ולא גלובלי, ושעובד מכל הטפסים.
+
+1.1 API Proof
+
+תן לי request/response אמיתי (עם IDs אמיתיים) עבור:
+	1.	GET /api/projects/{projectId}/trades
+	•	לפני יצירת תחום חדש → להראות 14 base בלבד
+	2.	POST /api/projects/{projectId}/trades
+	•	ליצור תחום חדש לדוגמה: "מעליות"
+	3.	GET /api/projects/{projectId}/trades
+	•	אחרי יצירה → לראות 15 (14+1)
+	4.	הוכחת 409 על duplicate
+	•	ניסיון ליצור שוב "מעליות" → 409 עם הודעה בעברית/ברורה
+
+1.2 Project Isolation Proof
+	•	צור תחום "מעליות" בפרויקט A
+	•	GET trades בפרויקט B (אחר) → אסור שיופיע שם "מעליות"
+(זה קריטי להוכיח שזה לא גלובלי)
+
+⸻
+
+2) UI Proof — “+ הוסף תחום חדש” בכל המקומות
+
+אני צריך צילום מסך מה-UI (או וידאו קצר 10–15 שניות) שמראה:
+	•	בחברות → מודאל “הוסף חברה חדשה” → dropdown תחום → יש “+ הוסף תחום חדש”
+	•	בצוות/Invite → role=contractor → dropdown תחום → יש “+ הוסף תחום חדש”
+	•	אחרי שמוסיפים תחום חדש → הוא מופיע ברשימה ונבחר בפועל
+
+אם כלי צילום לא עובד בגלל login — תן לי manual UAT steps קצר + צילום מסך מהאייפון שלך אם אתה יכול, אבל לפחות: API + צעדים מדויקים.
+
+⸻
+
+3) “+ הוסף קבלן” CTA — הוכחה שזה באמת עושה prefill
+
+אתה כתבת שיש chip ירוק “+ הוסף קבלן” שמוביל להזמנה עם trade pre-selected.
+
+אני צריך:
+	1.	צילום מסך בעמוד tasks עם chips + ה-CTA
+	2.	אחרי לחיצה:
+	•	מגיעים למסך/מודאל הזמנה פתוח
+	•	trade כבר נבחר לפי bucket פעיל
+	3.	Request/response אמיתי של יצירת invite קבלן עם trade_key
+	4.	אם הקבלן נרשם/auto-link → הוכחה שה-membership מקבל את ה-trade בפרויקט הזה
+
+⸻
+
+4) Required Fields Asterisks + Disabled Button
+
+4.1 חברות
+
+צילום מסך שמראה כוכבית ליד:
+	•	שם חברה *
+	•	תחום *
+	•	איש קשר *
+	•	טלפון *
+והכפתור Disabled עד שממלאים הכל.
+
+וגם:
+	•	דוגמת 422 מהשרת בעברית כשחסר שדה (לדוגמה contact_phone ריק).
+
+4.2 Invite
+
+צילום מסך שמראה כוכבית ליד:
+	•	טלפון *
+	•	שם מלא *
+	•	תפקיד *
+	•	אם contractor → תחום/trade *
+	•	אם management_team → sub_role *
+והכפתור Disabled בהתאם.
+
+⸻
+
+5) RBAC Proof (קריטי)
+
+תן לי status codes אמיתיים:
+	•	PM/admin יכולים POST /projects/{id}/trades → 200
+	•	Management / Contractor / Viewer מנסים ליצור trade → 403
+
+⸻
+
+6) Deliverables
+	•	M46_PROOF.md או עדכון ל-PROOF_PACKAGE.md עם כל ההוכחות (כולל קטעי JSON)
+	•	LIVE_M46_OUTPUT.txt (raw output של הקריאות)
+	•	Git SHA סופי
+
+רק אחרי זה אני עושה UAT באייפון ונותן אישור.

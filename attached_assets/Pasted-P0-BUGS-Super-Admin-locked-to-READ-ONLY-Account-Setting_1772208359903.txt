@@ -1,0 +1,54 @@
+P0 BUGS – Super Admin locked to READ-ONLY + Account Settings not reachable + email sender leakage
+
+Context:
+- Logged in as Super Admin (superadmin@brikops.dev, phone +972507569991).
+- UI shows red banner: “הגישה מוגבלת – מצב צפייה בלבד”.
+- This blocks actions and makes system feel broken.
+
+P0-1: Super Admin must never be paywalled/read-only
+Repro:
+1) Login as Super Admin
+2) Go to /projects and /billing/org/<org_id>
+Actual: Red READ-ONLY banner appears and blocks actions.
+Expected: Super Admin always FULL ACCESS (bypass billing/paywall checks).
+
+Required fix:
+- In effective access resolver (backend + frontend), if platform_role == 'super_admin' → return full access unconditionally.
+- Ensure paywall middleware never returns 402/READ_ONLY for super_admin.
+
+Proof required:
+- Screenshot: /projects as super_admin WITHOUT red banner.
+- API proof: /api/auth/me shows super_admin and access resolver returns full access.
+
+P0-2: Account Settings (Phase 2.9) not reachable / not visible
+Repro:
+1) Go to /admin/users
+2) Open drawer for the same super_admin user
+Actual: No “הגדרות חשבון” button appears.
+Expected: When isSelf=true, show “הגדרות חשבון” and allow navigation to /settings/account.
+
+Likely root cause:
+- isSelf calculation bug (id vs _id vs user_id mismatch) OR hidden by read-only gating.
+Fix:
+- Normalize IDs and ensure isSelf works across admin-users context.
+- Also allow direct access to /settings/account for management users.
+
+Proof required:
+- Screenshot showing “הגדרות חשבון” button in UserDrawer when viewing self.
+- Screenshot of /settings/account page rendering and performing change-email + change-password.
+
+P0-3: Email sender must be brikops aliases, not personal
+During tests, emails were sent from/related to personal Gmail or old contractor-ops domain.
+Requirement:
+- Use SMTP_FROM + SMTP_FROM_NAME from Secrets.
+- Set SMTP_FROM to no-reply@brikops.com (or support@brikops.com), never fallback to SMTP_USER.
+- Update templates/footers to reference support@brikops.com.
+
+Proof required:
+- Send a password reset email and show headers: From: BrikOps <no-reply@brikops.com> and Reply-To support@brikops.com.
+
+Release gates (high-risk: auth + billing):
+1) No closure without proof (root cause + fix + regression + API/UI proof).
+2) Guardrails: backend strict super_admin bypass + frontend paywall bypass + audit logs.
+3) Don’t close as “user confusion” – show actual evidence.
+4) Release checklist: smoke + negative tests (super_admin no paywall, contractor still blocked, viewer blocked, password change forces relogin, email change uniqueness).

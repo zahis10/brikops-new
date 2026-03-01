@@ -1,0 +1,58 @@
+M8 Final Proof Package – Required Attachments
+
+נא לצרף ל-PROOF_PACKAGE.md (או מסמך הוכחות) את הפריטים הבאים, עם נתונים אמיתיים מהסביבה:
+
+0) Meta
+- Commit hash / PR link
+- תאריך/שעה, Environment (dev/stage), base URL
+
+1) RBAC Proof (Viewer)
+- טבלת "Read = 200 / Mutations = 403" עם לפחות:
+  - 5 דוגמאות real requests של Viewer שמחזירות 403 (create/update/status/comments/manager decision)
+  - 3 דוגמאות real requests של Viewer שמחזירות 200 (read-only)
+- לציין במפורש: “All 23 mutation endpoints block Viewer” + רשימת endpoints (שמות/נתיבים)
+- לצרף Response snippets (status + body) לכל דוגמה
+
+2) Regression Guard for the RBAC bug
+- תיאור קצר של הבאג (variable redefinition / shadowing) ומה התיקון
+- הוכחה שיש בדיקת רגרסיה:
+  - test שמכסה את הנתיב שהיה פרוץ
+  - או lint rule שמונע shadowing (מומלץ: no-shadow / no-redeclare / typescript config)
+- פלט הרצת tests (קישור ל-log או קטע קצר)
+
+3) /login Cleanup
+- Screenshot של /login לפני auth (אין trial banner ואין דליפת מידע)
+- לציין איפה כן/לא מוצגים demo buttons, ומה הוסר
+
+4) /admin/users (Super Admin)
+- Screenshot של המסך + דוגמת חיפוש משתמש
+- הוכחה: non-super-admin מקבל 403 על admin endpoints (לפחות 2 דוגמאות)
+- דוגמת Audit event שנכתב על שינוי סטטוס/תפקיד/שיוך (actor/target/old/new/timestamp)
+
+5) Phone Change (Self + Admin) + OTP + Audit
+- דוגמת flow self-service (כולל OTP success)
+- דוגמת flow admin change (כולל step-up אם קיים)
+- לכל אחד: Audit event מלא עם old/new/reason/actor
+- בדיקות (לפחות):
+  - phone already used -> 400
+  - invalid format -> 400
+  - unauthorized -> 403
+
+6) RTL Phone Rendering
+- רשימת 8 קבצים/14 מופעים שתוקנו (paths)
+- 2–3 screenshots שמראים +972 מוצג נכון ב-RTL (iOS חובה)
+
+7) Hebrew Translations
+- Path לקובץ dictionary המרכזי
+- דוגמה שמראה שה-UI מציג labels בעברית (audit timeline + billing pages)
+- לציין coverage: 46 action labels, 16 entity types, 9 notification labels
+
+8) Project Accordion (Super Admin)
+- Screenshot מצב default collapsed
+- Screenshot expanded
+- הוכחה ל-reset בעת מעבר משתמש (לפחות screenshot/תיאור + מה ה-trigger)
+
+Deliverable
+- PROOF_PACKAGE.md מעודכן + קישור/קובץ
+- 5–10 screenshots ממוספרים (evidence_01…)
+- Test run output (או link ל-ci)

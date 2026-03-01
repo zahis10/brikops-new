@@ -1,0 +1,79 @@
+Approved — proceed with M9 Billing v1 Phase 2 exactly as planned.
+
+Start now with:
+- T001 (Pricing seed update + XL tier)
+- T002 (setup_state + handoff model)
+- T004 (shared Hebrew billing labels helper)
+in parallel.
+
+Locked clarifications (must follow)
+1) Feature flag remains strict
+- BILLING_V1_ENABLED=false => all new Phase 2 endpoints return 404 and new billing UI/actions stay hidden
+- BILLING_V1_ENABLED=true => Phase 2 behavior active
+
+2) Snapshot pricing is mandatory and immutable
+- project_fee_snapshot / tier_fee_snapshot / pricing_version are frozen on assignment/update
+- Future plan price changes must NOT retroactively mutate existing project_billing rows
+
+3) Org total aggregation rule (explicit)
+- subscriptions.total_monthly = sum(project_billing.monthly_total) for project_billing.status='active' only
+- paused/archived excluded from billed total, but still visible in org UI
+
+4) Strict role boundaries (no exceptions)
+- PM: read project billing + handoff request only
+- PM cannot patch plan/contracted_units/status/setup_state unless also org owner/org_admin/billing_admin
+- management_team: read-only project billing
+- contractor/viewer: blocked from billing endpoints/actions
+- super_admin: full override
+
+5) setup_state transitions must be validated
+- Use explicit VALID_SETUP_TRANSITIONS map
+- Invalid transitions return 400 (no silent coercion)
+- If you choose to simplify the state model, stop and present the revised state machine first
+
+6) Single source of truth for Hebrew labels
+- Use only frontend/src/utils/billingLabels.js for billing status / access / setup_state / tier labels
+- No duplicated mappings in components
+- No raw English billing strings in billing UI ("trialing", etc.)
+
+7) Don’t break Phase 1 read endpoints / current UI
+- Existing GET billing endpoints continue working
+- Phase 2 extends behavior, not destructive refactor
+
+Additional implementation notes (locked)
+8) Separate "setup complete" from "billing active"
+- In T003 / setup-complete:
+  - If project_billing.status is not active yet, set setup_state='ready' (NOT auto-active)
+  - Activation remains an explicit billing action (PATCH status='active' or equivalent)
+- Goal: keep a clean distinction between "configured" vs "actually billed/active"
+
+9) Observed vs contracted warning (UI only, no auto-charge)
+- In ProjectBillingCard (and org/project billing UI where relevant):
+  - If observed_units > contracted_units, show a warning badge/message in Hebrew:
+    "חריגה מהיחידות החוזיות (לבדיקה)"
+- This is monitoring/visibility only in Phase 2
+- No automatic price change or forced tier change from observed_units
+
+Delivery format (required after each significant task)
+For each completed task (or grouped milestone), provide:
+- Summary of what changed
+- Files touched
+- Tests run (with results)
+- API/UI proof snippets
+- Explicit note of anything still hypothesis (if any)
+
+High/Sensitive quality gates (mandatory for billing)
+1) No closure without proof
+- Billing/RBAC/scoping changes require tests + API proof + UI proof + audit proof
+
+2) Guardrails on sensitive flows
+- Backend: strict org/project scoping, explicit role checks, 400 on project.org_id=None, audited writes
+- Frontend: feature-flag gating, role-based action visibility, no tab-placement regressions
+
+3) “User confusion” is not a closure reason
+- Hypothesis only, never closure for billing/RBAC/scoping issues
+
+4) Release gates before customer-facing closure
+- Smoke tests + negative tests + proof package before marking Phase 2 resolved
+
+Proceed.

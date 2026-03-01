@@ -1,0 +1,43 @@
+דחוף – 3 תיקונים קריטיים בפרודקשן + הוכחת E2E
+
+1) OTP למספר חדש – לא צריך להיתקע על “לא נמצא קוד אימות / קוד לא נכון”
+המצב עכשיו: משתמש לא רשום מקבל OTP, מזין קוד, ובמקום redirect ל-/onboarding הוא מקבל הודעת שגיאה “לא נמצא קוד אימות/קוד לא נכון”.
+חשד עיקרי: נרמול מספר טלפון לא עקבי בין request-otp ל-verify-otp (עם/בלי +, רווחים, RTL). בנוסף ב-UI ה+ מופיע בסוף המספר (RTL) – צריך תיקון תצוגה עם <bdi dir="ltr">+972…</bdi> / unicode isolate.
+דרישה:
+- ליצור פונקציה אחת canonical לנרמול phone_e164 (strip spaces, ensure leading +, validate E164) ולהשתמש בה גם ב-request וגם ב-verify וגם בכל OTP lookups.
+- להוסיף לוגים מפורשים (בלי לחשוף קוד): [OTP] normalized_phone=... store_key=... ואז ב-verify אותה normalized_phone בדיוק.
+- UX: אם אין account אחרי verify OTP → להחזיר requires_onboarding=true ולהפנות אוטומטית ל-/onboarding כשהטלפון כבר verified (ללא שגיאת “קוד לא נמצא”).
+
+Acceptance:
+A) טלפון חדש לגמרי: request-otp -> verify-otp (קוד נכון) => redirect ל-/onboarding (לא שגיאה).
+B) טלפון קיים: verify-otp => JWT + כניסה רגילה.
+
+2) אחרי “צור ליקוי” – לשלוח הודעה לקבלן אוטומטית
+הדרישה העסקית: ברגע שנוצר ליקוי/משימה עם קבלן משויך, לשלוח אוטומטית WhatsApp לקבלן (ואם WA נכשל – SMS fallback).
+דרישה טכנית:
+- באנדפוינט שיוצר ליקוי (task/defect create): אחרי persist + שיוך קבלן, לקרוא ל-notification_service/engine enqueue:
+  action=task_created / defect_created
+  target_phone = contractor_phone_e164
+  payload כולל: שם פרויקט, סיבה/חובה, תיאור, קישור deep-link ישיר לליקוי, פרטי PM.
+- חובה לרשום:
+  notification_jobs עם status sent/queued + provider_message_id או sms sid
+  audit_events עם channel_used + error אם נכשל.
+- Frontend: אחרי הצלחת create להציג toast: “נשלחה הודעה לקבלן ב-WhatsApp” / “נשלחה SMS (fallback)” / “לא ניתן לשלוח – אין מספר לקבלן”.
+
+Acceptance:
+A) ליצור ליקוי עם קבלן שיש לו WhatsApp → לראות הודעת WA מגיעה + notification_jobs נוצר.
+B) ליצור ליקוי עם קבלן בלי WhatsApp → fallback ל-SMS (אם SMS_ENABLED=true) + sms_events sid.
+
+3) משתמש חדש נכנס ואין לו פרויקט – חייב UX של יצירת פרויקט
+היום: משתמש חדש יכול להיתקע במסך “אין פרויקטים” בלי אופציה ברורה לפתוח פרויקט.
+דרישה:
+- במסלול Onboarding create-org: ליצור גם פרויקט ראשון אוטומטית (למשל “הפרויקט הראשון שלי”) + לשייך את המשתמש כ-project_manager + redirect לדשבורד של הפרויקט.
+- במסך Projects empty-state עבור PM/Org Owner: להציג CTA גדול “צור פרויקט” (ולא טקסט ‘פנה למנהל המערכת…’).
+- לוודא שה-paywall לא חוסם יצירת פרויקט בזמן trial (org.subscription=trialing צריך לאפשר).
+
+Acceptance:
+A) create-org => בסיום יש org+trial + project ראשון + המשתמש נוחת לתוך הפרויקט.
+B) אם אין פרויקטים (מסיבה כלשהי) – תמיד יש כפתור “צור פרויקט” למשתמש PM.
+
+בסוף בבקשה להחזיר Proof קצר:
+- 3 תרחישים עם request/response IDs + לוגים רלוונטיים + DB evidence (project_id, org_id, notification_job_id / sms sid).

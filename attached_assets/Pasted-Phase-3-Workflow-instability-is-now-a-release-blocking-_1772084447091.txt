@@ -1,0 +1,49 @@
+Phase 3 — Workflow instability is now a release-blocking incident (P0). 
+
+Current state:
+- The workflow crashes repeatedly after ~17–20 API requests during RBAC/invoicing verification.
+- This blocks Playwright E2E and makes the system unusable for real testing.
+- “Code-verified” is NOT accepted as closure evidence for billing. We need a stable runtime + real HTTP proof + UI proof.
+
+Required actions (do NOT close until complete):
+
+A) Restore workflow stability (P0)
+1) Identify the root cause with evidence:
+   - Capture last 200 lines of backend logs + frontend logs at crash
+   - Capture process list + ports (show what is running)
+   - Capture memory + CPU stats right before crash (basic output is enough)
+   - Specify exactly what died first (backend/fe/craco/mongo) and why (OOM? port conflict? killed?).
+
+2) Apply a stability fix (pick the least risky):
+   Option 1 (preferred): Run MongoDB as Atlas only for verification (disable local mongod in workflow) so we don’t run MongoDB + uvicorn + React dev server together.
+   Option 2: Run frontend in production build mode during verification (no hot reload), backend only.
+   Option 3: Reduce workers/reload and remove duplicate processes; enforce single instance (kill stale processes + lock).
+   Option 4: Increase resource limits / adjust workflow config (if available).
+
+3) Proof of stability:
+   - A single scripted run of 60+ HTTP requests (preview/generate/list/detail/mark-paid + RBAC matrix) without crash
+   - Repeat run twice (2x) to prove it’s not luck.
+
+B) Phase 3 verification must be rerun with real proof (not “code-verified”)
+Once stable:
+1) Re-run T308 API proof:
+   - Full RBAC matrix with real HTTP status codes (owner / billing_admin / org_admin / PM / contractor / viewer / SA)
+   - Idempotency generate (same invoice id)
+   - Snapshot immutability (change plan after invoice generated -> invoice unchanged)
+   - Mark-paid updates subscription fields (show JSON before/after)
+   - Bad period input returns 400
+
+2) UI proof (minimal) — AFTER stability:
+   - OrgBillingPage: preview card, invoice list, invoice detail, mark-paid (authorized)
+   - Ensure org_admin can view but cannot generate/mark-paid (UI disabled or 403 handled cleanly)
+
+3) Playwright:
+   - Only after stability is proven. If still unstable, we accept UI screenshots taken manually in stable environment, but not code-review-only.
+
+C) Do NOT blame “infra” without fixing it
+If the environment can’t survive 20 requests, this is a product risk. We must stabilize before continuing.
+
+Deliverables for closure:
+- Root cause + fix + regression proof (2x stable 60+ request runs)
+- Updated proof package with real HTTP evidence + UI screenshots
+- Confirm workflow is running clean afterwards

@@ -1,0 +1,85 @@
+תיקוני המשך נדרשים (חשוב) — 3 נושאים מהותיים אחרי הספרינט
+
+יש 3 בעיות שצריך לתקן לפני שנמשיך:
+
+1) WhatsApp rejection notification — נמענים לא נכונים
+כרגע במודל בחירת נמען מופיעים גם קבלנים.
+זה לא תקין — הודעת דחייה ב-WhatsApp צריכה להישלח רק לצוות ניהול ומעלה (למשל: PM / approver / management_team / admin / super_admin), ולא לקבלנים.
+
+נדרש:
+- Backend (חובה): אכיפה בשרת ב-endpoint של notify-rejection
+  - אם recipient_user_id שייך לקבלן/role לא מורשה -> 403
+  - audit גם לחסימה/ניסיון לא מורשה
+- Backend team-contacts:
+  - להחזיר רק נמענים מורשים (ניהול ומעלה)
+  - בלי raw phone numbers כרגיל
+- Frontend modal:
+  - להציג רק נמענים מורשים
+  - לשנות microcopy בהתאם ("בחר נמען מצוות הניהול")
+  - אם אין אף נמען מורשה עם WhatsApp -> הודעה ברורה + disable send
+
+2) "פתיחת מלאכה" — לא כרובריקה נפרדת
+כרגע זה מופיע כשלב/רובריקה עצמאית ("פתיחת מלאכה"), וזה לא הזרימה הרצויה.
+אני רוצה שתיעוד פתיחת מלאכה יהיה בתוך הסעיפים/תחומי העבודה הרלוונטיים (למשל אינסטלציה / חשמל / טיח), ולא כשלב נפרד ברשימה.
+
+נדרש:
+- לשנות את מבנה התבנית:
+  - להסיר stage_prework כשלב עצמאי עבור ריצות חדשות
+  - להוסיף פריטי "תיעוד לפני עבודה" בתוך השלבים הרלוונטיים (בתחילת כל שלב רלוונטי)
+  - עם flag ברור ברמת item (למשל pre_work_documentation=true) לצורך badge/UI
+- תאימות לאחור:
+  - ריצות קיימות שכבר נוצרו עם stage_prework לא להישבר
+  - לא ליצור כפילויות
+  - אפשר mode של legacy display לריצות ישנות, אבל לריצות חדשות המבנה החדש בלבד
+
+3) אי-עקביות לוגית: "נכשל" + "אישור בוצע"
+לא יכול להיות מצב שבאותו שלב מוצג Quality = נכשל/לא תקין ובמקביל Review/Process = אושר/אישור בוצע.
+אם יש fail פעיל, אי אפשר להציג "אושר".
+
+נדרש:
+- Backend approval guard (חובה):
+  - לחסום approve אם יש פריטים ב-fail (או rejected פתוח / blockers רלוונטיים)
+  - להחזיר 422/400 עם הודעה ברורה
+- Frontend:
+  - disable/guard לכפתור אישור כשיש fail
+  - הודעת הסבר ברורה למה אי אפשר לאשר
+- UI fallback זמני:
+  - אם מגיע דאטה לא עקבי (approved + fail), לא להציג badge "אושר"
+  - להציג badge אדום/אזהרה ("מצב לא עקבי / דורש תיקון") עד תיקון הנתונים
+- Data repair / migration:
+  - למצוא רשומות קיימות במצב approved + fail_count>0
+  - להוריד אותן ל-pending_review או reopened (לפי ההיגיון הקיים במערכת)
+  - להוציא דוח קצר עם כמה רשומות תוקנו
+
+חשוב: זה שינוי רגיש (הרשאות + workflow approvals + customer-facing WhatsApp), אז לא סוגרים בלי הוכחות.
+
+דרישות הוכחה / שחרור (חובה לנושא הזה):
+1) No closure without proof
+- root cause לכל אחד מ-3 הנושאים
+- מה תוקן (backend/frontend)
+- regression notes
+- הוכחת API/UI (screenshots + request/response)
+
+2) Guardrails on sensitive flows
+- backend RBAC strict על notify-rejection recipient role
+- approval guard בשרת (לא רק UI)
+- audit logs לחסימות + הצלחות + failures
+
+3) לא לקבל "user confusion" כסגירה
+- אם היה מצב "נכשל + אושר" — להראות בדיוק למה זה קרה (logic/data inconsistency) ומה מונע הישנות
+
+4) Release gate לפני publish
+- Smoke tests:
+  - אין קבלן ברשימת נמענים
+  - ניסיון API לשלוח לקבלן -> 403
+  - stage עם fail לא ניתן לאישור (UI + API)
+  - stage תקין ללא fail כן ניתן לאישור
+  - ריצה חדשה: אין רובריקת "פתיחת מלאכה" נפרדת, ויש תיעוד לפני עבודה בתוך שלב רלוונטי
+  - ריצה ישנה: לא נשברת, אין כפילויות
+- Negative tests + screenshots + audit evidence
+
+תשלחו בסוף:
+- רשימת קבצים ששונו
+- הוכחת API endpoints (כולל unauthorized/forbidden cases)
+- screenshots לפני/אחרי
+- פירוט תיקון data migration (כמה רשומות עודכנו)

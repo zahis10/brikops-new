@@ -1,0 +1,120 @@
+Manual Billing V1.1 — Trust-safe flow (pending_review + optional receipt + admin approval)
+
+Goal
+Owner cannot self-extend license. Owner can only mark “I paid” → pending_review.
+Super admin approves payment and ONLY then extends paid_until.
+
+Changes
+
+T001: Status flow + endpoints
+- Add/confirm payment request statuses:
+  requested -> pending_review -> paid
+  + rejected/canceled as needed
+
+UI Status Texts (badges + helper):
+- requested  → Badge: "ממתין לתשלום"
+  Helper: "לאחר התשלום סמן 'סימנתי ששילמתי' (אפשר לצרף אסמכתא כדי לזרז)."
+- pending_review → Badge: "ממתין לאישור"
+  Helper: "סימנת ששילמת. האישור יתבצע לאחר בדיקה. אפשר לצרף אסמכתא כדי לזרז."
+- paid → Badge: "אושר ושולם"
+  Helper: "התשלום אושר והרישיון עודכן."
+- rejected → Badge: "נדחה"
+  Helper: "הבקשה נדחתה. לפרטים פנה לתמיכה."
+- canceled → Badge: "בוטל"
+  Helper: "הבקשה בוטלה."
+
+- New endpoint (owner action):
+  POST /api/billing/org/{org_id}/payment-requests/{request_id}/mark-paid-by-customer
+  RBAC: owner/billing_admin/org_admin (NOT PM)
+  Effect:
+   - set status = pending_review
+   - store customer_paid_note (optional)
+   - DOES NOT change subscription or paid_until
+  Audit: billing_customer_marked_paid
+
+Owner UI (button + toast):
+- Button label: "סימנתי ששילמתי"
+- Helper under button: "הרישיון מתעדכן רק לאחר אישור אדמין."
+- Success toast: "הבקשה עודכנה: ממתין לאישור."
+
+T002: Receipt upload (optional)
+- New endpoint:
+  POST /api/billing/org/{org_id}/payment-requests/{request_id}/receipt
+  RBAC: owner/billing_admin/org_admin
+  Stores receipt file (pdf/jpg/png) + metadata (uploaded_at, filename, size)
+  Audit: billing_receipt_uploaded
+- If customer doesn’t upload, admin can still approve later.
+
+Owner UI (buttons + toasts):
+- Button label: "העלה אסמכתא"
+- Optional secondary label (if already uploaded): "החלף אסמכתא"
+- View/download label: "הצג אסמכתא"
+- Helper under upload: "אופציונלי — מסייע לאישור מהיר יותר."
+- Success toast: "האסמכתא הועלתה בהצלחה."
+
+T003: Admin approval (super_admin only)
+- Update existing mark-paid behavior:
+  POST /api/billing/org/{org_id}/mark-paid
+  RBAC: super_admin only
+  Requires request_id OR cycle (request_id preferred).
+  Preconditions:
+   - request must be pending_review
+     (optional: allow requested if admin is doing manual approval after bank check)
+  Effect:
+   - paid_until = max(existing, requested_paid_until)
+   - set request status = paid
+  Audit: billing_mark_paid_admin (include request_id, previous_paid_until, new_paid_until)
+
+Admin UI (buttons + toasts):
+- Primary button: "אשר תשלום"
+- Secondary action: "דחה בקשה"
+  - Modal title: "דחיית בקשת תשלום"
+  - Field label: "סיבת דחייה"
+  - Placeholder: "לדוגמה: לא התקבלה אסמכתא / לא נמצא תשלום / סכום שגוי"
+  - Confirm button: "דחה"
+- Optional: "סמן בוטל"
+
+Toasts:
+- Approve success: "התשלום אושר — הרישיון עודכן עד {VALID_UNTIL_DATE}."
+- Reject success: "הבקשה נדחתה."
+- Permission error: "אין לך הרשאה לבצע פעולה זו."
+
+T004: UI adjustments
+- For owner (can_manage_billing=true):
+  - Replace “סמן כתשלום התקבל” with:
+    1) “סימנתי ששילמתי” -> sets pending_review (no license change)
+    2) “העלה אסמכתא” (optional)
+  - Show status badge per request: ממתין לתשלום / ממתין לאישור / אושר ושולם / נדחה / בוטל
+  - When status == pending_review:
+    - Hide “סימנתי ששילמתי” (already done) and show text: "כבר סומן כשולם — ממתין לאישור"
+    - Keep “העלה אסמכתא” visible
+
+- For PM/role_restricted:
+  - CTA always visible: "בקש שדרוג מבעלים"
+  - Copy button label: "העתק הודעה לבעלים"
+  - No access to: approve/mark-paid, payment-config edit, receipt upload
+
+- For super_admin:
+  - In “בקשות תשלום” list add filter tabs:
+    "פתוחות" (requested), "ממתין לאישור" (pending_review), "שולם" (paid), "נדחה", "בוטל", "הכל"
+  - Show receipt link if exists: "הצג אסמכתא"
+  - Show "אשר תשלום" + "דחה בקשה" actions
+
+- payment-config:
+  - PUT editable only for super_admin; others view-only or hidden
+  - Section title: "פרטי תשלום (BrikOps)"
+  - Save toast: "פרטי התשלום נשמרו בהצלחה."
+
+Copy-to-Clipboard (button labels):
+- "העתק הודעת תשלום"
+- "העתק הודעה מפורטת" (רק אם הוגדרו פרטי בנק/ביט)
+
+Generic copy toast:
+- "ההודעה הועתקה ללוח."
+
+Proof
+- Owner cannot extend paid_until (no admin approve button for owner; mark-paid admin-only).
+- Owner marks paid -> request becomes pending_review (no license change).
+- Admin approves -> paid_until extends + request becomes paid.
+- Receipt upload works but is optional (admin can approve without receipt after checking transfer).
+- PM sees only handoff; cannot approve or edit payment details.

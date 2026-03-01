@@ -1,0 +1,79 @@
+מעולה, מתקדמים — אבל בוא נבצע את זה בשלבים קשיחים כדי לא לשבור את המערכת.
+
+מטרת הספרינט (גרסה 1 – חובה)
+	1.	לתקן מיד את מסך מינוי PM
+	•	אם יש משתמשים קיימים מתאימים → שיופיעו ברשימה לבחירה.
+	•	אם אין משתמשים → להציג Empty State עם CTA להזמנה בטלפון.
+	2.	הזמנת PM בטלפון ע”י אדמין בלבד
+	•	אדמין מזין טלפון, נוצר invite לפרויקט ספציפי עם role=project_manager.
+	•	נשלח קישור הרשמה.
+	•	אחרי הרשמה (אותו טלפון), מתבצע auto-link אוטומטי ל־project_membership של אותו פרויקט.
+	3.	RBAC קשיח להזמנות (project-level בלבד)
+	•	Admin יכול להזמין: PM / Management / Contractor
+	•	PM יכול להזמין: Management / Contractor
+	•	Management יכול להזמין: Contractor בלבד
+	•	Contractor/Viewer: לא יכולים להזמין אף אחד
+
+⸻
+
+Data model להזמנות (חובה)
+
+collection: invites
+	•	id
+	•	project_id
+	•	inviter_user_id
+	•	target_phone (normalized E.164)
+	•	role (project_manager | management_team | contractor)
+	•	sub_role (nullable: site_manager | execution_engineer | safety_assistant)
+	•	token (single-use)
+	•	status (pending | accepted | expired | cancelled)
+	•	expires_at
+	•	accepted_by_user_id
+	•	accepted_at
+	•	created_at / updated_at
+
+כל invite חייב להיות single-use, עם TTL, ועם בדיקת idempotency למניעת כפילויות.
+
+⸻
+
+Flow הרשמה (חובה)
+	•	משתמש נכנס דרך invite link או נרשם עם טלפון תואם להזמנה pending.
+	•	המערכת מאמתת invite תקף + לא פג תוקף + לא בוטל.
+	•	יוצרת membership לפרויקט לפי role/sub_role שהוגדרו בהזמנה.
+	•	מסמנת invite כ־accepted.
+	•	חוסמת שימוש חוזר בטוקן.
+
+⸻
+
+UI חובה
+	1.	Modal/Sheet מינוי PM
+	•	טאב 1: “בחר משתמש קיים”
+	•	טאב 2: “הזמן בטלפון”
+	•	אם אין משתמשים בטאב 1 → הודעת Empty State ברורה עם כפתור מעבר להזמנה בטלפון.
+	2.	מסך הזמנות פרויקט
+	•	רשימת invites: pending/accepted/expired/cancelled
+	•	חיפוש וסינון
+	•	ביטול invite (cancel)
+	•	resend (אם pending)
+	3.	RTL מובייל מלא + הודעות שגיאה ברורות בעברית.
+
+⸻
+
+אבטחה ובדיקות חובה (DoD)
+	•	בדיקות של cross-project isolation (אין גישה/אישור לפרויקט אחר).
+	•	בדיקות היררכיה מלאה של invite permissions (403 איפה שצריך).
+	•	בדיקות token single-use + expiry.
+	•	בדיקות auto-link בעת הרשמה.
+	•	בדיקות שאין duplicate memberships.
+	•	הוכחות מסירה:
+	•	6–8 צילומי מסך אמיתיים
+	•	request/response לדוגמא
+	•	RBAC matrix
+	•	test summary
+	•	git SHA
+
+⸻
+
+חשוב — לא לעשות עכשיו
+	•	לא להרחיב כרגע לוואטסאפ/זרימות נוספות אם זה לא חלק מהספרינט הזה.
+	•	קודם נייצב invite system + assign PM תקין, אחר כך נרד לשלב הבא.

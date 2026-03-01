@@ -1,0 +1,96 @@
+Sprint M3 — Israeli Phone Normalization (Frontend + Backend + Migration + E2E)
+
+Goal
+Support Israeli local phone input UX (without forcing +972 in UI), while enforcing canonical E.164 in backend for matching, dedupe, OTP, and WhatsApp.
+
+Non-negotiable rule
+- User can type local Israeli format (e.g., 0507569991).
+- Backend always stores and works with phone_e164 (e.g., +972507569991).
+- All matching/deduplication/linking/sending uses phone_e164 only.
+
+1) Frontend Requirements
+A. Phone inputs
+- Placeholder: "05X-XXXXXXX"
+- Input mode: tel / numeric keyboard
+- Friendly Hebrew validation error:
+  "יש להזין מספר נייד ישראלי תקין"
+- Display format in UI: local readable format (e.g., 050-756-9991)
+
+B. UX behavior
+- Do NOT force user to type +972
+- Accept common local variants (with/without dashes/spaces)
+- Keep RTL/mobile-first behavior
+
+2) Backend Requirements
+A. Single normalization utility
+Create one shared function normalize_israeli_phone():
+- Accept:
+  0507569991
+  507569991
+  +972507569991
+  972507569991
+  plus spaces/dashes/parentheses
+- Return canonical E.164:
+  +972507569991
+- Invalid input -> HTTP 422 + Hebrew-friendly error
+
+B. Apply normalization everywhere phone enters system
+- Invites create/update
+- Registration
+- Login/OTP flows
+- Any endpoint that receives phone number
+
+C. Data model
+- phone_e164 (canonical, required for logic)
+- phone_raw (optional, original entered value)
+- optional local display field if needed
+
+D. Matching & dedupe
+- Auto-link invite on registration must compare by phone_e164 only
+- Duplicate invite blocking must be based on canonical phone_e164
+- Prevent active duplicate invites for same project + role + phone_e164
+
+3) Migration (one-time)
+Create migration/backfill script:
+- Normalize existing phone values in relevant collections
+- Update to canonical phone_e164 where possible
+- Produce report:
+  total scanned / updated / failed / skipped + failure reasons
+- Keep safe/idempotent behavior (rerun-safe)
+
+4) Tests
+A. Unit tests (normalization utility)
+- Valid inputs (local + intl + formatted with separators)
+- Invalid inputs (wrong length/prefix/non-mobile)
+
+B. E2E full chain (must pass)
+1. Create invite with local number (e.g., 0507569991)
+2. Register with different representation (e.g., +972507569991 or 507569991)
+3. Auto-link membership succeeds
+4. Duplicate invite blocked (409) across format variants
+5. Invalid phone returns 422
+
+5) Deliverables
+- PHONE_NORMALIZATION_PROOF.md
+- LIVE_PHONE_NORMALIZATION_OUTPUT.txt (raw request/response logs)
+Include:
+- Endpoints touched
+- Before/after examples
+- Migration report
+- Unit + E2E test summaries
+- Final Git SHA
+
+6) Definition of Done
+- Frontend shows local UX exactly as specified
+- Backend canonicalization enforced system-wide
+- Migration completed + report attached
+- E2E flow passes end-to-end
+- Duplicate and invalid handling verified (409 / 422)
+- No regressions in invites/auth/notifications
+
+7) Git / Release workflow
+- Branch: feat/m3-phone-normalization
+- Commit in logical chunks (frontend, backend, migration, tests, docs)
+- Tag after green tests:
+  m3-phone-normalization-ready
+- Final report and SHA must match all docs

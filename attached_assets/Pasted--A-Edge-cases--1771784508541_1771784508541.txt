@@ -1,0 +1,72 @@
+התכנית מעולה. מוסיף את הפינות הקטנות + עוד כמה הצעות כדי לסגור הרמטית:
+
+A) Edge cases קריטיים (להוסיף לתכנית)
+1) Expiry + TTL:
+- TTL מוחק מסמכים לפעמים בדיליי → בכל endpoint לבדוק expires_at בפועל (לא לסמוך רק על TTL).
+- אם פג תוקף → 410 Gone / 409 + הודעה ברורה.
+
+2) Cancel:
+- owner יכול לבטל pending → token נהיה לא תקף מייד (status=cancelled).
+- audit: ownership_transfer_cancelled.
+
+3) Repeat initiate:
+- אם יש pending קיים → 409 עם פרטים (למי נשלח, מתי, תוקף) + אפשרות cancel/resend במקום ליצור חדש.
+
+4) Phone normalization:
+- להשוות target_phone מול logged-in phone רק אחרי normalization ל-E.164 אחיד (+972...).
+- לא לאפשר accept אם לא תואם → 403/409.
+
+5) Rate limit:
+- initiate/resend: cooldown 60 שנ׳ לאותו org כדי לא להציף הודעות.
+- accept: להגביל ניסיונות OTP/typed confirmation (למשל 5 ניסיונות) + lockout.
+
+6) Post-transfer invalidation:
+- אחרי swap: לוודא old owner מפסיק לראות billing מיד:
+  a) /billing/me מחזיר is_owner=false מיד
+  b) אם יש cache/context בפרונט – invalidate/refetch
+  c) (רשות) bump session_version או logout-all לארגון כדי למנוע UI stale.
+
+B) UX “הרמטי” (מומלץ מאוד)
+7) Owner settings page:
+- להציג Status card ברור:
+  "נשלח אל: +9725... (מוסתר)"
+  "נשלח בתאריך: …"
+  "תוקף עד: … (48 שעות)"
+- כפתורים:
+  "שלח מחדש" (עם cooldown) + "בטל בקשה"
+- הודעות הצלחה/שגיאה לא מפחידות:
+  "נשלחה בקשה – ממתין לאישור"
+
+8) Recipient accept page:
+- להציג גם "בקשה נשלחה אל מספר: +9725***" (מוסתר) כדי להפחית טעויות.
+- כפתור “זה לא אני / לא מכיר בקשה” שמחזיר למסך מידע וממליץ לא לאשר.
+
+C) Security & correctness extras (כדאי)
+9) Bind token to org + target_phone:
+- במסמך request לשמור target_phone_e164 + org_id + initiator_user_id.
+- ב-accept: לבדוק token_hash + status=pending + not expired + phone match.
+
+10) Org name typed confirmation:
+- להשוות normalize (trim, collapse spaces) אבל עדיין “exact enough”.
+- להחזיר הודעה: "הקלד/י בדיוק: <ORG_NAME>"
+
+11) Prevent self-transfer:
+- אם target_phone == owner_phone → 409.
+
+12) Audit completeness:
+- initiated / resend / cancelled / accept_attempt_failed / accepted / completed
+- לכל אירוע לכלול org_id, old_owner_id, new_owner_id, target_phone masked, request_id.
+
+D) Proof Package (סגירה הרמטית)
+- /billing/me לפני/אחרי (owner הישן + owner החדש)
+- לוג [MSG-DELIVERY] type=ownership_transfer (WA→SMS)
+- כל audit events:
+  initiated, accepted, completed (+ cancelled אם בדקת)
+- Guardrails:
+  * wrong phone accept → 403
+  * wrong typed confirmation → 422
+  * expired token → 410
+  * repeat initiate while pending → 409
+  * cancel pending then try accept → 409/410
+
+עם זה זה באמת “הרמטי”.

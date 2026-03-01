@@ -1,0 +1,54 @@
+יש עדיין 2 באגים פתוחים שחוסמים שימוש אמיתי. נא לתקן עכשיו ולהחזיר הוכחת PASS.
+
+BUG 1 — איבוד פוקוס בהקלדה
+תסמינים:
+- בכל input (שם פרויקט/תיאור/שדות מודל ליקוי), אחרי כל אות הפוקוס נופל ואני צריך ללחוץ שוב.
+
+Root cause סביר:
+- קומפוננטה/טופס עושה remount בכל שינוי state (key דינמי, conditional render, parent refresh/polling שמרנדר מחדש).
+
+תיקון נדרש:
+1) להסיר key דינמי מכל form/modal/input (לא להשתמש ב-key שמבוסס state/Date.now()).
+2) לא לעשות remount לטופס כשה-state משתנה.
+3) לעצור polling/auto-refresh בזמן modal פתוח (אם יש interval של fetch).
+4) לשמור draft state מקומי יציב ב-modal ולהשתמש ב-setState פונקציונלי בלבד.
+5) לא לסגור dropdown/search menu על כל onChange.
+
+Acceptance:
+- אפשר להקליד 30 תווים רצוף בכל שדה בלי איבוד פוקוס, גם ב-Replit Preview וגם ב-Open in browser.
+
+BUG 2 — Dropdowns ריקים במודל "ליקוי חדש"
+תסמינים:
+- בפרויקט/בניין/קומה/יחידה אין נתונים לבחירה.
+- בניין/קומה נשארים disabled למרות שנבחר פרויקט.
+
+תיקון נדרש:
+1) לוודא endpoints מחזירים נתונים בפורמט נתמך:
+   - [] או {items: []} או {data: []}
+   ולהוסיף normalize אחיד ב-frontend.
+2) ב-onChange של Project:
+   - reset לשדות ילד: building/floor/unit
+   - fetchBuildings(projectId) מיד
+3) ב-onChange של Building:
+   - reset floor/unit + fetchFloors(buildingId)
+4) ב-onChange של Floor:
+   - reset unit + fetchUnits(floorId)
+5) owner חייב לראות את כל הפרויקטים (לא רק memberships).  
+   אם משתמש owner רואה ריק => לתקן endpoint “my projects” עבור owner.
+6) אחרי יצירת פרויקט חדש, ליצור הרשאה מתאימה כדי שהפרויקט יופיע מיידית בבחירה.
+
+Acceptance:
+- בחירת פרויקט מציגה בניינים אמיתיים.
+- בחירת בניין מציגה קומות.
+- בחירת קומה מציגה יחידות.
+- אם אין נתונים, מופיע Empty-state ברור (“אין בניינים לפרויקט זה”) + כפתור Retry.
+
+החזרה אליי חובה:
+A) וידאו קצר (30-60 שניות) של:
+   הקלדה רציפה בלי איבוד פוקוס + פתיחת מודל ליקוי עם 4 dropdowns שעובדים.
+B) 2 צילומי מסך:
+   1. לפני בחירת פרויקט
+   2. אחרי בחירת פרויקט עם רשימת בניינים אמיתית
+C) JSON של הקריאות:
+   projects, buildings, floors, units (status 200 + payload לא ריק)
+D) git_sha מהפוטר + /api/debug/version (חייב להיות זהה)

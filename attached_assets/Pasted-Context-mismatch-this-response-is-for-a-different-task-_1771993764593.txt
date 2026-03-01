@@ -1,0 +1,58 @@
+Context mismatch — this response is for a different task/thread (prework template / stage_blocks_row1), not for the current M9 Billing v1 discovery request.
+
+Please stop and reset to the current objective.
+
+Current task (READ-ONLY, no implementation yet):
+M9 Billing v1 — Discovery First (Org / Project / Company / Team / Contractor / RBAC / Trial / Billing mapping)
+
+Important:
+- Do NOT implement T001/T002/etc from any other thread
+- Do NOT modify code yet
+- Do NOT continue with prework/stage template work
+- This is a codebase audit + mapping task only
+
+What I need now (deliver as a single structured discovery report with code references):
+1) Current data model map
+   - organizations / companies / projects / memberships / roles / contractors / billing/trial entities
+   - file paths + line refs + key fields + relationships
+   - explicitly clarify whether “organization” and “company” are separate concepts or mixed/interchangeable today
+
+2) Current RBAC map (backend-enforced, not UI assumptions)
+   - all roles and scopes (global / org / project)
+   - endpoint checks and where they are enforced
+   - proof that viewer is backend read-only
+   - proof of super_admin global override paths
+
+3) Current trial/billing map
+   - existing billing screens/components
+   - current billing/trial endpoints, fields, flows
+   - what can be reused for Billing v1
+   - conflicts/duplication risks already present
+
+4) Ownership model clarification (must reflect this domain rule)
+   - Organization is the top-level entity responsible for a given project
+   - That org context unifies all companies/participants in that project (PM/team/contractors/etc.)
+   - Different projects may belong to different organizations
+   - super_admin has full cross-org/project control
+   - viewer is strictly read-only
+
+5) Risk/conflict analysis + minimal-change recommendations
+   - identify duplicates/conflicts BEFORE implementation
+   - propose additive / backward-compatible path
+
+6) Phased implementation plan (design only, no execution)
+   - Billing Account at org level
+   - multiple projects per org
+   - per-project pricing = Project Fee + Units Tier
+   - PM can start trial, Org Billing Admin activates payment
+   - no breaking existing flows
+
+Proof requirements for this discovery:
+- file paths + line references for major claims
+- endpoint examples + access-check references
+- at least one concrete trace for:
+  - PM project access
+  - super_admin cross-org/project access
+  - viewer read-only enforcement
+
+Please confirm by restating the current task in one sentence before starting the audit.

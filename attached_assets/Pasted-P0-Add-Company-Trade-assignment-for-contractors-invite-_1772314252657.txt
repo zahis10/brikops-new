@@ -1,0 +1,91 @@
+P0: Add Company + Trade assignment for contractors (invite + member edit) — WITH SAFE COMPATIBILITY CHECKS
+
+Use-case:
+One company (e.g., "אלקטרה תשתיות") has multiple contractor users (צחי/מתן/איגור). We must assign each contractor to a company and a trade so defects can be routed correctly.
+
+⚠️ Safety requirement (do not break current system):
+Before changing behavior, first inspect how membership/invites are modeled today and implement this in a backwards-compatible way.
+
+Step 0 — Compatibility check (must do first)
+1) Identify current data model:
+- Where is “member role” stored? (org_memberships? project_memberships? users?)
+- How is invite stored/applied today? (invite collection fields + accept flow)
+- Is there already a “company/team” concept? (contractors list / vendor / team / org companies)
+
+2) Add a /api/admin/system-info card or log dump (if already exists, use it) showing:
+- membership schema (example doc)
+- invite schema (example doc)
+- current role values/enums
+- existing company/team collections (if any)
+
+3) Confirm target fields do not conflict with existing names.
+- Prefer reusing existing fields if they already exist (e.g., vendor_id/team_id/trade).
+
+Backwards-compatible data plan
+- Add new fields as OPTIONAL first:
+  contractor_company_id (or company_id) + contractor_trade (or trade)
+- Do NOT require them for existing members immediately.
+- Only require them for NEW invites where role=contractor.
+- Existing members without these fields should continue to work, but be marked “לא משויך” and cannot be selected as assignee for new defects until assigned.
+
+Backend
+T1) Membership model
+- Ensure contractor membership supports:
+  - company_id (optional for existing; required for new contractor invites)
+  - trade (optional for existing; required for new contractor invites)
+- Validation rules:
+  - If role != contractor -> ignore company_id/trade (set null)
+  - If role == contractor -> company_id + trade required on NEW assignments (invite accept + member edit)
+
+T2) Invite creation (PM/Owner)
+- Extend invite payload (backwards compatible):
+  - role
+  - company_id (required only when role=contractor)
+  - trade (required only when role=contractor)
+- Server-side validate: company belongs to same org (and project if scoped).
+
+T3) Invite accept
+- When applying invite:
+  - Create/update membership with role + company_id + trade (if provided)
+  - If invite is old and missing company_id/trade -> membership created with nulls (unassigned)
+
+T4) Member edit endpoint (PM/Owner)
+- PUT /api/orgs/{org_id}/members/{user_id}/contractor-profile
+  Body: { company_id, trade }
+- RBAC: org owner/org_admin/PM (same as member role management)
+- Validate: company exists in org; trade in enum
+- Audit event: member_contractor_profile_changed (actor_id, target_user_id, org_id, old/new)
+
+Frontend
+T5) Invite modal (PM/Owner)
+- Role dropdown includes contractor.
+- If role=contractor show REQUIRED fields:
+  - "חברה" (company list + create new)
+  - "תחום" (trade)
+- Block submit if missing (client-side) + server validates too.
+
+T6) Member card (UserDrawer)
+- If member role=contractor:
+  - Show editable "חברה" + "תחום"
+- If missing company_id/trade:
+  - Show red badge "לא משויך לחברה/תחום"
+  - Show CTA "שייך עכשיו" (opens dropdowns)
+
+T7) Defect assignment guardrail
+- In assignee picker:
+  - Only show contractors with company_id + trade set
+  - If none available, show message: "אין קבלנים משויכים. יש לשייך קבלן לחברה/תחום."
+
+Proof / Release gates (High/Sensitive: permissions + routing)
+1) Schema proof: example membership + invite docs before/after
+2) Backwards compatibility:
+   - Existing members still load and app works (no crashes)
+   - Old invites still accepted (creates unassigned contractor)
+3) Happy path:
+   - Create invite (role=contractor + company + trade) -> accept -> member shows company+trade
+   - Assign defect filters by company and selects correct contractor
+4) Negative tests:
+   - Contractor invite without company/trade -> 400
+   - Assign defect to unassigned contractor -> blocked
+5) Audit proof:
+   - member_contractor_profile_changed exists with old/new

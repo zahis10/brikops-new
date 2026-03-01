@@ -1,0 +1,103 @@
+M9 Billing v1 — Phase 2.2 (Execution Brief)
+
+מטרה:
+לסגור את פער ה-UX בחיובים בלי לגעת בלוגיקה עסקית/תמחור:
+1) לאפשר ניהול אחראי חיוב בארגון מתוך UI (owner / super_admin)
+2) להבהיר למשתמשים מי אחראי לחיוב ומה עושים אחרי handoff
+3) להוסיף ניווט ברור מ-ProjectBillingCard לעמוד OrgBillingPage (אזור אחריות חיוב)
+4) לנקות טקסטים באנגלית במסכי Billing/Admin
+5) לשפר מובייל ב-OrgBillingPage (אזור אחריות חיוב)
+
+חשוב:
+- הכל מאחורי BILLING_V1_ENABLED
+- אין שינוי בתמחור / tiers / calculations / snapshots / paywall
+- להשתמש ב-Radix Select בלבד (לא native select)
+
+לביצוע (בקצרה):
+
+T1) Backend API חדש — רשימת חברי ארגון מלאה
+- להוסיף GET /api/orgs/{org_id}/members ב-member_management.py
+- מחזיר כל חברי הארגון + owner:
+  user_id, name, phone, role, is_owner
+- RBAC:
+  allow = super_admin / owner / org_admin / billing_admin
+  deny = PM-only / management_team / contractor / viewer (403)
+- Feature-flagged (404 כשהדגל כבוי)
+
+T2) Frontend API methods
+ב-frontend/src/services/api.js להוסיף:
+- listOrgMembers(orgId)  -> GET /api/orgs/{org_id}/members
+- changeOrgRole(orgId, userId, role) -> PUT endpoint קיים (wrapper בלבד)
+
+T3) OrgBillingPage — אזור "אחריות חיוב בארגון"
+- להחליף את billing_roles המצומצם בכרטיס מלא:
+  - טוען ALL org members מה-API החדש
+  - מציג תפקיד ארגוני בעברית לכל משתמש
+  - owner נעול (lock, לא ניתן לשנות)
+  - owner/SA רואים Radix Select לשינוי role: member / org_admin / billing_admin
+  - org_admin/billing_admin רואים קריאה בלבד
+- לקבוע canEdit לפי:
+  super_admin OR currentUser.id === owner_user_id
+- לפני שינוי תפקיד: confirm dialog בעברית
+- אחרי שינוי: toast + refresh
+- לתת id="responsibility" לסקשן (עבור ניווט עם hash)
+
+T4) ProjectBillingCard — ניווט + הבהרה
+- אם canEdit=true ולא במצב edit:
+  - להוסיף CTA: "ניהול אחראי חיוב בארגון"
+  - ניווט ל-/billing/org/{org_id}#responsibility
+- אם canEdit=false && isPM:
+  - להשאיר handoff כמו שהוא (לוגית)
+  - להוסיף טקסט הסבר ברור בעברית מה קורה אחרי שליחת הבקשה
+- ב-OrgBillingPage: אם יש hash=#responsibility -> scroll/focus לסקשן
+
+T5) Hebrew cleanup (ללא אנגלית גלויה)
+- AdminBillingPage:
+  - "ID:" -> "מזהה:"
+  - "v{version}" -> "גרסה {version}"
+- OrgBillingPage:
+  - ORG_ROLE_LABELS מלא:
+    member=חבר
+    project_manager=מנהל פרויקט
+    org_admin=מנהל ארגון
+    billing_admin=אחראי חיוב
+  - unknown fallback = "—"
+- billingLabels.js:
+  - כל fallback מחזיר "—" ולא raw key
+- actionLabels.js:
+  - לוודא שכל billing actions מתורגמים לעברית
+
+T6) Mobile polish — OrgBillingPage responsibility
+- מובייל 390-430px:
+  - כרטיסים מוערמים (לא שורות טבלה)
+  - Select לא חורג אופקית
+  - שמות/טלפונים נשברים יפה
+- Radix Select z-index=9999 (Preview-safe)
+
+T7) Proof / Verification (חובה לפני סגירה)
+API/RBAC:
+- GET /api/orgs/{org_id}/members:
+  allow = SA/owner/org_admin/billing_admin
+  deny = PM-only/management_team/contractor/viewer
+- PUT org-role:
+  allow = owner/SA
+  deny = כל היתר
+- הוכחת audit event: org_role_changed
+
+UI/Playwright:
+- PM: רואה handoff + הסבר, לא רואה שינוי תפקידי חיוב
+- Owner/SA: רואה רשימת חברים מלאה ויכול לשנות member -> billing_admin
+- ניווט: ProjectBillingCard CTA -> OrgBillingPage#responsibility
+- אין אנגלית גלויה במסכי billing למשתמש רגיל
+- צילום מסך מובייל (400px) לאזור responsibility
+
+סדר עבודה:
+1) T1 + T2 + T5
+2) T3
+3) T4 + T6
+4) T7 (Proof + screenshots)
+
+דגשים:
+- Backend RBAC הוא מקור האמת (frontend רק מציג/מסתיר UX)
+- כל שינוי role חייב להיות org-scoped + audit
+- לא סוגרים בלי הוכחות API + UI

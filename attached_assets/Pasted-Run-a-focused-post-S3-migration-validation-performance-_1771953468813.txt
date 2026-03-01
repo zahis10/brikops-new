@@ -1,0 +1,99 @@
+Run a focused post-S3-migration validation + performance audit on the DEV environment.
+
+Context:
+- We migrated file storage from local filesystem to S3 via object_storage abstraction.
+- FILES_STORAGE_BACKEND is currently set to s3 in DEV.
+- S3 upload was confirmed working (bucket: brikops-prod-files).
+- DEV feels slower since the S3 switch.
+- Goal: confirm nothing broke and identify whether slowdown is expected (network/S3) or a code issue.
+
+Please do ALL of the following and give a clear report.
+
+1) Runtime config proof (mask secrets)
+Print/log the effective runtime values used by the running backend process:
+- FILES_STORAGE_BACKEND
+- AWS_REGION
+- AWS_S3_BUCKET
+- AWS_S3_PRESIGNED_URL_EXPIRES
+Also confirm the process was restarted after the secret change.
+
+2) End-to-end smoke tests for all migrated write paths (DEV)
+Test one upload each and verify full round-trip:
+A. Task attachment upload
+B. QC photo upload
+C. Document vault upload (PDF if possible)
+For each flow, report:
+- Endpoint / UI action used
+- Upload success/failure
+- Stored DB reference format (must be s3://... for new records)
+- S3 object key actually created
+- API response URL returned to frontend (should be https presigned URL, not s3://)
+- Whether open/download from app response works in this environment
+- Any errors / warnings in logs
+
+3) Read-path compatibility checks (important)
+Validate that these still work correctly after migration:
+- list_tasks
+- get_task
+- list_task_updates
+- updates_feed
+- list_unit_tasks
+- list_project_plans
+- list_unit_plans
+For each endpoint checked:
+- confirm no raw s3:// values leak to frontend response
+- confirm local legacy paths (/api/uploads/...) still pass through unchanged if present
+- confirm URL resolution does not mutate unrelated fields
+
+4) Performance profiling (find where DEV feels slow)
+Measure timing (ms) for at least 5 runs each and provide avg/p95 if possible:
+- Upload small file (~50KB)
+- Upload medium image (~1–3MB)
+- list_tasks (with URL resolution)
+- get_task (with attachments/proofs)
+- updates_feed
+Break down latency into:
+- request total time
+- DB time (if measurable)
+- S3 upload time (save_bytes)
+- presigned URL generation time (generate_url / resolve_urls_in_doc)
+If exact breakdown is hard, instrument with temporary timing logs around:
+- object_storage.save_bytes()
+- object_storage.generate_url()
+- resolve_urls_in_doc()
+
+5) Error/retry audit (S3/boto3/botocore)
+Check logs/code for slowdowns caused by retries/timeouts and report if any:
+- boto3/botocore retries
+- timeouts
+- SignatureDoesNotMatch
+- AccessDenied on presigned requests
+- NoSuchBucket / invalid region
+- swallowed exceptions / fallback behavior
+
+6) Regression checks (critical)
+Confirm:
+- Existing local records (/api/uploads/...) still load with FILES_STORAGE_BACKEND=s3
+- New S3 records store stable refs as s3://...
+- Delete path (if implemented/testable) behaves correctly for S3 refs
+- No endpoint returns broken URLs or nulls unexpectedly after URL resolution
+
+7) Quick code-quality checks for S3 pathing
+Review and report:
+- Are keys consistently prefixed by flow (qc/, documents/, attachments/ etc.)?
+- Any uploads still writing directly with open(..., 'wb') bypassing object_storage?
+- Any read endpoints missing resolve_urls_in_doc() that should have it?
+- Any expensive repeated presign generation loops that can be cached per response?
+
+8) Temporary observability patch (optional but preferred)
+If helpful, add temporary debug timing logs (keep them concise) and include exact log lines.
+Do NOT expose secrets.
+
+Output format (strict):
+A) Executive summary (PASS / PASS with issues / FAIL)
+B) Root causes of slowdown (ranked)
+C) Evidence (logs + timings)
+D) Broken paths found (if any)
+E) Minimal fixes to apply now
+F) Nice-to-have optimizations later
+G) Exact manual checks for the user (max 

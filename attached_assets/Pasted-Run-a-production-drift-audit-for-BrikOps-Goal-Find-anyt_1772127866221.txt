@@ -1,0 +1,81 @@
+Run a production drift audit for BrikOps.
+
+Goal:
+Find anything that exists in code/dev but is missing, disabled, stale, or not actually active in production.
+
+Check all of the following and return a compact report:
+
+1) ENV / Secrets drift
+Compare current DEV vs PROD runtime env presence (mask values, do NOT expose secrets).
+Focus on:
+- ENABLE_COMPLETE_ACCOUNT_GATE
+- FILES_STORAGE_BACKEND
+- AWS_REGION
+- AWS_S3_BUCKET
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+- AWS_S3_PRESIGNED_URL_EXPIRES
+- CORS_ORIGINS
+- ALLOWED_HOSTS
+- PUBLIC_APP_URL
+- any identity/billing/auth-related env vars added recently
+
+Report:
+- present in dev only
+- present in prod only
+- missing in prod
+- different effective mode/behavior
+
+2) Backend deployment drift
+Verify production server is actually running the latest code for:
+- identity_router
+- /api/auth/account-status
+- /api/auth/complete-account
+- /api/auth/identity-event
+- billing-contact endpoints
+- S3 storage abstraction
+- complete-account soft rollout logic
+
+Report:
+- route exists in prod? yes/no
+- latest code active in prod? yes/no
+- restart/redeploy still needed? yes/no
+
+3) Frontend deployment drift
+Verify production frontend actually includes latest shipped changes for:
+- IdentityContext
+- CompleteAccountBanner
+- CompleteAccountModal
+- App.js wiring
+- any recent S3/file URL rendering changes
+
+Report:
+- latest frontend build deployed in prod? yes/no
+- any stale asset/build issue? yes/no
+
+4) Feature-flag effective behavior in prod
+Tell me the REAL current behavior in production for:
+- complete account gate
+- S3 storage
+- billing-contact endpoints
+Use runtime evidence, not assumptions.
+
+5) Recent changes not yet truly active in prod
+Make a list of anything that is:
+- implemented in code
+- tested in dev
+- but not active in prod yet
+Group by:
+- auth/identity
+- storage/S3
+- billing
+- WhatsApp/SMS/email
+- cloud/deployment
+
+6) Output format
+Return only:
+A) Executive summary
+B) Missing in prod
+C) Active in dev but not prod
+D) Stale frontend/backend deploy issues
+E) Exact minimal actions needed now

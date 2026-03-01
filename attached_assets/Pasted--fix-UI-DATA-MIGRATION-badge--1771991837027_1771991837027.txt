@@ -1,0 +1,80 @@
+מאשר — זה ה-fix הנכון.
+
+הבעיה עכשיו אינה UI אלא DATA MIGRATION:
+ה-badge "כולל תיעוד לפני עבודה" מופיע, אבל בריצות ישנות (pre-v3) חסרים בפועל ה-inline prework items בתוך qc_items, ולכן אין מה להציג בתוך השלב.
+
+נא לבצע בדיוק כך:
+
+Objective
+Backfill inline pre-work items into existing runs that are missing them (pl_pw1/pl_pw2, el_pw1/el_pw2, pt_pw1/pt_pw2) באמצעות migration-on-read idempotent.
+No frontend changes required.
+
+Tasks
+
+T001: Backend — Add idempotent migration-on-read for missing inline pre-work items
+- File: backend/contractor_ops/qc_router.py
+- Add function: _ensure_inline_prework_items(run_id, run_items, db)
+
+Behavior:
+1) Build expected prework items from FLOOR_TEMPLATE (source of truth) for PREWORK_TARGET_STAGES only:
+   - stage_plumbing
+   - stage_electrical
+   - stage_plaster
+2) For each target stage:
+   - Check existing run_items for expected prework item_ids
+   - Create only missing items (never duplicate)
+3) Created item payload (minimum fields):
+   - run_id
+   - stage_id
+   - item_id
+   - status = "pending"
+   - note = ""
+   - photos = []
+   - (any standard metadata fields used elsewhere, e.g. created_at / updated_at if applicable)
+4) Return updated run_items list (original + newly inserted)
+5) Idempotent:
+   - Safe on repeated calls
+   - If another request inserts simultaneously, do not crash (handle duplicate-key gracefully if unique index exists, or re-read after insert)
+
+Important implementation details:
+- Do NOT duplicate template definitions in code.
+- Extract expected items from FLOOR_TEMPLATE dynamically.
+- Call this function BEFORE items_by_stage / enrich / response shaping.
+- Apply in BOTH read endpoints:
+  - get_or_create_floor_run (after fetching run_items)
+  - get_run_by_id (after fetching run_items)
+
+Recommended safety:
+- Add lightweight audit/log only when items were actually created (e.g. qc_inline_prework_backfill), including run_id and created item_ids.
+- If no items were missing, no audit needed.
+
+Acceptance:
+- API returns inline prework items for ALL runs (old + new)
+- No duplicates on repeated reads
+- No crash under concurrent access
+
+T002: Verification — API proof + DB proof + screenshot
+- Restart server
+- Existing run proof (one old run missing prework before fix):
+  1) GET floor run → plumbing/electrical/plaster include prework items
+  2) prework items appear first in stage item order
+  3) pre_work_documentation: true appears on those items in API response
+- Fresh run proof:
+  - Same behavior (still correct)
+- DB proof:
+  - After opening old run once, qc_items contains the created prework items for that run
+- UI proof:
+  - Stage detail screenshot (e.g. plumbing/electrical/plaster) showing:
+    - "תיעוד מצב קיים" first
+    - "הערות לפני עבודה" second
+- Regression:
+  - Server compiles clean
+  - Project isolation tests pass
+
+Notes / Edge cases to handle
+- Partial-missing runs: if only some of the 6 items exist, create only the missing ones.
+- Ordering: ensure response ordering is template-driven so prework items render first consistently.
+- Legacy stage_prework should remain absent (no synthetic stage injection, no separate card).
+
+Implementation Order
+T001 -> T002

@@ -1,0 +1,175 @@
+M9 Billing v1 — Discovery First (READ-ONLY AUDIT BEFORE IMPLEMENTATION)
+Status: OPEN / High-Sensitive (Billing + RBAC + Org/Project scoping)
+Instruction: Do NOT start billing refactor/implementation yet. First deliver a full codebase mapping/audit of the current data model and permission model.
+
+Objective
+Before implementing Billing v1, I need a strict discovery/audit pass of the current codebase to understand exactly how Organizations, Projects, Companies, PMs, Teams, Contractors, and Roles are currently modeled and enforced.
+
+This is mandatory to avoid:
+- duplicate concepts/entities
+- breaking existing flows
+- permission regressions
+- billing logic attached to the wrong ownership level
+- messy migrations
+
+Critical Domain Clarification (Must be reflected in your analysis)
+1) Billing payer is the Organization (not per-user, not per-PM)
+2) A project belongs to one responsible Organization
+   - Example: Organization "Electra" is responsible for a specific project under its org context
+3) A different project may belong to a different Organization entirely
+4) Within a project, the Organization context unifies all companies/participants under that project:
+   - project manager
+   - internal team
+   - contractors
+   - other participating companies/entities in that project
+5) Super Admin retains full control across ALL organizations and ALL projects
+6) Viewer remains strictly read-only (no write actions at all)
+7) PM may start a trial/project, but payment can later be handed off to an Organization billing owner/admin
+
+What I need from you now (Discovery Package — no destructive changes)
+A. Current Data Model Mapping (authoritative)
+Map the CURRENT implementation as it exists in code and DB access layers:
+- Entities/collections/tables related to:
+  - organizations / companies / tenants (whatever names exist)
+  - projects
+  - project membership
+  - org membership
+  - roles / permissions
+  - contractors / teams / reviewers / viewers
+  - billing / subscription / trial (anything existing)
+- For each entity, provide:
+  - file(s) and line references where schema/model is defined
+  - key fields (especially IDs and ownership fields)
+  - relationships (organization_id, project_id, user_id, etc.)
+  - whether relationship is enforced in backend or only implied in frontend
+  - indexes/unique constraints (if any)
+- Explicitly identify whether “organization” and “company” are separate concepts in the code today or used interchangeably
+
+B. RBAC / Permission Model Mapping (current behavior, not assumptions)
+Provide the real current RBAC matrix from code (backend enforcement first):
+- Roles that exist today (super_admin, org admin, PM, reviewer, contractor, viewer, etc.)
+- Scope of each role:
+  - global scope
+  - organization scope
+  - project scope
+- Which endpoints enforce which checks
+- Which screens rely on frontend hiding only vs backend enforcement
+- Confirm viewer is truly read-only at backend level (not just UI-hidden buttons)
+
+C. Project Ownership / Membership Flow Mapping
+Document how a user becomes associated with:
+- an organization
+- a project
+- both
+- invited users
+- PM creation flow
+- contractor assignment flow
+- viewer assignment flow
+Show the exact current flow in code (files/endpoints/screens), including where “source of truth” lives.
+
+D. Billing / Trial Current State Audit
+Map everything that already exists today for billing/trial:
+- current billing screens/components
+- current billing API endpoints
+- trial logic (where stored/enforced)
+- any org/project-level payment assumptions already in code
+- any flags/fields that can be reused for Billing v1
+- any duplicated or conflicting billing concepts already present
+
+E. Risk / Conflict Analysis (very important)
+List likely conflicts BEFORE implementation:
+- duplicate ownership concepts (org vs company vs tenant)
+- project-level billing fields living in wrong model
+- PM starting trial but no org billing handoff path
+- role ambiguity between project manager and org admin
+- any endpoint currently missing org/project scoping
+- any viewer write-path exposure
+For each risk, propose:
+- minimal-change fix
+- no-break migration approach
+
+F. Proposed Billing v1 Data Ownership Design (design only, no rollout yet)
+Based on the audit, propose a minimal-change design that supports:
+- Billing Account at Organization level
+- Multiple projects under one organization
+- Per-project pricing = Project Fee + Units Tier
+- PM can start trial, Org Billing Admin activates payment
+- Super Admin global override
+- Viewer read-only
+Important:
+- Reuse existing entities where possible
+- Avoid introducing a second “organization/company” concept unless absolutely required
+- If new collections/tables are needed, justify why
+
+G. Migration / Implementation Plan (phased, no execution yet)
+Provide a phased plan only (do not implement yet):
+Phase 0: discovery/audit (this task)
+Phase 1: schema additions + read-only UI surfacing
+Phase 2: billing state machine + org handoff flow
+Phase 3: invoice estimation / plan enforcement
+Phase 4: payment integration (later)
+For each phase include:
+- expected files touched
+- backward compatibility risks
+- rollout guards
+- test requirements
+
+Required Output Format (important)
+Return a single structured report with these sections:
+1) Executive Summary
+2) Current Data Model Map
+3) Current RBAC Map
+4) Current Trial/Billing Map
+5) Risks / Conflicts
+6) Minimal-Change Billing v1 Design Proposal
+7) Phased Implementation Plan
+8) Proof / References (files + line numbers + endpoint examples)
+
+Proof Requirements for this Discovery (must include evidence)
+- File paths + line references for every major claim
+- Endpoint list + access checks (actual code references)
+- At least one concrete example trace for:
+  - PM project access
+  - Super Admin cross-org/project access
+  - Viewer permissions (read-only proof)
+- Screens/components list for current billing UI and where data comes from
+
+Hard Constraints
+- Do NOT refactor yet
+- Do NOT rename entities yet
+- Do NOT duplicate org/company concepts without explicit approval
+- Do NOT break existing flows
+- Prefer additive / backward-compatible approach for future implementation
+- If anything is unclear, state uncertainty explicitly with evidence gaps
+
+Quality / Release Requirements (Mandatory — High/Sensitive)
+1) No closure without proof
+- No conclusions without code references / endpoint evidence
+- No “probably” / “user confusion” style explanations as closure
+- Every important claim must point to actual files/lines
+
+2) Guardrails on sensitive flows (billing / RBAC / org-project scoping)
+- Backend strict scoping by org/project for all sensitive endpoints
+- Frontend guardrails are not a substitute for backend enforcement
+- Viewer must remain backend-enforced read-only
+- Super Admin override paths must be explicit and auditable
+
+3) No assumptions about existing ownership model
+- First map the current model exactly as implemented
+- Only then propose Billing v1 design
+- Call out duplicates/conflicts before suggesting changes
+
+4) Release gates for future implementation phases
+- For later implementation (not now), include:
+  - smoke tests
+  - negative tests (wrong org / wrong project / unauthorized role)
+  - proof package before marking any billing/RBAC change complete
+
+Acceptance Criteria (for THIS task)
+I will approve this discovery phase only if you deliver:
+- a code-referenced map of org/project/company/member/role relationships
+- a code-referenced RBAC map
+- a code-referenced current billing/trial map
+- identified risks/conflicts (with minimal-change recommendations)
+- a phased Billing v1 implementation plan that preserves existing behavior
+No implementation yet.

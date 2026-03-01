@@ -1,0 +1,83 @@
+M9 Billing v1 — Phase 3 (Billing Ops / Monthly Only, No Payments Yet)
+
+Objective
+Build the billing operations layer needed before payment integration:
+- Generate monthly org invoices/statements from project_billing (active only)
+- Freeze line-items (snapshots) per billing period for audit/traceability
+- Provide invoice preview + invoice history
+- Support manual “mark as paid” to simulate real billing (until Phase 4)
+- Define dunning rules: grace/past_due/read-only
+- No payment gateway yet, no MASAV, no annual plans
+
+Key rules (locked)
+- Billed amount uses contracted_units-based tier snapshots (already implemented)
+- Invoice line items freeze at generation time (no retro changes)
+- Org total for billing cycle sums active projects only
+- Changes to plan/contracted_units take effect next billing cycle (already the policy)
+
+T301 — Data model: invoices + invoice_line_items (new collections)
+- invoices:
+  id, org_id, period_ym (e.g. 2026-02), status (draft|issued|paid|past_due|void),
+  total_amount, currency ("ILS"), issued_at, due_at, paid_at,
+  created_by, created_at, updated_at
+- invoice_line_items:
+  invoice_id, project_id, project_name_snapshot,
+  plan_id_snapshot, tier_code_snapshot,
+  contracted_units_snapshot, project_fee_snapshot, tier_fee_snapshot,
+  monthly_total_snapshot,
+  created_at
+Acceptance:
+- Invoice is immutable snapshot of that month’s billing basis
+
+T302 — Invoice generation + preview endpoints (behind BILLING_V1_ENABLED)
+- GET /api/billing/org/{org_id}/invoice/preview?period=YYYY-MM
+  returns computed statement without writing DB (or with draft temp flag)
+- POST /api/billing/org/{org_id}/invoice/generate?period=YYYY-MM
+  writes invoice + line items (idempotent: same period+org does not duplicate)
+- GET /api/billing/org/{org_id}/invoices
+- GET /api/billing/org/{org_id}/invoices/{invoice_id}
+RBAC:
+- org owner/org_admin/billing_admin/SA can read invoices for org
+- contractor/viewer blocked
+- PM can only see project-level billing, not org invoices (unless org role)
+Acceptance:
+- Preview matches generated invoice totals and line items
+
+T303 — Manual payment simulation (until Phase 4)
+- POST /api/billing/org/{org_id}/invoices/{invoice_id}/mark-paid (owner/SA or billing_admin — decide)
+- Updates:
+  invoice.status=paid, paid_at=now
+  subscriptions.paid_until = end_of_period + grace (or next month start)
+  subscriptions.status=active
+- Audit event: invoice_marked_paid (before/after)
+Acceptance:
+- Mark-paid flips effective access to FULL_ACCESS via existing paid_until logic
+
+T304 — Past-due / grace policy (minimal, safe)
+- Define:
+  - due_at (e.g. 7 days after issue)
+  - grace_days (e.g. 7 days)
+- If invoice unpaid after due_at:
+  status=past_due
+- After due_at + grace:
+  org effective access becomes READ_ONLY (using existing middleware logic via paid_until/grace_until)
+Acceptance:
+- Clear deterministic rule, no surprises
+
+T305 — UI (OrgBillingPage additions)
+- “חיובים חודשיים” section:
+  - current invoice preview card (period, total, due date)
+  - generate invoice button (if none issued)
+  - invoices list (period, status, total)
+  - invoice details modal/page with line items per project
+- AdminBillingPage (SA):
+  - org invoice list quick view
+Acceptance:
+- Org billing users can understand “what will be charged this month” + history
+
+T306 — Proof + tests (required)
+- RBAC matrix for invoice endpoints
+- Idempotency proof (generate twice -> same invoice)
+- Snapshot immutability proof (change plan after generating -> invoice unchanged)
+- Manual mark-paid flips status + paid_until correctly
+- UI screenshots (preview + invoice list + invoice detail)

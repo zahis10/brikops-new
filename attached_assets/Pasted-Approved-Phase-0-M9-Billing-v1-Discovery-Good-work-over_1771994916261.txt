@@ -1,0 +1,91 @@
+Approved: Phase 0 (M9 Billing v1 Discovery) ✅
+Good work overall — the discovery is strong and code-referenced, and it confirms the current org/project/RBAC foundation is usable.
+
+We can proceed to Phase 1, but with the following REQUIRED corrections/clarifications first (to align with the agreed business model and avoid billing/RBAC confusion):
+
+Phase 1 Corrections (Required Before / As Part of Implementation)
+1) Pricing model correction (critical)
+- Billing v1 is NOT per-unit usage pricing.
+- Per-project pricing must be:
+  Project Fee (fixed monthly per project) + Units Tier Fee (flat tier-based monthly component)
+- Do NOT model `unit_tiers` as `price_per_unit` for v1.
+- Replace with a flat tier fee model (e.g. tier code + monthly fee snapshot).
+
+2) Separate contracted vs observed units (required)
+Add distinct fields/concepts:
+- `contracted_units` = billing basis (commercially agreed)
+- `observed_units` = system-detected project size (monitoring/enforcement)
+Do not use a single ambiguous `unit_count`.
+
+3) Role model hygiene (important)
+- Do not deepen the mixing between org-level and project-level roles.
+- PM is a project-scoped role.
+- Billing authority should be org-scoped (`owner`, `org_admin`, `billing_admin`).
+- Backward compatibility is fine, but new billing logic must use explicit org-scoped billing permissions.
+
+4) Multi-org safety fix (blocker for billing UI flows)
+- `get_user_org()` returning “first org” is unsafe for multi-org users.
+- Billing context resolution must be based on:
+  - selected project -> project.org_id, OR
+  - explicit selected organization context
+- Do not rely on first-org lookup for billing screens/actions.
+
+5) `projects.org_id` hardening (required early)
+- Phase 1 must include a safe backfill + orphan-project report before any billing enforcement.
+- Deliver:
+  - count of projects missing org_id
+  - backfill strategy/results
+  - rollback-safe migration plan
+- Do not enforce plan logic on projects lacking org_id.
+
+6) Phase 2 wording/behavior correction
+- “Auto-recalculate on unit changes” should mean observed_units monitoring + upgrade-needed detection,
+  NOT direct usage-based billing changes on every apartment add/remove event.
+
+7) Keep Organization vs Company separation strict
+- Company remains contractor-firm catalog entity only.
+- Billing payer and subscription ownership remain Organization-only.
+
+Proceeding Scope (Phase 1)
+Implement Phase 1 as additive + backward-compatible + feature-flagged (`BILLING_V1_ENABLED`):
+- schema additions
+- read-only billing UI surfacing (org + project billing cards)
+- contracted_units / observed_units foundations
+- org billing roles groundwork (incl. billing_admin)
+- no payment gateway yet
+- no destructive refactor
+
+Deliverables for Phase 1
+1) Updated Phase 1 design/spec (reflecting the corrections above)
+2) Implementation plan with exact files touched
+3) Code changes under feature flag
+4) Proof package:
+   - migration/backfill report (projects.org_id coverage)
+   - RBAC proof for org billing actions (owner/billing_admin/super_admin)
+   - viewer/contractor cannot access billing write paths
+   - UI screenshots (org billing + project billing read-only surfaces)
+   - API examples + negative tests
+
+Quality / Release Requirements (Mandatory — High/Sensitive)
+1) No closure without proof
+- root cause / design rationale
+- fix/implementation evidence
+- regression + negative tests
+- API/UI proof
+
+2) Guardrails on sensitive flows
+- backend strict org/project scoping for billing/RBAC
+- frontend UI visibility is not a substitute for backend authz
+- super_admin override explicit + auditable
+- viewer remains backend-enforced read-only
+
+3) No assumptions / no concept duplication
+- reuse existing entities where possible
+- do not introduce duplicate org/company ownership concepts
+- state uncertainties explicitly before coding
+
+4) Release gates
+- smoke tests + negative tests before marking any phase complete
+- no “user confusion” closure language without evidence
+
+Please start by sending the corrected Phase 1 schema/design delta (short) and the exact file-touch plan before coding.

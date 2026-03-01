@@ -1,0 +1,80 @@
+מעולה — מצוין שמצאת את זה 👍
+אז התיקון הנכון עכשיו הוא לא "לשנות לוגיקה", אלא ליישר הרשאות UI/צפייה מול השרת.
+
+בבקשה תבצע את זה כך:
+
+🎯 יעד
+- PM / owner / super_admin = ניהול מלא של מאשרי QC (הוספה + הסרה)
+- management_team = צפייה בלבד (read-only)
+- שאר התפקידים = בלי גישה / בלי טאב (לפי המודל הקיים)
+
+1) Backend — לאפשר צפייה בלבד ל-management_team
+כרגע _check_pm_or_admin חוסם גם GET list ולכן ה-tab נשבר עם 403.
+צריך לפצל הרשאות:
+- הרשאת צפייה ברשימת מאשרים (GET approvers list / stages meta אם נדרש למסך):
+  - PM / owner / super_admin / management_team
+- הרשאת ניהול (POST add / DELETE revoke):
+  - PM / owner / super_admin בלבד
+
+כלומר:
+- GET -> view permission
+- POST/DELETE -> manage permission (כמו היום)
+
+אם יש helper אחד בלבד, ליצור:
+- _check_qc_approvers_view_permission(...)
+- _check_pm_or_admin(...) (להשאיר לניהול)
+
+2) Frontend — מצב "צפייה בלבד" אמיתי ל-management_team
+כרגע הטאב מוצג, אבל גם כפתורי ניהול מוצגים.
+צריך להוסיף אבחנה ברורה:
+- canManageApprovers = PM/owner/super_admin
+- canViewApprovers = canManageApprovers || management_team
+
+ב-UI של QCApproversTab:
+אם canViewApprovers && !canManageApprovers:
+- להציג רשימת מאשרים קיימים
+- להציג scope של כל מאשר (כל השלבים / שלבים נבחרים)
+- להסתיר כפתור "הוסף מאשר"
+- להסתיר כפתורי הסרה (trash)
+- להציג banner/notice קטן:
+  "צפייה בלבד — רק מנהל הפרויקט יכול להוסיף או להסיר מאשרי QC"
+
+אם אין הרשאת צפייה בכלל:
+- לא להציג את הטאב, או להציג empty state עם "אין הרשאה"
+
+3) הסרת מאשר — רק לוודא UX תקין (כי המנגנון כבר קיים)
+כמו שמצאת, ה-API + removeApprover + audit כבר קיימים ✅
+צריך רק לוודא:
+- הכפתור מוצג רק למי שיכול לנהל
+- confirm ברור לפני הסרה
+- אחרי הסרה הרשימה מתרעננת מיידית
+- toast הצלחה / שגיאה ברור
+- אם השרת מחזיר 403 (למשל race/role change), להציג הודעה ברורה ולא לקרוס
+
+4) Hardening קטן (מומלץ)
+כדי למנוע UI "שבור" אם backend/frontend לא מסונכרנים:
+- אם GET approvers מחזיר 403 עבור management_team (לפני תיקון שרת), להציג fallback נעים:
+  "אין כרגע הרשאה לצפייה במאשרי QC"
+- אחרי תיקון שרת, management_team אמור לראות read-only בלי שגיאה
+
+✅ Acceptance Criteria (בדיקה קצרה)
+1. PM נכנס לטאב "מאשרי QC":
+   - רואה רשימה
+   - יכול להוסיף מאשר
+   - יכול להסיר מאשר
+2. management_team נכנס לטאב:
+   - רואה רשימה + scopes
+   - לא רואה כפתור הוספה
+   - לא רואה כפתור הסרה
+   - רואה הודעת "צפייה בלבד"
+3. ניסיון POST/DELETE כ-management_team:
+   - backend מחזיר 403
+4. הסרת מאשר כ-PM:
+   - נמחק מהרשימה
+   - נרשם approver_revoked
+   - המשתמש שהוסר לא יכול לאשר stage יותר (אלא אם הוא PM)
+
+אם בא לך, אחרי זה נעשה polish קטן לטאב עצמו:
+- badge “ברירת מחדל: PM”
+- תצוגת scope יותר קריאה (“כל השלבים” / “3 שלבים” עם expand)
+- חיווי מי מאשר כרגע בפועל לכל stage

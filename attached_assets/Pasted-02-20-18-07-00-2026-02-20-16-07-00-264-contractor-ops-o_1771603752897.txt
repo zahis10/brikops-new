@@ -1,0 +1,24 @@
+02-20 18:07:00
+2026-02-20 16:07:00,264 - contractor_ops.otp_service - INFO - [OTP] provider=whatsapp — sending via whatsapp_auth_template to +97254***
+02-20 18:07:01
+2026-02-20 16:07:01,449 - httpx - INFO - HTTP Request: POST https://graph.facebook.com/v21.0/1098144240038142/messages "HTTP/1.1 400 Bad Request"
+02-20 18:07:01
+2026-02-20 16:07:01,451 - contractor_ops.otp_service - WARNING - [OTP] WhatsApp OTP failed (400): {"error":{"message":"(#133010) Account not registered","type":"OAuthException","code":133010,"fbtrace_id":"At-mWmKTOOkT9A4CH-GnmaS"}}
+02-20 18:07:01
+2026-02-20 16:07:01,876 - httpx - INFO - HTTP Request: POST https://graph.facebook.com/v21.0/1098144240038142/messages "HTTP/1.1 400 Bad Request"
+02-20 18:07:01
+2026-02-20 16:07:01,877 - contractor_ops.otp_service - INFO - [OTP] WhatsApp failed (whatsapp_failed_400), sending via sms_fallback to +97254***
+02-20 18:07:01
+2026-02-20 16:07:01,877 - contractor_ops.otp_service - WARNING - [OTP] WhatsApp text fallback also failed (400)
+02-20 18:07:02
+2026-02-20 16:07:02,098 - httpx - INFO - HTTP Request: POST https://api.twilio.com/2010-04-01/Accounts/AC242833f4c288c76d8c696060fc095a34/Messages.json "HTTP/1.1 400 Bad Request"
+02-20 18:07:02
+2026-02-20 16:07:02,099 - contractor_ops.otp_service - ERROR - [OTP] SMS exception: Database objects do not implement truth value testing or bool(). Please compare with None instead: database is not None
+02-20 18:07:02
+2026-02-20 16:07:02,099 - contractor_ops.otp_service - ERROR - [OTP] FAIL all channels for +97254*** wa=whatsapp_failed_400 sms=sms_exception: Database objects do not implement truth value testing or bool(). Please compare with None instead: d
+02-20 18:07:02
+2026-02-20 16:07:02,099 - contractor_ops.sms_service - ERROR - [SMS] failed to=+972543886670: 400 {"code":21659,"message":"'From' +972547296949 is not a Twilio phone number or Short Code country mismatch","more_info":"https://www.twilio.com/docs/errors/21659","status":400}
+02-20 18:07:02
+INFO: 35.191.65.142:0 - "POST /api/auth/request-otp HTTP/1.1" 429 Too Many Requests
+02-20 18:07:18
+INFO: 35.191.65.143:0 - "POST /api/auth/request-otp HTTP/1.1" 429 Too Many Requests

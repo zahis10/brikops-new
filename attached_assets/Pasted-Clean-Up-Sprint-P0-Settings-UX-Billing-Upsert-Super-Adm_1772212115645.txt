@@ -1,0 +1,66 @@
+Clean-Up Sprint (P0): Settings UX + Billing Upsert + Super Admin Reset Password
+
+מטרה: לסגור 3 דברים כדי שהמערכת תהיה נקייה לבדיקה ושימוש:
+1) נגישות להגדרות חשבון – 1 קליק ל-/settings/account מכל מצב (בעיקר במובייל).
+2) Admin Billing – תיקון “לא נמצא מנוי לארגון זה” ע״י upsert/auto-create לרשומת subscription לפני פעולה.
+3) Super Admin Reset Password – יכולת איפוס סיסמה למשתמשים מהאדמין בלי לדעת סיסמה נוכחית, עם step-up + audit + session invalidation.
+
+T001 – Settings icon (UX)
+- להוסיף כפתור גלגל שיניים קבוע ב-header של /projects (MyProjectsPage) ליד האייקונים הקיימים.
+- ניווט ל-/settings/account, title="הגדרות חשבון".
+- זה חייב לעבוד גם כשאין memberships (כמו Super Admin).
+Acceptance:
+- Screenshot: /projects עם אייקון הגדרות.
+- לחיצה אחת → /settings/account נפתח.
+
+(אופציונלי: להוסיף גם ב-ProjectControlPage/ProjectDashboardPage רק אם זה פשוט ולא מסכן רגרסיות.)
+
+T002 – Admin Billing upsert bug
+- ב-admin_billing_override: אם get_subscription(org_id) מחזיר None → לבצע ensure/create subscription record ואז להמשיך לפעולה.
+- חשוב: לא ליצור מצב “trialing” שמבלבל. עדיף:
+  - ensure_subscription(org_id): יוצר רשומה בסיסית status='inactive/none' (ללא trial/paid) ורק אז מפעילים:
+    * extend_trial → trial_end_at + status=trialing
+    * comp → manual_override.is_comped=true + comped_until (או paid_until בהתאם ללוגיקה שלכם)
+    * activate → status=active + paid_until
+- להוסיף audit payload: { auto_created: true } כשהרשומה נוצרה עכשיו.
+Acceptance:
+- Org ללא subscription: פעולה “מתנה עד תאריך” עובדת (ללא “לא נמצא מנוי”), ונוצר audit עם auto_created=true.
+- Org ללא subscription: “הארכת ניסיון” עובדת.
+- אין שינוי בהתנהגות ל-org שכבר יש לו subscription.
+
+T003 – Backend: Super Admin reset password endpoint
+- Endpoint חדש: POST /api/admin/users/{user_id}/reset-password
+- הגנה: JWT + require_stepup + בדיקת super_admin אמיתית מה-DB.
+- Body: { new_password, note } (שניהם חובה)
+- Validation: כמו בכל המערכת (מינימום 8, אות+ספרה, common-passwords blocked).
+- Update:
+  - set password_hash=bcrypt(new_password)
+  - $unset password (אם קיים legacy)
+  - session_version += 1 (invalidate sessions)
+- Audit event:
+  - action=admin_password_reset
+  - actor_id (מי ביצע)
+  - entity_id=user_id (על מי)
+  - payload כולל note בלבד (לא לרשום סיסמה!)
+Acceptance:
+- SA מבצע reset → המשתמש מצליח להתחבר עם הסיסמה החדשה.
+- טוקנים ישנים של המשתמש נחסמים (Session revoked).
+- non-SA מקבל 403.
+
+T004 – Frontend: Reset Password UI ב-AdminUsersPage
+- להוסיף כפתור “איפוס סיסמה” בפרטי משתמש (כש-SA בוחר משתמש).
+- modal: new_password + note (סיבה) + submit
+- אם step-up נדרש → להפעיל את מנגנון ה-stepup הקיים ואז retry.
+- API service: adminUserService.resetUserPassword(userId, newPassword, note).
+Acceptance:
+- צילום מסך של modal.
+- flow מלא עובד.
+
+T005 – Build + Proof package
+- Build + restart.
+- Proofs:
+  1) Settings icon ב-/projects → /settings/account
+  2) Billing upsert לארגון בלי subscription (מתנה/ניסיון) עובד + audit auto_created
+  3) Reset password עובד + session invalidation + audit
+  4) Negative: non-SA חסום
+- עדכון replit.md

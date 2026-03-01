@@ -1,0 +1,53 @@
+P0 DEPLOYMENT HOTFIX – CONNECTION + LOGIN (NO NEW FEATURES)
+
+Please fix ONLY production connectivity and login on Replit deployment.
+
+Context:
+- Stack: FastAPI backend + React frontend + MongoDB
+- Deployment currently configured with external port 80
+- App seems published but login/API is not reachable correctly
+
+Required actions (in this exact order):
+
+1) Align ports end-to-end
+- Ensure the running web process listens on 0.0.0.0 and the SAME port that deployment forwards to.
+- If deployment forwards to :80, run uvicorn on :80.
+- Remove/disable extra conflicting listeners on :3000 / localhost:8000 in deployment mode.
+
+2) Start backend + DB correctly in production
+- Ensure mongod starts (or use configured managed DB if available).
+- Ensure backend starts successfully after DB is available.
+- Fail fast with clear logs if DB connection fails.
+
+3) Serve frontend correctly
+- Build frontend once in build step.
+- Backend must serve built frontend static files in production.
+- Keep /api routes reachable (do not let static route override /api).
+
+4) Fix frontend API base URL
+- In production, frontend must call relative /api (NOT localhost:8000 / 3000).
+- Verify login request goes to: https://<prod-domain>/api/auth/login
+
+5) CORS / auth sanity
+- If frontend and backend are same domain, avoid unnecessary CORS complexity.
+- If cross-origin is used, configure exact production origin and credentials properly.
+
+6) Add/verify health endpoint
+- Ensure GET /api/health returns 200 with JSON.
+
+7) Provide proof (mandatory)
+Return:
+- Final Build command
+- Final Run command
+- Output of:
+  - ss -ltnp | grep -E ':80|:3000|:8000'
+  - curl -i http://127.0.0.1:80/api/health
+  - curl -i https://<prod-domain>/api/health
+- Browser network proof that login POST hits /api/auth/login and returns 200
+- One successful login using demo tenant account
+
+Acceptance criteria:
+- App opens from production URL
+- /api/health is 200
+- Login works end-to-end from UI
+- No localhost API calls in production

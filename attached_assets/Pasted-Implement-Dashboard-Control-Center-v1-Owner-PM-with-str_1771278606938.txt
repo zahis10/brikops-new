@@ -1,0 +1,111 @@
+Implement Dashboard Control Center v1 (Owner/PM) with strict RBAC and mobile-first Hebrew RTL UI.
+
+GOAL
+Turn the main dashboard into an operational control center where Owner/PM can manage project hierarchy directly:
+- Create building
+- Bulk create floors
+- Bulk create units
+- Assign PM
+- Manage contractor companies
+All from the main dashboard, with no focus-loss bugs and no empty dropdown regressions.
+
+SCOPE
+
+A) Backend
+1) Add RBAC helper:
+   - owner: manage all projects
+   - pm: manage only projects where membership(role=pm) exists
+   - contractor/viewer: no management actions
+
+2) Add/extend endpoints:
+   - POST /api/buildings                (existing or verify)
+   - POST /api/floors/bulk              {project_id, building_id, from_floor, to_floor}
+   - POST /api/units/bulk               {
+       project_id, building_id,
+       from_floor, to_floor,
+       units_per_floor,
+       unit_start_number,
+       unit_number_padding(optional),
+       unit_prefix(optional)
+     }
+   - POST /api/projects/{id}/assign-pm  {user_id}
+   - POST /api/companies                {name, trade_category, phone(optional), project_id(optional)}
+   - GET  /api/projects/{id}/hierarchy  returns building->floors->units tree
+
+3) Validation rules:
+   - from_floor <= to_floor
+   - units_per_floor >= 1
+   - no duplicate (project_id, building_id, floor_number, unit_number)
+   - PM assign only to active user
+   - PM uniqueness per project (if business rule says only one PM)
+
+4) Audit logging:
+   - log actor_id, action, target_id, payload summary for all management mutations
+
+B) Frontend (Dashboard)
+1) Management mode (Owner/PM only):
+   - Header toggle/button: "מצב ניהול"
+   - Floating + button opens bottom-sheet action menu
+
+2) Bottom-sheet actions:
+   - Add Building
+   - Add Floors (bulk range)
+   - Add Units (bulk)
+   - Assign PM
+   - Add Company
+   - View Hierarchy
+
+3) Project card quick actions:
+   - 3-dot menu per project with same context actions
+   - PM sees only projects they can manage
+   - Owner sees all projects
+
+4) Filters on main screen:
+   - Project search
+   - Status filter
+   - Hide E2E projects (default ON)
+
+5) Stability requirements (must):
+   - No native <select> for critical cascading fields on mobile; use existing custom bottom-sheet dropdown
+   - No input focus loss while typing
+   - Cascading dropdowns must load explicitly on parent select (project->building->floor)
+   - Child fields disabled until parent selected
+   - Empty states in Hebrew + retry button
+
+C) UX/RTL
+- Full Hebrew RTL labels
+- Mobile-first spacing
+- Toasts for success/error
+- Inline validation messages in Hebrew
+
+D) Tests
+1) Backend tests:
+   - RBAC owner/pm/contractor/viewer
+   - PM cannot manage non-member project
+   - Bulk floors valid/invalid cases
+   - Bulk units valid/invalid/duplicate cases
+   - assign PM permission + uniqueness
+   - hierarchy endpoint shape
+
+2) Frontend tests:
+   - management controls visible only to owner/pm
+   - no focus loss typing in forms
+   - cascading dropdown load/disable behavior
+   - action completion refreshes dashboard data immediately
+
+3) Regression:
+   - existing auth/OTP/notifications tests remain green
+
+DELIVERABLE FORMAT
+Return:
+1) Changed files list
+2) New/updated API routes list
+3) RBAC matrix table (owner/pm/contractor/viewer x action)
+4) 6 screenshots:
+   - dashboard management mode
+   - bottom-sheet actions
+   - bulk floors form
+   - bulk units preview/submit
+   - assign PM success
+   - hierarchy view
+5) final PASS/FAIL against this checklist

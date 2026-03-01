@@ -1,0 +1,81 @@
+סגור, מאשר את התוכנית שלך. רק מחדד Acceptance + הוכחות כדי שאוכל לאשר UAT באייפון:
+
+M6 — Task Detail = Hub ניהולי (Managers)
+
+1) Manager Panel בדף ליקוי (TaskDetailPage)
+
+מה חייב להיות בפועל ב-UI:
+	•	עריכה במקום (inline) של:
+	•	Status
+	•	Priority
+	•	Trade / Category
+	•	Assignee (הקצאת קבלן) — dropdown שמגיע מ־project memberships (רק קבלנים רלוונטיים; אם אין פילטר לפי trade אז לפחות כל הקבלנים בפרויקט)
+	•	נעילה ברורה כשסטטוס closed / pending_manager_approval לפי החוקים (מה אפשר/אי אפשר לשנות).
+
+הוכחות שאני רוצה:
+	•	וידאו קצר: שינוי Priority + שינוי Assignee + שינוי Status → רואים שזה נשמר וחוזר אחרי refresh.
+	•	דוגמת request/response של:
+	•	PATCH /tasks/{id} (priority/status/category)
+	•	PATCH /tasks/{id}/assign (assignee)
+
+⸻
+
+2) Proof Gallery משודרג
+
+מה חייב להיות בפועל:
+	•	לכל תמונת הוכחה להציג:
+	•	מי העלה (שם משתמש / חברה אם קיים)
+	•	מתי הועלה (תאריך/שעה)
+	•	כפתור הורדה (Download)
+	•	אם יש כמה תמונות — גלריה נוחה במובייל.
+
+הוכחות:
+	•	צילום מסך/וידאו מתוך ליקוי עם 2–3 תמונות הוכחה שמראה את כל השדות + download עובד.
+
+⸻
+
+3) Timeline / Audit ויזואלי
+
+מה חייב להיות:
+	•	ציר זמן ברור (לא רק רשימת טקסט):
+	•	נפתח → שויך → הועלתה הוכחה → הוחזר/אושר → נסגר
+	•	אייקונים/סטטוסים והאירוע האחרון הכי בולט.
+
+הוכחות:
+	•	צילום מסך של ליקוי שעבר לפחות 4 אירועים.
+
+⸻
+
+4) RBAC (קריטי)
+	•	קבלן: רואה רק העלאת הוכחה (ולא רואה שום כפתורי ניהול).
+	•	מנהל/צוות ניהולי/PM/admin/owner: רואים פאנל ניהול מלא.
+	•	הקביעה לפי project role ולא לפי global role.
+
+הוכחות:
+	•	2 צילומי מסך: אותו ליקוי פעם כקבלן ופעם כמנהל (רואים שהכפתורים שונים).
+
+⸻
+
+5) Tests + Version Lock
+
+בדיקות חובה (אינטגרציה):
+	•	reject מחייב reason
+	•	approve → closed
+	•	reject → returned_to_contractor
+	•	contractor blocked על פעולות מנהל (403/404 לפי ההחלטה הקיימת)
+
+Version lock:
+	•	SHA מסונכרן ב־HEAD + /api/debug/version + footer.
+
+⸻
+
+מה אני בודק באייפון בסוף
+	1.	נכנס לליקוי בתור מנהל → משנה priority/assignee/status → נשמר
+	2.	רואה proof gallery כולל מי העלה ומתי + הורדה
+	3.	רואה timeline ברור
+	4.	נכנס בתור קבלן → אין פעולות מנהל בכלל
+
+⸻
+
+אם אתה רוצה, תוסיף גם debug endpoint קצר:
+/api/debug/m6-proof שמחזיר sample task עם updates + proofs כדי שאוכל לאמת גם בלי צילום מסך.

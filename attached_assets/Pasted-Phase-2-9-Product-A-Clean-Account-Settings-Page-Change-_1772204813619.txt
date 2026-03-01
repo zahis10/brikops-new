@@ -1,0 +1,86 @@
+Phase 2.9 — Product A (Clean): Account Settings Page (Change Email + Change Password)
+
+GOAL
+Add a dedicated Account Settings page for MANAGEMENT users only (super_admin/owner/org_admin/billing_admin/project_manager/management_team):
+1) Change Password (requires current password)
+2) Change Email (requires current password)
+No changes to contractor flows. No changes to OTP login. No breaking changes.
+
+KEY UX REQUIREMENT
+- Add a new page: /settings/account  (or /account-settings)
+- Add an entry point from the existing “User Details / Profile” modal: a button “הגדרות חשבון”
+- If user has no email yet → show “הוסף אימייל וסיסמה” CTA that opens the existing CompleteAccount (voluntary) flow (do NOT invent a new flow)
+
+SECURITY REQUIREMENTS (MUST)
+- Re-auth required: any change-email / change-password must require current_password and verify against password_hash
+- Validate passwords: min 8 chars, must include at least 1 letter + 1 digit (reuse same validation used in reset-password)
+- Validate emails: normalize to lowercase + strip; must be unique (case-insensitive). Reject duplicates.
+- Audit events:
+  - account_password_changed
+  - account_email_changed (include old_email/new_email in payload)
+- Contractors/viewers: page should show “אין הרשאה” and no APIs should allow them.
+
+BACKEND TASKS
+1) Add 2 new JWT endpoints (place in identity_router.py OR a new small auth_settings_router.py and include in server.py):
+   a) POST /api/auth/change-password
+      body: { current_password, new_password }
+      - verify current_password using password_hash
+      - validate new_password policy
+      - set password_hash = bcrypt(new_password)
+      - audit event: account_password_changed
+      - return { ok: true }
+
+   b) POST /api/auth/change-email
+      body: { current_password, new_email }
+      - verify current_password
+      - validate email format + uniqueness (case-insensitive)
+      - set user.email = new_email_lower
+      - set email_verified = false (do not enforce verification yet)
+      - audit event: account_email_changed (payload: old_email, new_email)
+      - return { ok: true, email: new_email_lower }
+
+   Notes:
+   - DO NOT use any legacy “password” field (we already unified to password_hash in Phase 2.7)
+   - For RBAC: allow only management users (reuse is_management_user logic if exists; otherwise check role in {project_manager, management_team} OR platform_role=super_admin OR org roles).
+   - Add negative tests: wrong current password → 401; weak new password → 400; invalid email → 400; duplicate email → 409.
+
+FRONTEND TASKS
+2) Add a new page: frontend/src/pages/AccountSettingsPage.js
+   - Section A: Email
+     - Show current email (or “לא מוגדר”)
+     - If email exists: Change Email form (new_email + current_password + submit)
+     - If email missing: show CTA button “השלמת חשבון (אימייל+סיסמה)” that opens the existing voluntary CompleteAccount modal (setShowCompleteForm(true))
+   - Section B: Password
+     - Change Password form (current_password + new_password + confirm + submit)
+   - Show success toasts, and keep RTL/LTR (email field dir="ltr")
+
+3) Wire routes and navigation
+   - App.js: add protected route /settings/account → AccountSettingsPage
+   - Add a button/link from the existing User Details / Profile modal → navigate("/settings/account")
+   - Make sure guards do not block this page (it is NOT an auth page; user must be logged in)
+
+4) API wiring
+   - frontend/src/services/api.js:
+     - authService.changePassword(currentPassword, newPassword) → POST /api/auth/change-password
+     - authService.changeEmail(currentPassword, newEmail) → POST /api/auth/change-email
+
+SMTP / FROM ADDRESS NOTE (IMPORTANT)
+- Do NOT ever send emails “from” Zahi’s personal address.
+- Use env vars:
+  SMTP_FROM = no-replay@brikops.com   (or support@brikops.com)
+  SMTP_FROM_NAME = BrikOps
+This is for email sending features (forgot-password already exists); change-email does NOT need to send email in Phase 2.9.
+
+PROOF PACKAGE REQUIRED (MUST PROVIDE)
+1) Screenshots: AccountSettingsPage (email section + password section)
+2) API proof:
+   - change-password success + login with new password
+   - change-email success + email updated in /api/auth/me response
+3) Negative tests:
+   - wrong current password blocked
+   - duplicate email blocked
+4) RBAC proof: contractor + viewer cannot access page and endpoints (403)
+5) Audit proof: show 2 audit events created with correct payloads
+
+ROLLBACK
+- Purely additive. If anything breaks, revert commit and republish. No DB migrations needed.

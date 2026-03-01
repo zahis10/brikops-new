@@ -1,0 +1,31 @@
+Here's the plan for the Billing v1 Phase 1 Proof Package:
+
+Goal: Produce all mandatory proof evidence required before Phase 1 can be closed.
+
+T001 — Environment Setup
+Restart the server with BILLING_V1_ENABLED=true. Assign temporary org_admin and billing_admin roles to existing demo users (sitemanager and engineer) on the PM's org so we can test all role permutations. Verify logins work.
+
+T002 — API Proof Matrix
+Fire real HTTP requests against every Billing v1 endpoint with every role (super_admin, org owner, org_admin, billing_admin, PM, management_team, contractor, viewer). Record HTTP status codes and response snippets. Include success, forbidden, bad input, and flag-off cases. Write results to proof/api_proof_matrix.md.
+
+T003 — RBAC Endpoint-Level Proof
+Prove via actual HTTP calls (not direct function tests) that: PM can read project billing but not another org's billing; contractor and viewer are blocked from all billing endpoints; super_admin overrides everything; org_admin and billing_admin can read org billing; management_team can read project billing but not org billing. Write to proof/rbac_proof.md.
+
+T004 — Migration Proof
+Run dry-run (show counts and orphan/ambiguous list), run apply (show what changed), run apply again (prove no-op / idempotency), query audit events for org_id_backfill_applied, and show code evidence that there's no auto-backfill on startup. Write to proof/migration_proof.md.
+
+T005 — Audit Trail Proof
+Query the audit_events collection for each required action type: project_billing_created, org_role_changed, org_id_backfill_applied, and trigger a plan creation to get billing_plan_created. Show actor, entity references, action, and payload summary for each. Write to proof/audit_trail_proof.md.
+
+T006 — Observed Units Source-of-Truth Proof
+Document the exact counting rule from compute_observed_units(), run it on a real project, cross-verify with a manual DB query, and prove archived exclusion by temporarily archiving a unit, re-counting, then restoring. Write to proof/observed_units_proof.md.
+
+T007 — UI Screenshots (Authenticated)
+With flag ON: screenshot ProjectBillingCard (PM, project settings tab), OrgBillingPage (PM as org owner), AdminBillingPage with plans + migration expanded (SA). Then restart with flag OFF and screenshot the same pages to prove graceful degradation / no billing UI exposure. Write to proof/ui_proof.md.
+
+T008 — Compile + Release Metadata + Cleanup
+Assemble everything into proof/PROOF_PACKAGE.md with: commit hash (7bae3fb), environment, BILLING_V1_ENABLED value for each proof run, and rollback instructions. Clean up temporary role assignments and restore server to flag-off state.
+
+Execution order: T001 first, then T002/T003/T004/T006 in parallel, T005 after T002, T007 after T001, T008 last.
+
+Want me to go ahead and execute this?

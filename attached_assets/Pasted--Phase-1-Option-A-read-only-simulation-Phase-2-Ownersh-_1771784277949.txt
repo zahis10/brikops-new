@@ -1,0 +1,71 @@
+מעולה, Phase 1 + Option A מאומתים וסגורים ✅ (כולל read_only simulation).
+בוא נתחיל Phase 2 – Ownership Transfer (Owner יחיד):
+
+מטרות:
+- Owner יחיד לכל org (owner_user_id).
+- Owner בלבד (וגם super_admin) רואה Billing/Trial.
+- Transfer מאפשר ל-PM שפתח את הארגון להעביר בעלות לנציג החברה שמשלם, בצורה חלקה ומאובטחת.
+- לאחר transfer: הבעלים החדש נהיה owner, הבעלים הישן נשאר PM/חבר צוות ללא Billing.
+
+דרישות Phase 2:
+1) Data model: ownership_transfer_requests
+- org_id, initiator_user_id, target_phone, status (pending/cancelled/expired/accepted/completed),
+  token מאובטח, expires_at=48h, created_at/accepted_at/completed_at
+- כלל: בקשה אחת פעילה בכל רגע (cancel/replace).
+
+2) Endpoints:
+- POST /org/transfer/initiate (owner בלבד) -> יוצר request + שולח הודעה type=ownership_transfer (WA->SMS)
+- POST /org/transfer/cancel (owner)
+- GET /org/transfer/:token (מידע מינימלי למסך אישור: org_name)
+- POST /org/transfer/accept (recipient) -> step-up OTP + typed confirmation (שם הארגון) -> atomic update:
+  org.owner_user_id=new_owner_user_id, request.status=completed
+  (old owner נשאר PM/role קיים אבל מאבד billing)
+
+3) UI:
+- Owner: “הגדרות ארגון → העברת בעלות” (שדה טלפון + שליחה + ביטול pending)
+- Recipient: “אישור העברת בעלות” (OTP step-up + הקלדת שם הארגון)
+- מסך הצלחה לשני הצדדים
+
+4) Messaging + Logs:
+- [MSG-DELIVERY] type=ownership_transfer אחיד
+- WA עדיף ואם נכשל SMS
+
+5) Audit:
+- ownership_transfer_initiated/cancelled/accepted/completed עם org_id + old_owner + new_owner + timestamps
+
+Acceptance:
+- לאחר transfer: /billing/me:
+  new owner is_owner=true
+  old owner is_owner=false
+- הצוות לא רואה billing בכלל.
+- הכל מתועד באודיט.
+
+========================
+Proof Package (חובה בסוף Phase 2)
+========================
+א) לפני transfer:
+- JSON של /api/billing/me עבור Owner (User A): is_owner=true, owner_user_id=A
+- צילום מסך: Owner רואה TrialBanner/Billing
+- JSON של /api/billing/me עבור User B (המוזמן): is_owner=false
+
+ב) Initiate:
+- צילום/וידאו קצר של Owner: “העברת בעלות” → הזנת טלפון → “שלח בקשת העברה”
+- לוג [MSG-DELIVERY] type=ownership_transfer שמראה WA/SMS + rid + result
+
+ג) Accept:
+- צילום/וידאו קצר אצל Recipient:
+  כניסה דרך קישור/טוקן → Step-up OTP → Typed confirmation (שם הארגון) → אישור
+- לוג audit: ownership_transfer_accepted + completed
+
+ד) אחרי transfer:
+- /api/billing/me עבור Recipient: is_owner=true, owner_user_id=Recipient
+- /api/billing/me עבור Owner הישן: is_owner=false, owner_user_id=Recipient
+- צילום מסך: הבעלים החדש רואה Billing; הבעלים הישן לא רואה Billing/Trial
+
+ה) Guardrails:
+- ניסיון accept עם typed confirmation שגוי → 422 + הודעה
+- ניסיון accept אחרי expiry → 410/409 + הודעה
+- ניסיון initiate ע"י non-owner → 403
+- audit events קיימים עבור initiated/cancelled/accepted/completed
+
+בוא תתחיל מה-DB+endpoints, ואז UI+Messaging, ואז נסגור עם Proof package למעלה.

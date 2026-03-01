@@ -1,0 +1,317 @@
+M9 Billing v1 — Phase 2.3 (Plan Merchandising UX + Value Communication) [UX-ONLY]
+
+מטרה
+להפוך את בחירת התוכנית (בסיסי / מקצועי / XL) משדה טכני לחוויית בחירה ברורה ומזמינה:
+- להסביר מה מקבלים בכל תוכנית (קופי עברי אמין, בלי להבטיח פיצ'רים שלא קיימים)
+- להציג “מה כלול” כשבוחרים תוכנית
+- להציג פירוק מחיר ברור: עלות תוכנית + מדרגת יחידות = סה״כ
+- להדגיש “מקצועי” כמומלץ
+- להוסיף השוואת חבילות ידידותית למובייל
+- ללא שינויי לוגיקה / תמחור / RBAC / snapshots / paywall / API
+
+חשוב (Constraint קשיח)
+- UX + content בלבד
+- אין שינוי ב-pricing math / tiers / snapshots / audit semantics
+- אין שינוי בהרשאות / RBAC
+- אין endpoints חדשים
+- אין native <select> (Radix בלבד)
+- הכל מאחורי BILLING_V1_ENABLED
+- לא להציג הבטחות על יכולות שלא קיימות בפועל
+
+קבצים קיימים לשימוש חוזר
+- frontend/src/utils/billingLabels.js
+- frontend/src/components/ProjectBillingCard.js
+- frontend/src/pages/OrgBillingPage.js
+- frontend/src/pages/AdminBillingPage.js
+- billingService.activePlans() כבר מחזיר: { id, project_fee_monthly, unit_tiers[], is_active, version }
+
+==================================================
+T001 — Plan Content Catalog (Single Source of Truth)
+==================================================
+צור קובץ חדש:
+- frontend/src/utils/billingPlanCatalog.js
+
+מבנה לכל תוכנית:
+- label
+- shortDescription
+- bestFor
+- badge (null / string)
+- highlights[] (3-4 פריטים)
+
+Helpers:
+- getPlanCatalog(planId)
+- getAllPlanCatalog()
+- getPlanBadge(planId)
+
+תוכן מוצע (עברית, אמין, בלי הבטחות שקריות):
+plan_basic:
+- label: "בסיסי"
+- shortDescription: "פתרון מסודר לפרויקט בתחילת עבודה שוטפת"
+- bestFor: "מתאים לפרויקטים קטנים/בינוניים בתחילת תהליך"
+- badge: null
+- highlights:
+  - "ניהול חיוב פרויקט לפי חבילה + מדרגת יחידות"
+  - "תצוגת עלות חודשית ברורה לפרויקט"
+  - "מעקב יחידות חוזיות מול יחידות בפועל"
+  - "מתאים להתחלה מסודרת של תהליך עבודה"
+
+plan_pro:
+- label: "מקצועי"
+- shortDescription: "האיזון המומלץ לרוב הפרויקטים הפעילים"
+- bestFor: "מתאים לרוב הפרויקטים הפעילים עם צוות וניהול שוטף"
+- badge: "מומלץ"
+- highlights:
+  - "כל מה שבבסיסי"
+  - "מתאים לניהול שוטף בהיקף עבודה גבוה יותר"
+  - "נראות טובה יותר לעלות ולתכנון חיוב ארגוני"
+  - "בחירה מומלצת לרוב הלקוחות"
+
+plan_xl:
+- label: "XL"
+- shortDescription: "מיועד לפרויקטים גדולים והיקפי עבודה משמעותיים"
+- bestFor: "מתאים לארגונים/פרויקטים גדולים או מורכבים"
+- badge: "להיקף גדול"
+- highlights:
+  - "כל מה שבמקצועי"
+  - "מותאם לסדרי גודל גדולים"
+  - "מתאים לעבודה ארגונית בפרויקטים עם נפח גבוה"
+  - "בחירה מתאימה להיקפים גדולים במיוחד"
+
+קבלה:
+- כל טקסטי התוכניות במקום אחד בלבד (ללא טקסטים מפוזרים בקומפוננטות)
+
+==================================================
+T002 — Hardening ל-billingLabels + מיקרוקופי אחיד
+==================================================
+עדכן:
+- frontend/src/utils/billingLabels.js
+
+שינויים:
+1) getPlanLabel(planId)
+- השתמש ב-billingPlanCatalog label
+- fallback תמיד "—" (לא plan_basic/raw key)
+
+2) getObservedUnitsWarning(...)
+- ניסוח ברור יותר:
+  "זוהתה חריגה בין מספר היחידות בפועל למספר היחידות החוזיות. החיוב נקבע לפי מספר היחידות החוזיות."
+
+3) יישור טרמינולוגיה (לשימוש בקומפוננטות)
+- "חבילת שירות"
+- "מדרגת יחידות"
+- "מספר יחידות לחיוב (לפי ההסכם)"
+- "סה״כ חודשי לפרויקט"
+
+קבלה:
+- אין plan_* גולמי גלוי למשתמשים רגילים
+- fallbackים בעברית / "—"
+
+==================================================
+T003 — ProjectBillingCard: Plan Merchandising Panel (Core UX)
+==================================================
+קובץ:
+- frontend/src/components/ProjectBillingCard.js
+
+ללא שינוי בשמירה/ביטול/PATCH/handoff.
+
+A) Display mode (לא בעריכה)
+הוסף בלוק חדש:
+כותרת: "חבילת השירות לפרויקט"
+
+תוכן:
+- שם תוכנית בעברית (getPlanLabel)
+- badge (אם יש)
+- shortDescription
+- "מתאים ל..." (bestFor)
+- highlights (3-4 bullets)
+
+הוסף בלוק:
+כותרת: "פירוק עלות חודשי לפרויקט"
+שורות:
+- "עלות חבילה" = project_fee_snapshot
+- "מדרגת יחידות" = tier_fee_snapshot + getTierLabel(tier_code)
+- "סה״כ חודשי לפרויקט" = monthly_total
+- שורת הסבר קטנה:
+  "החיוב מחושב לפי החבילה שנבחרה + מדרגת היחידות החוזיות"
+
+אם observed_units > contracted_units:
+- להציג warning קיים עם הניסוח החדש מ-billingLabels
+
+B) Edit mode
+מתחת ל-Radix Select של התוכנית:
+- preview חי של התוכנית שנבחרה:
+  - שם + badge
+  - shortDescription
+  - 3-4 bullets
+- preview מחיר:
+  - עלות חבילה לפי plans[].project_fee_monthly
+  - מדרגת יחידות לפי unit_tiers + contracted_units הנוכחי/הערך שהוזן
+  - סה״כ preview
+- אם אין תוכנית:
+  - placeholder: "בחר חבילת שירות כדי לראות מה כלול"
+
+הערה טכנית:
+- חישוב preview tier הוא UI-only מה-unit_tiers שכבר נטענו; לא לשנות לוגיקת backend.
+
+C) Merchandising עדין בדרופדאון
+- ליד "מקצועי" להציג תג עדין "מומלץ לרוב הפרויקטים" (אם UX מאפשר)
+- בלי לבחור אוטומטית ובלי forcing
+
+קבלה:
+- המשתמש מבין מה הוא בוחר ומה הוא מקבל
+- פירוק המחיר ברור
+- אין רגרסיה ב-save/cancel/PATCH/handoff
+
+==================================================
+T004 — Mini Plan Comparison (קומפוננטה חדשה)
+==================================================
+צור:
+- frontend/src/components/BillingPlanComparison.js
+
+שלב בתוך ProjectBillingCard (display mode) אזור מתקפל:
+כותרת: "השוואת חבילות"
+
+תצוגה:
+- 3 כרטיסים (mobile-first, stacked)
+- בסיסי / מקצועי / XL
+- badge (אם יש)
+- "מתאים ל..."
+- מחיר בסיס חבילה בלבד (project_fee_monthly)
+- מקצועי מודגש (border/bg עדין)
+
+נתונים:
+- לקבל plans[] כ-prop (מועדף)
+- לא להוסיף API חדש
+- לא להציג tier calculations מלאים בכרטיסי ההשוואה (כדי לא להעמיס)
+
+קבלה:
+- אפשר להבין הבדל בין חבילות בלי להיכנס לעריכה
+- קריא ב-400px
+
+==================================================
+T005 — OrgBillingPage: Value Communication (ללא שינוי חישוב)
+==================================================
+קובץ:
+- frontend/src/pages/OrgBillingPage.js
+
+שינויים:
+1) בראש העמוד: כרטיס הסבר
+כותרת: "איך מחושב החיוב בארגון"
+טקסט:
+"סה״כ החיוב הארגוני מחושב כסכום החיוב החודשי של כל הפרויקטים הפעילים בארגון."
+
+2) ברשימת פרויקטים:
+- שם תוכנית בעברית (getPlanLabel(pb.plan_id))
+- badge לתוכנית מקצועי
+- shortDescription קטן (אופציונלי)
+- פירוק מחיר קצר:
+  - עלות חבילה (project_fee_snapshot)
+  - מדרגת יחידות (tier_fee_snapshot)
+  - סה״כ (monthly_total)
+
+3) לא לשנות data fetching / total_monthly logic
+
+קבלה:
+- דף הארגון מסביר טוב יותר את ההיגיון
+- שמות התוכניות בעברית
+- פירוק המחיר קריא
+
+==================================================
+T006 — AdminBillingPage: Plan Cards Polish (תצוגה בלבד)
+==================================================
+קובץ:
+- frontend/src/pages/AdminBillingPage.js
+
+שינויים:
+- שם עברי גדול מה-catalog
+- shortDescription מה-catalog מתחת לשם
+- badge "מומלץ" ל-plan_pro
+- "גרסה X" (ולא raw)
+- "מזהה: plan_basic" נשאר כטקסט משני קטן
+- טבלת tiers נשארת אנכית/מסודרת (בדיקה + polish אם צריך)
+
+ללא שינוי:
+- CRUD
+- audit
+- deactivate
+- business logic
+
+קבלה:
+- התוכניות נראות כמו מוצר, לא כמו JSON
+
+==================================================
+T007 — UX Copy Cleanup (מיקרוקופי)
+==================================================
+יישור ניסוחים בכל מסכי billing/admin:
+- "בחר תוכנית" -> "בחר חבילת שירות לפרויקט"
+- "יחידות חוזיות" -> "מספר יחידות לחיוב (לפי ההסכם)"
+- "סה״כ" -> "סה״כ חודשי לפרויקט"
+- עקביות ב: "חבילת שירות" / "מדרגת יחידות" / "חיוב"
+
+קבצים (לפי צורך):
+- ProjectBillingCard.js
+- OrgBillingPage.js
+- AdminBillingPage.js
+- billingLabels.js
+
+קבלה:
+- ניסוח אחיד, ברור, לא טכני מדי
+- אין אנגלית גולמית למשתמשים רגילים
+
+==================================================
+T008 — Verification + Screenshots + Proof (UX-focused)
+==================================================
+Smoke tests (BILLING_V1_ENABLED=true):
+1) PM:
+- רואה כרטיס חיוב עם חבילה בעברית
+- רואה פירוק מחיר ברור
+- רואה handoff flow (אם !canEdit)
+
+2) owner / billing_admin:
+- רואה CTA לניהול אחראי חיוב בארגון (אם רלוונטי)
+- נכנס ל-OrgBillingPage ומבין סה״כ ארגוני
+- רואה חבילות בעברית + פירוקים
+
+3) SA:
+- רואה AdminBillingPage מסודר עם כרטיסי חבילות + תג "מומלץ" + גרסה + tiers
+
+Playwright screenshots (לפחות):
+a) ProjectBillingCard display mode — חבילה + badge + פירוק מחיר
+b) ProjectBillingCard edit mode — Radix Select + panel “מה כלול”
+c) BillingPlanComparison — 3 כרטיסים (stacked)
+d) OrgBillingPage — כרטיס "איך מחושב החיוב בארגון" + פרויקטים עם חבילות בעברית
+e) AdminBillingPage — כרטיסי תוכניות מעוצבים (Basic/Pro/XL)
+f) Mobile 400px — ProjectBillingCard + comparison קריאים
+
+Negative / Regression:
+- שמירה עדיין עובדת (PATCH לא נשבר)
+- handoff לא נשבר
+- RBAC לא השתנה
+- אין שינוי ב-monthly_total / snapshots
+
+Proof output:
+- proof/phase2_3_ux/PROOF_PACKAGE.md (או addendum מסודר)
+- לצרף summary קצר + screenshots + checks
+
+==================================================
+סדר ביצוע
+==================================================
+T001 → T002 → (T003 + T004 + T005 + T006 + T007 במקביל) → T008
+
+==================================================
+Quality / Release Requirements (Billing = Sensitive)
+==================================================
+1) אין סגירה בלי הוכחות:
+   - סיכום תיקון
+   - בדיקות smoke
+   - screenshots
+   - regression check (save/handoff untouched)
+
+2) Backend RBAC נשאר מקור האמת:
+   - זה שדרוג תצוגה בלבד, לא לשנות הרשאות
+
+3) לא סוגרים על "נראה טוב":
+   - לצרף צילום מסך + בדיקה קונקרטית לכל תרחיש מרכזי
+
+4) Release gate לפני סגירה:
+   - PM / owner / billing_admin / viewer smoke
+   - בדיקה שלילית שאין רגרסיה בלוגיקה

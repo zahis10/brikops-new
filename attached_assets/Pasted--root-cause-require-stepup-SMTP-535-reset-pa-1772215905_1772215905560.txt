@@ -1,0 +1,50 @@
+תודה — root cause מוסכם: require_stepup מפעיל אתגר אימייל, ו-SMTP בפרודקשן נכשל (535), ולכן reset-password נחסם.
+
+אבל: “fallback ללוגים בפרודקשן” זה פתרון מסוכן (קוד OTP שמופיע בלוגים = כל מי שיש לו גישה ללוגים יכול לעקוף step-up).
+אני מאשר fallback ללוגים רק כ-BREAK-GLASS מוגבל, לא כברירת מחדל.
+
+מה אני מבקש לשנות בתכנית:
+
+A) יעד נכון (Preferred / Production-Grade)
+1) לתקן SMTP בפרודקשן (Secrets + provider מאומת) כדי שה-Step-Up יישלח באימייל כמו שצריך.
+או
+2) להוסיף ערוץ Step-Up חלופי לאדמינים (TOTP / SMS Verify / WhatsApp Verify) — גם אם זה milestone נפרד.
+
+B) אם חייבים fallback כדי לא לחסום עבודה (Break-glass)
+אפשר fallback ללוגים רק אם כל התנאים מתקיימים:
+1) זה כבוי כברירת מחדל בפרודקשן ונפתח רק עם Feature Flag:
+   STEPUP_LOG_FALLBACK_ENABLED=true (ברירת מחדל: false ב-prod)
+2) מותר רק ל-super_admin (לא לכל admin), עם rate limit חזק (למשל 3 ניסיונות/10 דק’).
+3) חובה Audit event ייעודי לכל הפעלה:
+   stepup_fallback_log_used (actor, target_user_id, ip, user_agent, reason, request_id)
+4) הלוג עצמו צריך להיות עם request_id ולא לחשוף פרטים מיותרים; כן יופיע הקוד (אין ברירה), אבל:
+   - WARNING: [STEPUP-FALLBACK] request_id=... code=.... smtp_error=...
+   - לא להדפיס אימייל מלא / פרטי סודות
+5) UI: אם fallback=true להציג הודעה ברורה:
+   “SMTP לא זמין — קוד Step-Up זמין בלוגים (Break-glass)”
+6) אם הפלאג כבוי ו-SMTP נכשל: להחזיר שגיאה “Step-Up unavailable (SMTP)” ולא “reset failed”, כדי שיהיה ברור שהאופציה היא לתקן SMTP.
+
+C) חשוב: reset-password עצמו נשאר לא תלוי SMTP
+- אחרי Step-Up מאומת: reset-password חייב לבצע רק:
+  password_hash update + session_version bump + audit (admin_password_reset)
+- בשום מצב reset-password לא מנסה לשלוח אימייל.
+
+D) T003 (אופרטיבי) — reset לסופר אדמין בפרודקשן
+מאשר, אבל נדרש proof:
+- תיעוד מזהה משתמש (id/email) שנבחר
+- session_version לפני/אחרי
+- audit event: admin_password_reset_direct (כולל note + actor/system)
+- הסיסמה זמנית, ובכניסה ראשונה חייבים לשנות דרך /settings/account
+
+Required proof (לא נסגור בלי זה — auth/admin sensitive):
+1) לוגים: endpoint שנקרא (method+path) + סטטוס
+2) אם Step-Up מופעל: לראות SMTP exception אמיתי בלוג (redacted)
+3) E2E:
+   - Step-Up challenge נוצר
+   - אימות קוד עובד
+   - reset-password 200
+   - Login עם סיסמה חדשה עובד
+   - סשנים ישנים נופלים (session_version bump)
+   - Audit entries קיימים (stepup + reset)
+
+בבקשה עדכנו את ה-Tasks בהתאם והחזירו הוכחות.

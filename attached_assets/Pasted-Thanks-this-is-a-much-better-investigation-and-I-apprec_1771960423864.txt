@@ -1,0 +1,73 @@
+Thanks — this is a much better investigation, and I appreciate the structured RCA.
+
+That said, this incident is NOT closed yet.
+
+You may be right that the hierarchy API is correctly scoped and there is no backend cross-project leak in /api/projects/{project_id}/hierarchy. However, I cannot accept “likely user confusion” as a closing explanation without hard proof, especially for a tenant-isolation concern in a paid-customer product.
+
+We will treat this as an OPEN P0/P1 isolation investigation until the hardening + proof package is complete.
+
+Required next steps (mandatory)
+================================
+
+1) Complete T001–T005 exactly as listed
+- I agree with the direction.
+- batch-status hardening is required (defense-in-depth).
+- regression tests + proof package are required before closure.
+
+2) Add one more task (MANDATORY): Frontend race-condition hardening
+New Task: T006 — Prevent stale hierarchy responses from overwriting current project state
+Details:
+- In QCFloorSelectionPage, add request cancellation / response sequencing guard so an older request cannot overwrite state after projectId changes.
+- Use AbortController (preferred) or request token/version counter.
+- Ensure only the latest in-flight hierarchy + batch-status response can update UI state.
+- This is in addition to explicit reset (T004), not instead of it.
+Acceptance:
+- Rapid switching between Project A and Project B cannot result in wrong buildings shown from the previous project.
+- No stale response overwrite in logs / devtools network tests.
+
+Why this is mandatory:
+- A component-level state reset alone prevents stale display at fetch start, but does NOT prevent an older response arriving later and overwriting the newer project’s data.
+- This is a common source of “it looked like another project’s buildings” behavior even when backend scoping is correct.
+
+3) Strengthen T003 regression assertions (important)
+Current assertions need tightening:
+- “No building IDs overlap” is not sufficient / may be trivial depending on global ID uniqueness.
+- The test must explicitly verify ownership/scoping.
+
+Required assertions:
+- For every building returned by hierarchy(Project A): building.project_id == Project A
+- For every floor returned under hierarchy(Project A): floor.project_id == Project A (or floor’s building belongs to Project A)
+- Same for Project B
+- batch-status rejects any floor_ids where ANY floor does not belong to the provided project_id
+- Missing project_id in batch-status => 400
+- Invalid project_id => 400
+- Unauthorized project access => 403
+- Super Admin vs PM:
+  - Both must remain project-scoped (no out-of-project records)
+  - If role visibility differs, PM result can be subset of Super Admin
+  - Do NOT assume equality unless role rules explicitly guarantee equality
+
+4) Proof package requirements (strict)
+Do not return with “seems fixed” / “likely cache”.
+I need a concrete proof package that includes:
+- Root Cause Summary
+- Code changes list (files + what changed)
+- API proof for BOTH projects, BOTH roles
+- Negative proof (cross-project batch-status rejected)
+- UI proof after T004 + T006 (video or screenshots)
+- Test output (pass/fail) from regression suite
+- Commit hash(es)
+- Environment used (Preview / Prod)
+- Explicit closure statement:
+  “QC floor selection now enforces project scoping end-to-end; stale frontend responses cannot overwrite the currently selected project state.”
+
+5) Do not close as “user confusion” unless proven
+You can keep that as a hypothesis, but closure requires proof.
+Given the severity (tenant/project isolation concern), this must be evidence-based.
+
+Status
+======
+Keep this incident OPEN and release-blocking for the QC floor selection flow until:
+- T001, T002, T003, T004, T005, T006 are complete
+- Proof package is delivered
+- I review and approve the evidence

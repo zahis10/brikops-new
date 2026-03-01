@@ -1,0 +1,53 @@
+P0: Preview server crashes due to port conflict (blocks verifying Phase 2.11)
+
+Objective
+Server keeps crashing with "port already in use" so Preview stays on old/stale state and I can’t verify Phase 2.11 billing changes. Fix the workflow startup so it reliably frees the port BEFORE starting uvicorn, and provide proof (screenshot + JSON) that the new billing page is live.
+
+T001: Fix workflow startup script to handle port conflicts reliably
+Problem
+Current workflow uses `fuser -k 5000/tcp`, but sometimes the process is not fully terminated before uvicorn binds → crash.
+
+Required change (workflow configuration)
+Replace the workflow command with a robust kill + wait loop and exec uvicorn:
+
+PORT="${PORT:-5000}"
+echo "[BOOT] Freeing port $PORT..."
+
+# Best-effort kill any listeners
+( fuser -k "${PORT}/tcp" 2>/dev/null || true )
+( lsof -ti "tcp:${PORT}" 2>/dev/null | xargs -r kill -9 || true )
+
+# Wait until the port is truly free
+for i in $(seq 1 25); do
+  if lsof -iTCP:${PORT} -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+    echo "[BOOT] Port $PORT still in use, retry $i/25..."
+    sleep 0.2
+  else
+    echo "[BOOT] Port $PORT is free."
+    break
+  fi
+done
+
+# If still occupied, dump debug and fail loudly
+if lsof -iTCP:${PORT} -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+  echo "[BOOT][ERROR] Port $PORT still in use after retries. Debug:"
+  lsof -iTCP:${PORT} -sTCP:LISTEN -n -P || true
+  exit 1
+fi
+
+echo "[BOOT] Starting uvicorn..."
+exec uvicorn backend.main:app --host 0.0.0.0 --port "${PORT}"
+
+Acceptance (T001)
+- Server starts and stays running without "address already in use" across multiple restarts.
+- No orphan processes remain; logs show a single active server.
+
+T002: Provide proof that Phase 2.11 is working (after T001)
+- Screenshot of /billing/org/<org_id> in Preview showing the NEW “License Summary Card” with “בתוקף עד” + status fields.
+- JSON snippet from the same Preview domain:
+  GET /api/billing/org/<org_id>
+  showing at least: subscription_status, can_manage_billing, owner_name
+
+Acceptance (T002)
+- User can visually confirm the new billing UI is active.
+- JSON confirms the backend fields are present (new code deployed).

@@ -1,0 +1,98 @@
+צוות Replit — בבקשה לבצע התאמות Billing “מסונכרן לקוד הקיים” (לא לשבור שום דבר), לפי המבנה שכבר בנוי אצלנו.
+
+רקע/בעיות שמופיעות עכשיו בפרוד:
+1) בעמוד /billing/org/<org_id> מוצג באנר “הגישה מוגבלת – מצב צפייה בלבד” + כפתור “שדרוג”, אבל למטה רואים שיש תקופה/רישיון פעיל (due date/תקופה נוכחית). זה בלבול בין:
+   - הרשאות (PM לא בעלים → read-only)
+   לבין
+   - סטטוס תשלום/רישיון (active/expired/trial)
+2) לא ברור למשתמש “עד מתי הרישיון בתוקף” (paid_until לא מוצג בצורה בולטת/אחידה).
+3) בשדרוג אין שקיפות: אם בוחר חודשי/שנתי — לא מראה “עד מתי יהיה בתוקף” לפני אישור, ולא ברור האם זה מנוי מתחדש.
+
+✅ דרישה: לשמור על היישום שכבר קיים (paid_until/trial_end_at/read_only_reason + _resolve_access), רק להוסיף שדות/מסכים באופן backward-compatible.
+
+========================
+A) Backend — Source of truth אחד ל-Billing (בלי ניחושים ב-UI)
+========================
+
+A1) להרחיב את ה-response הקיים של billing (אותו endpoint שהעמוד משתמש בו היום — לא לשנות נתיב/שמות קיימים):
+- להשאיר כמו היום:
+  paid_until, trial_end_at, read_only_reason (מ-_resolve_access)
+- להוסיף (אופציונלי עם defaults כדי לא לשבור לקוחות):
+  subscription_status: "trial" | "active" | "expired" | "none"
+  billing_cycle: "monthly" | "yearly" | null
+  auto_renew: boolean (default false)
+  next_charge_at: ISO | null
+  grace_until: ISO | null (optional)
+
+הערה: אם כבר קיימים חלק מהשדות — להשתמש בהם ולא להמציא חדשים. להוסיף רק מה שחסר.
+
+A2) פונקציה אחת לחישוב snapshot (לשימוש בכל endpoints):
+compute_subscription_snapshot(now, paid_until, trial_end_at, grace_days=0):
+- אם trial_end_at && now < trial_end_at && (!paid_until || paid_until <= now) -> status="trial"
+- else אם paid_until && now < paid_until -> status="active"
+- else -> status="expired"/"none"
+(אם יש grace -> אפשר status="past_due" אבל לא חובה כרגע)
+
+A3) Endpoint חדש ל-Preview שדרוג (כדי להראות למשתמש “עד מתי יהיה בתוקף” לפני תשלום):
+GET /api/billing/preview-renewal?scope=org|project&id=<id>&cycle=monthly|yearly
+Response:
+{
+  cycle,
+  effective_start,
+  new_paid_until,
+  next_charge_at,
+  auto_renew_default
+}
+
+אלגוריתם (חוק זהב: לא מקצרים זמן):
+effective_start = max(now, paid_until_current || now)
+ואם רוצים לכבד ניסיון:
+effective_start = max(effective_start, trial_end_at || effective_start)
+monthly: new_paid_until = effective_start + 1 month
+yearly:  new_paid_until = effective_start + 1 year
+להחזיר new_paid_until בסוף-יום (Asia/Jerusalem) כדי שה-UI יציג תאריך ברור.
+
+========================
+B) Frontend — להפסיק “דרוש שדרוג” כשזו בעיית הרשאה
+========================
+
+B1) תמיד להציג בראש עמוד billing “כרטיס רישיון” ברור (License Summary):
+- סטטוס: פעיל/ניסיון/פג (מ-subscription_status)
+- “בתוקף עד: DD/MM/YYYY” (paid_until) או “ניסיון עד: …”
+- מחזור: חודשי/שנתי (אם billing_cycle קיים)
+- חידוש אוטומטי: כן/לא (auto_renew)
+- אם auto_renew=true: “חיוב הבא: next_charge_at”
+
+B2) תיקון לוגיקת באנר/CTA לפי read_only_reason בלבד:
+- read_only_reason == "role_restricted":
+  להציג: “צפייה בלבד — אין הרשאה לניהול חיוב”
+  ולהחליף CTA ל-handoff (לא כפתור שדרוג מת):
+  “שלח לבעלים לינק תשלום / בקשת שדרוג”
+- read_only_reason in ["payment_expired","trial_expired"]:
+  להציג “נדרש שדרוג/תשלום” + כפתור שדרוג אמיתי
+
+חשוב: לא להציג “דרוש שדרוג” כשיש paid_until פעיל — זה bug.
+
+B3) שדרוג (Upgrade) — שקיפות לפני אישור:
+- selector: חודשי / שנתי
+- בכל שינוי בחירה: לקרוא preview-renewal ולהציג:
+  “הרישיון יהיה בתוקף עד: <new_paid_until>”
+  ואם auto-renew ייתמך: “חיוב הבא: <next_charge_at>”
+- אם המשתמש role_restricted: לא לאפשר flow תשלום, רק handoff לבעלים.
+
+========================
+C) Proof / Acceptance (Billing זה High/Sensitive)
+========================
+1) API proof: snippet של response עם:
+   paid_until, trial_end_at, read_only_reason, subscription_status, billing_cycle, auto_renew, next_charge_at
+2) UI proof (mobile):
+   - License Summary מציג “בתוקף עד”
+   - PM עם רישיון פעיל: אין “דרוש שדרוג”, רק “צפייה בלבד — אין הרשאה” + handoff CTA
+   - Upgrade modal מציג new_paid_until לפני אישור (חודשי/שנתי)
+3) Negative:
+   - רישיון פג: מציג שדרוג
+   - role_restricted: לא מאפשר שדרוג ישיר אלא handoff
+
+הערה: לא מבקשים עכשיו לבנות סליקה (Stripe) — רק שקיפות, חישוב עקבי, והכנת הקרקע למנוי חודשי/שנתי כך שהמשתמש יבין “שנתי = תוקף לשנה קדימה” (או מחידוש אוטומטי בעתיד).
+
+בסיום: לשלוח screenshots + JSON snippet + ווידוא שהבאנר וה-CTA מסונכרנים ל-read_only_reason.

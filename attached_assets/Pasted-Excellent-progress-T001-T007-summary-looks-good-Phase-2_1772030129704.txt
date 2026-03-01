@@ -1,0 +1,130 @@
+Excellent progress. T001–T007 summary looks good.
+
+Phase 2 is NOT closed yet.
+T008 (proof package) is mandatory before closure.
+
+Please execute T008 now and deliver a complete evidence-based proof package for Phase 2.
+
+Required proof package (Phase 2) — must include all sections
+1) API proof matrix (read + write endpoints by role)
+- Include real HTTP calls and statuses for:
+  - super_admin
+  - org owner
+  - org_admin
+  - billing_admin
+  - project_manager
+  - management_team
+  - contractor
+  - viewer
+- Include success + forbidden + bad input cases
+- Include feature-flag OFF behavior (404)
+
+2) RBAC proof (targeted assertions)
+Must explicitly prove with real API calls:
+- PM can request handoff (allowed)
+- PM cannot PATCH project billing (forbidden) unless also org billing role/owner
+- management_team read-only project billing (no writes)
+- contractor/viewer blocked from billing endpoints/actions
+- org owner/org_admin/billing_admin can PATCH project billing
+- super_admin override works
+- project with org_id=None returns 400 on billing write endpoints
+
+3) Pricing proof (XL + boundaries + formulas)
+Must prove:
+- 3 plans visible (Basic/Pro/XL) with correct project fees (1200 / 2000 / 3500)
+- 4 tiers visible including tier_xl (501+)
+- Boundary correctness:
+  - 50 -> tier_s
+  - 51 -> tier_m
+  - 200 -> tier_m
+  - 201 -> tier_l
+  - 500 -> tier_l
+  - 501 -> tier_xl
+- Formula proof:
+  monthly_total = project_fee_snapshot + tier_fee_snapshot
+
+4) Snapshot immutability proof
+Must prove with actual data:
+- Assign project billing plan/version and snapshots
+- Change plan pricing/version later
+- Existing project_billing snapshot values remain unchanged
+- New assignments use new pricing/version
+- Include before/after evidence + audit event(s)
+
+5) Org total aggregation proof (active-only rule)
+Must explicitly prove:
+- subscriptions.total_monthly sums only project_billing rows with status='active'
+- paused/archived excluded from total
+- Rows still visible in org UI/API with status and monthly_total snapshot
+- Include before/after examples showing total changes when toggling active/paused
+
+6) Handoff workflow + setup_state proof
+Must prove end-to-end with real API calls and responses:
+- PM handoff-request -> setup_state becomes pending_handoff
+- Billing role handoff-ack -> setup_state becomes pending_billing_setup
+- Billing role setup-complete -> setup_state becomes ready (NOT auto-active)
+- Activation is explicit (PATCH status='active' or equivalent)
+- Invalid setup_state transition returns 400
+- Include audit events:
+  - billing_handoff_requested
+  - billing_handoff_acknowledged
+  - project_billing_setup_completed
+  - project_billing_updated / contracted_units_changed (where applicable)
+
+7) UI proof (authenticated screenshots, not code-review-only)
+Feature flag ON:
+- PM Project Billing tab (Hebrew labels, setup_state badge, handoff button)
+- Org owner or org_admin OrgBillingPage (Hebrew labels, setup_state per project, total_monthly)
+- Super Admin AdminBillingPage showing XL plan + version
+- ProjectBillingCard warning badge when observed_units > contracted_units:
+  "חריגה מהיחידות החוזיות (לבדיקה)"
+- Proof that billing card is in "חיוב" tab only (not QC approvers tab)
+
+Feature flag OFF:
+- Billing tab hidden
+- Billing pages/endpoints unavailable/graceful handling (404/hidden UI)
+
+8) Release metadata
+- Actual committed hash (final)
+- Environment (Preview/Dev/Prod)
+- BILLING_V1_ENABLED state used for each proof section
+- Test command(s) and results summary
+- Rollback instructions
+
+Additional mandatory checks (locked clarifications)
+A) setup-complete vs active separation
+- Must explicitly prove setup-complete sets setup_state='ready' and does NOT auto-activate billing unless a separate explicit activation action is performed
+
+B) observed_units warning is UI-only
+- Must explicitly prove observed_units > contracted_units triggers warning only
+- No automatic tier change / no automatic price change / no forced billing change from observed_units
+
+C) Single source of truth for labels
+- Show that billing labels come from shared billingLabels helper (brief file reference is enough)
+- No raw English billing statuses visible in billing UI screenshots
+
+Delivery format
+- Put all artifacts under proof/phase2/
+- Include a top-level proof/phase2/PROOF_PACKAGE.md with links/sections
+- For each section: show evidence, not just conclusions
+
+HIGH/SENSITIVE quality + release requirements (mandatory)
+1) No closure without proof
+- Do not close based on summary, assumption, or “looks good”
+- Closure requires tests + API proof + UI proof + audit proof
+
+2) Guardrails on sensitive billing flows
+- Backend: strict org/project scoping, explicit role checks, 400 on project.org_id=None, audited writes
+- Frontend: feature-flag gating, role-based action visibility, no wrong-tab regressions
+
+3) “User confusion” is not a closure reason
+- Hypothesis only, never closure for billing/RBAC/scoping issues
+
+4) Release gates before customer-facing closure
+- Smoke tests + negative tests + proof package attached before marking Phase 2 resolved
+
+After T008 is delivered, provide:
+- concise closure summary
+- files touched (if any)
+- final commit hash
+- pass/fail checklist for each required proof section

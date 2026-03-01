@@ -1,0 +1,82 @@
+Plan A (Billing Manual V1) — Real Upgrade Flow WITHOUT payment provider
+
+Objective
+Make “Upgrade” actually work today without PayPlus/Stripe:
+- User can choose monthly/yearly
+- System shows “license valid until” preview (already built)
+- User submits “Payment Request” (handoff) and admin/owner can mark-paid
+- DB remains source of truth (paid_until/status/manual_override)
+- No dead CTAs, no confusion between role_restricted vs payment_expired
+
+Scope
+- No external payment provider
+- Support: bank transfer / Bit / invoice link / manual confirmation
+- Prepare structure to plug in PayPlus later with minimal changes
+
+T001 Backend — Create payment request (manual)
+POST /api/billing/org/{org_id}/payment-request
+RBAC:
+- Allowed: can_manage_billing OR PM (PM can request but not mark-paid)
+Body:
+{
+  "cycle": "monthly"|"yearly",
+  "note": "free text (optional)",
+  "contact_email": "optional"
+}
+Logic:
+- Use existing preview-renewal to compute new_paid_until (never shorten rule)
+- Create a DB record in new collection: billing_payment_requests
+  fields:
+   - id, org_id, requested_by_user_id, cycle
+   - requested_paid_until (ISO)
+   - amount_ils (from plan/total_monthly*12 if yearly)
+   - status: "requested"|"sent"|"paid"|"canceled"
+   - created_at, updated_at
+- Write audit: billing_payment_request_created
+Return: {request_id, requested_paid_until, amount_ils}
+
+T002 Backend — Admin/Owner mark paid (manual activation)
+POST /api/billing/org/{org_id}/mark-paid
+RBAC: can_manage_billing OR super_admin only
+Body:
+{
+  "request_id": optional,
+  "cycle": optional,
+  "paid_note": optional
+}
+Logic:
+- Determine cycle + apply never-shorten:
+  paid_until = max(existing_paid_until, computed_new_paid_until_from_preview)
+- Set subscription.status="active" (or keep existing if trialing), update paid_until, next_charge_at=null, auto_renew=false
+- Update payment_request status to "paid" if request_id provided
+- Audit: billing_mark_paid (include actor, org_id, new_paid_until, request_id)
+
+T003 Frontend — Replace dead Upgrade with real manual flow
+OrgBillingPage.js
+- For can_manage_billing users:
+  - Show upgrade section ALWAYS when subscription is expired/trial/past_due or when user clicks “Upgrade”
+  - Cycle selector (already exists)
+  - Preview “הרישיון יהיה בתוקף עד …” (already exists)
+  - Add button: “שלח בקשת תשלום”
+    -> calls POST /payment-request
+    -> shows success toast + displays a “copy payment request message” template
+- For PM/role_restricted:
+  - Replace “Upgrade” with: “בקש שדרוג מבעלים”
+    -> calls /payment-request (allowed) OR just copy message if you prefer no API
+    -> message includes org name + amount + requested_paid_until + billing page link
+
+T004 Frontend — Owner tools for manual activation
+- Add small section visible to can_manage_billing:
+  “סמן כתשלום התקבל” (Mark paid)
+  -> calls /mark-paid
+  -> refetch billing and show “בתוקף עד …” updated
+
+T005 Proof package
+- Screenshot: upgrade section shows cycle + “valid until” + “שלח בקשת תשלום”
+- Screenshot: PM sees handoff CTA (no dead upgrade)
+- API JSON: /api/billing/org/<org_id> before/after mark-paid shows paid_until updated + subscription_status active
+- Audit entries: billing_payment_request_created + billing_mark_paid
+
+Notes
+- This keeps the UX/business flow real today.
+- Later, PayPlus/Stripe provider will replace “payment-request/mark-paid” with checkout+webhook, but DB model (paid_until) stays the same.

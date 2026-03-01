@@ -1,0 +1,47 @@
+BUG P0: Payment request created by PM “disappears” after relogin + not visible to Super Admin
+
+Symptoms:
+- PM clicks “שלח בקשת תשלום” and gets request_id.
+- After logout/login, PM cannot see the request anywhere (looks like it vanished).
+- Super Admin (/admin/billing) also doesn’t see it, so approvals can’t happen.
+
+T001 (Debug first): verify if the request exists in DB
+1) Immediately after PM creates request_id=XYZ, as Super Admin run:
+   GET /api/billing/org/<org_id>/payment-requests?status=requested,sent,pending_review,paid,canceled
+   - If it returns empty => the create endpoint is not persisting correctly (org_id mismatch / wrong DB / status mismatch).
+2) Also query by request_id directly (add temporary debug endpoint or DB lookup) to confirm org_id + status + requested_by_user_id.
+
+T002 (Backend fix): make PM-created requests visible (no more “disappears”)
+Problem:
+PM is allowed to CREATE payment-request, but likely cannot LIST them after relogin because list endpoint RBAC is can_manage_billing/SA only.
+
+Fix:
+- In GET /payment-requests:
+  Allow access if:
+   a) can_manage_billing OR super_admin  -> see all org requests
+   b) requester himself (requested_by_user_id == current_user_id) -> see only “my requests” for that org
+- Do not expose other users’ requests to PMs.
+
+Acceptance:
+- PM can see the request he created after relogin.
+- SA sees all requests.
+
+T003 (Admin visibility): requests must “pop” for Super Admin
+Requirement:
+A payment request should surface immediately for SA — not hidden in org pages.
+
+Fix (minimal but effective):
+- Add on /admin/billing a new top section (or KPI) “בקשות תשלום פתוחות”
+  - counts: requested + pending_review
+  - list latest 10 with: org_name, requester_name, amount, cycle, status, created_at
+  - button: “פתח חיוב ארגון” (link to /billing/org/<org_id>#requests)
+- Also create a notification event on payment-request creation:
+  - notify super_admin(s): “נפתחה בקשת תשלום” with link
+
+Acceptance:
+- After PM creates request, SA sees it immediately on /admin/billing (and/or notification badge increases).
+
+T004 (Proof):
+- Screenshot: PM creates request, relogin, still sees it under “בקשות תשלום” (or “הבקשות שלי”).
+- Screenshot: SA /admin/billing shows the new request in “בקשות תשלום פתוחות”.
+- JSON proof from GET payment-requests showing request_id, org_id, status, requested_by_user_id.

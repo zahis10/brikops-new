@@ -1,0 +1,104 @@
+Approved to proceed with M9 Billing v1 Phase 1 implementation ✅
+The corrected design is much better and aligns with the agreed model (org-level payer + per-project fee + flat units tier fee + contracted vs observed units).
+
+Proceed with Phase 1 under `BILLING_V1_ENABLED`, but the following are MANDATORY corrections/guardrails:
+
+Mandatory Corrections / Guardrails (Phase 1)
+1) No automatic backfill/seed on startup (critical)
+- Do NOT run `backfill_project_org_ids()` automatically on app startup in production.
+- Do NOT mutate billing data automatically on startup.
+- Replace with:
+  - dry-run report (counts + orphan/ambiguous list)
+  - explicit apply migration (idempotent)
+  - optional admin-only/manual execution path
+- Startup may log health/readiness only, but must not silently rewrite ownership/billing mappings.
+
+2) Remove/rename `subscriptions.plan_id` (org-level ambiguity)
+- Billing v1 pricing is per-project, so `subscriptions.plan_id` at org level is semantically misleading.
+- Preferred:
+  - keep `project_billing.plan_id`
+  - remove `subscriptions.plan_id`
+- If an org-level plan selector is needed later, use a clearly named field like `pricing_profile_id` (not `plan_id`).
+
+3) Strict endpoint scope split (required)
+- `GET /api/billing/org/{org_id}`:
+  - allowed: super_admin, org owner, org_admin, billing_admin
+  - NOT allowed: PM/management_team unless they also hold org billing role
+- `GET /api/billing/project/{project_id}`:
+  - read-only allowed: project_manager, management_team, org billing roles, org owner, super_admin
+  - blocked: contractor, viewer
+- PM of one project must NOT get org-wide billing visibility by default.
+
+4) Safe `projects.org_id` backfill rules (no unsafe auto-assignment)
+- Do NOT auto-assign org_id using a “first org” lookup for multi-org users.
+- If backfill source is ambiguous, mark project as orphan/ambiguous and report it (no silent assignment).
+- Deliver dry-run evidence before apply.
+
+5) Audit logging for all billing/org-role write paths (required)
+Add audit events for:
+- org role changes (`org_admin`, `billing_admin`)
+- plan CRUD (super_admin)
+- project_billing create/update
+- contracted_units changes
+- super_admin billing overrides affecting billing state
+Logs must be concise and include actor, org_id, project_id (if applicable), action, before/after summary.
+
+6) `observed_units` is monitoring only in Phase 1
+- No billing charge recalculation on every apartment add/remove in Phase 1.
+- Phase 1 = foundation + read-only UI + monitoring surfaces only.
+
+7) Pricing snapshots in `project_billing` (recommended/strongly preferred)
+Store snapshot fields so totals remain stable even if billing plan definitions change later:
+- `project_fee_snapshot`
+- `tier_fee_snapshot`
+- `tier_code`
+- optional `pricing_version`
+
+8) Feature-flag discipline
+- `BILLING_V1_ENABLED` default false
+- New endpoints and new UI surfaces fully gated
+- No behavior change to existing trial/paywall flows when flag is off
+
+Phase 1 Deliverables (Implementation + Proof)
+1) Corrected schema/design delta (reflecting the above) and exact file-touch plan (short)
+2) Code changes behind `BILLING_V1_ENABLED`
+3) Dry-run org_id backfill report:
+   - total projects
+   - projects missing org_id
+   - auto-resolvable count
+   - ambiguous/orphan count + list
+4) RBAC proof:
+   - super_admin / owner / org_admin / billing_admin access as expected
+   - PM project billing read works
+   - PM org billing read blocked unless org role
+   - contractor/viewer blocked from billing endpoints
+5) API examples + negative tests
+6) UI screenshots:
+   - OrgBillingPage (read-only)
+   - ProjectBillingCard (read-only)
+   - feature flag off = no UI exposure
+
+Quality / Release Requirements (Mandatory — High/Sensitive)
+1) No closure without proof
+- No closure based on assumptions
+- Must include root cause/design rationale, implementation evidence, regression + negative tests, API/UI proof
+
+2) Guardrails on sensitive flows
+- Backend strict org/project scoping for billing/RBAC
+- Frontend visibility is not a substitute for backend authorization
+- Super admin override explicit and auditable
+- Viewer remains backend-enforced read-only
+
+3) No concept duplication / no assumptions
+- Reuse existing entities where possible
+- Do not introduce duplicate org/company ownership concepts
+- State uncertainties explicitly before coding
+
+4) Release gates
+- Smoke tests + negative tests before marking Phase 1 complete
+- No “user confusion” closure language without evidence
+
+Please reply first with:
+A) Updated Phase 1 schema delta (reflecting the mandatory corrections above)
+B) Final exact file-touch plan
+Then proceed to implementation.

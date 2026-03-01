@@ -1,0 +1,73 @@
+Proceed with the plan as-is (Phase 2), with the following execution rules and clarifications locked in.
+
+APPROVED: M9 Billing v1 — Phase 2
+Scope stays exactly as proposed:
+- XL pricing support (new plan + tier_xl 501+)
+- Hebrew billing labels across UI
+- PM → Org billing handoff workflow
+- Authorized project billing write endpoints
+- UI upgrades (ProjectBillingCard / OrgBillingPage / AdminBillingPage)
+- Tests + proof package
+
+Important clarifications (must follow)
+1) Do NOT break Phase 1 read-only behavior
+- Existing read endpoints must continue to work
+- Feature flag gating (BILLING_V1_ENABLED) remains strict:
+  - OFF => new endpoints return 404, new UI hidden
+  - ON => Phase 2 behavior active
+
+2) Pricing snapshots are mandatory and immutable
+- project_fee_snapshot / tier_fee_snapshot / pricing_version must be frozen at assignment/update time
+- Updating plan prices later must NOT retroactively change existing project_billing rows
+
+3) Org total aggregation rule (explicit)
+- subscriptions.total_monthly = sum(project_billing.monthly_total) for status='active' only
+- paused/archived rows are excluded from billed total (but still visible in org UI)
+
+4) PM vs org billing roles (strict)
+- PM can view project billing + request handoff
+- PM cannot set plan / contracted_units / billing status unless also org owner/org_admin/billing_admin
+- management_team = read-only project billing
+- contractor/viewer = blocked from billing endpoints and billing actions
+- super_admin = full override
+
+5) setup_state transitions must be validated (no free jumps)
+Use a clear transition map and reject invalid transitions with 400.
+If you choose a leaner state model than proposed, stop and present it first before implementing.
+
+6) Billing labels must come from one shared helper only
+- No duplicated label mapping logic in multiple components
+- All visible statuses in billing UI must be Hebrew (no raw "trialing", etc.)
+
+Execution order (approved)
+- T001 + T002 + T004 in parallel
+- T003 after T001/T002
+- T005 + T006 + T007 in parallel after T003/T004
+- T008 proof package last
+
+Deliver in small commits by task (required)
+After each significant task, provide:
+- change summary (root cause / what changed)
+- files touched
+- tests run
+- API/UI proof snippets
+- explicit note of any remaining hypothesis (if any)
+
+HIGH/SENSITIVE quality gates (mandatory for this billing phase)
+1) No closure without proof
+- No “looks good” closure for billing/RBAC/scoping changes
+- Closure requires fix + tests + API proof + UI proof + audit proof
+
+2) Guardrails on sensitive billing flows
+- Frontend: feature flag gating, role-based action visibility, no wrong-tab regressions
+- Backend: strict org/project scoping, explicit role checks, 400 on project.org_id=None, audit trail for writes
+
+3) “User confusion” is not a closure reason
+- May be listed as hypothesis only
+- Billing/RBAC/scoping issues close only with evidence
+
+4) Release gates before customer-facing closure
+- Smoke tests (happy path) + negative tests (forbidden/invalid/wrong-org)
+- Proof package attached before marking Phase 2 resolved
+
+Start with T001/T002/T004 now.
