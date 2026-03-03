@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import {
   HardHat, LogOut, FolderOpen, ListTodo, Clock, CheckCircle2,
   AlertTriangle, ArrowLeftRight, MessageSquare, ChevronLeft,
-  Building2, Plus, Search
+  Building2, Plus, Search, Settings
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -208,6 +208,10 @@ const ContractorDashboard = () => {
                 <span className="hidden sm:inline">ליקוי חדש</span>
               </Button>
             )}
+            <Button variant="ghost" size="sm" onClick={() => navigate('/settings/account')} className="text-slate-300 hover:text-white hover:bg-slate-700" title="הגדרות חשבון">
+              <Settings className="w-4 h-4 ml-1" />
+              <span className="hidden sm:inline">חשבון</span>
+            </Button>
             <Button variant="ghost" size="sm" onClick={handleLogout} className="text-slate-300 hover:text-white hover:bg-slate-700">
               <LogOut className="w-4 h-4 ml-1" />
               <span className="hidden sm:inline">יציאה</span>

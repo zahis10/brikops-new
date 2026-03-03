@@ -621,12 +621,102 @@ export default function OrgBillingPage() {
   };
 
   if (loading) return <div className="flex justify-center items-center h-64"><div className="text-slate-500">טוען...</div></div>;
-  if (error) return <div className="max-w-2xl mx-auto p-6"><div className="bg-red-50 text-red-700 p-4 rounded-lg">{error}</div></div>;
+  if (error) return (
+    <div className="max-w-2xl mx-auto p-6" dir="rtl">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-6 space-y-4">
+        <div className="text-red-700 font-medium">{error}</div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              setLoading(true);
+              setError(null);
+              billingService.orgBilling(orgId)
+                .then(setData)
+                .catch(err => {
+                  if (err.response?.status === 404) {
+                    setError(null);
+                    setData(null);
+                  } else {
+                    setError(err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב');
+                  }
+                  console.error('[OrgBillingPage] retry failed:', err.response?.status, err.response?.data);
+                })
+                .finally(() => setLoading(false));
+            }}
+            className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+          >
+            🔄 נסה שוב
+          </button>
+          <button onClick={() => navigate(-1)} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+        </div>
+      </div>
+    </div>
+  );
   if (!data) return (
-    <div className="max-w-2xl mx-auto p-6 text-center" dir="rtl">
-      <div className="text-slate-400 py-12">
-        <p className="text-lg mb-2">נתוני חיוב אינם זמינים</p>
-        <button onClick={() => navigate(-1)} className="text-amber-600 hover:text-amber-700 text-sm">חזרה</button>
+    <div className="max-w-2xl mx-auto p-6" dir="rtl">
+      <div className="bg-white rounded-xl border border-slate-200 p-8 space-y-6">
+        <div className="text-center space-y-3">
+          <div className="text-4xl">📋</div>
+          <h2 className="text-xl font-bold text-slate-800">אין נתוני מנוי פעילים</h2>
+          <p className="text-sm text-slate-500">
+            לא נמצא מנוי פעיל לארגון זה. ייתכן שתקופת הניסיון הסתיימה או שטרם הוגדר מנוי.
+          </p>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+          <div className="flex items-start gap-2 text-sm text-amber-800">
+            <span className="shrink-0 mt-0.5">⚠</span>
+            <span className="font-medium">לשדרוג או חידוש המנוי, צרו קשר עם צוות BrikOps</span>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <a
+              href="https://wa.me/972559943649?text=%D7%A9%D7%9C%D7%95%D7%9D%2C%20%D7%90%D7%A0%D7%99%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%9C%D7%A9%D7%93%D7%A8%D7%92%20%D7%90%D7%AA%20%D7%94%D7%9E%D7%A0%D7%95%D7%99%20%D7%A9%D7%9C%D7%99"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium transition-colors"
+            >
+              💬 WhatsApp
+            </a>
+            <a
+              href="mailto:billing@brikops.com?subject=בקשת שדרוג מנוי"
+              className="flex-1 flex items-center justify-center gap-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium transition-colors"
+            >
+              ✉️ billing@brikops.com
+            </a>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => {
+              setLoading(true);
+              setError(null);
+              billingService.orgBilling(orgId)
+                .then(setData)
+                .catch(err => {
+                  if (err.response?.status === 404) {
+                    setError(null);
+                    setData(null);
+                  } else {
+                    setError(err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב');
+                  }
+                  console.error('[OrgBillingPage] retry failed:', err.response?.status, err.response?.data);
+                })
+                .finally(() => setLoading(false));
+            }}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-5 py-2 text-sm font-medium transition-colors"
+          >
+            <Loader2 className="w-4 h-4" style={{ display: 'none' }} />
+            🔄 נסה שוב
+          </button>
+          <button onClick={() => navigate(-1)} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+            חזרה
+          </button>
+        </div>
+
+        <div className="text-center text-xs text-slate-400 pt-2">
+          קוד ארגון: <bdi dir="ltr">{orgId}</bdi>
+        </div>
       </div>
     </div>
   );
