@@ -3,151 +3,147 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-PROD=0
+MODE="dry"
+YES="0"
 SKIP_CHECKS="${SKIP_CHECKS:-0}"
-
 FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api.brikops.com}"
 RUN_LINT="${RUN_LINT:-0}"
+MSG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --prod|--force)
-      PROD=1
-      shift
-      ;;
-    --skip-checks)
-      SKIP_CHECKS=1
-      shift
-      ;;
-    *)
-      break
-      ;;
+    --prod|--force) MODE="prod"; shift ;;
+    --yes)          YES="1"; shift ;;
+    --skip-checks)  SKIP_CHECKS=1; shift ;;
+    *)              MSG="${MSG:+$MSG }$1"; shift ;;
   esac
 done
 
-MSG="${*:-}"
-
 branch="$(git rev-parse --abbrev-ref HEAD)"
-if [[ $PROD -eq 1 && "$branch" != "main" ]]; then
+if [[ "$MODE" == "prod" && "$branch" != "main" ]]; then
   echo "ERROR: You are on branch '$branch'. Switch to 'main' to deploy."
   exit 1
 fi
 
-mapfile -t files < <(
-  { git diff --name-only
-    git diff --cached --name-only
-    git ls-files --others --exclude-standard
-  } | sed '/^$/d' | sort -u
-)
+has_uncommitted=0
+if [[ -n "$(git status --porcelain)" ]]; then
+  has_uncommitted=1
+fi
 
-if [[ ${#files[@]} -eq 0 ]]; then
-  echo "Nothing to deploy (no changes)."
+ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
+
+if [[ $has_uncommitted -eq 0 && "$ahead" -eq 0 ]]; then
+  echo "Nothing to deploy (no changes, nothing to push)."
   exit 0
 fi
 
 frontend_changed=0
 backend_changed=0
 
-for f in "${files[@]}"; do
-  if [[ "$f" == frontend/* ]]; then
-    frontend_changed=1
-  elif [[ "$f" == backend/* ]]; then
-    backend_changed=1
-  fi
-done
+check_files() {
+  local f
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    if [[ "$f" == frontend/* ]]; then frontend_changed=1; fi
+    if [[ "$f" == backend/* ]]; then backend_changed=1; fi
+  done
+}
 
-echo "Change summary:"
-echo "--------------------------------"
-git status --short
-echo "--------------------------------"
-echo
+if [[ $has_uncommitted -eq 1 ]]; then
+  { git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u | check_files
+fi
+if [[ "$ahead" -gt 0 ]]; then
+  git diff --name-only "origin/$branch..HEAD" | check_files
+fi
+
+echo "=== Deploy Status ==="
+if [[ $has_uncommitted -eq 1 ]]; then
+  echo "Uncommitted changes:"
+  git status --short
+  echo
+fi
+if [[ "$ahead" -gt 0 ]]; then
+  echo "Commits ahead of origin: $ahead"
+  git log --oneline "origin/$branch..HEAD"
+  echo
+fi
 
 echo "What will deploy:"
 if [[ $frontend_changed -eq 1 ]]; then echo "  - Frontend (Cloudflare Pages -> https://app.brikops.com)"; fi
 if [[ $backend_changed -eq 1 ]]; then echo "  - Backend  (GitHub Actions -> https://api.brikops.com)"; fi
-if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then echo "  - No frontend/backend changes (docs/config only)"; fi
+if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then echo "  - Config/docs only (no pipeline trigger)"; fi
 echo
 
-if [[ $PROD -eq 0 ]]; then
-  echo "Dry-run only."
-  echo "To deploy to production:"
+if [[ "$MODE" != "prod" ]]; then
+  echo "Dry-run only. To deploy:"
   echo "  ./deploy.sh --prod"
   echo "  ./deploy.sh --prod \"my commit message\""
-  echo
-  echo "Options:"
-  echo "  --skip-checks                 Skip preflight checks"
-  echo "  SKIP_CHECKS=1 ./deploy.sh     Same as above"
-  echo "  RUN_LINT=1 ./deploy.sh        Also run ESLint on frontend"
+  echo "  ./deploy.sh --prod --yes          # skip confirmation"
+  echo "  ./deploy.sh --prod --skip-checks  # skip preflight"
   exit 0
 fi
 
-if [[ -z "$MSG" ]]; then
-  if [[ $frontend_changed -eq 1 && $backend_changed -eq 1 ]]; then
-    MSG="deploy: update frontend and backend"
-  elif [[ $frontend_changed -eq 1 ]]; then
-    MSG="deploy: update frontend"
-  elif [[ $backend_changed -eq 1 ]]; then
-    MSG="deploy: update backend"
-  else
-    MSG="deploy: update config/docs"
+if [[ $has_uncommitted -eq 1 ]]; then
+  if [[ -z "$MSG" ]]; then
+    if [[ $frontend_changed -eq 1 && $backend_changed -eq 1 ]]; then
+      MSG="deploy: update frontend and backend"
+    elif [[ $frontend_changed -eq 1 ]]; then
+      MSG="deploy: update frontend"
+    elif [[ $backend_changed -eq 1 ]]; then
+      MSG="deploy: update backend"
+    else
+      MSG="deploy: update config/docs"
+    fi
   fi
 fi
 
 if [[ $SKIP_CHECKS -eq 0 ]]; then
   echo "Preflight checks..."
-  echo
-
   if [[ $backend_changed -eq 1 ]]; then
     echo "[backend] python3 -m compileall backend/ -q"
     python3 -m compileall backend/ -q
     echo "[backend] OK"
-    echo
   fi
-
   if [[ $frontend_changed -eq 1 ]]; then
     if [[ "$RUN_LINT" == "1" ]]; then
-      echo "[frontend] npx eslint src/ --quiet"
+      echo "[frontend] eslint"
       (cd frontend && npx eslint src/ --quiet)
       echo "[frontend] eslint OK"
-      echo
     fi
-
-    echo "[frontend] yarn build (with REACT_APP_BACKEND_URL=$FRONTEND_BACKEND_URL)"
+    echo "[frontend] yarn build (REACT_APP_BACKEND_URL=$FRONTEND_BACKEND_URL)"
     (cd frontend && REACT_APP_BACKEND_URL="$FRONTEND_BACKEND_URL" yarn build)
     echo "[frontend] build OK"
-    echo
   fi
+  echo
 else
-  echo "Preflight checks skipped (--skip-checks)."
+  echo "Preflight checks skipped."
   echo
 fi
 
-echo "Commit message: $MSG"
-echo
-read -rp "Deploy to production? (y/N): " confirm
-if [[ "${confirm,,}" != "y" ]]; then
-  echo "Cancelled."
-  exit 0
+if [[ "$YES" != "1" ]]; then
+  read -rp "Deploy to production? (y/N): " confirm
+  if [[ "${confirm,,}" != "y" ]]; then
+    echo "Cancelled."
+    exit 0
+  fi
 fi
 
 echo
-echo "Deploying to production..."
+echo "Deploying..."
 
-git add -A
-git commit -m "$MSG" || { echo "Nothing new to commit."; exit 0; }
-git push origin main
+if [[ $has_uncommitted -eq 1 ]]; then
+  git add -A
+  git commit -m "${MSG:-deploy: $(date '+%Y-%m-%d %H:%M')}" || true
+fi
+
+git push origin "$branch"
 
 SHA="$(git rev-parse --short HEAD)"
-
 echo
 echo "Pushed successfully. (commit: $SHA)"
 echo
-if [[ $frontend_changed -eq 1 ]]; then
-  echo "  Frontend updating on https://app.brikops.com (~1 min)"
-fi
-if [[ $backend_changed -eq 1 ]]; then
-  echo "  Backend updating on https://api.brikops.com (~2 min)"
-fi
+if [[ $frontend_changed -eq 1 ]]; then echo "  Frontend updating: https://app.brikops.com (~1 min)"; fi
+if [[ $backend_changed -eq 1 ]]; then echo "  Backend updating:  https://api.brikops.com (~2 min)"; fi
 echo
 echo "Monitor: https://github.com/zahis10/brikops-new/actions"
 echo "Health:  https://api.brikops.com/health"
