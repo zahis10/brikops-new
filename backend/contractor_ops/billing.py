@@ -741,6 +741,26 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         return {'error': 'ארגון לא נמצא'}
 
     sub = await get_subscription(org_id)
+
+    if not sub:
+        trial_end = org.get('trial_end_at') or org.get('trial_end_date')
+        synthetic_sub = {
+            'status': 'trialing' if trial_end else 'none',
+            'trial_end_at': trial_end,
+            'paid_until': None,
+            'billing_email': None,
+            'billing_cycle': None,
+            'auto_renew': False,
+            'next_charge_at': None,
+            'grace_until': None,
+            'manual_override': None,
+        }
+        logger.warning("Returning default subscription for org %s (no DB record, trial_end=%s)", org_id, trial_end)
+    else:
+        synthetic_sub = None
+
+    effective_sub = synthetic_sub or sub
+
     project_billings = await db.project_billing.find(
         {'org_id': org_id}, {'_id': 0}
     ).to_list(1000)
@@ -769,8 +789,8 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         if user:
             billing_users.append({'user_id': user['id'], 'name': user.get('name', ''), 'role': mem['role']})
 
-    access, reason = _resolve_access(sub)
-    snapshot = compute_subscription_snapshot(sub)
+    access, reason = _resolve_access(effective_sub)
+    snapshot = compute_subscription_snapshot(effective_sub)
 
     can_manage = False
     owner_name = None
@@ -804,10 +824,10 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         'owner_name': owner_name,
         'payment_config': payment_config,
         'subscription': {
-            'status': sub.get('status') if sub else None,
-            'trial_end_at': sub.get('trial_end_at') if sub else None,
-            'paid_until': sub.get('paid_until') if sub else None,
-            'billing_email': sub.get('billing_email') if sub else None,
+            'status': effective_sub.get('status'),
+            'trial_end_at': effective_sub.get('trial_end_at'),
+            'paid_until': effective_sub.get('paid_until'),
+            'billing_email': effective_sub.get('billing_email'),
             'total_monthly': total_monthly,
             'effective_access': access.value,
             'read_only_reason': reason,
@@ -816,7 +836,7 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
             'auto_renew': snapshot['auto_renew'],
             'next_charge_at': snapshot['next_charge_at'],
             'grace_until': snapshot['grace_until'],
-        } if sub else None,
+        },
         'projects': projects,
         'billing_roles': billing_users,
     }

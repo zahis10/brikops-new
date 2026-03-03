@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { billingService, orgMemberService, invoiceService, projectService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
-import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight } from 'lucide-react';
+import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard } from 'lucide-react';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
@@ -43,7 +43,7 @@ const SUBSCRIPTION_STATUS_LABELS = {
   past_due: 'חוב פתוח',
   expired: 'פג תוקף',
   suspended: 'מושעה',
-  none: '—',
+  none: 'לא פעיל',
 };
 
 const SUBSCRIPTION_STATUS_COLORS = {
@@ -52,7 +52,7 @@ const SUBSCRIPTION_STATUS_COLORS = {
   past_due: 'bg-red-100 text-red-700',
   expired: 'bg-red-100 text-red-700',
   suspended: 'bg-red-100 text-red-700',
-  none: 'bg-slate-100 text-slate-500',
+  none: 'bg-amber-100 text-amber-700',
 };
 
 const CYCLE_LABELS = {
@@ -77,6 +77,7 @@ export default function OrgBillingPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fatalError, setFatalError] = useState(null);
   const [members, setMembers] = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState(null);
@@ -133,9 +134,11 @@ export default function OrgBillingPage() {
   const canEditRoles = isSA || isOwner;
   const canMutateInvoices = isSA || isOwner || (data && members.find(m => m.user_id === user?.id && m.role === 'billing_admin'));
 
+  const renewRef = useRef(null);
+
   const sub = data?.subscription;
   const subStatus = sub?.subscription_status || 'none';
-  const needsUpgrade = subStatus === 'expired' || subStatus === 'past_due';
+  const needsUpgrade = subStatus === 'expired' || subStatus === 'past_due' || subStatus === 'none';
   const isTrial = subStatus === 'trial';
   const isActive = subStatus === 'active';
   const isSuspended = sub?.read_only_reason === 'suspended';
@@ -232,15 +235,19 @@ export default function OrgBillingPage() {
   useEffect(() => {
     if (!orgId) return;
     setLoading(true);
+    setFatalError(null);
     billingService.orgBilling(orgId)
       .then(setData)
       .catch(err => {
-        if (err.response?.status === 404) {
-          setError(null);
+        const status = err.response?.status;
+        const detail = err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב';
+        if (status === 403 || status === 404) {
+          setFatalError({ status, detail });
           setData(null);
         } else {
-          setError(err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב');
+          setError(detail);
         }
+        console.warn('[OrgBillingPage] billing load failed:', status, detail);
       })
       .finally(() => setLoading(false));
   }, [orgId]);
@@ -585,6 +592,19 @@ export default function OrgBillingPage() {
   }, [data, location.hash]);
 
   useEffect(() => {
+    if (!data || loading) return;
+    const params = new URLSearchParams(location.search);
+    const focus = params.get('focus');
+    if ((focus === 'renew' || location.hash === '#renew') && renewRef.current) {
+      setTimeout(() => {
+        renewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        renewRef.current?.classList.add('renew-highlight');
+        setTimeout(() => renewRef.current?.classList.remove('renew-highlight'), 2000);
+      }, 400);
+    }
+  }, [data, loading, location.search, location.hash]);
+
+  useEffect(() => {
     if (data?.payment_config) {
       setPaymentConfigBank(data.payment_config.bank_details || '');
       setPaymentConfigBit(data.payment_config.bit_phone || '');
@@ -630,43 +650,49 @@ export default function OrgBillingPage() {
             onClick={() => {
               setLoading(true);
               setError(null);
+              setFatalError(null);
               billingService.orgBilling(orgId)
                 .then(setData)
                 .catch(err => {
-                  if (err.response?.status === 404) {
-                    setError(null);
+                  const status = err.response?.status;
+                  const detail = err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב';
+                  if (status === 403 || status === 404) {
+                    setFatalError({ status, detail });
                     setData(null);
                   } else {
-                    setError(err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב');
+                    setError(detail);
                   }
-                  console.error('[OrgBillingPage] retry failed:', err.response?.status, err.response?.data);
+                  console.warn('[OrgBillingPage] retry failed:', status, detail);
                 })
                 .finally(() => setLoading(false));
             }}
             className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
           >
-            🔄 נסה שוב
+            נסה שוב
           </button>
           <button onClick={() => navigate(-1)} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
         </div>
       </div>
     </div>
   );
-  if (!data) return (
+  if (fatalError) return (
     <div className="max-w-2xl mx-auto p-6" dir="rtl">
       <div className="bg-white rounded-xl border border-slate-200 p-8 space-y-6">
         <div className="text-center space-y-3">
-          <div className="text-4xl">📋</div>
-          <h2 className="text-xl font-bold text-slate-800">אין נתוני מנוי פעילים</h2>
+          <div className="text-4xl">🚫</div>
+          <h2 className="text-xl font-bold text-slate-800">
+            {fatalError.status === 403 ? 'אין הרשאת צפייה בחיוב' : 'הארגון לא נמצא'}
+          </h2>
           <p className="text-sm text-slate-500">
-            לא נמצא מנוי פעיל לארגון זה. ייתכן שתקופת הניסיון הסתיימה או שטרם הוגדר מנוי.
+            {fatalError.status === 403
+              ? 'אין לך הרשאה לצפות בנתוני החיוב של ארגון זה. פנה לבעלי הארגון.'
+              : 'הארגון המבוקש לא נמצא במערכת. ייתכן שהקישור שגוי.'}
           </p>
         </div>
-
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
           <div className="flex items-start gap-2 text-sm text-amber-800">
             <span className="shrink-0 mt-0.5">⚠</span>
-            <span className="font-medium">לשדרוג או חידוש המנוי, צרו קשר עם צוות BrikOps</span>
+            <span className="font-medium">צריך עזרה? צרו קשר עם צוות BrikOps</span>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
             <a
@@ -675,49 +701,54 @@ export default function OrgBillingPage() {
               rel="noopener noreferrer"
               className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium transition-colors"
             >
-              💬 WhatsApp
+              WhatsApp
             </a>
             <a
               href="mailto:billing@brikops.com?subject=בקשת שדרוג מנוי"
               className="flex-1 flex items-center justify-center gap-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium transition-colors"
             >
-              ✉️ billing@brikops.com
+              billing@brikops.com
             </a>
           </div>
         </div>
-
         <div className="flex items-center justify-center gap-3 pt-2">
           <button
             onClick={() => {
               setLoading(true);
+              setFatalError(null);
               setError(null);
               billingService.orgBilling(orgId)
                 .then(setData)
                 .catch(err => {
-                  if (err.response?.status === 404) {
-                    setError(null);
+                  const status = err.response?.status;
+                  const detail = err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב';
+                  if (status === 403 || status === 404) {
+                    setFatalError({ status, detail });
                     setData(null);
                   } else {
-                    setError(err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב');
+                    setError(detail);
                   }
-                  console.error('[OrgBillingPage] retry failed:', err.response?.status, err.response?.data);
                 })
                 .finally(() => setLoading(false));
             }}
             className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-5 py-2 text-sm font-medium transition-colors"
           >
-            <Loader2 className="w-4 h-4" style={{ display: 'none' }} />
-            🔄 נסה שוב
+            נסה שוב
           </button>
           <button onClick={() => navigate(-1)} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
             חזרה
           </button>
         </div>
-
         <div className="text-center text-xs text-slate-400 pt-2">
           קוד ארגון: <bdi dir="ltr">{orgId}</bdi>
+          {fatalError.status && <span className="mr-2">(שגיאה {fatalError.status})</span>}
         </div>
       </div>
+    </div>
+  );
+  if (!data) return (
+    <div className="flex justify-center items-center h-64">
+      <div className="text-slate-500">טוען נתוני חיוב...</div>
     </div>
   );
 
@@ -771,7 +802,7 @@ export default function OrgBillingPage() {
             </div>
             <div className="bg-slate-50 rounded-lg p-3">
               <div className="text-slate-500 mb-1">מצב גישה</div>
-              <div className="font-semibold">
+              <div className="font-semibold flex items-center gap-1.5">
                 <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
                   sub.effective_access === 'full_access'
                     ? 'bg-emerald-100 text-emerald-700'
@@ -779,6 +810,17 @@ export default function OrgBillingPage() {
                 }`}>
                   {getAccessLabel(sub.effective_access)}
                 </span>
+                {sub.effective_access === 'read_only' && sub.read_only_reason && (
+                  <span className="relative group cursor-help">
+                    <Info className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="absolute z-10 hidden group-hover:block bg-slate-800 text-white text-xs rounded-lg px-3 py-2 -top-2 right-6 w-48 leading-relaxed shadow-lg">
+                      {sub.read_only_reason === 'trial_expired' && 'הניסיון הסתיים. כדי להמשיך לעבוד צריך לחדש מנוי.'}
+                      {sub.read_only_reason === 'payment_expired' && 'התשלום פג תוקף. יש לחדש כדי להמשיך.'}
+                      {sub.read_only_reason === 'no_subscription' && 'אין מנוי פעיל. יש לרכוש מנוי.'}
+                      {sub.read_only_reason === 'suspended' && 'המנוי הושעה על ידי מנהל המערכת.'}
+                    </span>
+                  </span>
+                )}
               </div>
             </div>
             <div className="bg-slate-50 rounded-lg p-3">
@@ -879,125 +921,204 @@ export default function OrgBillingPage() {
       </div>
 
       {!isSuspended && canManageBilling && !isSA && (
-        <div className="bg-white rounded-xl border border-amber-200 p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-slate-800">{(needsUpgrade || isTrial) ? 'שדרוג / חידוש' : 'חידוש מנוי מראש'}</h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-600">מחזור:</span>
-            <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-              <button
-                onClick={() => handleCycleChange('monthly')}
-                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-                  renewalCycle === 'monthly'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                חודשי
-              </button>
-              <button
-                onClick={() => handleCycleChange('yearly')}
-                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-                  renewalCycle === 'yearly'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                שנתי
-              </button>
-            </div>
+        <div ref={renewRef} id="renew" className="bg-white rounded-xl border-2 border-amber-200 p-6 space-y-5 transition-all duration-300" style={{ scrollMarginTop: '1rem' }}>
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-slate-800">
+              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי מראש'}
+            </h2>
+            <p className="text-xs text-slate-500">
+              בקרוב — חידוש עצמי באשראי. בינתיים אפשר לשלוח בקשת תשלום.
+            </p>
           </div>
-          {renewalLoading ? (
-            <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
-          ) : renewalPreview ? (
-            <div className="bg-amber-50 rounded-lg p-4 space-y-2">
-              <div className="text-sm text-amber-800">
-                <span className="font-medium">הרישיון יהיה בתוקף עד: </span>
-                <span className="font-bold">{renewalPreview.new_paid_until_display}</span>
-              </div>
-              {renewalPreview.auto_renew_default && (
-                <div className="text-xs text-amber-700">חידוש אוטומטי</div>
-              )}
+
+          {needsUpgrade && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+              {sub?.read_only_reason === 'trial_expired'
+                ? 'הניסיון הסתיים — נדרש שדרוג כדי להמשיך לעבוד'
+                : sub?.read_only_reason === 'payment_expired'
+                  ? 'התשלום פג תוקף — נדרש חידוש כדי לשחזר גישה מלאה'
+                  : 'אין מנוי פעיל — נדרש שדרוג'}
             </div>
-          ) : null}
-          <button
-            onClick={handlePaymentRequest}
-            disabled={paymentRequestLoading}
-            className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {paymentRequestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            שלח בקשת תשלום
-          </button>
-          {paymentRequestResult && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
-                <span>הבקשה נרשמה</span>
-              </div>
-              <div className="text-xs text-slate-600 space-y-1">
-                <div>מזהה בקשה: <span className="font-mono text-xs">{paymentRequestResult.request_id?.slice(0, 8)}...</span></div>
-                <div>תוקף לאחר תשלום: <span className="font-bold">{paymentRequestResult.requested_paid_until_display}</span></div>
-                <div>סכום: <span className="font-bold">₪{paymentRequestResult.amount_ils}</span></div>
-              </div>
-              <button
-                onClick={() => handleCopyPaymentMessage('A')}
-                className="w-full bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
-              >
-                <Copy className="w-4 h-4" />
-                העתק הודעת תשלום
-              </button>
-              {hasPaymentOptions && (
+          )}
+
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">בקרוב</span>
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  await billingService.checkout(orgId);
+                } catch (err) {
+                  if (err.response?.status === 501) {
+                    toast('תשלום באשראי ייפתח בקרוב — בינתיים אפשר לשלוח בקשת תשלום', { icon: '💳' });
+                  } else {
+                    toast.error(err.response?.data?.detail || 'שגיאה');
+                  }
+                }
+              }}
+              className="w-full bg-slate-300 text-slate-500 font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <CreditCard className="w-4 h-4" />
+              שלם באשראי
+              <span className="text-xs opacity-70">(בקרוב)</span>
+            </button>
+            <p className="text-xs text-slate-400 text-center">בקרוב תוכל לחדש אוטומטית ללא התערבות.</p>
+          </div>
+
+          <div className="bg-white border border-amber-200 rounded-lg p-4 space-y-4">
+            <span className="text-sm font-medium text-slate-700">שלח בקשת תשלום</span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-600">מחזור:</span>
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden">
                 <button
-                  onClick={() => handleCopyPaymentMessage('B')}
-                  className="w-full bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+                  onClick={() => handleCycleChange('monthly')}
+                  className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                    renewalCycle === 'monthly'
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  חודשי
+                </button>
+                <button
+                  onClick={() => handleCycleChange('yearly')}
+                  className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                    renewalCycle === 'yearly'
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  שנתי
+                </button>
+              </div>
+            </div>
+            {renewalLoading ? (
+              <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
+            ) : renewalPreview ? (
+              <div className="bg-amber-50 rounded-lg p-4 space-y-2">
+                <div className="text-sm text-amber-800">
+                  <span className="font-medium">הרישיון יהיה בתוקף עד: </span>
+                  <span className="font-bold">{renewalPreview.new_paid_until_display}</span>
+                </div>
+              </div>
+            ) : null}
+            <button
+              onClick={handlePaymentRequest}
+              disabled={paymentRequestLoading}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {paymentRequestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              שלח בקשת תשלום
+            </button>
+            {paymentRequestResult && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
+                  <span>הבקשה נשלחה. נחזור אליך בהקדם.</span>
+                </div>
+                <div className="text-xs text-slate-600 space-y-1">
+                  <div>מזהה בקשה: <span className="font-mono text-xs">{paymentRequestResult.request_id?.slice(0, 8)}...</span></div>
+                  <div>תוקף לאחר תשלום: <span className="font-bold">{paymentRequestResult.requested_paid_until_display}</span></div>
+                  <div>סכום: <span className="font-bold">₪{paymentRequestResult.amount_ils}</span></div>
+                </div>
+                <button
+                  onClick={() => handleCopyPaymentMessage('A')}
+                  className="w-full bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
                 >
                   <Copy className="w-4 h-4" />
-                  העתק הודעה מפורטת (עם אפשרויות תשלום)
+                  העתק הודעת תשלום
                 </button>
-              )}
-            </div>
-          )}
-          {paymentRequestResult && !isSA && (
-            <div className="border-t border-slate-200 pt-4 space-y-3">
-              {paymentRequestResult._customerMarked ? (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-                  כבר סומן כשולם — ממתין לאישור
-                </div>
-              ) : (
-                <>
+                {hasPaymentOptions && (
                   <button
-                    onClick={handleCustomerMarkPaid}
-                    disabled={customerMarkPaidLoading}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    onClick={() => handleCopyPaymentMessage('B')}
+                    className="w-full bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
                   >
-                    {customerMarkPaidLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                    סימנתי ששילמתי
+                    <Copy className="w-4 h-4" />
+                    העתק הודעה מפורטת (עם אפשרויות תשלום)
                   </button>
-                  <p className="text-xs text-slate-500 text-center">הרישיון מתעדכן רק לאחר אישור אדמין.</p>
-                </>
-              )}
-              <div className="space-y-2">
-                <input
-                  type="file"
-                  ref={receiptFileRef}
-                  className="hidden"
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleReceiptUpload(paymentRequestResult.request_id, file);
-                    e.target.value = '';
-                  }}
-                />
-                <button
-                  onClick={() => receiptFileRef.current?.click()}
-                  disabled={receiptUploading}
-                  className="w-full bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {receiptUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  העלה אסמכתא
-                </button>
-                <p className="text-xs text-slate-400 text-center">אופציונלי — מסייע לאישור מהיר יותר.</p>
+                )}
+              </div>
+            )}
+            {paymentRequestResult && !isSA && (
+              <div className="border-t border-slate-200 pt-4 space-y-3">
+                {paymentRequestResult._customerMarked ? (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                    כבר סומן כשולם — ממתין לאישור
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleCustomerMarkPaid}
+                      disabled={customerMarkPaidLoading}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {customerMarkPaidLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                      סימנתי ששילמתי
+                    </button>
+                    <p className="text-xs text-slate-500 text-center">הרישיון מתעדכן רק לאחר אישור אדמין.</p>
+                  </>
+                )}
+                <div className="space-y-2">
+                  <input
+                    type="file"
+                    ref={receiptFileRef}
+                    className="hidden"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleReceiptUpload(paymentRequestResult.request_id, file);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    onClick={() => receiptFileRef.current?.click()}
+                    disabled={receiptUploading}
+                    className="w-full bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {receiptUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                    העלה אסמכתא
+                  </button>
+                  <p className="text-xs text-slate-400 text-center">אופציונלי — מסייע לאישור מהיר יותר.</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700">חידוש אוטומטי</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">בקרוב</span>
+                <div className="w-10 h-5 bg-slate-300 rounded-full opacity-50 relative">
+                  <div className="w-4 h-4 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm" />
+                </div>
               </div>
             </div>
-          )}
+            <p className="text-xs text-slate-400">בקרוב תוכל להפעיל חידוש אוטומטי באשראי.</p>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+            <span className="text-sm font-medium text-slate-700">צריך עזרה?</span>
+            <p className="text-xs text-slate-500">אם יש בעיה טכנית או צורך במסמך/חשבונית</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <a
+                href="https://wa.me/972559943649?text=%D7%A9%D7%9C%D7%95%D7%9D%2C%20%D7%90%D7%A0%D7%99%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%9C%D7%A9%D7%93%D7%A8%D7%92%20%D7%90%D7%AA%20%D7%94%D7%9E%D7%A0%D7%95%D7%99%20%D7%A9%D7%9C%D7%99"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+              >
+                WhatsApp
+              </a>
+              <a
+                href="mailto:billing@brikops.com?subject=בקשת שדרוג מנוי"
+                className="flex-1 flex items-center justify-center gap-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+              >
+                billing@brikops.com
+              </a>
+            </div>
+          </div>
+
           {isSA && (
             <div className="border-t border-slate-200 pt-4">
               <button
@@ -1590,7 +1711,7 @@ export default function OrgBillingPage() {
           </div>
         </div>
       )}
-      <div className="text-center text-xs text-slate-300 mt-6">build 2026-02-28-v5</div>
+      <div className="text-center text-xs text-slate-300 mt-6">build 2026-03-03-v1</div>
     </div>
   );
 }

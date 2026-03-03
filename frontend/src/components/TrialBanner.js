@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useBilling } from '../contexts/BillingContext';
 import { Clock, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { getBillingHubUrl } from '../utils/billingHub';
+import { buildOrgBillingUrl } from '../utils/billingHub';
 
 const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/onboarding', '/forgot-password', '/reset-password'];
 
@@ -83,13 +83,12 @@ const TrialBanner = () => {
           </span>
           <button
             onClick={() => {
-              const url = getBillingHubUrl({ orgId: billing?.org_id });
+              const url = buildOrgBillingUrl({ orgId: billing?.org_id, focus: 'renew' });
               if (url) {
                 navigate(url);
-              } else if (billing?.org_id) {
-                setShowPaywall(true);
               } else {
-                toast.error('לא נמצא ארגון משויך — פנה לתמיכה');
+                toast.error('לא נמצא ארגון לחיוב. נסה לרענן/התחבר מחדש.');
+                console.warn('[TrialBanner] Missing org_id for billing navigation', { role: user?.role, path: location.pathname });
               }
             }}
             className={`mr-3 px-3 py-0.5 rounded text-xs font-bold ${
@@ -126,13 +125,12 @@ const TrialBanner = () => {
           {showUpgrade && (
             <button
               onClick={() => {
-                const url = getBillingHubUrl({ orgId: billing?.org_id });
+                const url = buildOrgBillingUrl({ orgId: billing?.org_id, focus: 'renew' });
                 if (url) {
                   navigate(url);
-                } else if (billing?.org_id) {
-                  setShowPaywall(true);
                 } else {
-                  toast.error('לא נמצא ארגון משויך — פנה לתמיכה');
+                  toast.error('לא נמצא ארגון לחיוב. נסה לרענן/התחבר מחדש.');
+                  console.warn('[TrialBanner] Missing org_id for billing navigation', { role: user?.role, path: location.pathname });
                 }
               }}
               className="mr-3 px-3 py-0.5 rounded text-xs font-bold bg-white text-red-600 hover:bg-red-50"

@@ -431,6 +431,18 @@ async def billing_org(org_id: str, user: dict = Depends(get_current_user)):
     return result
 
 
+@router.post("/billing/org/{org_id}/checkout")
+async def billing_checkout(org_id: str, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    if not _is_super_admin(user):
+        billing_role = await check_org_billing_role(user['id'], org_id)
+        if not billing_role:
+            raise HTTPException(status_code=403, detail='אין הרשאת ניהול חיוב')
+    raise HTTPException(status_code=501, detail='Credit card payment coming soon', headers={'X-Feature': 'stripe_checkout'})
+
+
 @router.get("/billing/preview-renewal")
 async def billing_preview_renewal(request: Request, user: dict = Depends(get_current_user)):
     from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, check_org_pm_role, preview_renewal

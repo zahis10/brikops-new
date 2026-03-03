@@ -127,3 +127,13 @@ code {
 .highlight-flash {
   animation: highlightFlash 3s ease-out;
 }
+
+@keyframes renewPulse {
+  0% { border-color: rgb(251 191 36); box-shadow: 0 0 0 0 rgb(251 191 36 / 0.4); }
+  50% { border-color: rgb(245 158 11); box-shadow: 0 0 0 6px rgb(251 191 36 / 0); }
+  100% { border-color: rgb(254 215 170); box-shadow: 0 0 0 0 rgb(251 191 36 / 0); }
+}
+
+.renew-highlight {
+  animation: renewPulse 0.8s ease-in-out 2;
+}
