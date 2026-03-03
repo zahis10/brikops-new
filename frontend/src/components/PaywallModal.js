@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useBilling } from '../contexts/BillingContext';
 import { ShieldAlert, CreditCard, MessageCircle, X } from 'lucide-react';
 import { Button } from './ui/button';
-import { getBillingHubUrl } from '../utils/billingHub';
+import { toast } from 'sonner';
+import { buildOrgBillingUrl } from '../utils/billingHub';
 
 const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/forgot-password', '/reset-password'];
 
@@ -71,8 +72,12 @@ const PaywallModal = () => {
 
   const handleGoToBilling = () => {
     setShowPaywall(false);
-    if (orgId) {
-      navigate(getBillingHubUrl({ orgId }));
+    const url = buildOrgBillingUrl({ orgId, focus: 'renew' });
+    if (url) {
+      navigate(url);
+    } else {
+      toast.error('לא נמצא ארגון לחיוב. נסה לרענן/התחבר מחדש.');
+      console.warn('[PaywallModal] Missing org_id for billing navigation', { role: user?.role, path: location.pathname });
     }
   };
 
