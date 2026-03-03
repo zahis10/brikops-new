@@ -204,6 +204,20 @@ class UserCreate(BaseModel):
     phone_e164: Optional[str] = None
 
 
+class ProjectMembershipSummary(BaseModel):
+    project_id: str
+    project_name: Optional[str] = None
+    role: Optional[str] = None
+    contractor_trade_key: Optional[str] = None
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+
+
+class OrgSummary(BaseModel):
+    id: str
+    name: Optional[str] = None
+
+
 class UserResponse(BaseModel):
     id: str
     email: Optional[str] = None
@@ -216,6 +230,8 @@ class UserResponse(BaseModel):
     user_status: Optional[str] = None
     created_at: Optional[str] = None
     platform_role: Optional[str] = 'none'
+    organization: Optional[OrgSummary] = None
+    project_memberships_summary: Optional[List[ProjectMembershipSummary]] = None
 
 
 class UserLogin(BaseModel):

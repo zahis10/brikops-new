@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBilling } from '../contexts/BillingContext';
 import { Clock, AlertTriangle, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { getBillingHubUrl } from '../utils/billingHub';
 
 const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/onboarding', '/forgot-password', '/reset-password'];
@@ -82,10 +83,13 @@ const TrialBanner = () => {
           </span>
           <button
             onClick={() => {
-              if (billing?.org_id) {
-                navigate(getBillingHubUrl({ orgId: billing.org_id }));
-              } else {
+              const url = getBillingHubUrl({ orgId: billing?.org_id });
+              if (url) {
+                navigate(url);
+              } else if (billing?.org_id) {
                 setShowPaywall(true);
+              } else {
+                toast.error('לא נמצא ארגון משויך — פנה לתמיכה');
               }
             }}
             className={`mr-3 px-3 py-0.5 rounded text-xs font-bold ${
@@ -122,10 +126,13 @@ const TrialBanner = () => {
           {showUpgrade && (
             <button
               onClick={() => {
-                if (billing?.org_id) {
-                  navigate(getBillingHubUrl({ orgId: billing.org_id }));
-                } else {
+                const url = getBillingHubUrl({ orgId: billing?.org_id });
+                if (url) {
+                  navigate(url);
+                } else if (billing?.org_id) {
                   setShowPaywall(true);
+                } else {
+                  toast.error('לא נמצא ארגון משויך — פנה לתמיכה');
                 }
               }}
               className="mr-3 px-3 py-0.5 rounded text-xs font-bold bg-white text-red-600 hover:bg-red-50"

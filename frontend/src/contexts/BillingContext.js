@@ -29,11 +29,6 @@ export const BillingProvider = ({ children }) => {
       setLoading(false);
       return;
     }
-    if (user.role === 'contractor') {
-      setBilling(null);
-      setLoading(false);
-      return;
-    }
     try {
       const response = await axios.get(`${API}/billing/me`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -41,6 +36,7 @@ export const BillingProvider = ({ children }) => {
       setBilling(response.data);
     } catch (err) {
       console.error('Failed to fetch billing info:', err);
+      setBilling(null);
     } finally {
       setLoading(false);
     }

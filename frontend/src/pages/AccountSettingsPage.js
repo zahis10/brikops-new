@@ -6,9 +6,10 @@ import { authService } from '../services/api';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
-  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone
+  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase
 } from 'lucide-react';
 import PhoneChangeModal from '../components/PhoneChangeModal';
+import { tRole, tTrade } from '../i18n';
 
 const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error }) => (
   <div className="space-y-1">
@@ -215,6 +216,38 @@ const AccountSettingsPage = () => {
             </div>
           )}
         </div>
+
+        {(user.organization || (user.project_memberships_summary && user.project_memberships_summary.length > 0)) && (
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Briefcase className="w-5 h-5 text-amber-500" />
+              <h2 className="text-lg font-semibold text-slate-900">פרטי עבודה</h2>
+            </div>
+
+            {user.organization && (
+              <div className="flex items-center gap-2 mb-4 text-sm text-slate-600">
+                <Building2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <span>ארגון: <span className="font-medium text-slate-900">{user.organization.name || user.organization.id}</span></span>
+              </div>
+            )}
+
+            {user.project_memberships_summary && user.project_memberships_summary.length > 0 && (
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-slate-700">פרויקטים</p>
+                {user.project_memberships_summary.map((pm, idx) => (
+                  <div key={pm.project_id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-1">
+                    <div className="font-medium text-slate-900 text-sm">{pm.project_name || pm.project_id}</div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                      {pm.role && <span>תפקיד: <span className="text-slate-700">{tRole(pm.role)}</span></span>}
+                      {pm.contractor_trade_key && <span>מקצוע: <span className="text-slate-700">{tTrade(pm.contractor_trade_key)}</span></span>}
+                      {pm.company_name && <span>חברה: <span className="text-slate-700">{pm.company_name}</span></span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div ref={phoneRef} id="phone" className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">

@@ -55,6 +55,7 @@ from contractor_ops.schemas import (
     InsertFloorRequest,
     ManagementSubRole, MembershipRole, ManagerDecisionRequest,
     InviteCreate,
+    ProjectMembershipSummary, OrgSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -1942,13 +1943,74 @@ async def dev_login(request: Request):
 
 @router.get("/auth/me", response_model=UserResponse)
 async def get_me(user: dict = Depends(get_current_user)):
-    return UserResponse(id=user['id'], email=user.get('email', ''), name=user['name'],
-                        phone=user.get('phone'), role=user['role'],
-                        company_id=user.get('company_id'),
-                        specialties=user.get('specialties'), phone_e164=user.get('phone_e164'),
-                        user_status=user.get('user_status', 'active'),
-                        created_at=user.get('created_at'),
-                        platform_role=user.get('platform_role', 'none'))
+    db = get_db()
+    user_id = user['id']
+
+    org_summary = None
+    try:
+        org_mem = await db.organization_memberships.find_one(
+            {'user_id': user_id}, {'_id': 0, 'org_id': 1}
+        )
+        if org_mem:
+            org_doc = await db.organizations.find_one(
+                {'id': org_mem['org_id']}, {'_id': 0, 'id': 1, 'name': 1}
+            )
+            if org_doc:
+                org_summary = OrgSummary(id=org_doc['id'], name=org_doc.get('name'))
+    except Exception:
+        pass
+
+    proj_summaries = None
+    try:
+        memberships = await db.project_memberships.find(
+            {'user_id': user_id}, {'_id': 0}
+        ).to_list(200)
+        if memberships:
+            project_ids = list({m['project_id'] for m in memberships if m.get('project_id')})
+            company_ids = list({m['company_id'] for m in memberships if m.get('company_id')})
+
+            projects_map = {}
+            if project_ids:
+                projects = await db.projects.find(
+                    {'id': {'$in': project_ids}},
+                    {'_id': 0, 'id': 1, 'name': 1}
+                ).to_list(200)
+                projects_map = {p['id']: p.get('name') for p in projects}
+
+            companies_map = {}
+            if company_ids:
+                companies = await db.project_companies.find(
+                    {'id': {'$in': company_ids}},
+                    {'_id': 0, 'id': 1, 'name': 1}
+                ).to_list(200)
+                companies_map = {c['id']: c.get('name') for c in companies}
+
+            proj_summaries = []
+            for m in memberships:
+                pid = m.get('project_id', '')
+                cid = m.get('company_id')
+                proj_summaries.append(ProjectMembershipSummary(
+                    project_id=pid,
+                    project_name=projects_map.get(pid),
+                    role=m.get('role'),
+                    contractor_trade_key=m.get('contractor_trade_key'),
+                    company_id=cid,
+                    company_name=companies_map.get(cid) if cid else None,
+                ))
+    except Exception:
+        pass
+
+    return UserResponse(
+        id=user['id'], email=user.get('email', ''), name=user['name'],
+        phone=user.get('phone'), role=user['role'],
+        company_id=user.get('company_id'),
+        specialties=user.get('specialties'), phone_e164=user.get('phone_e164'),
+        user_status=user.get('user_status', 'active'),
+        created_at=user.get('created_at'),
+        platform_role=user.get('platform_role', 'none'),
+        organization=org_summary,
+        project_memberships_summary=proj_summaries,
+    )
 
 
 @router.get("/users")
