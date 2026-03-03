@@ -42,13 +42,27 @@ BrikOps is a full-stack application with a clear separation between frontend and
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.
 
-### Cloud Deployment Prep
--   **Target Architecture**: Frontend on Cloudflare Pages, Backend API on AWS ECS Fargate, Files on S3.
--   **Frontend**: Live at `brikops-new.pages.dev` (Cloudflare Pages). Build: `yarn install && yarn build`, root=`frontend`, output=`build`, NODE_VERSION=20. `_redirects` (SPA fallback) and `_headers` (cache + security headers) in `frontend/public/`.
--   **Backend**: Dockerfile at `backend/Dockerfile` (python:3.11-slim, HEALTHCHECK on `/health`). No AWS credentials in container — IAM Task Role provides boto3 credentials.
+### Cloud Deployment (LIVE)
+-   **Frontend**: `app.brikops.com` → Cloudflare Pages (auto-deploys on push to `main`). Build: `yarn install && yarn build`, root=`frontend`, output=`build`, NODE_VERSION=20. `_redirects` (SPA fallback) and `_headers` (cache + security headers) in `frontend/public/`.
+-   **Backend**: `api.brikops.com` → AWS Elastic Beanstalk (Docker, eu-central-1). Dockerfile at `backend/Dockerfile` (python:3.11-slim). No AWS credentials in container — IAM Task Role provides boto3 credentials.
+-   **Database**: MongoDB Atlas (connected via `MONGO_URL` env var in Beanstalk).
 -   **PDF Services**: S3-aware via `object_storage.save_bytes()`. In S3 mode, PDFs written to `s3://reports/{filename}` and resolved to presigned URLs via `resolve_urls_in_doc(pdf_url)`. In local mode, existing `backend/reports/` behavior preserved.
--   **GitHub**: `zahis10/brikops-new` (main branch). Clean repo at `/home/runner/brikops-clean/`.
+-   **GitHub**: `zahis10/brikops-new` (main branch).
 -   **Env Template**: `backend/.env.production.template` lists all required env vars grouped by category.
+
+### CI/CD Pipeline
+-   **How to deploy**: `git push origin main` from Replit Shell triggers automatic deployment.
+-   **Backend deploy** (GitHub Actions — `.github/workflows/deploy-backend.yml`):
+    -   Triggers on push to `main` when `backend/**` files change.
+    -   Steps: OIDC login → ECR login → Docker build & push → Generate Dockerrun.aws.json → Upload to S3 → CreateApplicationVersion → UpdateEnvironment.
+    -   AWS auth via OIDC (role: `github-actions-brikops`), no static keys.
+    -   ECR repo: `brikops-api` (eu-central-1). EB app: `brikops-api`, env: `Brikops-api-env`.
+    -   Duration: ~2 minutes.
+-   **Frontend deploy** (Cloudflare Pages):
+    -   Auto-triggers on any push to `main` (Cloudflare connected to GitHub repo).
+    -   Build command: `yarn install && yarn build`, output: `build`.
+-   **DNS**: Cloudflare manages `brikops.com`. `api` CNAME → Beanstalk (DNS only), `app` CNAME → Cloudflare Pages (Proxied).
+-   **GitHub PAT**: Required for `git push` from Replit. Token needs `repo` + `workflow` scopes. Set remote URL: `git remote set-url origin https://zahis10:<TOKEN>@github.com/zahis10/brikops-new.git`.
 
 ## External Dependencies
 
