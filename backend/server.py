@@ -217,6 +217,9 @@ app.include_router(invites_router)
 from contractor_ops.companies_router import router as companies_router
 app.include_router(companies_router)
 
+from contractor_ops.stats_router import router as stats_router
+app.include_router(stats_router)
+
 from contractor_ops.ownership_transfer import (
     create_transfer_router, set_transfer_db, set_transfer_sms_client,
     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,

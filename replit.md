@@ -21,6 +21,14 @@ BrikOps is a full-stack application with a clear separation between frontend and
 ### Backend
 -   **Framework**: Python FastAPI, using Uvicorn.
 -   **Database**: MongoDB.
+-   **Router Architecture**: The main `router.py` has been refactored into sub-routers (all use `prefix="/api"`):
+    -   `debug_router.py`: 16 debug/health/admin endpoints.
+    -   `excel_router.py`: 3 excel/migration endpoints.
+    -   `plans_router.py`: 7 plans/disciplines endpoints.
+    -   `invites_router.py`: 7 invite/user/contractor-profile endpoints.
+    -   `companies_router.py`: 9 company/trade endpoints + `_slugify_hebrew` helper.
+    -   `stats_router.py`: 6 stats/dashboard/membership endpoints (project stats, dashboard, contractor-summary, task-buckets, memberships, my-memberships).
+    -   Sub-routers import shared helpers from `contractor_ops.router` (one-way dependency).
 -   **Key Modules & Features**:
     -   **Authentication & Onboarding**: Supports email/password, phone OTP, PM approval, WhatsApp Magic Link Login, and comprehensive onboarding. Includes a dev-only login endpoint for demo users.
     -   **Multi-channel Communication**: Automated notifications via WhatsApp (with SMS fallback) using Meta-approved templates, configurable by user's preferred language.
