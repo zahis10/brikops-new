@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { projectService, buildingService, floorService, projectCompanyService, userService } from '../services/api';
+import { projectService, buildingService, floorService, projectCompanyService } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -146,6 +146,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [units, setUnits] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [contractors, setContractors] = useState([]);
+  const [projectMembers, setProjectMembers] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState({});
 
@@ -165,9 +166,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (!pid) return;
     setLoading(l => ({ ...l, companies: true }));
     setLoadError(e => ({ ...e, companies: false }));
-    projectCompanyService.list(pid)
-      .then(data => { setCompanies(normalizeList(data)); })
-      .catch(err => { console.error('Failed to load companies:', err); toast.error('שגיאה בטעינת חברות'); setLoadError(e => ({ ...e, companies: true })); })
+    Promise.all([
+      projectCompanyService.list(pid),
+      projectService.getMemberships(pid),
+    ])
+      .then(([compData, memData]) => {
+        setCompanies(normalizeList(compData));
+        setProjectMembers(normalizeList(memData));
+      })
+      .catch(err => { console.error('Failed to load companies/members:', err); toast.error('שגיאה בטעינת חברות'); setLoadError(e => ({ ...e, companies: true })); })
       .finally(() => setLoading(l => ({ ...l, companies: false })));
   }, []);
 
@@ -222,10 +229,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setFloorId('');
     setUnitId('');
     setCompanyId('');
+    setAssigneeId('');
     setBuildings([]);
     setFloors([]);
     setUnits([]);
     setCompanies([]);
+    setContractors([]);
+    setProjectMembers([]);
     if (v) {
       loadBuildings(v);
       loadCompanies(v);
@@ -261,17 +271,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const handleCompanyChange = useCallback((v) => {
     setCompanyId(v);
     setAssigneeId('');
-    if (v) {
-      setLoading(l => ({ ...l, contractors: true }));
-      setLoadError(e => ({ ...e, contractors: false }));
-      userService.list({ role: 'contractor', company_id: v })
-        .then(data => { setContractors(normalizeList(data)); })
-        .catch(err => { console.error('Failed to load contractors:', err); toast.error('שגיאה בטעינת קבלנים'); setContractors([]); setLoadError(e => ({ ...e, contractors: true })); })
-        .finally(() => setLoading(l => ({ ...l, contractors: false })));
-    } else {
+  }, []);
+
+  useEffect(() => {
+    if (companyId && projectMembers.length > 0) {
+      const matched = projectMembers.filter(m =>
+        m.role === 'contractor' &&
+        (m.company_id === companyId || m.user_company_id === companyId)
+      );
+      setContractors(matched);
+    } else if (!companyId) {
       setContractors([]);
     }
-  }, []);
+  }, [companyId, projectMembers]);
 
   const filteredCompanies = category
     ? companies.filter(c =>
@@ -555,7 +567,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                   label="קבלן מבצע *"
                   value={assigneeId}
                   onChange={v => setAssigneeId(v)}
-                  options={contractors.filter(u => u.company_id && u.contractor_trade_key).map(u => ({ value: u.id, label: u.name }))}
+                  options={contractors.map(m => ({ value: m.user_id, label: m.user_name || m.name || 'קבלן' }))}
                   error={errors.assignee_id}
                   placeholder={companyId ? 'בחר קבלן' : 'בחר חברה קודם'}
                   isLoading={loading.contractors}
