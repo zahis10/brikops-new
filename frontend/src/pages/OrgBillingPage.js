@@ -1365,7 +1365,7 @@ export default function OrgBillingPage() {
         </div>
       )}
 
-      {isSA && (
+      {(isSA || isPM || isOwner || canManageBilling) && (
         <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
           <button
             onClick={() => setPaymentConfigExpanded(!paymentConfigExpanded)}
@@ -1374,7 +1374,7 @@ export default function OrgBillingPage() {
             <h2 className="text-lg font-semibold text-slate-800">פרטי תשלום (BrikOps)</h2>
             {paymentConfigExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
           </button>
-          {paymentConfigExpanded && (
+          {paymentConfigExpanded && isSA && (
             <div className="space-y-3">
               <p className="text-xs text-slate-500">
                 הגדר פרטי חשבון בנק ו/או Bit. לאחר ההגדרה, הודעת התשלום המפורטת (תבנית B) תהיה זמינה להעתקה.
@@ -1407,6 +1407,28 @@ export default function OrgBillingPage() {
                 {paymentConfigSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 שמור
               </button>
+            </div>
+          )}
+          {paymentConfigExpanded && !isSA && (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">
+                פרטי חשבון לביצוע העברה/תשלום:
+              </p>
+              {data?.payment_config?.bank_details ? (
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-slate-700">פרטי חשבון בנק</label>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-800 whitespace-pre-wrap">{data.payment_config.bank_details}</div>
+                </div>
+              ) : null}
+              {data?.payment_config?.bit_phone ? (
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-slate-700">מספר Bit</label>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-800">{data.payment_config.bit_phone}</div>
+                </div>
+              ) : null}
+              {!data?.payment_config?.bank_details && !data?.payment_config?.bit_phone && (
+                <p className="text-sm text-slate-400">לא הוגדרו פרטי תשלום עדיין.</p>
+              )}
             </div>
           )}
         </div>
@@ -1506,7 +1528,7 @@ export default function OrgBillingPage() {
             <div className="text-xs text-amber-700">
               {preview.line_items?.length || 0} פרויקטים פעילים
             </div>
-            {canMutateInvoices && !invoices.find(inv => inv.period_ym === currentPeriod) && (
+            {canMutateInvoices && !invoices.find(inv => inv.period_ym === currentPeriod) && (isSA || paymentRequests.some(pr => pr.status === 'paid')) && (
               <button
                 onClick={handleGenerate}
                 disabled={generating}

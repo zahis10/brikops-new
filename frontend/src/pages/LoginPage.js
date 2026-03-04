@@ -279,6 +279,11 @@ const LoginPage = () => {
                 </span>
               ) : 'שלח קוד אימות'}
             </Button>
+            <div className="text-left mt-2">
+              <a href="/forgot-password" className="text-sm text-amber-600 hover:text-amber-700 font-medium">
+                שכחתי סיסמה?
+              </a>
+            </div>
           </form>
         )}
 

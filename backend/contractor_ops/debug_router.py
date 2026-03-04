@@ -306,6 +306,57 @@ async def debug_whatsapp(request: Request, user: dict = Depends(_require_debug_a
     return result
 
 
+@router.post("/debug/whatsapp-test")
+async def debug_whatsapp_test(request: Request, user: dict = Depends(require_super_admin)):
+    from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_DEFECT_DEFAULT_LANG
+    from contractor_ops.notification_service import WhatsAppClient, validate_e164
+
+    body = await request.json()
+    to_phone = body.get('phone', '')
+
+    if not to_phone:
+        raise HTTPException(400, "phone is required (E.164 format, e.g. +972501234567)")
+    if not validate_e164(to_phone):
+        raise HTTPException(400, f"Invalid E.164 phone: {to_phone}")
+    if not WA_ACCESS_TOKEN or not WA_PHONE_NUMBER_ID:
+        raise HTTPException(500, "WA_ACCESS_TOKEN or WA_PHONE_NUMBER_ID not configured")
+
+    tpl_info = WA_DEFECT_TEMPLATES.get(WA_DEFECT_DEFAULT_LANG)
+    if not tpl_info:
+        raise HTTPException(500, f"No WhatsApp template for lang={WA_DEFECT_DEFAULT_LANG}")
+
+    test_client = WhatsAppClient(
+        access_token=WA_ACCESS_TOKEN,
+        phone_number_id=WA_PHONE_NUMBER_ID,
+        template_name=tpl_info['name'],
+        template_lang=tpl_info['lang'],
+        enabled=True,
+    )
+
+    test_payload = {
+        'project_name': 'בדיקת מערכת',
+        'building_name': 'בניין טסט',
+        'title': 'הודעת טסט מ-BrikOps',
+        'task_id': 'TEST-001',
+        'image_url': 'https://app.brikops.com/logo192.png',
+    }
+
+    try:
+        result = await test_client.send_message(to_phone, test_payload, defect_lang=WA_DEFECT_DEFAULT_LANG)
+        return {
+            "success": True,
+            "sent_to": to_phone,
+            "template": tpl_info['name'],
+            "wa_response": result,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)[:500],
+            "sent_to": to_phone,
+        }
+
+
 @router.get("/debug/whoami")
 async def debug_whoami(user: dict = Depends(_require_debug_access)):
     return {
