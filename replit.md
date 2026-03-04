@@ -30,6 +30,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   `stats_router.py`: 6 stats/dashboard/membership endpoints (project stats, dashboard, contractor-summary, task-buckets, memberships, my-memberships).
     -   `auth_router.py`: 7 auth endpoints (register, login, dev-login, get_me, logout-all, change-phone/request, change-phone/verify).
     -   `projects_router.py`: 18 project/building/floor/unit endpoints + helpers (`_is_numeric_unit`, `_compute_building_resequence`, `_natural_sort_key`).
+    -   `tasks_router.py`: 14 task endpoints (create, list, get, update, assign, status-change, reopen, contractor-proof, delete-proof, manager-decision, add-update, list-updates, upload-attachment, updates-feed) + `_build_bucket_maps` helper.
     -   Sub-routers import shared helpers from `contractor_ops.router` (one-way dependency).
 -   **Key Modules & Features**:
     -   **Authentication & Onboarding**: Supports email/password, phone OTP, PM approval, WhatsApp Magic Link Login, and comprehensive onboarding. Includes a dev-only login endpoint for demo users.
