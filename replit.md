@@ -23,7 +23,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Database**: MongoDB.
 -   **Router Architecture**: The main `router.py` has been refactored into sub-routers (all use `prefix="/api"`):
     -   `config_router.py`: 1 public endpoint (`/api/config/features`) returning feature flags (no auth required).
-    -   `debug_router.py`: 17 debug/health/admin endpoints (all gated behind `require_super_admin` except `/api/health`). Includes `POST /debug/whatsapp-test` (SA-only, bypasses WHATSAPP_ENABLED flag for testing).
+    -   `debug_router.py`: 18 debug/health/admin endpoints (all gated behind `require_super_admin` except `/api/health`). Includes `POST /debug/whatsapp-test` (SA-only, bypasses WHATSAPP_ENABLED flag for testing) and `GET /debug/notification-lookup?phone=<fragment>` (debug-access-gated, returns notification jobs matching a phone number).
     -   `excel_router.py`: 3 excel/migration endpoints.
     -   `plans_router.py`: 7 plans/disciplines endpoints.
     -   `invites_router.py`: 7 invite/user/contractor-profile endpoints.
@@ -38,7 +38,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   `router.py` now contains only shared helpers, constants, auth/security middleware, and 2 notification endpoints (~552 lines).
 -   **Key Modules & Features**:
     -   **Authentication & Onboarding**: Supports email/password, phone OTP, PM approval, WhatsApp Magic Link Login, and comprehensive onboarding. Includes a dev-only login endpoint for demo users.
-    -   **Multi-channel Communication**: Automated notifications via WhatsApp (with SMS fallback) using Meta-approved templates, configurable by user's preferred language.
+    -   **Multi-channel Communication**: Automated notifications via WhatsApp (with SMS fallback) using Meta-approved templates, configurable by user's preferred language. Fallback image (`WA_FALLBACK_IMAGE_URL = https://app.brikops.com/logo192.png`) is used when a defect has no attached photo, ensuring the required IMAGE header is always included in template messages.
     -   **Security**: Implements JWT tokens with HS256, issuer enforcement, and secret versioning.
     -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3).
     -   **Task Workflow Enforcement**: Strict status transitions and role-based permissions, including categorization and bucketing.

@@ -35,6 +35,8 @@ def _make_absolute_url(relative_path: str) -> str:
 
 E164_PATTERN = re.compile(r'^\+[1-9]\d{6,14}$')
 
+WA_FALLBACK_IMAGE_URL = "https://app.brikops.com/logo192.png"
+
 
 def validate_e164(phone: str) -> bool:
     if not phone:
@@ -173,13 +175,16 @@ class WhatsAppClient:
 
             components = []
 
-            if image_url and image_url.startswith('https://'):
+            effective_image = image_url if (image_url and image_url.startswith('https://')) else WA_FALLBACK_IMAGE_URL
+            if effective_image:
                 components.append({
                     "type": "header",
                     "parameters": [
-                        {"type": "image", "image": {"link": image_url}}
+                        {"type": "image", "image": {"link": effective_image}}
                     ]
                 })
+                if not image_url or not image_url.startswith('https://'):
+                    logger.info(f"[WA] No task image for task_id={task_id}, using fallback image")
 
             location_parts = [payload.get('project_name', ''), payload.get('building_name', '')]
             location = ' - '.join(p for p in location_parts if p) or ''
@@ -232,6 +237,14 @@ class WhatsAppClient:
             return {"success": True, "provider_message_id": mid}
         else:
             error_msg = resp.text[:500]
+            tpl_used = tpl_info['name'] if tpl_info else 'text_message'
+            has_image = bool(image_url and image_url.startswith('https://'))
+            logger.error(
+                f"[WA] API error sending to {mask_phone(to_phone)}: "
+                f"status={resp.status_code} template={tpl_used} "
+                f"has_task_image={has_image} used_fallback={not has_image} "
+                f"task_id={task_id} error={error_msg}"
+            )
             raise RuntimeError(f"WhatsApp API error ({resp.status_code}): {error_msg}")
 
 
