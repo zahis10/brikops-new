@@ -534,10 +534,13 @@ async def _deferred_db_init():
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")
 
     try:
-        from contractor_ops.billing import BILLING_V1_ENABLED
+        from contractor_ops.billing import BILLING_V1_ENABLED, apply_pending_decreases
         if BILLING_V1_ENABLED:
             from contractor_ops.billing_plans import seed_default_plans
             await seed_default_plans()
+            applied = await apply_pending_decreases()
+            if applied > 0:
+                logger.info(f"[BILLING-STARTUP] Applied {applied} pending unit decrease(s)")
         orphan_count = await db.projects.count_documents(
             {'$or': [{'org_id': {'$exists': False}}, {'org_id': None}]}
         )

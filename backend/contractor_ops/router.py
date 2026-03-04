@@ -1121,6 +1121,15 @@ async def admin_override(request: Request, user: dict = Depends(require_stepup))
     return result
 
 
+@router.post("/admin/billing/apply-pending-decreases")
+async def admin_apply_pending_decreases(user: dict = Depends(require_super_admin)):
+    from contractor_ops.billing import BILLING_V1_ENABLED, apply_pending_decreases
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    count = await apply_pending_decreases()
+    return {'applied': count}
+
+
 @router.get("/admin/billing/payment-requests-summary")
 async def admin_payment_requests_summary(user: dict = Depends(require_super_admin)):
     from contractor_ops.billing import BILLING_V1_ENABLED, list_open_payment_requests_all
