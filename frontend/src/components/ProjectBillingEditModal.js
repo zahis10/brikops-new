@@ -27,17 +27,18 @@ function resolveTier(units) {
 export default function ProjectBillingEditModal({ open, onClose, projectBilling, onSaved }) {
   const plans = getAllPlanCatalog();
   const [selectedPlanId, setSelectedPlanId] = useState('');
-  const [units, setUnits] = useState(0);
+  const [units, setUnits] = useState('');
   const [saving, setSaving] = useState(false);
   const [serverPlans, setServerPlans] = useState(null);
 
   const originalPlanId = projectBilling?.plan_id || '';
   const originalUnits = projectBilling?.contracted_units || 0;
+  const parsedUnits = parseInt(units) || 0;
 
   useEffect(() => {
     if (open && projectBilling) {
       setSelectedPlanId(projectBilling.plan_id || '');
-      setUnits(projectBilling.contracted_units || 0);
+      setUnits(String(projectBilling.contracted_units || ''));
     }
   }, [open, projectBilling]);
 
@@ -50,7 +51,7 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
   }, [open]);
 
   const preview = useMemo(() => {
-    if (!selectedPlanId || !units || units < 1) return null;
+    if (!selectedPlanId || parsedUnits < 1) return null;
     const serverPlan = serverPlans?.find(p => p.id === selectedPlanId);
     let projectFee = 0;
     let tierFee = 0;
@@ -59,7 +60,7 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
       projectFee = serverPlan.project_fee_monthly || 0;
       const tiers = serverPlan.unit_tiers || CLIENT_TIERS;
       for (const t of tiers) {
-        if (t.max_units === null || units <= t.max_units) {
+        if (t.max_units === null || parsedUnits <= t.max_units) {
           tierFee = t.monthly_fee;
           tierLabel = t.label;
           break;
@@ -72,23 +73,24 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
       }
     } else {
       const catalog = plans.find(p => p.id === selectedPlanId);
-      const tier = resolveTier(units);
+      const tier = resolveTier(parsedUnits);
       projectFee = catalog ? { plan_basic: 1200, plan_pro: 2000, plan_xl: 3500 }[selectedPlanId] || 0 : 0;
       tierFee = tier.monthly_fee;
       tierLabel = tier.label;
     }
     return { projectFee, tierFee, tierLabel, total: projectFee + tierFee };
-  }, [selectedPlanId, units, serverPlans, plans]);
+  }, [selectedPlanId, parsedUnits, serverPlans, plans]);
 
-  const hasChanges = selectedPlanId !== originalPlanId || units !== originalUnits;
+  const hasChanges = selectedPlanId !== originalPlanId || (parsedUnits > 0 && parsedUnits !== originalUnits);
 
   const handleSave = async () => {
     if (!hasChanges) return;
     setSaving(true);
     try {
       const payload = {};
+      const finalUnits = parsedUnits || 1;
       if (selectedPlanId !== originalPlanId) payload.plan_id = selectedPlanId;
-      if (units !== originalUnits) payload.contracted_units = units;
+      if (finalUnits !== originalUnits) payload.contracted_units = finalUnits;
 
       const response = await billingService.updateProjectBilling(projectBilling.project_id, payload);
 
@@ -97,9 +99,9 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
           ? new Date(response.pending_effective_from).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' })
           : '';
         toast(`הירידה תיכנס לתוקף ב-${dateStr}. עד אז החיוב לפי הכמות הנוכחית.`, { icon: '📅' });
-      } else if (units > originalUnits) {
+      } else if (finalUnits > originalUnits) {
         toast('ההגדלה פעילה מיד. החיוב יתעדכן לפי השיא החודשי.', { icon: '⬆️' });
-      } else if (selectedPlanId !== originalPlanId && units === originalUnits) {
+      } else if (selectedPlanId !== originalPlanId && finalUnits === originalUnits) {
         toast.success('החבילה עודכנה בהצלחה.');
       } else {
         toast.success('השינויים נשמרו בהצלחה.');
@@ -168,7 +170,8 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
               type="number"
               min={1}
               value={units}
-              onChange={(e) => setUnits(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => setUnits(e.target.value)}
+              onBlur={() => { if (!units || parseInt(units) < 1) setUnits('1'); }}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
               dir="ltr"
             />
