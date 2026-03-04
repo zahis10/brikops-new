@@ -32,7 +32,9 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   `projects_router.py`: 18 project/building/floor/unit endpoints + helpers (`_is_numeric_unit`, `_compute_building_resequence`, `_natural_sort_key`).
     -   `tasks_router.py`: 14 task endpoints (create, list, get, update, assign, status-change, reopen, contractor-proof, delete-proof, manager-decision, add-update, list-updates, upload-attachment, updates-feed) + `_build_bucket_maps` helper.
     -   `admin_router.py`: 20 admin endpoints (stepup request/verify, revoke-session, billing override/apply-pending/payment-requests-summary/orgs/audit/plans CRUD/migration, users list/get/phone/preferred-language/reset-password/role-change).
+    -   `billing_router.py`: 27 billing/orgs endpoints (billing/me, plans/active, org CRUD, checkout, preview-renewal, payment-request CRUD, payment-config, mark-paid, receipt, cancel/reject, project billing GET/PATCH, handoff-request/ack, setup-complete, invoice preview/generate/list/detail/mark-paid, billing-contact GET/PUT).
     -   Sub-routers import shared helpers from `contractor_ops.router` (one-way dependency).
+    -   `router.py` now contains only shared helpers, constants, auth/security middleware, and 2 notification endpoints (~552 lines).
 -   **Key Modules & Features**:
     -   **Authentication & Onboarding**: Supports email/password, phone OTP, PM approval, WhatsApp Magic Link Login, and comprehensive onboarding. Includes a dev-only login endpoint for demo users.
     -   **Multi-channel Communication**: Automated notifications via WhatsApp (with SMS fallback) using Meta-approved templates, configurable by user's preferred language.
