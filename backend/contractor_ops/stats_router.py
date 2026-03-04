@@ -6,9 +6,10 @@ from contractor_ops.router import (
     get_db, get_current_user,
     _check_project_access, _check_project_read_access,
     _get_project_membership, _get_project_role,
-    _enrich_memberships, _build_bucket_maps,
+    _enrich_memberships,
     PHONE_VISIBLE_ROLES, logger,
 )
+from contractor_ops.tasks_router import _build_bucket_maps
 from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET
 
 router = APIRouter(prefix="/api")
