@@ -357,6 +357,41 @@ async def debug_whatsapp_test(request: Request, user: dict = Depends(require_sup
         }
 
 
+@router.get("/debug/notification-lookup")
+async def debug_notification_lookup(
+    phone: str = Query(..., description="Phone number or fragment to search (e.g. 506616456)"),
+    limit: int = Query(10, ge=1, le=50),
+    user: dict = Depends(_require_debug_access),
+):
+    db = get_db()
+    import re as _re_mod
+    escaped = _re_mod.escape(phone)
+    jobs_cursor = db.notification_jobs.find(
+        {"target_phone": {"$regex": escaped}},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(limit)
+    jobs = []
+    async for job in jobs_cursor:
+        payload = job.get("payload", {})
+        jobs.append({
+            "id": job.get("id"),
+            "target_phone": job.get("target_phone"),
+            "event_type": job.get("event_type"),
+            "status": job.get("status"),
+            "channel": job.get("channel"),
+            "attempts": job.get("attempts"),
+            "last_error": job.get("last_error"),
+            "provider_message_id": job.get("provider_message_id"),
+            "has_image": bool(payload.get("image_url")),
+            "image_url": (payload.get("image_url") or "")[:100],
+            "task_id": payload.get("task_id"),
+            "title": (payload.get("title") or "")[:60],
+            "created_at": str(job.get("created_at", "")),
+            "updated_at": str(job.get("updated_at", "")),
+        })
+    return {"phone_query": phone, "count": len(jobs), "jobs": jobs}
+
+
 @router.get("/debug/whoami")
 async def debug_whoami(user: dict = Depends(_require_debug_access)):
     return {
