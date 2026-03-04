@@ -202,6 +202,9 @@ from contractor_ops.qc_router import router as qc_router, notif_router as qc_not
 app.include_router(qc_router)
 app.include_router(qc_notif_router)
 
+from contractor_ops.config_router import router as config_router
+app.include_router(config_router)
+
 from contractor_ops.debug_router import router as debug_router
 app.include_router(debug_router)
 
