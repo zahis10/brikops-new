@@ -519,9 +519,12 @@ const TaskDetailPage = () => {
         </Card>
 
         {(() => {
-          const heroImg = updates.find(u =>
-            u.update_type !== 'contractor_proof' && isImageAttachment(u)
-          );
+          const heroImg = updates.find(u => {
+            if (!isImageAttachment(u)) return false;
+            const within60s = task.created_at && u.created_at &&
+              Math.abs(new Date(u.created_at) - new Date(task.created_at)) <= 60000;
+            return within60s || u.update_type !== 'contractor_proof';
+          });
           if (!heroImg || !heroImg.attachment_url) return null;
           return (
             <Card className="p-0 overflow-hidden">

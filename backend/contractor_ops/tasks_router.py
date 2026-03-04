@@ -256,16 +256,17 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
             {'_id': 0, 'user_name': 1, 'company_id': 1}
         )
         if assignee_mem:
-            task_data['assignee_name'] = assignee_mem.get('user_name', '')
+            a_name = assignee_mem.get('user_name', '')
+            if not a_name:
+                a_user = await db.users.find_one({'id': task['assignee_id']}, {'_id': 0, 'name': 1})
+                a_name = a_user.get('name', '') if a_user else ''
+            task_data['assignee_name'] = a_name
             a_company_id = assignee_mem.get('company_id') or task.get('company_id')
             if a_company_id:
                 comp = await db.project_companies.find_one({'id': a_company_id, 'deletedAt': {'$exists': False}}, {'_id': 0, 'name': 1})
                 if not comp:
                     comp = await db.companies.find_one({'id': a_company_id}, {'_id': 0, 'name': 1})
                 task_data['assignee_company_name'] = comp.get('name', '') if comp else ''
-        else:
-            assignee_user = await db.users.find_one({'id': task['assignee_id']}, {'_id': 0, 'name': 1})
-            task_data['assignee_name'] = assignee_user.get('name', '') if assignee_user else ''
 
     return task_data
 

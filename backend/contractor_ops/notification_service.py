@@ -499,9 +499,15 @@ class NotificationEngine:
         payload = job.get('payload', {})
         if not payload.get('image_url') and job.get('task_id'):
             attachment = await self.db.task_updates.find_one(
-                {'task_id': job['task_id'], 'update_type': 'attachment'},
-                {'_id': 0, 'attachment_url': 1},
+                {'task_id': job['task_id'], 'update_type': 'attachment',
+                 'content_type': {'$regex': '^image/'}},
+                {'_id': 0, 'attachment_url': 1, 'content_type': 1},
             )
+            if not attachment:
+                attachment = await self.db.task_updates.find_one(
+                    {'task_id': job['task_id'], 'update_type': 'attachment'},
+                    {'_id': 0, 'attachment_url': 1, 'content_type': 1},
+                )
             if attachment and attachment.get('attachment_url'):
                 payload['image_url'] = _make_absolute_url(attachment['attachment_url'])
                 job['payload'] = payload

@@ -3,7 +3,7 @@ import { billingService } from '../services/api';
 import { getAllPlanCatalog } from '../utils/billingPlanCatalog';
 import { formatCurrency } from '../utils/billingLabels';
 import { toast } from 'sonner';
-import { Loader2, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, Check, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
 const CLIENT_TIERS = [
   { code: 'tier_s', label: 'עד 50 יחידות', max_units: 50, monthly_fee: 900 },
@@ -126,8 +126,18 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
     }
   };
 
-  if (!canManageBilling) return null;
-  if (projectList.length === 0) return null;
+  if (!canManageBilling) return (
+    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-600 flex items-center gap-2">
+      <Info className="w-4 h-4 text-slate-400 shrink-0" />
+      אין לך הרשאה לניהול חיוב. פנה לבעלי הארגון.
+    </div>
+  );
+  if (projectList.length === 0) return (
+    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-600 flex items-center gap-2">
+      <Info className="w-4 h-4 text-slate-400 shrink-0" />
+      אין פרויקטים עם חיוב. יש ליצור פרויקט ולהגדיר תמחור.
+    </div>
+  );
 
   return (
     <div className="space-y-4">
