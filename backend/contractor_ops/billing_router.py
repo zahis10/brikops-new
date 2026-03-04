@@ -368,7 +368,8 @@ async def billing_project(project_id: str, user: dict = Depends(get_current_user
 @router.patch("/billing/project/{project_id}")
 async def billing_project_update(project_id: str, request: Request, user: dict = Depends(get_current_user)):
     from contractor_ops.billing import (
-        BILLING_V1_ENABLED, check_org_billing_role, update_project_billing, recalc_org_total
+        BILLING_V1_ENABLED, check_org_billing_role, update_project_billing,
+        recalc_org_total, create_project_billing
     )
     if not BILLING_V1_ENABLED:
         raise HTTPException(status_code=404, detail='Not found')
@@ -392,14 +393,23 @@ async def billing_project_update(project_id: str, request: Request, user: dict =
             )
             if not pm_project:
                 raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט זה')
-    pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0, 'id': 1})
-    if not pb:
-        raise HTTPException(status_code=404, detail='אין רשומת חיוב לפרויקט')
     body = await request.json()
     allowed_fields = {'plan_id', 'contracted_units', 'status', 'setup_state', 'billing_contact_note'}
     updates = {k: v for k, v in body.items() if k in allowed_fields}
     if not updates:
         raise HTTPException(status_code=400, detail='לא סופקו שדות לעדכון')
+    pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0, 'id': 1})
+    if not pb:
+        try:
+            result = await create_project_billing(
+                project_id, org_id, user['id'],
+                plan_id=updates.get('plan_id'),
+                contracted_units=updates.get('contracted_units', 0)
+            )
+            await recalc_org_total(org_id)
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     try:
         result = await update_project_billing(pb['id'], updates, user['id'])
         await recalc_org_total(org_id)
