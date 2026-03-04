@@ -493,6 +493,21 @@ class NotificationEngine:
 
     async def process_job(self, job: dict) -> dict:
         job_id = job['id']
+        fresh_job = await self.db.notification_jobs.find_one({'id': job_id}, {'_id': 0})
+        if fresh_job:
+            job = fresh_job
+        payload = job.get('payload', {})
+        if not payload.get('image_url') and job.get('task_id'):
+            attachment = await self.db.task_updates.find_one(
+                {'task_id': job['task_id'], 'update_type': 'attachment'},
+                {'_id': 0, 'attachment_url': 1},
+            )
+            if attachment and attachment.get('attachment_url'):
+                payload['image_url'] = _make_absolute_url(attachment['attachment_url'])
+                job['payload'] = payload
+                await self.db.notification_jobs.update_one(
+                    {'id': job_id}, {'$set': {'payload': payload}}
+                )
         ts = _now()
         attempt = job.get('attempts', 0) + 1
         phone_masked = mask_phone(job.get('target_phone', '')) if job.get('target_phone') else ''

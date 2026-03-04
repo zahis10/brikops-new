@@ -14,6 +14,12 @@ from config import ENABLE_DEBUG_ENDPOINTS
 router = APIRouter(prefix="/api")
 
 
+async def _require_debug_access(user: dict = Depends(require_super_admin)):
+    if not ENABLE_DEBUG_ENDPOINTS:
+        raise HTTPException(status_code=404, detail="Not found")
+    return user
+
+
 def _resolve_git_sha():
     release = _os.environ.get("RELEASE_SHA", "")
     if release:
@@ -198,7 +204,7 @@ async def admin_diagnostics_role_conflicts(request: Request, user: dict = Depend
 
 
 @router.get("/debug/version")
-async def debug_version():
+async def debug_version(user: dict = Depends(_require_debug_access)):
     from config import APP_MODE, WHATSAPP_ENABLED, OTP_PROVIDER, OWNER_PHONE, SUPER_ADMIN_PHONE, ENABLE_QUICK_LOGIN, SMS_ENABLED, ENABLE_ONBOARDING_V2, ENABLE_AUTO_TRIAL
     from contractor_ops.billing import BILLING_V1_ENABLED
     resp = {
@@ -225,7 +231,7 @@ async def debug_version():
 
 
 @router.get("/debug/otp-status")
-async def debug_otp_status(user: dict = Depends(require_super_admin)):
+async def debug_otp_status(user: dict = Depends(_require_debug_access)):
     from config import OTP_PROVIDER, APP_MODE, WHATSAPP_ENABLED, SMS_ENABLED
     from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID
     from config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_MESSAGING_SERVICE_SID
@@ -250,9 +256,7 @@ async def debug_otp_status(user: dict = Depends(require_super_admin)):
 
 
 @router.get("/debug/whatsapp")
-async def debug_whatsapp(request: Request, user: dict = Depends(require_stepup)):
-    if not ENABLE_DEBUG_ENDPOINTS:
-        raise HTTPException(status_code=404, detail="Not found")
+async def debug_whatsapp(request: Request, user: dict = Depends(_require_debug_access)):
     from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID
     import httpx
 
@@ -303,10 +307,7 @@ async def debug_whatsapp(request: Request, user: dict = Depends(require_stepup))
 
 
 @router.get("/debug/whoami")
-async def debug_whoami(user: dict = Depends(get_current_user)):
-    import os as _os_w
-    if _os_w.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def debug_whoami(user: dict = Depends(_require_debug_access)):
     return {
         "id": user.get("id"),
         "name": user.get("name"),
@@ -318,10 +319,7 @@ async def debug_whoami(user: dict = Depends(get_current_user)):
 
 
 @router.get("/debug/m6-proof")
-async def debug_m6_proof():
-    import os as _os2
-    if _os2.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def debug_m6_proof(user: dict = Depends(_require_debug_access)):
     db = get_db()
 
     proj = await db.projects.find_one({}, {'_id': 0, 'id': 1, 'name': 1})
@@ -366,10 +364,7 @@ async def debug_m6_proof():
 
 
 @router.get("/debug/m411-proof")
-async def debug_m411_proof():
-    import os as _os2
-    if _os2.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def debug_m411_proof(user: dict = Depends(_require_debug_access)):
     db = get_db()
 
     proj = await db.projects.find_one({}, {'_id': 0, 'id': 1, 'name': 1})
@@ -405,11 +400,8 @@ async def debug_m411_proof():
 
 
 @router.get("/debug/unit-plans-proof")
-async def debug_unit_plans_proof():
-    import os as _os2
+async def debug_unit_plans_proof(user: dict = Depends(_require_debug_access)):
     import httpx as _httpx
-    if _os2.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
 
     api = 'http://localhost:8000'
     results = {}
@@ -476,10 +468,7 @@ async def debug_unit_plans_proof():
 
 
 @router.get("/debug/phone-rbac-proof")
-async def debug_phone_rbac_proof(project_id: Optional[str] = Query(None)):
-    import os as _os2
-    if _os2.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def debug_phone_rbac_proof(project_id: Optional[str] = Query(None), user: dict = Depends(_require_debug_access)):
     db = get_db()
 
     if not project_id:
@@ -509,10 +498,7 @@ async def debug_phone_rbac_proof(project_id: Optional[str] = Query(None)):
 
 
 @router.get("/debug/m47-proof")
-async def m47_proof():
-    import os as _os2
-    if _os2.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def m47_proof(user: dict = Depends(_require_debug_access)):
     from contractor_ops.bucket_utils import BUCKET_LABELS
     db = get_db()
 
@@ -565,10 +551,7 @@ async def m47_proof():
 
 
 @router.get("/debug/m45-proof")
-async def m45_proof():
-    import os
-    if os.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def m45_proof(user: dict = Depends(_require_debug_access)):
     from contractor_ops.bucket_utils import BUCKET_LABELS
     from contractor_ops.phone_utils import normalize_israeli_phone
 
@@ -631,10 +614,7 @@ async def m45_proof():
 
 
 @router.get("/debug/m4-proof")
-async def m4_proof_page():
-    import os
-    if os.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def m4_proof_page(user: dict = Depends(_require_debug_access)):
     from starlette.responses import HTMLResponse
     import json as json_module
     db = get_db()
@@ -759,10 +739,7 @@ h2{{color:#1e293b;border-bottom:2px solid #f59e0b;padding-bottom:8px}}
 
 
 @router.get("/debug/m4-proof-bottom")
-async def m4_proof_page_bottom():
-    import os
-    if os.environ.get("APP_MODE", "dev") != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+async def m4_proof_page_bottom(user: dict = Depends(_require_debug_access)):
     from starlette.responses import HTMLResponse
     import json as json_module
     db = get_db()

@@ -425,7 +425,15 @@ const TaskDetailPage = () => {
 
   const status = STATUS_CONFIG[task.status] || STATUS_CONFIG.open;
   const priority = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
-  const allAttachments = updates.filter(u => u.update_type === 'attachment');
+  const isImageAttachment = (u) => {
+    if (u.update_type !== 'attachment') return false;
+    const ct = (u.content_type || '').toLowerCase();
+    const fn = (u.file_name || u.content || '').toLowerCase();
+    if (fn.endsWith('.bin') || fn.endsWith('.txt')) return false;
+    if (ct && !ct.startsWith('image/')) return false;
+    return true;
+  };
+  const allAttachments = updates.filter(isImageAttachment);
   const attachments = allAttachments.filter(a => a.user_id === task.assignee_id);
   const previousAssigneeAttachments = allAttachments.filter(a => a.user_id !== task.assignee_id);
   const comments = updates.filter(u => u.update_type !== 'attachment');
@@ -439,7 +447,7 @@ const TaskDetailPage = () => {
   const showManagerDecision = isManagement && task.status === 'pending_manager_approval';
 
   const timelineEvents = updates
-    .filter(u => u.update_type === 'status_change' || u.update_type === 'attachment')
+    .filter(u => u.update_type === 'status_change' || isImageAttachment(u))
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
   const hasCreatedEvent = timelineEvents.length > 0;
@@ -510,6 +518,24 @@ const TaskDetailPage = () => {
           )}
         </Card>
 
+        {(() => {
+          const heroImg = updates.find(u =>
+            u.update_type !== 'contractor_proof' && isImageAttachment(u)
+          );
+          if (!heroImg || !heroImg.attachment_url) return null;
+          return (
+            <Card className="p-0 overflow-hidden">
+              <img
+                src={heroImg.attachment_url}
+                alt={task.title}
+                className="w-full max-h-[400px] object-cover cursor-pointer"
+                style={{ borderRadius: 'inherit' }}
+                onClick={() => setImageModal(heroImg.attachment_url)}
+              />
+            </Card>
+          );
+        })()}
+
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
             <Building2 className="w-4 h-4" />
@@ -556,14 +582,14 @@ const TaskDetailPage = () => {
               <div className="flex items-center gap-2">
                 <Briefcase className="w-4 h-4 text-slate-400" />
                 <span className="text-slate-600">חברה:</span>
-                <span className="font-medium">{getCompanyName(task.company_id)}</span>
+                <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || ''}</span>
               </div>
               {task.assignee_id && (
                 <div className="flex items-center gap-2">
                   <User className="w-4 h-4 text-slate-400" />
                   <span className="text-slate-600">קבלן:</span>
                   <span className="font-medium">
-                    {projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || task.assignee_id}
+                    {task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך'}
                   </span>
                 </div>
               )}
@@ -650,7 +676,7 @@ const TaskDetailPage = () => {
                       disabled={taskIsClosed || savingField === 'assignee'}
                       label={savingField === 'assignee' ? 'שומר...' : (
                         task.assignee_id
-                          ? (projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן')
+                          ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך')
                           : 'לא שויך'
                       )}
                     />

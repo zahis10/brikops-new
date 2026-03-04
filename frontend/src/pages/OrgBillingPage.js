@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil } from 'lucide-react';
 import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
+import UpgradeWizard from '../components/UpgradeWizard';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
@@ -959,6 +960,21 @@ export default function OrgBillingPage() {
                   ? 'התשלום פג תוקף — נדרש חידוש כדי לשחזר גישה מלאה'
                   : 'אין מנוי פעיל — נדרש שדרוג'}
             </div>
+          )}
+
+          {needsUpgrade && data.projects?.length > 0 && (
+            <UpgradeWizard
+              orgId={orgId}
+              projects={data.projects}
+              canManageBilling={canManageBilling}
+              onPaymentRequested={(result) => {
+                setPaymentRequestResult(result);
+                loadPaymentRequests(paymentRequestsFilter);
+                billingService.orgBilling(orgId).then(setData).catch(() => {});
+              }}
+              renewalCycle={renewalCycle}
+              onCycleChange={(cycle) => setRenewalCycle(cycle)}
+            />
           )}
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">

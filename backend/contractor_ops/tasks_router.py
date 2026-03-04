@@ -249,7 +249,24 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     if task.get('unit_id'):
         un = await db.units.find_one({'id': task['unit_id']}, {'_id': 0})
         task_data['unit_name'] = (un.get('display_label') or un.get('name') or un.get('unit_no') or str(un.get('number', ''))) if un else ''
-    
+
+    if task.get('assignee_id'):
+        assignee_mem = await db.project_memberships.find_one(
+            {'project_id': task['project_id'], 'user_id': task['assignee_id']},
+            {'_id': 0, 'user_name': 1, 'company_id': 1}
+        )
+        if assignee_mem:
+            task_data['assignee_name'] = assignee_mem.get('user_name', '')
+            a_company_id = assignee_mem.get('company_id') or task.get('company_id')
+            if a_company_id:
+                comp = await db.project_companies.find_one({'id': a_company_id, 'deletedAt': {'$exists': False}}, {'_id': 0, 'name': 1})
+                if not comp:
+                    comp = await db.companies.find_one({'id': a_company_id}, {'_id': 0, 'name': 1})
+                task_data['assignee_company_name'] = comp.get('name', '') if comp else ''
+        else:
+            assignee_user = await db.users.find_one({'id': task['assignee_id']}, {'_id': 0, 'name': 1})
+            task_data['assignee_name'] = assignee_user.get('name', '') if assignee_user else ''
+
     return task_data
 
 
@@ -770,6 +787,7 @@ async def upload_task_attachment(task_id: str, file: UploadFile = File(...), use
         'id': update_id, 'task_id': task_id, 'user_id': user['id'],
         'user_name': user.get('name', ''), 'content': f'Attachment: {file.filename}',
         'update_type': 'attachment', 'attachment_url': result.file_url,
+        'content_type': file.content_type or '', 'file_name': file.filename or '',
         'created_at': ts,
     }
     await db.task_updates.insert_one(doc)
