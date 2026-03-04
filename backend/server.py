@@ -223,6 +223,9 @@ app.include_router(stats_router)
 from contractor_ops.auth_router import router as auth_router
 app.include_router(auth_router)
 
+from contractor_ops.projects_router import router as projects_router
+app.include_router(projects_router)
+
 from contractor_ops.ownership_transfer import (
     create_transfer_router, set_transfer_db, set_transfer_sms_client,
     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,
