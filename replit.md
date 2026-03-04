@@ -22,7 +22,8 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Framework**: Python FastAPI, using Uvicorn.
 -   **Database**: MongoDB.
 -   **Router Architecture**: The main `router.py` has been refactored into sub-routers (all use `prefix="/api"`):
-    -   `debug_router.py`: 16 debug/health/admin endpoints.
+    -   `config_router.py`: 1 public endpoint (`/api/config/features`) returning feature flags (no auth required).
+    -   `debug_router.py`: 16 debug/health/admin endpoints (all gated behind `require_super_admin` except `/api/health`).
     -   `excel_router.py`: 3 excel/migration endpoints.
     -   `plans_router.py`: 7 plans/disciplines endpoints.
     -   `invites_router.py`: 7 invite/user/contractor-profile endpoints.

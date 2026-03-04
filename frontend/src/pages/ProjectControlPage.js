@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
-  sortIndexService, versionService, archiveService, stepupService, isStepupError, billingService,
+  sortIndexService, versionService, configService, archiveService, stepupService, isStepupError, billingService,
   qcService
 } from '../services/api';
 import { toast } from 'sonner';
@@ -2520,9 +2520,11 @@ const ProjectControlPage = () => {
   }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades]);
 
   useEffect(() => {
+    configService.getFeatures().then(data => {
+      setBillingEnabled(!!data.feature_flags?.billing_v1_enabled);
+    }).catch(() => {});
     versionService.get().then(data => {
       setGitSha(data.git_sha || data.sha || data.version || '');
-      setBillingEnabled(!!data.feature_flags?.billing_v1_enabled);
     }).catch(() => {});
   }, []);
 

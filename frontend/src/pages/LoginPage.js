@@ -50,10 +50,9 @@ const LoginPage = () => {
 
   useEffect(() => {
     const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-    fetch(`${BACKEND_URL}/api/debug/version`)
+    fetch(`${BACKEND_URL}/api/config/features`)
       .then(r => r.json())
       .then(d => {
-        setGitSha(d.git_sha || '');
         setAppMode(d.feature_flags?.app_mode || '');
         setQuickLoginEnabled(d.feature_flags?.enable_quick_login === true);
       })

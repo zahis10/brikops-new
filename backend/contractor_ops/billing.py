@@ -906,12 +906,29 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
     )
 
     projects = []
+    billed_project_ids = set()
     for pb in project_billings:
         proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'id': 1, 'name': 1})
         projects.append({
             **pb,
             'project_name': proj.get('name', '') if proj else '',
         })
+        billed_project_ids.add(pb['project_id'])
+
+    all_org_projects = await db.projects.find(
+        {'org_id': org_id}, {'_id': 0, 'id': 1, 'name': 1}
+    ).to_list(1000)
+    for proj in all_org_projects:
+        if proj['id'] not in billed_project_ids:
+            projects.append({
+                'project_id': proj['id'],
+                'org_id': org_id,
+                'project_name': proj.get('name', ''),
+                'plan_id': None,
+                'contracted_units': 0,
+                'status': None,
+                'monthly_total': 0,
+            })
 
     org_members = await db.organization_memberships.find(
         {'org_id': org_id, 'role': {'$in': list(ORG_BILLING_ROLES)}},

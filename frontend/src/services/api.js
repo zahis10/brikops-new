@@ -406,7 +406,14 @@ export const sortIndexService = {
 
 export const versionService = {
   async get() {
-    const response = await axios.get(`${API}/debug/version`);
+    const response = await axios.get(`${API}/debug/version`, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
+export const configService = {
+  async getFeatures() {
+    const response = await axios.get(`${API}/config/features`);
     return response.data;
   },
 };
