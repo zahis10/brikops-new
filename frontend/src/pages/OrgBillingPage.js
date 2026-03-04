@@ -3,7 +3,8 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { billingService, orgMemberService, invoiceService, projectService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
-import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock } from 'lucide-react';
+import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil } from 'lucide-react';
+import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
@@ -84,7 +85,10 @@ export default function OrgBillingPage() {
   const [membersDenied, setMembersDenied] = useState(false);
   const [changingRole, setChangingRole] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [editingProjectBilling, setEditingProjectBilling] = useState(null);
+  const [highlightedProjectId, setHighlightedProjectId] = useState(null);
   const responsibilityRef = useRef(null);
+  const projectsSectionRef = useRef(null);
 
   const [invoices, setInvoices] = useState([]);
   const [invoicesLoading, setInvoicesLoading] = useState(false);
@@ -375,7 +379,15 @@ export default function OrgBillingPage() {
         loadPaymentRequests(paymentRequestsFilter);
       }
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת בקשת תשלום');
+      const detail = err.response?.data?.detail || 'שגיאה ביצירת בקשת תשלום';
+      if (detail.includes('₪0') || detail.includes('0.00') || detail.toLowerCase().includes('amount is zero')) {
+        toast('הסכום לתשלום הוא ₪0. יש לעדכן את תמחור הפרויקטים לפני יצירת בקשה.', { icon: '⚠️', duration: 5000 });
+        setTimeout(() => {
+          projectsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+      } else {
+        toast.error(detail);
+      }
     } finally {
       setPaymentRequestLoading(false);
     }
@@ -508,7 +520,15 @@ export default function OrgBillingPage() {
         loadPaymentRequests(paymentRequestsFilter);
       }
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת בקשת תשלום');
+      const detail = err.response?.data?.detail || 'שגיאה ביצירת בקשת תשלום';
+      if (detail.includes('₪0') || detail.includes('0.00') || detail.toLowerCase().includes('amount is zero')) {
+        toast('הסכום לתשלום הוא ₪0. יש לעדכן את תמחור הפרויקטים לפני יצירת בקשה.', { icon: '⚠️', duration: 5000 });
+        setTimeout(() => {
+          projectsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+      } else {
+        toast.error(detail);
+      }
     } finally {
       setPaymentRequestLoading(false);
     }
@@ -1380,13 +1400,13 @@ export default function OrgBillingPage() {
           סה״כ החיוב הארגוני מחושב כסכום החיוב החודשי של כל הפרויקטים הפעילים בארגון.
         </div>
 
-        <h2 className="text-lg font-semibold text-slate-800">פרויקטים ({data.projects?.length || 0})</h2>
+        <h2 ref={projectsSectionRef} className="text-lg font-semibold text-slate-800">פרויקטים ({data.projects?.length || 0})</h2>
         {data.projects?.length > 0 ? (
           <div className="space-y-3">
             {data.projects.map(pb => {
               const badge = getPlanBadge(pb.plan_id);
               return (
-                <div key={pb.project_id} className="bg-slate-50 rounded-lg p-4 space-y-2">
+                <div key={pb.project_id} data-project-id={pb.project_id} className={`bg-slate-50 rounded-lg p-4 space-y-2 transition-all ${highlightedProjectId === pb.project_id ? 'billing-highlight-flash' : ''}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-slate-700">{pb.project_name || pb.project_id}</span>
@@ -1396,7 +1416,18 @@ export default function OrgBillingPage() {
                         </span>
                       )}
                     </div>
-                    <span className="text-sm font-bold text-slate-900 flex-shrink-0">{formatCurrency(pb.monthly_total)}/חודש</span>
+                    <div className="flex items-center gap-2">
+                      {(canManageBilling || isSA) && (
+                        <button
+                          onClick={() => setEditingProjectBilling(pb)}
+                          className="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded transition-colors"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          ערוך
+                        </button>
+                      )}
+                      <span className="text-sm font-bold text-slate-900 flex-shrink-0">{formatCurrency(pb.monthly_total)}/חודש</span>
+                    </div>
                   </div>
                   {pb.plan_id && (
                     <div className="flex items-center gap-2">
@@ -1723,7 +1754,27 @@ export default function OrgBillingPage() {
           </div>
         </div>
       )}
-      <div className="text-center text-xs text-slate-300 mt-6">build 2026-03-03-v1</div>
+      <ProjectBillingEditModal
+        open={!!editingProjectBilling}
+        onClose={() => setEditingProjectBilling(null)}
+        projectBilling={editingProjectBilling}
+        onSaved={async (response) => {
+          try {
+            const updated = await billingService.orgBilling(orgId);
+            setData(updated);
+            const savedId = editingProjectBilling?.project_id;
+            if (savedId) {
+              setHighlightedProjectId(savedId);
+              setTimeout(() => {
+                const el = document.querySelector(`[data-project-id="${savedId}"]`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }, 100);
+              setTimeout(() => setHighlightedProjectId(null), 2500);
+            }
+          } catch (e) {}
+        }}
+      />
+      <div className="text-center text-xs text-slate-300 mt-6">build 2026-03-04-v1</div>
     </div>
   );
 }

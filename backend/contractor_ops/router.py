@@ -755,7 +755,16 @@ async def billing_project_update(project_id: str, request: Request, user: dict =
     if not _is_super_admin(user):
         billing_role = await check_org_billing_role(user['id'], org_id)
         if not billing_role:
-            raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט')
+            from contractor_ops.billing import check_org_pm_role
+            is_pm = await check_org_pm_role(user['id'], org_id)
+            if not is_pm:
+                raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט')
+            pm_project = await db.project_memberships.find_one(
+                {'user_id': user['id'], 'project_id': project_id, 'role': 'project_manager'},
+                {'_id': 0}
+            )
+            if not pm_project:
+                raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט זה')
     pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0, 'id': 1})
     if not pb:
         raise HTTPException(status_code=404, detail='אין רשומת חיוב לפרויקט')
