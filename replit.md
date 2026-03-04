@@ -23,7 +23,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Database**: MongoDB.
 -   **Router Architecture**: The main `router.py` has been refactored into sub-routers (all use `prefix="/api"`):
     -   `config_router.py`: 1 public endpoint (`/api/config/features`) returning feature flags (no auth required).
-    -   `debug_router.py`: 16 debug/health/admin endpoints (all gated behind `require_super_admin` except `/api/health`).
+    -   `debug_router.py`: 17 debug/health/admin endpoints (all gated behind `require_super_admin` except `/api/health`). Includes `POST /debug/whatsapp-test` (SA-only, bypasses WHATSAPP_ENABLED flag for testing).
     -   `excel_router.py`: 3 excel/migration endpoints.
     -   `plans_router.py`: 7 plans/disciplines endpoints.
     -   `invites_router.py`: 7 invite/user/contractor-profile endpoints.

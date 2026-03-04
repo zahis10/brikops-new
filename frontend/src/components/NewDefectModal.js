@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { projectService, buildingService, floorService, companyService, userService } from '../services/api';
+import { projectService, buildingService, floorService, projectCompanyService, userService } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -161,10 +161,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       .finally(() => setLoading(l => ({ ...l, projects: false })));
   }, []);
 
-  const loadCompanies = useCallback(() => {
+  const loadCompanies = useCallback((pid) => {
+    if (!pid) return;
     setLoading(l => ({ ...l, companies: true }));
     setLoadError(e => ({ ...e, companies: false }));
-    companyService.list()
+    projectCompanyService.list(pid)
       .then(data => { setCompanies(normalizeList(data)); })
       .catch(err => { console.error('Failed to load companies:', err); toast.error('שגיאה בטעינת חברות'); setLoadError(e => ({ ...e, companies: true })); })
       .finally(() => setLoading(l => ({ ...l, companies: false })));
@@ -177,11 +178,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         setBuildingId(prefillData.building_id);
         setFloorId(prefillData.floor_id);
         setUnitId(prefillData.unit_id);
+        loadCompanies(prefillData.project_id);
       }
       if (!hasPrefill) {
         loadProjects();
       }
-      loadCompanies();
     }
   }, [isOpen, hasPrefill, prefillData, loadProjects, loadCompanies]);
 
@@ -220,13 +221,16 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setBuildingId('');
     setFloorId('');
     setUnitId('');
+    setCompanyId('');
     setBuildings([]);
     setFloors([]);
     setUnits([]);
+    setCompanies([]);
     if (v) {
       loadBuildings(v);
+      loadCompanies(v);
     }
-  }, [loadBuildings]);
+  }, [loadBuildings, loadCompanies]);
 
   const handleBuildingChange = useCallback((v) => {
     setBuildingId(v);
