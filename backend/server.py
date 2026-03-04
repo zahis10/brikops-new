@@ -211,6 +211,9 @@ app.include_router(excel_router)
 from contractor_ops.plans_router import router as plans_router
 app.include_router(plans_router)
 
+from contractor_ops.invites_router import router as invites_router
+app.include_router(invites_router)
+
 from contractor_ops.ownership_transfer import (
     create_transfer_router, set_transfer_db, set_transfer_sms_client,
     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,
