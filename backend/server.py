@@ -205,6 +205,9 @@ app.include_router(qc_notif_router)
 from contractor_ops.debug_router import router as debug_router
 app.include_router(debug_router)
 
+from contractor_ops.excel_router import router as excel_router
+app.include_router(excel_router)
+
 from contractor_ops.ownership_transfer import (
     create_transfer_router, set_transfer_db, set_transfer_sms_client,
     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,
