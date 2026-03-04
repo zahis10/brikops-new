@@ -355,6 +355,8 @@ async def get_billing_info(user_id: str) -> dict:
     is_pm = False
     if not can_manage:
         is_pm = await check_org_pm_role(user_id, org_id)
+        if is_pm:
+            can_manage = True
 
     mem = await db.organization_memberships.find_one(
         {'org_id': org_id, 'user_id': user_id}, {'_id': 0, 'role': 1}
@@ -938,8 +940,11 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         can_manage = is_sa or (billing_role in ('org_admin', 'billing_admin', 'owner'))
         if not can_manage:
             is_pm = await check_org_pm_role(user_id, org_id)
-            owner_user = await db.users.find_one({'id': org.get('owner_user_id')}, {'_id': 0, 'name': 1})
-            owner_name = owner_user.get('name', '') if owner_user else None
+            if is_pm:
+                can_manage = True
+            else:
+                owner_user = await db.users.find_one({'id': org.get('owner_user_id')}, {'_id': 0, 'name': 1})
+                owner_name = owner_user.get('name', '') if owner_user else None
 
     pc = org.get('payment_config') or {}
     payment_config = {

@@ -7,7 +7,8 @@ import {
 } from '../utils/billingLabels';
 import { getPlanBadge } from '../utils/billingPlanCatalog';
 import { getBillingHubUrl } from '../utils/billingHub';
-import { ExternalLink, Info, Clock } from 'lucide-react';
+import { ExternalLink, Info, Clock, Pencil } from 'lucide-react';
+import ProjectBillingEditModal from './ProjectBillingEditModal';
 
 function PlanBadge({ planId }) {
   const badge = getPlanBadge(planId);
@@ -22,11 +23,12 @@ function PlanBadge({ planId }) {
   );
 }
 
-export default function ProjectBillingCard({ projectId, userRole }) {
+export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!projectId) return;
@@ -172,6 +174,16 @@ export default function ProjectBillingCard({ projectId, userRole }) {
         </div>
       )}
 
+      {canEdit && billing && (
+        <button
+          onClick={() => setEditModalOpen(true)}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-amber-300 text-amber-700 hover:bg-amber-50 font-medium rounded-lg text-sm transition-colors"
+        >
+          <Pencil className="w-4 h-4" />
+          ערוך תמחור
+        </button>
+      )}
+
       {data.org_id && (
         <button
           onClick={() => navigate(getBillingHubUrl({ orgId: data.org_id, projectId }))}
@@ -180,6 +192,21 @@ export default function ProjectBillingCard({ projectId, userRole }) {
           <ExternalLink className="w-4 h-4" />
           מעבר לניהול חיוב
         </button>
+      )}
+
+      {canEdit && billing && (
+        <ProjectBillingEditModal
+          open={editModalOpen}
+          onClose={() => setEditModalOpen(false)}
+          projectBilling={{
+            project_id: projectId,
+            project_name: data.project_name || projectId,
+            plan_id: billing.plan_id,
+            contracted_units: billing.contracted_units,
+            monthly_total: billing.monthly_total,
+          }}
+          onSaved={() => loadData()}
+        />
       )}
     </div>
   );

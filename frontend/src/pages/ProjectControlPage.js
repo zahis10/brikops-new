@@ -2643,7 +2643,7 @@ const ProjectControlPage = () => {
         )}
 
         {activeTab === 'billing' && billingEnabled && (
-          <ProjectBillingCard projectId={projectId} userRole={myRole} />
+          <ProjectBillingCard projectId={projectId} userRole={myRole} canEdit={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
         )}
       </div>
 

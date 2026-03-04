@@ -685,6 +685,10 @@ export const billingService = {
     const response = await axios.patch(`${API}/billing/project/${projectId}`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async listActivePlans() {
+    const response = await axios.get(`${API}/billing/plans/active`, { headers: getAuthHeader() });
+    return response.data;
+  },
   async handoffRequest(projectId, note) {
     const response = await axios.post(`${API}/billing/project/${projectId}/handoff-request`, { note }, { headers: getAuthHeader() });
     return response.data;

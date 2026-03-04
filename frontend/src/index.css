@@ -137,3 +137,12 @@ code {
 .renew-highlight {
   animation: renewPulse 0.8s ease-in-out 2;
 }
+
+@keyframes billingFlash {
+  0% { background-color: rgb(254 243 199); box-shadow: 0 0 0 2px rgb(245 158 11 / 0.4); }
+  100% { background-color: rgb(248 250 252); box-shadow: none; }
+}
+
+.billing-highlight-flash {
+  animation: billingFlash 2s ease-out forwards;
+}
