@@ -204,7 +204,7 @@ async def admin_diagnostics_role_conflicts(request: Request, user: dict = Depend
 
 
 @router.get("/debug/version")
-async def debug_version(user: dict = Depends(_require_debug_access)):
+async def debug_version():
     from config import APP_MODE, WHATSAPP_ENABLED, OTP_PROVIDER, OWNER_PHONE, SUPER_ADMIN_PHONE, ENABLE_QUICK_LOGIN, SMS_ENABLED, ENABLE_ONBOARDING_V2, ENABLE_AUTO_TRIAL
     from contractor_ops.billing import BILLING_V1_ENABLED
     resp = {
