@@ -1,0 +1,942 @@
+import re
+import uuid
+import secrets
+from typing import Optional, List
+
+from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from contractor_ops.router import (
+    get_db, get_current_user, require_roles,
+    _check_project_access, _check_project_read_access,
+    _audit, _now, _is_super_admin, _priority_sort_key, logger,
+)
+from contractor_ops.billing import get_user_org, get_subscription
+from contractor_ops.schemas import (
+    Project, Building, Floor, Unit, Task,
+    BulkFloorRequest, BulkUnitRequest, InsertFloorRequest,
+)
+
+router = APIRouter(prefix="/api")
+
+
+def _natural_sort_key(name: str):
+    parts = re.split(r'(\d+)', name or '')
+    result = []
+    for p in parts:
+        try:
+            result.append((0, int(p)))
+        except ValueError:
+            result.append((1, p))
+    return result
+
+
+def _is_numeric_unit(unit_no: str) -> bool:
+    try:
+        int(unit_no)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+async def _compute_building_resequence(db, building_id: str):
+    floors = await db.floors.find({'building_id': building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+    floor_changes = []
+    unit_changes = []
+    global_counter = 0
+
+    for idx, f in enumerate(floors):
+        new_si = (idx + 1) * 1000
+        old_si = f.get('sort_index', 0)
+        if old_si != new_si:
+            floor_changes.append({
+                'type': 'floor',
+                'id': f['id'],
+                'name': f['name'],
+                'old_sort_index': old_si,
+                'new_sort_index': new_si,
+            })
+        units = await db.units.find({'floor_id': f['id']}, {'_id': 0}).sort('sort_index', 1).to_list(10000)
+        numeric_in_floor = 0
+        for uidx, u in enumerate(units):
+            if _is_numeric_unit(u['unit_no']):
+                global_counter += 1
+                numeric_in_floor += 1
+                new_unit_no = str(global_counter)
+                new_si_u = numeric_in_floor * 10
+                if u['unit_no'] != new_unit_no:
+                    unit_changes.append({
+                        'type': 'unit',
+                        'id': u['id'],
+                        'floor_id': f['id'],
+                        'floor_name': f['name'],
+                        'old_unit_no': u['unit_no'],
+                        'new_unit_no': new_unit_no,
+                        'new_sort_index': new_si_u,
+                        'new_display_label': new_unit_no,
+                    })
+                else:
+                    pass
+            else:
+                pass
+
+    return floor_changes, unit_changes
+
+
+@router.post("/projects", response_model=Project)
+async def create_project(project: Project, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    if not _is_super_admin(user):
+        org = await get_user_org(user['id'])
+        if org:
+            sub = await get_subscription(org['id'])
+            if sub and sub.get('status') == 'trialing':
+                existing_count = await db.projects.count_documents({'org_id': org['id']})
+                if existing_count >= 1:
+                    raise HTTPException(
+                        status_code=403,
+                        detail='בתקופת הניסיון ניתן ליצור פרויקט אחד בלבד. לפרויקטים נוספים יש לשדרג את המנוי.'
+                    )
+    existing = await db.projects.find_one({'code': project.code})
+    if existing:
+        raise HTTPException(status_code=400, detail='Project code already exists')
+    project_id = str(uuid.uuid4())
+    ts = _now()
+    org = await get_user_org(user['id'])
+    join_code = None
+    for _jc_attempt in range(10):
+        candidate = f"BRK-{secrets.randbelow(9000) + 1000}"
+        if not await db.projects.find_one({'join_code': candidate}):
+            join_code = candidate
+            break
+    doc = {
+        'id': project_id, 'name': project.name, 'code': project.code,
+        'description': project.description, 'status': project.status.value if project.status else 'active',
+        'client_name': project.client_name, 'start_date': project.start_date,
+        'end_date': project.end_date, 'created_by': user['id'],
+        'org_id': org['id'] if org else None,
+        'join_code': join_code,
+        'created_at': ts, 'updated_at': ts,
+    }
+    await db.projects.insert_one(doc)
+    await db.project_memberships.update_one(
+        {'project_id': project_id, 'user_id': user['id']},
+        {'$set': {'id': str(uuid.uuid4()), 'project_id': project_id, 'user_id': user['id'], 'role': 'project_manager', 'created_at': ts}},
+        upsert=True
+    )
+    await _audit('project', project_id, 'create', user['id'], {'name': project.name, 'code': project.code})
+    return Project(**{k: v for k, v in doc.items() if k != '_id'})
+
+
+@router.post("/projects/{project_id}/assign-pm")
+async def assign_pm(project_id: str, body: dict, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    target_user_id = body.get('user_id')
+    if not target_user_id:
+        raise HTTPException(status_code=400, detail='user_id is required')
+    target = await db.users.find_one({'id': target_user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail='User not found')
+    await db.users.update_one(
+        {'id': target_user_id},
+        {'$set': {'role': 'project_manager', 'project_id': project_id, 'updated_at': _now()}}
+    )
+    await db.project_memberships.update_one(
+        {'project_id': project_id, 'user_id': target_user_id},
+        {'$set': {'id': str(uuid.uuid4()), 'project_id': project_id, 'user_id': target_user_id, 'role': 'project_manager', 'created_at': _now()}},
+        upsert=True
+    )
+    await _audit('user', target_user_id, 'assign_pm', user['id'], {'project_id': project_id, 'project_name': project.get('name')})
+    return {'success': True, 'message': f'User {target.get("name")} assigned as PM to project {project.get("name")}'}
+
+
+@router.get("/projects/{project_id}/available-pms")
+async def list_available_pms(project_id: str, search: Optional[str] = Query(None), user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    existing_pm_ids = await db.project_memberships.distinct('user_id', {
+        'project_id': project_id, 'role': 'project_manager'
+    })
+    query = {
+        'id': {'$nin': existing_pm_ids},
+        'user_status': {'$nin': ['rejected', 'suspended', 'pending_pm_approval']},
+    }
+    users = await db.users.find(query, {'_id': 0, 'password_hash': 0}).to_list(500)
+    if search:
+        search_lower = search.lower()
+        users = [u for u in users if
+                 search_lower in (u.get('name', '') or '').lower() or
+                 search_lower in (u.get('email', '') or '').lower() or
+                 search_lower in (u.get('phone_e164', '') or '').lower() or
+                 search_lower in (u.get('phone', '') or '').lower()]
+    return users
+
+
+@router.get("/projects")
+async def list_projects(user: dict = Depends(get_current_user)):
+    db = get_db()
+    if _is_super_admin(user):
+        projects = await db.projects.find({}, {'_id': 0}).to_list(1000)
+        enriched = []
+        for p in projects:
+            proj = Project(**p).dict()
+            proj['my_role'] = 'project_manager'
+            proj['my_sub_role'] = None
+            enriched.append(proj)
+        return enriched
+    else:
+        memberships = await db.project_memberships.find({'user_id': user['id']}, {'_id': 0}).to_list(1000)
+        membership_map = {m['project_id']: m for m in memberships}
+        project_ids = list(membership_map.keys())
+        if not project_ids:
+            return []
+        projects = await db.projects.find({'id': {'$in': project_ids}}, {'_id': 0}).to_list(1000)
+        enriched = []
+        for p in projects:
+            proj = Project(**p).dict()
+            mem = membership_map.get(p['id'], {})
+            proj['my_role'] = mem.get('role', 'viewer')
+            proj['my_sub_role'] = mem.get('sub_role', None)
+            if mem.get('role') == 'contractor':
+                proj['my_trade_key'] = mem.get('contractor_trade_key')
+            enriched.append(proj)
+        return enriched
+
+
+@router.get("/projects/{project_id}")
+async def get_project(project_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    await _check_project_read_access(user, project_id)
+    proj = Project(**project).dict()
+    if _is_super_admin(user):
+        proj['my_role'] = 'project_manager'
+        proj['my_sub_role'] = None
+    else:
+        membership = await db.project_memberships.find_one(
+            {'user_id': user['id'], 'project_id': project_id}, {'_id': 0}
+        )
+        proj['my_role'] = membership.get('role', 'viewer') if membership else 'viewer'
+        proj['my_sub_role'] = membership.get('sub_role', None) if membership else None
+        if membership and membership.get('role') == 'contractor':
+            proj['my_trade_key'] = membership.get('contractor_trade_key')
+    return proj
+
+
+@router.post("/projects/{project_id}/buildings", response_model=Building)
+async def create_building(project_id: str, building: Building, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    await _check_project_access(user, project_id)
+    building_id = str(uuid.uuid4())
+    doc = {
+        'id': building_id, 'project_id': project_id, 'name': building.name,
+        'code': building.code, 'floors_count': building.floors_count or 0,
+        'created_at': _now(),
+    }
+    await db.buildings.insert_one(doc)
+    await _audit('building', building_id, 'create', user['id'], {'project_id': project_id, 'name': building.name})
+    return Building(**{k: v for k, v in doc.items() if k != '_id'})
+
+
+@router.get("/projects/{project_id}/buildings", response_model=List[Building])
+async def list_buildings(project_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    buildings = await db.buildings.find({'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(1000)
+    buildings.sort(key=lambda b: (b.get('sort_index', 0), _natural_sort_key(b.get('name', ''))))
+    return [Building(**b) for b in buildings]
+
+
+@router.post("/buildings/{building_id}/floors", response_model=Floor)
+async def create_floor(building_id: str, floor: Floor, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found')
+    await _check_project_access(user, building['project_id'])
+
+    is_numeric_floor = False
+    try:
+        floor_num_val = int(floor.name)
+        is_numeric_floor = True
+    except (ValueError, TypeError):
+        floor_num_val = 0
+
+    if is_numeric_floor:
+        floor.floor_number = floor_num_val
+
+    existing_floors = await db.floors.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+
+    if is_numeric_floor and existing_floors:
+        insert_before = None
+        for ef in existing_floors:
+            ef_num = None
+            try:
+                ef_num = int(ef.get('name', ''))
+            except (ValueError, TypeError):
+                try:
+                    ef_num = int(ef.get('floor_number', 0))
+                except (ValueError, TypeError):
+                    pass
+            if ef_num is not None and ef_num > floor_num_val:
+                insert_before = ef
+                break
+        if insert_before:
+            floor.sort_index = insert_before.get('sort_index', 1000) - 1
+        else:
+            max_si = max(ef.get('sort_index', 0) for ef in existing_floors)
+            floor.sort_index = max_si + 1000
+    elif floor.sort_index is None:
+        if existing_floors:
+            max_si = max(ef.get('sort_index', 0) for ef in existing_floors)
+            floor.sort_index = max_si + 1000
+        else:
+            floor.sort_index = floor.floor_number * 1000
+
+    floor_id = str(uuid.uuid4())
+    ts = _now()
+    doc = {
+        'id': floor_id, 'building_id': building_id, 'project_id': building['project_id'],
+        'name': floor.name, 'floor_number': floor.floor_number,
+        'sort_index': floor.sort_index,
+        'display_label': floor.display_label or floor.name,
+        'kind': floor.kind.value if floor.kind else None,
+        'created_at': ts,
+    }
+    await db.floors.insert_one(doc)
+
+    unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
+    created_units = []
+    if unit_count > 0:
+        all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
+        max_numeric = 0
+        for u in all_units:
+            try:
+                n = int(u['unit_no'])
+                if n > max_numeric:
+                    max_numeric = n
+            except (ValueError, TypeError):
+                pass
+        for i in range(unit_count):
+            unit_no = str(max_numeric + i + 1)
+            unit_id = str(uuid.uuid4())
+            unit_doc = {
+                'id': unit_id, 'floor_id': floor_id, 'building_id': building_id,
+                'project_id': building['project_id'], 'unit_no': unit_no,
+                'unit_type': 'apartment', 'status': 'available',
+                'sort_index': (i + 1) * 10,
+                'display_label': unit_no,
+                'created_at': ts,
+            }
+            await db.units.insert_one(unit_doc)
+            created_units.append(unit_no)
+
+    reseq_floor_changes, reseq_unit_changes = await _compute_building_resequence(db, building_id)
+    for c in reseq_floor_changes:
+        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+    if reseq_unit_changes:
+        for c in reseq_unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': f"__tmp_{c['id']}",
+                'display_label': f"__tmp_{c['id']}",
+            }})
+        for c in reseq_unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': c['new_unit_no'],
+                'display_label': c['new_display_label'],
+                'sort_index': c['new_sort_index'],
+            }})
+
+    await _audit('floor', floor_id, 'create', user['id'], {
+        'building_id': building_id, 'name': floor.name,
+        'sort_index': doc['sort_index'], 'unit_count': unit_count,
+        'created_units': created_units,
+        'units_renumbered': len(reseq_unit_changes),
+    })
+    return Floor(**{k: v for k, v in doc.items() if k != '_id'})
+
+
+@router.get("/buildings/{building_id}/floors", response_model=List[Floor])
+async def list_floors(building_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    floors = await db.floors.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+    return [Floor(**f) for f in floors]
+
+
+@router.post("/floors/{floor_id}/units")
+async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    floor = await db.floors.find_one({'id': floor_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not floor:
+        raise HTTPException(status_code=404, detail='Floor not found')
+    await _check_project_access(user, floor['project_id'])
+    building_id = floor['building_id']
+    project_id = floor['project_id']
+    ts = _now()
+
+    unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
+
+    if unit_count > 0:
+        all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
+        max_numeric = 0
+        for u in all_units:
+            try:
+                n = int(u['unit_no'])
+                if n > max_numeric:
+                    max_numeric = n
+            except (ValueError, TypeError):
+                pass
+
+        existing_floor_units = await db.units.find({'floor_id': floor_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', -1).to_list(1000)
+        base_sort = (existing_floor_units[0].get('sort_index', 0) + 10) if existing_floor_units else 10
+
+        created = []
+        for i in range(unit_count):
+            unit_no = str(max_numeric + i + 1)
+            unit_id = str(uuid.uuid4())
+            doc = {
+                'id': unit_id, 'floor_id': floor_id, 'building_id': building_id,
+                'project_id': project_id, 'unit_no': unit_no,
+                'unit_type': 'apartment', 'status': 'available',
+                'sort_index': base_sort + (i * 10),
+                'display_label': unit_no, 'created_at': ts,
+            }
+            await db.units.insert_one(doc)
+            created.append(unit_no)
+            await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit_no})
+
+        reseq_floor_changes, reseq_unit_changes = await _compute_building_resequence(db, building_id)
+        for c in reseq_floor_changes:
+            await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+        if reseq_unit_changes:
+            for c in reseq_unit_changes:
+                await db.units.update_one({'id': c['id']}, {'$set': {
+                    'unit_no': f"__tmp_{c['id']}", 'display_label': f"__tmp_{c['id']}",
+                }})
+            for c in reseq_unit_changes:
+                await db.units.update_one({'id': c['id']}, {'$set': {
+                    'unit_no': c['new_unit_no'], 'display_label': c['new_unit_no'],
+                    'sort_index': c.get('new_sort_index', 0),
+                }})
+
+        return {'created': len(created), 'units': created}
+
+    if not unit.unit_no:
+        raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
+    existing = await db.units.find_one({
+        'project_id': project_id, 'building_id': building_id,
+        'floor_id': floor_id, 'unit_no': unit.unit_no,
+        'archived': {'$ne': True},
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail='Unit number already exists on this floor')
+    if unit.sort_index is None:
+        max_unit = await db.units.find_one({'floor_id': floor_id, 'archived': {'$ne': True}}, sort=[('sort_index', -1)])
+        unit.sort_index = (max_unit.get('sort_index', 0) + 10) if max_unit else 10
+    unit_id = str(uuid.uuid4())
+    doc = {
+        'id': unit_id, 'floor_id': floor_id, 'building_id': building_id,
+        'project_id': project_id, 'unit_no': unit.unit_no,
+        'unit_type': unit.unit_type.value if unit.unit_type else 'apartment',
+        'status': unit.status.value if unit.status else 'available',
+        'sort_index': unit.sort_index,
+        'display_label': unit.display_label or unit.unit_no, 'created_at': ts,
+    }
+    await db.units.insert_one(doc)
+    await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
+    return Unit(**{k: v for k, v in doc.items() if k != '_id'})
+
+
+@router.get("/floors/{floor_id}/units", response_model=List[Unit])
+async def list_units_by_floor(floor_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    units = await db.units.find({'floor_id': floor_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+    return [Unit(**u) for u in units]
+
+
+@router.post("/floors/bulk")
+async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    await _check_project_access(user, body.project_id)
+    building = await db.buildings.find_one({'id': body.building_id, 'project_id': body.project_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found in this project')
+    if body.from_floor > body.to_floor:
+        raise HTTPException(status_code=422, detail='from_floor must be <= to_floor')
+    if body.to_floor - body.from_floor > 200:
+        raise HTTPException(status_code=422, detail='Maximum 200 floors per batch')
+
+    if body.dry_run:
+        would_create = 0
+        would_skip = 0
+        for num in range(body.from_floor, body.to_floor + 1):
+            existing = await db.floors.find_one({'building_id': body.building_id, 'floor_number': num, 'archived': {'$ne': True}})
+            if existing:
+                would_skip += 1
+            else:
+                would_create += 1
+        return {'dry_run': True, 'would_create': would_create, 'would_skip': would_skip, 'message': f'תצוגה מקדימה: {would_create} קומות חדשות, {would_skip} דילוגים'}
+
+    batch_id = body.batch_id or str(uuid.uuid4())[:12]
+    created = []
+    skipped = 0
+    ts = _now()
+    for num in range(body.from_floor, body.to_floor + 1):
+        existing = await db.floors.find_one({
+            'building_id': body.building_id,
+            'floor_number': num,
+            'archived': {'$ne': True},
+        })
+        if existing:
+            skipped += 1
+            continue
+        floor_id = str(uuid.uuid4())
+        si = num * 1000
+        doc = {
+            'id': floor_id,
+            'building_id': body.building_id,
+            'project_id': body.project_id,
+            'name': f'קומה {num}',
+            'floor_number': num,
+            'sort_index': si,
+            'display_label': f'קומה {num}',
+            'kind': 'basement' if num < 0 else ('ground' if num == 0 else 'residential'),
+            'created_at': ts,
+            'batch_id': batch_id,
+        }
+        await db.floors.insert_one(doc)
+        created.append({'id': floor_id, 'name': doc['name'], 'floor_number': num, 'sort_index': si})
+
+    await _audit('building', body.building_id, 'bulk_create_floors', user['id'], {
+        'project_id': body.project_id,
+        'from_floor': body.from_floor,
+        'to_floor': body.to_floor,
+        'created_count': len(created),
+        'skipped_count': skipped,
+        'batch_id': batch_id,
+    })
+
+    msg = f'נוצרו {len(created)} קומות'
+    if skipped > 0:
+        msg += f', דולגו {skipped} קומות קיימות'
+
+    return {'created_count': len(created), 'skipped_count': skipped, 'items': created, 'message': msg, 'batch_id': batch_id}
+
+
+@router.post("/units/bulk")
+async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(require_roles('project_manager'))):
+    import time as _time
+    rid = str(uuid.uuid4())[:8]
+    t0 = _time.time()
+    db = get_db()
+    await _check_project_access(user, body.project_id)
+    building = await db.buildings.find_one({'id': body.building_id, 'project_id': body.project_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found in this project')
+    if body.from_floor > body.to_floor:
+        raise HTTPException(status_code=422, detail='from_floor must be <= to_floor')
+    if body.units_per_floor < 1 or body.units_per_floor > 100:
+        raise HTTPException(status_code=422, detail='units_per_floor must be between 1 and 100')
+    total_floors = body.to_floor - body.from_floor + 1
+    if total_floors > 200:
+        raise HTTPException(status_code=422, detail='Maximum 200 floors per batch')
+
+    all_floors = await db.floors.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+    existing_numeric_units = await db.units.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
+    max_existing = 0
+    for eu in existing_numeric_units:
+        if _is_numeric_unit(eu.get('unit_no', '')):
+            max_existing = max(max_existing, int(eu['unit_no']))
+    global_counter = max_existing
+
+    target_floors = [f for f in all_floors if body.from_floor <= f['floor_number'] <= body.to_floor]
+
+    if body.dry_run:
+        would_create = 0
+        would_skip = 0
+        temp_counter = global_counter
+        for floor in target_floors:
+            for unit_idx in range(body.units_per_floor):
+                if body.unit_prefix:
+                    unit_num = body.unit_start_number + unit_idx
+                    unit_no = f'{body.unit_prefix}{str(unit_num).zfill(body.unit_number_padding) if body.unit_number_padding > 0 else str(unit_num)}'
+                else:
+                    temp_counter += 1
+                    unit_no = str(temp_counter)
+                existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
+                if existing:
+                    would_skip += 1
+                else:
+                    would_create += 1
+        return {'dry_run': True, 'would_create': would_create, 'would_skip': would_skip, 'message': f'תצוגה מקדימה: {would_create} דירות חדשות, {would_skip} דילוגים'}
+
+    batch_id = body.batch_id or str(uuid.uuid4())[:12]
+    created = []
+    skipped = 0
+    ts = _now()
+
+    for floor in target_floors:
+        existing_floor_units = await db.units.find({'floor_id': floor['id'], 'archived': {'$ne': True}}, {'_id': 0}).to_list(10000)
+        floor_unit_count = len(existing_floor_units)
+
+        for unit_idx in range(body.units_per_floor):
+            if body.unit_prefix:
+                unit_num = body.unit_start_number + unit_idx
+                unit_no = f'{body.unit_prefix}{str(unit_num).zfill(body.unit_number_padding) if body.unit_number_padding > 0 else str(unit_num)}'
+            else:
+                global_counter += 1
+                unit_no = str(global_counter)
+
+            existing = await db.units.find_one({
+                'floor_id': floor['id'],
+                'unit_no': unit_no,
+                'archived': {'$ne': True},
+            })
+            if existing:
+                skipped += 1
+                continue
+
+            unit_id = str(uuid.uuid4())
+            si = (floor_unit_count + unit_idx + 1) * 10
+            doc = {
+                'id': unit_id,
+                'floor_id': floor['id'],
+                'building_id': body.building_id,
+                'project_id': body.project_id,
+                'unit_no': unit_no,
+                'unit_type': 'apartment',
+                'status': 'available',
+                'sort_index': si,
+                'display_label': unit_no,
+                'created_at': ts,
+                'batch_id': batch_id,
+            }
+            await db.units.insert_one(doc)
+            created.append({'id': unit_id, 'unit_no': unit_no, 'floor_number': floor['floor_number']})
+
+    await _audit('building', body.building_id, 'bulk_create_units', user['id'], {
+        'project_id': body.project_id,
+        'from_floor': body.from_floor,
+        'to_floor': body.to_floor,
+        'units_per_floor': body.units_per_floor,
+        'created_count': len(created),
+        'skipped_count': skipped,
+        'batch_id': batch_id,
+    })
+
+    elapsed_ms = round((_time.time() - t0) * 1000, 1)
+    units_requested = len(target_floors) * body.units_per_floor
+    logger.info(
+        f"[BULK-UNITS] rid={rid} project_id={body.project_id} building_id={body.building_id} "
+        f"floors_matched={len(target_floors)} units_per_floor={body.units_per_floor} "
+        f"units_requested={units_requested} units_created={len(created)} skipped={skipped} "
+        f"errors=[] elapsed_ms={elapsed_ms}"
+    )
+
+    msg = f'נוצרו {len(created)} דירות'
+    if skipped > 0:
+        msg += f', דולגו {skipped} דירות קיימות'
+
+    return {'created_count': len(created), 'skipped_count': skipped, 'items': created, 'message': msg, 'batch_id': batch_id}
+
+
+@router.get("/projects/{project_id}/hierarchy")
+async def get_project_hierarchy(project_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    await _check_project_read_access(user, project_id)
+
+    buildings = await db.buildings.find({'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(1000)
+    building_names = [b.get('name', '?') for b in buildings]
+    logger.info(f"[HIERARCHY:ACCESS] user={user['id']} project={project_id} buildings={len(buildings)} names={building_names}")
+    all_floors = await db.floors.find({'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(10000)
+
+    building_ids = [b['id'] for b in buildings]
+    floor_ids = [f['id'] for f in all_floors]
+
+    all_units = []
+    if floor_ids:
+        all_units = await db.units.find({'floor_id': {'$in': floor_ids}, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
+
+    units_by_floor = {}
+    for u in all_units:
+        fid = u['floor_id']
+        if fid not in units_by_floor:
+            units_by_floor[fid] = []
+        raw_unit_no = u['unit_no']
+        raw_display = u.get('display_label', raw_unit_no)
+        if _is_numeric_unit(raw_unit_no):
+            eff = raw_unit_no
+        else:
+            eff = raw_display or raw_unit_no
+        units_by_floor[fid].append({
+            'id': u['id'],
+            'unit_no': raw_unit_no,
+            'unit_type': u.get('unit_type', 'apartment'),
+            'status': u.get('status', 'available'),
+            'sort_index': u.get('sort_index', 0),
+            'display_label': raw_display,
+            'effective_label': eff,
+        })
+
+    for fid in units_by_floor:
+        units_by_floor[fid].sort(key=lambda x: x['sort_index'])
+
+    floors_by_building = {}
+    for f in all_floors:
+        bid = f['building_id']
+        if bid not in floors_by_building:
+            floors_by_building[bid] = []
+        floors_by_building[bid].append({
+            'id': f['id'],
+            'name': f['name'],
+            'floor_number': f['floor_number'],
+            'sort_index': f.get('sort_index', f['floor_number'] * 1000),
+            'display_label': f.get('display_label', f['name']),
+            'kind': f.get('kind'),
+            'units': units_by_floor.get(f['id'], []),
+        })
+
+    for bid in floors_by_building:
+        floors_by_building[bid].sort(key=lambda x: x['sort_index'])
+
+    buildings.sort(key=lambda b: (b.get('sort_index', 0), _natural_sort_key(b.get('name', ''))))
+    hierarchy_buildings = []
+    for b in buildings:
+        hierarchy_buildings.append({
+            'id': b['id'],
+            'name': b['name'],
+            'code': b.get('code'),
+            'floors': floors_by_building.get(b['id'], []),
+        })
+
+    return {
+        'project_id': project_id,
+        'project_name': project['name'],
+        'buildings': hierarchy_buildings,
+    }
+
+
+@router.get("/units/{unit_id}/tasks", response_model=List[Task])
+async def list_unit_tasks(unit_id: str,
+                          status: Optional[str] = Query(None),
+                          category: Optional[str] = Query(None),
+                          user: dict = Depends(get_current_user)):
+    db = get_db()
+    query = {'unit_id': unit_id}
+    if status:
+        query['status'] = status
+    if category:
+        query['category'] = category
+    tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+    tasks = sorted(tasks, key=_priority_sort_key)
+    from services.object_storage import resolve_urls_in_doc
+    result = []
+    for t in tasks:
+        td = Task(**t).dict()
+        resolve_urls_in_doc(td)
+        result.append(td)
+    return result
+
+
+@router.get("/units/{unit_id}")
+async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    unit = await db.units.find_one({'id': unit_id}, {'_id': 0})
+    if not unit:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    floor = await db.floors.find_one({'id': unit.get('floor_id')}, {'_id': 0}) if unit.get('floor_id') else None
+    building = await db.buildings.find_one({'id': unit.get('building_id')}, {'_id': 0}) if unit.get('building_id') else None
+    project_id = unit.get('project_id') or (building.get('project_id') if building else None)
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0}) if project_id else None
+    if project_id:
+        await _check_project_read_access(user, project_id)
+
+    effective_label = unit.get('display_label') or unit.get('unit_no', '')
+    try:
+        int(unit.get('unit_no', ''))
+        effective_label = unit.get('display_label') or unit.get('unit_no', '')
+    except (ValueError, TypeError):
+        effective_label = unit.get('display_label') or unit.get('unit_no', '')
+
+    tasks = await db.tasks.find({'unit_id': unit_id}, {'_id': 0}).to_list(10000)
+    by_status = {}
+    for t in tasks:
+        s = t.get('status', 'open')
+        by_status[s] = by_status.get(s, 0) + 1
+
+    return {
+        'unit': {
+            **unit,
+            'effective_label': effective_label,
+        },
+        'floor': {'id': floor['id'], 'name': floor.get('name', '')} if floor else None,
+        'building': {'id': building['id'], 'name': building.get('name', '')} if building else None,
+        'project': {'id': project['id'], 'name': project.get('name', ''), 'code': project.get('code', '')} if project else None,
+        'kpi': {
+            'total': len(tasks),
+            'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
+            'in_progress': by_status.get('in_progress', 0) + by_status.get('waiting_verify', 0) + by_status.get('pending_contractor_proof', 0) + by_status.get('pending_manager_approval', 0),
+            'closed': by_status.get('closed', 0),
+        },
+    }
+
+
+@router.post("/buildings/{building_id}/resequence")
+async def resequence_building(building_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    building = await db.buildings.find_one({'id': building_id}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found')
+    await _check_project_access(user, building['project_id'])
+    dry_run = body.get('dry_run', False)
+
+    floor_changes, unit_changes = await _compute_building_resequence(db, building_id)
+
+    if dry_run:
+        return {
+            'dry_run': True,
+            'floors_affected': len(floor_changes),
+            'units_affected': len(unit_changes),
+            'floor_changes': floor_changes,
+            'unit_changes': unit_changes,
+        }
+    for c in floor_changes:
+        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+    if unit_changes:
+        for c in unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': f"__tmp_{c['id']}",
+                'display_label': f"__tmp_{c['id']}",
+            }})
+        for c in unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': c['new_unit_no'],
+                'display_label': c['new_display_label'],
+                'sort_index': c['new_sort_index'],
+            }})
+    await _audit('building', building_id, 'resequence', user['id'], {
+        'floors_affected': len(floor_changes),
+        'units_affected': len(unit_changes),
+        'floor_changes': floor_changes,
+        'unit_changes': unit_changes,
+    })
+    return {
+        'success': True,
+        'floors_affected': len(floor_changes),
+        'units_affected': len(unit_changes),
+        'floor_changes': floor_changes,
+        'unit_changes': unit_changes,
+    }
+
+
+@router.post("/projects/{project_id}/insert-floor")
+async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = Depends(require_roles('project_manager'))):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    await _check_project_access(user, project_id)
+    building = await db.buildings.find_one({'id': body.building_id, 'project_id': project_id})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found in this project')
+
+    floors = await db.floors.find({'building_id': body.building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+    insert_si = body.insert_at_index
+
+    floors_to_shift = [f for f in floors if f.get('sort_index', 0) >= insert_si]
+    floor_shift_changes = []
+    for f in floors_to_shift:
+        old_si = f.get('sort_index', 0)
+        new_si = old_si + 1000
+        floor_shift_changes.append({
+            'type': 'floor',
+            'id': f['id'],
+            'name': f['name'],
+            'old_sort_index': old_si,
+            'new_sort_index': new_si,
+        })
+
+    if body.dry_run:
+        for c in floor_shift_changes:
+            await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+        temp_floor_id = '__preview__'
+        temp_floor_doc = {
+            'id': temp_floor_id, 'building_id': body.building_id, 'project_id': project_id,
+            'name': body.name, 'floor_number': insert_si // 1000,
+            'sort_index': insert_si,
+            'display_label': body.display_label or body.name,
+            'kind': body.kind.value if body.kind else None,
+            'created_at': _now(),
+        }
+        await db.floors.insert_one(temp_floor_doc)
+        _, unit_changes = await _compute_building_resequence(db, body.building_id)
+        await db.floors.delete_one({'id': temp_floor_id})
+        for c in floor_shift_changes:
+            await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['old_sort_index']}})
+        return {
+            'dry_run': True,
+            'new_floor_name': body.name,
+            'insert_at_index': insert_si,
+            'floors_affected': len(floor_shift_changes),
+            'units_affected': len(unit_changes),
+            'floor_changes': floor_shift_changes,
+            'unit_changes': unit_changes,
+        }
+
+    for c in floor_shift_changes:
+        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+
+    floor_id = str(uuid.uuid4())
+    ts = _now()
+    new_floor_doc = {
+        'id': floor_id, 'building_id': body.building_id, 'project_id': project_id,
+        'name': body.name, 'floor_number': insert_si // 1000,
+        'sort_index': insert_si,
+        'display_label': body.display_label or body.name,
+        'kind': body.kind.value if body.kind else None,
+        'created_at': ts,
+    }
+    await db.floors.insert_one(new_floor_doc)
+
+    reseq_floor_changes, reseq_unit_changes = await _compute_building_resequence(db, body.building_id)
+    for c in reseq_floor_changes:
+        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+    if reseq_unit_changes:
+        for c in reseq_unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': f"__tmp_{c['id']}",
+                'display_label': f"__tmp_{c['id']}",
+            }})
+        for c in reseq_unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': c['new_unit_no'],
+                'display_label': c['new_display_label'],
+                'sort_index': c['new_sort_index'],
+            }})
+
+    await _audit('building', body.building_id, 'insert_floor', user['id'], {
+        'project_id': project_id,
+        'new_floor_id': floor_id,
+        'new_floor_name': body.name,
+        'insert_at_index': insert_si,
+        'floors_shifted': len(floor_shift_changes),
+        'units_renumbered': len(reseq_unit_changes),
+        'floor_changes': floor_shift_changes,
+        'unit_changes': reseq_unit_changes,
+    })
+    return {
+        'success': True,
+        'new_floor': {k: v for k, v in new_floor_doc.items() if k != '_id'},
+        'floors_shifted': len(floor_shift_changes),
+        'units_renumbered': len(reseq_unit_changes),
+    }
