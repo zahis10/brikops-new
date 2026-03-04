@@ -7,7 +7,7 @@ import {
 } from '../utils/billingLabels';
 import { getPlanBadge } from '../utils/billingPlanCatalog';
 import { getBillingHubUrl } from '../utils/billingHub';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Info, Clock } from 'lucide-react';
 
 function PlanBadge({ planId }) {
   const badge = getPlanBadge(planId);
@@ -142,6 +142,18 @@ export default function ProjectBillingCard({ projectId, userRole }) {
                 <span className="text-slate-500">יחידות בפועל</span>
                 <span className={`font-medium ${warning ? 'text-amber-600' : 'text-slate-700'}`}>{billing.observed_units}</span>
               </div>
+              {billing.cycle_peak_units > billing.contracted_units && (
+                <div className="flex items-center gap-1 text-xs text-amber-700 mt-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
+                  <Info className="w-3 h-3" />
+                  <span>שיא במחזור: {billing.cycle_peak_units} יחידות</span>
+                </div>
+              )}
+              {billing.pending_contracted_units != null && (
+                <div className="flex items-center gap-1 text-xs text-blue-700 bg-blue-50 rounded px-2 py-1 mt-1">
+                  <Clock className="w-3 h-3" />
+                  <span>ירד ל-{billing.pending_contracted_units} יחידות החל מ-{billing.pending_effective_from ? new Date(billing.pending_effective_from).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' }) : '—'}</span>
+                </div>
+              )}
             </div>
             <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
               <span className="text-sm text-slate-500">סה״כ חודשי לפרויקט</span>

@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { billingService, orgMemberService, invoiceService, projectService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
-import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard } from 'lucide-react';
+import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock } from 'lucide-react';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
@@ -1414,8 +1414,20 @@ export default function OrgBillingPage() {
                   <div className="grid grid-cols-3 gap-2 text-xs text-slate-500">
                     <div>עלות חבילה: <span className="font-medium text-slate-700">{formatCurrency(pb.project_fee_snapshot)}</span></div>
                     <div>מדרגת יחידות: <span className="font-medium text-slate-700">{formatCurrency(pb.tier_fee_snapshot)}</span></div>
-                    <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
+                    <div>יחידות נוכחיות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
                   </div>
+                  {pb.cycle_peak_units > pb.contracted_units && (
+                    <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
+                      <Info className="w-3 h-3" />
+                      <span>שיא במחזור: {pb.cycle_peak_units} יחידות</span>
+                    </div>
+                  )}
+                  {pb.pending_contracted_units != null && (
+                    <div className="flex items-center gap-1 text-xs text-blue-700 bg-blue-50 rounded px-2 py-1">
+                      <Clock className="w-3 h-3" />
+                      <span>ירד ל-{pb.pending_contracted_units} יחידות החל מ-{pb.pending_effective_from ? new Date(pb.pending_effective_from).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' }) : '—'}</span>
+                    </div>
+                  )}
                 </div>
               );
             })}
