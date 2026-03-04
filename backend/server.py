@@ -229,6 +229,9 @@ app.include_router(projects_router)
 from contractor_ops.tasks_router import router as tasks_router
 app.include_router(tasks_router)
 
+from contractor_ops.admin_router import router as admin_router
+app.include_router(admin_router)
+
 from contractor_ops.ownership_transfer import (
     create_transfer_router, set_transfer_db, set_transfer_sms_client,
     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,
