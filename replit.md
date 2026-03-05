@@ -40,7 +40,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Authentication & Onboarding**: Supports email/password, phone OTP, PM approval, WhatsApp Magic Link Login, and comprehensive onboarding. Includes a dev-only login endpoint for demo users.
     -   **Multi-channel Communication**: Automated notifications via WhatsApp (with SMS fallback) using Meta-approved templates, configurable by user's preferred language. Fallback image (`WA_FALLBACK_IMAGE_URL = https://app.brikops.com/logo192.png`) is used when a defect has no attached photo, ensuring the required IMAGE header is always included in template messages.
     -   **Security**: Implements JWT tokens with HS256, issuer enforcement, and secret versioning.
-    -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3).
+    -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3). S3 uploads use `asyncio.to_thread()` to avoid blocking the async event loop. Timing logs added for S3 operations (`[UPLOAD:STAGE3:S3_TIME]`, `[UPLOAD:STAGE4:S3_TIME]`).
     -   **Task Workflow Enforcement**: Strict status transitions and role-based permissions, including categorization and bucketing.
     -   **Proof Management**: Multi-image proof uploads with audit logging.
     -   **Billing System**: Centralized billing management for organizations, including payment requests, renewals, plan management, and access control based on subscription status. Enforces a single open payment request per organization and provides administrative oversight. Implements anti-gaming policy: unit increases are immediate (with peak tracking via `cycle_peak_units`), decreases are deferred to the next billing cycle (`pending_contracted_units` + `pending_effective_from`), and payment requests use peak-based pricing with immutable `billing_breakdown`. Pending decreases are lazily applied on billing reads, server startup, and via SA endpoint. PM can edit project billing (plan + units) for projects they manage via `ProjectBillingEditModal` — available on both OrgBillingPage and ProjectBillingCard. Amount=0 payment request errors guide users to edit project pricing first. `PATCH /billing/project/{id}` uses upsert: creates a billing record via `create_project_billing` if none exists. **UpgradeWizard** component (`frontend/src/components/UpgradeWizard.js`): inline 3-step wizard (project → plan+units → summary) shown on OrgBillingPage when `needsUpgrade === true`; submits via `updateProjectBilling` then `createPaymentRequest`; handles single/multi project, projects with/without existing billing. Old payment request section on OrgBillingPage hidden when wizard is active.
@@ -59,7 +59,8 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Backend**: AWS Elastic Beanstalk (Docker, `api.brikops.com`).
 -   **Database**: MongoDB Atlas.
 -   **PDF Services**: S3-aware for reports, generating presigned URLs.
--   **CI/CD Pipeline**: Automatic deployment on `git push origin main` via GitHub Actions for backend and Cloudflare Pages for frontend. AWS authentication uses OIDC.
+-   **CI/CD Pipeline**: Automatic deployment on `git push origin main` via GitHub Actions for backend (triggered by `backend/**` or `.platform/**` changes) and Cloudflare Pages for frontend. AWS authentication uses OIDC. Deploy bundle includes `Dockerrun.aws.json` + `.platform/` directory.
+-   **EB Nginx Config**: `.platform/nginx/conf.d/proxy.conf` sets `client_max_body_size 20M` on the EB host nginx proxy.
 
 ## External Dependencies
 

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - '.platform/**'
 
 permissions:
   id-token: write
@@ -63,7 +64,7 @@ jobs:
           EOF
 
       - name: Create deploy bundle
-        run: zip deploy.zip Dockerrun.aws.json
+        run: zip -r deploy.zip Dockerrun.aws.json .platform/
 
       - name: Deploy to Elastic Beanstalk
         env:
