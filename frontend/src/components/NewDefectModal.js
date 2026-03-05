@@ -342,7 +342,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const handleImageAdd = useCallback(async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    for (const f of files) {
+      console.log(`[image:original] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
+    }
     const compressed = await Promise.all(files.map(f => compressImage(f)));
+    for (const f of compressed) {
+      console.log(`[image:ready] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
+    }
     const newImages = compressed.map(file => ({
       file,
       preview: URL.createObjectURL(file),
@@ -405,7 +411,12 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       console.log('Step 1: task created id=' + task.id);
 
       console.log('Step 2: uploading ' + images.length + ' images…');
-      const uploadPromises = images.map(img => taskService.uploadAttachment(task.id, img.file));
+      images.forEach((img, i) => console.log(`[upload:start] #${i} ${img.name} size=${(img.file.size/1024).toFixed(0)}KB`));
+      const uploadPromises = images.map((img, i) =>
+        taskService.uploadAttachment(task.id, img.file)
+          .then(res => { console.log(`[upload:done] #${i} ${img.name} ok`); return res; })
+          .catch(err => { console.error(`[upload:fail] #${i} ${img.name}`, err.message, err.response?.status); throw err; })
+      );
       await withTimeout(Promise.all(uploadPromises), 60000, 'העלאת תמונות');
       console.log('Step 2: uploads done');
 
