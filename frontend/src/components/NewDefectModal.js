@@ -10,6 +10,8 @@ import {
 import { Button } from './ui/button';
 import { tCategory } from '../i18n';
 
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.items)) return data.items;
@@ -333,6 +335,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const handleSubmit = async () => {
     if (!validate()) return;
     setSubmitting(true);
+
+    const withTimeout = (promise, ms, stepName) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`שגיאת זמן בשלב: ${stepName} — נסה שוב`)), ms)
+        ),
+      ]);
+
     try {
       const taskData = {
         project_id: projectId,
@@ -345,15 +356,22 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         priority: priority,
       };
       const { taskService } = await import('../services/api');
-      const task = await taskService.create(taskData);
 
+      console.log('Step 1: creating task…');
+      const task = await withTimeout(taskService.create(taskData), 30000, 'יצירת ליקוי');
+      console.log('Step 1: task created id=' + task.id);
+
+      console.log('Step 2: uploading ' + images.length + ' images…');
       const uploadPromises = images.map(img => taskService.uploadAttachment(task.id, img.file));
-      await Promise.all(uploadPromises);
+      await withTimeout(Promise.all(uploadPromises), 30000, 'העלאת תמונות');
+      console.log('Step 2: uploads done');
 
-      const assignResult = await taskService.assign(task.id, {
+      console.log('Step 3: assigning contractor…');
+      const assignResult = await withTimeout(taskService.assign(task.id, {
         company_id: companyId,
         assignee_id: assigneeId,
-      });
+      }), 30000, 'שיוך קבלן');
+      console.log('Step 3: assigned');
 
       toast.success('הליקוי נוצר בהצלחה!');
 
@@ -384,7 +402,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       setErrors({});
       onSuccess(task.id);
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה ביצירת הליקוי';
+      console.error('handleSubmit error:', err);
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -582,7 +602,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             <label className="block text-sm font-medium text-slate-700">
               תמונות * <span className="text-xs text-slate-400">(לפחות 1)</span>
             </label>
-            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
+            <input ref={cameraInputRef} type="file" accept="image/*" {...(isIOS ? {} : { capture: 'environment' })} onChange={handleImageAdd} className="hidden" />
             <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
             {images.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
