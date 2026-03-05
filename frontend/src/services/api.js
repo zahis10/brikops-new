@@ -267,7 +267,7 @@ export const excelService = {
     const formData = new FormData();
     formData.append('file', file);
     const response = await axios.post(`${API}/projects/${projectId}/excel-import`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+      headers: getAuthHeader(),
     });
     return response.data;
   },
@@ -331,7 +331,7 @@ export const taskService = {
     const formData = new FormData();
     formData.append('file', file);
     const response = await axios.post(`${API}/tasks/${id}/attachments`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+      headers: getAuthHeader(),
       timeout: 55000,
     });
     return response.data;
@@ -345,7 +345,7 @@ export const taskService = {
     }
     if (note) formData.append('note', note);
     const response = await axios.post(`${API}/tasks/${id}/contractor-proof`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' }
+      headers: getAuthHeader(),
     });
     return response.data;
   },
@@ -512,7 +512,7 @@ export const unitPlanService = {
     formData.append('discipline', discipline);
     if (note) formData.append('note', note);
     const response = await axios.post(`${API}/projects/${projectId}/units/${unitId}/plans`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+      headers: getAuthHeader(),
     });
     return response.data;
   },
@@ -532,7 +532,7 @@ export const projectPlanService = {
     formData.append('discipline', discipline);
     if (note) formData.append('note', note);
     const response = await axios.post(`${API}/projects/${projectId}/plans`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+      headers: getAuthHeader(),
     });
     return response.data;
   },
@@ -749,7 +749,7 @@ export const billingService = {
   async uploadReceipt(orgId, requestId, file) {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await axios.post(`${API}/billing/org/${orgId}/payment-requests/${requestId}/receipt`, formData, { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } });
+    const response = await axios.post(`${API}/billing/org/${orgId}/payment-requests/${requestId}/receipt`, formData, { headers: getAuthHeader() });
     return response.data;
   },
   async getReceiptUrl(orgId, requestId) {
@@ -850,7 +850,7 @@ export const qcService = {
     const formData = new FormData();
     formData.append('file', file);
     const response = await axios.post(`${API}/qc/run/${runId}/item/${itemId}/photo`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+      headers: getAuthHeader(),
     });
     return response.data;
   },

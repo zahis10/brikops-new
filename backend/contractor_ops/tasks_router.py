@@ -772,16 +772,26 @@ async def list_task_updates(task_id: str, user: dict = Depends(get_current_user)
 
 
 @router.post("/tasks/{task_id}/attachments")
-async def upload_task_attachment(task_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+async def upload_task_attachment(task_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    import time as _time
+    t_start = _time.time()
+    ct = request.headers.get('content-type', '')
+    has_boundary = 'boundary=' in ct
+    logger.info(f"[ATTACH:ENTER] task={task_id} filename={file.filename} ct_has_boundary={has_boundary} ct={ct[:120]}")
+
     db = get_db()
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers cannot upload attachments')
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:
         raise HTTPException(status_code=404, detail='Task not found')
+    logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
+
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"task_{task_id}")
+    logger.info(f"[ATTACH:STORED] task={task_id} file_url={result.file_url} elapsed={_time.time()-t_start:.2f}s")
+
     ts = _now()
     update_id = str(uuid.uuid4())
     doc = {
@@ -799,6 +809,7 @@ async def upload_task_attachment(task_id: str, file: UploadFile = File(...), use
     await _audit('task_attachment', update_id, 'upload', user['id'], {
         'task_id': task_id, 'filename': file.filename, 'file_url': result.file_url,
     })
+    logger.info(f"[ATTACH:DB_DONE] task={task_id} elapsed={_time.time()-t_start:.2f}s")
 
     existing_count = await db.task_updates.count_documents({
         'task_id': task_id, 'update_type': 'attachment',
@@ -818,6 +829,7 @@ async def upload_task_attachment(task_id: str, file: UploadFile = File(...), use
                         await engine.process_job(img_result)
             except Exception as e:
                 logger.warning(f"[NOTIFY-IMG] attach_image_to_notification failed: {e}")
+    logger.info(f"[ATTACH:COMPLETE] task={task_id} update_id={update_id} total_elapsed={_time.time()-t_start:.2f}s")
 
     from services.object_storage import resolve_url
     return {'id': update_id, 'file_url': resolve_url(result.file_url), 'thumbnail_url': resolve_url(result.thumbnail_url), 'filename': file.filename}
