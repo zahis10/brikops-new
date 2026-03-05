@@ -295,17 +295,62 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
-  const handleImageAdd = useCallback((e) => {
+  const compressImage = useCallback(async (file) => {
+    const MAX_SIZE = 800 * 1024;
+    const MAX_WIDTH = 1600;
+    const JPEG_QUALITY = 0.7;
+
+    if (file.size <= MAX_SIZE) return file;
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      let width = bitmap.width;
+      let height = bitmap.height;
+
+      if (width > MAX_WIDTH) {
+        height = Math.round((height * MAX_WIDTH) / width);
+        width = MAX_WIDTH;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+
+      const blob = await new Promise(resolve =>
+        canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
+      );
+
+      if (!blob) throw new Error('Canvas toBlob returned null');
+
+      const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+        type: 'image/jpeg',
+        lastModified: Date.now(),
+      });
+
+      console.log(`[compress] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(compressedFile.size/1024).toFixed(0)}KB`);
+      return compressedFile;
+    } catch (err) {
+      console.warn('[compress] failed, using original:', err);
+      toast.error('דחיסת תמונה נכשלה — משתמש בקובץ המקורי');
+      return file;
+    }
+  }, []);
+
+  const handleImageAdd = useCallback(async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    const newImages = files.map(file => ({
+    const compressed = await Promise.all(files.map(f => compressImage(f)));
+    const newImages = compressed.map(file => ({
       file,
       preview: URL.createObjectURL(file),
       name: file.name,
     }));
     setImages(prev => [...prev, ...newImages]);
     e.target.value = '';
-  }, []);
+  }, [compressImage]);
 
   const removeImage = useCallback((index) => {
     setImages(prev => {
@@ -401,8 +446,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       onSuccess(task.id);
     } catch (err) {
       console.error('handleSubmit error:', err);
-      const detail = err.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
+      let msg;
+      if (err.response?.status === 413) {
+        msg = 'התמונה גדולה מדי. נסה תמונה קטנה יותר או העלאה מהגלריה.';
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        msg = 'העלאה נכשלה בגלל חיבור איטי. נסה שוב.';
+      } else {
+        const detail = err.response?.data?.detail;
+        msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
+      }
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -600,7 +652,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             <label className="block text-sm font-medium text-slate-700">
               תמונות * <span className="text-xs text-slate-400">(לפחות 1)</span>
             </label>
-            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
+            <input ref={cameraInputRef} type="file" accept="image/*" onChange={handleImageAdd} className="hidden" />
             <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
             {images.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">

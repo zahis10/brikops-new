@@ -331,7 +331,8 @@ export const taskService = {
     const formData = new FormData();
     formData.append('file', file);
     const response = await axios.post(`${API}/tasks/${id}/attachments`, formData, {
-      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' }
+      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+      timeout: 55000,
     });
     return response.data;
   },
