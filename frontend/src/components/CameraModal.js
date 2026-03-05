@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Camera, X, RotateCcw } from 'lucide-react';
+import { Camera, X, RotateCcw, ImagePlus, HelpCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ERROR_MESSAGES = {
@@ -10,13 +10,14 @@ const ERROR_MESSAGES = {
   OverconstrainedError: 'לא ניתן לבחור מצלמה אחורית — מנסה מצלמה רגילה',
 };
 
-const CameraModal = ({ isOpen, onCapture, onClose }) => {
+const CameraModal = ({ isOpen, onCapture, onClose, onGallery }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
   const [errorCode, setErrorCode] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -40,6 +41,7 @@ const CameraModal = ({ isOpen, onCapture, onClose }) => {
     setError(null);
     setErrorCode(null);
     setReady(false);
+    setShowHelp(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -105,6 +107,14 @@ const CameraModal = ({ isOpen, onCapture, onClose }) => {
     onClose();
   }, [stopStream, onClose]);
 
+  const handleGallery = useCallback(() => {
+    stopStream();
+    if (onGallery) {
+      onGallery();
+    }
+    onClose();
+  }, [stopStream, onGallery, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -131,23 +141,43 @@ const CameraModal = ({ isOpen, onCapture, onClose }) => {
                   <Camera className="w-16 h-16 text-slate-400 mx-auto mb-4" />
                   <p className="text-white text-lg mb-2">{error}</p>
                   {errorCode && (
-                    <p className="text-slate-500 text-xs font-mono mb-4">camera_error={errorCode}</p>
+                    <p className="text-slate-500 text-xs font-mono mb-5">camera_error={errorCode}</p>
                   )}
 
-                  <div className="text-slate-400 text-sm text-right space-y-2 mb-6 bg-white/5 rounded-lg p-4" dir="rtl">
-                    <p className="text-slate-300 text-xs font-medium mb-2">איך לאפשר מצלמה:</p>
-                    <p className="text-xs">Safari: aA → Website Settings → Camera → Allow</p>
-                    <p className="text-xs">iOS: Settings → Safari → Camera → Allow/Ask</p>
-                    <p className="text-xs text-slate-500">Reset: Settings → Safari → Advanced → Website Data → delete brikops</p>
+                  <div className="flex gap-3 mb-4">
+                    <button
+                      onClick={startCamera}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white rounded-lg font-medium"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      נסה שוב
+                    </button>
+                    <button
+                      onClick={handleGallery}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-white/10 text-white rounded-lg font-medium border border-white/20"
+                    >
+                      <ImagePlus className="w-4 h-4" />
+                      העלה מהגלריה
+                    </button>
                   </div>
 
                   <button
-                    onClick={startCamera}
-                    className="flex items-center gap-2 mx-auto px-4 py-2 bg-amber-500 text-white rounded-lg"
+                    onClick={() => setShowHelp(prev => !prev)}
+                    className="flex items-center gap-1 mx-auto text-slate-400 text-xs hover:text-slate-300 transition-colors"
                   >
-                    <RotateCcw className="w-4 h-4" />
-                    נסה שוב
+                    <HelpCircle className="w-3 h-3" />
+                    עזרה
+                    {showHelp ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                   </button>
+
+                  {showHelp && (
+                    <div className="text-slate-400 text-sm text-right space-y-2 mt-3 bg-white/5 rounded-lg p-4" dir="rtl">
+                      <p className="text-slate-300 text-xs font-medium mb-2">איך לאפשר מצלמה:</p>
+                      <p className="text-xs">Safari: aA → Website Settings → Camera → Allow</p>
+                      <p className="text-xs">iOS: Settings → Safari → Camera → Allow/Ask</p>
+                      <p className="text-xs text-slate-500">Reset: Settings → Safari → Advanced → Website Data → delete brikops</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <video

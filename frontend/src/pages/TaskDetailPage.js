@@ -1253,6 +1253,7 @@ const TaskDetailPage = () => {
         isOpen={showCameraModal}
         onCapture={handleCameraCapture}
         onClose={() => setShowCameraModal(false)}
+        onGallery={() => proofInputRef.current?.click()}
       />
     </div>
   );
