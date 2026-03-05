@@ -29,6 +29,8 @@ def set_wa_verify_token(token: str):
 def set_meta_app_secret(secret: str):
     global _meta_app_secret
     _meta_app_secret = secret
+    if not secret:
+        logger.warning("[WA:WEBHOOK] META_APP_SECRET not configured — signature verification DISABLED")
 
 
 def get_engine() -> NotificationEngine:
@@ -147,6 +149,7 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
         raw_body = await request.body()
 
         sig_header = request.headers.get('X-Hub-Signature-256', '')
+        logger.info(f"[WA:WEBHOOK] received body_len={len(raw_body)} has_signature={bool(sig_header)} content_type={request.headers.get('content-type', '')}")
         if _meta_app_secret:
             if not sig_header:
                 logger.warning("[WA] signature_missing - X-Hub-Signature-256 header absent, allowing request")
@@ -205,7 +208,8 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
                     except Exception as e:
                         logger.error(f"[WA] failed to save status event: {e}")
 
-                    logger.info(f"[WA] status_update wa_id={provider_id} status={wa_status} to={recipient}")
+                    masked_recipient = (recipient[:3] + '****' + recipient[-4:]) if len(recipient) > 8 else '****'
+                    logger.info(f"[WA] status_update wa_id={provider_id} status={wa_status} to={masked_recipient}")
 
                     status_map = {
                         'sent': 'sent',
@@ -250,7 +254,8 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
                     except Exception as e:
                         logger.error(f"[WA] failed to save message event: {e}")
 
-                    logger.info(f"[WA] incoming_message from={from_phone} wa_id={msg_id} type={msg_type} text={msg_text[:80]}")
+                    masked_from = (from_phone[:3] + '****' + from_phone[-4:]) if len(from_phone) > 8 else '****'
+                    logger.info(f"[WA] incoming_message from={masked_from} wa_id={msg_id} type={msg_type} text={msg_text[:80]}")
 
         logger.info(f"[WA] webhook processed: {len(processed)} status updates linked, {events_saved} events saved to DB")
         return {'processed': len(processed), 'events_saved': events_saved, 'results': processed}

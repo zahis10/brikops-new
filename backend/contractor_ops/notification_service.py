@@ -216,7 +216,7 @@ class WhatsAppClient:
                     "components": components,
                 }
             }
-            logger.info(f"[WA] Sending defect template={tpl_name} lang={tpl_lang} defect_lang={defect_lang or WA_DEFECT_DEFAULT_LANG} task_id={task_id}")
+            logger.info(f"[WA:SEND] template={tpl_name} lang={tpl_lang} to={mask_phone(to_phone)} task_id={task_id} has_image={'yes' if effective_image else 'no'} is_fallback={effective_image == WA_FALLBACK_IMAGE_URL}")
         else:
             text = format_text_message(payload)
             body = {
@@ -225,15 +225,17 @@ class WhatsAppClient:
                 "type": "text",
                 "text": {"body": text}
             }
+            logger.info(f"[WA:SEND] text_message to={mask_phone(to_phone)} task_id={task_id}")
 
-        logger.debug(f"[WA] Request payload: {body}")
+        logger.info(f"[WA:SEND] api_url={self.api_url} to={mask_phone(to_phone)}")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(self.api_url, json=body, headers=headers)
 
-        logger.debug(f"[WA] Response status={resp.status_code}, body={resp.text[:500]}")
+        logger.info(f"[WA:SEND] status={resp.status_code} to={mask_phone(to_phone)} task_id={task_id} body={resp.text[:500]}")
         if resp.status_code in (200, 201):
             data = resp.json()
             mid = data.get("messages", [{}])[0].get("id", "")
+            logger.info(f"[WA:SEND] SUCCESS provider_message_id={mid} to={mask_phone(to_phone)} task_id={task_id}")
             return {"success": True, "provider_message_id": mid}
         else:
             error_msg = resp.text[:500]
