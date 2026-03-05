@@ -2,6 +2,8 @@ import os
 import io
 import uuid
 import hashlib
+import asyncio
+import time
 from typing import Tuple, Dict, Any
 from dataclasses import dataclass
 from fastapi import UploadFile
@@ -69,8 +71,9 @@ class StorageService:
             key = f"attachments/{unique_name}"
             
             content_type = file.content_type or "application/octet-stream"
-            stored_ref = obj_save_bytes(content, key, content_type)
-            logger.info(f"[UPLOAD:STAGE3:STORED] ref={stored_ref}")
+            t0 = time.time()
+            stored_ref = await asyncio.to_thread(obj_save_bytes, content, key, content_type)
+            logger.info(f"[UPLOAD:STAGE3:STORED] ref={stored_ref} elapsed={time.time()-t0:.2f}s")
 
             thumbnail_ref = stored_ref
             if file.content_type and file.content_type.startswith('image/'):
@@ -82,8 +85,9 @@ class StorageService:
                     img_format = 'JPEG' if unique_name.lower().endswith(('.jpg', '.jpeg')) else 'PNG'
                     img.save(thumb_buf, format=img_format)
                     thumb_bytes = thumb_buf.getvalue()
-                    thumbnail_ref = obj_save_bytes(thumb_bytes, thumbnail_name, content_type)
-                    logger.info(f"[UPLOAD:STAGE4:THUMBNAIL] ref={thumbnail_ref}")
+                    t0_thumb = time.time()
+                    thumbnail_ref = await asyncio.to_thread(obj_save_bytes, thumb_bytes, thumbnail_name, content_type)
+                    logger.info(f"[UPLOAD:STAGE4:THUMBNAIL] ref={thumbnail_ref} elapsed={time.time()-t0_thumb:.2f}s")
                 except Exception as thumb_err:
                     logger.warning(f"[UPLOAD:STAGE4:THUMBNAIL_FAILED] error={thumb_err}, using original")
 
