@@ -306,8 +306,144 @@ async def debug_whatsapp(request: Request, user: dict = Depends(_require_debug_a
     return result
 
 
+@router.post("/debug/whatsapp-send-test")
+async def debug_whatsapp_send_test(request: Request, user: dict = Depends(require_super_admin)):
+    from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_DEFECT_DEFAULT_LANG
+    from contractor_ops.notification_service import WhatsAppClient, validate_e164, WA_FALLBACK_IMAGE_URL
+    import httpx
+
+    body = await request.json()
+    to_phone = body.get('phone', '')
+    mode = body.get('mode', 'template')
+
+    valid_modes = ('template_text_only', 'template', 'template_with_meta_media_id')
+    if mode not in valid_modes:
+        raise HTTPException(400, f"mode must be one of: {', '.join(valid_modes)}")
+    if not to_phone:
+        raise HTTPException(400, "phone is required (E.164 format, e.g. +972501234567)")
+    if not validate_e164(to_phone):
+        raise HTTPException(400, f"Invalid E.164 phone: {to_phone}")
+    if not WA_ACCESS_TOKEN or not WA_PHONE_NUMBER_ID:
+        raise HTTPException(500, "WA_ACCESS_TOKEN or WA_PHONE_NUMBER_ID not configured")
+
+    tpl_info = WA_DEFECT_TEMPLATES.get(WA_DEFECT_DEFAULT_LANG)
+    if not tpl_info:
+        raise HTTPException(500, f"No WhatsApp template for lang={WA_DEFECT_DEFAULT_LANG}")
+
+    to_digits = to_phone.lstrip('+')
+    tpl_name = tpl_info['name']
+    tpl_lang = tpl_info['lang']
+    api_url = f"https://graph.facebook.com/v21.0/{WA_PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WA_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    components = []
+    has_image_header = False
+    media_upload_result = None
+
+    if mode == 'template_text_only':
+        pass
+    elif mode == 'template':
+        components.append({
+            "type": "header",
+            "parameters": [{"type": "image", "image": {"link": WA_FALLBACK_IMAGE_URL}}]
+        })
+        has_image_header = True
+    elif mode == 'template_with_meta_media_id':
+        try:
+            media_url = f"https://graph.facebook.com/v21.0/{WA_PHONE_NUMBER_ID}/media"
+            async with httpx.AsyncClient(timeout=30) as client:
+                img_resp = await client.get(WA_FALLBACK_IMAGE_URL)
+                if img_resp.status_code != 200:
+                    return {"success": False, "error": f"Failed to download fallback image: HTTP {img_resp.status_code}", "mode": mode}
+                img_bytes = img_resp.content
+
+                upload_resp = await client.post(
+                    media_url,
+                    headers={"Authorization": f"Bearer {WA_ACCESS_TOKEN}"},
+                    files={"file": ("test.png", img_bytes, "image/png")},
+                    data={"messaging_product": "whatsapp", "type": "image/png"},
+                )
+            media_upload_result = {
+                "status": upload_resp.status_code,
+                "body": upload_resp.text[:300],
+            }
+            if upload_resp.status_code in (200, 201):
+                media_id = upload_resp.json().get("id", "")
+                if media_id:
+                    components.append({
+                        "type": "header",
+                        "parameters": [{"type": "image", "image": {"id": media_id}}]
+                    })
+                    has_image_header = True
+                else:
+                    return {"success": False, "error": "Media upload returned no ID", "media_upload": media_upload_result, "mode": mode}
+            else:
+                return {"success": False, "error": f"Media upload failed: HTTP {upload_resp.status_code}", "media_upload": media_upload_result, "mode": mode}
+        except Exception as e:
+            return {"success": False, "error": f"Media upload exception: {str(e)[:300]}", "mode": mode}
+
+    components.append({
+        "type": "body",
+        "parameters": [
+            {"type": "text", "parameter_name": "location", "text": "בדיקת מערכת - בניין טסט"},
+            {"type": "text", "parameter_name": "issue", "text": "הודעת טסט מ-BrikOps"},
+            {"type": "text", "parameter_name": "ref", "text": "TEST-001"},
+        ]
+    })
+    components.append({
+        "type": "button",
+        "sub_type": "url",
+        "index": 0,
+        "parameters": [{"type": "text", "text": "TEST-001"}]
+    })
+
+    send_body = {
+        "messaging_product": "whatsapp",
+        "to": to_digits,
+        "type": "template",
+        "template": {
+            "name": tpl_name,
+            "language": {"code": tpl_lang},
+            "components": components,
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(api_url, json=send_body, headers=headers)
+        import re as _re
+        resp_data = _re.sub(r'\d{10,15}', lambda m: m.group()[:3] + '****' + m.group()[-4:] if len(m.group()) > 8 else '****', resp.text[:500])
+        mid = ''
+        if resp.status_code in (200, 201):
+            mid = resp.json().get("messages", [{}])[0].get("id", "")
+
+        result = {
+            "success": resp.status_code in (200, 201),
+            "mode": mode,
+            "phone_number_id": f"...{WA_PHONE_NUMBER_ID[-6:]}" if len(WA_PHONE_NUMBER_ID) > 6 else WA_PHONE_NUMBER_ID,
+            "template_used": tpl_name,
+            "template_lang": tpl_lang,
+            "has_image_header": has_image_header,
+            "http_status": resp.status_code,
+            "response_body": resp_data,
+            "provider_message_id": mid,
+        }
+        if media_upload_result:
+            result["media_upload"] = media_upload_result
+        return result
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)[:500],
+            "mode": mode,
+        }
+
+
 @router.post("/debug/whatsapp-test")
-async def debug_whatsapp_test(request: Request, user: dict = Depends(require_super_admin)):
+async def debug_whatsapp_test_legacy(request: Request, user: dict = Depends(require_super_admin)):
     from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_DEFECT_DEFAULT_LANG
     from contractor_ops.notification_service import WhatsAppClient, validate_e164
 
@@ -355,6 +491,86 @@ async def debug_whatsapp_test(request: Request, user: dict = Depends(require_sup
             "error": str(e)[:500],
             "sent_to": to_phone,
         }
+
+
+def _strip_qs(url: str) -> str:
+    if not url:
+        return ''
+    return url.split('?')[0][:100] if url else ''
+
+
+def _safe_mask_phone(phone: str) -> str:
+    if not phone:
+        return ''
+    from contractor_ops.msg_logger import mask_phone
+    return mask_phone(phone)
+
+
+@router.get("/debug/whatsapp-latest")
+async def debug_whatsapp_latest(
+    limit: int = Query(50, ge=1, le=200),
+    user: dict = Depends(require_super_admin),
+):
+    db = get_db()
+    from config import WHATSAPP_ENABLED, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_WEBHOOK_VERIFY_TOKEN, META_APP_SECRET
+
+    waba_id = _os.environ.get('WABA_ID', '')
+
+    jobs_cursor = db.notification_jobs.find(
+        {}, {'_id': 0}
+    ).sort('created_at', -1).limit(limit)
+    jobs = []
+    async for job in jobs_cursor:
+        payload = job.get('payload', {})
+        jobs.append({
+            'id': job.get('id'),
+            'task_id': job.get('task_id') or payload.get('task_id', ''),
+            'event_type': job.get('event_type'),
+            'target_phone': _safe_mask_phone(job.get('target_phone', '')),
+            'channel': job.get('channel'),
+            'status': job.get('status'),
+            'provider_message_id': job.get('provider_message_id', ''),
+            'template_name': payload.get('template_name', ''),
+            'template_lang': payload.get('defect_lang', ''),
+            'has_image': bool(payload.get('image_url')),
+            'attempts': job.get('attempts', 0),
+            'last_error': job.get('last_error'),
+            'created_at': str(job.get('created_at', '')),
+            'updated_at': str(job.get('updated_at', '')),
+        })
+
+    events_cursor = db.whatsapp_events.find(
+        {}, {'_id': 0}
+    ).sort('received_at', -1).limit(limit)
+    events = []
+    async for evt in events_cursor:
+        raw = evt.get('raw_payload', {})
+        errors = raw.get('errors', []) if isinstance(raw, dict) else []
+        events.append({
+            'id': evt.get('id'),
+            'wa_message_id': evt.get('wa_message_id', ''),
+            'status': evt.get('status', ''),
+            'to_phone': _safe_mask_phone(evt.get('to_phone', '')),
+            'phone_number_id': f"...{evt.get('phone_number_id', '')[-6:]}" if len(evt.get('phone_number_id', '')) > 6 else evt.get('phone_number_id', ''),
+            'event_type': evt.get('event_type', ''),
+            'received_at': str(evt.get('received_at', '')),
+            'errors': errors,
+        })
+
+    config = {
+        'whatsapp_enabled': WHATSAPP_ENABLED,
+        'phone_number_id': f"...{WA_PHONE_NUMBER_ID[-6:]}" if len(WA_PHONE_NUMBER_ID) > 6 else WA_PHONE_NUMBER_ID or 'NOT SET',
+        'waba_id': f"...{waba_id[-6:]}" if len(waba_id) > 6 else waba_id or 'NOT SET',
+        'meta_app_secret_set': bool(META_APP_SECRET),
+        'webhook_verify_token_set': bool(WA_WEBHOOK_VERIFY_TOKEN),
+        'defect_templates': {k: v['name'] for k, v in WA_DEFECT_TEMPLATES.items()},
+    }
+
+    return {
+        'config': config,
+        'notification_jobs': jobs,
+        'whatsapp_events': events,
+    }
 
 
 @router.get("/debug/notification-lookup")
