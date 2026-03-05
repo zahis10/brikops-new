@@ -290,7 +290,7 @@ class TaskUpdate(BaseModel):
 
 
 class TaskAssign(BaseModel):
-    company_id: str
+    company_id: Optional[str] = None
     assignee_id: str
     force_category_change: Optional[bool] = None
 

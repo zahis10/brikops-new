@@ -49,7 +49,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Identity System**: Manages user accounts, including account status, completion, and audit logging.
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements with cascade operations.
     -   **Role Conflict Guard**: Prevents users from holding conflicting `contractor` and organizational management roles within the same organization.
-    -   **Contractor Company+Trade Assignment**: Manages contractor assignments to companies and trades at the project membership level, including invite flows and editing capabilities, with validation to ensure contractors are assigned. Defect creation modal loads contractor list from project memberships (not users collection) to correctly match project-scoped company assignments.
+    -   **Contractor Company+Trade Assignment**: Manages contractor assignments to companies and trades at the project membership level, including invite flows and editing capabilities, with validation to ensure contractors are assigned. Defect creation modal loads contractor list from project memberships (not users collection) to correctly match project-scoped company assignments. `assign_task` uses a company_id resolution chain: (1) membership.company_id, (2) request body company_id, (3) user.company_id fallback — with cross-org validation and automatic membership backfill + audit event when company_id is resolved from request/user fallback.
 
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.

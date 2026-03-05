@@ -316,18 +316,44 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
     assignee_trade_key = assignee_membership.get('contractor_trade_key')
 
     if assignee_membership.get('role') == 'contractor':
-        if not mem_company_id or not assignee_trade_key:
+        if not assignee_trade_key:
             raise HTTPException(status_code=409, detail={
-                'code': 'CONTRACTOR_UNASSIGNED',
-                'message': 'לא ניתן לשייך ליקוי לקבלן ללא חברה/תחום. יש לשייך קבלן לחברה ולתחום תחילה.',
+                'code': 'CONTRACTOR_NO_TRADE',
+                'message': 'חסר תחום מקצועי לקבלן. יש לשייך תחום תחילה.',
             })
 
-    effective_company_id = mem_company_id or assignment.company_id
-    company = await db.project_companies.find_one({'id': effective_company_id, 'deletedAt': {'$exists': False}}, {'_id': 0})
+    effective_company_id = mem_company_id or assignment.company_id or assignee.get('company_id')
+    if not effective_company_id:
+        raise HTTPException(status_code=409, detail={
+            'code': 'CONTRACTOR_NO_COMPANY',
+            'message': 'לא ניתן לשייך ליקוי לקבלן ללא חברה. יש לשייך קבלן לחברה תחילה.',
+        })
+
+    company_source = 'membership' if mem_company_id else ('request' if assignment.company_id else 'user_fallback')
+
+    project = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'id': 1, 'org_id': 1})
+    company = await db.project_companies.find_one({'id': effective_company_id, 'project_id': task['project_id'], 'deletedAt': {'$exists': False}}, {'_id': 0})
     if not company:
         company = await db.companies.find_one({'id': effective_company_id}, {'_id': 0})
+        if company:
+            project_org_id = project.get('org_id') if project else None
+            company_org_id = company.get('org_id')
+            if project_org_id and company_org_id and project_org_id != company_org_id:
+                raise HTTPException(status_code=403, detail='החברה לא שייכת לארגון של הפרויקט')
     if not company:
-        raise HTTPException(status_code=404, detail='Company not found')
+        raise HTTPException(status_code=404, detail='חברה לא נמצאה או לא שייכת לפרויקט')
+
+    if company_source != 'membership' and not mem_company_id:
+        await db.project_memberships.update_one(
+            {'project_id': task['project_id'], 'user_id': assignment.assignee_id},
+            {'$set': {'company_id': effective_company_id, 'updated_at': _now()}}
+        )
+        await _audit('membership', assignee_membership.get('id', assignment.assignee_id), 'membership_company_backfill', user['id'], {
+            'project_id': task['project_id'],
+            'user_id': assignment.assignee_id,
+            'company_id': effective_company_id,
+            'source': company_source,
+        })
     category_synced = False
     task_category = task.get('category')
     if assignee_trade_key and not _trades_match(task_category, assignee_trade_key):
