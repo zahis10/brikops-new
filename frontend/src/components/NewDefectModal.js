@@ -788,6 +788,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         isOpen={showCameraModal}
         onCapture={handleCameraCapture}
         onClose={() => setShowCameraModal(false)}
+        onGallery={() => galleryInputRef.current?.click()}
       />
     </div>
   );
