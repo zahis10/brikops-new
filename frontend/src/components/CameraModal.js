@@ -3,12 +3,20 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Camera, X, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
+const ERROR_MESSAGES = {
+  NotAllowedError: 'לא ניתן לגשת למצלמה — יש לאשר הרשאה',
+  NotReadableError: 'המצלמה בשימוש אפליקציה אחרת',
+  NotFoundError: 'לא נמצאה מצלמה במכשיר',
+  OverconstrainedError: 'לא ניתן לבחור מצלמה אחורית — מנסה מצלמה רגילה',
+};
+
 const CameraModal = ({ isOpen, onCapture, onClose }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
+  const [errorCode, setErrorCode] = useState(null);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -18,30 +26,50 @@ const CameraModal = ({ isOpen, onCapture, onClose }) => {
     setReady(false);
   }, []);
 
+  const attachStream = useCallback((stream) => {
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.onloadedmetadata = () => {
+        videoRef.current.play().then(() => setReady(true)).catch(() => setReady(true));
+      };
+    }
+  }, []);
+
   const startCamera = useCallback(async () => {
     setError(null);
+    setErrorCode(null);
     setReady(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().then(() => setReady(true)).catch(() => setReady(true));
-        };
-      }
+      attachStream(stream);
     } catch (err) {
-      console.error('[CameraModal] getUserMedia failed:', err);
-      const msg = err.name === 'NotAllowedError'
-        ? 'לא ניתן לגשת למצלמה — יש לאשר הרשאת מצלמה בהגדרות הדפדפן'
-        : 'לא ניתן לגשת למצלמה';
+      console.error(`[CameraModal] err.name=${err.name} err.message=${err.message}`);
+
+      if (err.name === 'OverconstrainedError') {
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          attachStream(fallbackStream);
+          return;
+        } catch (fallbackErr) {
+          console.error(`[CameraModal] fallback err.name=${fallbackErr.name} err.message=${fallbackErr.message}`);
+          const msg = ERROR_MESSAGES[fallbackErr.name] || 'שגיאה בגישה למצלמה';
+          setError(msg);
+          setErrorCode(fallbackErr.name);
+          toast.error(msg);
+          return;
+        }
+      }
+
+      const msg = ERROR_MESSAGES[err.name] || 'שגיאה בגישה למצלמה';
       setError(msg);
+      setErrorCode(err.name);
       toast.error(msg);
     }
-  }, []);
+  }, [attachStream]);
 
   useEffect(() => {
     if (isOpen) {
@@ -99,9 +127,20 @@ const CameraModal = ({ isOpen, onCapture, onClose }) => {
 
             <div className="flex-1 flex items-center justify-center overflow-hidden">
               {error ? (
-                <div className="text-center p-6">
+                <div className="text-center p-6 max-w-sm">
                   <Camera className="w-16 h-16 text-slate-400 mx-auto mb-4" />
-                  <p className="text-white text-lg mb-4">{error}</p>
+                  <p className="text-white text-lg mb-2">{error}</p>
+                  {errorCode && (
+                    <p className="text-slate-500 text-xs font-mono mb-4">camera_error={errorCode}</p>
+                  )}
+
+                  <div className="text-slate-400 text-sm text-right space-y-2 mb-6 bg-white/5 rounded-lg p-4" dir="rtl">
+                    <p className="text-slate-300 text-xs font-medium mb-2">איך לאפשר מצלמה:</p>
+                    <p className="text-xs">Safari: aA → Website Settings → Camera → Allow</p>
+                    <p className="text-xs">iOS: Settings → Safari → Camera → Allow/Ask</p>
+                    <p className="text-xs text-slate-500">Reset: Settings → Safari → Advanced → Website Data → delete brikops</p>
+                  </div>
+
                   <button
                     onClick={startCamera}
                     className="flex items-center gap-2 mx-auto px-4 py-2 bg-amber-500 text-white rounded-lg"

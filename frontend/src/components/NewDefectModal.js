@@ -466,7 +466,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       switch (pStatus) {
         case 'sent':
         case 'queued':
-          toast.success(`נשלחה הודעה ב-${ch} ל-${phone} (בהמתנה למסירה)`);
+          toast.info(`נשלחה הודעה ב-${ch} ל-${phone} (בהמתנה למסירה)`);
           break;
         case 'delivered':
           toast.success(`הודעה נמסרה ל-${phone}`);
@@ -482,7 +482,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           break;
         default:
           if (ns.sent && msgId) {
-            toast.success(`נשלחה הודעה ב-${ch} ל-${phone} (בהמתנה למסירה)`);
+            toast.info(`נשלחה הודעה ב-${ch} ל-${phone} (בהמתנה למסירה)`);
           } else {
             toast.warning(`לא ניתן לשלוח הודעה לקבלן: ${ns.error || ns.reason || 'סיבה לא ידועה'}`);
           }
