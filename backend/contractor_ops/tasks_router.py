@@ -12,6 +12,7 @@ from contractor_ops.router import (
     MANAGEMENT_ROLES, logger,
     PRIORITY_SORT_MAP, _priority_sort_key,
 )
+from contractor_ops.msg_logger import mask_phone
 from contractor_ops.schemas import (
     Task, TaskCreate, TaskUpdate, TaskAssign, TaskStatusChange,
     TaskUpdateCreate, TaskUpdateResponse,
@@ -394,19 +395,30 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
         try:
             task_link = _get_task_link(task_id)
             job = await engine.enqueue(task_id, 'task_assigned', user['id'], task_link=task_link)
-            if job and job.get('status') == 'queued':
+            if not job:
+                notification_status = {'sent': False, 'provider_status': 'failed', 'error': 'לא ניתן להוסיף הודעה לתור'}
+            elif job.get('status') == 'failed':
+                notification_status = {'sent': False, 'provider_status': 'failed', 'error': job.get('error', 'אין מספר וואטסאפ תקין לקבלן')}
+            elif job.get('status') == 'queued':
+                target_phone = job.get('target_phone', '')
+                phone_masked = mask_phone(target_phone) if target_phone else ''
                 proc_result = await engine.process_job(job)
+                proc_status = proc_result.get('status', 'unknown')
                 notification_status = {
-                    'sent': True,
+                    'sent': proc_status in ('sent', 'delivered'),
+                    'provider_status': proc_status,
                     'channel': proc_result.get('channel', 'unknown'),
                     'job_id': proc_result.get('job_id', job.get('id', '')),
                     'provider_message_id': proc_result.get('provider_message_id', ''),
+                    'to_phone_masked': phone_masked,
                 }
-            elif job:
-                notification_status = {'sent': False, 'reason': 'duplicate', 'job_id': job.get('id', '')}
+                if proc_result.get('error'):
+                    notification_status['error'] = proc_result['error'][:200]
+            else:
+                notification_status = {'sent': False, 'provider_status': 'duplicate', 'error': 'הודעה כבר נשלחה', 'job_id': job.get('id', '')}
         except Exception as e:
             logger.warning(f"[NOTIFY] Auto-enqueue failed for assign: {e}")
-            notification_status = {'sent': False, 'reason': str(e)[:200]}
+            notification_status = {'sent': False, 'provider_status': 'failed', 'error': str(e)[:200]}
 
     updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     result = Task(**updated).dict()

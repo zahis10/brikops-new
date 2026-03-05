@@ -257,24 +257,41 @@ class NotificationEngine:
         self.invite_template_lang = invite_template_lang
         self.sms_client = None
 
+    @staticmethod
+    def _normalize_israeli_phone(phone: str) -> str:
+        if not phone:
+            return phone
+        cleaned = phone.replace('-', '').replace(' ', '').strip()
+        if cleaned.startswith('05') and len(cleaned) == 10:
+            return '+972' + cleaned[1:]
+        return cleaned
+
     async def _resolve_target_phone(self, task: dict) -> Optional[dict]:
         assignee_id = task.get('assignee_id')
         if assignee_id:
             user = await self.db.users.find_one({'id': assignee_id}, {'_id': 0})
-            if user and user.get('phone_e164'):
-                return {
-                    'phone_e164': user['phone_e164'],
-                    'preferred_language': user.get('preferred_language') or 'he',
-                }
+            if user:
+                phone = user.get('phone_e164') or user.get('phone', '')
+                phone = self._normalize_israeli_phone(phone)
+                if phone and validate_e164(phone):
+                    return {
+                        'phone_e164': phone,
+                        'preferred_language': user.get('preferred_language') or 'he',
+                    }
+                logger.warning(f"[NOTIFY] Assignee {assignee_id} has invalid/missing phone: {mask_phone(phone) if phone else 'NONE'}")
 
         company_id = task.get('company_id')
         if company_id:
             company = await self.db.companies.find_one({'id': company_id}, {'_id': 0})
-            if company and company.get('phone_e164'):
-                return {
-                    'phone_e164': company['phone_e164'],
-                    'preferred_language': 'he',
-                }
+            if company:
+                phone = company.get('phone_e164') or company.get('phone', '')
+                phone = self._normalize_israeli_phone(phone)
+                if phone and validate_e164(phone):
+                    return {
+                        'phone_e164': phone,
+                        'preferred_language': 'he',
+                    }
+                logger.warning(f"[NOTIFY] Company {company_id} has invalid/missing phone: {mask_phone(phone) if phone else 'NONE'}")
 
         return None
 
@@ -319,7 +336,7 @@ class NotificationEngine:
         resolved = await self._resolve_target_phone(task)
         if not resolved:
             logger.warning(f"[NOTIFY] No target phone for task {task_id}, skipping")
-            return None
+            return {'status': 'failed', 'id': str(uuid.uuid4()), 'error': 'אין מספר וואטסאפ תקין לקבלן'}
 
         target_phone = resolved['phone_e164']
         preferred_language = resolved['preferred_language']

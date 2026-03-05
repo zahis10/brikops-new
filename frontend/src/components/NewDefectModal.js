@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { tCategory } from '../i18n';
+import CameraModal from './CameraModal';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -140,6 +141,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [assigneeId, setAssigneeId] = useState('');
 
   const [images, setImages] = useState([]);
+  const [showCameraModal, setShowCameraModal] = useState(false);
   const [projects, setProjects] = useState([]);
   const [buildings, setBuildings] = useState([]);
   const [floors, setFloors] = useState([]);
@@ -292,7 +294,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       )
     : companies;
 
-  const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
   const compressImage = useCallback(async (file) => {
@@ -364,6 +365,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       return prev.filter((_, i) => i !== index);
     });
   }, []);
+
+  const handleCameraCapture = useCallback(async (blob) => {
+    const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    console.log(`[image:camera] size=${(file.size/1024).toFixed(0)}KB`);
+    const compressed = await compressImage(file);
+    console.log(`[image:camera:ready] size=${(compressed.size/1024).toFixed(0)}KB`);
+    setImages(prev => [...prev, { file: compressed, preview: URL.createObjectURL(compressed), name: compressed.name }]);
+    setShowCameraModal(false);
+  }, [compressImage]);
 
   const validate = useCallback(() => {
     const errs = {};
@@ -445,19 +455,39 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
     toast.success('הליקוי נוצר בהצלחה!');
 
-    if (assignResult?.notification_status?.sent) {
-      const ch = assignResult.notification_status.channel;
-      if (ch === 'whatsapp') {
-        toast.success('נשלחה הודעה לקבלן ב-WhatsApp');
-      } else if (ch === 'sms') {
-        toast.success('נשלחה SMS לקבלן (fallback)');
-      } else {
-        toast.success('נשלחה הודעה לקבלן');
+    const ns = assignResult?.notification_status;
+    if (ns) {
+      const phone = ns.to_phone_masked || '';
+      const msgId = ns.provider_message_id || '';
+      const pStatus = ns.provider_status || '';
+      const ch = ns.channel === 'sms' ? 'SMS' : 'WhatsApp';
+      console.log('[WA-DEBUG]', { provider_status: pStatus, provider_message_id: msgId, to_phone_masked: phone, channel: ns.channel });
+
+      switch (pStatus) {
+        case 'sent':
+        case 'queued':
+          toast.success(`נשלחה הודעה ב-${ch} ל-${phone} (בהמתנה למסירה)`);
+          break;
+        case 'delivered':
+          toast.success(`הודעה נמסרה ל-${phone}`);
+          break;
+        case 'failed':
+          toast.error(`נכשל לשלוח ל-${phone}: ${ns.error || ns.reason || 'שגיאה לא ידועה'}`);
+          break;
+        case 'skipped_dry_run':
+          toast.warning('הודעה לא נשלחה (מצב בדיקה)');
+          break;
+        case 'duplicate':
+          toast.info('הודעה כבר נשלחה לקבלן זה');
+          break;
+        default:
+          if (ns.sent && msgId) {
+            toast.success(`נשלחה הודעה ב-${ch} ל-${phone} (בהמתנה למסירה)`);
+          } else {
+            toast.warning(`לא ניתן לשלוח הודעה לקבלן: ${ns.error || ns.reason || 'סיבה לא ידועה'}`);
+          }
+          console.log('[WA-DEBUG] unexpected status', ns);
       }
-      console.log('WhatsApp/SMS result', assignResult.notification_status);
-    } else if (assignResult?.notification_status && !assignResult.notification_status.sent) {
-      toast.info('לא ניתן לשלוח הודעה לקבלן כרגע');
-      console.log('Notification not sent', assignResult.notification_status);
     }
 
     images.forEach(img => URL.revokeObjectURL(img.preview));
@@ -691,7 +721,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             <label className="block text-sm font-medium text-slate-700">
               תמונות * <span className="text-xs text-slate-400">(לפחות 1)</span>
             </label>
-            <input ref={cameraInputRef} type="file" accept="image/*" onChange={handleImageAdd} className="hidden" />
             <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
             {images.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
@@ -711,7 +740,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => cameraInputRef.current?.click()}
+                onClick={() => setShowCameraModal(true)}
                 className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-amber-50 active:bg-amber-100 ${errors.images ? 'border-red-400' : 'border-amber-300'}`}
               >
                 <Camera className="w-6 h-6 text-amber-500" />
@@ -755,6 +784,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           </Button>
         </div>
       </div>
+      <CameraModal
+        isOpen={showCameraModal}
+        onCapture={handleCameraCapture}
+        onClose={() => setShowCameraModal(false)}
+      />
     </div>
   );
 };
