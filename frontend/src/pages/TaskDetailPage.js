@@ -1097,6 +1097,19 @@ const TaskDetailPage = () => {
                         עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
                       </p>
                     )}
+                    {(n.status === 'queued' || n.status === 'sent') && n.created_at && (Date.now() - new Date(n.created_at).getTime() > 60000) && (
+                      <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                        <p className="font-medium">⚠ לא התקבל אישור מסירה</p>
+                        <p className="text-[10px] text-amber-600 mt-0.5">
+                          עדכון אחרון: {new Date(n.updated_at || n.created_at).toLocaleString('he-IL')}
+                          {n.provider_message_id && (
+                            <span className="font-mono mr-2" dir="ltr">
+                              msg: {n.provider_message_id.slice(-12)}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    )}
                     {n.last_error && (
                       <p className="text-xs text-red-500 mt-1">{n.last_error}</p>
                     )}
