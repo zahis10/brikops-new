@@ -393,82 +393,110 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         ),
       ]);
 
+    const extractErrorMsg = (err, fallback) => {
+      const detail = err.response?.data?.detail;
+      if (typeof detail === 'string') return detail;
+      if (typeof detail === 'object' && detail?.message) return detail.message;
+      return err.message || fallback;
+    };
+
+    const taskData = {
+      project_id: projectId,
+      building_id: buildingId,
+      floor_id: floorId,
+      unit_id: unitId,
+      category: category,
+      title: title,
+      description: description,
+      priority: priority,
+    };
+
+    let task;
+    let assignResult;
+    const { taskService } = await import('../services/api');
+    const imagesToUpload = [...images];
+
+    console.log('CREATE payload', taskData);
+
     try {
-      const taskData = {
-        project_id: projectId,
-        building_id: buildingId,
-        floor_id: floorId,
-        unit_id: unitId,
-        category: category,
-        title: title,
-        description: description,
-        priority: priority,
-      };
-      const { taskService } = await import('../services/api');
+      task = await withTimeout(taskService.create(taskData), 30000, 'יצירת ליקוי');
+      console.log('Step 1 OK: task created id=' + task.id);
+    } catch (err) {
+      console.error('Step 1 FAILED: create task', err);
+      toast.error(extractErrorMsg(err, 'שגיאה ביצירת הליקוי'));
+      setSubmitting(false);
+      return;
+    }
 
-      console.log('Step 1: creating task…');
-      const task = await withTimeout(taskService.create(taskData), 30000, 'יצירת ליקוי');
-      console.log('Step 1: task created id=' + task.id);
+    console.log('ASSIGN payload', { taskId: task.id, company_id: companyId, assignee_id: assigneeId });
 
-      console.log('Step 2: uploading ' + images.length + ' images…');
-      images.forEach((img, i) => console.log(`[upload:start] #${i} ${img.name} size=${(img.file.size/1024).toFixed(0)}KB`));
-      const uploadPromises = images.map((img, i) =>
-        taskService.uploadAttachment(task.id, img.file)
-          .then(res => { console.log(`[upload:done] #${i} ${img.name} ok`); return res; })
-          .catch(err => { console.error(`[upload:fail] #${i} ${img.name}`, err.message, err.response?.status); throw err; })
-      );
-      await withTimeout(Promise.all(uploadPromises), 60000, 'העלאת תמונות');
-      console.log('Step 2: uploads done');
-
-      console.log('Step 3: assigning contractor…');
-      const assignResult = await withTimeout(taskService.assign(task.id, {
+    try {
+      assignResult = await withTimeout(taskService.assign(task.id, {
         company_id: companyId,
         assignee_id: assigneeId,
       }), 30000, 'שיוך קבלן');
-      console.log('Step 3: assigned');
-
-      toast.success('הליקוי נוצר בהצלחה!');
-
-      if (assignResult?.notification_status?.sent) {
-        const ch = assignResult.notification_status.channel;
-        if (ch === 'whatsapp') {
-          toast.success('נשלחה הודעה לקבלן ב-WhatsApp');
-        } else if (ch === 'sms') {
-          toast.success('נשלחה SMS לקבלן (fallback)');
-        } else {
-          toast.success('נשלחה הודעה לקבלן');
-        }
-      } else if (assignResult?.notification_status && !assignResult.notification_status.sent) {
-        toast.info('לא ניתן לשלוח הודעה לקבלן כרגע');
-      }
-      images.forEach(img => URL.revokeObjectURL(img.preview));
-      setProjectId('');
-      setBuildingId('');
-      setFloorId('');
-      setUnitId('');
-      setCategory('');
-      setTitle('');
-      setDescription('');
-      setPriority('medium');
-      setCompanyId('');
-      setAssigneeId('');
-      setImages([]);
-      setErrors({});
-      onSuccess(task.id);
+      console.log('Step 2 OK: assigned', { notification_status: assignResult?.notification_status });
     } catch (err) {
-      console.error('handleSubmit error:', err);
-      let msg;
-      if (err.response?.status === 413) {
-        msg = 'התמונה גדולה מדי. נסה תמונה קטנה יותר או העלאה מהגלריה.';
-      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-        msg = 'העלאה נכשלה בגלל חיבור איטי. נסה שוב.';
-      } else {
-        const detail = err.response?.data?.detail;
-        msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
-      }
-      toast.error(msg);
-    } finally {
+      console.error('Step 2 FAILED: assign', err);
+      toast.error(extractErrorMsg(err, 'שיוך לקבלן נכשל'));
       setSubmitting(false);
+      return;
+    }
+
+    toast.success('הליקוי נוצר בהצלחה!');
+
+    if (assignResult?.notification_status?.sent) {
+      const ch = assignResult.notification_status.channel;
+      if (ch === 'whatsapp') {
+        toast.success('נשלחה הודעה לקבלן ב-WhatsApp');
+      } else if (ch === 'sms') {
+        toast.success('נשלחה SMS לקבלן (fallback)');
+      } else {
+        toast.success('נשלחה הודעה לקבלן');
+      }
+      console.log('WhatsApp/SMS result', assignResult.notification_status);
+    } else if (assignResult?.notification_status && !assignResult.notification_status.sent) {
+      toast.info('לא ניתן לשלוח הודעה לקבלן כרגע');
+      console.log('Notification not sent', assignResult.notification_status);
+    }
+
+    images.forEach(img => URL.revokeObjectURL(img.preview));
+    setProjectId('');
+    setBuildingId('');
+    setFloorId('');
+    setUnitId('');
+    setCategory('');
+    setTitle('');
+    setDescription('');
+    setPriority('medium');
+    setCompanyId('');
+    setAssigneeId('');
+    setImages([]);
+    setErrors({});
+    setSubmitting(false);
+    onSuccess(task.id);
+
+    if (imagesToUpload.length > 0) {
+      console.log('UPLOAD sizes', imagesToUpload.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
+      try {
+        const results = await Promise.allSettled(
+          imagesToUpload.map((img, i) =>
+            taskService.uploadAttachment(task.id, img.file)
+              .then(res => { console.log(`[upload:done] #${i} ${img.name} ok`); return res; })
+              .catch(err => { console.error(`[upload:fail] #${i} ${img.name}`, err.message, err.response?.status); throw err; })
+          )
+        );
+        const failed = results.filter(r => r.status === 'rejected');
+        if (failed.length > 0) {
+          console.error('Upload: ' + failed.length + '/' + imagesToUpload.length + ' failed');
+          toast.warning('הליקוי נוצר ונשלח לקבלן, אך ' + failed.length + ' תמונות לא הועלו. ניתן להעלות שוב מדף הליקוי.');
+        } else {
+          console.log('Upload: all ' + imagesToUpload.length + ' images uploaded');
+        }
+      } catch (uploadErr) {
+        console.error('Upload unexpected error:', uploadErr);
+        toast.warning('הליקוי נוצר ונשלח לקבלן, אך העלאת התמונות נכשלה. ניתן להעלות שוב מדף הליקוי.');
+      }
     }
   };
 
