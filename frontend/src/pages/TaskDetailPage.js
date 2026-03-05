@@ -9,10 +9,12 @@ import {
   MessageSquare, Paperclip, ArrowRight, Send, HardHat, Image as ImageIcon,
   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
-  Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle
+  Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
+  Copy, Smartphone
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+import CameraModal from '../components/CameraModal';
 
 const STATUS_CONFIG = {
   open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700', icon: CircleDot },
@@ -152,6 +154,7 @@ const TaskDetailPage = () => {
   const [savingField, setSavingField] = useState(null);
 
   const [tradeMismatchModal, setTradeMismatchModal] = useState(null);
+  const [showCameraModal, setShowCameraModal] = useState(false);
 
   const proofInputRef = useRef(null);
 
@@ -266,6 +269,16 @@ const TaskDetailPage = () => {
 
   const removeProofFile = (fileId) => {
     setProofFiles(prev => prev.filter(f => f.id !== fileId));
+  };
+
+  const handleCameraCapture = (blob) => {
+    const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setProofFiles(prev => [...prev, { file, preview: ev.target.result, id: Date.now() + Math.random() }]);
+    };
+    reader.readAsDataURL(file);
+    setShowCameraModal(false);
   };
 
   const handleSubmitProof = async () => {
@@ -777,16 +790,22 @@ const TaskDetailPage = () => {
               </div>
             )}
 
-            <button
-              onClick={() => proofInputRef.current?.click()}
-              className="w-full mb-4 py-5 border-2 border-dashed border-amber-400 rounded-xl bg-white hover:bg-amber-50 transition-colors flex flex-col items-center gap-2"
-            >
-              <Camera className="w-8 h-8 text-amber-500" />
-              <span className="text-sm font-semibold text-amber-700">
-                {proofFiles.length > 0 ? 'הוסף תמונה נוספת' : 'צלם / העלה תמונת תיקון'}
-              </span>
-              <span className="text-xs text-amber-500">לחץ לפתיחת מצלמה או בחירת תמונה</span>
-            </button>
+            <div className="flex gap-3 mb-4">
+              <button
+                onClick={() => setShowCameraModal(true)}
+                className="flex-1 py-5 border-2 border-dashed border-amber-400 rounded-xl bg-white hover:bg-amber-50 transition-colors flex flex-col items-center gap-2"
+              >
+                <Camera className="w-8 h-8 text-amber-500" />
+                <span className="text-sm font-semibold text-amber-700">צלם תמונה</span>
+              </button>
+              <button
+                onClick={() => proofInputRef.current?.click()}
+                className="flex-1 py-5 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 transition-colors flex flex-col items-center gap-2"
+              >
+                <Upload className="w-8 h-8 text-slate-400" />
+                <span className="text-sm font-semibold text-slate-600">בחר מגלריה</span>
+              </button>
+            </div>
 
             {proofFiles.length > 0 && (
               <p className="text-xs text-amber-600 mb-3 text-center font-medium">{proofFiles.length} תמונ{proofFiles.length === 1 ? 'ה' : 'ות'} נבחר{proofFiles.length === 1 ? 'ה' : 'ו'}</p>
@@ -1007,12 +1026,17 @@ const TaskDetailPage = () => {
               {notifications.map(n => {
                 const cfg = NOTIF_STATUS_CONFIG[n.status] || NOTIF_STATUS_CONFIG.queued;
                 const Icon = cfg.icon;
+                const channelLabel = n.channel === 'sms' ? 'SMS' : n.channel === 'whatsapp' ? 'WhatsApp' : n.channel;
+                const maskedPhone = n.target_phone ? (n.target_phone.length > 8 ? n.target_phone.slice(0,4) + '****' + n.target_phone.slice(-4) : n.target_phone.slice(0,3) + '****') : '';
                 return (
                   <div key={n.id} className="border-b border-slate-100 pb-3 last:border-0">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
                         <Icon className={`w-4 h-4 ${cfg.color}`} />
                         <span className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</span>
+                        {channelLabel && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">{channelLabel}</span>
+                        )}
                       </div>
                       <span className="text-xs text-slate-400">
                         {n.created_at ? new Date(n.created_at).toLocaleString('he-IL') : ''}
@@ -1023,20 +1047,56 @@ const TaskDetailPage = () => {
                         <span className="bg-slate-100 px-1.5 py-0.5 rounded">
                           {getNotifEventLabel(n.event_type)}
                         </span>
-                        <span className="mr-2">{n.target_phone}</span>
+                        <span className="mr-2">{maskedPhone}</span>
                       </div>
-                      {n.status === 'failed' && canManage && (
+                      <div className="flex items-center gap-1">
+                        {n.status === 'failed' && canManage && (
+                          <Button
+                            onClick={() => handleRetry(n.id)}
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 gap-1"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            נסה שוב
+                          </Button>
+                        )}
                         <Button
-                          onClick={() => handleRetry(n.id)}
                           size="sm"
-                          variant="outline"
-                          className="text-xs h-7 gap-1"
+                          variant="ghost"
+                          className="text-xs h-7 gap-1 text-slate-400"
+                          onClick={() => {
+                            const debug = {
+                              task_id: n.task_id,
+                              job_id: n.id,
+                              masked_phone: maskedPhone,
+                              message_id: n.provider_message_id || '',
+                              delivery_state: n.status,
+                              channel: n.channel,
+                              event_type: n.event_type,
+                              error: n.last_error || null,
+                              created_at: n.created_at,
+                              updated_at: n.updated_at,
+                            };
+                            navigator.clipboard.writeText(JSON.stringify(debug, null, 2));
+                            toast.success('דיבוג הועתק ללוח');
+                          }}
                         >
-                          <RefreshCw className="w-3 h-3" />
-                          נסה שוב
+                          <Copy className="w-3 h-3" />
+                          העתק דיבוג
                         </Button>
-                      )}
+                      </div>
                     </div>
+                    {n.provider_message_id && (
+                      <p className="text-[10px] text-slate-400 mt-1 font-mono truncate" dir="ltr">
+                        msg: {n.provider_message_id}
+                      </p>
+                    )}
+                    {n.updated_at && n.updated_at !== n.created_at && (
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        עודכן: {new Date(n.updated_at).toLocaleString('he-IL')}
+                      </p>
+                    )}
                     {n.last_error && (
                       <p className="text-xs text-red-500 mt-1">{n.last_error}</p>
                     )}
@@ -1175,6 +1235,12 @@ const TaskDetailPage = () => {
           </div>
         </div>
       )}
+
+      <CameraModal
+        isOpen={showCameraModal}
+        onCapture={handleCameraCapture}
+        onClose={() => setShowCameraModal(false)}
+      />
     </div>
   );
 };

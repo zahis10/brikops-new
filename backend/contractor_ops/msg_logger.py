@@ -57,9 +57,11 @@ def log_msg_queued(
 
 
 def mask_phone(phone_e164: str) -> str:
+    if not phone_e164:
+        return ''
     if len(phone_e164) > 8:
-        return phone_e164[:6] + "***" + phone_e164[-2:]
-    return phone_e164[:4] + "***"
+        return phone_e164[:4] + '****' + phone_e164[-4:]
+    return phone_e164[:3] + '****'
 
 
 class DeliveryTimer:
