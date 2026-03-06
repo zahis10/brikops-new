@@ -142,6 +142,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
   const [images, setImages] = useState([]);
   const [showCameraModal, setShowCameraModal] = useState(false);
+  const [createdTaskId, setCreatedTaskId] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
   const [projects, setProjects] = useState([]);
   const [buildings, setBuildings] = useState([]);
   const [floors, setFloors] = useState([]);
@@ -182,6 +184,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
   useEffect(() => {
     if (isOpen) {
+      setCreatedTaskId(null);
+      setUploadError(null);
       if (hasPrefill) {
         setProjectId(prefillData.project_id);
         setBuildingId(prefillData.building_id);
@@ -301,43 +305,67 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     const MAX_WIDTH = 1600;
     const JPEG_QUALITY = 0.7;
 
-    if (file.size <= MAX_SIZE) return file;
+    if (file.size <= MAX_SIZE && file.type && file.type.startsWith('image/') && !file.type.includes('heic')) {
+      return file;
+    }
 
-    try {
-      const bitmap = await createImageBitmap(file);
-      let width = bitmap.width;
-      let height = bitmap.height;
-
+    const drawToCanvas = (source, srcWidth, srcHeight) => {
+      let width = srcWidth;
+      let height = srcHeight;
       if (width > MAX_WIDTH) {
         height = Math.round((height * MAX_WIDTH) / width);
         width = MAX_WIDTH;
       }
-
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(bitmap, 0, 0, width, height);
-      bitmap.close();
+      ctx.drawImage(source, 0, 0, width, height);
+      return canvas;
+    };
 
+    const canvasToFile = async (canvas, origName) => {
       const blob = await new Promise(resolve =>
         canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
       );
+      if (!blob || blob.size === 0) throw new Error('Canvas toBlob returned empty');
+      const outName = origName.replace(/\.[^.]+$/, '.jpg');
+      return new File([blob], outName, { type: 'image/jpeg', lastModified: Date.now() });
+    };
 
-      if (!blob) throw new Error('Canvas toBlob returned null');
-
-      const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
-        type: 'image/jpeg',
-        lastModified: Date.now(),
-      });
-
-      console.log(`[compress] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(compressedFile.size/1024).toFixed(0)}KB`);
-      return compressedFile;
-    } catch (err) {
-      console.warn('[compress] failed, using original:', err);
-      toast.error('דחיסת תמונה נכשלה — משתמש בקובץ המקורי');
-      return file;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height);
+      bitmap.close();
+      const result = await canvasToFile(canvas, file.name);
+      console.log(`[compress:bitmap] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
+      return result;
+    } catch (bitmapErr) {
+      console.warn('[compress:bitmap] failed, trying Image fallback:', bitmapErr.message);
     }
+
+    try {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Image load failed'));
+        img.src = url;
+      });
+      const canvas = drawToCanvas(img, img.naturalWidth, img.naturalHeight);
+      URL.revokeObjectURL(url);
+      const result = await canvasToFile(canvas, file.name);
+      console.log(`[compress:img] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
+      return result;
+    } catch (imgErr) {
+      console.warn('[compress:img] fallback also failed:', imgErr.message);
+    }
+
+    console.warn(`[compress] all methods failed for ${file.name}, using original (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
+    if (!file.type || file.type === '') {
+      return new File([file], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+    }
+    return file;
   }, []);
 
   const handleImageAdd = useCallback(async (e) => {
@@ -391,103 +419,78 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     return Object.keys(errs).length === 0;
   }, [projectId, buildingId, floorId, unitId, category, title, description, companyId, assigneeId, images]);
 
-  const handleSubmit = async () => {
-    if (!validate()) return;
+  const uploadWithRetry = async (taskService, taskId, file, fileName, maxAttempts = 3) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`[upload:attempt] #${attempt}/${maxAttempts} ${fileName} (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
+        const res = await taskService.uploadAttachment(taskId, file);
+        console.log(`[upload:ok] ${fileName} on attempt #${attempt}`);
+        return res;
+      } catch (err) {
+        const status = err.response?.status;
+        const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
+        const isNetwork = !err.response && err.message?.includes('Network');
+        console.error(`[upload:fail] ${fileName} attempt #${attempt}/${maxAttempts}`,
+          { status, isTimeout, isNetwork, message: err.message, responseData: err.response?.data });
+        if (attempt < maxAttempts) {
+          const delay = attempt * 2000;
+          console.log(`[upload:retry] waiting ${delay}ms before retry...`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          throw err;
+        }
+      }
+    }
+  };
+
+  const doUploadAndAssign = async (taskId) => {
+    setUploadError(null);
     setSubmitting(true);
 
-    const withTimeout = (promise, ms, stepName) =>
-      Promise.race([
-        promise,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`שגיאת זמן בשלב: ${stepName} — נסה שוב`)), ms)
-        ),
-      ]);
-
-    const extractErrorMsg = (err, fallback) => {
-      const detail = err.response?.data?.detail;
-      if (typeof detail === 'string') return detail;
-      if (typeof detail === 'object' && detail?.message) return detail.message;
-      return err.message || fallback;
-    };
-
-    const taskData = {
-      project_id: projectId,
-      building_id: buildingId,
-      floor_id: floorId,
-      unit_id: unitId,
-      category: category,
-      title: title,
-      description: description,
-      priority: priority,
-    };
-
-    let task;
-    let assignResult;
     const { taskService } = await import('../services/api');
     const imagesToUpload = [...images];
 
-    console.log('CREATE payload', taskData);
-
-    try {
-      task = await withTimeout(taskService.create(taskData), 30000, 'יצירת ליקוי');
-      console.log('Step 1 OK: task created id=' + task.id);
-    } catch (err) {
-      console.error('Step 1 FAILED: create task', err);
-      toast.error(extractErrorMsg(err, 'שגיאה ביצירת הליקוי'));
-      setSubmitting(false);
-      return;
-    }
-
     if (imagesToUpload.length > 0) {
       console.log('UPLOAD sizes', imagesToUpload.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
-      try {
-        const results = await Promise.allSettled(
-          imagesToUpload.map((img, i) =>
-            taskService.uploadAttachment(task.id, img.file)
-              .then(res => { console.log(`[upload:done] #${i} ${img.name} ok`); return res; })
-              .catch(err => { console.error(`[upload:fail] #${i} ${img.name}`, err.message, err.response?.status); throw err; })
-          )
-        );
-        const succeeded = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected');
-        if (succeeded === 0) {
-          console.error('Upload: all ' + imagesToUpload.length + ' failed — cannot assign');
-          toast.error('העלאת התמונות נכשלה — לא ניתן לשלוח לקבלן. נסה שוב מדף הליקוי.');
-          setSubmitting(false);
-          onSuccess(task.id);
-          return;
-        }
-        if (failed.length > 0) {
-          console.warn('Upload: ' + failed.length + '/' + imagesToUpload.length + ' failed, ' + succeeded + ' succeeded');
-          toast.warning(failed.length + ' תמונות לא הועלו, אך ממשיך בשיוך הקבלן.');
-        } else {
-          console.log('Upload: all ' + imagesToUpload.length + ' images uploaded');
-        }
-      } catch (uploadErr) {
-        console.error('Upload unexpected error:', uploadErr);
-        toast.error('העלאת התמונות נכשלה — לא ניתן לשלוח לקבלן. נסה שוב מדף הליקוי.');
+      const results = await Promise.allSettled(
+        imagesToUpload.map((img) => uploadWithRetry(taskService, taskId, img.file, img.name))
+      );
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failedResults = results.filter(r => r.status === 'rejected');
+
+      if (succeeded === 0) {
+        const reasons = failedResults.map(r => r.reason?.message || 'unknown').join('; ');
+        console.error(`Upload: all ${imagesToUpload.length} failed after retries — cannot assign. Reasons: ${reasons}`);
+        setUploadError(`העלאת ${imagesToUpload.length} תמונות נכשלה לאחר מספר ניסיונות. ניתן לנסות שוב.`);
         setSubmitting(false);
-        onSuccess(task.id);
         return;
+      }
+      if (failedResults.length > 0) {
+        console.warn(`Upload: ${failedResults.length}/${imagesToUpload.length} failed, ${succeeded} succeeded — proceeding to assign`);
+        toast.warning(`${failedResults.length} תמונות לא הועלו, אך ממשיך בשיוך הקבלן.`);
+      } else {
+        console.log(`Upload: all ${imagesToUpload.length} images uploaded successfully`);
       }
     }
 
-    console.log('ASSIGN payload', { taskId: task.id, company_id: companyId, assignee_id: assigneeId });
+    console.log('ASSIGN payload', { taskId, company_id: companyId, assignee_id: assigneeId });
 
+    let assignResult;
     try {
-      assignResult = await withTimeout(taskService.assign(task.id, {
-        company_id: companyId,
-        assignee_id: assigneeId,
-      }), 30000, 'שיוך קבלן');
-      console.log('Step 3 OK: assigned', { notification_status: assignResult?.notification_status });
+      assignResult = await Promise.race([
+        taskService.assign(taskId, { company_id: companyId, assignee_id: assigneeId }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: שיוך קבלן — נסה שוב')), 30000)),
+      ]);
+      console.log('ASSIGN OK', { notification_status: assignResult?.notification_status });
     } catch (err) {
-      console.error('Step 3 FAILED: assign', err);
+      console.error('ASSIGN FAILED', err);
       const detail = err.response?.data?.detail;
       const errorCode = typeof detail === 'object' ? detail?.error_code : null;
       if (errorCode === 'NO_TASK_IMAGE') {
-        toast.error(detail.message || 'יש לצרף לפחות תמונה אחת לפני שליחה לקבלן');
+        setUploadError(detail.message || 'יש לצרף לפחות תמונה אחת לפני שליחה לקבלן');
       } else {
-        toast.error(extractErrorMsg(err, 'שיוך לקבלן נכשל'));
+        const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שיוך לקבלן נכשל');
+        toast.error(msg);
       }
       setSubmitting(false);
       return;
@@ -543,8 +546,62 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setAssigneeId('');
     setImages([]);
     setErrors({});
+    setCreatedTaskId(null);
+    setUploadError(null);
     setSubmitting(false);
-    onSuccess(task.id);
+    onSuccess(taskId);
+  };
+
+  const handleSubmit = async () => {
+    if (createdTaskId && uploadError) {
+      await doUploadAndAssign(createdTaskId);
+      return;
+    }
+
+    if (!validate()) return;
+    setSubmitting(true);
+    setUploadError(null);
+
+    const taskData = {
+      project_id: projectId,
+      building_id: buildingId,
+      floor_id: floorId,
+      unit_id: unitId,
+      category: category,
+      title: title,
+      description: description,
+      priority: priority,
+    };
+
+    let task;
+    const { taskService } = await import('../services/api');
+
+    console.log('CREATE payload', taskData);
+
+    try {
+      task = await Promise.race([
+        taskService.create(taskData),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: יצירת ליקוי — נסה שוב')), 30000)),
+      ]);
+      console.log('Step 1 OK: task created id=' + task.id);
+      setCreatedTaskId(task.id);
+    } catch (err) {
+      console.error('Step 1 FAILED: create task', err);
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
+      toast.error(msg);
+      setSubmitting(false);
+      return;
+    }
+
+    await doUploadAndAssign(task.id);
+  };
+
+  const handleClose = () => {
+    if (createdTaskId && uploadError) {
+      toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
+    }
+    onClose();
   };
 
   if (!isOpen) return null;
@@ -553,7 +610,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 overflow-y-auto p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-8 overflow-hidden">
         <div className="bg-amber-500 text-white px-6 py-4 flex items-center justify-between">
-          <button onClick={onClose} className="p-1 hover:bg-amber-600 rounded-lg transition-colors">
+          <button onClick={handleClose} className="p-1 hover:bg-amber-600 rounded-lg transition-colors">
             <X className="w-5 h-5" />
           </button>
           <h2 className="text-lg font-bold">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</h2>
@@ -776,23 +833,35 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           </div>
         </div>
 
+        {uploadError && (
+          <div className="border-t border-red-200 bg-red-50 px-6 py-3 flex items-center gap-3" dir="rtl">
+            <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+            <p className="text-sm text-red-700 flex-1">{uploadError}</p>
+          </div>
+        )}
+
         <div className="border-t px-6 py-4 flex gap-3" dir="rtl">
           <Button
             onClick={handleSubmit}
             disabled={submitting}
-            className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg"
+            className={`flex-1 font-medium py-2.5 rounded-lg ${uploadError ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white'}`}
           >
             {submitting ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                יוצר ליקוי...
+                {uploadError ? 'מעלה תמונות...' : 'יוצר ליקוי...'}
+              </span>
+            ) : uploadError ? (
+              <span className="flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4" />
+                נסה שוב להעלות
               </span>
             ) : (
               'צור ליקוי'
             )}
           </Button>
           <Button
-            onClick={onClose}
+            onClick={handleClose}
             variant="outline"
             disabled={submitting}
             className="px-6 py-2.5 rounded-lg"
