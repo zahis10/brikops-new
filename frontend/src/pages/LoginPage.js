@@ -202,7 +202,13 @@ const LoginPage = () => {
       const data = await res.json();
       const { token: newToken, user: userData, platform_role } = data;
       localStorage.setItem('token', newToken);
-      window.location.href = '/projects';
+      const intended = sessionStorage.getItem('intendedPath');
+      if (intended) {
+        sessionStorage.removeItem('intendedPath');
+        window.location.href = intended;
+      } else {
+        window.location.href = '/projects';
+      }
     } catch (error) {
       toast.error('אירעה שגיאה. נסה שוב.');
     } finally {
