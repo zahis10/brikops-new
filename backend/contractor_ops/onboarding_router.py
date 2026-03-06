@@ -249,7 +249,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 }
             if user['role'] == 'project_manager' and ENABLE_AUTO_TRIAL:
                 await ensure_user_org(user['id'], user.get('name', ''))
-            platform_role = 'super_admin' if is_super_admin_phone(user['phone_e164']) else 'none'
+            sa_check = is_super_admin_phone(user['phone_e164'])
+            platform_role = 'super_admin' if sa_check['matched'] else 'none'
             if user.get('platform_role') != platform_role:
                 await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
             sv = user.get('session_version', 0)

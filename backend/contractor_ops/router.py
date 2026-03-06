@@ -238,7 +238,8 @@ async def require_super_admin(request: Request, user: dict = Depends(get_current
         await _audit_admin_access(user.get('id', ''), route, method, 429, ip, ua, 'rate_limited')
         raise HTTPException(status_code=429, detail='יותר מדי בקשות. נסה שוב בעוד דקה.')
 
-    if not is_super_admin_phone(user_phone):
+    sa_check = is_super_admin_phone(user_phone)
+    if not sa_check['matched']:
         await _audit_admin_access(user.get('id', ''), route, method, 403, ip, ua, 'not_in_allowlist')
         raise HTTPException(status_code=403, detail='גישה מוגבלת למנהל מערכת בלבד')
 

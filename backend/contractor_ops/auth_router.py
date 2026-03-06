@@ -8,7 +8,7 @@ from contractor_ops.router import (
     _get_otp_service, _audit, _now,
     ensure_user_org, MANAGEMENT_ROLES, logger,
 )
-from config import is_super_admin_phone, ENABLE_COMPLETE_ACCOUNT_GATE
+from config import is_super_admin_phone, ENABLE_COMPLETE_ACCOUNT_GATE, SA_PHONES_SOURCE, SUPER_ADMIN_PHONES, _mask_phone
 from contractor_ops.phone_utils import normalize_israeli_phone
 from contractor_ops.schemas import (
     UserCreate, UserLogin, UserResponse, Role,
@@ -287,7 +287,11 @@ async def login(credentials: UserLogin):
         raise HTTPException(status_code=403, detail='Account suspended')
     if user['role'] == 'project_manager':
         await ensure_user_org(user['id'], user.get('name', ''))
-    platform_role = 'super_admin' if is_super_admin_phone(user.get('phone_e164', '')) else 'none'
+    user_phone_raw = user.get('phone_e164', '')
+    sa_check = is_super_admin_phone(user_phone_raw)
+    platform_role = 'super_admin' if sa_check['matched'] else 'none'
+    sa_reason = f" reason={sa_check['reason']}" if sa_check.get('reason') else ''
+    logger.info(f"[SA_CHECK] user_phone_raw={_mask_phone(user_phone_raw)} norm={_mask_phone(sa_check.get('norm') or '')} matched={sa_check['matched']} list_count={len(SUPER_ADMIN_PHONES)} source={SA_PHONES_SOURCE}{sa_reason}")
     if user.get('platform_role') != platform_role:
         await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
     sv = user.get('session_version', 0)
@@ -326,7 +330,11 @@ async def dev_login(request: Request):
         raise HTTPException(status_code=404, detail=f'Demo user not found for role: {role}')
     if user['role'] == 'project_manager':
         await ensure_user_org(user['id'], user.get('name', ''))
-    platform_role = 'super_admin' if is_super_admin_phone(user.get('phone_e164', '')) else 'none'
+    user_phone_raw = user.get('phone_e164', '')
+    sa_check = is_super_admin_phone(user_phone_raw)
+    platform_role = 'super_admin' if sa_check['matched'] else 'none'
+    sa_reason = f" reason={sa_check['reason']}" if sa_check.get('reason') else ''
+    logger.info(f"[SA_CHECK] user_phone_raw={_mask_phone(user_phone_raw)} norm={_mask_phone(sa_check.get('norm') or '')} matched={sa_check['matched']} list_count={len(SUPER_ADMIN_PHONES)} source={SA_PHONES_SOURCE}{sa_reason}")
     if user.get('platform_role') != platform_role:
         await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
     sv = user.get('session_version', 0)

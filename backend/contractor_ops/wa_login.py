@@ -308,7 +308,8 @@ async def verify_magic_link(token: str = Query(...)):
 
     from contractor_ops.router import _create_token
     from config import is_super_admin_phone
-    platform_role = 'super_admin' if is_super_admin_phone(user.get('phone_e164', '')) else user.get('platform_role', 'none')
+    sa_check = is_super_admin_phone(user.get('phone_e164', ''))
+    platform_role = 'super_admin' if sa_check['matched'] else user.get('platform_role', 'none')
     jwt_token = _create_token(
         user_id=user["id"],
         email=user.get("email", ""),
