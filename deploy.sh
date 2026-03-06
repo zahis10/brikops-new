@@ -56,6 +56,61 @@ if [[ "$ahead" -gt 0 ]]; then
   git diff --name-only "origin/$branch..HEAD" | check_files
 fi
 
+check_frontend_staleness() {
+  local bundle
+  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
+  if [[ -z "$bundle" ]]; then
+    echo "[STALE BUILD] No frontend bundle found — will rebuild"
+    frontend_changed=1
+    return
+  fi
+  local bundle_ts
+  bundle_ts=$(stat -c "%Y" "$bundle" 2>/dev/null || echo 0)
+
+  local newest_src=0
+  local inputs=(
+    "frontend/src"
+    "frontend/public"
+  )
+  local input_files=(
+    "frontend/package.json"
+    "frontend/yarn.lock"
+    "frontend/craco.config.js"
+    "frontend/tailwind.config.js"
+    "frontend/postcss.config.js"
+  )
+
+  for dir in "${inputs[@]}"; do
+    if [[ -d "$dir" ]]; then
+      local dir_newest
+      dir_newest=$(find "$dir" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1)
+      if [[ -n "$dir_newest" ]] && (( dir_newest > newest_src )); then
+        newest_src=$dir_newest
+      fi
+    fi
+  done
+
+  for f in "${input_files[@]}"; do
+    if [[ -f "$f" ]]; then
+      local f_ts
+      f_ts=$(stat -c "%Y" "$f" 2>/dev/null || echo 0)
+      if (( f_ts > newest_src )); then
+        newest_src=$f_ts
+      fi
+    fi
+  done
+
+  if (( newest_src > bundle_ts )); then
+    local src_date bundle_date
+    src_date=$(date -d "@$newest_src" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$newest_src")
+    bundle_date=$(date -d "@$bundle_ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$bundle_ts")
+    echo "[STALE BUILD] Frontend source ($src_date) is newer than build ($bundle_date) — will rebuild"
+    frontend_changed=1
+  fi
+}
+
+check_frontend_staleness
+
 echo "=== Deploy Status ==="
 if [[ $has_uncommitted -eq 1 ]]; then
   echo "Uncommitted changes:"
@@ -112,7 +167,15 @@ if [[ $SKIP_CHECKS -eq 0 ]]; then
     fi
     echo "[frontend] yarn build (REACT_APP_BACKEND_URL=$FRONTEND_BACKEND_URL)"
     (cd frontend && REACT_APP_BACKEND_URL="$FRONTEND_BACKEND_URL" yarn build)
-    echo "[frontend] build OK"
+    new_bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
+    if [[ -z "$new_bundle" ]]; then
+      echo "[frontend] ERROR: build produced no bundle — aborting"
+      exit 1
+    fi
+    bundle_name=$(basename "$new_bundle")
+    bundle_size=$(( $(stat -c "%s" "$new_bundle") / 1024 ))
+    bundle_time=$(date -d "@$(stat -c '%Y' "$new_bundle")" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || stat -c '%Y' "$new_bundle")
+    echo "[frontend] Build verified: ${bundle_name} (${bundle_size}KB) at ${bundle_time}"
   fi
   echo
 else
