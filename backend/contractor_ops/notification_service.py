@@ -35,7 +35,18 @@ def _make_absolute_url(relative_path: str) -> str:
 
 E164_PATTERN = re.compile(r'^\+[1-9]\d{6,14}$')
 
-WA_FALLBACK_IMAGE_URL = "https://app.brikops.com/logo192.png"
+_WA_FALLBACK_IMAGE_RAW = os.environ.get('WA_FALLBACK_IMAGE_URL', 's3://public/assets/brikops-logo.png')
+
+
+def _resolve_fallback_image() -> str:
+    from services.object_storage import generate_url
+    raw = _WA_FALLBACK_IMAGE_RAW
+    if raw.startswith('s3://'):
+        return generate_url(raw)
+    return raw
+
+
+WA_FALLBACK_IMAGE_URL = _WA_FALLBACK_IMAGE_RAW
 
 
 def validate_e164(phone: str) -> bool:
@@ -175,7 +186,8 @@ class WhatsAppClient:
 
             components = []
 
-            effective_image = image_url if (image_url and image_url.startswith('https://')) else WA_FALLBACK_IMAGE_URL
+            fallback_image = _resolve_fallback_image()
+            effective_image = image_url if (image_url and image_url.startswith('https://')) else fallback_image
             if effective_image:
                 components.append({
                     "type": "header",
@@ -216,7 +228,7 @@ class WhatsAppClient:
                     "components": components,
                 }
             }
-            logger.info(f"[WA:SEND] template={tpl_name} lang={tpl_lang} to={mask_phone(to_phone)} task_id={task_id} has_image={'yes' if effective_image else 'no'} is_fallback={effective_image == WA_FALLBACK_IMAGE_URL}")
+            logger.info(f"[WA:SEND] template={tpl_name} lang={tpl_lang} to={mask_phone(to_phone)} task_id={task_id} has_image={'yes' if effective_image else 'no'} is_fallback={not image_url or not image_url.startswith('https://')}")
         else:
             text = format_text_message(payload)
             body = {
