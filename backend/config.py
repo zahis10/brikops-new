@@ -72,11 +72,13 @@ WA_TEMPLATE_INVITE = os.environ.get('WA_TEMPLATE_INVITE', '')
 WA_TEMPLATE_INVITE_LANG = os.environ.get('WA_TEMPLATE_INVITE_LANG', 'he')
 
 WA_DEFECT_TEMPLATES = {
-    'he': {'name': 'brikops_defect_new_he', 'lang': 'en'},
-    'en': {'name': 'brikops_defect_new', 'lang': 'en'},
-    'ar': {'name': 'brikops_defect_new_ar', 'lang': 'ar'},
+    'he': {'name': os.environ.get('WA_DEFECT_TEMPLATE_HE', 'brikops_defect_new_he'), 'lang': 'en'},
+    'en': {'name': os.environ.get('WA_DEFECT_TEMPLATE_EN', 'brikops_defect_new'), 'lang': 'en'},
+    'ar': {'name': os.environ.get('WA_DEFECT_TEMPLATE_AR', 'brikops_defect_new_ar'), 'lang': 'ar'},
+    'zh': {'name': os.environ.get('WA_DEFECT_TEMPLATE_ZH', 'brikops_defect_new_zh'), 'lang': 'zh'},
 }
 WA_DEFECT_DEFAULT_LANG = 'he'
+WA_TEMPLATE_PARAM_MODE = os.environ.get('WA_TEMPLATE_PARAM_MODE', 'named')
 OTP_SMS_FALLBACK_SECONDS = int(os.environ.get('OTP_SMS_FALLBACK_SECONDS', '25'))
 WA_WEBHOOK_VERIFY_TOKEN = os.environ.get('WA_WEBHOOK_VERIFY_TOKEN', '')
 META_APP_SECRET = os.environ.get('META_APP_SECRET', '')

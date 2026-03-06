@@ -385,19 +385,27 @@ async def debug_whatsapp_send_test(request: Request, user: dict = Depends(requir
         except Exception as e:
             return {"success": False, "error": f"Media upload exception: {str(e)[:300]}", "mode": mode}
 
+    from config import WA_TEMPLATE_PARAM_MODE
+    db = get_db()
+    sample_task = await db.tasks.find_one({}, {'id': 1, '_id': 0})
+    button_id = sample_task['id'] if sample_task else 'TEST-001'
+
+    ref_param = {"type": "text", "text": "TEST-001"}
+    location_param = {"type": "text", "text": "בדיקת מערכת - בניין טסט"}
+    issue_param = {"type": "text", "text": "הודעת טסט מ-BrikOps"}
+    if WA_TEMPLATE_PARAM_MODE == 'named':
+        ref_param["parameter_name"] = "ref"
+        location_param["parameter_name"] = "location"
+        issue_param["parameter_name"] = "issue"
     components.append({
         "type": "body",
-        "parameters": [
-            {"type": "text", "parameter_name": "location", "text": "בדיקת מערכת - בניין טסט"},
-            {"type": "text", "parameter_name": "issue", "text": "הודעת טסט מ-BrikOps"},
-            {"type": "text", "parameter_name": "ref", "text": "TEST-001"},
-        ]
+        "parameters": [ref_param, location_param, issue_param]
     })
     components.append({
         "type": "button",
         "sub_type": "url",
         "index": 0,
-        "parameters": [{"type": "text", "text": "TEST-001"}]
+        "parameters": [{"type": "text", "text": button_id}]
     })
 
     send_body = {

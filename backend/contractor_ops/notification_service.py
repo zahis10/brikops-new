@@ -175,10 +175,11 @@ class WhatsAppClient:
         }
 
         lang_key = defect_lang or WA_DEFECT_DEFAULT_LANG
-        if lang_key == 'zh':
-            logger.info(f"[WA] Language zh not supported, falling back to en for task_id={task_id}")
-            lang_key = 'en'
         tpl_info = WA_DEFECT_TEMPLATES.get(lang_key)
+        if not tpl_info and lang_key != 'en':
+            logger.info(f"[WA] Language {lang_key} not found, falling back to en for task_id={task_id}")
+            lang_key = 'en'
+            tpl_info = WA_DEFECT_TEMPLATES.get(lang_key)
 
         if tpl_info:
             tpl_name = tpl_info['name']
@@ -201,13 +202,17 @@ class WhatsAppClient:
             location_parts = [payload.get('project_name', ''), payload.get('building_name', '')]
             location = ' - '.join(p for p in location_parts if p) or ''
 
+            from config import WA_TEMPLATE_PARAM_MODE
+            ref_param = {"type": "text", "text": payload.get('task_id', '')}
+            location_param = {"type": "text", "text": location}
+            issue_param = {"type": "text", "text": payload.get('title', '')}
+            if WA_TEMPLATE_PARAM_MODE == 'named':
+                ref_param["parameter_name"] = "ref"
+                location_param["parameter_name"] = "location"
+                issue_param["parameter_name"] = "issue"
             components.append({
                 "type": "body",
-                "parameters": [
-                    {"type": "text", "parameter_name": "location", "text": location},
-                    {"type": "text", "parameter_name": "issue", "text": payload.get('title', '')},
-                    {"type": "text", "parameter_name": "ref", "text": payload.get('task_id', '')},
-                ]
+                "parameters": [ref_param, location_param, issue_param]
             })
 
             if task_id:
