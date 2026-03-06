@@ -155,14 +155,23 @@ const TaskDetailPage = () => {
 
   const [tradeMismatchModal, setTradeMismatchModal] = useState(null);
   const [showCameraModal, setShowCameraModal] = useState(false);
+  const [errorState, setErrorState] = useState(null);
+  const [externalEntry, setExternalEntry] = useState(false);
 
   const proofInputRef = useRef(null);
 
   useEffect(() => {
     if (location.state?.returnTo) {
       sessionStorage.setItem(RETURN_TO_KEY, location.state.returnTo);
+    } else {
+      const source = sessionStorage.getItem('deepLinkSource');
+      if (source === 'external') {
+        sessionStorage.removeItem('deepLinkSource');
+        setExternalEntry(true);
+        console.log('[DEEP_LINK] TaskDetailPage: external entry for task', id);
+      }
     }
-  }, [location.state]);
+  }, [location.state, id]);
 
   const projectRole = task?.user_project_role || 'none';
   const isManagement = MGMT_ROLES.includes(projectRole);
@@ -196,19 +205,27 @@ const TaskDetailPage = () => {
     } catch (err) {
       if (err?.response?.status === 404) {
         toast.error('הליקוי לא נמצא');
-        navigate('/projects');
+        setErrorState('not_found');
       } else if (err?.response?.status === 403) {
         toast.error('אין לך הרשאה לצפות בליקוי זה');
-        navigate('/projects');
+        setErrorState('forbidden');
       } else {
         toast.error('שגיאה בטעינת הליקוי');
       }
     } finally {
       setLoading(false);
     }
-  }, [id, navigate]);
+  }, [id]);
 
   useEffect(() => { loadTask(); }, [loadTask]);
+
+  useEffect(() => {
+    if (externalEntry && task?.project_id && !location.state?.returnTo) {
+      const contractorBack = `/projects/${task.project_id}/tasks?assignee=me`;
+      sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
+      console.log('[DEEP_LINK] TaskDetailPage: set contractor back target', contractorBack);
+    }
+  }, [externalEntry, task?.project_id, location.state?.returnTo]);
 
   const handleAddComment = async () => {
     if (!comment.trim()) return;
@@ -428,10 +445,32 @@ const TaskDetailPage = () => {
     );
   }
 
-  if (!task) {
+  if (errorState || !task) {
+    const isNotFound = errorState === 'not_found' || !task;
+    const isForbidden = errorState === 'forbidden';
+    const errorBackUrl = sessionStorage.getItem(RETURN_TO_KEY)
+      || (task?.project_id ? `/projects/${task.project_id}/tasks?assignee=me` : '/projects');
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <p className="text-slate-500">הליקוי לא נמצא</p>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <div className="text-center space-y-4 p-8">
+          {isForbidden ? (
+            <ShieldX className="w-16 h-16 text-red-400 mx-auto" />
+          ) : (
+            <AlertTriangle className="w-16 h-16 text-amber-400 mx-auto" />
+          )}
+          <h2 className="text-xl font-bold text-slate-700">
+            {isForbidden ? 'אין לך הרשאה לצפות בליקוי הזה' : 'הליקוי לא קיים או הוסר'}
+          </h2>
+          <p className="text-slate-500 text-sm">
+            {isForbidden ? 'ליקוי זה שייך לפרויקט שאין לך גישה אליו' : 'ייתכן שהליקוי נמחק או שהקישור אינו תקין'}
+          </p>
+          <Button
+            onClick={() => navigate(errorBackUrl)}
+            className="bg-amber-500 hover:bg-amber-600 text-white mt-4"
+          >
+            חזרה לליקויים שלי
+          </Button>
+        </div>
       </div>
     );
   }
@@ -489,6 +528,7 @@ const TaskDetailPage = () => {
           >
             {(() => {
               const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+              if (externalEntry && !location.state?.returnTo) return 'חזרה לליקויים שלי';
               return rt && rt.includes('/dashboard') ? 'חזרה למרכז ניהול' : 'חזרה לרשימת ליקויים';
             })()}
             <ArrowRight className="w-4 h-4" />
