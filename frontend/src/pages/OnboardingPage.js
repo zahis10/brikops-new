@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { onboardingService } from '../services/api';
+import { onboardingService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import {
   HardHat, Phone, ArrowRight, ArrowLeft, Loader2, Eye, EyeOff,
@@ -59,7 +59,6 @@ const OnboardingPage = () => {
   }, []);
 
   useEffect(() => {
-    const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     fetch(`${BACKEND_URL}/api/debug/version`)
       .then(r => r.json())
       .then(d => {

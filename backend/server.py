@@ -725,6 +725,8 @@ if CANONICAL_DOMAIN:
 async def canonical_redirect_middleware(request: Request, call_next):
     if not CANONICAL_DOMAIN or not _canonical_host:
         return await call_next(request)
+    if APP_MODE == 'dev':
+        return await call_next(request)
     host = request.headers.get('host', '').split(':')[0].lower()
     if host == _canonical_host or host == f'www.{_canonical_host}':
         return await call_next(request)
