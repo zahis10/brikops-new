@@ -20,6 +20,7 @@ from contractor_ops.schemas import (
     ManagerDecisionRequest,
 )
 from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET, TRADE_MAP
+from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_CODE, NO_IMAGE_MESSAGE
 
 router = APIRouter(prefix="/api")
 
@@ -52,7 +53,12 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
             raise HTTPException(status_code=404, detail='Unit not found on this floor')
     task_id = str(uuid.uuid4())
     ts = _now()
-    initial_status = 'assigned' if task.assignee_id else 'open'
+    if task.assignee_id:
+        raise HTTPException(
+            status_code=400,
+            detail={'error_code': NO_IMAGE_ERROR_CODE, 'message': NO_IMAGE_MESSAGE},
+        )
+    initial_status = 'open'
     doc = {
         'id': task_id, 'project_id': task.project_id, 'building_id': task.building_id,
         'floor_id': task.floor_id, 'unit_id': task.unit_id,
@@ -321,6 +327,8 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
                 'code': 'CONTRACTOR_NO_TRADE',
                 'message': 'חסר תחום מקצועי לקבלן. יש לשייך תחום תחילה.',
             })
+
+    await require_task_image(db, task_id)
 
     if not assignment.company_id:
         raise HTTPException(status_code=400, detail='company_id is required')

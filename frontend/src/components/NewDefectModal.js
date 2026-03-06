@@ -438,6 +438,40 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       return;
     }
 
+    if (imagesToUpload.length > 0) {
+      console.log('UPLOAD sizes', imagesToUpload.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
+      try {
+        const results = await Promise.allSettled(
+          imagesToUpload.map((img, i) =>
+            taskService.uploadAttachment(task.id, img.file)
+              .then(res => { console.log(`[upload:done] #${i} ${img.name} ok`); return res; })
+              .catch(err => { console.error(`[upload:fail] #${i} ${img.name}`, err.message, err.response?.status); throw err; })
+          )
+        );
+        const succeeded = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected');
+        if (succeeded === 0) {
+          console.error('Upload: all ' + imagesToUpload.length + ' failed — cannot assign');
+          toast.error('העלאת התמונות נכשלה — לא ניתן לשלוח לקבלן. נסה שוב מדף הליקוי.');
+          setSubmitting(false);
+          onSuccess(task.id);
+          return;
+        }
+        if (failed.length > 0) {
+          console.warn('Upload: ' + failed.length + '/' + imagesToUpload.length + ' failed, ' + succeeded + ' succeeded');
+          toast.warning(failed.length + ' תמונות לא הועלו, אך ממשיך בשיוך הקבלן.');
+        } else {
+          console.log('Upload: all ' + imagesToUpload.length + ' images uploaded');
+        }
+      } catch (uploadErr) {
+        console.error('Upload unexpected error:', uploadErr);
+        toast.error('העלאת התמונות נכשלה — לא ניתן לשלוח לקבלן. נסה שוב מדף הליקוי.');
+        setSubmitting(false);
+        onSuccess(task.id);
+        return;
+      }
+    }
+
     console.log('ASSIGN payload', { taskId: task.id, company_id: companyId, assignee_id: assigneeId });
 
     try {
@@ -445,10 +479,16 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         company_id: companyId,
         assignee_id: assigneeId,
       }), 30000, 'שיוך קבלן');
-      console.log('Step 2 OK: assigned', { notification_status: assignResult?.notification_status });
+      console.log('Step 3 OK: assigned', { notification_status: assignResult?.notification_status });
     } catch (err) {
-      console.error('Step 2 FAILED: assign', err);
-      toast.error(extractErrorMsg(err, 'שיוך לקבלן נכשל'));
+      console.error('Step 3 FAILED: assign', err);
+      const detail = err.response?.data?.detail;
+      const errorCode = typeof detail === 'object' ? detail?.error_code : null;
+      if (errorCode === 'NO_TASK_IMAGE') {
+        toast.error(detail.message || 'יש לצרף לפחות תמונה אחת לפני שליחה לקבלן');
+      } else {
+        toast.error(extractErrorMsg(err, 'שיוך לקבלן נכשל'));
+      }
       setSubmitting(false);
       return;
     }
@@ -505,29 +545,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setErrors({});
     setSubmitting(false);
     onSuccess(task.id);
-
-    if (imagesToUpload.length > 0) {
-      console.log('UPLOAD sizes', imagesToUpload.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
-      try {
-        const results = await Promise.allSettled(
-          imagesToUpload.map((img, i) =>
-            taskService.uploadAttachment(task.id, img.file)
-              .then(res => { console.log(`[upload:done] #${i} ${img.name} ok`); return res; })
-              .catch(err => { console.error(`[upload:fail] #${i} ${img.name}`, err.message, err.response?.status); throw err; })
-          )
-        );
-        const failed = results.filter(r => r.status === 'rejected');
-        if (failed.length > 0) {
-          console.error('Upload: ' + failed.length + '/' + imagesToUpload.length + ' failed');
-          toast.warning('הליקוי נוצר ונשלח לקבלן, אך ' + failed.length + ' תמונות לא הועלו. ניתן להעלות שוב מדף הליקוי.');
-        } else {
-          console.log('Upload: all ' + imagesToUpload.length + ' images uploaded');
-        }
-      } catch (uploadErr) {
-        console.error('Upload unexpected error:', uploadErr);
-        toast.warning('הליקוי נוצר ונשלח לקבלן, אך העלאת התמונות נכשלה. ניתן להעלות שוב מדף הליקוי.');
-      }
-    }
   };
 
   if (!isOpen) return null;
