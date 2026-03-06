@@ -253,8 +253,14 @@ const TaskDetailPage = () => {
         setNotifications(notifData);
       }
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה בשליחת הודעה';
-      toast.error(msg);
+      const detail = err.response?.data?.detail;
+      const errorCode = typeof detail === 'object' ? detail?.error_code : null;
+      if (errorCode === 'NO_TASK_IMAGE') {
+        toast.error(detail.message || 'יש לצרף לפחות תמונה אחת לפני שליחה לקבלן');
+      } else {
+        const msg = (typeof detail === 'string' ? detail : detail?.message) || 'שגיאה בשליחת הודעה';
+        toast.error(msg);
+      }
     } finally {
       setSendingWhatsApp(false);
     }
@@ -558,15 +564,21 @@ const TaskDetailPage = () => {
 
           {canManage && task.assignee_id && (
             <div className="mt-4 pt-3 border-t border-slate-100">
-              <Button
-                onClick={handleSendWhatsApp}
-                disabled={sendingWhatsApp}
-                size="sm"
-                className="bg-green-600 hover:bg-green-700 text-white gap-2"
-              >
-                <Phone className="w-4 h-4" />
-                {sendingWhatsApp ? 'שולח...' : 'שלח עדכון בוואטסאפ'}
-              </Button>
+              {allAttachments.length === 0 ? (
+                <p className="text-xs text-amber-600 font-medium">
+                  יש לצרף לפחות תמונה אחת לפני שליחה לקבלן
+                </p>
+              ) : (
+                <Button
+                  onClick={handleSendWhatsApp}
+                  disabled={sendingWhatsApp}
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700 text-white gap-2"
+                >
+                  <Phone className="w-4 h-4" />
+                  {sendingWhatsApp ? 'שולח...' : 'שלח עדכון בוואטסאפ'}
+                </Button>
+              )}
             </div>
           )}
         </Card>

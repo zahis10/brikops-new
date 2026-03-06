@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from contractor_ops.schemas import NotificationJobResponse, ManualNotifyRequest
 from contractor_ops.notification_service import NotificationEngine
+from contractor_ops.task_image_guard import require_task_image
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
         if not task.get('assignee_id') and not task.get('company_id'):
             raise HTTPException(status_code=400, detail='Task has no assignee or company assigned')
 
+        await require_task_image(db, task_id)
+
         job = await engine.enqueue(
             task_id=task_id,
             event_type='manual_send',
@@ -111,6 +114,11 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
     async def retry_notification(job_id: str,
                                  user: dict = Depends(require_roles_fn('project_manager', 'management_team'))):
         engine = get_engine()
+        db = engine.db
+
+        job_doc = await db.notification_jobs.find_one({'id': job_id}, {'_id': 0})
+        if job_doc and job_doc.get('task_id'):
+            await require_task_image(db, job_doc['task_id'])
 
         result = await engine.retry_job(job_id, actor_id=user['id'])
         if not result:
