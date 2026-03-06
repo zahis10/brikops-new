@@ -85,30 +85,49 @@ META_APP_SECRET = os.environ.get('META_APP_SECRET', '')
 
 OWNER_PHONE = os.environ.get('OWNER_PHONE', '')
 
-def _parse_super_admin_phones() -> set:
+def _mask_phone(phone: str) -> str:
+    if not phone:
+        return '<empty>'
+    return '****' + phone[-4:] if len(phone) >= 4 else '****'
+
+def _parse_super_admin_phones() -> tuple:
     from contractor_ops.phone_utils import normalize_israeli_phone
     phones = set()
     raw_single = os.environ.get('SUPER_ADMIN_PHONE', OWNER_PHONE).strip()
     raw_multi = os.environ.get('SUPER_ADMIN_PHONES', '').strip()
     raw_list = []
+    source = 'none'
     if raw_multi:
         raw_list = [p.strip() for p in raw_multi.split(',') if p.strip()]
+        source = 'SUPER_ADMIN_PHONES'
     elif raw_single:
         raw_list = [p.strip() for p in raw_single.split(',') if p.strip()]
+        source = 'SUPER_ADMIN_PHONE'
     for raw_phone in raw_list:
         try:
             norm = normalize_israeli_phone(raw_phone)
             if norm.get('phone_e164'):
                 phones.add(norm['phone_e164'])
         except Exception:
-            phones.add(raw_phone)
-    return phones
+            logger.warning(f"[SA_PHONES] failed to normalize env phone {_mask_phone(raw_phone)}, skipping")
+    masked = ','.join(_mask_phone(p) for p in phones)
+    print(f"[SA_PHONES] count={len(phones)} source={source} phones={masked}", flush=True)
+    return phones, source
 
-SUPER_ADMIN_PHONES = _parse_super_admin_phones()
+SUPER_ADMIN_PHONES, SA_PHONES_SOURCE = _parse_super_admin_phones()
 SUPER_ADMIN_PHONE = next(iter(SUPER_ADMIN_PHONES), '')
 
-def is_super_admin_phone(phone_e164: str) -> bool:
-    return phone_e164 in SUPER_ADMIN_PHONES
+def is_super_admin_phone(phone_raw: str) -> dict:
+    from contractor_ops.phone_utils import normalize_israeli_phone
+    if not phone_raw:
+        return {'matched': False, 'norm': None, 'reason': 'empty_phone'}
+    try:
+        result = normalize_israeli_phone(phone_raw)
+        norm = result.get('phone_e164', '')
+    except Exception:
+        return {'matched': False, 'norm': None, 'reason': 'normalize_failed'}
+    matched = norm in SUPER_ADMIN_PHONES
+    return {'matched': matched, 'norm': norm, 'reason': None}
 
 OTP_PROVIDER = os.environ.get('OTP_PROVIDER', 'mock')
 
