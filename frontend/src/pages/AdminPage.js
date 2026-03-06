@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { projectService, buildingService, floorService, companyService, userService } from '../services/api';
+import { projectService, buildingService, floorService, companyService, userService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -102,7 +102,6 @@ const AdminPage = () => {
     setSystemInfoLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       const res = await fetch(`${BACKEND_URL}/api/admin/system-info`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -337,7 +336,6 @@ const AdminPage = () => {
     }
     setLoading(l => ({ ...l, assignPM: true }));
     try {
-      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       const token = localStorage.getItem('token');
       const response = await fetch(`${BACKEND_URL}/api/projects/${selectedProject.id}/assign-pm`, {
         method: 'POST',

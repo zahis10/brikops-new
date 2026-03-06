@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBilling } from '../contexts/BillingContext';
-import { projectService, taskService, feedService, membershipService } from '../services/api';
+import { projectService, taskService, feedService, membershipService, BACKEND_URL } from '../services/api';
 import { tRole } from '../i18n';
 import { toast } from 'sonner';
 import {
@@ -67,7 +67,6 @@ const ContractorDashboard = () => {
   const [modalProject, setModalProject] = useState(null);
 
   useEffect(() => {
-    const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     fetch(`${BACKEND_URL}/api/debug/version`)
       .then(r => r.json())
       .then(d => setGitSha(d.git_sha || ''))

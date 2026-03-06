@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { qcService } from '../services/api';
+import { qcService, BACKEND_URL } from '../services/api';
 import { getStageVisualStatus, getQualityBadge, getReviewBadge } from '../utils/qcVisualStatus';
 import { toast } from 'sonner';
 import {
@@ -10,8 +10,6 @@ import {
   Paperclip, FileText, Phone
 } from 'lucide-react';
 import WhatsAppRejectionModal from '../components/WhatsAppRejectionModal';
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 const STATUS_CONFIG = {
   pass: { icon: CheckCircle2, label: 'תקין', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', btnBg: 'bg-emerald-500 text-white' },

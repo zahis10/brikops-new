@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { onboardingService } from '../services/api';
+import { onboardingService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import { Eye, EyeOff, HardHat, Phone, ArrowRight, Loader2, Mail, AlertCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -49,7 +49,6 @@ const LoginPage = () => {
   const [quickLoginEnabled, setQuickLoginEnabled] = useState(false);
 
   useEffect(() => {
-    const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     fetch(`${BACKEND_URL}/api/config/features`)
       .then(r => r.json())
       .then(d => {
@@ -190,7 +189,6 @@ const LoginPage = () => {
   const handleDemoLogin = async (account) => {
     setLoading(true);
     try {
-      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       const res = await fetch(`${BACKEND_URL}/api/auth/dev-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
