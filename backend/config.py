@@ -92,7 +92,7 @@ def _parse_super_admin_phones() -> set:
     if raw_multi:
         raw_list = [p.strip() for p in raw_multi.split(',') if p.strip()]
     elif raw_single:
-        raw_list = [raw_single]
+        raw_list = [p.strip() for p in raw_single.split(',') if p.strip()]
     for raw_phone in raw_list:
         try:
             norm = normalize_israeli_phone(raw_phone)
