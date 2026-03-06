@@ -309,7 +309,7 @@ async def debug_whatsapp(request: Request, user: dict = Depends(_require_debug_a
 @router.post("/debug/whatsapp-send-test")
 async def debug_whatsapp_send_test(request: Request, user: dict = Depends(require_super_admin)):
     from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_DEFECT_DEFAULT_LANG
-    from contractor_ops.notification_service import WhatsAppClient, validate_e164, WA_FALLBACK_IMAGE_URL
+    from contractor_ops.notification_service import WhatsAppClient, validate_e164, _resolve_fallback_image
     import httpx
 
     body = await request.json()
@@ -348,14 +348,14 @@ async def debug_whatsapp_send_test(request: Request, user: dict = Depends(requir
     elif mode == 'template':
         components.append({
             "type": "header",
-            "parameters": [{"type": "image", "image": {"link": WA_FALLBACK_IMAGE_URL}}]
+            "parameters": [{"type": "image", "image": {"link": _resolve_fallback_image()}}]
         })
         has_image_header = True
     elif mode == 'template_with_meta_media_id':
         try:
             media_url = f"https://graph.facebook.com/v21.0/{WA_PHONE_NUMBER_ID}/media"
             async with httpx.AsyncClient(timeout=30) as client:
-                img_resp = await client.get(WA_FALLBACK_IMAGE_URL)
+                img_resp = await client.get(_resolve_fallback_image())
                 if img_resp.status_code != 200:
                     return {"success": False, "error": f"Failed to download fallback image: HTTP {img_resp.status_code}", "mode": mode}
                 img_bytes = img_resp.content

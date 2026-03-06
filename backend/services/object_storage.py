@@ -21,11 +21,13 @@ def _get_s3():
     global _s3_client
     if _s3_client is None:
         import boto3
+        from botocore.config import Config
         _s3_client = boto3.client(
             "s3",
             region_name=_S3_REGION,
             aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            config=Config(signature_version='s3v4', s3={'addressing_style': 'virtual'}),
         )
     return _s3_client
 
