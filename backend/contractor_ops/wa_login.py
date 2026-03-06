@@ -177,7 +177,7 @@ async def _send_wa_login_message(phone_e164: str, url: str) -> dict:
         "to": to_digits,
         "type": "template",
         "template": {
-            "name": "brikops_login_link",
+            "name": os.environ.get('WA_LOGIN_TEMPLATE_HE', 'brikops_login_link_he'),
             "language": {"code": "en"},
             "components": [
                 {
@@ -191,7 +191,8 @@ async def _send_wa_login_message(phone_e164: str, url: str) -> dict:
     }
 
     try:
-        logger.info(f"[WA-LOGIN] Sending template brikops_login_link to ...{_phone_last4(phone_e164)}, request={payload}")
+        tpl_name = payload['template']['name']
+        logger.info(f"[WA-LOGIN] Sending template {tpl_name} to ...{_phone_last4(phone_e164)}, request={payload}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(api_url, json=payload, headers=headers)
 
