@@ -41,6 +41,13 @@ BrikOps is a full-stack application with a clear separation between frontend and
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.
 
+### Deploy Pipeline (`deploy.sh`)
+-   **Staleness Detection**: Before deploy, `check_frontend_staleness()` compares timestamps of all frontend build inputs (`frontend/src/`, `frontend/public/`, `package.json`, `yarn.lock`, `craco.config.js`, `tailwind.config.js`, `postcss.config.js`) against the compiled bundle (`frontend/build/static/js/main*.js`). If source is newer or bundle is missing, a rebuild is forced automatically.
+-   **Build Command**: `(cd frontend && REACT_APP_BACKEND_URL="$FRONTEND_BACKEND_URL" yarn build)` — uses CRACO (Create React App Configuration Override).
+-   **Post-build Verification**: Logs bundle name, size (KB), and build timestamp. Aborts if no bundle is produced.
+-   **Fail-fast**: `set -euo pipefail` + explicit bundle existence check ensure deploy never proceeds with a stale or broken build.
+-   **Contractor Image Guard**: Backend enforces `NO_TASK_IMAGE` policy — tasks must have at least one image before contractor assignment. Frontend flow: create → upload images → assign.
+
 ### Cloud Deployment (LIVE)
 -   **Frontend**: Cloudflare Pages (`app.brikops.com`).
 -   **Backend**: AWS Elastic Beanstalk (Docker, `api.brikops.com`).
