@@ -20,6 +20,13 @@ def _make_absolute_url(relative_path: str) -> str:
         return ""
     if relative_path.startswith("http://") or relative_path.startswith("https://"):
         return relative_path
+    if relative_path.startswith("s3://"):
+        from services.object_storage import generate_url
+        resolved = generate_url(relative_path)
+        if resolved and resolved.startswith("https://"):
+            return resolved
+        logger.warning(f"[NOTIFY] s3:// resolve failed for {relative_path[:40]}, got {str(resolved)[:40]}")
+        return ""
     domain = os.environ.get('PUBLIC_APP_URL', '').rstrip('/')
     if not domain:
         domain = os.environ.get('APP_BASE_URL', '')
@@ -188,7 +195,16 @@ class WhatsAppClient:
             components = []
 
             fallback_image = _resolve_fallback_image()
-            effective_image = image_url if (image_url and image_url.startswith('https://')) else fallback_image
+            if image_url and image_url.startswith('https://'):
+                effective_image = image_url
+                image_source = 'task_attachment'
+            elif fallback_image and fallback_image.startswith('https://'):
+                effective_image = fallback_image
+                image_source = 'fallback'
+            else:
+                effective_image = None
+                image_source = 'none'
+
             if effective_image:
                 components.append({
                     "type": "header",
@@ -196,8 +212,7 @@ class WhatsAppClient:
                         {"type": "image", "image": {"link": effective_image}}
                     ]
                 })
-                if not image_url or not image_url.startswith('https://'):
-                    logger.info(f"[WA] No task image for task_id={task_id}, using fallback image")
+            logger.info(f"[WA:IMAGE] task_id={task_id} source={image_source} url={str(effective_image)[:80] if effective_image else 'none'}")
 
             location_parts = [payload.get('project_name', ''), payload.get('building_name', '')]
             location = ' - '.join(p for p in location_parts if p) or ''
@@ -372,8 +387,9 @@ class NotificationEngine:
             return existing
 
         if not task_link:
-            base_url = _make_absolute_url('')
-            task_link = f"{base_url.rstrip('/')}/tasks/{task_id}" if base_url else f"/tasks/{task_id}"
+            from contractor_ops.router import get_public_base_url
+            base_url = get_public_base_url()
+            task_link = f"{base_url}/tasks/{task_id}" if base_url else f"/tasks/{task_id}"
 
         payload = await self._enrich_payload(task, custom_message=custom_message, task_link=task_link)
         payload['defect_lang'] = preferred_language
