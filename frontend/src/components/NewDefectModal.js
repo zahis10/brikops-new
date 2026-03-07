@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { tCategory } from '../i18n';
-import CameraModal from './CameraModal';
 import { compressImage } from '../utils/imageCompress';
 
 const normalizeList = (data) => {
@@ -142,7 +141,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [assigneeId, setAssigneeId] = useState('');
 
   const [images, setImages] = useState([]);
-  const [showCameraModal, setShowCameraModal] = useState(false);
   const [createdTaskId, setCreatedTaskId] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -153,6 +151,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [contractors, setContractors] = useState([]);
   const [projectMembers, setProjectMembers] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState(null);
   const [errors, setErrors] = useState({});
 
   const [loading, setLoading] = useState({});
@@ -300,6 +299,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     : companies;
 
   const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   const handleImageAdd = useCallback(async (e) => {
     try {
@@ -333,21 +333,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     });
   }, []);
 
-  const handleCameraCapture = useCallback(async (blob) => {
-    try {
-      const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
-      console.log(`[image:camera] size=${(file.size/1024).toFixed(0)}KB`);
-      const compressed = await compressImage(file);
-      console.log(`[image:camera:ready] size=${(compressed.size/1024).toFixed(0)}KB`);
-      setImages(prev => [...prev, { file: compressed, preview: URL.createObjectURL(compressed), name: compressed.name }]);
-    } catch (err) {
-      console.error('[defect:camera] failed to process image:', err);
-      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
-    } finally {
-      setShowCameraModal(false);
-    }
-  }, []);
-
   const validate = useCallback(() => {
     const errs = {};
     if (!projectId) errs.project_id = 'חובה';
@@ -364,7 +349,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     return Object.keys(errs).length === 0;
   }, [projectId, buildingId, floorId, unitId, category, title, description, companyId, assigneeId, images]);
 
-  const uploadWithRetry = async (taskService, taskId, file, fileName, maxAttempts = 3) => {
+  const uploadWithRetry = async (taskService, taskId, file, fileName, maxAttempts = 2) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         console.log(`[upload:attempt] #${attempt}/${maxAttempts} ${fileName} (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
@@ -397,12 +382,12 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
   const doUploadAndAssign = async (taskId) => {
     setUploadError(null);
-    setSubmitting(true);
 
     const { taskService } = await import('../services/api');
     const imagesToUpload = [...images];
 
     if (imagesToUpload.length > 0) {
+      setSubmitStep('uploading');
       console.log('UPLOAD sizes', imagesToUpload.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
       const results = await Promise.allSettled(
         imagesToUpload.map((img) => uploadWithRetry(taskService, taskId, img.file, img.name))
@@ -414,7 +399,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         const reasons = failedResults.map(r => r.reason?.message || 'unknown').join('; ');
         console.error(`Upload: all ${imagesToUpload.length} failed after retries — cannot assign. Reasons: ${reasons}`);
         setUploadError(`העלאת ${imagesToUpload.length} תמונות נכשלה לאחר מספר ניסיונות. ניתן לנסות שוב.`);
-        setSubmitting(false);
         return;
       }
       if (failedResults.length > 0) {
@@ -425,6 +409,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
     }
 
+    setSubmitStep('assigning');
     console.log('ASSIGN payload', { taskId, company_id: companyId, assignee_id: assigneeId });
 
     let assignResult;
@@ -444,7 +429,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שיוך לקבלן נכשל');
         toast.error(msg);
       }
-      setSubmitting(false);
       return;
     }
 
@@ -500,53 +484,74 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setErrors({});
     setCreatedTaskId(null);
     setUploadError(null);
-    setSubmitting(false);
     onSuccess(taskId);
   };
 
   const handleSubmit = async () => {
     if (createdTaskId && uploadError) {
-      await doUploadAndAssign(createdTaskId);
+      setSubmitting(true);
+      setSubmitStep('uploading');
+      try {
+        await doUploadAndAssign(createdTaskId);
+      } catch (err) {
+        console.error('[submit:retry:unhandled]', err);
+        toast.error('שגיאה לא צפויה. נסה שוב.');
+      } finally {
+        setSubmitting(false);
+        setSubmitStep(null);
+      }
       return;
     }
 
     if (!validate()) return;
     setSubmitting(true);
+    setSubmitStep('creating');
     setUploadError(null);
 
-    const taskData = {
-      project_id: projectId,
-      building_id: buildingId,
-      floor_id: floorId,
-      unit_id: unitId,
-      category: category,
-      title: title,
-      description: description,
-      priority: priority,
-    };
-
-    let task;
-    const { taskService } = await import('../services/api');
-
-    console.log('CREATE payload', taskData);
-
     try {
-      task = await Promise.race([
-        taskService.create(taskData),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: יצירת ליקוי — נסה שוב')), 30000)),
-      ]);
-      console.log('Step 1 OK: task created id=' + task.id);
-      setCreatedTaskId(task.id);
-    } catch (err) {
-      console.error('Step 1 FAILED: create task', err);
-      const detail = err.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
-      toast.error(msg);
-      setSubmitting(false);
-      return;
-    }
+      const taskData = {
+        project_id: projectId,
+        building_id: buildingId,
+        floor_id: floorId,
+        unit_id: unitId,
+        category: category,
+        title: title,
+        description: description,
+        priority: priority,
+      };
 
-    await doUploadAndAssign(task.id);
+      const { taskService } = await import('../services/api');
+
+      console.log('CREATE payload', taskData);
+
+      let task;
+      try {
+        task = await Promise.race([
+          taskService.create(taskData),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: יצירת ליקוי — נסה שוב')), 30000)),
+        ]);
+        console.log('Step 1 OK: task created id=' + task.id);
+        setCreatedTaskId(task.id);
+      } catch (err) {
+        console.error('Step 1 FAILED: create task', err);
+        const detail = err.response?.data?.detail;
+        const msg = typeof detail === 'string' ? detail : (typeof detail === 'object' && detail?.message ? detail.message : err.message || 'שגיאה ביצירת הליקוי');
+        toast.error(msg);
+        return;
+      }
+
+      await doUploadAndAssign(task.id);
+    } catch (err) {
+      console.error('[submit:unhandled]', err);
+      if (createdTaskId) {
+        toast.error('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
+      } else {
+        toast.error('שגיאה לא צפויה. נסה שוב.');
+      }
+    } finally {
+      setSubmitting(false);
+      setSubmitStep(null);
+    }
   };
 
   const handleClose = () => {
@@ -748,6 +753,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               תמונות * <span className="text-xs text-slate-400">(לפחות 1)</span>
             </label>
             <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
+            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
             {images.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {images.map((img, i) => (
@@ -766,7 +772,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setShowCameraModal(true)}
+                onClick={() => cameraInputRef.current?.click()}
                 className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-amber-50 active:bg-amber-100 ${errors.images ? 'border-red-400' : 'border-amber-300'}`}
               >
                 <Camera className="w-6 h-6 text-amber-500" />
@@ -801,7 +807,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
             {submitting ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {uploadError ? 'מעלה תמונות...' : 'יוצר ליקוי...'}
+                {submitStep === 'uploading' ? 'מעלה תמונות...' : submitStep === 'assigning' ? 'משייך קבלן...' : 'יוצר ליקוי...'}
               </span>
             ) : uploadError ? (
               <span className="flex items-center justify-center gap-2">
@@ -822,12 +828,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           </Button>
         </div>
       </div>
-      <CameraModal
-        isOpen={showCameraModal}
-        onCapture={handleCameraCapture}
-        onClose={() => setShowCameraModal(false)}
-        onGallery={() => galleryInputRef.current?.click()}
-      />
     </div>
   );
 };

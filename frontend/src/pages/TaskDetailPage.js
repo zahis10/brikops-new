@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import CameraModal from '../components/CameraModal';
 
 const STATUS_CONFIG = {
   open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700', icon: CircleDot },
@@ -155,11 +154,11 @@ const TaskDetailPage = () => {
   const [savingField, setSavingField] = useState(null);
 
   const [tradeMismatchModal, setTradeMismatchModal] = useState(null);
-  const [showCameraModal, setShowCameraModal] = useState(false);
   const [errorState, setErrorState] = useState(null);
   const [externalEntry, setExternalEntry] = useState(false);
 
-  const proofInputRef = useRef(null);
+  const proofCameraRef = useRef(null);
+  const proofGalleryRef = useRef(null);
 
   useEffect(() => {
     if (location.state?.returnTo) {
@@ -300,23 +299,6 @@ const TaskDetailPage = () => {
 
   const removeProofFile = (fileId) => {
     setProofFiles(prev => prev.filter(f => f.id !== fileId));
-  };
-
-  const handleCameraCapture = async (blob) => {
-    try {
-      const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
-      const compressed = await compressImage(file);
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
-      };
-      reader.readAsDataURL(compressed);
-    } catch (err) {
-      console.error('[proof:camera] failed to process image:', err);
-      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
-    } finally {
-      setShowCameraModal(false);
-    }
   };
 
   const handleSubmitProof = async () => {
@@ -839,14 +821,8 @@ const TaskDetailPage = () => {
               צלם או העלה תמונות של התיקון שבוצע ושלח לאישור המנהל
             </p>
 
-            <input
-              ref={proofInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleProofFileChange}
-              className="hidden"
-            />
+            <input ref={proofCameraRef} type="file" accept="image/*" capture="environment" onChange={handleProofFileChange} className="hidden" />
+            <input ref={proofGalleryRef} type="file" accept="image/*" onChange={handleProofFileChange} className="hidden" />
 
             {proofFiles.length > 0 && (
               <div className="mb-4 grid grid-cols-2 gap-3">
@@ -866,14 +842,14 @@ const TaskDetailPage = () => {
 
             <div className="flex gap-3 mb-4">
               <button
-                onClick={() => setShowCameraModal(true)}
+                onClick={() => proofCameraRef.current?.click()}
                 className="flex-1 py-5 border-2 border-dashed border-amber-400 rounded-xl bg-white hover:bg-amber-50 transition-colors flex flex-col items-center gap-2"
               >
                 <Camera className="w-8 h-8 text-amber-500" />
                 <span className="text-sm font-semibold text-amber-700">צלם תמונה</span>
               </button>
               <button
-                onClick={() => proofInputRef.current?.click()}
+                onClick={() => proofGalleryRef.current?.click()}
                 className="flex-1 py-5 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 transition-colors flex flex-col items-center gap-2"
               >
                 <Upload className="w-8 h-8 text-slate-400" />
@@ -1323,12 +1299,6 @@ const TaskDetailPage = () => {
         </div>
       )}
 
-      <CameraModal
-        isOpen={showCameraModal}
-        onCapture={handleCameraCapture}
-        onClose={() => setShowCameraModal(false)}
-        onGallery={() => proofInputRef.current?.click()}
-      />
     </div>
   );
 };
