@@ -810,17 +810,37 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
     actor = _actor_name(user)
 
     old_status = item.get("status", "pending")
+
+    returned_to_user_id = item.get("updated_by")
+    returned_to_user_name = None
+    stage_actors = run.get("stage_actors", {}).get(stage_id, {})
+    if not returned_to_user_id or returned_to_user_id == user["id"]:
+        returned_to_user_id = stage_actors.get("submitted_by")
+    if returned_to_user_id and returned_to_user_id == user["id"]:
+        returned_to_user_id = None
+    if returned_to_user_id:
+        target_user = await db.users.find_one({"id": returned_to_user_id}, {"_id": 0, "name": 1, "phone_e164": 1})
+        if target_user:
+            returned_to_user_name = target_user.get("name", "")
+        else:
+            returned_to_user_id = None
+
+    rejection_obj = {
+        "by": user["id"],
+        "by_name": actor,
+        "at": now,
+        "reason": body.reason.strip(),
+        "previous_status": old_status,
+    }
+    if returned_to_user_id:
+        rejection_obj["returned_to_user_id"] = returned_to_user_id
+        rejection_obj["returned_to_user_name"] = returned_to_user_name
+
     await db.qc_items.update_one(
         {"id": item_id, "run_id": run_id},
         {"$set": {
             "status": "fail",
-            "reviewer_rejection": {
-                "by": user["id"],
-                "by_name": actor,
-                "at": now,
-                "reason": body.reason.strip(),
-                "previous_status": old_status,
-            },
+            "reviewer_rejection": rejection_obj,
         }}
     )
 
@@ -835,7 +855,7 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
         }}
     )
 
-    await _audit("qc_item", item_id, "item_rejected", user["id"], {
+    audit_data = {
         "run_id": run_id,
         "stage_id": stage_id,
         "item_id": item.get("item_id"),
@@ -844,9 +864,84 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
         "actor_name": actor,
         "previous_status": old_status,
         "new_status": "fail",
-    })
+    }
+    if returned_to_user_id:
+        audit_data["returned_to_user_id"] = returned_to_user_id
+        audit_data["returned_to_user_name"] = returned_to_user_name
+    await _audit("qc_item", item_id, "item_rejected", user["id"], audit_data)
 
-    return {"ok": True, "message": "הסעיף נדחה — השלב נפתח מחדש לתיקון"}
+    returned_to = None
+    notified = False
+    if returned_to_user_id:
+        try:
+            await _create_qc_notification(
+                db, [returned_to_user_id],
+                project_id=run["project_id"], stage_id=stage_id,
+                floor_id=run.get("floor_id"), building_id=run.get("building_id"),
+                stage_code=stage_id, stage_label_he=_stage_label(stage_id),
+                actor_id=user["id"], actor_name_str=actor,
+                action="item_rejected", reason=body.reason.strip(), run_id=run_id,
+            )
+            notified = True
+        except Exception as e:
+            logger.warning(f"[QC-REJECT] Failed to create in-app notification: {e}")
+
+        if target_user and target_user.get("phone_e164"):
+            try:
+                engine = get_notification_engine()
+                if engine and engine.wa_client:
+                    project = await db.projects.find_one({"id": run["project_id"]}, {"_id": 0, "name": 1})
+                    project_name = project.get("name", "") if project else ""
+                    floor = await db.floors.find_one({"id": run.get("floor_id")}, {"_id": 0, "name": 1})
+                    floor_name = floor.get("name", "") if floor else ""
+                    stage_title = _stage_label(stage_id)
+                    tpl_item_title = TPL_ITEM_MAP.get(item.get("item_id"), {}).get("title", "")
+
+                    base_url = get_public_base_url()
+                    direct_link = ""
+                    if base_url:
+                        direct_link = f"{base_url}/projects/{run['project_id']}/qc/floors/{run.get('floor_id')}/run/{run_id}/stage/{stage_id}"
+
+                    lines = [
+                        f"🔴 *הודעת דחייה — {project_name}*",
+                        "",
+                        f"🏗️ פרויקט: {project_name}",
+                        f"🔢 קומה: {floor_name}",
+                        f"📋 שלב: {stage_title}",
+                    ]
+                    if tpl_item_title:
+                        lines.append(f"📌 סעיף: {tpl_item_title}")
+                    lines.append(f"\n❌ סיבת דחייה: {body.reason.strip()}")
+                    if direct_link:
+                        lines.append(f"\n🔗 קישור: {direct_link}")
+                    message_text = "\n".join(lines)
+
+                    first_photo_url = None
+                    photos = item.get("photos", [])
+                    if photos:
+                        first_photo_url = _resolve_photo_url(photos[0].get("url"))
+
+                    wa_payload = {
+                        "title": f"דחייה — {stage_title}",
+                        "project_name": project_name,
+                        "building_name": "",
+                        "floor_name": floor_name,
+                        "category": "",
+                        "priority": "",
+                        "status": "נדחה",
+                        "custom_message": message_text,
+                    }
+                    if first_photo_url:
+                        wa_payload["image_url"] = first_photo_url
+
+                    await engine.wa_client.send_message(target_user["phone_e164"], wa_payload)
+                    logger.info(f"[QC-REJECT-AUTO-WA] Sent to user={returned_to_user_id} for item={item_id}")
+            except Exception as e:
+                logger.warning(f"[QC-REJECT-AUTO-WA] Failed: {e}")
+
+        returned_to = {"user_id": returned_to_user_id, "user_name": returned_to_user_name, "notified": notified}
+
+    return {"ok": True, "message": "הסעיף נדחה — השלב נפתח מחדש לתיקון", "returned_to": returned_to}
 
 
 ALLOWED_PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
@@ -1609,7 +1704,7 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
     base_url = get_public_base_url()
     direct_link = ""
     if base_url:
-        direct_link = f"{base_url}/projects/{project_id}/floors/{run.get('floor_id')}/qc/{run_id}/stage/{stage_id}"
+        direct_link = f"{base_url}/projects/{project_id}/qc/floors/{run.get('floor_id')}/run/{run_id}/stage/{stage_id}"
 
     if body.message:
         message_text = body.message
