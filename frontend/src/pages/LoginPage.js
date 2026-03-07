@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
-import { Eye, EyeOff, HardHat, Phone, ArrowRight, Loader2, Mail, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, HardHat, Phone, ArrowRight, Loader2, Mail, AlertCircle, MessageCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
@@ -405,6 +405,27 @@ const LoginPage = () => {
               ) : 'התחבר'}
             </Button>
           </form>
+        )}
+
+        {authMethod === 'phone' && phoneStep === 'phone' && (
+          <div className="mt-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1 h-px bg-slate-200" />
+              <span className="text-xs text-slate-400">או</span>
+              <div className="flex-1 h-px bg-slate-200" />
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/auth/wa')}
+              className="w-full h-11 flex items-center justify-center gap-2 rounded-lg text-sm font-medium text-white transition-colors"
+              style={{ backgroundColor: '#25D366' }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1ebe5d'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#25D366'}
+            >
+              <MessageCircle className="w-5 h-5" />
+              התחבר עם WhatsApp
+            </button>
+          </div>
         )}
 
         <div className="mt-4 text-center">
