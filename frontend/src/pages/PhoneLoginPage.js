@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingService } from '../services/api';
 import { toast } from 'sonner';
-import { HardHat, Phone, ArrowRight, Loader2, Mail } from 'lucide-react';
+import { HardHat, Phone, ArrowRight, Loader2, Mail, MessageCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
@@ -293,7 +293,28 @@ const PhoneLoginPage = () => {
           </form>
         )}
 
-        <div className="mt-6 pt-5 border-t border-slate-200 text-center space-y-2">
+        {step === 'phone' && (
+          <div className="mt-6 pt-5 border-t border-slate-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1 h-px bg-slate-200" />
+              <span className="text-xs text-slate-400">או</span>
+              <div className="flex-1 h-px bg-slate-200" />
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/auth/wa')}
+              className="w-full h-11 flex items-center justify-center gap-2 rounded-lg text-sm font-medium text-white transition-colors"
+              style={{ backgroundColor: '#25D366' }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1ebe5d'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#25D366'}
+            >
+              <MessageCircle className="w-5 h-5" />
+              התחבר עם WhatsApp
+            </button>
+          </div>
+        )}
+
+        <div className="mt-4 pt-4 border-t border-slate-200 text-center space-y-2">
           <Link
             to="/login"
             className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 transition-colors"
