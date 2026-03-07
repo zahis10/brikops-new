@@ -396,9 +396,31 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       const failedResults = results.filter(r => r.status === 'rejected');
 
       if (succeeded === 0) {
-        const reasons = failedResults.map(r => r.reason?.message || 'unknown').join('; ');
-        console.error(`Upload: all ${imagesToUpload.length} failed after retries — cannot assign. Reasons: ${reasons}`);
-        setUploadError(`העלאת ${imagesToUpload.length} תמונות נכשלה לאחר מספר ניסיונות. ניתן לנסות שוב.`);
+        const firstErr = failedResults[0]?.reason;
+        const status = firstErr?.response?.status;
+        const errCode = firstErr?.code;
+        const isTimeout = errCode === 'ECONNABORTED' || firstErr?.message?.includes('timeout');
+        const isNetwork = !firstErr?.response && firstErr?.message?.includes('Network');
+        const serverMsg = firstErr?.response?.data?.detail;
+        const shortServer = typeof serverMsg === 'string' ? serverMsg.slice(0, 80) : (typeof serverMsg === 'object' && serverMsg?.message ? serverMsg.message.slice(0, 80) : '');
+        const fileSizeMB = imagesToUpload[0]?.file?.size ? (imagesToUpload[0].file.size / (1024 * 1024)).toFixed(1) : '?';
+
+        console.error('[upload:diagnostic]', {
+          status, code: errCode, message: firstErr?.message,
+          responseBody: firstErr?.response?.data, fileSizeKB: imagesToUpload[0]?.file?.size ? Math.round(imagesToUpload[0].file.size / 1024) : null,
+        });
+
+        let diagMsg;
+        if (isTimeout) {
+          diagMsg = `העלאת תמונה נכשלה: timeout בזמן העלאה (${fileSizeMB}MB)`;
+        } else if (isNetwork) {
+          diagMsg = `העלאת תמונה נכשלה: שגיאת רשת (${fileSizeMB}MB)`;
+        } else if (status) {
+          diagMsg = `העלאת תמונה נכשלה: HTTP ${status}${shortServer ? ' — ' + shortServer : ''} (${fileSizeMB}MB)`;
+        } else {
+          diagMsg = `העלאת תמונה נכשלה: ${firstErr?.message || 'שגיאה לא ידועה'} (${fileSizeMB}MB)`;
+        }
+        setUploadError(diagMsg + ' — ניתן לנסות שוב.');
         return;
       }
       if (failedResults.length > 0) {
