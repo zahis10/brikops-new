@@ -302,22 +302,28 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const galleryInputRef = useRef(null);
 
   const handleImageAdd = useCallback(async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-    for (const f of files) {
-      console.log(`[image:original] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
+    try {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+      for (const f of files) {
+        console.log(`[image:original] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
+      }
+      const compressed = await Promise.all(files.map(f => compressImage(f)));
+      for (const f of compressed) {
+        console.log(`[image:ready] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
+      }
+      const newImages = compressed.map(file => ({
+        file,
+        preview: URL.createObjectURL(file),
+        name: file.name,
+      }));
+      setImages(prev => [...prev, ...newImages]);
+    } catch (err) {
+      console.error('[defect:image] failed to process image:', err);
+      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+    } finally {
+      if (e.target) e.target.value = '';
     }
-    const compressed = await Promise.all(files.map(f => compressImage(f)));
-    for (const f of compressed) {
-      console.log(`[image:ready] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
-    }
-    const newImages = compressed.map(file => ({
-      file,
-      preview: URL.createObjectURL(file),
-      name: file.name,
-    }));
-    setImages(prev => [...prev, ...newImages]);
-    e.target.value = '';
   }, []);
 
   const removeImage = useCallback((index) => {
@@ -328,12 +334,18 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   }, []);
 
   const handleCameraCapture = useCallback(async (blob) => {
-    const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
-    console.log(`[image:camera] size=${(file.size/1024).toFixed(0)}KB`);
-    const compressed = await compressImage(file);
-    console.log(`[image:camera:ready] size=${(compressed.size/1024).toFixed(0)}KB`);
-    setImages(prev => [...prev, { file: compressed, preview: URL.createObjectURL(compressed), name: compressed.name }]);
-    setShowCameraModal(false);
+    try {
+      const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      console.log(`[image:camera] size=${(file.size/1024).toFixed(0)}KB`);
+      const compressed = await compressImage(file);
+      console.log(`[image:camera:ready] size=${(compressed.size/1024).toFixed(0)}KB`);
+      setImages(prev => [...prev, { file: compressed, preview: URL.createObjectURL(compressed), name: compressed.name }]);
+    } catch (err) {
+      console.error('[defect:camera] failed to process image:', err);
+      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+    } finally {
+      setShowCameraModal(false);
+    }
   }, []);
 
   const validate = useCallback(() => {
