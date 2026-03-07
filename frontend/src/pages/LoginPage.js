@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
-import { Eye, EyeOff, HardHat, Phone, ArrowRight, Loader2, Mail, AlertCircle, MessageCircle } from 'lucide-react';
+import { Eye, EyeOff, HardHat, Phone, ArrowRight, Loader2, Mail, AlertCircle, MessageCircle, CheckCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
@@ -185,6 +185,47 @@ const LoginPage = () => {
       setLoading(false);
     }
   };
+
+  const handleWhatsAppLogin = useCallback(async () => {
+    if (!phone.trim()) {
+      toast.error('יש להזין מספר טלפון');
+      return;
+    }
+    const e164 = canonicalE164(phone);
+    if (!isValidIsraeliMobile(e164)) {
+      toast.error('מספר טלפון לא תקין');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/wa/request-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: e164 }),
+      });
+      if (res.status === 429) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'נא לנסות שוב מאוחר יותר.');
+        return;
+      }
+      if (!res.ok) {
+        toast.error('שגיאה בשליחת קישור. נסה שוב.');
+        return;
+      }
+      setPhoneE164(e164);
+      setPhoneStep('waSuccess');
+    } catch (error) {
+      if (error.message?.includes('timeout')) {
+        setPhoneE164(e164);
+        setPhoneStep('waSuccess');
+        toast('ייתכן עיכוב קצר בשליחה...', { icon: '⏳' });
+      } else {
+        toast.error('שגיאה בשליחת קישור. נסה שוב.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [phone]);
 
   const handleDemoLogin = async (account) => {
     setLoading(true);
@@ -416,15 +457,51 @@ const LoginPage = () => {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/auth/wa')}
-              className="w-full h-11 flex items-center justify-center gap-2 rounded-lg text-sm font-medium text-white transition-colors"
+              onClick={handleWhatsAppLogin}
+              disabled={loading}
+              className="w-full h-11 flex items-center justify-center gap-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50"
               style={{ backgroundColor: '#25D366' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1ebe5d'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#25D366'}
+              onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#1ebe5d'; }}
+              onMouseLeave={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#25D366'; }}
             >
-              <MessageCircle className="w-5 h-5" />
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <MessageCircle className="w-5 h-5" />
+              )}
               התחבר עם WhatsApp
             </button>
+          </div>
+        )}
+
+        {authMethod === 'phone' && phoneStep === 'waSuccess' && (
+          <div className="space-y-4" dir="rtl">
+            <button
+              type="button"
+              onClick={() => { setPhoneStep('phone'); }}
+              className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-2"
+            >
+              <ArrowRight className="w-4 h-4" />
+              חזרה
+            </button>
+            <div className="text-center py-6">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: '#25D366' }}>
+                <CheckCircle className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">
+                שלחנו לך קישור התחברות ב-WhatsApp
+              </h3>
+              <p className="text-sm text-slate-600 mb-1">למספר</p>
+              <bdi dir="ltr" className="font-mono text-base font-medium text-slate-900 inline-block">
+                {phoneE164}
+              </bdi>
+              <p className="text-xs text-slate-400 mt-4">
+                פתח את WhatsApp ולחץ על הקישור כדי להתחבר
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                הקישור תקף ל-10 דקות
+              </p>
+            </div>
           </div>
         )}
 
