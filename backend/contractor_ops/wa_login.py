@@ -178,7 +178,7 @@ async def _send_wa_login_message(phone_e164: str, url: str) -> dict:
         "type": "template",
         "template": {
             "name": os.environ.get('WA_LOGIN_TEMPLATE_HE', 'brikops_login_link_he'),
-            "language": {"code": "en"},
+            "language": {"code": "he"},
             "components": [
                 {
                     "type": "button",
