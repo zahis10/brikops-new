@@ -628,7 +628,11 @@ async def startup():
     logger.info(f"[STARTUP] ONBOARDING_V2={ENABLE_ONBOARDING_V2} AUTO_TRIAL={ENABLE_AUTO_TRIAL}")
     logger.info(f"[STARTUP] MONGO_URL {_mongo_sanity(MONGO_URL)}")
     from services.object_storage import log_backend as _log_storage_backend
-    _log_storage_backend()
+    try:
+        _log_storage_backend()
+    except RuntimeError as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        sys.exit(1)
 
     if APP_MODE == 'prod' and ('localhost' in MONGO_URL or '127.0.0.1' in MONGO_URL):
         logger.critical("[FATAL] Production mode is using a LOCAL MongoDB! This is not allowed. Refusing to start.")

@@ -143,4 +143,15 @@ def resolve_urls_in_doc(doc, fields=("file_url", "thumbnail_url", "attachment_ur
 
 
 def log_backend():
-    logger.info(f"[STORAGE:INIT] backend={_BACKEND_MODE}, bucket={_S3_BUCKET or '(none)'}, region={_S3_REGION}, presign_expires={_PRESIGN_EXPIRES}s")
+    if _BACKEND_MODE == "s3":
+        if not _S3_BUCKET:
+            msg = "[STORAGE:FATAL] FILES_STORAGE_BACKEND=s3 but AWS_S3_BUCKET is empty or not set"
+            logger.critical(msg)
+            raise RuntimeError(msg)
+        has_key = bool(os.environ.get("AWS_ACCESS_KEY_ID"))
+        has_secret = bool(os.environ.get("AWS_SECRET_ACCESS_KEY"))
+        logger.info(f"[STORAGE] backend=s3 bucket={_S3_BUCKET} region={_S3_REGION} presign_expires={_PRESIGN_EXPIRES}s credentials={'OK' if has_key and has_secret else 'MISSING'}")
+        if not has_key or not has_secret:
+            logger.warning("[STORAGE:WARN] AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set — S3 uploads will fail unless using IAM role")
+    else:
+        logger.info(f"[STORAGE] backend=local dir={_LOCAL_UPLOADS_ROOT}")
