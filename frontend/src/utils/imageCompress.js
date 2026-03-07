@@ -1,6 +1,7 @@
 const MAX_SIZE = 800 * 1024;
 const MAX_WIDTH = 1600;
 const JPEG_QUALITY = 0.7;
+const COMPRESS_TIMEOUT_MS = 15000;
 
 function drawToCanvas(source, srcWidth, srcHeight) {
   let width = srcWidth;
@@ -26,11 +27,7 @@ async function canvasToFile(canvas, origName) {
   return new File([blob], outName, { type: 'image/jpeg', lastModified: Date.now() });
 }
 
-export async function compressImage(file) {
-  if (file.size <= MAX_SIZE && file.type && file.type.startsWith('image/') && !file.type.includes('heic')) {
-    return file;
-  }
-
+async function _doCompress(file) {
   try {
     const bitmap = await createImageBitmap(file);
     const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height);
@@ -64,4 +61,23 @@ export async function compressImage(file) {
     return new File([file], file.name, { type: 'image/jpeg', lastModified: Date.now() });
   }
   return file;
+}
+
+export async function compressImage(file) {
+  if (file.size <= MAX_SIZE && file.type && file.type.startsWith('image/') && !file.type.includes('heic')) {
+    return file;
+  }
+
+  try {
+    const result = await Promise.race([
+      _doCompress(file),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('compression timeout')), COMPRESS_TIMEOUT_MS)
+      ),
+    ]);
+    return result;
+  } catch (err) {
+    console.warn(`[compress:timeout] ${file.name} — compression timed out or failed (${err.message}), using original (${(file.size/1024).toFixed(0)}KB)`);
+    return file;
+  }
 }

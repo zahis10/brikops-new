@@ -280,16 +280,22 @@ const TaskDetailPage = () => {
   };
 
   const handleProofFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const compressed = await compressImage(file);
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
-      };
-      reader.readAsDataURL(compressed);
+    try {
+      const file = e.target.files[0];
+      if (file) {
+        const compressed = await compressImage(file);
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
+        };
+        reader.readAsDataURL(compressed);
+      }
+    } catch (err) {
+      console.error('[proof:file] failed to process image:', err);
+      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+    } finally {
+      if (e.target) e.target.value = '';
     }
-    if (e.target) e.target.value = '';
   };
 
   const removeProofFile = (fileId) => {
@@ -297,14 +303,20 @@ const TaskDetailPage = () => {
   };
 
   const handleCameraCapture = async (blob) => {
-    const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
-    const compressed = await compressImage(file);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
-    };
-    reader.readAsDataURL(compressed);
-    setShowCameraModal(false);
+    try {
+      const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const compressed = await compressImage(file);
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
+      };
+      reader.readAsDataURL(compressed);
+    } catch (err) {
+      console.error('[proof:camera] failed to process image:', err);
+      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+    } finally {
+      setShowCameraModal(false);
+    }
   };
 
   const handleSubmitProof = async () => {
