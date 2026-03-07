@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 import uuid
 import logging
+import httpx
 from contractor_ops.router import get_db, get_current_user, _get_project_role, _is_super_admin, _now, _audit, MANAGEMENT_ROLES, get_notification_engine, get_public_base_url
+from contractor_ops.msg_logger import mask_phone
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/qc", tags=["qc"])
@@ -784,6 +786,83 @@ class ItemRejectBody(BaseModel):
     reason: str
 
 
+async def _send_qc_rejection_wa(
+    wa_client, to_phone: str, *,
+    project_name: str, floor_name: str, stage_name: str,
+    item_name: str, rejection_reason: str, button_path: str,
+) -> bool:
+    from config import WA_QC_REJECT_TEMPLATE_HE, WA_QC_REJECT_TEMPLATE_LANG
+
+    if not wa_client or not wa_client.enabled:
+        logger.info(f"[QC-REJECT-WA] Skipped — WhatsApp disabled")
+        return False
+
+    tpl_name = WA_QC_REJECT_TEMPLATE_HE
+    tpl_lang = WA_QC_REJECT_TEMPLATE_LANG
+
+    location_parts = [p for p in [floor_name] if p]
+    location = " - ".join(location_parts) or ""
+
+    components = [
+        {
+            "type": "body",
+            "parameters": [
+                {"type": "text", "text": project_name, "parameter_name": "project_name"},
+                {"type": "text", "text": location, "parameter_name": "location"},
+                {"type": "text", "text": stage_name, "parameter_name": "stage_name"},
+                {"type": "text", "text": item_name, "parameter_name": "item_name"},
+                {"type": "text", "text": rejection_reason, "parameter_name": "rejection_reason"},
+            ],
+        }
+    ]
+    if button_path:
+        components.append({
+            "type": "button",
+            "sub_type": "url",
+            "index": 0,
+            "parameters": [{"type": "text", "text": button_path}],
+        })
+
+    body = {
+        "messaging_product": "whatsapp",
+        "to": to_phone.lstrip("+"),
+        "type": "template",
+        "template": {
+            "name": tpl_name,
+            "language": {"code": tpl_lang},
+            "components": components,
+        },
+    }
+
+    headers = {
+        "Authorization": f"Bearer {wa_client.access_token}",
+        "Content-Type": "application/json",
+    }
+
+    logger.info(
+        f"[QC-REJECT-WA] template={tpl_name} lang={tpl_lang} to={mask_phone(to_phone)} "
+        f"params=[project_name={project_name}, location={location}, stage_name={stage_name}, "
+        f"item_name={item_name}, rejection_reason={rejection_reason[:60]}] "
+        f"button_path={button_path}"
+    )
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(wa_client.api_url, json=body, headers=headers)
+
+    resp_text = resp.text[:500]
+    if resp.status_code in (200, 201):
+        data = resp.json()
+        mid = data.get("messages", [{}])[0].get("id", "")
+        logger.info(f"[QC-REJECT-WA] SUCCESS wamid={mid} to={mask_phone(to_phone)}")
+        return True
+    else:
+        logger.warning(
+            f"[QC-REJECT-WA] FAILED status={resp.status_code} to={mask_phone(to_phone)} "
+            f"template={tpl_name} body={resp_text}"
+        )
+        return False
+
+
 @router.post("/run/{run_id}/item/{item_id}/reject")
 async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -897,47 +976,24 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
                     stage_title = _stage_label(stage_id)
                     tpl_item_title = TPL_ITEM_MAP.get(item.get("item_id"), {}).get("title", "")
 
-                    base_url = get_public_base_url()
-                    direct_link = ""
-                    if base_url:
-                        direct_link = f"{base_url}/projects/{run['project_id']}/qc/floors/{run.get('floor_id')}/run/{run_id}/stage/{stage_id}"
+                    button_path = (
+                        f"projects/{run['project_id']}/qc/floors/{run.get('floor_id')}"
+                        f"/run/{run_id}/stage/{stage_id}?src=wa"
+                    )
 
-                    lines = [
-                        f"🔴 *הודעת דחייה — {project_name}*",
-                        "",
-                        f"🏗️ פרויקט: {project_name}",
-                        f"🔢 קומה: {floor_name}",
-                        f"📋 שלב: {stage_title}",
-                    ]
-                    if tpl_item_title:
-                        lines.append(f"📌 סעיף: {tpl_item_title}")
-                    lines.append(f"\n❌ סיבת דחייה: {body.reason.strip()}")
-                    if direct_link:
-                        lines.append(f"\n🔗 קישור: {direct_link}")
-                    message_text = "\n".join(lines)
-
-                    first_photo_url = None
-                    photos = item.get("photos", [])
-                    if photos:
-                        first_photo_url = _resolve_photo_url(photos[0].get("url"))
-
-                    wa_payload = {
-                        "title": f"דחייה — {stage_title}",
-                        "project_name": project_name,
-                        "building_name": "",
-                        "floor_name": floor_name,
-                        "category": "",
-                        "priority": "",
-                        "status": "נדחה",
-                        "custom_message": message_text,
-                    }
-                    if first_photo_url:
-                        wa_payload["image_url"] = first_photo_url
-
-                    await engine.wa_client.send_message(target_user["phone_e164"], wa_payload)
-                    logger.info(f"[QC-REJECT-AUTO-WA] Sent to user={returned_to_user_id} for item={item_id}")
+                    wa_sent = await _send_qc_rejection_wa(
+                        engine.wa_client, target_user["phone_e164"],
+                        project_name=project_name,
+                        floor_name=floor_name,
+                        stage_name=stage_title,
+                        item_name=tpl_item_title or item_id,
+                        rejection_reason=body.reason.strip(),
+                        button_path=button_path,
+                    )
+                    if wa_sent:
+                        notified = True
             except Exception as e:
-                logger.warning(f"[QC-REJECT-AUTO-WA] Failed: {e}")
+                logger.warning(f"[QC-REJECT-WA] Failed: {e}")
 
         returned_to = {"user_id": returned_to_user_id, "user_name": returned_to_user_name, "notified": notified}
 
