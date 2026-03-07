@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { projectService, buildingService, floorService, projectCompanyService } from '../services/api';
+import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -405,16 +405,29 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         const shortServer = typeof serverMsg === 'string' ? serverMsg.slice(0, 80) : (typeof serverMsg === 'object' && serverMsg?.message ? serverMsg.message.slice(0, 80) : '');
         const fileSizeMB = imagesToUpload[0]?.file?.size ? (imagesToUpload[0].file.size / (1024 * 1024)).toFixed(1) : '?';
 
+        const uploadUrl = `${BACKEND_URL}/api/tasks/${taskId}/attachments`;
         console.error('[upload:diagnostic]', {
           status, code: errCode, message: firstErr?.message,
-          responseBody: firstErr?.response?.data, fileSizeKB: imagesToUpload[0]?.file?.size ? Math.round(imagesToUpload[0].file.size / 1024) : null,
+          responseBody: firstErr?.response?.data,
+          fileSizeKB: imagesToUpload[0]?.file?.size ? Math.round(imagesToUpload[0].file.size / 1024) : null,
+          url: uploadUrl, online: navigator.onLine,
         });
 
         let diagMsg;
         if (isTimeout) {
           diagMsg = `העלאת תמונה נכשלה: timeout בזמן העלאה (${fileSizeMB}MB)`;
         } else if (isNetwork) {
-          diagMsg = `העלאת תמונה נכשלה: שגיאת רשת (${fileSizeMB}MB)`;
+          let reachable = false;
+          try {
+            const hc = await fetch(`${BACKEND_URL}/api/health`, { method: 'GET', mode: 'cors' });
+            reachable = hc.ok;
+          } catch (_) {}
+          if (reachable) {
+            diagMsg = `העלאת תמונה נכשלה: שגיאת רשת — השרת זמין אך ההעלאה נחסמה (${fileSizeMB}MB)`;
+          } else {
+            diagMsg = `העלאת תמונה נכשלה: שגיאת רשת — השרת לא זמין (${fileSizeMB}MB, online=${navigator.onLine})`;
+          }
+          console.error('[upload:network-diag]', { reachable, online: navigator.onLine, url: uploadUrl });
         } else if (status) {
           diagMsg = `העלאת תמונה נכשלה: HTTP ${status}${shortServer ? ' — ' + shortServer : ''} (${fileSizeMB}MB)`;
         } else {
