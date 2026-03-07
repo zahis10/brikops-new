@@ -53,24 +53,56 @@ app = FastAPI(
 
 import time as _time
 
+def _is_attach_upload(request: Request) -> bool:
+    if request.method != 'POST':
+        return False
+    parts = request.url.path.strip('/').split('/')
+    return (len(parts) == 4 and parts[0] == 'api' and parts[1] == 'tasks'
+            and parts[3] == 'attachments')
+
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id", str(uuid.uuid4())[:8])
     request.state.request_id = request_id
     start = _time.perf_counter()
+
+    is_attach = _is_attach_upload(request)
+    if is_attach:
+        h = request.headers
+        logger.warning(
+            f"[ATTACH:ARRIVAL] rid={request_id} path={request.url.path} "
+            f"ct={h.get('content-type', '?')[:120]} cl={h.get('content-length', '?')} "
+            f"auth={'yes' if h.get('authorization') else 'no'} "
+            f"origin={h.get('origin', '?')} cf_ray={h.get('cf-ray', '?')} "
+            f"xff={h.get('x-forwarded-for', '?')} ua={h.get('user-agent', '?')[:100]}"
+        )
+
     try:
         response = await call_next(request)
-    except Exception:
+    except Exception as exc:
         elapsed_ms = round((_time.perf_counter() - start) * 1000, 1)
-        logger.warning(
-            f"[SLOW-ERR] rid={request_id} {request.method} {request.url.path} "
-            f"time={elapsed_ms}ms (exception)"
-        )
+        if is_attach:
+            logger.warning(
+                f"[ATTACH:EXCEPTION] rid={request_id} path={request.url.path} "
+                f"exc={type(exc).__name__}: {str(exc)[:200]} elapsed={elapsed_ms}ms"
+            )
+        else:
+            logger.warning(
+                f"[SLOW-ERR] rid={request_id} {request.method} {request.url.path} "
+                f"time={elapsed_ms}ms (exception)"
+            )
         raise
+
     elapsed_ms = round((_time.perf_counter() - start) * 1000, 1)
     response.headers["x-response-time-ms"] = str(elapsed_ms)
     response.headers["x-request-id"] = request_id
-    if elapsed_ms > 800:
+
+    if is_attach:
+        logger.warning(
+            f"[ATTACH:RESPONSE] rid={request_id} path={request.url.path} "
+            f"status={response.status_code} elapsed={elapsed_ms}ms"
+        )
+    elif elapsed_ms > 800:
         logger.warning(
             f"[SLOW] rid={request_id} {request.method} {request.url.path} "
             f"status={response.status_code} time={elapsed_ms}ms"
