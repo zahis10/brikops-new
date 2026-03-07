@@ -49,6 +49,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Change Detection**: `check_files()` uses process substitution to detect changes by path: `backend/**` or `.platform/**` → backend deploy (GitHub Actions), `frontend/**` → frontend deploy (Cloudflare Pages). Matches the `paths` filter in `.github/workflows/deploy-backend.yml`.
 -   **Post-push Summary**: Structured deploy summary showing changes detected (YES/NO), deploy expectations (EXPECTED/NOT EXPECTED with reasons), monitoring URLs, and a one-liner status.
 -   **Contractor Image Guard**: Backend enforces `NO_TASK_IMAGE` policy — tasks must have at least one image before contractor assignment. Frontend flow: create → upload images → assign.
+-   **Upload Image Validation**: Task attachment endpoint validates each file before storage: content_type must start with `image/`, file must be non-empty, and Pillow must decode+verify the image. Rejects with `INVALID_TASK_IMAGE` (400). Frontend skips retries for this error and shows Hebrew message.
 -   **Mobile Upload Resilience**: `NewDefectModal` retries each image upload up to 3 times with exponential backoff (2s/4s). HEIC compression uses `createImageBitmap` with `new Image()` fallback. On total upload failure, modal stays open with retry button (reuses same task ID, no orphans). Partial upload success (≥1 image) proceeds to assign. Upload timeout is 120s.
 
 ### Cloud Deployment (LIVE)

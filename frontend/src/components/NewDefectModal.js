@@ -428,10 +428,17 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         return res;
       } catch (err) {
         const status = err.response?.status;
+        const errorCode = err.response?.data?.detail?.error_code;
         const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
         const isNetwork = !err.response && err.message?.includes('Network');
         console.error(`[upload:fail] ${fileName} attempt #${attempt}/${maxAttempts}`,
-          { status, isTimeout, isNetwork, message: err.message, responseData: err.response?.data });
+          { status, errorCode, isTimeout, isNetwork, message: err.message, responseData: err.response?.data });
+        if (errorCode === 'INVALID_TASK_IMAGE') {
+          const msg = err.response?.data?.detail?.message || 'ניתן לצרף תמונות בלבד';
+          console.error(`[upload:invalid] ${fileName} — server rejected as invalid image, no retry`);
+          toast.error(`${fileName}: ${msg}`);
+          throw err;
+        }
         if (attempt < maxAttempts) {
           const delay = attempt * 2000;
           console.log(`[upload:retry] waiting ${delay}ms before retry...`);

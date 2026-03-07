@@ -807,6 +807,28 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
         raise HTTPException(status_code=404, detail='Task not found')
     logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
 
+    file_ct = file.content_type or ''
+    if not file_ct.startswith('image/'):
+        logger.warning(f"[ATTACH:REJECTED] task={task_id} filename={file.filename} content_type={file_ct} reason=not_image")
+        raise HTTPException(status_code=400, detail={'error_code': 'INVALID_TASK_IMAGE', 'message': 'ניתן לצרף תמונות בלבד'})
+
+    raw = await file.read()
+    if len(raw) == 0:
+        logger.warning(f"[ATTACH:REJECTED] task={task_id} filename={file.filename} reason=empty_file")
+        raise HTTPException(status_code=400, detail={'error_code': 'INVALID_TASK_IMAGE', 'message': 'ניתן לצרף תמונות בלבד'})
+
+    from PIL import Image as _PILImage
+    import io as _io
+    try:
+        img = _PILImage.open(_io.BytesIO(raw))
+        img.verify()
+    except Exception as pil_err:
+        logger.warning(f"[ATTACH:REJECTED] task={task_id} filename={file.filename} reason=pillow_decode_failed error={pil_err}")
+        raise HTTPException(status_code=400, detail={'error_code': 'INVALID_TASK_IMAGE', 'message': 'ניתן לצרף תמונות בלבד'})
+
+    await file.seek(0)
+    logger.info(f"[ATTACH:VALIDATED] task={task_id} filename={file.filename} size={len(raw)} content_type={file_ct}")
+
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"task_{task_id}")
