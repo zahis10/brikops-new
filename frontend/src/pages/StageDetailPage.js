@@ -369,7 +369,12 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
             {resolveActorName(rejection.by_name) && <>נדחה ע"י <span className="font-medium">{resolveActorName(rejection.by_name)}</span></>}
             {rejection.at && <> • {formatShortTime(rejection.at)}</>}
           </p>
-          {canSendWhatsApp && onWhatsAppCta && (
+          {rejection.returned_to_user_name && (
+            <p className="text-[11px] text-red-500 mt-0.5" dir="rtl">
+              הוחזר ל: <span className="font-medium">{rejection.returned_to_user_name}</span>
+            </p>
+          )}
+          {canSendWhatsApp && onWhatsAppCta && !rejection.returned_to_user_id && (
             <button
               onClick={() => onWhatsAppCta(item.id, item.title, rejection.reason)}
               className="mt-2 w-full flex items-center justify-center gap-2 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 active:bg-green-200 border border-green-200 rounded-lg px-3 py-2 min-h-[40px] transition-all"
@@ -1260,8 +1265,12 @@ export default function StageDetailPage() {
 
   const handleRejectItem = async (itemId, reason) => {
     try {
-      await qcService.rejectItem(runId, itemId, { reason });
-      toast.success('הסעיף נדחה — השלב נפתח מחדש לתיקון');
+      const result = await qcService.rejectItem(runId, itemId, { reason });
+      if (result?.returned_to?.user_name) {
+        toast.success(`הסעיף נדחה — הודעה נשלחה ל${result.returned_to.user_name}`);
+      } else {
+        toast.success('הסעיף נדחה');
+      }
       setLastRejectedItemId(itemId);
       await softLoad(itemId);
       loadTimeline();
