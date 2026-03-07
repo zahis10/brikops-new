@@ -701,17 +701,12 @@ PAYWALL_EXEMPT_PREFIXES = (
 
 @app.middleware("http")
 async def paywall_middleware(request: Request, call_next):
-    if request.method == 'GET' or not request.url.path.startswith('/api/'):
-        response = await call_next(request)
-    else:
+    paywall_block = False
+    if request.method != 'GET' and request.url.path.startswith('/api/'):
         exempt = any(request.url.path.startswith(p) for p in PAYWALL_EXEMPT_PREFIXES)
-        if exempt:
-            response = await call_next(request)
-        else:
+        if not exempt:
             auth_header = request.headers.get('authorization', '')
-            if not auth_header.startswith('Bearer '):
-                response = await call_next(request)
-            else:
+            if auth_header.startswith('Bearer '):
                 from jose import jwt as jose_jwt, JWTError as JoseJWTError
                 try:
                     token = auth_header[7:]
@@ -731,13 +726,15 @@ async def paywall_middleware(request: Request, call_next):
                         if not _is_sa:
                             access = await get_effective_access(user_id)
                             if access != EffectiveAccess.FULL_ACCESS:
-                                return JSONResponse(
-                                    status_code=402,
-                                    content={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
-                                )
-                    response = await call_next(request)
-                except (JoseJWTError, Exception):
-                    response = await call_next(request)
+                                paywall_block = True
+                except JoseJWTError:
+                    pass
+    if paywall_block:
+        return JSONResponse(
+            status_code=402,
+            content={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+        )
+    response = await call_next(request)
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
