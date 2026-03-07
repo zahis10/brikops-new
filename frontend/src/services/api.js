@@ -349,6 +349,7 @@ export const taskService = {
     if (note) formData.append('note', note);
     const response = await axios.post(`${API}/tasks/${id}/contractor-proof`, formData, {
       headers: getAuthHeader(),
+      timeout: 120000,
     });
     return response.data;
   },

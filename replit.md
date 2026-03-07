@@ -51,6 +51,8 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Contractor Image Guard**: Backend enforces `NO_TASK_IMAGE` policy — tasks must have at least one image before contractor assignment. Frontend flow: create → upload images → assign.
 -   **Upload Image Validation**: Task attachment endpoint validates each file before storage: content_type must start with `image/`, file must be non-empty, and Pillow must decode+verify the image. Rejects with `INVALID_TASK_IMAGE` (400). Frontend skips retries for this error and shows Hebrew message.
 -   **Mobile Upload Resilience**: `NewDefectModal` retries each image upload up to 3 times with exponential backoff (2s/4s). HEIC compression uses `createImageBitmap` with `new Image()` fallback. On total upload failure, modal stays open with retry button (reuses same task ID, no orphans). Partial upload success (≥1 image) proceeds to assign. Upload timeout is 120s.
+    -   **Shared Image Compression**: `frontend/src/utils/imageCompress.js` — reusable utility (MAX_SIZE=800KB, MAX_WIDTH=1600, JPEG_QUALITY=0.7, HEIC support, createImageBitmap + Image fallback). Used by both `NewDefectModal` and `TaskDetailPage` (contractor proof flow).
+    -   **Contractor Proof Hardening**: `TaskDetailPage.js` proof flow compresses images before upload, `api.js` `submitContractorProof` has 120s timeout. Error handling distinguishes timeout/400/500 with Hebrew messages.
 
 ### Cloud Deployment (LIVE)
 -   **Frontend**: Cloudflare Pages (`app.brikops.com`).
