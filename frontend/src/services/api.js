@@ -335,7 +335,7 @@ export const taskService = {
     formData.append('file', file);
     const response = await axios.post(`${API}/tasks/${id}/attachments`, formData, {
       headers: getAuthHeader(),
-      timeout: 30000,
+      timeout: 90000,
     });
     return response.data;
   },
