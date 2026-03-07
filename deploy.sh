@@ -45,15 +45,15 @@ check_files() {
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     if [[ "$f" == frontend/* ]]; then frontend_changed=1; fi
-    if [[ "$f" == backend/* ]]; then backend_changed=1; fi
+    if [[ "$f" == backend/* || "$f" == .platform/* ]]; then backend_changed=1; fi
   done
 }
 
 if [[ $has_uncommitted -eq 1 ]]; then
-  { git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u | check_files
+  check_files < <({ git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u)
 fi
 if [[ "$ahead" -gt 0 ]]; then
-  git diff --name-only "origin/$branch..HEAD" | check_files
+  check_files < <(git diff --name-only "origin/$branch..HEAD")
 fi
 
 check_frontend_staleness() {
@@ -202,11 +202,57 @@ fi
 git push origin "$branch"
 
 SHA="$(git rev-parse --short HEAD)"
+
 echo
-echo "Pushed successfully. (commit: $SHA)"
+echo "═══════════════════════════════════════════════════"
+echo " DEPLOY SUMMARY  (commit: $SHA)"
+echo "═══════════════════════════════════════════════════"
 echo
-if [[ $frontend_changed -eq 1 ]]; then echo "  Frontend updating: https://app.brikops.com (~1 min)"; fi
-if [[ $backend_changed -eq 1 ]]; then echo "  Backend updating:  https://api.brikops.com (~2 min)"; fi
+echo " Changes detected:"
+if [[ $backend_changed -eq 1 ]]; then
+  echo "   Backend  (backend/** .platform/**):  YES"
+else
+  echo "   Backend  (backend/** .platform/**):  NO"
+fi
+if [[ $frontend_changed -eq 1 ]]; then
+  echo "   Frontend (frontend/**):              YES"
+else
+  echo "   Frontend (frontend/**):              NO"
+fi
 echo
-echo "Monitor: https://github.com/zahis10/brikops-new/actions"
-echo "Health:  https://api.brikops.com/health"
+echo " Deploy status:"
+if [[ $backend_changed -eq 1 ]]; then
+  echo "   Backend  (GitHub Actions → EB):      EXPECTED (~2 min)"
+else
+  echo "   Backend  (GitHub Actions → EB):      NOT EXPECTED"
+  echo "     → no changes under backend/** or .platform/** — path filter skips"
+fi
+if [[ $frontend_changed -eq 1 ]]; then
+  echo "   Frontend (Cloudflare Pages):         EXPECTED (~1 min)"
+else
+  echo "   Frontend (Cloudflare Pages):         NOT EXPECTED"
+  echo "     → no changes under frontend/**"
+fi
+echo
+echo " Where to check:"
+echo "   Backend:   https://github.com/zahis10/brikops-new/actions"
+echo "   Frontend:  Cloudflare Pages dashboard → app.brikops.com"
+echo "   Health:    https://api.brikops.com/health"
+echo
+echo "═══════════════════════════════════════════════════"
+summary_line="✓ Push completed ($SHA)"
+if [[ $frontend_changed -eq 1 ]]; then
+  summary_line="$summary_line · Frontend → Cloudflare Pages"
+else
+  summary_line="$summary_line · Frontend → no deploy needed"
+fi
+if [[ $backend_changed -eq 1 ]]; then
+  summary_line="$summary_line · Backend → GitHub Actions"
+else
+  summary_line="$summary_line · Backend → no deploy needed"
+fi
+if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then
+  summary_line="✓ Push completed ($SHA) — no deploys expected (config/docs only)"
+fi
+echo " $summary_line"
+echo "═══════════════════════════════════════════════════"
