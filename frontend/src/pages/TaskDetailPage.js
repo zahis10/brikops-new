@@ -4,6 +4,7 @@ import { tCategory, tStatus, tPriority } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
 import { taskService, companyService, notificationService, projectService, tradeService } from '../services/api';
 import { toast } from 'sonner';
+import { compressImage } from '../utils/imageCompress';
 import {
   ChevronRight, Building2, Layers, DoorOpen, Clock, User, Briefcase,
   MessageSquare, Paperclip, ArrowRight, Send, HardHat, Image as ImageIcon,
@@ -278,14 +279,15 @@ const TaskDetailPage = () => {
     }
   };
 
-  const handleProofFileChange = (e) => {
+  const handleProofFileChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
+      const compressed = await compressImage(file);
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setProofFiles(prev => [...prev, { file, preview: ev.target.result, id: Date.now() + Math.random() }]);
+        setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
       };
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(compressed);
     }
     if (e.target) e.target.value = '';
   };
@@ -294,13 +296,14 @@ const TaskDetailPage = () => {
     setProofFiles(prev => prev.filter(f => f.id !== fileId));
   };
 
-  const handleCameraCapture = (blob) => {
+  const handleCameraCapture = async (blob) => {
     const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    const compressed = await compressImage(file);
     const reader = new FileReader();
     reader.onload = (ev) => {
-      setProofFiles(prev => [...prev, { file, preview: ev.target.result, id: Date.now() + Math.random() }]);
+      setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(compressed);
     setShowCameraModal(false);
   };
 
@@ -309,17 +312,24 @@ const TaskDetailPage = () => {
       toast.error('יש להעלות לפחות תמונת תיקון אחת');
       return;
     }
+    const files = proofFiles.map(f => f.file);
     setSubmittingProof(true);
     try {
-      const files = proofFiles.map(f => f.file);
       const result = await taskService.submitContractorProof(id, files, proofNote);
       toast.success(result.message || 'נשלח לאישור מנהל');
       setProofFiles([]);
       setProofNote('');
       await loadTask();
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה בשליחת הוכחת תיקון';
-      toast.error(msg);
+      if (err.code === 'ECONNABORTED') {
+        toast.error('הזמן הקצוב לשליחה עבר. בדוק חיבור אינטרנט ונסה שוב.');
+      } else if (err.response?.status === 400) {
+        toast.error(err.response?.data?.detail || 'שגיאה בנתונים שנשלחו');
+      } else if (err.response?.status >= 500) {
+        toast.error('שגיאה בשרת. נסה שוב בעוד רגע.');
+      } else {
+        toast.error(err.response?.data?.detail || 'שגיאה בשליחת הוכחת תיקון');
+      }
     } finally {
       setSubmittingProof(false);
     }
