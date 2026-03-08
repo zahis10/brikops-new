@@ -5,9 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
+import NewDefectModal from '../components/NewDefectModal';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
-  ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon
+  ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus
 } from 'lucide-react';
 
 const STATUS_LABELS = {
@@ -49,6 +50,8 @@ const ApartmentDashboardPage = () => {
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [flagChecked, setFlagChecked] = useState(false);
+  const [showDefectModal, setShowDefectModal] = useState(false);
+  const canCreateDefect = user && user.role === 'project_manager';
 
   useEffect(() => {
     configService.getFeatures().then(data => {
@@ -159,7 +162,7 @@ const ApartmentDashboardPage = () => {
       });
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-6" dir="rtl">
+    <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
       <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
         <div className="max-w-lg mx-auto px-4 py-3">
           <div className="flex items-center gap-3">
@@ -356,6 +359,41 @@ const ApartmentDashboardPage = () => {
           </div>
         )}
       </div>
+
+      {canCreateDefect && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t border-slate-200 p-3 z-40">
+          <div className="max-w-lg mx-auto">
+            <button
+              onClick={() => setShowDefectModal(true)}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-colors active:bg-amber-700"
+            >
+              <Plus className="w-5 h-5" />
+              פתח ליקוי
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showDefectModal && (
+        <NewDefectModal
+          isOpen={showDefectModal}
+          onClose={() => setShowDefectModal(false)}
+          onSuccess={() => {
+            loadUnit();
+            loadTasks();
+          }}
+          prefillData={{
+            project_id: project?.id || projectId,
+            building_id: building?.id || '',
+            floor_id: floor?.id || '',
+            unit_id: unitId,
+            project_name: project?.name || '',
+            building_name: building?.name || '',
+            floor_name: floor?.name || '',
+            unit_label: effectiveLabel,
+          }}
+        />
+      )}
     </div>
   );
 };

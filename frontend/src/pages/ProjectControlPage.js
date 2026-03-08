@@ -1824,10 +1824,11 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
               {defectsV2Enabled && (
                 <button
                   onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/buildings/${building.id}/defects`); }}
-                  className="p-3 text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-100"
+                  className="flex items-center gap-1.5 mx-1 px-3 py-1.5 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg transition-colors text-xs font-bold whitespace-nowrap"
                   title="ליקויים לפי בניין"
                 >
-                  <span className="text-xs font-medium">ליקויים</span>
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  ליקויים
                 </button>
               )}
               {isPM && (

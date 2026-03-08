@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { buildingService, configService } from '../services/api';
+import { formatUnitLabel } from '../utils/formatters';
 import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
@@ -271,7 +272,7 @@ const BuildingDefectsPage = () => {
                                   )}
                                 </div>
                                 <span className="text-[11px] text-slate-600 font-medium truncate max-w-full">
-                                  {unit.display_label || unit.unit_no || ''}
+                                  {formatUnitLabel(unit.display_label || unit.unit_no || '')}
                                 </span>
                               </button>
                             );
