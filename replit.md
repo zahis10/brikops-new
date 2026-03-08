@@ -37,6 +37,10 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements with cascade operations.
     -   **Role Conflict Guard**: Prevents users from holding conflicting roles within the same organization.
     -   **Contractor Company+Trade Assignment**: Manages contractor assignments at the project membership level with validation.
+    -   **WhatsApp Deep Link Access**: `get_task` endpoint allows assigned contractors to access their tasks directly via WhatsApp deep links without trade-match filtering. Trade filtering only applies to list queries, not direct task access for the assigned contractor.
+    -   **Task Image Categorization**: `TaskDetailPage` splits image attachments into 3 groups: opening images (by task creator), current contractor proofs (by assignee), and previous contractor proofs (by others). This is a minimal user_id-based split; long-term, attachments should carry an explicit `kind` field.
+    -   **Short Task Reference**: New tasks get a `short_ref` field (`task_id[:8]`) stored at creation. WhatsApp notifications display `#<short_ref>` instead of the full UUID. Old tasks without `short_ref` fall back to `task_id[:8]` computed on the fly.
+    -   **Status Chip Counts**: `/task-buckets` endpoint returns `status_counts` dict (per-status task counts respecting RBAC). `ProjectTasksPage` displays counts on status filter chips.
 
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.

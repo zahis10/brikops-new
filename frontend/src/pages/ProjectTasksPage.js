@@ -253,7 +253,17 @@ const ProjectTasksPage = () => {
 
         <div className="overflow-x-auto -mx-4 px-4 scrollbar-thin">
           <div className="flex gap-1.5 pb-1" style={{ minWidth: 'max-content' }}>
-            {(isContractor ? CONTRACTOR_STATUS_CHIPS : MANAGER_STATUS_CHIPS).map(chip => (
+            {(isContractor ? CONTRACTOR_STATUS_CHIPS : MANAGER_STATUS_CHIPS).map(chip => {
+              const sc = bucketData?.status_counts || {};
+              let chipCount = null;
+              if (chip.key === '') {
+                chipCount = Object.values(sc).reduce((a, b) => a + b, 0);
+              } else if (chip.statusIn) {
+                chipCount = chip.statusIn.split(',').reduce((sum, s) => sum + (sc[s] || 0), 0);
+              } else if (chip.status) {
+                chipCount = sc[chip.status] || 0;
+              }
+              return (
               <button
                 key={chip.key}
                 onClick={() => updateParams('statusChip', chip.key)}
@@ -263,9 +273,10 @@ const ProjectTasksPage = () => {
                     : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
                 }`}
               >
-                {chip.label}
+                {chip.label}{chipCount != null ? ` (${chipCount})` : ''}
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 

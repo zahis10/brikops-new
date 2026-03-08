@@ -68,6 +68,7 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
         'status': initial_status, 'company_id': task.company_id,
         'assignee_id': task.assignee_id, 'due_date': task.due_date,
         'created_by': user['id'], 'created_at': ts, 'updated_at': ts,
+        'short_ref': task_id[:8],
         'attachments_count': 0, 'comments_count': 0,
     }
     await db.tasks.insert_one(doc)
@@ -229,10 +230,6 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     is_contractor = membership['role'] == 'contractor' or user['role'] == 'contractor'
     if is_contractor and not is_assignee:
         raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
-    if is_contractor and is_assignee:
-        trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
-        if not _trades_match(task.get('category'), trade_key):
-            raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
     if membership['role'] == 'none' and not is_assignee:
         raise HTTPException(status_code=403, detail='No access to this task')
     task_data = Task(**task).dict()

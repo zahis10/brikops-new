@@ -396,11 +396,21 @@ async def get_task_buckets(
                 my_membership['contractor_trade_key'], my_membership['contractor_trade_key']
             )
 
-    task_query = {'project_id': project_id}
+    base_query = {'project_id': project_id}
+    if is_contractor:
+        base_query['assignee_id'] = user['id']
+
+    status_count_query = dict(base_query)
+    status_pipeline = [
+        {'$match': status_count_query},
+        {'$group': {'_id': '$status', 'count': {'$sum': 1}}},
+    ]
+    status_agg = await db.tasks.aggregate(status_pipeline).to_list(100)
+    status_counts = {doc['_id']: doc['count'] for doc in status_agg if doc['_id']}
+
+    task_query = dict(base_query)
     if status:
         task_query['status'] = status
-    if is_contractor:
-        task_query['assignee_id'] = user['id']
 
     bucket_projection = {'_id': 0, 'id': 1, 'assignee_id': 1, 'company_id': 1, 'category': 1}
     tasks = await db.tasks.find(task_query, bucket_projection).to_list(10000)
@@ -456,4 +466,5 @@ async def get_task_buckets(
     return {
         'total': total,
         'buckets': buckets,
+        'status_counts': status_counts,
     }

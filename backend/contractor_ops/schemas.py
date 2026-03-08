@@ -261,6 +261,7 @@ class Task(BaseModel):
     created_by: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    short_ref: Optional[str] = None
     attachments_count: int = 0
     comments_count: int = 0
 

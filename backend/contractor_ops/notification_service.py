@@ -102,6 +102,7 @@ def build_whatsapp_payload(task: dict, project: dict = None, building: dict = No
         'unit_no': unit.get('unit_no', '') if unit else '',
         'assignee_name': assignee.get('name', '') if assignee else '',
         'company_name': company.get('name', '') if company else '',
+        'short_ref': task.get('short_ref', task.get('id', '')[:8]),
         'task_link': task_link,
         'custom_message': custom_message,
     }
@@ -218,7 +219,9 @@ class WhatsAppClient:
             location = ' - '.join(p for p in location_parts if p) or ''
 
             from config import WA_TEMPLATE_PARAM_MODE
-            ref_param = {"type": "text", "text": payload.get('task_id', '')}
+            task_id_val = payload.get('task_id', '')
+            short_ref = payload.get('short_ref') or task_id_val[:8]
+            ref_param = {"type": "text", "text": f"#{short_ref}"}
             location_param = {"type": "text", "text": location}
             issue_param = {"type": "text", "text": payload.get('title', '')}
             if WA_TEMPLATE_PARAM_MODE == 'named':

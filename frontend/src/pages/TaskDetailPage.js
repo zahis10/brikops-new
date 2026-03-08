@@ -496,8 +496,9 @@ const TaskDetailPage = () => {
     return true;
   };
   const allAttachments = updates.filter(isImageAttachment);
-  const attachments = allAttachments.filter(a => a.user_id === task.assignee_id);
-  const previousAssigneeAttachments = allAttachments.filter(a => a.user_id !== task.assignee_id);
+  const openingAttachments = allAttachments.filter(a => a.user_id === task.created_by);
+  const attachments = allAttachments.filter(a => a.user_id === task.assignee_id && a.user_id !== task.created_by);
+  const previousAssigneeAttachments = allAttachments.filter(a => a.user_id !== task.created_by && a.user_id !== task.assignee_id);
   const comments = updates.filter(u => u.update_type !== 'attachment');
   const canComment = user?.role !== 'viewer' && projectRole !== 'viewer';
 
@@ -889,6 +890,63 @@ const TaskDetailPage = () => {
                   ? 'ההוכחה נשלחה — ממתין לאישור מנהל'
                   : 'הליקוי סגור — לא ניתן להעלות הוכחה'}
               </span>
+            </div>
+          </Card>
+        )}
+
+        {openingAttachments.length > 0 && (
+          <Card className="p-5">
+            <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
+              <Camera className="w-4 h-4" />
+              תמונות פתיחה ({openingAttachments.length})
+            </h3>
+            <div className="space-y-3">
+              {openingAttachments.map((att, i) => (
+                <div key={att.id} className="flex gap-3 items-start bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <button
+                    onClick={() => setImageModal(att.attachment_url)}
+                    className="w-20 h-20 rounded-lg overflow-hidden border border-slate-200 hover:border-amber-400 transition-colors flex-shrink-0"
+                  >
+                    <img
+                      src={att.attachment_url}
+                      alt={`תמונת פתיחה ${i + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={e => { e.target.style.display = 'none'; }}
+                    />
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <User className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-sm font-medium text-slate-700">{att.user_name || 'לא ידוע'}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-xs text-slate-500">
+                        {att.created_at ? new Date(att.created_at).toLocaleString('he-IL') : ''}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setImageModal(att.attachment_url)}
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        צפייה
+                      </button>
+                      <a
+                        href={att.attachment_url}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-xs text-green-600 hover:text-green-800"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        הורדה
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </Card>
         )}
