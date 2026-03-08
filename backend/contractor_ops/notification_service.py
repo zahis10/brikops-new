@@ -103,6 +103,7 @@ def build_whatsapp_payload(task: dict, project: dict = None, building: dict = No
         'assignee_name': assignee.get('name', '') if assignee else '',
         'company_name': company.get('name', '') if company else '',
         'short_ref': task.get('short_ref', task.get('id', '')[:8]),
+        'display_number': task.get('display_number'),
         'task_link': task_link,
         'custom_message': custom_message,
     }
@@ -215,13 +216,29 @@ class WhatsAppClient:
                 })
             logger.info(f"[WA:IMAGE] task_id={task_id} source={image_source} url={str(effective_image)[:80] if effective_image else 'none'}")
 
-            location_parts = [payload.get('project_name', ''), payload.get('building_name', '')]
+            location_parts = [payload.get('project_name', '')]
+            building = payload.get('building_name', '')
+            unit = payload.get('unit_no', '')
+            floor = payload.get('floor_name', '')
+            sub_parts = []
+            if building:
+                sub_parts.append(building)
+            if floor:
+                sub_parts.append(f"קומה {floor}")
+            if unit:
+                sub_parts.append(f"דירה {unit}")
+            if sub_parts:
+                location_parts.append(' / '.join(sub_parts))
             location = ' - '.join(p for p in location_parts if p) or ''
 
             from config import WA_TEMPLATE_PARAM_MODE
-            task_id_val = payload.get('task_id', '')
-            short_ref = payload.get('short_ref') or task_id_val[:8]
-            ref_param = {"type": "text", "text": f"#{short_ref}"}
+            display_number = payload.get('display_number')
+            if display_number:
+                ref_text = f"#{display_number}"
+            else:
+                task_id_val = payload.get('task_id', '')
+                ref_text = f"#{payload.get('short_ref') or task_id_val[:8]}"
+            ref_param = {"type": "text", "text": ref_text}
             location_param = {"type": "text", "text": location}
             issue_param = {"type": "text", "text": payload.get('title', '')}
             if WA_TEMPLATE_PARAM_MODE == 'named':

@@ -262,6 +262,7 @@ class Task(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     short_ref: Optional[str] = None
+    display_number: Optional[int] = None
     attachments_count: int = 0
     comments_count: int = 0
 

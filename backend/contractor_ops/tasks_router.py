@@ -59,6 +59,14 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
             detail={'error_code': NO_IMAGE_ERROR_CODE, 'message': NO_IMAGE_MESSAGE},
         )
     initial_status = 'open'
+    from pymongo import ReturnDocument
+    counter_doc = await db.counters.find_one_and_update(
+        {'_id': f'task_seq:{task.project_id}'},
+        {'$inc': {'seq': 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    display_number = counter_doc['seq']
     doc = {
         'id': task_id, 'project_id': task.project_id, 'building_id': task.building_id,
         'floor_id': task.floor_id, 'unit_id': task.unit_id,
@@ -69,6 +77,7 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
         'assignee_id': task.assignee_id, 'due_date': task.due_date,
         'created_by': user['id'], 'created_at': ts, 'updated_at': ts,
         'short_ref': task_id[:8],
+        'display_number': display_number,
         'attachments_count': 0, 'comments_count': 0,
     }
     await db.tasks.insert_one(doc)
@@ -224,13 +233,17 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:
+        logger.info(f"[GET_TASK] 404 task_not_found task_id={task_id} user_id={user['id']}")
         raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
     membership = await _get_project_membership(user, task['project_id'])
     is_assignee = task.get('assignee_id') == user['id']
     is_contractor = membership['role'] == 'contractor' or user['role'] == 'contractor'
+    logger.info(f"[GET_TASK] task_id={task_id} user_id={user['id']} membership_role={membership['role']} user_role={user.get('role')} is_contractor={is_contractor} is_assignee={is_assignee} assignee_id={task.get('assignee_id')}")
     if is_contractor and not is_assignee:
+        logger.info(f"[GET_TASK] 404 contractor_not_assignee task_id={task_id} user_id={user['id']}")
         raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
     if membership['role'] == 'none' and not is_assignee:
+        logger.info(f"[GET_TASK] 403 no_membership_not_assignee task_id={task_id} user_id={user['id']}")
         raise HTTPException(status_code=403, detail='No access to this task')
     task_data = Task(**task).dict()
     from services.object_storage import resolve_urls_in_doc
@@ -609,16 +622,6 @@ async def contractor_proof(
         'actor_project_role': membership['role'],
         'note': note or '', 'proof_urls': proof_urls,
     })
-
-    engine = get_notification_engine()
-    if engine:
-        try:
-            task_link = _get_task_link(task_id)
-            job = await engine.enqueue(task_id, 'contractor_proof_uploaded', user['id'], task_link=task_link)
-            if job and job.get('status') == 'queued':
-                await engine.process_job(job)
-        except Exception as e:
-            logger.warning(f"[NOTIFY] contractor-proof notification failed: {e}")
 
     updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     return {

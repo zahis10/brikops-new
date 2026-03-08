@@ -210,7 +210,9 @@ const TaskDetailPage = () => {
         toast.error('אין לך הרשאה לצפות בליקוי זה');
         setErrorState('forbidden');
       } else {
+        console.error('[TASK_LOAD_ERROR]', err?.response?.status, err?.message);
         toast.error('שגיאה בטעינת הליקוי');
+        setErrorState('load_error');
       }
     } finally {
       setLoading(false);
@@ -456,8 +458,9 @@ const TaskDetailPage = () => {
   }
 
   if (errorState || !task) {
-    const isNotFound = errorState === 'not_found' || !task;
+    const isNotFound = errorState === 'not_found';
     const isForbidden = errorState === 'forbidden';
+    const isLoadError = errorState === 'load_error' || (!errorState && !task);
     const errorBackUrl = sessionStorage.getItem(RETURN_TO_KEY)
       || (task?.project_id ? `/projects/${task.project_id}/tasks?assignee=me` : '/projects');
     return (
@@ -469,17 +472,26 @@ const TaskDetailPage = () => {
             <AlertTriangle className="w-16 h-16 text-amber-400 mx-auto" />
           )}
           <h2 className="text-xl font-bold text-slate-700">
-            {isForbidden ? 'אין לך הרשאה לצפות בליקוי הזה' : 'הליקוי לא קיים או הוסר'}
+            {isForbidden ? 'אין לך הרשאה לצפות בליקוי הזה' : isLoadError ? 'שגיאה בטעינת הליקוי' : 'הליקוי לא קיים או הוסר'}
           </h2>
           <p className="text-slate-500 text-sm">
-            {isForbidden ? 'ליקוי זה שייך לפרויקט שאין לך גישה אליו' : 'ייתכן שהליקוי נמחק או שהקישור אינו תקין'}
+            {isForbidden ? 'ליקוי זה שייך לפרויקט שאין לך גישה אליו' : isLoadError ? 'בדוק את החיבור לאינטרנט ונסה שוב' : 'ייתכן שהליקוי נמחק או שהקישור אינו תקין'}
           </p>
-          <Button
-            onClick={() => navigate(errorBackUrl)}
-            className="bg-amber-500 hover:bg-amber-600 text-white mt-4"
-          >
-            חזרה לליקויים שלי
-          </Button>
+          {isLoadError ? (
+            <Button
+              onClick={() => { setErrorState(null); setLoading(true); loadTask(); }}
+              className="bg-amber-500 hover:bg-amber-600 text-white mt-4"
+            >
+              נסה שוב
+            </Button>
+          ) : (
+            <Button
+              onClick={() => navigate(errorBackUrl)}
+              className="bg-amber-500 hover:bg-amber-600 text-white mt-4"
+            >
+              חזרה לליקויים שלי
+            </Button>
+          )}
         </div>
       </div>
     );

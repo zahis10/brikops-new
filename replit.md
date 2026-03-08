@@ -39,8 +39,12 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Contractor Company+Trade Assignment**: Manages contractor assignments at the project membership level with validation.
     -   **WhatsApp Deep Link Access**: `get_task` endpoint allows assigned contractors to access their tasks directly via WhatsApp deep links without trade-match filtering. Trade filtering only applies to list queries, not direct task access for the assigned contractor.
     -   **Task Image Categorization**: `TaskDetailPage` splits image attachments into 3 groups: opening images (by task creator), current contractor proofs (by assignee), and previous contractor proofs (by others). This is a minimal user_id-based split; long-term, attachments should carry an explicit `kind` field.
-    -   **Short Task Reference**: New tasks get a `short_ref` field (`task_id[:8]`) stored at creation. WhatsApp notifications display `#<short_ref>` instead of the full UUID. Old tasks without `short_ref` fall back to `task_id[:8]` computed on the fly.
+    -   **Short Task Reference**: New tasks get a `short_ref` field (`task_id[:8]`) stored at creation. Old tasks without `short_ref` fall back to `task_id[:8]` computed on the fly.
+    -   **Display Number**: New tasks get a sequential `display_number` via atomic MongoDB counter (`db.counters` collection, key `task_seq:{project_id}`). WhatsApp notifications use `#<display_number>` (e.g., `ליקוי #24`). Old tasks without `display_number` fall back to `short_ref`. No migration/backfill for existing tasks.
     -   **Status Chip Counts**: `/task-buckets` endpoint returns `status_counts` dict (per-status task counts respecting RBAC). `ProjectTasksPage` displays counts on status filter chips.
+    -   **WhatsApp Location Text**: Includes project, building, floor (`קומה X`), and unit (`דירה Y`) — omitting empty parts.
+    -   **Proof Upload Notifications**: Contractor proof upload does NOT send WhatsApp notifications (removed to prevent contractors receiving misleading "new defect" messages). Future: add PM-facing notification with a dedicated Meta-approved template.
+    -   **Task Detail Error Handling**: `TaskDetailPage` distinguishes 404 (shows "not found"), 403 (shows "no permission"), and other errors like network/timeout (shows retryable "load error" page with retry button). Prevents masking transient errors as "task not found".
 
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.
