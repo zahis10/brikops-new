@@ -111,6 +111,8 @@ const LoginPage = () => {
       if (result.requires_onboarding || result.next === 'onboarding') {
         if (onboardingEnabled !== true) {
           toast.error('הרשמה אינה זמינה כרגע, פנה למנהל');
+          setPhoneStep('phone');
+          setOtpCode('');
           return;
         }
         if (ENABLE_REGISTER_MANAGEMENT_REDIRECTS) {
