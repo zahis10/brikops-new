@@ -100,6 +100,10 @@ export const buildingService = {
     const response = await axios.post(`${API}/floors/bulk`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async defectsSummary(buildingId) {
+    const response = await axios.get(`${API}/buildings/${buildingId}/defects-summary`, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const floorService = {

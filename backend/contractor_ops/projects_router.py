@@ -940,3 +940,108 @@ async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = D
         'floors_shifted': len(floor_shift_changes),
         'units_renumbered': len(reseq_unit_changes),
     }
+
+
+@router.get("/buildings/{building_id}/defects-summary")
+async def building_defects_summary(building_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not building:
+        raise HTTPException(status_code=404, detail='Building not found')
+    project_id = building['project_id']
+    await _check_project_read_access(user, project_id)
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+
+    floors = await db.floors.find(
+        {'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}
+    ).sort('sort_index', 1).to_list(1000)
+
+    floor_ids = [f['id'] for f in floors]
+    units = []
+    if floor_ids:
+        units = await db.units.find(
+            {'floor_id': {'$in': floor_ids}, 'archived': {'$ne': True}}, {'_id': 0}
+        ).to_list(100000)
+
+    units_by_floor = {}
+    unit_ids = []
+    for u in units:
+        fid = u['floor_id']
+        if fid not in units_by_floor:
+            units_by_floor[fid] = []
+        units_by_floor[fid].append(u)
+        unit_ids.append(u['id'])
+
+    for fid in units_by_floor:
+        units_by_floor[fid].sort(key=lambda x: x.get('sort_index', 0))
+
+    tasks = await db.tasks.find(
+        {'building_id': building_id, 'archived': {'$ne': True}},
+        {'_id': 0, 'unit_id': 1, 'status': 1}
+    ).to_list(100000)
+
+    defects_by_unit = {}
+    for t in tasks:
+        uid = t.get('unit_id')
+        if not uid:
+            continue
+        if uid not in defects_by_unit:
+            defects_by_unit[uid] = {}
+        s = t.get('status', 'open')
+        defects_by_unit[uid][s] = defects_by_unit[uid].get(s, 0) + 1
+
+    open_statuses = {'open', 'assigned', 'reopened'}
+    in_progress_statuses = {'in_progress', 'pending_contractor_proof', 'pending_manager_approval', 'returned_to_contractor'}
+    waiting_verify_statuses = {'waiting_verify'}
+    closed_statuses = {'closed'}
+
+    def compute_counts(status_map):
+        open_count = sum(status_map.get(s, 0) for s in open_statuses)
+        in_progress = sum(status_map.get(s, 0) for s in in_progress_statuses)
+        waiting = sum(status_map.get(s, 0) for s in waiting_verify_statuses)
+        closed = sum(status_map.get(s, 0) for s in closed_statuses)
+        total = sum(status_map.values())
+        return {
+            'open': open_count,
+            'in_progress': in_progress,
+            'waiting_verify': waiting,
+            'closed': closed,
+            'total': total,
+        }
+
+    floor_results = []
+    for f in floors:
+        floor_units = units_by_floor.get(f['id'], [])
+        unit_results = []
+        for u in floor_units:
+            status_map = defects_by_unit.get(u['id'], {})
+            unit_results.append({
+                'id': u['id'],
+                'unit_no': u.get('unit_no', ''),
+                'display_label': u.get('display_label') or u.get('unit_no', ''),
+                'unit_type': u.get('unit_type', 'apartment'),
+                'defect_counts': compute_counts(status_map),
+            })
+        floor_results.append({
+            'id': f['id'],
+            'name': f.get('name', ''),
+            'floor_number': f.get('floor_number', 0),
+            'display_label': f.get('display_label') or f.get('name', ''),
+            'units': unit_results,
+        })
+
+    return {
+        'building': {
+            'id': building['id'],
+            'name': building.get('name', ''),
+            'code': building.get('code'),
+        },
+        'project': {
+            'id': project['id'],
+            'name': project.get('name', ''),
+            'code': project.get('code', ''),
+        },
+        'floors': floor_results,
+    }

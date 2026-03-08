@@ -157,6 +157,7 @@ ENABLE_DEBUG_ENDPOINTS = os.environ.get('ENABLE_DEBUG_ENDPOINTS', 'true' if APP_
 
 ENABLE_ONBOARDING_V2 = os.environ.get('ENABLE_ONBOARDING_V2', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
 ENABLE_AUTO_TRIAL = os.environ.get('ENABLE_AUTO_TRIAL', 'true').lower() == 'true'
+ENABLE_DEFECTS_V2 = os.environ.get('ENABLE_DEFECTS_V2', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
 
 _gate_raw = os.environ.get('ENABLE_COMPLETE_ACCOUNT_GATE', 'off').strip().lower()
 if _gate_raw not in ('off', 'soft', 'enforce'):
@@ -223,6 +224,7 @@ def log_sanitized_startup():
     logger.info(f"  ENABLE_DEBUG_EP:    {ENABLE_DEBUG_ENDPOINTS}")
     logger.info(f"  ONBOARDING_V2:     {ENABLE_ONBOARDING_V2}")
     logger.info(f"  AUTO_TRIAL:        {ENABLE_AUTO_TRIAL}")
+    logger.info(f"  DEFECTS_V2:        {ENABLE_DEFECTS_V2}")
     logger.info(f"  STEPUP_CHANNEL:     {STEPUP_CHANNEL}")
     logger.info(f"  STEPUP_EMAIL:       {'****' + STEPUP_EMAIL[-10:] if len(STEPUP_EMAIL) > 10 else STEPUP_EMAIL or 'NOT SET'}")
     logger.info(f"  STEPUP_TTL:         {STEPUP_TTL_SECONDS}s")

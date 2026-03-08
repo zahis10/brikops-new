@@ -1821,6 +1821,15 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                 </div>
                 <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">{floors.length} קומות</span>
               </button>
+              {defectsV2Enabled && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/buildings/${building.id}/defects`); }}
+                  className="p-3 text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-100"
+                  title="ליקויים לפי בניין"
+                >
+                  <span className="text-xs font-medium">ליקויים</span>
+                </button>
+              )}
               {isPM && (
                 <button
                   onClick={(e) => { e.stopPropagation(); handleArchiveBuilding(building); }}
@@ -2414,6 +2423,7 @@ const ProjectControlPage = () => {
   const [openInviteTriggered, setOpenInviteTriggered] = useState(false);
   const [gitSha, setGitSha] = useState('');
   const [billingEnabled, setBillingEnabled] = useState(false);
+  const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
 
   const TABS = billingEnabled ? [...BASE_TABS, BILLING_TAB] : BASE_TABS;
@@ -2522,6 +2532,7 @@ const ProjectControlPage = () => {
   useEffect(() => {
     configService.getFeatures().then(data => {
       setBillingEnabled(!!data.feature_flags?.billing_v1_enabled);
+      setDefectsV2Enabled(!!data.feature_flags?.defects_v2);
     }).catch(() => {});
     versionService.get().then(data => {
       setGitSha(data.git_sha || data.sha || data.version || '');
