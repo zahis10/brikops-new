@@ -386,7 +386,9 @@ const OnboardingPage = () => {
     );
   }
 
-  if (onboardingEnabled === false && !incomingPhone) {
+  const isRegistrationIntent = new URLSearchParams(location.search).get('mode') === 'register';
+
+  if (onboardingEnabled === false && !incomingPhone && !isRegistrationIntent) {
     if (!isInviteFlow) {
       sessionStorage.removeItem('onboarding_phone');
       sessionStorage.removeItem('onboarding_step');

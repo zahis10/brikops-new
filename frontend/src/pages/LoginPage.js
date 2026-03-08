@@ -507,16 +507,14 @@ const LoginPage = () => {
           </div>
         )}
 
-        {onboardingEnabled === true && (
-          <div className="mt-4 text-center">
-            <p className="text-sm text-slate-500">
-              אין לך חשבון?{' '}
-              <button type="button" onClick={() => navigate(ENABLE_REGISTER_MANAGEMENT_REDIRECTS ? '/register-management' : '/onboarding')} className="text-amber-600 hover:text-amber-700 font-medium">
-                הרשמה
-              </button>
-            </p>
-          </div>
-        )}
+        <div className="mt-4 text-center">
+          <p className="text-sm text-slate-500">
+            אין לך חשבון?{' '}
+            <button type="button" onClick={() => navigate(ENABLE_REGISTER_MANAGEMENT_REDIRECTS ? '/register-management' : '/onboarding?mode=register')} className="text-amber-600 hover:text-amber-700 font-medium">
+              הרשמה
+            </button>
+          </p>
+        </div>
 
         {quickLoginEnabled && (
           <div className="mt-6 pt-5 border-t border-slate-200">
