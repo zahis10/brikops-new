@@ -47,6 +47,7 @@ const LoginPage = () => {
   const [appMode, setAppMode] = useState('');
 
   const [quickLoginEnabled, setQuickLoginEnabled] = useState(false);
+  const [onboardingEnabled, setOnboardingEnabled] = useState(null);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/config/features`)
@@ -54,8 +55,9 @@ const LoginPage = () => {
       .then(d => {
         setAppMode(d.feature_flags?.app_mode || '');
         setQuickLoginEnabled(d.feature_flags?.enable_quick_login === true);
+        setOnboardingEnabled(d.feature_flags?.onboarding_v2 === true);
       })
-      .catch(() => {});
+      .catch(() => { setOnboardingEnabled(false); });
   }, []);
 
   const handleRequestOtp = useCallback(async (e) => {
@@ -107,6 +109,10 @@ const LoginPage = () => {
       const result = await onboardingService.verifyOtp(phoneE164, otpCode);
 
       if (result.requires_onboarding || result.next === 'onboarding') {
+        if (onboardingEnabled !== true) {
+          toast.error('הרשמה אינה זמינה כרגע, פנה למנהל');
+          return;
+        }
         if (ENABLE_REGISTER_MANAGEMENT_REDIRECTS) {
           navigate('/register-management', { state: { phone: result.phone_e164 || phoneE164, phone_verified: true } });
         } else {
@@ -151,7 +157,7 @@ const LoginPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [otpCode, phoneE164, loginWithOtp, navigate]);
+  }, [otpCode, phoneE164, loginWithOtp, navigate, onboardingEnabled]);
 
   const handleEmailLogin = async (e) => {
     e.preventDefault();
@@ -505,14 +511,16 @@ const LoginPage = () => {
           </div>
         )}
 
-        <div className="mt-4 text-center">
-          <p className="text-sm text-slate-500">
-            אין לך חשבון?{' '}
-            <button type="button" onClick={() => navigate(ENABLE_REGISTER_MANAGEMENT_REDIRECTS ? '/register-management' : '/onboarding')} className="text-amber-600 hover:text-amber-700 font-medium">
-              הרשמה
-            </button>
-          </p>
-        </div>
+        {onboardingEnabled === true && (
+          <div className="mt-4 text-center">
+            <p className="text-sm text-slate-500">
+              אין לך חשבון?{' '}
+              <button type="button" onClick={() => navigate(ENABLE_REGISTER_MANAGEMENT_REDIRECTS ? '/register-management' : '/onboarding')} className="text-amber-600 hover:text-amber-700 font-medium">
+                הרשמה
+              </button>
+            </p>
+          </div>
+        )}
 
         {quickLoginEnabled && (
           <div className="mt-6 pt-5 border-t border-slate-200">

@@ -59,7 +59,7 @@ const OnboardingPage = () => {
   }, []);
 
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/debug/version`)
+    fetch(`${BACKEND_URL}/api/config/features`)
       .then(r => r.json())
       .then(d => {
         setOnboardingEnabled(d.feature_flags?.onboarding_v2 === true);
@@ -387,6 +387,12 @@ const OnboardingPage = () => {
   }
 
   if (onboardingEnabled === false) {
+    if (!isInviteFlow) {
+      sessionStorage.removeItem('onboarding_phone');
+      sessionStorage.removeItem('onboarding_step');
+      navigate('/login', { replace: true });
+      return null;
+    }
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
         <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl text-center" dir="rtl">
