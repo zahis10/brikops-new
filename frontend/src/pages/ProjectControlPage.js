@@ -1245,7 +1245,7 @@ const QC_BADGE_COLORS = {
   submitted: 'bg-slate-100 text-slate-600',
 };
 
-const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement }) => {
+const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled }) => {
   const navigate = useNavigate();
   const [expandedBuildings, setExpandedBuildings] = useState({});
   const [expandedFloors, setExpandedFloors] = useState({});
@@ -2643,7 +2643,7 @@ const ProjectControlPage = () => {
       <div className="max-w-4xl mx-auto px-4 py-4">
         {activeTab === 'structure' && (
           <div className="space-y-4">
-            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={() => setShowAddBuilding(true)} onQuickSetup={() => setShowQuickSetup(true)} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={user?.platform_role === 'super_admin'} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} />
+            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={() => setShowAddBuilding(true)} onQuickSetup={() => setShowQuickSetup(true)} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={user?.platform_role === 'super_admin'} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} />
           </div>
         )}
 
