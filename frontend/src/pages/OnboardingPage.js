@@ -386,7 +386,7 @@ const OnboardingPage = () => {
     );
   }
 
-  if (onboardingEnabled === false) {
+  if (onboardingEnabled === false && !incomingPhone) {
     if (!isInviteFlow) {
       sessionStorage.removeItem('onboarding_phone');
       sessionStorage.removeItem('onboarding_step');

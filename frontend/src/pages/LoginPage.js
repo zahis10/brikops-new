@@ -109,12 +109,6 @@ const LoginPage = () => {
       const result = await onboardingService.verifyOtp(phoneE164, otpCode);
 
       if (result.requires_onboarding || result.next === 'onboarding') {
-        if (onboardingEnabled !== true) {
-          toast.error('הרשמה אינה זמינה כרגע, פנה למנהל');
-          setPhoneStep('phone');
-          setOtpCode('');
-          return;
-        }
         if (ENABLE_REGISTER_MANAGEMENT_REDIRECTS) {
           navigate('/register-management', { state: { phone: result.phone_e164 || phoneE164, phone_verified: true } });
         } else {
@@ -159,7 +153,7 @@ const LoginPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [otpCode, phoneE164, loginWithOtp, navigate, onboardingEnabled]);
+  }, [otpCode, phoneE164, loginWithOtp, navigate]);
 
   const handleEmailLogin = async (e) => {
     e.preventDefault();
