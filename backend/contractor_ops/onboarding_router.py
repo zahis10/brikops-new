@@ -9,7 +9,7 @@ from jose import jwt
 from config import (
     APP_ID, JWT_SECRET, JWT_SECRET_VERSION, JWT_ALGORITHM,
     JWT_EXPIRATION_HOURS, JWT_SUPER_ADMIN_EXPIRATION_MINUTES, APP_MODE,
-    is_super_admin_phone, ENABLE_AUTO_TRIAL, ENABLE_ONBOARDING_V2,
+    is_super_admin_phone, ENABLE_AUTO_TRIAL,
     ENABLE_COMPLETE_ACCOUNT_GATE,
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_FROM_NAME, SMTP_REPLY_TO,
     RESET_TOKEN_TTL_MINUTES, PASSWORD_RESET_BASE_URL,
@@ -850,8 +850,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
     @router.get("/onboarding/status")
     async def onboarding_status(phone: str = Query(...)):
-        if not ENABLE_ONBOARDING_V2:
-            raise HTTPException(status_code=404, detail="Onboarding V2 disabled")
         db = get_db()
         try:
             norm = normalize_israeli_phone(phone)
@@ -891,8 +889,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
     @router.post("/onboarding/create-org")
     async def onboarding_create_org(body: dict):
-        if not ENABLE_ONBOARDING_V2:
-            raise HTTPException(status_code=404, detail="Onboarding V2 disabled")
         db = get_db()
         phone = body.get('phone')
         full_name = body.get('full_name', '').strip()
@@ -1072,8 +1068,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
     @router.post("/onboarding/accept-invite")
     async def onboarding_accept_invite(body: dict):
-        if not ENABLE_ONBOARDING_V2:
-            raise HTTPException(status_code=404, detail="Onboarding V2 disabled")
         db = get_db()
         invite_id = body.get('invite_id')
         phone = body.get('phone')
@@ -1287,8 +1281,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
     @router.post("/onboarding/join-by-code")
     async def onboarding_join_by_code(body: dict):
-        if not ENABLE_ONBOARDING_V2:
-            raise HTTPException(status_code=404, detail="Onboarding V2 disabled")
         db = get_db()
         join_code = (body.get('join_code') or '').strip().upper()
         phone = body.get('phone')
