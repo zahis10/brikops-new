@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { unitService, configService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,9 +6,11 @@ import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import NewDefectModal from '../components/NewDefectModal';
+import FilterDrawer, { DEFAULT_FILTERS } from '../components/FilterDrawer';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
-  ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus
+  ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
+  SlidersHorizontal, Search, X
 } from 'lucide-react';
 
 const STATUS_LABELS = {
@@ -23,11 +25,10 @@ const STATUS_LABELS = {
   reopened: { label: 'נפתח מחדש', color: 'bg-amber-100 text-amber-700', key: 'open' },
 };
 
-const FILTER_CHIPS = [
-  { key: 'all', label: 'הכל' },
-  { key: 'open', label: 'פתוחים' },
-  { key: 'in_progress', label: 'בטיפול' },
-  { key: 'closed', label: 'סגורים' },
+const STATUS_FILTER_OPTIONS = [
+  { value: 'open', label: 'פתוחים' },
+  { value: 'in_progress', label: 'בטיפול' },
+  { value: 'closed', label: 'סגורים' },
 ];
 
 const PRIORITY_CONFIG = {
@@ -35,6 +36,12 @@ const PRIORITY_CONFIG = {
   medium: { label: 'בינוני', color: 'text-blue-600' },
   high: { label: 'גבוה', color: 'text-amber-600' },
   critical: { label: 'קריטי', color: 'text-red-600' },
+};
+
+const STATUS_LABEL_MAP = {
+  open: 'פתוחים',
+  in_progress: 'בטיפול',
+  closed: 'סגורים',
 };
 
 const ApartmentDashboardPage = () => {
@@ -46,8 +53,9 @@ const ApartmentDashboardPage = () => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(false);
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [filters, setFilters] = useState({ ...DEFAULT_FILTERS });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [flagChecked, setFlagChecked] = useState(false);
@@ -100,11 +108,90 @@ const ApartmentDashboardPage = () => {
   }, [flagChecked, loadUnit, loadTasks]);
 
   useEffect(() => {
-    if (categoryFilter !== 'all') {
-      const exists = tasks.some(t => t.category === categoryFilter);
-      if (!exists) setCategoryFilter('all');
+    setFilters(prev => {
+      const next = { ...prev };
+      let changed = false;
+      if (prev.category !== 'all' && !tasks.some(t => t.category === prev.category)) {
+        next.category = 'all';
+        changed = true;
+      }
+      if (prev.company !== 'all' && !tasks.some(t => t.company_id === prev.company)) {
+        next.company = 'all';
+        changed = true;
+      }
+      if (prev.assignee !== 'all' && !tasks.some(t => t.assignee_id === prev.assignee)) {
+        next.assignee = 'all';
+        changed = true;
+      }
+      if (prev.created_by !== 'all' && !tasks.some(t => t.created_by === prev.created_by)) {
+        next.created_by = 'all';
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks]);
+
+  const filterOptions = useMemo(() => {
+    const cats = {};
+    const companies = {};
+    const assignees = {};
+    const creators = {};
+
+    tasks.forEach(t => {
+      if (t.category) cats[t.category] = tCategory(t.category);
+      if (t.company_id) {
+        companies[t.company_id] = t.company_name || t.assignee_company_name || t.company_id.slice(0, 8);
+      }
+      if (t.assignee_id) {
+        assignees[t.assignee_id] = t.assignee_name || t.assigned_to_name || t.assignee_id.slice(0, 8);
+      }
+      if (t.created_by) {
+        creators[t.created_by] = t.created_by_name || t.created_by.slice(0, 8);
+      }
+    });
+
+    return {
+      statuses: STATUS_FILTER_OPTIONS,
+      categories: Object.entries(cats).map(([v, l]) => ({ value: v, label: l })),
+      companies: Object.entries(companies).map(([v, l]) => ({ value: v, label: l })),
+      assignees: Object.entries(assignees).map(([v, l]) => ({ value: v, label: l })),
+      creators: Object.entries(creators).map(([v, l]) => ({ value: v, label: l })),
+    };
+  }, [tasks]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filters.status !== 'all') count++;
+    if (filters.category !== 'all') count++;
+    if (filters.company !== 'all') count++;
+    if (filters.assignee !== 'all') count++;
+    if (filters.created_by !== 'all') count++;
+    if (searchQuery.trim()) count++;
+    return count;
+  }, [filters, searchQuery]);
+
+  const filterSummaryText = useMemo(() => {
+    const parts = [];
+    if (filters.status !== 'all') parts.push(`סטטוס: ${STATUS_LABEL_MAP[filters.status] || filters.status}`);
+    if (filters.category !== 'all') parts.push(`תחום: ${tCategory(filters.category)}`);
+    if (filters.company !== 'all') {
+      const co = filterOptions.companies.find(c => c.value === filters.company);
+      parts.push(`חברה: ${co?.label || filters.company.slice(0, 8)}`);
     }
-  }, [tasks, categoryFilter]);
+    if (filters.assignee !== 'all') {
+      const a = filterOptions.assignees.find(c => c.value === filters.assignee);
+      parts.push(`אחראי: ${a?.label || filters.assignee.slice(0, 8)}`);
+    }
+    if (filters.created_by !== 'all') {
+      const cr = filterOptions.creators.find(c => c.value === filters.created_by);
+      parts.push(`נוצר: ${cr?.label || filters.created_by.slice(0, 8)}`);
+    }
+    if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
+
+    if (parts.length === 0) return '';
+    if (parts.length <= 3) return parts.join(' · ');
+    return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
+  }, [filters, searchQuery, filterOptions]);
 
   if (!flagChecked || loading) {
     return (
@@ -146,42 +233,31 @@ const ApartmentDashboardPage = () => {
 
   const severity = getSeverityBadge();
 
-  const categoryFilteredTasks = categoryFilter === 'all'
-    ? tasks
-    : tasks.filter(t => t.category === categoryFilter);
+  const searchLower = searchQuery.trim().toLowerCase();
+  const baseFilteredTasks = tasks.filter(t => {
+    if (filters.category !== 'all' && t.category !== filters.category) return false;
+    if (filters.company !== 'all' && t.company_id !== filters.company) return false;
+    if (filters.assignee !== 'all' && t.assignee_id !== filters.assignee) return false;
+    if (filters.created_by !== 'all' && t.created_by !== filters.created_by) return false;
+    if (searchLower && !(
+      (t.title || '').toLowerCase().includes(searchLower) ||
+      (t.description || '').toLowerCase().includes(searchLower)
+    )) return false;
+    return true;
+  });
 
   const filterCounts = {
-    all: categoryFilteredTasks.length,
-    open: categoryFilteredTasks.filter(t => {
-      const sl = STATUS_LABELS[t.status];
-      return sl?.key === 'open';
-    }).length,
-    in_progress: categoryFilteredTasks.filter(t => {
-      const sl = STATUS_LABELS[t.status];
-      return sl?.key === 'in_progress';
-    }).length,
-    closed: categoryFilteredTasks.filter(t => {
-      const sl = STATUS_LABELS[t.status];
-      return sl?.key === 'closed';
-    }).length,
+    all: baseFilteredTasks.length,
+    open: baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === 'open').length,
+    in_progress: baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === 'in_progress').length,
+    closed: baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === 'closed').length,
   };
 
-  const categoryChips = (() => {
-    const cats = {};
-    tasks.forEach(t => {
-      if (t.category) cats[t.category] = (cats[t.category] || 0) + 1;
-    });
-    return Object.entries(cats)
-      .sort((a, b) => b[1] - a[1])
-      .map(([key, count]) => ({ key, label: tCategory(key), count }));
-  })();
+  const filteredTasks = filters.status === 'all'
+    ? baseFilteredTasks
+    : baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === filters.status);
 
-  const filteredTasks = activeFilter === 'all'
-    ? categoryFilteredTasks
-    : categoryFilteredTasks.filter(t => {
-        const sl = STATUS_LABELS[t.status];
-        return sl?.key === activeFilter;
-      });
+  const hasActiveFilters = activeFilterCount > 0;
 
   return (
     <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
@@ -296,46 +372,42 @@ const ApartmentDashboardPage = () => {
       )}
 
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {FILTER_CHIPS.map(chip => (
-            <button
-              key={chip.key}
-              onClick={() => setActiveFilter(chip.key)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                activeFilter === chip.key
-                  ? 'bg-amber-500 text-white shadow-sm'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {chip.label} ({filterCounts[chip.key] ?? 0})
-            </button>
-          ))}
+        <div className="flex gap-2">
+          <div className="flex-1 relative">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="חיפוש ליקוי..."
+              className="w-full pr-9 pl-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setFilterDrawerOpen(true)}
+            className="relative px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 text-sm font-medium text-slate-600"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            סינון
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
         </div>
-        {categoryChips.length >= 1 && (
-          <div className="flex gap-2 overflow-x-auto pb-1">
+
+        {hasActiveFilters && filterSummaryText && (
+          <div className="flex items-center gap-2 text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            <span className="flex-1 truncate">{filterSummaryText}</span>
             <button
-              onClick={() => setCategoryFilter('all')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                categoryFilter === 'all'
-                  ? 'bg-slate-700 text-white shadow-sm'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
+              type="button"
+              onClick={() => { setFilters({ ...DEFAULT_FILTERS }); setSearchQuery(''); }}
+              className="text-amber-600 hover:text-amber-700 flex-shrink-0"
             >
-              כל התחומים ({tasks.length})
+              <X className="w-3.5 h-3.5" />
             </button>
-            {categoryChips.map(chip => (
-              <button
-                key={chip.key}
-                onClick={() => setCategoryFilter(chip.key)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                  categoryFilter === chip.key
-                    ? 'bg-slate-700 text-white shadow-sm'
-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                {chip.label} ({chip.count})
-              </button>
-            ))}
           </div>
         )}
       </div>
@@ -351,7 +423,7 @@ const ApartmentDashboardPage = () => {
               <CheckCircle2 className="w-10 h-10 mx-auto" />
             </div>
             <p className="text-sm text-slate-500">
-              {activeFilter !== 'all' ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים לדירה זו'}
+              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים לדירה זו'}
             </p>
           </div>
         ) : (
@@ -443,6 +515,14 @@ const ApartmentDashboardPage = () => {
           }}
         />
       )}
+
+      <FilterDrawer
+        open={filterDrawerOpen}
+        onOpenChange={setFilterDrawerOpen}
+        filters={filters}
+        onApply={setFilters}
+        filterOptions={filterOptions}
+      />
     </div>
   );
 };

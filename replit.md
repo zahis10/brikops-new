@@ -34,7 +34,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **QC (Quality Control) System**: Floor-level quality control with a hardcoded template, detailed item management, strict RBAC, a stage-based workflow, and an approver system.
     -   **Identity System**: Manages user accounts, including account status, completion, and audit logging.
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements with cascade operations.
-    -   **Defects V2 (Read-Only)**: Parallel building-level and apartment-level defect views, gated by `ENABLE_DEFECTS_V2` feature flag. Includes `BuildingDefectsPage` and `ApartmentDashboardPage` with task defect count aggregation.
+    -   **Defects V2**: Parallel building-level and apartment-level defect views, gated by `ENABLE_DEFECTS_V2` feature flag. Includes `BuildingDefectsPage` and `ApartmentDashboardPage` with task defect count aggregation. ApartmentDashboardPage uses a slide-in `FilterDrawer` (Radix Sheet) with draft filter pattern for status/category/company/assignee/creator filtering, plus inline search. `NewDefectModal` includes "הוסף חברה" link, auto-select single company, and no-contractors helper UX.
 
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.
