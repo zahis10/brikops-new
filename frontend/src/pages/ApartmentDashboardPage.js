@@ -47,6 +47,7 @@ const ApartmentDashboardPage = () => {
   const [loading, setLoading] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [flagChecked, setFlagChecked] = useState(false);
@@ -98,6 +99,13 @@ const ApartmentDashboardPage = () => {
     }
   }, [flagChecked, loadUnit, loadTasks]);
 
+  useEffect(() => {
+    if (categoryFilter !== 'all') {
+      const exists = tasks.some(t => t.category === categoryFilter);
+      if (!exists) setCategoryFilter('all');
+    }
+  }, [tasks, categoryFilter]);
+
   if (!flagChecked || loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -138,25 +146,39 @@ const ApartmentDashboardPage = () => {
 
   const severity = getSeverityBadge();
 
+  const categoryFilteredTasks = categoryFilter === 'all'
+    ? tasks
+    : tasks.filter(t => t.category === categoryFilter);
+
   const filterCounts = {
-    all: tasks.length,
-    open: tasks.filter(t => {
+    all: categoryFilteredTasks.length,
+    open: categoryFilteredTasks.filter(t => {
       const sl = STATUS_LABELS[t.status];
       return sl?.key === 'open';
     }).length,
-    in_progress: tasks.filter(t => {
+    in_progress: categoryFilteredTasks.filter(t => {
       const sl = STATUS_LABELS[t.status];
       return sl?.key === 'in_progress';
     }).length,
-    closed: tasks.filter(t => {
+    closed: categoryFilteredTasks.filter(t => {
       const sl = STATUS_LABELS[t.status];
       return sl?.key === 'closed';
     }).length,
   };
 
+  const categoryChips = (() => {
+    const cats = {};
+    tasks.forEach(t => {
+      if (t.category) cats[t.category] = (cats[t.category] || 0) + 1;
+    });
+    return Object.entries(cats)
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => ({ key, label: tCategory(key), count }));
+  })();
+
   const filteredTasks = activeFilter === 'all'
-    ? tasks
-    : tasks.filter(t => {
+    ? categoryFilteredTasks
+    : categoryFilteredTasks.filter(t => {
         const sl = STATUS_LABELS[t.status];
         return sl?.key === activeFilter;
       });
@@ -273,8 +295,8 @@ const ApartmentDashboardPage = () => {
         </div>
       )}
 
-      <div className="max-w-lg mx-auto px-4 mt-4">
-        <div className="flex gap-2 overflow-x-auto pb-2">
+      <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
+        <div className="flex gap-2 overflow-x-auto pb-1">
           {FILTER_CHIPS.map(chip => (
             <button
               key={chip.key}
@@ -289,6 +311,33 @@ const ApartmentDashboardPage = () => {
             </button>
           ))}
         </div>
+        {categoryChips.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            <button
+              onClick={() => setCategoryFilter('all')}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                categoryFilter === 'all'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              כל התחומים ({tasks.length})
+            </button>
+            {categoryChips.map(chip => (
+              <button
+                key={chip.key}
+                onClick={() => setCategoryFilter(chip.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                  categoryFilter === chip.key
+                    ? 'bg-slate-700 text-white shadow-sm'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {chip.label} ({chip.count})
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="max-w-lg mx-auto px-4 mt-3">

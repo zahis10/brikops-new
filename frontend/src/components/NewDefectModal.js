@@ -298,6 +298,14 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       )
     : companies;
 
+  useEffect(() => {
+    if (!category) return;
+    if (!companyId && filteredCompanies.length === 1) {
+      setCompanyId(filteredCompanies[0].id);
+      setAssigneeId('');
+    }
+  }, [category, filteredCompanies, companyId]);
+
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
@@ -755,6 +763,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                   הוסף חברה
                 </Button>
               </div>
+            ) : category && filteredCompanies.length === 0 && !loading.companies ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center space-y-2">
+                <p className="text-sm text-amber-800 font-medium">אין חברות בתחום זה</p>
+                <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
+                <Button
+                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                  className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
+                  disabled={!projectId}
+                >
+                  <Plus className="w-4 h-4 ml-1 inline" />
+                  הוסף חברה
+                </Button>
+              </div>
             ) : (
               <>
                 <SelectField
@@ -766,7 +787,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                   placeholder={category ? 'בחר חברה (מסונן לפי קטגוריה)' : 'בחר קטגוריה קודם'}
                   isLoading={loading.companies}
                   disabled={!category}
-                  emptyMessage={category && filteredCompanies.length === 0 ? 'אין חברות בתחום זה' : undefined}
                 />
                 <SelectField
                   label="קבלן מבצע *"
