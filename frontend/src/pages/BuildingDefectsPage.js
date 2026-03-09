@@ -1,12 +1,33 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { buildingService, configService } from '../services/api';
 import { formatUnitLabel } from '../utils/formatters';
+import { tCategory } from '../i18n';
 import { toast } from 'sonner';
+import FilterDrawer from '../components/FilterDrawer';
 import {
   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
-  Home, AlertTriangle, Clock, CheckCircle2, Filter
+  Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X
 } from 'lucide-react';
+
+const BUILDING_DEFAULT_FILTERS = {
+  status: 'all',
+  category: 'all',
+  floor: 'all',
+  unit: 'all',
+};
+
+const STATUS_FILTER_OPTIONS = [
+  { value: 'open', label: 'פתוחים' },
+  { value: 'closed', label: 'סגורים' },
+  { value: 'blocking', label: 'חוסמי מסירה' },
+];
+
+const STATUS_LABEL_MAP = {
+  open: 'פתוחים',
+  closed: 'סגורים',
+  blocking: 'חוסמי מסירה',
+};
 
 const BuildingDefectsPage = () => {
   const { projectId, buildingId } = useParams();
@@ -16,7 +37,9 @@ const BuildingDefectsPage = () => {
   const [loading, setLoading] = useState(true);
   const [flagChecked, setFlagChecked] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
-  const [filterMode, setFilterMode] = useState('all');
+  const [filters, setFilters] = useState({ ...BUILDING_DEFAULT_FILTERS });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [expandedFloors, setExpandedFloors] = useState({});
 
   useEffect(() => {
@@ -64,6 +87,34 @@ const BuildingDefectsPage = () => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => {
+    if (!data?.floors) return;
+    setFilters(prev => {
+      const next = { ...prev };
+      let changed = false;
+      if (prev.floor !== 'all' && !data.floors.some(f => f.id === prev.floor)) {
+        next.floor = 'all';
+        changed = true;
+      }
+      if (prev.unit !== 'all') {
+        const allUnits = data.floors.flatMap(f => f.units || []);
+        if (!allUnits.some(u => u.id === prev.unit)) {
+          next.unit = 'all';
+          changed = true;
+        }
+      }
+      if (prev.category !== 'all') {
+        const allCats = new Set();
+        data.floors.forEach(f => (f.units || []).forEach(u => (u.categories || []).forEach(c => allCats.add(c))));
+        if (!allCats.has(prev.category)) {
+          next.category = 'all';
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [data]);
+
   const toggleFloor = (idx) => {
     setExpandedFloors(prev => ({ ...prev, [idx]: !prev[idx] }));
   };
@@ -84,15 +135,91 @@ const BuildingDefectsPage = () => {
     return 'text-slate-300';
   };
 
-  const getFloorDefectCount = (floor, mode) => {
-    return (floor.units || []).reduce((sum, u) => {
-      const c = u.defect_counts || {};
-      if (mode === 'blocking') {
-        return sum + (c.open || 0) + (c.in_progress || 0);
-      }
-      return sum + (c.total || 0);
-    }, 0);
+  const unitPassesFilter = (unit) => {
+    if (filters.unit !== 'all' && unit.id !== filters.unit) return false;
+    if (filters.category !== 'all' && !(unit.categories || []).includes(filters.category)) return false;
+    if (filters.status !== 'all') {
+      const c = unit.defect_counts || {};
+      if (filters.status === 'open' && (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0) === 0) return false;
+      if (filters.status === 'closed' && (c.closed || 0) === 0) return false;
+      if (filters.status === 'blocking' && (c.open || 0) + (c.in_progress || 0) === 0) return false;
+    }
+    const searchLower = searchQuery.trim().toLowerCase();
+    if (searchLower) {
+      const label = (unit.display_label || unit.unit_no || '').toLowerCase();
+      if (!label.includes(searchLower)) return false;
+    }
+    return true;
   };
+
+  const getStatusCount = (c) => {
+    if (!c) return 0;
+    if (filters.status === 'open') return (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
+    if (filters.status === 'closed') return c.closed || 0;
+    if (filters.status === 'blocking') return (c.open || 0) + (c.in_progress || 0);
+    return c.total || 0;
+  };
+
+  const getFilteredFloorData = () => {
+    if (!data?.floors) return [];
+    return (data.floors || [])
+      .filter(f => filters.floor === 'all' || f.id === filters.floor)
+      .map(floor => {
+        const filteredUnits = (floor.units || []).filter(unitPassesFilter);
+        return { ...floor, filteredUnits };
+      });
+  };
+
+  const getFloorDefectCount = (filteredUnits) => {
+    return filteredUnits.reduce((sum, u) => sum + getStatusCount(u.defect_counts), 0);
+  };
+
+  const filterSections = useMemo(() => {
+    if (!data?.floors) return [];
+    const cats = new Set();
+    const floorOpts = [];
+    const unitOpts = [];
+    (data.floors || []).forEach(f => {
+      floorOpts.push({ value: f.id, label: f.display_label || f.name || `קומה ${f.floor_number}` });
+      (f.units || []).forEach(u => {
+        (u.categories || []).forEach(c => cats.add(c));
+        unitOpts.push({ value: u.id, label: formatUnitLabel(u.display_label || u.unit_no || '') });
+      });
+    });
+    return [
+      { key: 'status', label: 'סטטוס', options: STATUS_FILTER_OPTIONS },
+      { key: 'category', label: 'תחום', options: [...cats].sort().map(c => ({ value: c, label: tCategory(c) })) },
+      { key: 'floor', label: 'קומה', options: floorOpts },
+      { key: 'unit', label: 'דירה', options: unitOpts },
+    ];
+  }, [data]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filters.status !== 'all') count++;
+    if (filters.category !== 'all') count++;
+    if (filters.floor !== 'all') count++;
+    if (filters.unit !== 'all') count++;
+    if (searchQuery.trim()) count++;
+    return count;
+  }, [filters, searchQuery]);
+
+  const filterSummaryText = useMemo(() => {
+    const parts = [];
+    filterSections.forEach(section => {
+      const val = filters[section.key];
+      if (val && val !== 'all') {
+        const opt = section.options.find(o => o.value === val);
+        parts.push(`${section.label}: ${opt?.label || val}`);
+      }
+    });
+    if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
+    if (parts.length === 0) return '';
+    if (parts.length <= 3) return parts.join(' · ');
+    return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
+  }, [filters, searchQuery, filterSections]);
+
+  const hasActiveFilters = activeFilterCount > 0;
 
   const getTotalCounts = () => {
     if (!data?.floors) return { total: 0, pending: 0, followUp: 0 };
@@ -132,6 +259,7 @@ const BuildingDefectsPage = () => {
   }
 
   const counts = getTotalCounts();
+  const filteredFloors = getFilteredFloorData();
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
@@ -186,44 +314,65 @@ const BuildingDefectsPage = () => {
           )}
         </div>
 
-        <div className="flex gap-2">
-          <button
-            onClick={() => setFilterMode('all')}
-            className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
-              filterMode === 'all'
-                ? 'bg-slate-700 text-white shadow-sm'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            כל הליקויים
-          </button>
-          <button
-            onClick={() => setFilterMode('blocking')}
-            className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
-              filterMode === 'blocking'
-                ? 'bg-red-600 text-white shadow-sm'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            חוסמי מסירה
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <div className="flex-1 relative">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="חיפוש דירה..."
+                className="w-full pr-9 pl-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setFilterDrawerOpen(true)}
+              className="relative px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 text-sm font-medium text-slate-600"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              סינון
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {hasActiveFilters && filterSummaryText && (
+            <div className="flex items-center gap-2 text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              <span className="flex-1 truncate">{filterSummaryText}</span>
+              <button
+                type="button"
+                onClick={() => { setFilters({ ...BUILDING_DEFAULT_FILTERS }); setSearchQuery(''); }}
+                className="text-amber-600 hover:text-amber-700 flex-shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="space-y-2 pb-6">
-          {(data.floors || []).length === 0 ? (
+          {filteredFloors.length === 0 ? (
             <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
               <Building2 className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-500">אין קומות בבניין זה</p>
+              <p className="text-sm text-slate-500">
+                {hasActiveFilters ? 'אין קומות התואמות לסינון' : 'אין קומות בבניין זה'}
+              </p>
             </div>
           ) : (
-            (data.floors || []).map((floor, idx) => {
-              const floorCount = getFloorDefectCount(floor, filterMode);
-              const isExpanded = expandedFloors[idx];
+            filteredFloors.map((floor, idx) => {
+              const originalIdx = (data.floors || []).findIndex(f => f.id === floor.id);
+              const floorCount = getFloorDefectCount(floor.filteredUnits);
+              const isExpanded = expandedFloors[originalIdx];
 
               return (
                 <div key={floor.id || idx} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <button
-                    onClick={() => toggleFloor(idx)}
+                    onClick={() => toggleFloor(originalIdx)}
                     className="w-full flex items-center gap-3 p-3 text-right hover:bg-slate-50 transition-colors"
                   >
                     <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
@@ -237,7 +386,7 @@ const BuildingDefectsPage = () => {
                     <div className="flex items-center gap-2">
                       {floorCount > 0 && (
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          filterMode === 'blocking' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
+                          filters.status === 'blocking' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
                         }`}>
                           {floorCount}
                         </span>
@@ -248,14 +397,14 @@ const BuildingDefectsPage = () => {
 
                   {isExpanded && (
                     <div className="px-3 pb-3 border-t border-slate-100">
-                      {(floor.units || []).length === 0 ? (
-                        <p className="text-xs text-slate-400 text-center py-3">אין דירות בקומה זו</p>
+                      {floor.filteredUnits.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-3">
+                          {hasActiveFilters ? 'אין דירות התואמות לסינון בקומה זו' : 'אין דירות בקומה זו'}
+                        </p>
                       ) : (
                         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pt-3">
-                          {(floor.units || []).map(unit => {
-                            const badgeCount = filterMode === 'blocking'
-                              ? (unit.defect_counts?.open || 0) + (unit.defect_counts?.in_progress || 0)
-                              : (unit.defect_counts?.total || 0);
+                          {floor.filteredUnits.map(unit => {
+                            const badgeCount = getStatusCount(unit.defect_counts);
 
                             return (
                               <button
@@ -287,6 +436,15 @@ const BuildingDefectsPage = () => {
           )}
         </div>
       </div>
+
+      <FilterDrawer
+        open={filterDrawerOpen}
+        onOpenChange={setFilterDrawerOpen}
+        filters={filters}
+        defaultFilters={BUILDING_DEFAULT_FILTERS}
+        onApply={setFilters}
+        sections={filterSections}
+      />
     </div>
   );
 };

@@ -979,18 +979,23 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
 
     tasks = await db.tasks.find(
         {'building_id': building_id, 'archived': {'$ne': True}},
-        {'_id': 0, 'unit_id': 1, 'status': 1}
+        {'_id': 0, 'unit_id': 1, 'status': 1, 'category': 1}
     ).to_list(100000)
 
     defects_by_unit = {}
+    categories_by_unit = {}
     for t in tasks:
         uid = t.get('unit_id')
         if not uid:
             continue
         if uid not in defects_by_unit:
             defects_by_unit[uid] = {}
+            categories_by_unit[uid] = set()
         s = t.get('status', 'open')
         defects_by_unit[uid][s] = defects_by_unit[uid].get(s, 0) + 1
+        cat = t.get('category')
+        if cat:
+            categories_by_unit[uid].add(cat)
 
     open_statuses = {'open', 'assigned', 'reopened'}
     in_progress_statuses = {'in_progress', 'pending_contractor_proof', 'pending_manager_approval', 'returned_to_contractor'}
@@ -1023,6 +1028,7 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
                 'display_label': u.get('display_label') or u.get('unit_no', ''),
                 'unit_type': u.get('unit_type', 'apartment'),
                 'defect_counts': compute_counts(status_map),
+                'categories': sorted(categories_by_unit.get(u['id'], set())),
             })
         floor_results.append({
             'id': f['id'],

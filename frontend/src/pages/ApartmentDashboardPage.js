@@ -6,12 +6,20 @@ import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import NewDefectModal from '../components/NewDefectModal';
-import FilterDrawer, { DEFAULT_FILTERS } from '../components/FilterDrawer';
+import FilterDrawer from '../components/FilterDrawer';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
   SlidersHorizontal, Search, X
 } from 'lucide-react';
+
+const APARTMENT_DEFAULT_FILTERS = {
+  status: 'all',
+  category: 'all',
+  company: 'all',
+  assignee: 'all',
+  created_by: 'all',
+};
 
 const STATUS_LABELS = {
   open: { label: 'פתוח', color: 'bg-red-100 text-red-700', key: 'open' },
@@ -53,7 +61,7 @@ const ApartmentDashboardPage = () => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(false);
-  const [filters, setFilters] = useState({ ...DEFAULT_FILTERS });
+  const [filters, setFilters] = useState({ ...APARTMENT_DEFAULT_FILTERS });
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
@@ -131,7 +139,7 @@ const ApartmentDashboardPage = () => {
     });
   }, [tasks]);
 
-  const filterOptions = useMemo(() => {
+  const filterSections = useMemo(() => {
     const cats = {};
     const companies = {};
     const assignees = {};
@@ -150,13 +158,13 @@ const ApartmentDashboardPage = () => {
       }
     });
 
-    return {
-      statuses: STATUS_FILTER_OPTIONS,
-      categories: Object.entries(cats).map(([v, l]) => ({ value: v, label: l })),
-      companies: Object.entries(companies).map(([v, l]) => ({ value: v, label: l })),
-      assignees: Object.entries(assignees).map(([v, l]) => ({ value: v, label: l })),
-      creators: Object.entries(creators).map(([v, l]) => ({ value: v, label: l })),
-    };
+    return [
+      { key: 'status', label: 'סטטוס', options: STATUS_FILTER_OPTIONS },
+      { key: 'category', label: 'תחום', options: Object.entries(cats).map(([v, l]) => ({ value: v, label: l })) },
+      { key: 'company', label: 'חברה', options: Object.entries(companies).map(([v, l]) => ({ value: v, label: l })) },
+      { key: 'assignee', label: 'אחראי', options: Object.entries(assignees).map(([v, l]) => ({ value: v, label: l })) },
+      { key: 'created_by', label: 'נוצר על ידי', options: Object.entries(creators).map(([v, l]) => ({ value: v, label: l })) },
+    ];
   }, [tasks]);
 
   const activeFilterCount = useMemo(() => {
@@ -172,26 +180,19 @@ const ApartmentDashboardPage = () => {
 
   const filterSummaryText = useMemo(() => {
     const parts = [];
-    if (filters.status !== 'all') parts.push(`סטטוס: ${STATUS_LABEL_MAP[filters.status] || filters.status}`);
-    if (filters.category !== 'all') parts.push(`תחום: ${tCategory(filters.category)}`);
-    if (filters.company !== 'all') {
-      const co = filterOptions.companies.find(c => c.value === filters.company);
-      parts.push(`חברה: ${co?.label || filters.company.slice(0, 8)}`);
-    }
-    if (filters.assignee !== 'all') {
-      const a = filterOptions.assignees.find(c => c.value === filters.assignee);
-      parts.push(`אחראי: ${a?.label || filters.assignee.slice(0, 8)}`);
-    }
-    if (filters.created_by !== 'all') {
-      const cr = filterOptions.creators.find(c => c.value === filters.created_by);
-      parts.push(`נוצר: ${cr?.label || filters.created_by.slice(0, 8)}`);
-    }
+    filterSections.forEach(section => {
+      const val = filters[section.key];
+      if (val && val !== 'all') {
+        const opt = section.options.find(o => o.value === val);
+        parts.push(`${section.label}: ${opt?.label || val}`);
+      }
+    });
     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
 
     if (parts.length === 0) return '';
     if (parts.length <= 3) return parts.join(' · ');
     return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
-  }, [filters, searchQuery, filterOptions]);
+  }, [filters, searchQuery, filterSections]);
 
   if (!flagChecked || loading) {
     return (
@@ -403,7 +404,7 @@ const ApartmentDashboardPage = () => {
             <span className="flex-1 truncate">{filterSummaryText}</span>
             <button
               type="button"
-              onClick={() => { setFilters({ ...DEFAULT_FILTERS }); setSearchQuery(''); }}
+              onClick={() => { setFilters({ ...APARTMENT_DEFAULT_FILTERS }); setSearchQuery(''); }}
               className="text-amber-600 hover:text-amber-700 flex-shrink-0"
             >
               <X className="w-3.5 h-3.5" />
@@ -520,8 +521,9 @@ const ApartmentDashboardPage = () => {
         open={filterDrawerOpen}
         onOpenChange={setFilterDrawerOpen}
         filters={filters}
+        defaultFilters={APARTMENT_DEFAULT_FILTERS}
         onApply={setFilters}
-        filterOptions={filterOptions}
+        sections={filterSections}
       />
     </div>
   );

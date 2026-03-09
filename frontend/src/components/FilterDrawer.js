@@ -8,14 +8,6 @@ import {
 } from './ui/sheet';
 import { SlidersHorizontal } from 'lucide-react';
 
-const DEFAULT_FILTERS = {
-  status: 'all',
-  category: 'all',
-  company: 'all',
-  assignee: 'all',
-  created_by: 'all',
-};
-
 const FilterSection = ({ label, value, onChange, options }) => (
   <div className="space-y-2">
     <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
@@ -49,8 +41,8 @@ const FilterSection = ({ label, value, onChange, options }) => (
   </div>
 );
 
-const FilterDrawer = ({ open, onOpenChange, filters, onApply, filterOptions }) => {
-  const [draft, setDraft] = useState({ ...DEFAULT_FILTERS });
+const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, sections }) => {
+  const [draft, setDraft] = useState({ ...filters });
   const [wasOpen, setWasOpen] = useState(false);
 
   useEffect(() => {
@@ -70,7 +62,7 @@ const FilterDrawer = ({ open, onOpenChange, filters, onApply, filterOptions }) =
   };
 
   const handleReset = () => {
-    setDraft({ ...DEFAULT_FILTERS });
+    setDraft({ ...defaultFilters });
   };
 
   return (
@@ -87,42 +79,17 @@ const FilterDrawer = ({ open, onOpenChange, filters, onApply, filterOptions }) =
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          <FilterSection
-            label="סטטוס"
-            value={draft.status}
-            onChange={v => updateDraft('status', v)}
-            options={filterOptions.statuses}
-          />
-          <FilterSection
-            label="תחום"
-            value={draft.category}
-            onChange={v => updateDraft('category', v)}
-            options={filterOptions.categories}
-          />
-          {filterOptions.companies.length > 0 && (
-            <FilterSection
-              label="חברה"
-              value={draft.company}
-              onChange={v => updateDraft('company', v)}
-              options={filterOptions.companies}
-            />
-          )}
-          {filterOptions.assignees.length > 0 && (
-            <FilterSection
-              label="אחראי"
-              value={draft.assignee}
-              onChange={v => updateDraft('assignee', v)}
-              options={filterOptions.assignees}
-            />
-          )}
-          {filterOptions.creators.length > 0 && (
-            <FilterSection
-              label="נוצר על ידי"
-              value={draft.created_by}
-              onChange={v => updateDraft('created_by', v)}
-              options={filterOptions.creators}
-            />
-          )}
+          {sections.map(section => (
+            section.options.length > 0 && (
+              <FilterSection
+                key={section.key}
+                label={section.label}
+                value={draft[section.key]}
+                onChange={v => updateDraft(section.key, v)}
+                options={section.options}
+              />
+            )
+          ))}
         </div>
 
         <div className="border-t border-slate-200 px-5 py-3 flex gap-3">
@@ -146,5 +113,4 @@ const FilterDrawer = ({ open, onOpenChange, filters, onApply, filterOptions }) =
   );
 };
 
-export { DEFAULT_FILTERS };
 export default FilterDrawer;
