@@ -311,7 +311,7 @@ const ApartmentDashboardPage = () => {
             </button>
           ))}
         </div>
-        {categoryChips.length > 1 && (
+        {categoryChips.length >= 1 && (
           <div className="flex gap-2 overflow-x-auto pb-1">
             <button
               onClick={() => setCategoryFilter('all')}

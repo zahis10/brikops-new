@@ -778,27 +778,53 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               </div>
             ) : (
               <>
-                <SelectField
-                  label="חברה *"
-                  value={companyId}
-                  onChange={handleCompanyChange}
-                  options={filteredCompanies.map(c => ({ value: c.id, label: c.name }))}
-                  error={errors.company_id}
-                  placeholder={category ? 'בחר חברה (מסונן לפי קטגוריה)' : 'בחר קטגוריה קודם'}
-                  isLoading={loading.companies}
-                  disabled={!category}
-                />
-                <SelectField
-                  label="קבלן מבצע *"
-                  value={assigneeId}
-                  onChange={v => setAssigneeId(v)}
-                  options={contractors.map(m => ({ value: m.user_id, label: m.user_name || m.name || 'קבלן' }))}
-                  error={errors.assignee_id}
-                  placeholder={companyId ? 'בחר קבלן' : 'בחר חברה קודם'}
-                  isLoading={loading.contractors}
-                  disabled={!companyId}
-                  emptyMessage={companyId && !loading.contractors ? 'אין קבלנים משויכים. יש לשייך קבלן לחברה/תחום.' : undefined}
-                />
+                <div className="space-y-1">
+                  <SelectField
+                    label="חברה *"
+                    value={companyId}
+                    onChange={handleCompanyChange}
+                    options={filteredCompanies.map(c => ({ value: c.id, label: c.name }))}
+                    error={errors.company_id}
+                    placeholder={category ? 'בחר חברה (מסונן לפי קטגוריה)' : 'בחר קטגוריה קודם'}
+                    isLoading={loading.companies}
+                    disabled={!category}
+                  />
+                  {category && (
+                    <button
+                      type="button"
+                      onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      הוסף חברה
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <SelectField
+                    label="קבלן מבצע *"
+                    value={assigneeId}
+                    onChange={v => setAssigneeId(v)}
+                    options={contractors.map(m => ({ value: m.user_id, label: m.user_name || m.name || 'קבלן' }))}
+                    error={errors.assignee_id}
+                    placeholder={companyId ? 'בחר קבלן' : 'בחר חברה קודם'}
+                    isLoading={loading.contractors}
+                    disabled={!companyId}
+                  />
+                  {companyId && !loading.contractors && contractors.length === 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-amber-700">אין קבלנים משויכים לחברה זו</p>
+                      <button
+                        type="button"
+                        onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                        className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        הוסף קבלן
+                      </button>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
