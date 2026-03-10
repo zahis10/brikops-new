@@ -677,8 +677,22 @@ if not frontend_build.exists():
 if frontend_build.exists():
     static_dir = frontend_build / "static"
     if static_dir.exists():
+        if os.environ.get("APP_MODE", "dev") != "production":
+            from starlette.middleware.base import BaseHTTPMiddleware
+            class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+                async def dispatch(self, request, call_next):
+                    response = await call_next(request)
+                    if request.url.path.startswith("/static"):
+                        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                        response.headers["Pragma"] = "no-cache"
+                        response.headers["Expires"] = "0"
+                    return response
+            app.add_middleware(NoCacheStaticMiddleware)
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="frontend_static")
     logger.info(f"[SPA] Serving frontend from {frontend_build}")
+
+    _no_cache_headers = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+    _is_dev = os.environ.get("APP_MODE", "dev") != "production"
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
@@ -687,8 +701,14 @@ if frontend_build.exists():
             return JSONResponse(status_code=404, content={"detail": "Not found"})
         file_path = frontend_build / full_path
         if file_path.is_file() and '..' not in full_path:
-            return FileResponse(str(file_path))
-        return FileResponse(str(frontend_build / "index.html"))
+            resp = FileResponse(str(file_path))
+            if _is_dev:
+                resp.headers.update(_no_cache_headers)
+            return resp
+        resp = FileResponse(str(frontend_build / "index.html"))
+        if _is_dev:
+            resp.headers.update(_no_cache_headers)
+        return resp
 else:
     logger.warning(f"[SPA] Frontend build not found, API-only mode")
 
