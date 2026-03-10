@@ -6,51 +6,69 @@ import {
   SheetTitle,
   SheetDescription,
 } from './ui/sheet';
-import { SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 
-const FilterSection = ({ label, value, onChange, options }) => (
-  <div className="space-y-2">
-    <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
-    <div className="flex flex-wrap gap-2">
-      <button
-        type="button"
-        onClick={() => onChange('all')}
-        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-          value === 'all'
-            ? 'bg-amber-500 text-white shadow-sm'
-            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-        }`}
-      >
-        הכל
-      </button>
-      {options.map(opt => (
+const FilterSection = ({ label, value, onChange, options, isOpen, onToggle }) => (
+  <div>
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full flex items-center justify-between py-1"
+    >
+      <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
+      {isOpen
+        ? <ChevronUp className="w-4 h-4 text-slate-400" />
+        : <ChevronDown className="w-4 h-4 text-slate-400" />
+      }
+    </button>
+    {isOpen && (
+      <div className="flex flex-wrap gap-2 mt-2">
         <button
-          key={opt.value}
           type="button"
-          onClick={() => onChange(opt.value)}
-          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] truncate ${
-            value === opt.value
+          onClick={() => onChange('all')}
+          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+            value === 'all'
               ? 'bg-amber-500 text-white shadow-sm'
               : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
           }`}
         >
-          {opt.label}
+          הכל
         </button>
-      ))}
-    </div>
+        {options.map(opt => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] truncate ${
+              value === opt.value
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    )}
   </div>
 );
 
 const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, sections }) => {
   const [draft, setDraft] = useState({ ...filters });
   const [wasOpen, setWasOpen] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState({});
 
   useEffect(() => {
     if (open && !wasOpen) {
       setDraft({ ...filters });
+      setCollapsedSections({});
     }
     setWasOpen(open);
   }, [open, filters, wasOpen]);
+
+  const toggleSection = (key) => {
+    setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const updateDraft = (key, value) => {
     setDraft(prev => ({ ...prev, [key]: value }));
@@ -87,6 +105,8 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
                 value={draft[section.key]}
                 onChange={v => updateDraft(section.key, v)}
                 options={section.options}
+                isOpen={!collapsedSections[section.key]}
+                onToggle={() => toggleSection(section.key)}
               />
             )
           ))}

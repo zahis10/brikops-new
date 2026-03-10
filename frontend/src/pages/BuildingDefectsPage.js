@@ -162,12 +162,14 @@ const BuildingDefectsPage = () => {
 
   const getFilteredFloorData = () => {
     if (!data?.floors) return [];
+    const hasFilters = filters.status !== 'all' || filters.category !== 'all' || filters.floor !== 'all' || filters.unit !== 'all' || searchQuery.trim();
     return (data.floors || [])
       .filter(f => filters.floor === 'all' || f.id === filters.floor)
       .map(floor => {
         const filteredUnits = (floor.units || []).filter(unitPassesFilter);
         return { ...floor, filteredUnits };
-      });
+      })
+      .filter(floor => !hasFilters || floor.filteredUnits.length > 0);
   };
 
   const getFloorDefectCount = (filteredUnits) => {
@@ -398,9 +400,7 @@ const BuildingDefectsPage = () => {
                   {isExpanded && (
                     <div className="px-3 pb-3 border-t border-slate-100">
                       {floor.filteredUnits.length === 0 ? (
-                        <p className="text-xs text-slate-400 text-center py-3">
-                          {hasActiveFilters ? 'אין דירות התואמות לסינון בקומה זו' : 'אין דירות בקומה זו'}
-                        </p>
+                        <p className="text-xs text-slate-400 text-center py-3">אין דירות בקומה זו</p>
                       ) : (
                         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pt-3">
                           {floor.filteredUnits.map(unit => {
