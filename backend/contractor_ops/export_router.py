@@ -334,9 +334,11 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
     return output
 
 
-MAX_IMAGES_PER_DEFECT = 4
-PDF_IMAGE_MAX_WIDTH_CM = 7
-PDF_IMAGE_MAX_HEIGHT_CM = 5
+MAX_IMAGES_PER_DEFECT = 2
+PDF_IMAGE_MAX_WIDTH_CM = 12
+PDF_IMAGE_MAX_HEIGHT_CM = 7
+PDF_IMAGE_REDUCED_WIDTH_CM = 7
+PDF_IMAGE_REDUCED_HEIGHT_CM = 4.5
 
 
 ALLOWED_IMAGE_HOSTS = {
@@ -431,6 +433,177 @@ def _fetch_image_for_pdf(url):
         return None
 
 
+def _build_image_flowable(img_buf, max_w_cm, max_h_cm, caption_text, style_caption, heb_fn):
+    from reportlab.lib.units import cm, mm
+    from reportlab.platypus import Table, TableStyle, Image as RLImage, Paragraph
+    from reportlab.lib import colors
+    from PIL import Image as PILImage
+
+    try:
+        pil_img = PILImage.open(io.BytesIO(img_buf.getvalue()))
+        iw, ih = pil_img.size
+        max_w = max_w_cm * cm
+        max_h = max_h_cm * cm
+        scale = min(max_w / iw, max_h / ih, 1.0)
+        draw_w = iw * scale
+        draw_h = ih * scale
+        img_buf.seek(0)
+        rl_img = RLImage(img_buf, width=draw_w, height=draw_h)
+        rl_img.hAlign = 'RIGHT'
+        caption_para = Paragraph(heb_fn(caption_text), style_caption)
+        img_with_caption = Table(
+            [[rl_img], [caption_para]],
+            colWidths=[draw_w],
+            rowHeights=[draw_h, None],
+        )
+        img_with_caption.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, 0), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 1 * mm),
+            ('TOPPADDING', (0, 1), (-1, 1), 0),
+            ('BOTTOMPADDING', (0, 1), (-1, 1), 0),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        img_with_caption.hAlign = 'RIGHT'
+        return img_with_caption
+    except Exception as e:
+        logger.warning(f'[PDF] Image render failed: {e}')
+        return None
+
+
+def _build_defect_card(task, doc_width, page_height, heb_fn, styles, lookup_maps,
+                       image_size='normal', cached_images=None):
+    from reportlab.lib.units import cm, mm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        Paragraph, Spacer, Table, TableStyle, KeepTogether
+    )
+
+    user_map, company_map, floor_map, unit_map, building_map = lookup_maps
+    AMBER_LIGHT = colors.HexColor('#FEF3C7')
+    SLATE_200 = colors.HexColor('#E2E8F0')
+    WHITE = colors.white
+    CARD_PAD = 6 * mm
+
+    if image_size == 'reduced':
+        img_max_w = PDF_IMAGE_REDUCED_WIDTH_CM
+        img_max_h = PDF_IMAGE_REDUCED_HEIGHT_CM
+    else:
+        img_max_w = PDF_IMAGE_MAX_WIDTH_CM
+        img_max_h = PDF_IMAGE_MAX_HEIGHT_CM
+
+    inner_width = doc_width - 2 * CARD_PAD
+    card_content = []
+
+    status = task.get('status', 'open')
+    is_blocking = status in BLOCKING_STATUSES
+    title_text = task.get('title', '')
+    number = task.get('display_number') or task.get('short_ref', '')
+    prefix = f'#{number} ' if number else ''
+
+    header_para = Paragraph(heb_fn(f'{prefix}{title_text}'), styles['defect_title'])
+    header_tbl = Table([[header_para]], colWidths=[inner_width])
+    header_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), AMBER_LIGHT),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3 * mm),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3 * mm),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3 * mm),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3 * mm),
+        ('ROUNDEDCORNERS', [2 * mm, 2 * mm, 0, 0]),
+    ]))
+    card_content.append(header_tbl)
+
+    fields = [
+        ('תחום', CATEGORY_LABEL.get(task.get('category', ''), task.get('category', ''))),
+        ('סטטוס', STATUS_LABEL.get(status, status)),
+        ('בניין', building_map.get(task.get('building_id', ''), '')),
+        ('קומה', floor_map.get(task.get('floor_id', ''), '')),
+        ('דירה', unit_map.get(task.get('unit_id', ''), '')),
+        ('חברה/קבלן', company_map.get(task.get('company_id', ''), '')),
+        ('תאריך יצירה', _format_datetime(task.get('created_at'))),
+        ('תאריך עדכון', _format_datetime(task.get('updated_at'))),
+        ('חוסם מסירה', 'כן' if is_blocking else 'לא'),
+    ]
+    desc = task.get('description', '')
+    if desc:
+        fields.insert(1, ('תיאור', desc))
+
+    field_rows = []
+    for label, value in fields:
+        if not value:
+            continue
+        field_rows.append([
+            Paragraph(heb_fn(str(value)), styles['field_value']),
+            Paragraph(heb_fn(label), styles['field_label']),
+        ])
+
+    if field_rows:
+        details_tbl = Table(field_rows, colWidths=[inner_width * 0.7, inner_width * 0.3])
+        details_tbl.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 1),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        card_content.append(Spacer(1, 2 * mm))
+        card_content.append(details_tbl)
+
+    image_links = task.get('_resolved_image_links') or []
+    rendered_images = 0
+    fetched_bufs = cached_images if cached_images is not None else {}
+    if image_links:
+        card_content.append(Spacer(1, 3 * mm))
+        for img_idx, img_url in enumerate(image_links[:MAX_IMAGES_PER_DEFECT]):
+            if img_url in fetched_bufs:
+                img_buf = fetched_bufs[img_url]
+                if img_buf:
+                    img_buf.seek(0)
+            else:
+                img_buf = _fetch_image_for_pdf(img_url)
+                fetched_bufs[img_url] = img_buf
+            if img_buf:
+                caption = f'תמונה {img_idx + 1}'
+                img_flowable = _build_image_flowable(
+                    img_buf, img_max_w, img_max_h,
+                    caption, styles['caption'], heb_fn
+                )
+                if img_flowable:
+                    card_content.append(img_flowable)
+                    if img_idx < MAX_IMAGES_PER_DEFECT - 1:
+                        card_content.append(Spacer(1, 2 * mm))
+                    rendered_images += 1
+
+    total_available = len(image_links)
+    not_shown = total_available - rendered_images
+    if not_shown > 0:
+        card_content.append(Spacer(1, 1 * mm))
+        card_content.append(Paragraph(
+            heb_fn(f'({not_shown} תמונות נוספות לא מוצגות)'), styles['count']))
+
+    card_content.append(Spacer(1, 2 * mm))
+
+    outer_card = Table(
+        [[card_content]],
+        colWidths=[doc_width],
+        style=TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), WHITE),
+            ('BOX', (0, 0), (-1, -1), 0.75, SLATE_200),
+            ('ROUNDEDCORNERS', [2 * mm, 2 * mm, 2 * mm, 2 * mm]),
+            ('TOPPADDING', (0, 0), (-1, -1), CARD_PAD),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), CARD_PAD),
+            ('LEFTPADDING', (0, 0), (-1, -1), CARD_PAD),
+            ('RIGHTPADDING', (0, 0), (-1, -1), CARD_PAD),
+        ]),
+    )
+
+    card_w, card_h = outer_card.wrap(doc_width, page_height)
+    return outer_card, card_h, rendered_images, card_content, fetched_bufs
+
+
 def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, company_map,
                   floor_map, unit_map, building_map, filters_desc=None):
     import os
@@ -442,7 +615,7 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.enums import TA_RIGHT, TA_CENTER
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
     )
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -459,13 +632,9 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
         reshaped = arabic_reshaper.reshape(str(text))
         return get_display(reshaped)
 
-    AMBER = colors.HexColor('#F59E0B')
-    AMBER_LIGHT = colors.HexColor('#FEF3C7')
-    AMBER_DARK = colors.HexColor('#B45309')
     SLATE_700 = colors.HexColor('#334155')
     SLATE_500 = colors.HexColor('#64748B')
-    SLATE_200 = colors.HexColor('#E2E8F0')
-    WHITE = colors.white
+    AMBER_DARK = colors.HexColor('#B45309')
 
     style_title = ParagraphStyle('PDFTitle', fontName='Rubik', fontSize=18,
                                   alignment=TA_CENTER, textColor=SLATE_700, leading=24)
@@ -478,14 +647,26 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
     style_field_value = ParagraphStyle('PDFFieldValue', fontName='Rubik', fontSize=10,
                                         alignment=TA_RIGHT, textColor=SLATE_700, leading=13)
     style_defect_title = ParagraphStyle('PDFDefectTitle', fontName='Rubik', fontSize=12,
-                                         alignment=TA_RIGHT, textColor=SLATE_700, leading=16)
+                                         alignment=TA_RIGHT, textColor=SLATE_700, leading=16,
+                                         fontWeight='bold')
     style_count = ParagraphStyle('PDFCount', fontName='Rubik', fontSize=9,
                                   alignment=TA_CENTER, textColor=SLATE_500, leading=12)
+    style_caption = ParagraphStyle('PDFCaption', fontName='Rubik', fontSize=8,
+                                    alignment=TA_CENTER, textColor=SLATE_500, leading=10)
+
+    styles = {
+        'defect_title': style_defect_title,
+        'field_label': style_field_label,
+        'field_value': style_field_value,
+        'count': style_count,
+        'caption': style_caption,
+    }
 
     output = io.BytesIO()
     doc = SimpleDocTemplate(output, pagesize=A4,
                             leftMargin=1.5 * cm, rightMargin=1.5 * cm,
                             topMargin=1.5 * cm, bottomMargin=1.5 * cm)
+    page_height = A4[1] - doc.topMargin - doc.bottomMargin
     elements = []
 
     scope_heb = heb('בניין') if scope_type == 'building' else heb('דירה')
@@ -506,93 +687,28 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
     elements.append(Paragraph(heb(f'סה״כ ליקויים: {len(tasks)}'), style_count))
     elements.append(Spacer(1, 6 * mm))
 
+    lookup_maps = (user_map, company_map, floor_map, unit_map, building_map)
+
     for idx, task in enumerate(tasks):
-        status = task.get('status', 'open')
-        is_blocking = status in BLOCKING_STATUSES
+        card, card_h, rendered, card_content, img_cache = _build_defect_card(
+            task, doc.width, page_height, heb, styles, lookup_maps,
+            image_size='normal'
+        )
 
-        title_text = task.get('title', '')
-        number = task.get('display_number') or task.get('short_ref', '')
-        prefix = f'#{number} ' if number else ''
-        elements.append(Paragraph(heb(f'{prefix}{title_text}'), style_defect_title))
-        elements.append(Spacer(1, 2 * mm))
+        if card_h <= page_height:
+            elements.append(KeepTogether([card]))
+        else:
+            card_reduced, card_h_reduced, _, content_reduced, _ = _build_defect_card(
+                task, doc.width, page_height, heb, styles, lookup_maps,
+                image_size='reduced', cached_images=img_cache
+            )
+            if card_h_reduced <= page_height:
+                elements.append(KeepTogether([card_reduced]))
+            else:
+                elements.extend(content_reduced)
 
-        fields = [
-            ('תחום', CATEGORY_LABEL.get(task.get('category', ''), task.get('category', ''))),
-            ('סטטוס', STATUS_LABEL.get(status, status)),
-            ('בניין', building_map.get(task.get('building_id', ''), '')),
-            ('קומה', floor_map.get(task.get('floor_id', ''), '')),
-            ('דירה', unit_map.get(task.get('unit_id', ''), '')),
-            ('חברה/קבלן', company_map.get(task.get('company_id', ''), '')),
-            ('תאריך יצירה', _format_datetime(task.get('created_at'))),
-            ('תאריך עדכון', _format_datetime(task.get('updated_at'))),
-            ('חוסם מסירה', 'כן' if is_blocking else 'לא'),
-        ]
-
-        desc = task.get('description', '')
-        if desc:
-            fields.insert(1, ('תיאור', desc))
-
-        field_rows = []
-        for label, value in fields:
-            if not value:
-                continue
-            field_rows.append([
-                Paragraph(heb(str(value)), style_field_value),
-                Paragraph(heb(label), style_field_label),
-            ])
-
-        if field_rows:
-            avail_w = doc.width
-            tbl = Table(field_rows, colWidths=[avail_w * 0.7, avail_w * 0.3])
-            tbl.setStyle(TableStyle([
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('TOPPADDING', (0, 0), (-1, -1), 1),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
-                ('LEFTPADDING', (0, 0), (-1, -1), 4),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ]))
-            elements.append(tbl)
-
-        image_links = task.get('_resolved_image_links') or []
-        rendered_images = 0
-        if image_links:
-            elements.append(Spacer(1, 2 * mm))
-            for img_url in image_links[:MAX_IMAGES_PER_DEFECT]:
-                img_buf = _fetch_image_for_pdf(img_url)
-                if img_buf:
-                    try:
-                        from PIL import Image as PILImage
-                        pil_img = PILImage.open(io.BytesIO(img_buf.getvalue()))
-                        iw, ih = pil_img.size
-                        max_w = PDF_IMAGE_MAX_WIDTH_CM * cm
-                        max_h = PDF_IMAGE_MAX_HEIGHT_CM * cm
-                        scale = min(max_w / iw, max_h / ih, 1.0)
-                        draw_w = iw * scale
-                        draw_h = ih * scale
-                        img_buf.seek(0)
-                        rl_img = RLImage(img_buf, width=draw_w, height=draw_h)
-                        rl_img.hAlign = 'RIGHT'
-                        elements.append(rl_img)
-                        elements.append(Spacer(1, 2 * mm))
-                        rendered_images += 1
-                    except Exception as e:
-                        logger.warning(f'[PDF] Image render failed: {e}')
-            skipped = len(image_links) - min(len(image_links), MAX_IMAGES_PER_DEFECT)
-            if skipped > 0 or (len(image_links) > 0 and rendered_images < min(len(image_links), MAX_IMAGES_PER_DEFECT)):
-                note_count = len(image_links) - rendered_images
-                if note_count > 0:
-                    elements.append(Paragraph(
-                        heb(f'({note_count} תמונות נוספות לא מוצגות)'), style_count))
-
-        sep_tbl = Table([['']], colWidths=[doc.width])
-        sep_tbl.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, 0), 0.5, SLATE_200),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
-        ]))
-        elements.append(Spacer(1, 3 * mm))
-        elements.append(sep_tbl)
-        elements.append(Spacer(1, 4 * mm))
+        if idx < len(tasks) - 1:
+            elements.append(Spacer(1, 5 * mm))
 
     doc.build(elements)
     output.seek(0)
