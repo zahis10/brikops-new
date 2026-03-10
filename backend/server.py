@@ -243,6 +243,9 @@ app.include_router(debug_router)
 from contractor_ops.excel_router import router as excel_router
 app.include_router(excel_router)
 
+from contractor_ops.export_router import router as export_router
+app.include_router(export_router)
+
 from contractor_ops.plans_router import router as plans_router
 app.include_router(plans_router)
 

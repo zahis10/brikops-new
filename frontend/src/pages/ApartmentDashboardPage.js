@@ -7,10 +7,11 @@ import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import NewDefectModal from '../components/NewDefectModal';
 import FilterDrawer from '../components/FilterDrawer';
+import ExportModal from '../components/ExportModal';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-  SlidersHorizontal, Search, X
+  SlidersHorizontal, Search, X, Download
 } from 'lucide-react';
 
 const APARTMENT_DEFAULT_FILTERS = {
@@ -64,6 +65,7 @@ const ApartmentDashboardPage = () => {
   const [filters, setFilters] = useState({ ...APARTMENT_DEFAULT_FILTERS });
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [flagChecked, setFlagChecked] = useState(false);
@@ -397,6 +399,14 @@ const ApartmentDashboardPage = () => {
               </span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => setExportModalOpen(true)}
+            className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 text-sm font-medium text-slate-600"
+          >
+            <Download className="w-4 h-4" />
+            ייצוא
+          </button>
         </div>
 
         {hasActiveFilters && filterSummaryText && (
@@ -524,6 +534,18 @@ const ApartmentDashboardPage = () => {
         defaultFilters={APARTMENT_DEFAULT_FILTERS}
         onApply={setFilters}
         sections={filterSections}
+      />
+
+      <ExportModal
+        open={exportModalOpen}
+        onOpenChange={setExportModalOpen}
+        scope="unit"
+        unitId={unitId}
+        filters={{ ...filters, search: searchQuery }}
+        meta={{
+          projectName: unitData?.project_name,
+          unitLabel: unitData ? formatUnitLabel(unitData) : '',
+        }}
       />
     </div>
   );

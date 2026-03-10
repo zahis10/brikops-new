@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { buildingService, configService } from '../services/api';
+import ExportModal from '../components/ExportModal';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import { toast } from 'sonner';
 import FilterDrawer from '../components/FilterDrawer';
 import {
   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
-  Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X
+  Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download
 } from 'lucide-react';
 
 const BUILDING_DEFAULT_FILTERS = {
@@ -40,6 +41,7 @@ const BuildingDefectsPage = () => {
   const [filters, setFilters] = useState({ ...BUILDING_DEFAULT_FILTERS });
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [expandedFloors, setExpandedFloors] = useState({});
 
   useEffect(() => {
@@ -341,6 +343,14 @@ const BuildingDefectsPage = () => {
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => setExportModalOpen(true)}
+              className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 text-sm font-medium text-slate-600"
+            >
+              <Download className="w-4 h-4" />
+              ייצוא
+            </button>
           </div>
 
           {hasActiveFilters && filterSummaryText && (
@@ -444,6 +454,18 @@ const BuildingDefectsPage = () => {
         defaultFilters={BUILDING_DEFAULT_FILTERS}
         onApply={setFilters}
         sections={filterSections}
+      />
+
+      <ExportModal
+        open={exportModalOpen}
+        onOpenChange={setExportModalOpen}
+        scope="building"
+        buildingId={buildingId}
+        filters={{ ...filters, search: searchQuery }}
+        meta={{
+          projectName: data?.project?.name,
+          buildingName: data?.building?.name,
+        }}
       />
     </div>
   );

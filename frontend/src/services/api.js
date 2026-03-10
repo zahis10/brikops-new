@@ -973,3 +973,25 @@ export const authService = {
     return response.data;
   },
 };
+
+export const exportService = {
+  async exportDefects({ scope, unit_id, building_id, filters }) {
+    const response = await axios.post(
+      `${API}/defects/export`,
+      { scope, unit_id, building_id, filters },
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    const disposition = response.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : `defects_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+    return { success: true, filename };
+  },
+};
