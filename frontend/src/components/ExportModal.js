@@ -6,12 +6,13 @@ import {
   DialogTitle,
   DialogDescription,
 } from './ui/dialog';
-import { Download, Loader2, FileSpreadsheet } from 'lucide-react';
+import { Download, Loader2, FileSpreadsheet, FileText } from 'lucide-react';
 import { exportService } from '../services/api';
 import { toast } from 'sonner';
 
 const ExportModal = ({ open, onOpenChange, scope, unitId, buildingId, filters, meta }) => {
   const [exporting, setExporting] = useState(false);
+  const [format, setFormat] = useState('excel');
 
   const handleExport = async () => {
     setExporting(true);
@@ -21,6 +22,7 @@ const ExportModal = ({ open, onOpenChange, scope, unitId, buildingId, filters, m
         unit_id: unitId,
         building_id: buildingId,
         filters: filters || {},
+        format,
       });
       toast.success('הקובץ הורד בהצלחה');
       onOpenChange(false);
@@ -38,7 +40,7 @@ const ExportModal = ({ open, onOpenChange, scope, unitId, buildingId, filters, m
 
   const filterParts = [];
   if (filters?.status && filters.status !== 'all') {
-    const statusLabels = { open: 'פתוחים', closed: 'סגורים', blocking: 'חוסמי מסירה' };
+    const statusLabels = { open: 'פתוחים', closed: 'סגורים', blocking: 'חוסמי מסירה', in_progress: 'בטיפול' };
     filterParts.push(`סטטוס: ${statusLabels[filters.status] || filters.status}`);
   }
   if (filters?.category && filters.category !== 'all') filterParts.push(`תחום: ${filters.category}`);
@@ -59,19 +61,57 @@ const ExportModal = ({ open, onOpenChange, scope, unitId, buildingId, filters, m
               ייצוא ליקויים
             </div>
           </DialogTitle>
-          <DialogDescription className="sr-only">ייצוא ליקויים לקובץ Excel</DialogDescription>
+          <DialogDescription className="sr-only">ייצוא ליקויים לקובץ</DialogDescription>
         </DialogHeader>
 
         <div className="px-5 py-4 space-y-4">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setFormat('excel')}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
+                format === 'excel'
+                  ? 'border-amber-400 bg-amber-50 text-amber-700'
+                  : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormat('pdf')}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
+                format === 'pdf'
+                  ? 'border-amber-400 bg-amber-50 text-amber-700'
+                  : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              PDF
+            </button>
+          </div>
+
           <div className="bg-slate-50 rounded-lg p-3 space-y-2">
             <div className="flex items-center gap-2 text-sm text-slate-700">
-              <FileSpreadsheet className="w-4 h-4 text-amber-500" />
-              <span className="font-medium">Excel (.xlsx)</span>
+              {format === 'pdf' ? (
+                <FileText className="w-4 h-4 text-amber-500" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4 text-amber-500" />
+              )}
+              <span className="font-medium">
+                {format === 'pdf' ? 'PDF (.pdf)' : 'Excel (.xlsx)'}
+              </span>
             </div>
             <div className="text-xs text-slate-500">
               {meta?.projectName && <span>{meta.projectName} · </span>}
               {scopeLabel}
             </div>
+            {format === 'pdf' && (
+              <div className="text-xs text-amber-600">
+                כולל תמונות מוטמעות
+              </div>
+            )}
           </div>
 
           {filterParts.length > 0 && (

@@ -975,15 +975,16 @@ export const authService = {
 };
 
 export const exportService = {
-  async exportDefects({ scope, unit_id, building_id, filters }) {
+  async exportDefects({ scope, unit_id, building_id, filters, format = 'excel' }) {
     const response = await axios.post(
       `${API}/defects/export`,
-      { scope, unit_id, building_id, filters },
+      { scope, unit_id, building_id, filters, format },
       { headers: getAuthHeader(), responseType: 'blob' }
     );
     const disposition = response.headers['content-disposition'] || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? match[1] : `defects_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const ext = format === 'pdf' ? '.pdf' : '.xlsx';
+    const filename = match ? match[1] : `defects_export_${new Date().toISOString().slice(0, 10)}${ext}`;
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const a = document.createElement('a');
     a.href = url;
