@@ -104,18 +104,60 @@ def _apply_filters(tasks, filters: ExportFilters, scope: str = 'unit'):
     return result
 
 
-def _resolve_image_links(task):
+_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.heif', '.tiff', '.tif'}
+
+
+def _is_image_ref(url, content_type=None):
+    if content_type and content_type.startswith('image/'):
+        return True
+    import os
+    _, ext = os.path.splitext(url.split('?')[0])
+    return ext.lower() in _IMAGE_EXTENSIONS
+
+
+async def _resolve_image_links(db, task):
     links = []
-    for att in (task.get('attachments') or []):
-        url = att.get('file_url') or att.get('url') or ''
-        if url:
-            resolved = generate_url(url) if url.startswith('s3://') else url
-            links.append(resolved)
-    proof_urls = task.get('proof_urls') or []
-    for url in proof_urls:
-        if isinstance(url, str) and url:
-            resolved = generate_url(url) if url.startswith('s3://') else url
-            links.append(resolved)
+    seen = set()
+
+    try:
+        task_id = task.get('id') or task.get('task_id') or ''
+        if task_id:
+            att_updates = await db.task_updates.find({
+                'task_id': task_id,
+                'update_type': 'attachment',
+                'deletedAt': {'$exists': False},
+            }, {'_id': 0, 'attachment_url': 1, 'content_type': 1}).to_list(200)
+
+            for att in att_updates:
+                url = att.get('attachment_url') or ''
+                if not url:
+                    continue
+                ct = att.get('content_type') or ''
+                if not _is_image_ref(url, ct):
+                    continue
+                resolved = generate_url(url) if url.startswith('s3://') else url
+                if resolved not in seen:
+                    seen.add(resolved)
+                    links.append(resolved)
+
+        for att in (task.get('attachments') or []):
+            url = att.get('file_url') or att.get('url') or ''
+            if url and _is_image_ref(url):
+                resolved = generate_url(url) if url.startswith('s3://') else url
+                if resolved not in seen:
+                    seen.add(resolved)
+                    links.append(resolved)
+
+        proof_urls = task.get('proof_urls') or []
+        for url in proof_urls:
+            if isinstance(url, str) and url and _is_image_ref(url):
+                resolved = generate_url(url) if url.startswith('s3://') else url
+                if resolved not in seen:
+                    seen.add(resolved)
+                    links.append(resolved)
+    except Exception as e:
+        logger.warning(f'[EXPORT] Image link resolution failed for task {task.get("id","?")}: {e}')
+
     return links
 
 
@@ -225,7 +267,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
         status = task.get('status', 'open')
         is_blocking = status in BLOCKING_STATUSES
 
-        image_links = _resolve_image_links(task)
+        image_links = task.get('_resolved_image_links') or []
         image_count = task.get('attachments_count', 0) or len(image_links)
         links_text = '\n'.join(image_links) if image_links else ''
 
@@ -302,7 +344,6 @@ ALLOWED_IMAGE_HOSTS = {
     'brikops-prod-files.s3.amazonaws.com',
     's3.eu-central-1.amazonaws.com',
     's3.amazonaws.com',
-    'localhost',
 }
 
 
@@ -320,30 +361,71 @@ def _is_safe_image_url(url):
         return False
 
 
+def _image_to_jpeg_buf(img_data_bytes):
+    from PIL import Image as PILImage
+    img = PILImage.open(io.BytesIO(img_data_bytes))
+    img.verify()
+    img = PILImage.open(io.BytesIO(img_data_bytes))
+    if img.mode not in ('RGB',):
+        img = img.convert('RGB')
+    max_px = 800
+    if img.width > max_px or img.height > max_px:
+        img.thumbnail((max_px, max_px), PILImage.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=75, optimize=True)
+    buf.seek(0)
+    return buf
+
+
+_UPLOADS_BASE = None
+
+
+def _get_uploads_base():
+    global _UPLOADS_BASE
+    if _UPLOADS_BASE is None:
+        from pathlib import Path
+        _UPLOADS_BASE = Path(__file__).parent.parent / 'uploads'
+    return _UPLOADS_BASE
+
+
+def _fetch_local_image(url):
+    from pathlib import Path
+    if not url.startswith('/api/uploads/'):
+        return None
+    rel = url[len('/api/uploads/'):]
+    if not rel or '..' in rel or rel.startswith('/'):
+        logger.warning(f'[PDF] Rejected suspicious local path: {url[:80]}')
+        return None
+    base = _get_uploads_base().resolve()
+    file_path = (base / rel).resolve()
+    try:
+        file_path.relative_to(base)
+    except ValueError:
+        logger.warning(f'[PDF] Path traversal blocked: {url[:80]}')
+        return None
+    if not file_path.is_file():
+        logger.warning(f'[PDF] Local file not found: {url[:80]}')
+        return None
+    raw = file_path.read_bytes()
+    return _image_to_jpeg_buf(raw)
+
+
 def _fetch_image_for_pdf(url):
     import requests as http_requests
-    from PIL import Image as PILImage
     try:
-        fetch_url = url
-        if not fetch_url.startswith('http'):
+        if url.startswith('/api/uploads/'):
+            return _fetch_local_image(url)
+        if not url.startswith('http'):
+            logger.warning(f'[PDF] Skipping non-HTTP/non-local URL: {url[:80]}')
             return None
-        if not _is_safe_image_url(fetch_url):
+        if not _is_safe_image_url(url):
             logger.warning(f'[PDF] Blocked unsafe image URL: {url[:80]}')
             return None
-        resp = http_requests.get(fetch_url, timeout=8)
+        resp = http_requests.get(url, timeout=8)
         if resp.status_code != 200:
             logger.warning(f'[PDF] Image fetch failed: {resp.status_code} for {url[:80]}')
             return None
-        img = PILImage.open(io.BytesIO(resp.content))
-        if img.mode not in ('RGB',):
-            img = img.convert('RGB')
-        max_px = 800
-        if img.width > max_px or img.height > max_px:
-            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=75, optimize=True)
-        buf.seek(0)
-        return buf
+        return _image_to_jpeg_buf(resp.content)
     except Exception as e:
         logger.warning(f'[PDF] Image processing failed: {e} for {url[:80]}')
         return None
@@ -471,7 +553,7 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
             ]))
             elements.append(tbl)
 
-        image_links = _resolve_image_links(task)
+        image_links = task.get('_resolved_image_links') or []
         rendered_images = 0
         if image_links:
             elements.append(Spacer(1, 2 * mm))
@@ -587,6 +669,9 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
 
     user_map, company_map = await _build_lookup_maps(db, filtered)
     floor_map, unit_map, building_map_loc = await _build_location_maps(db, filtered)
+
+    for t in filtered:
+        t['_resolved_image_links'] = await _resolve_image_links(db, t)
 
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     safe_scope = filename_scope.replace(' ', '_').replace('/', '_')
