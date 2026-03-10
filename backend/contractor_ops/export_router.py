@@ -343,10 +343,15 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
     safe_scope = filename_scope.replace(' ', '_').replace('/', '_')
     filename = f"defects_{safe_scope}_{today}.xlsx"
 
+    from urllib.parse import quote
+    ascii_filename = f"defects_{req.scope}_{today}.xlsx"
+    encoded_filename = quote(filename)
+    disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}"
+
     logger.info(f"[EXPORT] user={user.get('id')} scope={req.scope} tasks={len(filtered)} filename={filename}")
 
     return StreamingResponse(
         excel_bytes,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        headers={'Content-Disposition': disposition}
     )
