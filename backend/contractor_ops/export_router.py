@@ -335,7 +335,7 @@ def _fetch_image_for_pdf(url):
             logger.warning(f'[PDF] Image fetch failed: {resp.status_code} for {url[:80]}')
             return None
         img = PILImage.open(io.BytesIO(resp.content))
-        if img.mode in ('RGBA', 'P'):
+        if img.mode not in ('RGB',):
             img = img.convert('RGB')
         max_px = 800
         if img.width > max_px or img.height > max_px:
@@ -578,7 +578,12 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
     project_name = project.get('name', '') if project else ''
 
     filtered = _apply_filters(tasks, req.filters, scope=req.scope)
-    filtered.sort(key=lambda t: t.get('created_at', ''), reverse=True)
+    def _sort_key(t):
+        v = t.get('created_at', '')
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return str(v)
+    filtered.sort(key=_sort_key, reverse=True)
 
     user_map, company_map = await _build_lookup_maps(db, filtered)
     floor_map, unit_map, building_map_loc = await _build_location_maps(db, filtered)
