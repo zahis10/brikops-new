@@ -110,6 +110,15 @@ def _check_rate_limit(key, max_requests=5, window_seconds=60):
     return True
 
 
+def _resolve_client_ip(request: Request) -> str:
+    forwarded = request.headers.get('x-forwarded-for', '')
+    if forwarded:
+        ip = forwarded.split(',')[0].strip()
+        if ip and ip not in ('', 'unknown'):
+            return ip
+    return request.client.host if request.client else 'unknown'
+
+
 MANAGEMENT_ROLES = [
     'project_manager_assistant', 'engineer', 'safety', 'foreman',
     'inspector', 'site_manager', 'admin_assistant',
@@ -138,39 +147,38 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             raise HTTPException(status_code=422, detail=str(e))
 
         masked = req.phone_e164[:6] + '****' + req.phone_e164[-2:] if len(req.phone_e164) > 8 else req.phone_e164[:4] + '****'
-
-        client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else 'unknown')
-        if ',' in client_ip:
-            client_ip = client_ip.split(',')[0].strip()
+        client_ip = _resolve_client_ip(request)
 
         if not _check_rate_limit(f"otp_ip:{client_ip}", max_requests=20, window_seconds=900):
-            logger.warning(f"[OTP-ENDPOINT] rid={request_id} IP_RATE_LIMITED ip={client_ip}")
+            logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_ip_limit rid={request_id}")
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+        if not _check_rate_limit(f"otp_combo:{req.phone_e164}:{client_ip}", max_requests=5, window_seconds=300):
+            logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_phone_ip_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
         otp = get_otp()
         sms_ready = bool(otp.sms_client and otp.sms_client.enabled)
 
         logger.info(
-            f"[OTP-ENDPOINT] rid={request_id} phone={masked} "
-            f"sms_mode={otp.sms_mode} app_mode={otp.app_mode} "
-            f"sms_ready={sms_ready}"
+            f"[OTP-AUDIT] event=otp_requested phone={masked} ip={client_ip} "
+            f"rid={request_id} sms_mode={otp.sms_mode} sms_ready={sms_ready}"
         )
 
         if not _check_rate_limit(f"otp:{req.phone_e164}", max_requests=5, window_seconds=300):
-            logger.warning(f"[OTP-ENDPOINT] rid={request_id} RATE_LIMITED phone={masked}")
-            raise HTTPException(status_code=429, detail='יותר מדי בקשות. נסה שוב בעוד מספר דקות.')
+            logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_phone_limit rid={request_id}")
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
         result = await otp.request_otp(req.phone_e164)
 
         if not result.get('success'):
             error_type = result.get('error', '')
 
-            logger.error(
-                f"[OTP-ENDPOINT] rid={request_id} FAILED phone={masked} error={error_type}"
-            )
-
             if error_type in ('rate_limited', 'too_many_attempts'):
-                raise HTTPException(status_code=429, detail=result['message'])
+                logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason={error_type} rid={request_id}")
+                raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+            logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason={error_type} rid={request_id}")
 
             return {
                 'success': True,
@@ -187,8 +195,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             )
 
         logger.info(
-            f"[OTP-ENDPOINT] rid={rid} QUEUED phone={masked} "
-            f"idempotent={result.get('idempotent', False)}"
+            f"[OTP-AUDIT] event=otp_queued phone={masked} ip={client_ip} "
+            f"rid={rid} idempotent={result.get('idempotent', False)}"
         )
 
         response = {
@@ -203,7 +211,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         return response
 
     @router.post("/auth/verify-otp")
-    async def verify_otp(req: OTPVerify):
+    async def verify_otp(req: OTPVerify, request: Request):
         if not req.phone_e164 or not req.code:
             raise HTTPException(status_code=400, detail='מספר טלפון וקוד נדרשים')
         try:
@@ -212,15 +220,29 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
+        masked = req.phone_e164[:6] + '****' + req.phone_e164[-2:] if len(req.phone_e164) > 8 else req.phone_e164[:4] + '****'
+        client_ip = _resolve_client_ip(request)
+
+        if not _check_rate_limit(f"verify_ip:{client_ip}", max_requests=20, window_seconds=900):
+            logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=verify_ip_limit")
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
         if not _check_rate_limit(f"verify:{req.phone_e164}", max_requests=10, window_seconds=300):
-            raise HTTPException(status_code=429, detail='יותר מדי ניסיונות. נסה שוב בעוד מספר דקות.')
+            logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=verify_phone_limit")
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
         otp = get_otp()
         result = await otp.verify_otp(req.phone_e164, req.code)
 
         if not result['success']:
-            status_code = 429 if result.get('error') == 'locked' else 400
-            raise HTTPException(status_code=status_code, detail=result['message'])
+            error_type = result.get('error', '')
+            if error_type == 'locked':
+                logger.warning(f"[OTP-AUDIT] event=otp_lockout_triggered phone={masked} ip={client_ip} attempts={result.get('attempts', 'n/a')}")
+                raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+            logger.warning(f"[OTP-AUDIT] event=otp_verify_failed phone={masked} ip={client_ip} reason={error_type}")
+            raise HTTPException(status_code=400, detail='קוד אימות שגוי או שפג תוקפו.')
+
+        logger.info(f"[OTP-AUDIT] event=otp_verify_success phone={masked} ip={client_ip}")
 
         db = get_db()
         user = await db.users.find_one({'phone_e164': req.phone_e164}, {'_id': 0})
@@ -278,7 +300,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'user_exists': False,
             'requires_onboarding': True,
             'next': 'onboarding',
-            'phone_e164': req.phone_e164,
         }
 
     @router.post("/auth/register-with-phone")

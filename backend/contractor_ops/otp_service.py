@@ -274,21 +274,21 @@ class OTPService:
         if not otp_doc:
             logger.warning(f"[OTP-VERIFY] no_otp_found for {masked}")
             await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'no_otp'})
-            return {'success': False, 'error': 'no_otp', 'message': 'לא נמצא קוד אימות. בקש קוד חדש.'}
+            return {'success': False, 'error': 'invalid_or_expired', 'message': 'קוד אימות שגוי או שפג תוקפו.'}
 
         if otp_doc.get('locked_until') and otp_doc['locked_until'] > now.isoformat():
             await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'locked'})
             return {
                 'success': False,
                 'error': 'locked',
-                'message': 'חשבון נעול. נסה שוב מאוחר יותר.',
+                'message': 'נא לנסות שוב מאוחר יותר.',
                 'locked_until': otp_doc['locked_until']
             }
 
         if otp_doc['expires_at'] < now.isoformat():
             await self.db.otp_codes.delete_one({'phone': phone_e164})
             await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'expired'})
-            return {'success': False, 'error': 'expired', 'message': 'קוד אימות פג תוקף. בקש קוד חדש.'}
+            return {'success': False, 'error': 'invalid_or_expired', 'message': 'קוד אימות שגוי או שפג תוקפו.'}
 
         attempts = otp_doc.get('attempts', 0) + 1
 
@@ -302,18 +302,17 @@ class OTPService:
                 return {
                     'success': False,
                     'error': 'locked',
-                    'message': f'יותר מדי ניסיונות. החשבון ננעל ל-{self.lockout_minutes} דקות.',
-                    'locked_until': locked_until
+                    'message': 'נא לנסות שוב מאוחר יותר.',
+                    'locked_until': locked_until,
+                    'attempts': attempts,
                 }
 
             await self.db.otp_codes.update_one({'phone': phone_e164}, update)
-            remaining = self.max_attempts - attempts
             await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'invalid_code', 'attempts': attempts})
             return {
                 'success': False,
                 'error': 'invalid_code',
-                'message': f'קוד שגוי. נותרו {remaining} ניסיונות.',
-                'remaining_attempts': remaining
+                'message': 'קוד אימות שגוי או שפג תוקפו.',
             }
 
         await self.db.otp_codes.update_one(

@@ -84,3 +84,21 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   All JWT encode/decode paths use `PyJWT` with HS256, same claims, same expiry, same issuer validation, same leeway
 -   Negative auth proofs passed: expired token → 401, invalid signature → 401, wrong issuer → 401
 -   App boot and e2e login regression checks passed
+
+### OTP flow hardening (2026-03)
+
+**Protections (existing + new):**
+-   **Send rate limits:** per-IP (20/900s), per-phone (5/300s), per-phone+IP combo (5/300s), 90s cooldown, 3/15min cap, 10/day cap, idempotent window (<15s)
+-   **Verify rate limits:** per-phone (10/300s), per-IP (20/900s)
+-   **Brute-force lockout:** 5 failed attempts → 15-minute lockout (persistent in MongoDB)
+-   **One-time use:** OTP deleted after successful verification
+-   **Code security:** 6-digit, SHA-256 hashed, cryptographic RNG (`secrets.randbelow`)
+-   **Reduced information leakage:** generic error messages for all failure types (no `remaining_attempts`, no distinguishable `no_otp`/`expired`/`invalid_code` errors in client responses); `phone_e164` not echoed for non-existing users; send response always generic regardless of phone existence
+-   **Structured audit logging:** `[OTP-AUDIT]` events with masked phone, client IP, reason, rid — covers `otp_requested`, `otp_throttled`, `otp_verify_success`, `otp_verify_failed`, `otp_lockout_triggered`
+
+**Implementation notes:**
+-   Persistent protections (cooldown, 15min/daily caps, brute-force lockout) use MongoDB via `OTPService` — survive restarts and would work across multiple instances
+-   Endpoint-level rate limits (per-IP, per-phone, per-phone+IP combo) use in-memory `_rate_limits` dict — reset on server restart and do not share across instances. This is a known limitation; migrating these to persistent/shared storage is a follow-up if multi-instance deployment is needed
+-   Client IP extracted from `x-forwarded-for` first entry (trusted proxy), falling back to `request.client.host`
+
+**Files:** `backend/contractor_ops/otp_service.py`, `backend/contractor_ops/onboarding_router.py`
