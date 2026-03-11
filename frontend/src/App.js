@@ -40,6 +40,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccountSettingsPage from './pages/AccountSettingsPage';
 import BuildingDefectsPage from './pages/BuildingDefectsPage';
+import BuildingQCPage from './pages/BuildingQCPage';
 import InnerBuildingPage from './pages/InnerBuildingPage';
 import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
 
@@ -245,6 +246,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <InnerBuildingPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/buildings/:buildingId/qc"
+        element={
+          <ProtectedRoute>
+            <BuildingQCPage />
           </ProtectedRoute>
         }
       />

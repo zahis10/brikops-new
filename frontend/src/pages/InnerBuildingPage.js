@@ -158,7 +158,7 @@ const InnerBuildingPage = () => {
       return;
     }
     if (tabId === 'qc') {
-      navigate(`/projects/${projectId}/qc`);
+      navigate(`/projects/${projectId}/buildings/${buildingId}/qc`);
       return;
     }
     setActiveTab(tabId);
