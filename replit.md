@@ -117,6 +117,26 @@ BrikOps is a full-stack application with a clear separation between frontend and
 
 **Files:** `backend/contractor_ops/otp_service.py`, `backend/contractor_ops/onboarding_router.py`
 
+### Inner Building Screen — Phase 1 (2026-03)
+
+**New page:** `InnerBuildingPage` at `/projects/:projectId/buildings/:buildingId` — a focused building workspace for mobile.
+
+**UI sections:**
+- Sticky dark header (bg-slate-800) with smart back (navigate(-1) with fallback), building name, project name subtitle
+- 3-tab work switcher: דירות/קומות (default, inline), ליקויים (→ BuildingDefectsPage), בקרת ביצוע (→ project-level /qc, temporary fallback — building-specific QC targeting deferred)
+- KPI strip: floor count, unit count, open defects count (from defects-summary API)
+- Collapsible floor → apartment hierarchy: floor cards expand to show apartment tiles with defect badges; apartment tap → /projects/:projectId/units/:unitId
+
+**Data loading:** `projectService.getHierarchy` + `buildingService.defectsSummary` in parallel. 403/401 → toast + redirect to /projects. Network error → retry screen.
+
+**Navigation wiring:**
+- ProjectControlPage StructureTab: building card has separate chevron (expand/collapse inline) and main area (navigate to InnerBuildingPage)
+- Route added in App.js before the /defects route
+
+**Files:** `frontend/src/pages/InnerBuildingPage.js`, `frontend/src/App.js`, `frontend/src/pages/ProjectControlPage.js`
+
+**Phase 1 scope:** View + navigation only. No add/import/setup flows, no FAB, no Excel import. These are deferred to Phase 2.
+
 ### Billing: manual_override NoneType fix (2026-03)
 
 **Root cause:** `get_billing_info()` in `billing.py` used `sub.get('manual_override', {}).get(...)` on lines 392-393. When `manual_override` key exists in the subscription document but its value is `None` (as set by synthetic subscription creation at line 884), `.get(key, default)` returns `None` — the default `{}` only applies when the key is absent, not when it's present with a `None` value. The subsequent `.get('comped_until')` then crashes with `AttributeError: 'NoneType' object has no attribute 'get'`.

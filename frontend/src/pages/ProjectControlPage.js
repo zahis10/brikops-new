@@ -1792,8 +1792,16 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
           <Card key={building.id} className="overflow-hidden rounded-xl border-slate-200">
             <div className="flex items-center">
               <button onClick={() => toggleBuilding(building.id)}
-                className="flex-1 flex items-center gap-3 p-3.5 hover:bg-slate-50 transition-colors text-right">
-                {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
+                className="p-3.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors flex-shrink-0"
+                aria-label={isExpanded ? 'כווץ בניין' : 'הרחב בניין'}
+                aria-expanded={isExpanded}
+              >
+                {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+              <button onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}`)}
+                className="flex-1 flex items-center gap-3 py-3.5 pr-0 pl-3 hover:bg-slate-50 transition-colors text-right"
+                aria-label={`פתח ${building.name}`}
+              >
                 <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0">
                   <Building2 className="w-5 h-5 text-amber-500" />
                 </div>
@@ -1804,6 +1812,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                   </p>
                   <p className="text-xs text-slate-400 mt-0.5">{floors.length} קומות{(() => { const unitCount = floors.reduce((sum, f) => sum + (f.units || []).length, 0); return unitCount > 0 ? ` · ${unitCount} דירות` : ''; })()}{(() => { if (!isManagement || !floors.length) return null; const total = floors.length; const active = floors.filter(f => { const raw = qcStatuses[f.id]; const badge = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; return badge !== 'not_started'; }).length; return active > 0 ? <span className="text-amber-600 font-medium">{` · בקרה: ${active}/${total}`}</span> : null; })()}</p>
                 </div>
+                <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0 rotate-180" />
               </button>
               {isPM && (
                 <button
