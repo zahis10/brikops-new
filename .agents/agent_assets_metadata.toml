@@ -12,3 +12,9 @@ id = "o-uOOYY9SpJm7-IRckVbJ"
 uri = "file://WEEKLY_CHANGELOG.md"
 type = "text"
 title = "Weekly Changelog (March 4-11, 2026)"
+
+[[outputs]]
+id = "AWBwNTn8NTAzcXNCYDixT"
+uri = "file://brikops-slim.zip"
+type = "unspecified"
+title = "BrikOps Slim Export (94MB)"
