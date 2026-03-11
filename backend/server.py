@@ -334,6 +334,8 @@ async def create_indexes():
         await db.wa_login_tokens.create_index("expires_at", expireAfterSeconds=0)
         await db.users.create_index("email_verify_token", sparse=True)
         await db.users.create_index("password_reset_token", sparse=True)
+        await db.otp_rate_limits.create_index([("kind", 1), ("key", 1)], unique=True)
+        await db.otp_rate_limits.create_index("expires_at", expireAfterSeconds=0)
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

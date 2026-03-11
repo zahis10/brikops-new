@@ -99,12 +99,20 @@ BrikOps is a full-stack application with a clear separation between frontend and
 **Throttle proofs collected:**
 -   verify-otp per-IP throttle: 21st attempt from same IP returns HTTP 429; audit log `event=otp_throttled reason=verify_ip_limit`
 -   request-otp per-phone+IP combo throttle: 4th request for same phone+IP returns HTTP 429 (combo limit 3/300s fires before per-phone 5/300s); audit log `event=otp_throttled reason=send_phone_ip_limit`
+-   Restart persistence proof: counter survives app restart — 19 attempts pre-restart, same Mongo document persists post-restart, attempt 21 post-restart returns 429
 
 **Implementation notes:**
--   Persistent protections (cooldown, 15min/daily caps, brute-force lockout) use MongoDB via `OTPService` — survive restarts and work across multiple instances
--   Endpoint-level rate limits (per-IP, per-phone, per-phone+IP combo) use in-memory `_rate_limits` dict — **these reset on server restart and do not share across instances**. This is a known deployment limitation. Migrating to shared/persistent storage (Redis or MongoDB with TTL) is the follow-up for multi-instance production-grade enforcement
+-   All OTP rate limits are now persistent in MongoDB:
+    -   `OTPService`-level protections (cooldown, 15min/daily caps, brute-force lockout) use `otp_codes` / `otp_metrics` collections
+    -   Endpoint-level rate limits (per-IP, per-phone, per-phone+IP combo for both send and verify) use `otp_rate_limits` collection with atomic aggregation pipeline updates (`find_one_and_update` with `$cond`/`$ifNull` for race-safe increment/reset in a single operation)
+-   `otp_rate_limits` collection:
+    -   Documents: `kind`, `key`, `count`, `window_start`, `expires_at`, `updated_at`
+    -   Unique compound index on `(kind, key)` — prevents duplicate documents; `DuplicateKeyError` caught with single retry for concurrent first-insert races
+    -   TTL index on `expires_at` (expireAfterSeconds=0) — automatic cleanup of expired windows
+    -   Kinds: `send_ip`, `send_phone_ip`, `send_phone`, `verify_ip`, `verify_phone`
 -   Client IP extraction uses `_resolve_client_ip()`: parses `x-forwarded-for` first entry, falls back to `request.client.host`. **x-forwarded-for is trusted only when the app runs behind the known proxy chain** (Replit dev proxy in development, AWS Elastic Beanstalk ALB in production). If the app is ever directly exposed without a trusted reverse proxy, x-forwarded-for must not be trusted and the IP extraction logic must be updated
+-   Non-OTP rate limits (password reset endpoints) still use in-memory `_check_rate_limit` — these are outside OTP scope and lower risk
 
-**Status:** OTP hardening improved with known deployment limitation
+**Status:** OTP hardening complete — all OTP rate limits persistent in MongoDB
 
 **Files:** `backend/contractor_ops/otp_service.py`, `backend/contractor_ops/onboarding_router.py`

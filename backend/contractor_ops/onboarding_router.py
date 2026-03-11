@@ -110,7 +110,58 @@ def _check_rate_limit(key, max_requests=5, window_seconds=60):
     return True
 
 
+async def _check_rate_limit_mongo(db, kind: str, key: str, max_requests: int, window_seconds: int) -> bool:
+    from pymongo import ReturnDocument
+    from pymongo.errors import DuplicateKeyError
+
+    now = datetime.now(timezone.utc)
+    new_expires = now + timedelta(seconds=window_seconds)
+
+    pipeline = [
+        {"$set": {
+            "count": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": 1,
+                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
+            }},
+            "window_start": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": now,
+                "else": {"$ifNull": ["$window_start", now]},
+            }},
+            "expires_at": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": new_expires,
+                "else": {"$ifNull": ["$expires_at", new_expires]},
+            }},
+            "updated_at": now,
+        }},
+    ]
+
+    for attempt in range(2):
+        try:
+            result = await db.otp_rate_limits.find_one_and_update(
+                {"kind": kind, "key": key},
+                pipeline,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            return result["count"] <= max_requests
+        except DuplicateKeyError:
+            if attempt == 0:
+                continue
+            return False
+
+
 def _resolve_client_ip(request: Request) -> str:
+    """Extract client IP from request.
+
+    Trusted only when app runs behind a known reverse proxy:
+      - Development: Replit dev proxy
+      - Production: AWS Elastic Beanstalk ALB
+    If the app is ever directly exposed without a trusted proxy,
+    x-forwarded-for must NOT be trusted and this logic must be updated.
+    """
     forwarded = request.headers.get('x-forwarded-for', '')
     if forwarded:
         ip = forwarded.split(',')[0].strip()
@@ -149,11 +200,13 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         masked = req.phone_e164[:6] + '****' + req.phone_e164[-2:] if len(req.phone_e164) > 8 else req.phone_e164[:4] + '****'
         client_ip = _resolve_client_ip(request)
 
-        if not _check_rate_limit(f"otp_ip:{client_ip}", max_requests=20, window_seconds=900):
+        db = get_db()
+
+        if not await _check_rate_limit_mongo(db, "send_ip", client_ip, max_requests=20, window_seconds=900):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_ip_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
-        if not _check_rate_limit(f"otp_combo:{req.phone_e164}:{client_ip}", max_requests=3, window_seconds=300):
+        if not await _check_rate_limit_mongo(db, "send_phone_ip", f"{req.phone_e164}:{client_ip}", max_requests=3, window_seconds=300):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_phone_ip_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
@@ -165,7 +218,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             f"rid={request_id} sms_mode={otp.sms_mode} sms_ready={sms_ready}"
         )
 
-        if not _check_rate_limit(f"otp:{req.phone_e164}", max_requests=5, window_seconds=300):
+        if not await _check_rate_limit_mongo(db, "send_phone", req.phone_e164, max_requests=5, window_seconds=300):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_phone_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
@@ -223,11 +276,13 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         masked = req.phone_e164[:6] + '****' + req.phone_e164[-2:] if len(req.phone_e164) > 8 else req.phone_e164[:4] + '****'
         client_ip = _resolve_client_ip(request)
 
-        if not _check_rate_limit(f"verify_ip:{client_ip}", max_requests=20, window_seconds=900):
+        db = get_db()
+
+        if not await _check_rate_limit_mongo(db, "verify_ip", client_ip, max_requests=20, window_seconds=900):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=verify_ip_limit")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
-        if not _check_rate_limit(f"verify:{req.phone_e164}", max_requests=10, window_seconds=300):
+        if not await _check_rate_limit_mongo(db, "verify_phone", req.phone_e164, max_requests=10, window_seconds=300):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=verify_phone_limit")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
@@ -244,7 +299,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
         logger.info(f"[OTP-AUDIT] event=otp_verify_success phone={masked} ip={client_ip}")
 
-        db = get_db()
         user = await db.users.find_one({'phone_e164': req.phone_e164}, {'_id': 0})
 
         if user:
