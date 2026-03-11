@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
-  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw
+  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw, Clock
 } from 'lucide-react';
 
 const DEFAULT_DISCIPLINES = [
@@ -448,6 +448,15 @@ const ProjectPlansPage = () => {
                     >
                       <Download className="w-3.5 h-3.5 text-slate-400" />
                     </a>
+                    {plan.replaces_plan_id && (
+                      <button
+                        onClick={() => navigate(`/projects/${projectId}/plans/${plan.id}/history`)}
+                        className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+                        title="היסטוריה"
+                      >
+                        <Clock className="w-3.5 h-3.5 text-slate-300" />
+                      </button>
+                    )}
                     {canManage && (
                       <>
                         <button

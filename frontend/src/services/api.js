@@ -551,6 +551,12 @@ export const projectPlanService = {
     });
     return response.data;
   },
+  async history(projectId, planId) {
+    const response = await axios.get(`${API}/projects/${projectId}/plans/${planId}/history`, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
   async replace(projectId, planId, file, note = '') {
     const formData = new FormData();
     formData.append('file', file);

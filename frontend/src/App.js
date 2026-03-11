@@ -30,6 +30,7 @@ import UnitPlansPage from './pages/UnitPlansPage';
 import ProjectTasksPage from './pages/ProjectTasksPage';
 import ProjectPlansPage from './pages/ProjectPlansPage';
 import ProjectPlansArchivePage from './pages/ProjectPlansArchivePage';
+import ProjectPlanHistoryPage from './pages/ProjectPlanHistoryPage';
 import MyProjectsPage from './pages/MyProjectsPage';
 import WaLoginPage from './pages/WaLoginPage';
 import OwnershipTransferPage from './pages/OwnershipTransferPage';
@@ -207,6 +208,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <ProjectPlansArchivePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/plans/:planId/history"
+        element={
+          <ProtectedRoute>
+            <ProjectPlanHistoryPage />
           </ProtectedRoute>
         }
       />

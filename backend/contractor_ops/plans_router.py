@@ -127,6 +127,50 @@ async def upload_project_plan(
     return resolve_urls_in_doc(dict(plan_doc))
 
 
+@router.get("/projects/{project_id}/plans/{plan_id}/history")
+async def get_project_plan_history(
+    project_id: str,
+    plan_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+
+    current = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+    }, {'_id': 0})
+    if not current:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה')
+
+    from services.object_storage import resolve_urls_in_doc
+
+    chain = []
+    visited = set()
+    cursor = current
+
+    while cursor and len(chain) < 50:
+        if cursor['id'] in visited:
+            break
+        visited.add(cursor['id'])
+        uploader = await db.users.find_one({'id': cursor.get('uploaded_by')}, {'_id': 0, 'name': 1})
+        cursor['uploaded_by_name'] = uploader.get('name', '') if uploader else ''
+        resolve_urls_in_doc(cursor)
+        chain.append(cursor)
+
+        prev_id = cursor.get('replaces_plan_id')
+        if not prev_id:
+            break
+        cursor = await db.project_plans.find_one({
+            'id': prev_id,
+            'project_id': project_id,
+            'deletedAt': {'$exists': False},
+        }, {'_id': 0})
+
+    return {'plan_id': plan_id, 'project_id': project_id, 'versions': chain}
+
+
 @router.post("/projects/{project_id}/plans/{plan_id}/replace")
 async def replace_project_plan(
     project_id: str,
