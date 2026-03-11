@@ -23,7 +23,11 @@ async def list_project_plans(
     project = await db.projects.find_one({'id': project_id})
     if not project:
         raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
-    query = {'project_id': project_id, 'deletedAt': {'$exists': False}}
+    query = {
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    }
     if discipline:
         query['discipline'] = discipline
     plans = await db.project_plans.find(query, {'_id': 0}).sort('created_at', -1).to_list(500)
@@ -31,6 +35,35 @@ async def list_project_plans(
     for p in plans:
         uploader = await db.users.find_one({'id': p.get('uploaded_by')}, {'_id': 0, 'name': 1})
         p['uploaded_by_name'] = uploader.get('name', '') if uploader else ''
+        resolve_urls_in_doc(p)
+    return plans
+
+
+@router.get("/projects/{project_id}/plans/archive")
+async def list_project_plans_archive(
+    project_id: str,
+    discipline: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    project = await db.projects.find_one({'id': project_id})
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+    query = {
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': 'archived',
+    }
+    if discipline:
+        query['discipline'] = discipline
+    plans = await db.project_plans.find(query, {'_id': 0}).sort('archived_at', -1).to_list(500)
+    from services.object_storage import resolve_urls_in_doc
+    for p in plans:
+        uploader = await db.users.find_one({'id': p.get('uploaded_by')}, {'_id': 0, 'name': 1})
+        p['uploaded_by_name'] = uploader.get('name', '') if uploader else ''
+        archiver = await db.users.find_one({'id': p.get('archived_by')}, {'_id': 0, 'name': 1})
+        p['archived_by_name'] = archiver.get('name', '') if archiver else ''
         resolve_urls_in_doc(p)
     return plans
 
@@ -92,6 +125,91 @@ async def upload_project_plan(
 
     from services.object_storage import resolve_urls_in_doc
     return resolve_urls_in_doc(dict(plan_doc))
+
+
+@router.patch("/projects/{project_id}/plans/{plan_id}/archive")
+async def archive_project_plan(
+    project_id: str,
+    plan_id: str,
+    body: dict = Body(default={}),
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לארכב תוכניות')
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    })
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה או כבר בארכיון')
+
+    ts = _now()
+    await db.project_plans.update_one({'id': plan_id}, {'$set': {
+        'status': 'archived',
+        'archive_reason': 'manual',
+        'archived_at': ts,
+        'archived_by': user['id'],
+        'archive_note': (body.get('note') or '').strip(),
+    }})
+
+    await _audit('project_plan', plan_id, 'project_plan_archived', user['id'], {
+        'project_id': project_id,
+        'discipline': plan.get('discipline', ''),
+        'filename': plan.get('original_filename', ''),
+        'archive_reason': 'manual',
+    })
+
+    return {'success': True}
+
+
+@router.patch("/projects/{project_id}/plans/{plan_id}/restore")
+async def restore_project_plan(
+    project_id: str,
+    plan_id: str,
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לשחזר תוכניות')
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': 'archived',
+    })
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה בארכיון')
+
+    await db.project_plans.update_one({'id': plan_id}, {'$unset': {
+        'status': '',
+        'archive_reason': '',
+        'archived_at': '',
+        'archived_by': '',
+        'archive_note': '',
+    }})
+
+    await _audit('project_plan', plan_id, 'project_plan_restored', user['id'], {
+        'project_id': project_id,
+        'discipline': plan.get('discipline', ''),
+        'filename': plan.get('original_filename', ''),
+    })
+
+    return {'success': True}
 
 
 @router.get("/projects/{project_id}/units/{unit_id}/plans")

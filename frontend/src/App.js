@@ -29,6 +29,7 @@ import UnitHomePage from './pages/UnitHomePage';
 import UnitPlansPage from './pages/UnitPlansPage';
 import ProjectTasksPage from './pages/ProjectTasksPage';
 import ProjectPlansPage from './pages/ProjectPlansPage';
+import ProjectPlansArchivePage from './pages/ProjectPlansArchivePage';
 import MyProjectsPage from './pages/MyProjectsPage';
 import WaLoginPage from './pages/WaLoginPage';
 import OwnershipTransferPage from './pages/OwnershipTransferPage';
@@ -201,6 +202,14 @@ const AppRoutes = () => {
         }
       />
       <Route path="/" element={<Navigate to="/projects" replace />} />
+      <Route
+        path="/projects/:projectId/plans/archive"
+        element={
+          <ProtectedRoute>
+            <ProjectPlansArchivePage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/projects/:projectId/plans"
         element={

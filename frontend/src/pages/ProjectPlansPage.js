@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
-  Calendar, User, X, Plus, Trash2, Search, AlertCircle, FolderOpen
+  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive
 } from 'lucide-react';
 
 const DEFAULT_DISCIPLINES = [
@@ -36,9 +36,13 @@ const ProjectPlansPage = () => {
   const [addingDiscipline, setAddingDiscipline] = useState(false);
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState(null);
+  const [archivingPlanId, setArchivingPlanId] = useState(null);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archiveNote, setArchiveNote] = useState('');
 
   const myRole = project?.my_role || user?.role;
-  const canUpload = user && UPLOAD_ROLES.includes(myRole);
+  const canManage = user && UPLOAD_ROLES.includes(myRole);
 
   const loadProject = useCallback(async () => {
     try {
@@ -150,15 +154,25 @@ const ProjectPlansPage = () => {
     }
   };
 
-  const handleDelete = async (plan) => {
-    const reason = window.prompt('סיבה למחיקת התוכנית:');
-    if (!reason || !reason.trim()) return;
+  const openArchiveModal = (plan) => {
+    setArchiveTarget(plan);
+    setArchiveNote('');
+    setShowArchiveModal(true);
+  };
+
+  const handleArchive = async () => {
+    if (!archiveTarget) return;
+    setArchivingPlanId(archiveTarget.id);
     try {
-      await projectPlanService.delete(projectId, plan.id, reason.trim());
-      toast.success('התוכנית נמחקה');
+      await projectPlanService.archive(projectId, archiveTarget.id, archiveNote);
+      toast.success('התוכנית הועברה לארכיון');
+      setShowArchiveModal(false);
+      setArchiveTarget(null);
       loadPlans();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'שגיאה במחיקה');
+      toast.error(err?.response?.data?.detail || 'שגיאה בהעברה לארכיון');
+    } finally {
+      setArchivingPlanId(null);
     }
   };
 
@@ -190,14 +204,14 @@ const ProjectPlansPage = () => {
             <div className="min-w-0">
               <h1 className="text-base font-bold flex items-center gap-2">
                 <FolderOpen className="w-4 h-4 text-amber-400" />
-                תוכניות
+                תוכניות פעילות
               </h1>
               {project?.name && (
                 <p className="text-[11px] text-slate-400 truncate">{project.name}</p>
               )}
             </div>
           </div>
-          {canUpload && (
+          {canManage && (
             <button
               onClick={() => setShowUploadModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 rounded-lg text-xs font-bold transition-colors"
@@ -248,10 +262,19 @@ const ProjectPlansPage = () => {
       {headerBlock}
 
       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
-        <p className="text-[11px] text-slate-400 px-1">
-          {plans.length} תוכניות
-          {activeDiscipline !== 'all' && ` · ${getDisciplineLabel(activeDiscipline)}`}
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-slate-400 px-1">
+            {plans.length} תוכניות פעילות
+            {activeDiscipline !== 'all' && ` · ${getDisciplineLabel(activeDiscipline)}`}
+          </p>
+          <button
+            onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
+            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors px-1"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            ארכיון תוכניות
+          </button>
+        </div>
 
         <div className="relative">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -292,7 +315,7 @@ const ProjectPlansPage = () => {
               </button>
             );
           })}
-          {canUpload && (
+          {canManage && (
             showAddDiscipline ? (
               <div className="flex items-center gap-1 shrink-0">
                 <input
@@ -339,9 +362,9 @@ const ProjectPlansPage = () => {
             <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
             {plans.length === 0 ? (
               <>
-                <p className="text-sm text-slate-500">אין תוכניות עדיין</p>
+                <p className="text-sm text-slate-500">אין תוכניות פעילות</p>
                 <p className="text-xs text-slate-400 mt-1">
-                  {canUpload ? 'לחץ על כפתור ההעלאה כדי להוסיף תוכנית' : 'תוכניות יתווספו על ידי צוות הניהול'}
+                  {canManage ? 'לחץ על כפתור ההעלאה כדי להוסיף תוכנית' : 'תוכניות יתווספו על ידי צוות הניהול'}
                 </p>
               </>
             ) : (
@@ -395,13 +418,14 @@ const ProjectPlansPage = () => {
                     >
                       <Download className="w-3.5 h-3.5 text-slate-400" />
                     </a>
-                    {canUpload && (
+                    {canManage && (
                       <button
-                        onClick={() => handleDelete(plan)}
-                        className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                        title="מחק תוכנית"
+                        onClick={() => openArchiveModal(plan)}
+                        disabled={archivingPlanId === plan.id}
+                        className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-40"
+                        title="העבר לארכיון"
                       >
-                        <Trash2 className="w-3.5 h-3.5 text-red-300" />
+                        <Archive className="w-3.5 h-3.5 text-slate-400" />
                       </button>
                     )}
                   </div>
@@ -412,7 +436,7 @@ const ProjectPlansPage = () => {
         )}
       </div>
 
-      {showUploadModal && canUpload && (
+      {showUploadModal && canManage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
@@ -482,6 +506,65 @@ const ProjectPlansPage = () => {
                   {uploading ? 'מעלה...' : 'בחר קובץ והעלה'}
                 </label>
                 <p className="text-[10px] text-slate-400 text-center mt-2">PDF, JPG, PNG, DWG, DXF</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showArchiveModal && archiveTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => { setShowArchiveModal(false); setArchiveTarget(null); }}
+          />
+          <div className="relative z-10 w-full max-w-sm mx-4 p-5 bg-white shadow-2xl rounded-2xl" dir="rtl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-800">העברה לארכיון</h3>
+              <button
+                onClick={() => { setShowArchiveModal(false); setArchiveTarget(null); }}
+                className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="bg-slate-50 rounded-xl px-3 py-2.5">
+                <p className="text-xs text-slate-500">תוכנית</p>
+                <p className="text-sm font-medium text-slate-800 mt-0.5 break-words line-clamp-2">
+                  {archiveTarget.original_filename || archiveTarget.file_url}
+                </p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-600 mb-1.5 block">הערה (אופציונלי)</label>
+                <input
+                  type="text"
+                  value={archiveNote}
+                  onChange={e => setArchiveNote(e.target.value)}
+                  placeholder="למה מועברת לארכיון?"
+                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') handleArchive(); }}
+                />
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-xs text-amber-700">
+                התוכנית תועבר לארכיון ותוכל לשחזר אותה בכל עת מדף הארכיון.
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleArchive}
+                  disabled={!!archivingPlanId}
+                  className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {archivingPlanId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                  העבר לארכיון
+                </button>
+                <button
+                  onClick={() => { setShowArchiveModal(false); setArchiveTarget(null); }}
+                  className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors"
+                >
+                  ביטול
+                </button>
               </div>
             </div>
           </div>

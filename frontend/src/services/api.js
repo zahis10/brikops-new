@@ -534,12 +534,31 @@ export const projectPlanService = {
     });
     return response.data;
   },
+  async listArchived(projectId, params = {}) {
+    const response = await axios.get(`${API}/projects/${projectId}/plans/archive`, {
+      headers: getAuthHeader(),
+      params,
+    });
+    return response.data;
+  },
   async upload(projectId, file, discipline, note = '') {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('discipline', discipline);
     if (note) formData.append('note', note);
     const response = await axios.post(`${API}/projects/${projectId}/plans`, formData, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
+  async archive(projectId, planId, note = '') {
+    const response = await axios.patch(`${API}/projects/${projectId}/plans/${planId}/archive`, { note }, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
+  async restore(projectId, planId) {
+    const response = await axios.patch(`${API}/projects/${projectId}/plans/${planId}/restore`, {}, {
       headers: getAuthHeader(),
     });
     return response.data;
