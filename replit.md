@@ -70,22 +70,17 @@ BrikOps is a full-stack application with a clear separation between frontend and
 
 ## Security Remediations
 
-### ecdsa dependency — direct dependency cleanup + runtime risk mitigation completed (2026-03)
+### ecdsa / python-jose — fully remediated (2026-03)
 
-**What was completed:**
+**Phase 1 — direct dependency cleanup + runtime risk mitigation:**
 -   `ecdsa==0.19.1` removed from direct `requirements.txt`
--   `python-jose[cryptography]==3.5.0` declared explicitly to ensure the `cryptography` backend is always used
--   HS256 JWT runtime path verified: zero `ecdsa` modules loaded into `sys.modules` during JWT encode/decode
--   App boot and login regression checks passed
+-   `python-jose[cryptography]==3.5.0` declared explicitly to ensure the `cryptography` backend was always used
+-   HS256 JWT runtime path verified: zero `ecdsa` modules loaded at runtime
 
-**What was NOT completed:**
--   `ecdsa` is still installed transitively — `python-jose==3.5.0` declares `ecdsa` as a hard base dependency regardless of the `[cryptography]` extra
--   The vulnerability is not fully removed from the environment or dependency graph
--   Dependency scanners may still continue to flag `ecdsa` as a vulnerability in the installed package set
-
-**Follow-up task (required for full remediation):**
-Migrate JWT implementation from `python-jose` to `PyJWT` to fully eliminate the transitive `ecdsa` dependency. `PyJWT==2.11.0` is already installed and does not depend on `ecdsa`. The follow-up must provide proof of:
-1.  `python-jose` removed from `requirements.txt` and uninstalled
-2.  `ecdsa` no longer installed in the environment
-3.  JWT encode/decode still works with `PyJWT`
-4.  Login and all protected routes still work end-to-end
+**Phase 2 — full remediation via PyJWT migration:**
+-   JWT implementation migrated from `python-jose` to `PyJWT==2.11.0` across all 3 backend files (`router.py`, `onboarding_router.py`, `server.py`)
+-   `python-jose` removed from `requirements.txt` and uninstalled from environment
+-   `ecdsa` no longer installed in environment — confirmed absent via `pip show`
+-   All JWT encode/decode paths use `PyJWT` with HS256, same claims, same expiry, same issuer validation, same leeway
+-   Negative auth proofs passed: expired token → 401, invalid signature → 401, wrong issuer → 401
+-   App boot and e2e login regression checks passed

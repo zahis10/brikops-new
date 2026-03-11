@@ -734,13 +734,14 @@ async def paywall_middleware(request: Request, call_next):
         if not exempt:
             auth_header = request.headers.get('authorization', '')
             if auth_header.startswith('Bearer '):
-                from jose import jwt as jose_jwt, JWTError as JoseJWTError
+                import jwt as _pyjwt
                 try:
                     token = auth_header[7:]
-                    payload = jose_jwt.decode(
+                    payload = _pyjwt.decode(
                         token, JWT_SECRET,
                         algorithms=['HS256'],
-                        options={'require_exp': True, 'require_iat': True, 'require_iss': True, 'leeway': 60},
+                        options={'require': ['exp', 'iat', 'iss']},
+                        leeway=60,
                         issuer=APP_ID,
                     )
                     user_id = payload.get('user_id')
@@ -754,7 +755,7 @@ async def paywall_middleware(request: Request, call_next):
                             access = await get_effective_access(user_id)
                             if access != EffectiveAccess.FULL_ACCESS:
                                 paywall_block = True
-                except JoseJWTError:
+                except _pyjwt.PyJWTError:
                     pass
     if paywall_block:
         return JSONResponse(

@@ -8,7 +8,7 @@ import secrets
 import bcrypt
 import logging
 import re as _re
-from jose import JWTError, jwt
+import jwt
 
 from config import (
     APP_ID, JWT_SECRET, JWT_SECRET_VERSION,
@@ -154,11 +154,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             token, JWT_SECRET,
             algorithms=JWT_ALLOWED_ALGORITHMS,
             options={
-                'require_exp': True,
-                'require_iat': True,
-                'require_iss': True,
-                'leeway': JWT_CLOCK_SKEW_SECONDS,
+                'require': ['exp', 'iat', 'iss'],
             },
+            leeway=JWT_CLOCK_SKEW_SECONDS,
             issuer=APP_ID,
         )
         if payload.get('secret_version') != JWT_SECRET_VERSION:
@@ -177,7 +175,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user['_jwt_sv'] = jwt_sv
         user['_jwt_exp'] = payload.get('exp', 0)
         return user
-    except JWTError as e:
+    except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f'Invalid token: {str(e)}')
 
 

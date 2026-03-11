@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import uuid
 import bcrypt
 import logging
-from jose import jwt
+import jwt
 
 from config import (
     APP_ID, JWT_SECRET, JWT_SECRET_VERSION, JWT_ALGORITHM,
