@@ -1808,7 +1808,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
               {isPM && (
                 <button
                   onClick={(e) => { e.stopPropagation(); handleArchiveBuilding(building); }}
-                  className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors border-r border-slate-100"
+                  className="p-2.5 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors border-r border-slate-50"
                   title="ארכב בניין"
                 >
                   <Archive className="w-4 h-4" />
@@ -1816,7 +1816,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
               )}
               <button
                 onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); if (!isExpanded) toggleBuilding(building.id); }}
-                className="p-3 text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-100"
+                className="p-2.5 text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-50"
                 title="הוסף קומה"
               >
                 <Plus className="w-4 h-4" />
@@ -2553,9 +2553,9 @@ const ProjectControlPage = () => {
 
   const workTabs = [
     { id: 'structure', label: 'מבנה', icon: Building2 },
-    { id: 'plans', label: 'תוכניות', icon: FileText },
     { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
+    { id: 'plans', label: 'תוכניות', icon: FileText },
   ].filter(t => !t.hidden);
 
   const handleWorkTab = (id) => {
@@ -2606,7 +2606,7 @@ const ProjectControlPage = () => {
           <div className="flex gap-1 overflow-x-auto">
             {MGMT_TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-                className={`px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${activeTab === tab.id ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                className={`px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${activeTab === tab.id ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                 {tab.label}
               </button>
             ))}
