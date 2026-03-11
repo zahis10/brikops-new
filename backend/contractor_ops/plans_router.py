@@ -127,6 +127,81 @@ async def upload_project_plan(
     return resolve_urls_in_doc(dict(plan_doc))
 
 
+@router.post("/projects/{project_id}/plans/{plan_id}/replace")
+async def replace_project_plan(
+    project_id: str,
+    plan_id: str,
+    file: UploadFile = File(...),
+    note: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה להחליף תוכניות')
+
+    old_plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    })
+    if not old_plan:
+        raise HTTPException(status_code=404, detail='תוכנית פעילה לא נמצאה')
+
+    discipline = old_plan['discipline']
+
+    from services.storage_service import StorageService
+    storage = StorageService()
+    result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
+
+    new_plan_id = str(uuid.uuid4())
+    ts = _now()
+    new_plan_doc = {
+        'id': new_plan_id,
+        'project_id': project_id,
+        'discipline': discipline,
+        'file_url': result.file_url,
+        'original_filename': file.filename,
+        'file_size': result.file_size,
+        'uploaded_by': user['id'],
+        'note': note or '',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'replaces_plan_id': plan_id,
+    }
+    await db.project_plans.insert_one(new_plan_doc)
+    new_plan_doc.pop('_id', None)
+
+    await db.project_plans.update_one({'id': plan_id}, {'$set': {
+        'status': 'archived',
+        'archive_reason': 'replaced',
+        'archived_at': ts,
+        'archived_by': user['id'],
+        'replaced_by_plan_id': new_plan_id,
+    }})
+
+    await _audit('project_plan', new_plan_id, 'project_plan_replace_upload', user['id'], {
+        'project_id': project_id,
+        'discipline': discipline,
+        'filename': file.filename,
+        'replaces_plan_id': plan_id,
+        'old_filename': old_plan.get('original_filename', ''),
+    })
+    await _audit('project_plan', plan_id, 'project_plan_replaced', user['id'], {
+        'project_id': project_id,
+        'discipline': discipline,
+        'replaced_by_plan_id': new_plan_id,
+        'new_filename': file.filename,
+    })
+
+    from services.object_storage import resolve_urls_in_doc
+    return resolve_urls_in_doc(dict(new_plan_doc))
+
+
 @router.patch("/projects/{project_id}/plans/{plan_id}/archive")
 async def archive_project_plan(
     project_id: str,

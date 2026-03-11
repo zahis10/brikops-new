@@ -551,6 +551,15 @@ export const projectPlanService = {
     });
     return response.data;
   },
+  async replace(projectId, planId, file, note = '') {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (note) formData.append('note', note);
+    const response = await axios.post(`${API}/projects/${projectId}/plans/${planId}/replace`, formData, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
   async archive(projectId, planId, note = '') {
     const response = await axios.patch(`${API}/projects/${projectId}/plans/${planId}/archive`, { note }, {
       headers: getAuthHeader(),

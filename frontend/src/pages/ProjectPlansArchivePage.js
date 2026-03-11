@@ -288,8 +288,12 @@ const ProjectPlansArchivePage = () => {
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">
                         {getDisciplineLabel(plan.discipline)}
                       </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">
-                        הועברה לארכיון
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        plan.archive_reason === 'replaced'
+                          ? 'bg-blue-50 text-blue-600'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {plan.archive_reason === 'replaced' ? 'הוחלפה' : 'הועברה לארכיון'}
                       </span>
                       {plan.uploaded_by_name && (
                         <span className="text-[10px] text-slate-400 flex items-center gap-0.5">

@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
-  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive
+  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw
 } from 'lucide-react';
 
 const DEFAULT_DISCIPLINES = [
@@ -20,6 +20,7 @@ const ProjectPlansPage = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const fileInputRef = useRef(null);
+  const replaceFileInputRef = useRef(null);
 
   const [project, setProject] = useState(null);
   const [plans, setPlans] = useState([]);
@@ -40,6 +41,10 @@ const ProjectPlansPage = () => {
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [archiveNote, setArchiveNote] = useState('');
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState(null);
+  const [replaceNote, setReplaceNote] = useState('');
+  const [replacing, setReplacing] = useState(false);
 
   const myRole = project?.my_role || user?.role;
   const canManage = user && UPLOAD_ROLES.includes(myRole);
@@ -173,6 +178,31 @@ const ProjectPlansPage = () => {
       toast.error(err?.response?.data?.detail || 'שגיאה בהעברה לארכיון');
     } finally {
       setArchivingPlanId(null);
+    }
+  };
+
+  const openReplaceModal = (plan) => {
+    setReplaceTarget(plan);
+    setReplaceNote('');
+    setShowReplaceModal(true);
+  };
+
+  const handleReplace = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !replaceTarget) return;
+    setReplacing(true);
+    try {
+      await projectPlanService.replace(projectId, replaceTarget.id, file, replaceNote);
+      toast.success('התוכנית הוחלפה בהצלחה');
+      setShowReplaceModal(false);
+      setReplaceTarget(null);
+      setReplaceNote('');
+      loadPlans();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'שגיאה בהחלפת תוכנית');
+    } finally {
+      setReplacing(false);
+      if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
     }
   };
 
@@ -419,14 +449,23 @@ const ProjectPlansPage = () => {
                       <Download className="w-3.5 h-3.5 text-slate-400" />
                     </a>
                     {canManage && (
-                      <button
-                        onClick={() => openArchiveModal(plan)}
-                        disabled={archivingPlanId === plan.id}
-                        className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-40"
-                        title="העבר לארכיון"
-                      >
-                        <Archive className="w-3.5 h-3.5 text-slate-400" />
-                      </button>
+                      <>
+                        <button
+                          onClick={() => openReplaceModal(plan)}
+                          className="p-1.5 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="החלף גרסה"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+                        </button>
+                        <button
+                          onClick={() => openArchiveModal(plan)}
+                          disabled={archivingPlanId === plan.id}
+                          className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-40"
+                          title="העבר לארכיון"
+                        >
+                          <Archive className="w-3.5 h-3.5 text-slate-400" />
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -566,6 +605,83 @@ const ProjectPlansPage = () => {
                   ביטול
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReplaceModal && replaceTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => { setShowReplaceModal(false); setReplaceTarget(null); }}
+          />
+          <div className="relative z-10 w-full max-w-sm mx-4 p-5 bg-white shadow-2xl rounded-2xl" dir="rtl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-800">החלפת תוכנית</h3>
+              <button
+                onClick={() => { setShowReplaceModal(false); setReplaceTarget(null); }}
+                className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="bg-slate-50 rounded-xl px-3 py-2.5">
+                <p className="text-xs text-slate-500">תוכנית נוכחית</p>
+                <p className="text-sm font-medium text-slate-800 mt-0.5 break-words line-clamp-2">
+                  {replaceTarget.original_filename || replaceTarget.file_url}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {getDisciplineLabel(replaceTarget.discipline)} · {formatDate(replaceTarget.created_at)}
+                </p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-600 mb-1.5 block">הערה לגרסה החדשה (אופציונלי)</label>
+                <input
+                  type="text"
+                  value={replaceNote}
+                  onChange={e => setReplaceNote(e.target.value)}
+                  placeholder="מה השתנה בגרסה החדשה?"
+                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  autoFocus
+                />
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 text-xs text-blue-700">
+                הקובץ הנוכחי יועבר לארכיון והקובץ החדש יהפוך לתוכנית הפעילה.
+              </div>
+              <div>
+                <input
+                  ref={replaceFileInputRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf"
+                  onChange={handleReplace}
+                  className="hidden"
+                  id="project-plan-replace"
+                />
+                <label
+                  htmlFor="project-plan-replace"
+                  className={`flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-bold cursor-pointer transition-colors ${
+                    replacing
+                      ? 'bg-slate-200 text-slate-400 cursor-wait'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg'
+                  }`}
+                >
+                  {replacing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  {replacing ? 'מחליף...' : 'בחר קובץ חדש והחלף'}
+                </label>
+                <p className="text-[10px] text-slate-400 text-center mt-2">PDF, JPG, PNG, DWG, DXF</p>
+              </div>
+              <button
+                onClick={() => { setShowReplaceModal(false); setReplaceTarget(null); }}
+                className="w-full py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors"
+              >
+                ביטול
+              </button>
             </div>
           </div>
         </div>
