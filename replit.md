@@ -67,3 +67,6 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Uvicorn**: ASGI server for FastAPI.
 -   **React**: Frontend core library.
 -   **Radix UI, TailwindCSS, shadcn/ui**: Frontend component and styling libraries.
+
+## Security Remediations
+-   **ecdsa dependency (2026-03)**: Removed `ecdsa==0.19.1` from direct `requirements.txt`. The package was a transitive dependency of `python-jose` (pure-python ECDSA with known timing side-channel vulnerabilities). Changed declaration to `python-jose[cryptography]==3.5.0` to explicitly require the safe `cryptography` backend. **Note**: `ecdsa` remains installed transitively because `python-jose==3.5.0` has it as a hard base dependency — but it is **never loaded at runtime**. All JWT operations use HS256 (HMAC) via the `cryptography` backend. The `ecdsa` fallback backend is never reached because `cryptography` is present and takes priority in `jose.backends`. Zero `ecdsa` modules appear in `sys.modules` during app execution.
