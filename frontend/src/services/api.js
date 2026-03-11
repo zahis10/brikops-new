@@ -551,6 +551,27 @@ export const projectPlanService = {
     });
     return response.data;
   },
+  markSeen(projectId, planId) {
+    const token = localStorage.getItem('token');
+    const url = `${API}/projects/${projectId}/plans/${planId}/seen`;
+    try {
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        keepalive: true,
+        body: '{}',
+      });
+    } catch {}
+  },
+  async getSeenStatus(projectId, planId) {
+    const response = await axios.get(`${API}/projects/${projectId}/plans/${planId}/seen`, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
   async history(projectId, planId) {
     const response = await axios.get(`${API}/projects/${projectId}/plans/${planId}/history`, {
       headers: getAuthHeader(),

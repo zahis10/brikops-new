@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
-  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw, Clock
+  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw, Clock, Users, CheckCircle
 } from 'lucide-react';
 
 const DEFAULT_DISCIPLINES = [
@@ -14,6 +14,7 @@ const DEFAULT_DISCIPLINES = [
 ];
 
 const UPLOAD_ROLES = ['project_manager', 'management_team'];
+const MANAGER_VIEW_ROLES = ['super_admin', 'project_manager', 'management_team'];
 
 const ProjectPlansPage = () => {
   const { projectId } = useParams();
@@ -45,9 +46,14 @@ const ProjectPlansPage = () => {
   const [replaceTarget, setReplaceTarget] = useState(null);
   const [replaceNote, setReplaceNote] = useState('');
   const [replacing, setReplacing] = useState(false);
+  const [showSeenModal, setShowSeenModal] = useState(false);
+  const [seenModalData, setSeenModalData] = useState(null);
+  const [seenModalLoading, setSeenModalLoading] = useState(false);
+  const [seenModalPlanName, setSeenModalPlanName] = useState('');
 
   const myRole = project?.my_role || user?.role;
   const canManage = user && UPLOAD_ROLES.includes(myRole);
+  const isManager = user && (MANAGER_VIEW_ROLES.includes(myRole) || user?.role === 'super_admin');
 
   const loadProject = useCallback(async () => {
     try {
@@ -204,6 +210,36 @@ const ProjectPlansPage = () => {
       setReplacing(false);
       if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
     }
+  };
+
+  const handleViewPlan = (plan) => {
+    projectPlanService.markSeen(projectId, plan.id);
+  };
+
+  const openSeenModal = async (plan) => {
+    setSeenModalPlanName(plan.original_filename || plan.file_url);
+    setShowSeenModal(true);
+    setSeenModalLoading(true);
+    setSeenModalData(null);
+    try {
+      const data = await projectPlanService.getSeenStatus(projectId, plan.id);
+      setSeenModalData(data);
+    } catch {
+      toast.error('שגיאה בטעינת סטטוס צפייה');
+      setShowSeenModal(false);
+    } finally {
+      setSeenModalLoading(false);
+    }
+  };
+
+  const formatSeenDate = (dateStr) => {
+    if (!dateStr) return '';
+    try {
+      return new Date(dateStr).toLocaleDateString('he-IL', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+    } catch { return dateStr; }
   };
 
   const handleBack = () => {
@@ -429,12 +465,22 @@ const ProjectPlansPage = () => {
                     {plan.note && (
                       <p className="text-xs text-slate-500 mt-1.5">{plan.note}</p>
                     )}
+                    {isManager && plan.total_members != null && (
+                      <button
+                        onClick={() => openSeenModal(plan)}
+                        className="flex items-center gap-1 mt-1.5 text-[10px] text-slate-400 hover:text-amber-600 transition-colors"
+                      >
+                        <Users className="w-3 h-3" />
+                        נצפה על ידי {plan.seen_count || 0}/{plan.total_members}
+                      </button>
+                    )}
                   </div>
                   <div className="flex gap-0.5 flex-shrink-0">
                     <a
                       href={plan.file_url}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={() => handleViewPlan(plan)}
                       className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                       title="צפה"
                     >
@@ -443,6 +489,7 @@ const ProjectPlansPage = () => {
                     <a
                       href={plan.file_url}
                       download
+                      onClick={() => handleViewPlan(plan)}
                       className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                       title="הורד"
                     >
@@ -691,6 +738,76 @@ const ProjectPlansPage = () => {
               >
                 ביטול
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSeenModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowSeenModal(false)}
+          />
+          <div className="relative z-10 w-full max-w-md mx-4 bg-white shadow-2xl rounded-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-800">סטטוס צפייה</h3>
+                <p className="text-[10px] text-slate-400 truncate mt-0.5">{seenModalPlanName}</p>
+              </div>
+              <button
+                onClick={() => setShowSeenModal(false)}
+                className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-4">
+              {seenModalLoading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
+                </div>
+              ) : seenModalData ? (
+                <>
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Users className="w-3.5 h-3.5" />
+                    <span>נצפה על ידי {seenModalData.seen_count}/{seenModalData.total_members}</span>
+                  </div>
+
+                  {seenModalData.seen?.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-bold text-green-700 mb-2 flex items-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        צפו ({seenModalData.seen.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {seenModalData.seen.map(u => (
+                          <div key={u.user_id} className="flex items-center justify-between bg-green-50 rounded-lg px-3 py-2">
+                            <span className="text-xs font-medium text-slate-700">{u.name || 'ללא שם'}</span>
+                            <span className="text-[10px] text-slate-400">{formatSeenDate(u.last_seen_at)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {seenModalData.unseen?.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-500 mb-2 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        טרם צפו ({seenModalData.unseen.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {seenModalData.unseen.map(u => (
+                          <div key={u.user_id} className="flex items-center bg-slate-50 rounded-lg px-3 py-2">
+                            <span className="text-xs font-medium text-slate-500">{u.name || 'ללא שם'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : null}
             </div>
           </div>
         </div>

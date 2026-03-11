@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projectService, projectPlanService } from '../services/api';
+// eslint-disable-next-line no-unused-vars
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { t } from '../i18n';
@@ -191,6 +192,7 @@ const ProjectPlanHistoryPage = () => {
                         href={currentVersion.file_url}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => currentVersion.status !== 'archived' && projectPlanService.markSeen(projectId, currentVersion.id)}
                         className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                         title="צפה"
                       >
@@ -199,6 +201,7 @@ const ProjectPlanHistoryPage = () => {
                       <a
                         href={currentVersion.file_url}
                         download
+                        onClick={() => currentVersion.status !== 'archived' && projectPlanService.markSeen(projectId, currentVersion.id)}
                         className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                         title="הורד"
                       >

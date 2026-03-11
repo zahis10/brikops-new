@@ -12,6 +12,10 @@ from contractor_ops.router import (
 router = APIRouter(prefix="/api")
 
 
+MANAGEMENT_ROLES = ('super_admin', 'project_manager', 'management_team')
+TRACKABLE_ROLES = ('project_manager', 'management_team', 'contractor', 'viewer')
+
+
 @router.get("/projects/{project_id}/plans")
 async def list_project_plans(
     project_id: str,
@@ -32,10 +36,35 @@ async def list_project_plans(
         query['discipline'] = discipline
     plans = await db.project_plans.find(query, {'_id': 0}).sort('created_at', -1).to_list(500)
     from services.object_storage import resolve_urls_in_doc
+
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none') if requester_membership else 'none'
+    is_manager = requester_role in MANAGEMENT_ROLES or user.get('role') == 'super_admin'
+
+    total_members = 0
+    if is_manager and plans:
+        total_members = await db.project_memberships.count_documents({
+            'project_id': project_id,
+            'role': {'$in': list(TRACKABLE_ROLES)},
+        })
+
+    plan_ids = [p['id'] for p in plans]
+    seen_counts = {}
+    if is_manager and plan_ids:
+        pipeline = [
+            {'$match': {'plan_id': {'$in': plan_ids}}},
+            {'$group': {'_id': '$plan_id', 'count': {'$sum': 1}}},
+        ]
+        async for doc in db.plan_read_receipts.aggregate(pipeline):
+            seen_counts[doc['_id']] = doc['count']
+
     for p in plans:
         uploader = await db.users.find_one({'id': p.get('uploaded_by')}, {'_id': 0, 'name': 1})
         p['uploaded_by_name'] = uploader.get('name', '') if uploader else ''
         resolve_urls_in_doc(p)
+        if is_manager:
+            p['seen_count'] = seen_counts.get(p['id'], 0)
+            p['total_members'] = total_members
     return plans
 
 
@@ -125,6 +154,106 @@ async def upload_project_plan(
 
     from services.object_storage import resolve_urls_in_doc
     return resolve_urls_in_doc(dict(plan_doc))
+
+
+@router.post("/projects/{project_id}/plans/{plan_id}/seen")
+async def mark_plan_seen(
+    project_id: str,
+    plan_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    }, {'_id': 0, 'id': 1})
+    if not plan:
+        return {'success': False}
+
+    ts = datetime.now(timezone.utc).isoformat()
+    await db.plan_read_receipts.update_one(
+        {'plan_id': plan_id, 'user_id': user['id']},
+        {
+            '$set': {'last_seen_at': ts, 'project_id': project_id},
+            '$setOnInsert': {
+                'id': str(uuid.uuid4()),
+                'first_seen_at': ts,
+                'source': 'view',
+            },
+        },
+        upsert=True,
+    )
+    return {'success': True}
+
+
+@router.get("/projects/{project_id}/plans/{plan_id}/seen")
+async def get_plan_seen_status(
+    project_id: str,
+    plan_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    }, {'_id': 0, 'id': 1})
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית פעילה לא נמצאה')
+
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none') if requester_membership else 'none'
+    if requester_role not in MANAGEMENT_ROLES and user.get('role') != 'super_admin':
+        raise HTTPException(status_code=403, detail='אין הרשאה לצפות בסטטוס צפייה')
+
+    memberships = await db.project_memberships.find(
+        {'project_id': project_id, 'role': {'$in': list(TRACKABLE_ROLES)}},
+        {'_id': 0, 'user_id': 1},
+    ).to_list(500)
+    member_user_ids = [m['user_id'] for m in memberships]
+
+    receipts = await db.plan_read_receipts.find(
+        {'plan_id': plan_id, 'user_id': {'$in': member_user_ids}},
+        {'_id': 0},
+    ).to_list(500)
+    seen_user_ids = {r['user_id'] for r in receipts}
+    receipt_map = {r['user_id']: r for r in receipts}
+
+    users = await db.users.find(
+        {'id': {'$in': member_user_ids}},
+        {'_id': 0, 'id': 1, 'name': 1},
+    ).to_list(500)
+    user_map = {u['id']: u.get('name', '') for u in users}
+
+    seen = []
+    unseen = []
+    for uid in member_user_ids:
+        name = user_map.get(uid, '')
+        if uid in seen_user_ids:
+            r = receipt_map[uid]
+            seen.append({
+                'user_id': uid,
+                'name': name,
+                'first_seen_at': r.get('first_seen_at', ''),
+                'last_seen_at': r.get('last_seen_at', ''),
+            })
+        else:
+            unseen.append({'user_id': uid, 'name': name})
+
+    return {
+        'plan_id': plan_id,
+        'seen_count': len(seen),
+        'total_members': len(member_user_ids),
+        'seen': seen,
+        'unseen': unseen,
+    }
 
 
 @router.get("/projects/{project_id}/plans/{plan_id}/history")
