@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { projectService, buildingService } from '../services/api';
+import { projectService, buildingService, floorService } from '../services/api';
 import { formatUnitLabel } from '../utils/formatters';
 import { Card } from '../components/ui/card';
 import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, Building2, Layers, Home,
-  ChevronDown, ChevronRight, AlertTriangle, WifiOff
+  ChevronDown, ChevronRight, AlertTriangle, WifiOff, Plus, X
 } from 'lucide-react';
 
 const normalizeList = (data) => {
@@ -36,6 +36,19 @@ const InnerBuildingPage = () => {
   const [expandedFloors, setExpandedFloors] = useState({});
   const [activeTab, setActiveTab] = useState('units');
   const [loadError, setLoadError] = useState(null);
+
+  const [fabOpen, setFabOpen] = useState(false);
+  const [addingFloor, setAddingFloor] = useState(false);
+  const [newFloorName, setNewFloorName] = useState('');
+  const [newFloorUnitCount, setNewFloorUnitCount] = useState('0');
+  const [floorSaving, setFloorSaving] = useState(false);
+  const [addingUnitToFloor, setAddingUnitToFloor] = useState(null);
+  const [newUnitsCount, setNewUnitsCount] = useState('');
+  const [unitSaving, setUnitSaving] = useState(false);
+  const [pendingExpandFloor, setPendingExpandFloor] = useState(null);
+
+  const addFloorFormRef = useRef(null);
+  const floorRefs = useRef({});
 
   const handleBack = useCallback(() => {
     if (window.history.length > 2) {
@@ -85,6 +98,21 @@ const InnerBuildingPage = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (pendingExpandFloor && building) {
+      const floors = building.floors || [];
+      const target = floors.find(f => f.id === pendingExpandFloor) || floors.find(f => f.name === pendingExpandFloor) || floors[floors.length - 1];
+      if (target) {
+        setExpandedFloors(prev => ({ ...prev, [target.id]: true }));
+        setTimeout(() => {
+          const el = floorRefs.current[target.id];
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+      }
+      setPendingExpandFloor(null);
+    }
+  }, [pendingExpandFloor, building]);
 
   const unitDefectMap = useMemo(() => {
     const map = {};
@@ -138,6 +166,77 @@ const InnerBuildingPage = () => {
 
   const toggleFloor = (floorId) => {
     setExpandedFloors(prev => ({ ...prev, [floorId]: !prev[floorId] }));
+  };
+
+  const handleAddFloor = async () => {
+    if (!newFloorName.trim()) {
+      toast.error('יש להזין קומה (מספר או שם)');
+      return;
+    }
+    setFloorSaving(true);
+    try {
+      const unitCount = parseInt(newFloorUnitCount) || 0;
+      const created = await buildingService.createFloor(buildingId, {
+        name: newFloorName.trim(),
+        floor_number: 0,
+        unit_count: unitCount,
+      });
+      toast.success('קומה נוספה בהצלחה');
+      const createdFloorId = created?.id || created?._id || newFloorName.trim();
+      setAddingFloor(false);
+      setNewFloorName('');
+      setNewFloorUnitCount('0');
+      setPendingExpandFloor(createdFloorId);
+      await loadData();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join(', ') : 'שגיאה בהוספת קומה';
+      toast.error(msg);
+    } finally {
+      setFloorSaving(false);
+    }
+  };
+
+  const handleAddUnit = async (floorId) => {
+    const count = parseInt(newUnitsCount) || 0;
+    if (count <= 0) {
+      toast.error('יש להזין כמות דירות (מספר חיובי)');
+      return;
+    }
+    setUnitSaving(true);
+    try {
+      await floorService.createUnit(floorId, { unit_count: count });
+      toast.success(`${count} דירות נוספו בהצלחה`);
+      setAddingUnitToFloor(null);
+      setNewUnitsCount('');
+      await loadData();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join(', ') : 'שגיאה בהוספת דירות';
+      toast.error(msg);
+    } finally {
+      setUnitSaving(false);
+    }
+  };
+
+  const handleFabAddUnits = () => {
+    setFabOpen(false);
+    const expandedId = Object.keys(expandedFloors).find(id => expandedFloors[id]);
+    if (expandedId) {
+      setAddingUnitToFloor(expandedId);
+      setNewUnitsCount('');
+    } else {
+      toast.info('בחר קומה תחילה');
+    }
+  };
+
+  const handleFloorPlusClick = (e, floorId) => {
+    e.stopPropagation();
+    setAddingUnitToFloor(floorId);
+    setNewUnitsCount('');
+    if (!expandedFloors[floorId]) {
+      setExpandedFloors(prev => ({ ...prev, [floorId]: true }));
+    }
   };
 
   if (loading) {
@@ -198,7 +297,7 @@ const InnerBuildingPage = () => {
   const floors = building.floors || [];
 
   return (
-    <div dir="rtl" className="min-h-screen bg-slate-50">
+    <div dir="rtl" className="min-h-screen bg-slate-50" style={{ paddingBottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))' }}>
       <div className="sticky top-0 z-30 bg-slate-800 px-4 py-3 flex items-center gap-3">
         <button onClick={handleBack} className="text-white hover:text-amber-300 transition-colors" aria-label="חזרה">
           <ArrowRight className="w-5 h-5" />
@@ -250,7 +349,53 @@ const InnerBuildingPage = () => {
             </Card>
           </div>
 
-          {floors.length === 0 ? (
+          {addingFloor && (
+            <Card ref={addFloorFormRef} className="p-3 bg-amber-50 border-amber-100 rounded-xl">
+              <p className="text-xs font-medium text-amber-700 mb-2">הוסף קומה ל{building.name}</p>
+              <div className="flex gap-2 items-start flex-wrap">
+                <div className="flex-1 min-w-[120px]">
+                  <label className="block text-[11px] font-medium text-amber-800 mb-1">שם/מספר קומה</label>
+                  <input
+                    type="text"
+                    value={newFloorName}
+                    onChange={e => setNewFloorName(e.target.value)}
+                    placeholder="למשל: 1, -1, גג"
+                    className="w-full text-sm border border-amber-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    onKeyDown={e => e.key === 'Enter' && handleAddFloor()}
+                    autoFocus
+                  />
+                </div>
+                <div className="w-28">
+                  <label className="block text-[11px] font-medium text-amber-800 mb-1">מס׳ דירות בקומה</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newFloorUnitCount}
+                    onChange={e => setNewFloorUnitCount(e.target.value)}
+                    placeholder="0"
+                    className="w-full text-sm border border-amber-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center"
+                    onKeyDown={e => e.key === 'Enter' && handleAddFloor()}
+                  />
+                </div>
+                <button
+                  onClick={handleAddFloor}
+                  disabled={floorSaving}
+                  className="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 flex-shrink-0 mt-[18px]"
+                >
+                  {floorSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'הוסף'}
+                </button>
+                <button
+                  onClick={() => { setAddingFloor(false); setNewFloorName(''); setNewFloorUnitCount('0'); }}
+                  className="text-slate-400 hover:text-slate-600 flex-shrink-0 mt-[18px]"
+                  aria-label="ביטול"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </Card>
+          )}
+
+          {floors.length === 0 && !addingFloor ? (
             <Card className="p-6 text-center">
               <Layers className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm text-slate-500">אין קומות בבניין זה</p>
@@ -263,39 +408,80 @@ const InnerBuildingPage = () => {
                 const floorOpenDefects = floorDefectMap[floor.id] || 0;
 
                 return (
-                  <Card key={floor.id} className="overflow-hidden rounded-xl border-slate-200">
-                    <button
-                      onClick={() => toggleFloor(floor.id)}
-                      className="w-full flex items-center gap-3 p-3.5 hover:bg-slate-50 transition-colors text-right"
-                      aria-expanded={isExpanded}
-                      aria-label={`${floor.display_label || floor.name} - ${units.length} דירות`}
-                    >
-                      {isExpanded
-                        ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                        : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                      }
-                      <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Layers className="w-4 h-4 text-blue-500" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-slate-800 truncate">
-                          {floor.display_label || floor.name}
-                        </p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          {units.length} דירות
-                          {floorOpenDefects > 0 && (
-                            <span className="text-red-500 font-medium mr-2">
-                              · {floorOpenDefects} ליקויים
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                    </button>
+                  <Card
+                    key={floor.id}
+                    ref={el => { floorRefs.current[floor.id] = el; }}
+                    className="overflow-hidden rounded-xl border-slate-200"
+                  >
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => toggleFloor(floor.id)}
+                        className="flex-1 flex items-center gap-3 p-3.5 hover:bg-slate-50 transition-colors text-right"
+                        aria-expanded={isExpanded}
+                        aria-label={`${floor.display_label || floor.name} - ${units.length} דירות`}
+                      >
+                        {isExpanded
+                          ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                        }
+                        <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Layers className="w-4 h-4 text-blue-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-800 truncate">
+                            {floor.display_label || floor.name}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {units.length} דירות
+                            {floorOpenDefects > 0 && (
+                              <span className="text-red-500 font-medium mr-2">
+                                · {floorOpenDefects} ליקויים
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => handleFloorPlusClick(e, floor.id)}
+                        className="p-2 ml-1 text-blue-500 hover:bg-blue-50 rounded-md transition-colors flex-shrink-0"
+                        aria-label="הוסף דירות"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     {isExpanded && (
                       <div className="border-t border-slate-100 p-3">
-                        {units.length === 0 ? (
+                        {addingUnitToFloor === floor.id && (
+                          <div className="flex gap-2 items-center mb-2 bg-blue-50 p-2 rounded-lg">
+                            <input
+                              type="number"
+                              min="1"
+                              value={newUnitsCount}
+                              onChange={e => setNewUnitsCount(e.target.value)}
+                              placeholder="כמות דירות"
+                              className="flex-1 text-sm border border-blue-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              onKeyDown={e => e.key === 'Enter' && handleAddUnit(floor.id)}
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => handleAddUnit(floor.id)}
+                              disabled={unitSaving}
+                              className="bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-600 disabled:opacity-50"
+                            >
+                              {unitSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'הוסף'}
+                            </button>
+                            <button
+                              onClick={() => { setAddingUnitToFloor(null); setNewUnitsCount(''); }}
+                              className="text-slate-400 hover:text-slate-600"
+                              aria-label="ביטול"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                        {units.length === 0 && addingUnitToFloor !== floor.id ? (
                           <p className="text-xs text-slate-400 text-center py-2">אין דירות בקומה זו</p>
-                        ) : (
+                        ) : units.length > 0 ? (
                           <div className="flex flex-wrap gap-2">
                             {units.map(unit => {
                               const label = formatUnitLabel(unit.effective_label || unit.unit_no);
@@ -319,7 +505,7 @@ const InnerBuildingPage = () => {
                               );
                             })}
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     )}
                   </Card>
@@ -328,6 +514,47 @@ const InnerBuildingPage = () => {
             </div>
           )}
         </div>
+      )}
+
+      {activeTab === 'units' && (
+        <>
+          {fabOpen && (
+            <div
+              className="fixed inset-0 bg-black/20 z-30"
+              onClick={() => setFabOpen(false)}
+            />
+          )}
+          <div className="fixed left-4 z-40 flex flex-col items-center gap-2" style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
+            {fabOpen && (
+              <>
+                <button
+                  onClick={() => { setFabOpen(false); setAddingFloor(true); setNewFloorName(''); setNewFloorUnitCount('0'); }}
+                  className="flex items-center gap-2 bg-white shadow-lg rounded-full px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors border border-slate-200"
+                >
+                  <Layers className="w-4 h-4 text-amber-500" />
+                  הוסף קומה
+                </button>
+                <button
+                  onClick={handleFabAddUnits}
+                  className="flex items-center gap-2 bg-white shadow-lg rounded-full px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors border border-slate-200"
+                >
+                  <Home className="w-4 h-4 text-blue-500" />
+                  הוסף דירות
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => setFabOpen(prev => !prev)}
+              className="w-14 h-14 rounded-full bg-amber-500 text-white shadow-lg hover:bg-amber-600 active:bg-amber-700 transition-all flex items-center justify-center"
+              aria-label={fabOpen ? 'סגור תפריט' : 'פתח תפריט הוספה'}
+            >
+              <Plus
+                className="w-6 h-6 transition-transform duration-200"
+                style={{ transform: `rotate(${fabOpen ? 45 : 0}deg)` }}
+              />
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
