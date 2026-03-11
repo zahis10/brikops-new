@@ -265,10 +265,10 @@ const ProjectPlansPage = () => {
           />
         </div>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-1">
+        <div className="flex gap-1 overflow-x-auto pb-1">
           <button
             onClick={() => setActiveDiscipline('all')}
-            className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
               activeDiscipline === 'all'
                 ? 'bg-amber-500 text-white'
                 : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
@@ -282,7 +282,7 @@ const ProjectPlansPage = () => {
               <button
                 key={d.key}
                 onClick={() => setActiveDiscipline(d.key)}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
                   activeDiscipline === d.key
                     ? 'bg-amber-500 text-white'
                     : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
@@ -352,12 +352,12 @@ const ProjectPlansPage = () => {
           <div className="space-y-2">
             {filteredPlans.map(plan => (
               <div key={plan.id} className="bg-white rounded-xl border border-slate-200 px-4 py-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <FileText className="w-4.5 h-4.5 text-amber-500" />
+                <div className="flex items-start gap-2.5">
+                  <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <FileText className="w-4 h-4 text-amber-500" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold text-slate-800 truncate">{plan.original_filename || plan.file_url}</h3>
+                    <h3 className="text-[13px] font-bold text-slate-800 leading-snug break-words line-clamp-2">{plan.original_filename || plan.file_url}</h3>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
                         {getDisciplineLabel(plan.discipline)}
@@ -377,31 +377,31 @@ const ProjectPlansPage = () => {
                       <p className="text-xs text-slate-500 mt-1.5">{plan.note}</p>
                     )}
                   </div>
-                  <div className="flex gap-1 flex-shrink-0">
+                  <div className="flex gap-0.5 flex-shrink-0">
                     <a
                       href={plan.file_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                      className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                       title="צפה"
                     >
-                      <Eye className="w-4 h-4 text-slate-500" />
+                      <Eye className="w-3.5 h-3.5 text-slate-400" />
                     </a>
                     <a
                       href={plan.file_url}
                       download
-                      className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                      className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
                       title="הורד"
                     >
-                      <Download className="w-4 h-4 text-slate-500" />
+                      <Download className="w-3.5 h-3.5 text-slate-400" />
                     </a>
                     {canUpload && (
                       <button
                         onClick={() => handleDelete(plan)}
-                        className="p-2 hover:bg-red-50 rounded-lg transition-colors"
+                        className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
                         title="מחק תוכנית"
                       >
-                        <Trash2 className="w-4 h-4 text-red-400" />
+                        <Trash2 className="w-3.5 h-3.5 text-red-300" />
                       </button>
                     )}
                   </div>
