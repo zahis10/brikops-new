@@ -69,4 +69,23 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Radix UI, TailwindCSS, shadcn/ui**: Frontend component and styling libraries.
 
 ## Security Remediations
--   **ecdsa dependency (2026-03)**: Removed `ecdsa==0.19.1` from direct `requirements.txt`. The package was a transitive dependency of `python-jose` (pure-python ECDSA with known timing side-channel vulnerabilities). Changed declaration to `python-jose[cryptography]==3.5.0` to explicitly require the safe `cryptography` backend. **Note**: `ecdsa` remains installed transitively because `python-jose==3.5.0` has it as a hard base dependency — but it is **never loaded at runtime**. All JWT operations use HS256 (HMAC) via the `cryptography` backend. The `ecdsa` fallback backend is never reached because `cryptography` is present and takes priority in `jose.backends`. Zero `ecdsa` modules appear in `sys.modules` during app execution.
+
+### ecdsa dependency — direct dependency cleanup + runtime risk mitigation completed (2026-03)
+
+**What was completed:**
+-   `ecdsa==0.19.1` removed from direct `requirements.txt`
+-   `python-jose[cryptography]==3.5.0` declared explicitly to ensure the `cryptography` backend is always used
+-   HS256 JWT runtime path verified: zero `ecdsa` modules loaded into `sys.modules` during JWT encode/decode
+-   App boot and login regression checks passed
+
+**What was NOT completed:**
+-   `ecdsa` is still installed transitively — `python-jose==3.5.0` declares `ecdsa` as a hard base dependency regardless of the `[cryptography]` extra
+-   The vulnerability is not fully removed from the environment or dependency graph
+-   Dependency scanners may still continue to flag `ecdsa` as a vulnerability in the installed package set
+
+**Follow-up task (required for full remediation):**
+Migrate JWT implementation from `python-jose` to `PyJWT` to fully eliminate the transitive `ecdsa` dependency. `PyJWT==2.11.0` is already installed and does not depend on `ecdsa`. The follow-up must provide proof of:
+1.  `python-jose` removed from `requirements.txt` and uninstalled
+2.  `ecdsa` no longer installed in the environment
+3.  JWT encode/decode still works with `PyJWT`
+4.  Login and all protected routes still work end-to-end
