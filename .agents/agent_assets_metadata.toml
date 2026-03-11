@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "kvOenhCVwxPYRIqYSU0Vf"
+uri = "file://brikops-source.zip"
+type = "unspecified"
+title = "BrikOps Source Code (March 11, 2026)"
+
+[[outputs]]
+id = "o-uOOYY9SpJm7-IRckVbJ"
+uri = "file://WEEKLY_CHANGELOG.md"
+type = "text"
+title = "Weekly Changelog (March 4-11, 2026)"

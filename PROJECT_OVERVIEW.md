@@ -1,6 +1,6 @@
 # BrikOps — Project Overview
 
-**Last updated:** March 6, 2026
+**Last updated:** March 11, 2026
 
 ## Table of Contents
 1. [Directory Tree](#directory-tree)
@@ -56,8 +56,10 @@ brikops/
 │   │   ├── stats_router.py             # 6 stats/dashboard/membership endpoints
 │   │   ├── config_router.py            # 1 public endpoint (/api/config/features, no auth)
 │   │   ├── debug_router.py             # 20 debug/health/admin endpoints (SA-gated except /health)
+│   │   ├── export_router.py             # 3 defects export endpoints (Excel + PDF)
 │   │   ├── excel_router.py             # 3 excel import/export endpoints
 │   │   ├── plans_router.py             # 7 plans/disciplines endpoints
+│   │   ├── task_image_guard.py         # Image validation middleware for task attachments
 │   │   ├── identity_router.py          # 5 identity/account endpoints (account-status, complete-account, change-password)
 │   │   ├── archive_router.py           # 9 archive/restore endpoints (buildings, floors, units)
 │   │   ├── qc_router.py                # 18 QC (quality control) endpoints
@@ -144,14 +146,15 @@ brikops/
 │       ├── components/
 │       │   ├── ui/                     # shadcn/ui primitives (button, card, dialog, etc.)
 │       │   ├── CameraModal.js          # Inline camera capture (iOS-compatible)
-│       │   ├── NewDefectModal.js        # Defect creation wizard
+│       │   ├── NewDefectModal.js        # Defect creation wizard (3-step: create→upload→assign)
+│       │   ├── ExportModal.js           # Defects export (Excel/PDF format selector)
+│       │   ├── FilterDrawer.js          # Slide-out filter panel (collapsible sections)
 │       │   ├── UpgradeWizard.js         # Billing upgrade wizard
 │       │   ├── ProjectBillingEditModal.js
 │       │   ├── ProjectBillingCard.js
 │       │   ├── WhatsAppRejectionModal.js
-│       │   ├── TaskStatusBadge.js
-│       │   ├── ContractorCard.js
-│       │   ├── ProtectedRoute.js        # Auth guard with intendedPath
+│       │   ├── QCApproversTab.js
+│       │   ├── NotificationBell.js
 │       │   └── ...
 │       │
 │       ├── pages/
@@ -165,15 +168,19 @@ brikops/
 │       │   ├── TaskDetailPage.js        # Task detail with proof gallery, notification history
 │       │   ├── UnitDetailPage.js
 │       │   ├── UnitHomePage.js
-│       │   ├── FloorDetailPage.js
+│       │   ├── FloorDetailPage.js       # Smart back navigation
+│       │   ├── InnerBuildingPage.js     # Building workspace (3-tab, KPI, add-floor/unit)
+│       │   ├── BuildingQCPage.js        # Building-scoped QC floor selection
+│       │   ├── BuildingDefectsPage.js   # Building-level defect list (V2, feature-flagged)
+│       │   ├── ApartmentDashboardPage.js # Unit-level defect dashboard (V2, feature-flagged)
 │       │   ├── ContractorDashboard.js
 │       │   ├── OrgBillingPage.js
 │       │   ├── StageDetailPage.js       # QC stage inspection
-│       │   ├── QCFloorSelectionPage.js
-│       │   ├── ProjectPlansPage.js
-│       │   ├── UnitPlansPage.js
+│       │   ├── QCFloorSelectionPage.js  # Rewritten as building selector for QC
+│       │   ├── ProjectPlansPage.js      # Refreshed: dark header, discipline chips, search
+│       │   ├── UnitPlansPage.js         # Refreshed: matches ProjectPlansPage design
 │       │   ├── MyProjectsPage.js
-│       │   ├── ProjectControlPage.js
+│       │   ├── ProjectControlPage.js    # 4-tab work switcher, amber palette, RTL
 │       │   ├── JoinRequestsPage.js
 │       │   ├── PhoneLoginPage.js
 │       │   ├── WaLoginPage.js
@@ -977,24 +984,51 @@ Indexes: `[project_id, status]`, `user_id`
 
 ---
 
-## Recent Changes (March 2026)
+## Recent Changes (March 4–11, 2026)
 
-### WhatsApp Delivery & Templates
+### Security Hardening
+- **PyJWT migration**: Replaced `ecdsa`/`python-jose` with `PyJWT==2.11.0`. HS256 enforcement, issuer validation, secret versioning.
+- **OTP flow hardened**: Rate limits (per-IP, per-phone, per-phone+IP combo), brute-force lockout, SHA-256 hashed 6-digit codes, one-time use, generic error messages, structured audit logging.
+- **OTP rate limits persistent**: Moved from in-memory dicts to MongoDB — survives restarts, multi-process safe.
+- **Dependency security updates**: Python and frontend packages updated for CVE patches.
+
+### Bug Fixes
+- **Billing crash**: `GET /billing/org/{org_id}` crashed on missing `manual_override` — added safe `.get()` fallback.
+- **PDF export**: Large defect cards breaking page layout — added card-aware page breaking and image caching.
+- **Excel export**: Hebrew filenames garbled — fixed `Content-Disposition` with RFC 5987 `filename*`.
+- **Contractor selection**: Company→contractor cascade broken in `NewDefectModal` — rewrote with proper state management.
+- **iOS image uploads**: HEIC format failures — added `createImageBitmap` compression, retry with backoff, content-type detection.
+- **iOS camera**: Permission crashes — new `CameraModal` with error handling and gallery fallback.
+- **API URL**: Replit preview failures — centralized `BACKEND_URL` in `api.js` with relative URL default.
+- **WhatsApp delivery**: Phone normalization and fallback image fixes.
+- **Feature flags**: Missing `/api/config/features` endpoint — added `config_router.py`.
+- **Duplicate payments**: Idempotency check added to payment request endpoint.
+- **Cache control**: Added `no-cache` headers for HTML in dev mode.
+
+### New Features
+- **Defects Export (Excel + PDF)**: Full export at building/unit scope. Excel with Hebrew RTL headers; PDF A4 with Rubik font, defect cards with images, pagination. `ExportModal` UI component.
+- **Defects V2**: `BuildingDefectsPage` + `ApartmentDashboardPage` behind `ENABLE_DEFECTS_V2` flag. `FilterDrawer` with collapsible multi-select filters.
+- **InnerBuildingPage**: Mobile-first building workspace — sticky header, 3-tab switcher, KPI strip, collapsible floor→unit hierarchy, FAB with add-floor/add-unit inline forms.
+- **BuildingQCPage**: Building-scoped QC floor selection with status badges, search, filter chips.
+- **QC navigation unified**: `/qc` rewritten as building selector → BuildingQCPage → FloorDetailPage. Smart back navigation throughout.
+- **ProjectPlansPage refresh**: Dark header, horizontal discipline chips (amber), client-side search, plan row hierarchy, upload modal.
+- **UnitPlansPage refresh**: Matched to ProjectPlansPage design. No-delete policy (product decision).
+- **ProjectControlPage redesign**: 4-tab work switcher, amber palette, RTL, building QC progress indicators.
+- **NewDefectModal rewrite**: 3-step flow (create→upload→assign), retry logic, HEIC compression, category-based company filtering, draft save on failure.
+- **UpgradeWizard**: Billing plan management with renewal preview.
+- **Legal pages**: Terms, Privacy, Data Deletion (Hebrew, static HTML).
+- **Task image guard**: Backend enforces at least one image before contractor assignment.
+
+### Architecture
+- **Mockup sandbox**: Vite-based component preview environment (`mockup/` directory) for isolated UI prototyping.
+- **Feature flags endpoint**: Public `/api/config/features` (no auth) via `config_router.py`.
+- **Export system**: New `export_router.py` (834 lines) for Excel/PDF defect exports.
+- **Deploy script rewrite**: Staleness detection, frontend rebuild verification, change detection, fail-fast.
+
+### Previous (pre-March 4)
 - WhatsApp delivery confirmed working (S3 fallback image, s3v4+virtual addressing)
 - Template names configurable via ENV (`WA_DEFECT_TEMPLATE_HE/EN/AR/ZH`)
-- Body params reordered: `{{1}}=ref, {{2}}=location, {{3}}=issue`
 - `WA_TEMPLATE_PARAM_MODE` env var (named/positional)
-- Login template via `WA_LOGIN_TEMPLATE_HE` env var
-- `PUBLIC_APP_URL` fixed to `https://app.brikops.com`
-
-### Super Admin Detection Hardened
-- `is_super_admin_phone()` now normalizes incoming phone before comparison
-- Returns `{matched, norm, reason}` instead of bool — no raw fallback on normalization failure
-- `[SA_PHONES]` startup log: count + source + masked phones
-- `[SA_CHECK]` log on every login: user_phone_raw, norm, matched, list_count, source
-
-### Replit Preview Fix
-- `BACKEND_URL` centralized in `api.js`, exported and imported by all consumers
-- Fallback changed from `https://api.brikops.com` to `''` (relative URLs)
-- Canonical redirect middleware skipped in dev mode (`APP_MODE=dev`)
-- All 7 consumer files updated to import from `api.js`
+- Super admin detection hardened: normalized phone comparison, `{matched, norm, reason}` return
+- `BACKEND_URL` centralized in `api.js` with relative URL default
+- Canonical redirect middleware skipped in dev mode
