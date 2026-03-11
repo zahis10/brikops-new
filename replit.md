@@ -116,3 +116,11 @@ BrikOps is a full-stack application with a clear separation between frontend and
 **Status:** OTP hardening complete — all OTP rate limits persistent in MongoDB
 
 **Files:** `backend/contractor_ops/otp_service.py`, `backend/contractor_ops/onboarding_router.py`
+
+### Billing: manual_override NoneType fix (2026-03)
+
+**Root cause:** `get_billing_info()` in `billing.py` used `sub.get('manual_override', {}).get(...)` on lines 392-393. When `manual_override` key exists in the subscription document but its value is `None` (as set by synthetic subscription creation at line 884), `.get(key, default)` returns `None` — the default `{}` only applies when the key is absent, not when it's present with a `None` value. The subsequent `.get('comped_until')` then crashes with `AttributeError: 'NoneType' object has no attribute 'get'`.
+
+**Fix:** Changed to `(sub.get('manual_override') or {}).get(...)` — the `or {}` catches both absent key and explicit `None` value. This matches the safe pattern already used in `_resolve_access()` (line 282).
+
+**Files:** `backend/contractor_ops/billing.py` (lines 395-396)
