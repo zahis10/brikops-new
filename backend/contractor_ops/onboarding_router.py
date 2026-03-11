@@ -153,7 +153,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_ip_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
-        if not _check_rate_limit(f"otp_combo:{req.phone_e164}:{client_ip}", max_requests=5, window_seconds=300):
+        if not _check_rate_limit(f"otp_combo:{req.phone_e164}:{client_ip}", max_requests=3, window_seconds=300):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_phone_ip_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 

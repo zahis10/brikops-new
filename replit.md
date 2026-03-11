@@ -88,7 +88,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 ### OTP flow hardening (2026-03)
 
 **Protections (existing + new):**
--   **Send rate limits:** per-IP (20/900s), per-phone (5/300s), per-phone+IP combo (5/300s), 90s cooldown, 3/15min cap, 10/day cap, idempotent window (<15s)
+-   **Send rate limits:** per-IP (20/900s), per-phone (5/300s), per-phone+IP combo (3/300s — stricter than per-phone to catch single-source abuse first), 90s cooldown, 3/15min cap, 10/day cap, idempotent window (<15s)
 -   **Verify rate limits:** per-phone (10/300s), per-IP (20/900s)
 -   **Brute-force lockout:** 5 failed attempts → 15-minute lockout (persistent in MongoDB)
 -   **One-time use:** OTP deleted after successful verification
@@ -96,9 +96,15 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Reduced information leakage:** generic error messages for all failure types (no `remaining_attempts`, no distinguishable `no_otp`/`expired`/`invalid_code` errors in client responses); `phone_e164` not echoed for non-existing users; send response always generic regardless of phone existence
 -   **Structured audit logging:** `[OTP-AUDIT]` events with masked phone, client IP, reason, rid — covers `otp_requested`, `otp_throttled`, `otp_verify_success`, `otp_verify_failed`, `otp_lockout_triggered`
 
+**Throttle proofs collected:**
+-   verify-otp per-IP throttle: 21st attempt from same IP returns HTTP 429; audit log `event=otp_throttled reason=verify_ip_limit`
+-   request-otp per-phone+IP combo throttle: 4th request for same phone+IP returns HTTP 429 (combo limit 3/300s fires before per-phone 5/300s); audit log `event=otp_throttled reason=send_phone_ip_limit`
+
 **Implementation notes:**
--   Persistent protections (cooldown, 15min/daily caps, brute-force lockout) use MongoDB via `OTPService` — survive restarts and would work across multiple instances
--   Endpoint-level rate limits (per-IP, per-phone, per-phone+IP combo) use in-memory `_rate_limits` dict — reset on server restart and do not share across instances. This is a known limitation; migrating these to persistent/shared storage is a follow-up if multi-instance deployment is needed
--   Client IP extracted from `x-forwarded-for` first entry (trusted proxy), falling back to `request.client.host`
+-   Persistent protections (cooldown, 15min/daily caps, brute-force lockout) use MongoDB via `OTPService` — survive restarts and work across multiple instances
+-   Endpoint-level rate limits (per-IP, per-phone, per-phone+IP combo) use in-memory `_rate_limits` dict — **these reset on server restart and do not share across instances**. This is a known deployment limitation. Migrating to shared/persistent storage (Redis or MongoDB with TTL) is the follow-up for multi-instance production-grade enforcement
+-   Client IP extraction uses `_resolve_client_ip()`: parses `x-forwarded-for` first entry, falls back to `request.client.host`. **x-forwarded-for is trusted only when the app runs behind the known proxy chain** (Replit dev proxy in development, AWS Elastic Beanstalk ALB in production). If the app is ever directly exposed without a trusted reverse proxy, x-forwarded-for must not be trusted and the IP extraction logic must be updated
+
+**Status:** OTP hardening improved with known deployment limitation
 
 **Files:** `backend/contractor_ops/otp_service.py`, `backend/contractor_ops/onboarding_router.py`
