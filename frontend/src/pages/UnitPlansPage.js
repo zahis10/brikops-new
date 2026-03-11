@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { unitService, unitPlanService, disciplineService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -7,9 +7,8 @@ import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
-  Calendar, User, X, Plus
+  Calendar, User, X, Plus, Search, AlertCircle, FolderOpen
 } from 'lucide-react';
-import { Card } from '../components/ui/card';
 
 const DEFAULT_DISCIPLINES = [
   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
@@ -36,15 +35,22 @@ const UnitPlansPage = () => {
   const [showAddDiscipline, setShowAddDiscipline] = useState(false);
   const [newDisciplineLabel, setNewDisciplineLabel] = useState('');
   const [addingDiscipline, setAddingDiscipline] = useState(false);
+  const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState(null);
 
-  const canUpload = user && UPLOAD_ROLES.includes(user.role);
+  const myRole = unitData?.project?.my_role || user?.role;
+  const canUpload = user && UPLOAD_ROLES.includes(myRole);
 
   const loadUnit = useCallback(async () => {
     try {
       const data = await unitService.get(unitId);
       setUnitData(data);
     } catch (err) {
-      toast.error(t('unitPlans', 'loadError'));
+      if (err?.response?.status === 403) {
+        setLoadError('forbidden');
+        return;
+      }
+      setLoadError('error');
     } finally {
       setLoading(false);
     }
@@ -62,16 +68,14 @@ const UnitPlansPage = () => {
   const loadPlans = useCallback(async () => {
     try {
       setPlansLoading(true);
-      const params = {};
-      if (activeDiscipline !== 'all') params.discipline = activeDiscipline;
-      const data = await unitPlanService.list(projectId, unitId, params);
+      const data = await unitPlanService.list(projectId, unitId);
       setPlans(Array.isArray(data) ? data : []);
-    } catch (err) {
+    } catch {
       toast.error(t('unitPlans', 'loadError'));
     } finally {
       setPlansLoading(false);
     }
-  }, [projectId, unitId, activeDiscipline]);
+  }, [projectId, unitId]);
 
   useEffect(() => { loadUnit(); loadDisciplines(); }, [loadUnit, loadDisciplines]);
   useEffect(() => { loadPlans(); }, [loadPlans]);
@@ -83,10 +87,37 @@ const UnitPlansPage = () => {
     return found?.label || key;
   };
 
+  const allDisciplinesList = disciplines.length > 0
+    ? disciplines
+    : DEFAULT_DISCIPLINES.map(d => ({ key: d, label: d, source: 'default' }));
+
+  const disciplineCounts = useMemo(() => {
+    const counts = {};
+    plans.forEach(p => {
+      const key = p.discipline || 'other';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [plans]);
+
+  const filteredPlans = useMemo(() => {
+    let result = plans;
+    if (activeDiscipline !== 'all') {
+      result = result.filter(p => p.discipline === activeDiscipline);
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(p =>
+        (p.original_filename || '').toLowerCase().includes(q) ||
+        (p.note || '').toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [plans, activeDiscipline, search]);
+
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setUploading(true);
     try {
       await unitPlanService.upload(projectId, unitId, file, uploadDiscipline, uploadNote);
@@ -120,16 +151,13 @@ const UnitPlansPage = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
-      </div>
-    );
-  }
-
-  const { unit, floor, building, project } = unitData || {};
-  const effectiveLabel = unit?.effective_label || unit?.unit_no || '';
+  const handleBack = () => {
+    if (window.history.length > 2) {
+      navigate(-1);
+    } else {
+      navigate(`/projects/${projectId}/units/${unitId}`);
+    }
+  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
@@ -138,184 +166,236 @@ const UnitPlansPage = () => {
     } catch { return dateStr; }
   };
 
-  const allDisciplinesList = disciplines.length > 0
-    ? disciplines
-    : DEFAULT_DISCIPLINES.map(d => ({ key: d, label: d, source: 'default' }));
+  const { unit, floor, building, project } = unitData || {};
+  const effectiveLabel = unit?.effective_label || unit?.unit_no || '';
+
+  const subtitleParts = [];
+  if (project?.name) subtitleParts.push(project.name);
+  if (building?.name) subtitleParts.push(building.name);
+  if (floor?.name) subtitleParts.push(floor.name);
+
+  const headerBlock = (
+    <div className="bg-slate-800 text-white sticky top-0 z-30">
+      <div className="max-w-2xl mx-auto px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <button onClick={handleBack} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
+              <ArrowRight className="w-5 h-5" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-base font-bold flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-amber-400" />
+                תוכניות — {formatUnitLabel(effectiveLabel)}
+              </h1>
+              {subtitleParts.length > 0 && (
+                <p className="text-[11px] text-slate-400 truncate">{subtitleParts.join(' › ')}</p>
+              )}
+            </div>
+          </div>
+          {canUpload && (
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 rounded-lg text-xs font-bold transition-colors"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              העלאה
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-slate-50" dir="rtl">
+        {headerBlock}
+        <div className="max-w-2xl mx-auto px-4 py-12 text-center">
+          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+          {loadError === 'forbidden' ? (
+            <p className="text-slate-600 font-medium">אין הרשאה לצפייה בתוכניות</p>
+          ) : (
+            <>
+              <p className="text-slate-600 font-medium mb-4">לא הצלחנו לטעון את הדירה</p>
+              <button
+                onClick={() => { setLoadError(null); setLoading(true); loadUnit(); }}
+                className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors"
+              >
+                נסה שוב
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <div className="bg-gradient-to-l from-blue-500 to-blue-600 text-white">
-        <div className="max-w-4xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-bold truncate">{t('unitPlans', 'title')} — {formatUnitLabel(effectiveLabel)}</h1>
-              <div className="flex items-center gap-1.5 text-blue-100 text-xs">
-                {project && <span>{project.name}</span>}
-                {building && <><span>›</span><span>{building.name}</span></>}
-                {floor && <><span>›</span><span>{floor.name}</span></>}
-              </div>
-            </div>
-            {canUpload && (
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium transition-colors"
-              >
-                <Upload className="w-4 h-4" />
-                {t('unitPlans', 'upload')}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      {headerBlock}
 
-      <div className="max-w-4xl mx-auto px-4 mt-4 flex gap-4">
-        <div className="w-40 shrink-0">
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden sticky top-4">
-            <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200">
-              <h3 className="text-xs font-bold text-slate-600">תחומים</h3>
-            </div>
-            <div className="py-1">
+      <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+        <p className="text-[11px] text-slate-400 px-1">
+          {plans.length} תוכניות
+          {activeDiscipline !== 'all' && ` · ${getDisciplineLabel(activeDiscipline)}`}
+        </p>
+
+        <div className="relative">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="חיפוש תוכנית..."
+            className="w-full pr-9 pl-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-amber-300"
+            dir="rtl"
+          />
+        </div>
+
+        <div className="flex gap-1 overflow-x-auto pb-1">
+          <button
+            onClick={() => setActiveDiscipline('all')}
+            className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+              activeDiscipline === 'all'
+                ? 'bg-amber-500 text-white'
+                : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
+            }`}
+          >
+            הכל ({plans.length})
+          </button>
+          {allDisciplinesList.map(d => {
+            const count = disciplineCounts[d.key] || 0;
+            return (
               <button
-                onClick={() => setActiveDiscipline('all')}
-                className={`w-full text-right px-3 py-2 text-xs font-medium transition-colors ${
-                  activeDiscipline === 'all'
-                    ? 'bg-blue-50 text-blue-700 border-l-2 border-blue-500'
-                    : 'text-slate-600 hover:bg-slate-50'
+                key={d.key}
+                onClick={() => setActiveDiscipline(d.key)}
+                className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+                  activeDiscipline === d.key
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
                 }`}
               >
-                {t('unitPlans', 'allDisciplines')}
+                {getDisciplineLabel(d.key)}{count > 0 ? ` (${count})` : ''}
               </button>
-              {allDisciplinesList.map(d => (
+            );
+          })}
+          {canUpload && (
+            showAddDiscipline ? (
+              <div className="flex items-center gap-1 shrink-0">
+                <input
+                  type="text"
+                  value={newDisciplineLabel}
+                  onChange={e => setNewDisciplineLabel(e.target.value)}
+                  placeholder="שם תחום"
+                  className="w-24 h-8 px-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddDiscipline(); if (e.key === 'Escape') { setShowAddDiscipline(false); setNewDisciplineLabel(''); } }}
+                />
                 <button
-                  key={d.key}
-                  onClick={() => setActiveDiscipline(d.key)}
-                  className={`w-full text-right px-3 py-2 text-xs font-medium transition-colors flex items-center justify-between ${
-                    activeDiscipline === d.key
-                      ? 'bg-blue-50 text-blue-700 border-l-2 border-blue-500'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
+                  onClick={handleAddDiscipline}
+                  disabled={addingDiscipline || !newDisciplineLabel.trim()}
+                  className="h-8 px-2.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 transition-colors"
                 >
-                  <span className="truncate">{getDisciplineLabel(d.key)}</span>
-                  {d.source === 'custom' && (
-                    <span className="text-[9px] text-slate-400 mr-1">מותאם</span>
-                  )}
+                  {addingDiscipline ? '...' : 'הוסף'}
                 </button>
-              ))}
-            </div>
-            {canUpload && (
-              <div className="border-t border-slate-200 p-2">
-                {showAddDiscipline ? (
-                  <div className="space-y-1.5">
-                    <input
-                      type="text"
-                      value={newDisciplineLabel}
-                      onChange={e => setNewDisciplineLabel(e.target.value)}
-                      placeholder="שם תחום חדש"
-                      className="w-full h-8 px-2 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      autoFocus
-                      onKeyDown={e => { if (e.key === 'Enter') handleAddDiscipline(); if (e.key === 'Escape') setShowAddDiscipline(false); }}
-                    />
-                    <div className="flex gap-1">
-                      <button
-                        onClick={handleAddDiscipline}
-                        disabled={addingDiscipline || !newDisciplineLabel.trim()}
-                        className="flex-1 h-7 text-[10px] font-medium bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
-                      >
-                        {addingDiscipline ? '...' : 'הוסף'}
-                      </button>
-                      <button
-                        onClick={() => { setShowAddDiscipline(false); setNewDisciplineLabel(''); }}
-                        className="h-7 px-2 text-[10px] text-slate-500 hover:text-slate-700 rounded-md hover:bg-slate-100"
-                      >
-                        ביטול
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setShowAddDiscipline(true)}
-                    className="w-full flex items-center justify-center gap-1 h-8 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    הוסף תחום
-                  </button>
-                )}
+                <button
+                  onClick={() => { setShowAddDiscipline(false); setNewDisciplineLabel(''); }}
+                  className="h-8 px-1.5 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 min-w-0 pb-8">
-          {plansLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-            </div>
-          ) : plans.length === 0 ? (
-            <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-              <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-500">{t('unitPlans', 'noPlans')}</p>
-              <p className="text-xs text-slate-400 mt-1">{t('unitPlans', 'noPlansHint')}</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {plans.map(plan => (
-                <Card key={plan.id} className="p-3.5 border-slate-200">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <FileText className="w-5 h-5 text-blue-500" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-slate-800 truncate">{plan.original_filename || plan.file_url}</h3>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-                          {getDisciplineLabel(plan.discipline)}
-                        </span>
-                        {plan.uploaded_by_name && (
-                          <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
-                            <User className="w-3 h-3" />
-                            {plan.uploaded_by_name}
-                          </span>
-                        )}
-                        <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
-                          <Calendar className="w-3 h-3" />
-                          {formatDate(plan.created_at)}
-                        </span>
-                      </div>
-                      {plan.note && (
-                        <p className="text-xs text-slate-500 mt-1">{plan.note}</p>
-                      )}
-                    </div>
-                    <div className="flex gap-1.5 flex-shrink-0">
-                      <a
-                        href={plan.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-                        title={t('unitPlans', 'viewFile')}
-                      >
-                        <Eye className="w-4 h-4 text-slate-500" />
-                      </a>
-                      <a
-                        href={plan.file_url}
-                        download
-                        className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-                        title={t('unitPlans', 'downloadFile')}
-                      >
-                        <Download className="w-4 h-4 text-slate-500" />
-                      </a>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
+            ) : (
+              <button
+                onClick={() => setShowAddDiscipline(true)}
+                className="whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white border border-dashed border-slate-300 text-slate-400 hover:border-amber-400 hover:text-amber-600 transition-all flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                תחום
+              </button>
+            )
           )}
         </div>
+
+        {plansLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+          </div>
+        ) : filteredPlans.length === 0 ? (
+          <div className="py-10 text-center">
+            <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+            {plans.length === 0 ? (
+              <>
+                <p className="text-sm text-slate-500">{t('unitPlans', 'noPlans')}</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {canUpload ? t('unitPlans', 'noPlansHint') : 'תוכניות יתווספו על ידי צוות הניהול'}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-400">לא נמצאו תוכניות תואמות</p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredPlans.map(plan => (
+              <div key={plan.id} className="bg-white rounded-xl border border-slate-200 px-4 py-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <FileText className="w-4 h-4 text-amber-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-[13px] font-bold text-slate-800 leading-snug break-words line-clamp-2">{plan.original_filename || plan.file_url}</h3>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                        {getDisciplineLabel(plan.discipline)}
+                      </span>
+                      {plan.uploaded_by_name && (
+                        <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
+                          <User className="w-3 h-3" />
+                          {plan.uploaded_by_name}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
+                        <Calendar className="w-3 h-3" />
+                        {formatDate(plan.created_at)}
+                      </span>
+                    </div>
+                    {plan.note && (
+                      <p className="text-xs text-slate-500 mt-1.5">{plan.note}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-0.5 flex-shrink-0">
+                    <a
+                      href={plan.file_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+                      title={t('unitPlans', 'viewFile')}
+                    >
+                      <Eye className="w-3.5 h-3.5 text-slate-400" />
+                    </a>
+                    <a
+                      href={plan.file_url}
+                      download
+                      className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+                      title={t('unitPlans', 'downloadFile')}
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-400" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {showUploadModal && canUpload && (
@@ -324,7 +404,7 @@ const UnitPlansPage = () => {
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setShowUploadModal(false)}
           />
-          <Card className="relative z-10 w-full max-w-md mx-4 p-5 bg-white shadow-2xl rounded-2xl">
+          <div className="relative z-10 w-full max-w-md mx-4 p-5 bg-white shadow-2xl rounded-2xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-bold text-slate-800">{t('unitPlans', 'upload')}</h3>
               <button
@@ -344,7 +424,7 @@ const UnitPlansPage = () => {
                       onClick={() => setUploadDiscipline(d.key)}
                       className={`text-xs px-2.5 py-1.5 rounded-full border transition-colors ${
                         uploadDiscipline === d.key
-                          ? 'bg-blue-500 text-white border-blue-500'
+                          ? 'bg-amber-500 text-white border-amber-500'
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
@@ -360,7 +440,7 @@ const UnitPlansPage = () => {
                   value={uploadNote}
                   onChange={e => setUploadNote(e.target.value)}
                   placeholder={t('unitPlans', 'notePlaceholder')}
-                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
                 />
               </div>
               <div>
@@ -377,7 +457,7 @@ const UnitPlansPage = () => {
                   className={`flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-bold cursor-pointer transition-colors ${
                     uploading
                       ? 'bg-slate-200 text-slate-400 cursor-wait'
-                      : 'bg-blue-500 hover:bg-blue-600 text-white shadow-lg'
+                      : 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg'
                   }`}
                 >
                   {uploading ? (
@@ -390,7 +470,7 @@ const UnitPlansPage = () => {
                 <p className="text-[10px] text-slate-400 text-center mt-2">PDF, JPG, PNG, DWG, DXF</p>
               </div>
             </div>
-          </Card>
+          </div>
         </div>
       )}
     </div>
