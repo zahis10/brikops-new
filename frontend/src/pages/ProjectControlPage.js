@@ -1802,7 +1802,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                     {building.name}
                     {building.code && <span className="text-slate-400 font-normal mr-2">({building.code})</span>}
                   </p>
-                  <p className="text-xs text-slate-400 mt-0.5">{floors.length} קומות{(() => { const unitCount = floors.reduce((sum, f) => sum + (f.units || []).length, 0); return unitCount > 0 ? ` · ${unitCount} דירות` : ''; })()}{(() => { if (!isManagement || !floors.length) return ''; const total = floors.length; const active = floors.filter(f => { const raw = qcStatuses[f.id]; const badge = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; return badge !== 'not_started'; }).length; return active > 0 ? ` · בקרה: ${active}/${total}` : ''; })()}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{floors.length} קומות{(() => { const unitCount = floors.reduce((sum, f) => sum + (f.units || []).length, 0); return unitCount > 0 ? ` · ${unitCount} דירות` : ''; })()}{(() => { if (!isManagement || !floors.length) return null; const total = floors.length; const active = floors.filter(f => { const raw = qcStatuses[f.id]; const badge = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; return badge !== 'not_started'; }).length; return active > 0 ? <span className="text-amber-600 font-medium">{` · בקרה: ${active}/${total}`}</span> : null; })()}</p>
                 </div>
               </button>
               {isPM && (
@@ -2590,7 +2590,7 @@ const ProjectControlPage = () => {
             const isActive = workMode === wt.id;
             return (
               <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-sm font-semibold transition-all touch-manipulation ${isActive ? 'text-amber-600 border-b-[3px] border-amber-500' : 'text-slate-500 hover:text-slate-700 border-b-[3px] border-transparent'}`}>
+                className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-sm font-semibold transition-all touch-manipulation ${isActive ? 'text-amber-700 border-b-[3px] border-amber-500' : 'text-slate-500 hover:text-slate-700 border-b-[3px] border-transparent'}`}>
                 <Icon className="w-4 h-4" />
                 {wt.label}
               </button>
@@ -2606,7 +2606,7 @@ const ProjectControlPage = () => {
           <div className="flex gap-1 overflow-x-auto">
             {MGMT_TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-                className={`px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${activeTab === tab.id ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                className={`px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${activeTab === tab.id ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                 {tab.label}
               </button>
             ))}
