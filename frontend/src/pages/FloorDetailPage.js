@@ -149,7 +149,7 @@ export default function FloorDetailPage() {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
         <div className="text-center">
           <p className="text-red-500 mb-3">{error}</p>
-          <button onClick={() => navigate(`/projects/${projectId}/qc`)} className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm">חזרה לבקרת ביצוע</button>
+          <button onClick={() => { if (window.history.length > 2) { navigate(-1); } else { navigate(`/projects/${projectId}/qc`); } }} className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm">חזרה לבקרת ביצוע</button>
         </div>
       </div>
     );
@@ -170,7 +170,7 @@ export default function FloorDetailPage() {
         <div className="max-w-2xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button onClick={() => navigate(`/projects/${projectId}/qc`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
+              <button onClick={() => { if (window.history.length > 2) { navigate(-1); } else { navigate(`/projects/${projectId}/qc`); } }} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
                 <ArrowRight className="w-5 h-5" />
               </button>
               <div>
