@@ -1802,7 +1802,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                     {building.name}
                     {building.code && <span className="text-slate-400 font-normal mr-2">({building.code})</span>}
                   </p>
-                  <p className="text-xs text-slate-400 mt-0.5">{floors.length} קומות{(() => { const unitCount = floors.reduce((sum, f) => sum + (f.units || []).length, 0); return unitCount > 0 ? ` · ${unitCount} דירות` : ''; })()}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{floors.length} קומות{(() => { const unitCount = floors.reduce((sum, f) => sum + (f.units || []).length, 0); return unitCount > 0 ? ` · ${unitCount} דירות` : ''; })()}{(() => { if (!isManagement || !floors.length) return ''; const total = floors.length; const active = floors.filter(f => { const raw = qcStatuses[f.id]; const badge = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; return badge !== 'not_started'; }).length; return active > 0 ? ` · בקרה: ${active}/${total}` : ''; })()}</p>
                 </div>
               </button>
               {isPM && (
@@ -2401,8 +2401,20 @@ const ProjectControlPage = () => {
   const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
 
-  const [workMode, setWorkMode] = useState('structure');
+  const [workMode, setWorkMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`brikops_workMode_${projectId}`);
+      return (saved === 'structure' || saved === 'defects') ? saved : 'structure';
+    } catch { return 'structure'; }
+  });
   const [showFab, setShowFab] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`brikops_workMode_${projectId}`);
+      setWorkMode((saved === 'structure' || saved === 'defects') ? saved : 'structure');
+    } catch { setWorkMode('structure'); }
+  }, [projectId]);
 
   const MGMT_TABS = billingEnabled ? [...SECONDARY_TABS, BILLING_TAB] : SECONDARY_TABS;
   const VALID_TABS = MGMT_TABS.map(t => t.id);
@@ -2540,10 +2552,10 @@ const ProjectControlPage = () => {
   const buildings = hierarchy;
 
   const workTabs = [
-    { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
-    { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
-    { id: 'plans', label: 'תוכניות', icon: FileText },
     { id: 'structure', label: 'מבנה', icon: Building2 },
+    { id: 'plans', label: 'תוכניות', icon: FileText },
+    { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
   ].filter(t => !t.hidden);
 
   const handleWorkTab = (id) => {
@@ -2551,6 +2563,7 @@ const ProjectControlPage = () => {
     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
     setWorkMode(id);
     if (id !== 'structure') setActiveTab('');
+    try { localStorage.setItem(`brikops_workMode_${projectId}`, id); } catch {}
   };
 
   return (
@@ -2571,7 +2584,7 @@ const ProjectControlPage = () => {
       </header>
 
       <div className="sticky top-[40px] z-40 bg-white border-b border-slate-200">
-        <div className="max-w-4xl mx-auto flex">
+        <div className="max-w-4xl mx-auto flex" dir="rtl">
           {workTabs.map(wt => {
             const Icon = wt.icon;
             const isActive = workMode === wt.id;
@@ -2587,13 +2600,13 @@ const ProjectControlPage = () => {
       </div>
 
       {workMode === 'structure' && (
-        <div className="max-w-4xl mx-auto px-4 pt-3 space-y-3">
+        <div className="max-w-4xl mx-auto px-4 pt-2 space-y-2">
           <KpiRow stats={stats} />
 
           <div className="flex gap-1 overflow-x-auto">
             {MGMT_TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                className={`px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${activeTab === tab.id ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                 {tab.label}
               </button>
             ))}
