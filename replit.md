@@ -17,6 +17,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 ### Frontend
 -   **Framework**: React (Create React App with CRACO).
 -   **UI/UX**: Leverages Radix UI, TailwindCSS, and shadcn/ui for a modern, responsive user experience. Features include dynamic dashboards, hierarchical navigation, a consistent color palette (amber for CTA/brand, slate for neutral, emerald for success, red for failure), multi-step task management with visual timelines and proof galleries, email/password and OTP-based authentication, and role-based dynamic routing.
+-   **ProjectControlPage (redesigned)**: Workflow-first layout. Compact header → 4-tab work switcher (ליקויים|בקרת ביצוע|תוכניות|מבנה) → inline views. `workMode` state: 'structure' (default, shows KPI + buildings + secondary management pills) or 'defects' (building selector → V2 per-building defects). בקרת ביצוע/תוכניות navigate out to /qc and /plans. FAB replaces old bottom bar with add actions (building/floors/units/excel). הקמה מהירה only when hierarchy is empty.
 
 ### Backend
 -   **Framework**: Python FastAPI, using Uvicorn.

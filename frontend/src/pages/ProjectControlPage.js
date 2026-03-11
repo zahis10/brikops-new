@@ -67,14 +67,13 @@ const KIND_COLORS = {
   commercial: 'bg-orange-100 text-orange-700',
 };
 
-const BASE_TABS = [
-  { id: 'structure', label: 'מבנה', icon: Building2 },
-  { id: 'team', label: 'צוות', icon: Users },
-  { id: 'companies', label: 'חברות', icon: Briefcase },
-  { id: 'settings', label: 'מאשרי QC', icon: ClipboardCheck },
+const SECONDARY_TABS = [
+  { id: 'team', label: 'צוות' },
+  { id: 'companies', label: 'חברות' },
+  { id: 'settings', label: 'מאשרי QC' },
 ];
 
-const BILLING_TAB = { id: 'billing', label: 'חיוב', icon: CreditCard };
+const BILLING_TAB = { id: 'billing', label: 'חיוב' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   if (!open) return null;
@@ -154,39 +153,22 @@ const InputField = ({ label, value, onChange, placeholder, error, type = 'text',
   </div>
 );
 
-const KpiRow = ({ stats, projectId, navigate, setActiveTab }) => {
+const KpiRow = ({ stats }) => {
   if (!stats) return null;
   const items = [
-    { label: 'בניינים', value: stats.buildings, icon: Building2, color: 'text-amber-600', tab: 'structure' },
-    { label: 'קומות', value: stats.floors, icon: Layers, color: 'text-blue-600', tab: 'structure' },
-    { label: 'דירות', value: stats.units, icon: DoorOpen, color: 'text-green-600', tab: 'structure' },
-    { label: 'צוות', value: stats.team_members, icon: Users, color: 'text-purple-600', tab: 'team' },
-    { label: 'חברות', value: stats.companies, icon: Briefcase, color: 'text-indigo-600', tab: 'companies' },
-    { label: 'ליקויים', value: stats.open_defects, icon: AlertTriangle, color: 'text-red-600', href: `/projects/${projectId}/tasks` },
+    { label: 'בניינים', value: stats.buildings, color: 'text-amber-600' },
+    { label: 'קומות', value: stats.floors, color: 'text-blue-600' },
+    { label: 'דירות', value: stats.units, color: 'text-green-600' },
+    { label: 'ליקויים פתוחים', value: stats.open_defects, color: 'text-red-600' },
   ];
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-      {items.map(item => {
-        const Icon = item.icon;
-        const handleClick = item.tab
-          ? () => setActiveTab(item.tab)
-          : item.href ? () => navigate(item.href) : undefined;
-        return (
-          <div
-            key={item.label}
-            className="bg-white rounded-lg border p-2.5 text-center shadow-sm cursor-pointer hover:shadow-md hover:border-amber-200 transition-all active:scale-95"
-            onClick={handleClick}
-            role="button"
-            tabIndex={0}
-            aria-label={item.label}
-            onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && handleClick) { e.preventDefault(); handleClick(); } }}
-          >
-            <Icon className={`w-4 h-4 mx-auto mb-1 ${item.color}`} />
-            <p className="text-lg font-bold text-slate-800">{item.value}</p>
-            <p className="text-[10px] text-slate-500">{item.label}</p>
-          </div>
-        );
-      })}
+    <div className="flex gap-2">
+      {items.map(item => (
+        <div key={item.label} className="flex-1 bg-white rounded-lg border border-slate-100 py-2 px-1 text-center">
+          <p className={`text-base font-bold ${item.color}`}>{item.value ?? 0}</p>
+          <p className="text-[10px] text-slate-400 leading-tight">{item.label}</p>
+        </div>
+      ))}
     </div>
   );
 };
@@ -1807,30 +1789,22 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
         const isExpanded = expandedBuildings[building.id];
         const floors = building.floors || [];
         return (
-          <Card key={building.id} className="overflow-hidden">
+          <Card key={building.id} className="overflow-hidden rounded-xl border-slate-200">
             <div className="flex items-center">
               <button onClick={() => toggleBuilding(building.id)}
-                className="flex-1 flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors text-right">
+                className="flex-1 flex items-center gap-3 p-3.5 hover:bg-slate-50 transition-colors text-right">
                 {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
-                <Building2 className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Building2 className="w-5 h-5 text-amber-500" />
+                </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-800 truncate">
+                  <p className="text-base font-bold text-slate-800 truncate">
                     {building.name}
                     {building.code && <span className="text-slate-400 font-normal mr-2">({building.code})</span>}
                   </p>
+                  <p className="text-xs text-slate-400 mt-0.5">{floors.length} קומות{(() => { const unitCount = floors.reduce((sum, f) => sum + (f.units || []).length, 0); return unitCount > 0 ? ` · ${unitCount} דירות` : ''; })()}</p>
                 </div>
-                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">{floors.length} קומות</span>
               </button>
-              {defectsV2Enabled && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/buildings/${building.id}/defects`); }}
-                  className="flex items-center gap-1.5 mx-1 px-3 py-1.5 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg transition-colors text-xs font-bold whitespace-nowrap"
-                  title="ליקויים לפי בניין"
-                >
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  ליקויים
-                </button>
-              )}
               {isPM && (
                 <button
                   onClick={(e) => { e.stopPropagation(); handleArchiveBuilding(building); }}
@@ -2427,11 +2401,14 @@ const ProjectControlPage = () => {
   const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
 
-  const TABS = billingEnabled ? [...BASE_TABS, BILLING_TAB] : BASE_TABS;
-  const VALID_TABS = TABS.map(t => t.id);
-  const rawTab = searchParams.get('tab') || 'structure';
-  const activeTab = VALID_TABS.includes(rawTab) ? rawTab : 'structure';
-  const setActiveTab = (tab) => { setSearchParams(prev => { const next = new URLSearchParams(prev); next.set('tab', tab); return next; }, { replace: true }); };
+  const [workMode, setWorkMode] = useState('structure');
+  const [showFab, setShowFab] = useState(false);
+
+  const MGMT_TABS = billingEnabled ? [...SECONDARY_TABS, BILLING_TAB] : SECONDARY_TABS;
+  const VALID_TABS = MGMT_TABS.map(t => t.id);
+  const rawTab = searchParams.get('tab') || '';
+  const activeTab = VALID_TABS.includes(rawTab) ? rawTab : '';
+  const setActiveTab = (tab) => { setSearchParams(prev => { const next = new URLSearchParams(prev); if (tab) next.set('tab', tab); else next.delete('tab'); return next; }, { replace: true }); };
 
   useEffect(() => {
     const checkAccess = async () => {
@@ -2560,130 +2537,132 @@ const ProjectControlPage = () => {
 
   if (!project) return null;
 
-  const statusBadge = STATUS_BADGES[project.status] || STATUS_BADGES.active;
   const buildings = hierarchy;
 
+  const workTabs = [
+    { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
+    { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+    { id: 'plans', label: 'תוכניות', icon: FileText },
+    { id: 'structure', label: 'מבנה', icon: Building2 },
+  ].filter(t => !t.hidden);
+
+  const handleWorkTab = (id) => {
+    if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
+    if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
+    setWorkMode(id);
+    if (id !== 'structure') setActiveTab('');
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
-      <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate('/projects')} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors" title="חזרה לפרויקטים">
+    <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+      <header className="bg-slate-800 text-white sticky top-0 z-50">
+        <div className="max-w-4xl mx-auto px-4 py-2 flex items-center gap-2">
+          <button onClick={() => navigate('/projects')} className="p-1 hover:bg-slate-700 rounded-lg transition-colors" title="חזרה לפרויקטים">
             <ArrowRight className="w-5 h-5" />
           </button>
           <div className="flex-1 min-w-0">
             <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
-            <p className="text-xs text-slate-400">קוד: {project.code}</p>
           </div>
           <NotificationBell />
-          <button
-            onClick={() => navigate('/settings/account')}
-            className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors"
-            title="הגדרות חשבון"
-          >
+          <button onClick={() => navigate('/settings/account')} className="p-1 hover:bg-slate-700 rounded-lg transition-colors" title="הגדרות חשבון">
             <Settings className="w-4 h-4" />
           </button>
-          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusBadge.className}`}>
-            {statusBadge.label}
-          </span>
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto px-4 pt-3 space-y-3">
-        <KpiRow stats={stats} projectId={projectId} navigate={navigate} setActiveTab={setActiveTab} />
-
-        <div className="flex gap-2">
-          <button
-            onClick={() => navigate(`/projects/${projectId}/dashboard`)}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-          >
-            <BarChart3 className="w-4 h-4" />
-            מרכז ניהול
-          </button>
-          <button
-            onClick={() => navigate(`/projects/${projectId}/tasks`)}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-          >
-            <AlertTriangle className="w-4 h-4" />
-            ליקויים
-          </button>
-          {['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) && (
-            <button
-              onClick={() => navigate(`/projects/${projectId}/qc`)}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-            >
-              <ClipboardCheck className="w-4 h-4" />
-              בקרת ביצוע
-            </button>
-          )}
-          <button
-            onClick={() => navigate(`/projects/${projectId}/plans`)}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-          >
-            <FileText className="w-4 h-4" />
-            תוכניות פרויקט
-          </button>
-        </div>
-
-        <div className="flex gap-1 bg-white rounded-lg shadow-sm border p-1 overflow-x-auto">
-          {TABS.map(tab => {
-            const TabIcon = tab.icon;
-            const isActive = activeTab === tab.id;
+      <div className="sticky top-[40px] z-40 bg-white border-b border-slate-200">
+        <div className="max-w-4xl mx-auto flex">
+          {workTabs.map(wt => {
+            const Icon = wt.icon;
+            const isActive = workMode === wt.id;
             return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 min-w-0 py-2 px-2 rounded-md text-xs font-medium transition-all flex flex-col items-center gap-1 touch-manipulation ${
-                  isActive ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                }`}>
-                <TabIcon className="w-4 h-4" />
-                <span className="truncate">{tab.label}</span>
+              <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-sm font-semibold transition-all touch-manipulation ${isActive ? 'text-amber-600 border-b-[3px] border-amber-500' : 'text-slate-500 hover:text-slate-700 border-b-[3px] border-transparent'}`}>
+                <Icon className="w-4 h-4" />
+                {wt.label}
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-4">
-        {activeTab === 'structure' && (
-          <div className="space-y-4">
-            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={() => setShowAddBuilding(true)} onQuickSetup={() => setShowQuickSetup(true)} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={user?.platform_role === 'super_admin'} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} />
+      {workMode === 'structure' && (
+        <div className="max-w-4xl mx-auto px-4 pt-3 space-y-3">
+          <KpiRow stats={stats} />
+
+          <div className="flex gap-1 overflow-x-auto">
+            {MGMT_TABS.map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {tab.label}
+              </button>
+            ))}
           </div>
-        )}
 
-        {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
+          {!activeTab && (
+            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={() => setShowAddBuilding(true)} onQuickSetup={() => setShowQuickSetup(true)} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={user?.platform_role === 'super_admin'} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} />
+          )}
 
-        {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
+          {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
 
-        {activeTab === 'settings' && (
-          <QCApproversTab projectId={projectId} canManageApprovers={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
-        )}
+          {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
 
-        {activeTab === 'billing' && billingEnabled && (
-          <ProjectBillingCard projectId={projectId} userRole={myRole} canEdit={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
-        )}
-      </div>
+          {activeTab === 'settings' && (
+            <QCApproversTab projectId={projectId} canManageApprovers={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
+          )}
 
-      <div className="text-center text-xs text-slate-400 py-2">
-        גרסה: {gitSha}
-      </div>
-
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-lg z-40">
-        <div className="max-w-4xl mx-auto px-4 py-2 flex gap-2 overflow-x-auto" dir="rtl">
-          <Button onClick={() => setShowQuickSetup(true)} className="bg-green-500 hover:bg-green-600 text-white text-xs whitespace-nowrap" size="sm">
-            <Zap className="w-3.5 h-3.5 ml-1" />הקמה מהירה
-          </Button>
-          <Button onClick={() => setShowAddBuilding(true)} className="bg-amber-500 hover:bg-amber-600 text-white text-xs whitespace-nowrap" size="sm">
-            <Plus className="w-3.5 h-3.5 ml-1" />בניין
-          </Button>
-          <Button onClick={() => setShowBulkFloors(true)} className="bg-amber-500 hover:bg-amber-600 text-white text-xs whitespace-nowrap" size="sm">
-            <Layers className="w-3.5 h-3.5 ml-1" />הוסף קומות
-          </Button>
-          <Button onClick={() => setShowBulkUnits(true)} className="bg-amber-500 hover:bg-amber-600 text-white text-xs whitespace-nowrap" size="sm">
-            <DoorOpen className="w-3.5 h-3.5 ml-1" />הוסף דירות
-          </Button>
-          <Button onClick={() => setShowExcelImport(true)} variant="outline" className="text-xs whitespace-nowrap border-amber-300 text-amber-700" size="sm">
-            <Upload className="w-3.5 h-3.5 ml-1" />יבוא אקסל
-          </Button>
+          {activeTab === 'billing' && billingEnabled && (
+            <ProjectBillingCard projectId={projectId} userRole={myRole} canEdit={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
+          )}
         </div>
+      )}
+
+      {workMode === 'defects' && (
+        <div className="max-w-4xl mx-auto px-4 pt-4 space-y-2">
+          <p className="text-sm font-semibold text-slate-600 mb-3">בחר בניין לצפייה בליקויים</p>
+          {hierarchyLoading ? (
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 text-amber-500 animate-spin" /></div>
+          ) : hierarchy.length === 0 ? (
+            <div className="text-center py-12 text-slate-400">
+              <Building2 className="w-10 h-10 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">אין בניינים בפרויקט</p>
+            </div>
+          ) : hierarchy.map(building => (
+            <button key={building.id} onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/defects`)}
+              className="w-full flex items-center gap-3 p-3.5 bg-white rounded-xl border border-slate-200 hover:border-amber-300 hover:bg-amber-50 transition-all text-right active:scale-[0.98]">
+              <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <Building2 className="w-5 h-5 text-amber-500" />
+              </div>
+              <span className="flex-1 text-sm font-bold text-slate-800">{building.name}{building.code ? ` (${building.code})` : ''}</span>
+              <ChevronRight className="w-4 h-4 text-amber-400 rotate-180" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
+      <div className={`fixed bottom-20 left-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+        <button onClick={() => { setShowAddBuilding(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+          <Building2 className="w-4 h-4 text-amber-500" />הוסף בניין
+        </button>
+        <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+          <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
+        </button>
+        <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+          <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
+        </button>
+        <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+          <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
+        </button>
+        {hierarchy.length === 0 && (
+          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-green-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-green-600 whitespace-nowrap">
+            <Zap className="w-4 h-4" />הקמה מהירה
+          </button>
+        )}
       </div>
+      <button onClick={() => setShowFab(prev => !prev)} className={`fixed bottom-6 left-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
+        <Plus className="w-6 h-6 text-white" />
+      </button>
 
       {showQuickSetup && <QuickSetupWizard projectId={projectId} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
