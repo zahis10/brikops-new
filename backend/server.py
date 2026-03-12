@@ -599,9 +599,9 @@ async def _deferred_db_init():
         await ensure_demo_users()
 
     if ENABLE_DEMO_USERS:
-        from contractor_ops.demo_seed import ensure_demo_reviewer_accounts, ensure_demo_org
+        from contractor_ops.demo_seed import ensure_demo_reviewer_accounts, ensure_demo_org, ensure_demo_data
         user_map = await ensure_demo_reviewer_accounts(db, DEMO_DEFAULT_PASSWORD, DEMO_RESET_PASSWORDS)
-        await ensure_demo_org(db, user_map)
+        demo_org_id = await ensure_demo_org(db, user_map)
     else:
         logger.info("[DEMO] Skipped (ENABLE_DEMO_USERS not set)")
 
@@ -628,6 +628,12 @@ async def _deferred_db_init():
         logger.info(f"[BILLING-HEALTH] BILLING_V1_ENABLED={BILLING_V1_ENABLED} orphan_projects={orphan_count}")
     except Exception as e:
         logger.warning(f"[BILLING-HEALTH] Health check failed (non-fatal): {e}")
+
+    if ENABLE_DEMO_USERS:
+        try:
+            await ensure_demo_data(db, user_map, demo_org_id)
+        except Exception as e:
+            logger.warning(f"[DEMO-DATA] Demo data seeding failed (non-fatal): {e}")
 
     logger.info("[STARTUP] Deferred DB init completed.")
 

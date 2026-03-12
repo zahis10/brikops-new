@@ -51,7 +51,9 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Controlled enablement**: `ENABLE_DEMO_USERS` env var (defaults to `true` in dev, `false` in prod). Also supports `DEMO_DEFAULT_PASSWORD` and `DEMO_RESET_PASSWORDS`.
 -   **Demo accounts**: 4 stable reviewer accounts (`demo-pm@brikops.com`, `demo-team@brikops.com`, `demo-contractor@brikops.com`, `demo-viewer@brikops.com`) — all with `is_demo: true`, email+password auth.
 -   **Demo org**: "חברת הדגמה" with `is_demo: true`, owned by demo-pm, subscription comped until 2030-12-31 (uses existing `is_comped` mechanism — zero changes to billing logic).
+-   **Demo data**: `ensure_demo_data()` seeds 1 project ("פרויקט מגדלי הדמו"), 2 buildings, 6 floors, 30 units, 16 defects (mixed statuses), 3 contractor companies, 3 QC runs with 165 items, and billing (plan_pro, 30 units, 2900 ILS/mo, setup_state=ready).
 -   **Isolation**: All demo records tagged `is_demo: true`. Seeding is fully idempotent. No changes to billing.py, auth_router.py, or paywall middleware.
+-   **Startup order**: Demo users/org first → migrations/billing plans → demo data seeding (ensures billing plans exist before demo billing snapshot).
 -   **Module**: `backend/contractor_ops/demo_seed.py` — isolated demo seeding logic.
 
 ### Workflow Configuration
