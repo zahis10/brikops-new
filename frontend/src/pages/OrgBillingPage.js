@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { billingService, orgMemberService, invoiceService, projectService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
-import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil } from 'lucide-react';
+import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
 import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
 import UpgradeWizard from '../components/UpgradeWizard';
 import {
@@ -1006,6 +1006,57 @@ export default function OrgBillingPage() {
 
           <div className="bg-white border border-amber-200 rounded-lg p-4 space-y-4">
             <span className="text-sm font-medium text-slate-700">שלח בקשת תשלום</span>
+
+            {data.projects?.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-slate-500">תמחור פרויקטים:</span>
+                {data.projects.map(pb => {
+                  const badge = getPlanBadge(pb.plan_id);
+                  const isConfigured = pb.plan_id && pb.contracted_units > 0;
+                  return (
+                    <div key={pb.project_id} className={`rounded-lg p-3 space-y-1 ${isConfigured ? 'bg-slate-50 border border-slate-200' : 'bg-amber-50 border border-amber-300'}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-700">{pb.project_name || pb.project_id}</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setEditingProjectBilling(pb)}
+                            className="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded transition-colors"
+                          >
+                            <Pencil className="w-3 h-3" />
+                            ערוך
+                          </button>
+                          {isConfigured && (
+                            <span className="text-sm font-bold text-slate-900 flex-shrink-0">{formatCurrency(pb.monthly_total)}/חודש</span>
+                          )}
+                        </div>
+                      </div>
+                      {isConfigured ? (
+                        <div className="flex items-center gap-3 text-xs text-slate-500">
+                          <span className="font-medium text-slate-700">{getPlanLabel(pb.plan_id)}</span>
+                          {badge && <span className={`px-1.5 py-0.5 rounded-full font-medium ${pb.plan_id === 'plan_pro' ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'}`}>{badge}</span>}
+                          <span>{pb.contracted_units} יחידות</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-xs text-amber-700">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>חסר תמחור — יש לבחור חבילה ומספר יחידות</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {(() => {
+                  const totalMonthly = data.projects.reduce((sum, pb) => sum + (pb.monthly_total || 0), 0);
+                  return totalMonthly > 0 ? (
+                    <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                      <span className="text-sm font-medium text-slate-600">סה״כ חודשי</span>
+                      <span className="text-base font-bold text-slate-900">{formatCurrency(totalMonthly)}</span>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            )}
+
             <div className="flex items-center gap-3">
               <span className="text-sm text-slate-600">מחזור:</span>
               <div className="flex rounded-lg border border-slate-200 overflow-hidden">
@@ -1041,10 +1092,18 @@ export default function OrgBillingPage() {
                 </div>
               </div>
             ) : null}
+
+            {data.projects?.some(pb => !pb.plan_id || !pb.contracted_units || pb.contracted_units < 1) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span>יש להגדיר תמחור לכל הפרויקטים לפני שליחת בקשת תשלום</span>
+              </div>
+            )}
+
             <button
               onClick={handlePaymentRequest}
-              disabled={paymentRequestLoading}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              disabled={paymentRequestLoading || data.projects?.some(pb => !pb.plan_id || !pb.contracted_units || pb.contracted_units < 1)}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {paymentRequestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               שלח בקשת תשלום
