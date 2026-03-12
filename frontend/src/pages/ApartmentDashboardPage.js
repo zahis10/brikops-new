@@ -356,7 +356,7 @@ const ApartmentDashboardPage = () => {
                   return (
                     <button
                       key={task.id}
-                      onClick={() => navigate(`/tasks/${task.id}`)}
+                      onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } })}
                       className="w-full bg-red-50 rounded-lg p-2.5 text-right hover:bg-red-100 transition-colors"
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -448,7 +448,7 @@ const ApartmentDashboardPage = () => {
               return (
                 <button
                   key={task.id}
-                  onClick={() => navigate(`/tasks/${task.id}`)}
+                  onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}/defects` } })}
                   className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50"
                 >
                   <div className="flex items-start gap-3">

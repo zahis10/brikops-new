@@ -223,11 +223,13 @@ const TaskDetailPage = () => {
 
   useEffect(() => {
     if (externalEntry && task?.project_id && !location.state?.returnTo) {
-      const contractorBack = `/projects/${task.project_id}/tasks?assignee=me`;
+      const contractorBack = task.building_id
+        ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+        : `/projects/${task.project_id}/control?tab=defects`;
       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
       console.log('[DEEP_LINK] TaskDetailPage: set contractor back target', contractorBack);
     }
-  }, [externalEntry, task?.project_id, location.state?.returnTo]);
+  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo]);
 
   const handleAddComment = async () => {
     if (!comment.trim()) return;
@@ -462,7 +464,8 @@ const TaskDetailPage = () => {
     const isForbidden = errorState === 'forbidden';
     const isLoadError = errorState === 'load_error' || (!errorState && !task);
     const errorBackUrl = sessionStorage.getItem(RETURN_TO_KEY)
-      || (task?.project_id ? `/projects/${task.project_id}/tasks?assignee=me` : '/projects');
+      || (task?.building_id && task?.project_id ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+        : task?.project_id ? `/projects/${task.project_id}/control?tab=defects` : '/projects');
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
         <div className="text-center space-y-4 p-8">
@@ -541,8 +544,10 @@ const TaskDetailPage = () => {
               if (returnTo) {
                 sessionStorage.removeItem(RETURN_TO_KEY);
                 navigate(returnTo);
+              } else if (task?.building_id && task?.project_id) {
+                navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
               } else if (task?.project_id) {
-                navigate(`/projects/${task.project_id}/tasks`);
+                navigate(`/projects/${task.project_id}/control?tab=defects`);
               } else {
                 navigate('/projects');
               }

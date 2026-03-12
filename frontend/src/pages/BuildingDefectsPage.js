@@ -51,13 +51,13 @@ const BuildingDefectsPage = () => {
         const features = await configService.getFeatures();
         if (cancelled) return;
         if (!features?.feature_flags?.defects_v2) {
-          navigate(`/projects/${projectId}/tasks`, { replace: true });
+          navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
           return;
         }
         setFlagChecked(true);
       } catch {
         if (!cancelled) {
-          navigate(`/projects/${projectId}/tasks`, { replace: true });
+          navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
         }
       }
     };
@@ -78,7 +78,7 @@ const BuildingDefectsPage = () => {
       console.error('Failed to load building defects summary:', err);
       if (err?.response?.status === 403) {
         toast.error('אין לך הרשאה לצפות בנתוני בניין זה');
-        navigate(`/projects/${projectId}/tasks`);
+        navigate(`/projects/${projectId}/control?tab=defects`);
         return;
       }
       toast.error('שגיאה בטעינת סיכום ליקויים');
@@ -255,7 +255,7 @@ const BuildingDefectsPage = () => {
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
         <Building2 className="w-12 h-12 text-slate-300" />
         <p className="text-slate-500">לא נמצאו נתונים לבניין זה</p>
-        <button onClick={() => navigate(`/projects/${projectId}/tasks`)} className="text-amber-600 hover:text-amber-700 font-medium text-sm">
+        <button onClick={() => navigate(`/projects/${projectId}/control?tab=defects`)} className="text-amber-600 hover:text-amber-700 font-medium text-sm">
           חזרה לליקויים
         </button>
       </div>
