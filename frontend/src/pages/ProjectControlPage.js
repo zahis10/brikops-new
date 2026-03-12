@@ -153,12 +153,15 @@ const InputField = ({ label, value, onChange, placeholder, error, type = 'text',
   </div>
 );
 
-const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
+const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) => {
   const [activeCard, setActiveCard] = useState(0);
   const touchRef = useRef(null);
 
-  const hasQc = qcSummary && qcSummary.totalFloors > 0;
-  const cardCount = hasQc ? 2 : 1;
+  const hasQc = qcSummary && qcSummary.totalFloors > 0 &&
+    (qcSummary.completed > 0 || qcSummary.pending > 0 || qcSummary.failed > 0);
+  const showQcLoading = qcLoading && !hasQc;
+  const cardCount = (hasQc || showQcLoading) ? 2 : 1;
+  console.log('[QC-DEBUG] KpiSection render:', { qcSummary, hasQc, showQcLoading, cardCount, qcLoading });
 
   useEffect(() => {
     setActiveCard(prev => Math.min(prev, cardCount - 1));
@@ -202,7 +205,8 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
         onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <div className="flex transition-transform duration-300 ease-out" dir="ltr"
           style={{ width: `${cardCount * 100}%`, transform: `translateX(-${activeCard * (100 / cardCount)}%)` }}>
-          <div className="flex-1 min-w-0 bg-gradient-to-br from-red-500 to-red-600 p-4 md:p-5 text-white" dir="rtl">
+          <div className="p-4 md:p-5 text-white" dir="rtl"
+            style={{ width: `${100 / cardCount}%`, flexShrink: 0, background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' }}>
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
@@ -218,7 +222,8 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
             </div>
           </div>
           {hasQc && (
-            <div className="flex-1 min-w-0 bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 md:p-5 text-white" dir="rtl">
+            <div className="p-4 md:p-5 text-white" dir="rtl"
+              style={{ width: `${100 / cardCount}%`, flexShrink: 0, background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-4xl md:text-5xl font-black leading-none">{qcPct}%</p>
@@ -231,6 +236,18 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
                   className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
                   צפה בבקרת ביצוע
                 </button>
+              </div>
+            </div>
+          )}
+          {showQcLoading && (
+            <div className="p-4 md:p-5 text-white flex items-center justify-center" dir="rtl"
+              style={{ width: `${100 / cardCount}%`, flexShrink: 0, background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
+              <div className="text-center">
+                <svg className="animate-spin h-8 w-8 text-emerald-200 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="text-sm font-medium text-white/90">טוען נתוני בקרה...</p>
               </div>
             </div>
           )}
@@ -2568,6 +2585,7 @@ const ProjectControlPage = () => {
   const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
   const [qcSummary, setQcSummary] = useState(null);
+  const [qcLoading, setQcLoading] = useState(false);
 
   const [workMode, setWorkMode] = useState(() => {
     try {
@@ -2688,10 +2706,12 @@ const ProjectControlPage = () => {
   }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades]);
 
   useEffect(() => {
-    if (!hierarchy?.length) { setQcSummary(null); return; }
+    if (!hierarchy?.length) { setQcSummary(null); setQcLoading(false); return; }
     const floorIds = [];
     hierarchy.forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
-    if (floorIds.length === 0) { setQcSummary(null); return; }
+    if (floorIds.length === 0) { setQcSummary(null); setQcLoading(false); return; }
+    console.log('[QC-DEBUG] fetching batch status for', floorIds.length, 'floors');
+    setQcLoading(true);
     qcService.getFloorsBatchStatus(floorIds, { projectId }).then(data => {
       const totalFloors = floorIds.length;
       let completed = 0, pending = 0, failed = 0;
@@ -2702,8 +2722,14 @@ const ProjectControlPage = () => {
         if (f.badge === 'submitted' || (f.pass_count === f.total && f.total > 0)) { completed++; }
         else if (f.badge === 'in_progress' || f.badge === 'pending_review') { pending++; }
       }
+      console.log('[QC-DEBUG] qcSummary computed:', { totalFloors, completed, pending, failed });
       setQcSummary({ totalFloors, completed, pending, failed });
-    }).catch(() => setQcSummary(null));
+      setQcLoading(false);
+    }).catch(err => {
+      console.error('[QC-DEBUG] getFloorsBatchStatus failed:', err);
+      setQcSummary(null);
+      setQcLoading(false);
+    });
   }, [hierarchy, projectId]);
 
   useEffect(() => {
@@ -2788,7 +2814,7 @@ const ProjectControlPage = () => {
 
       {workMode === 'structure' && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
-          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
+          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} qcLoading={qcLoading} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
 
           <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {MGMT_TABS.map(tab => (
