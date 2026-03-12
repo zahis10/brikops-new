@@ -63,11 +63,18 @@ const StageCard = ({ stage, onClick, isActive }) => {
   const Icon = STAGE_STATUS_ICONS[status] || null;
   const qBadge = getQualityBadge(stage);
   const rBadge = getReviewBadge(stage);
+  const stageAccent = isActive ? ''
+    : status === 'approved' ? 'border-r-4 border-green-400'
+    : status === 'rejected' ? 'border-r-4 border-red-400'
+    : status === 'pending_review' ? 'border-r-4 border-blue-400'
+    : status === 'reopened' ? 'border-r-4 border-amber-400'
+    : (status === 'draft' || status === 'ready') && stage.done > 0 ? 'border-r-4 border-amber-300'
+    : '';
   return (
     <button
       onClick={onClick}
       className={`w-full text-right p-3 rounded-xl border transition-all ${
-        isActive ? 'border-amber-300 bg-amber-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+        isActive ? 'border-amber-300 bg-amber-50 shadow-sm' : `border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm ${stageAccent}`
       }`}
     >
       <div className="flex items-center justify-between mb-1">

@@ -341,12 +341,24 @@ export default function BuildingQCPage() {
             const vs = getFloorBadgeVisualStatus(status);
             const Icon = QC_STATUS_ICONS[status] || Clock;
             const showQuality = quality && quality.label !== qcFloorStatusLabel(status);
+            const failCount = qcStatuses[floor.id]?.fail_count || 0;
+            const floorAccent = failCount > 0 ? 'border-r-4 border-red-400'
+              : status === 'in_progress' ? 'border-r-4 border-amber-400'
+              : status === 'not_started' ? 'border-r-4 border-slate-300'
+              : status === 'approved' ? 'border-r-4 border-green-400'
+              : (status === 'pending_review' || status === 'submitted') ? 'border-r-4 border-blue-400'
+              : '';
+            const badgePrefix = status === 'in_progress' ? '◐ '
+              : status === 'not_started' ? '◷ '
+              : status === 'approved' ? '✓ '
+              : failCount > 0 ? '⚠ '
+              : '';
 
             return (
               <button
                 key={floor.id}
                 onClick={() => navigate(`/projects/${projectId}/floors/${floor.id}`)}
-                className="w-full flex items-center justify-between px-3.5 py-3 bg-white rounded-xl border border-slate-200 hover:bg-slate-50 active:bg-slate-100 transition-colors text-right"
+                className={`w-full flex items-center justify-between px-3.5 py-3 bg-white rounded-xl border border-slate-100 ${floorAccent} hover:border-amber-200 hover:shadow active:bg-slate-50 transition-all text-right`}
               >
                 <div className="flex items-center gap-2.5">
                   <Layers className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
@@ -356,11 +368,12 @@ export default function BuildingQCPage() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   {showQuality && (
-                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${quality.color}`}>
+                    <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${quality.color}`}>
                       {quality.label}
                     </span>
                   )}
-                  <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${vs.bg} ${vs.color}`}>
+                  <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full ${vs.bg} ${vs.color}`}>
+                    <span>{badgePrefix}</span>
                     <Icon className="w-3 h-3" />
                     {qcFloorStatusLabel(status)}
                   </span>

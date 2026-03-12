@@ -88,12 +88,20 @@ export default function QCFloorSelectionPage() {
     hierarchy.forEach(b => {
       const floors = b.floors || [];
       const counts = {};
+      let started = 0;
       floors.forEach(f => {
         const st = getFloorBadge(qcStatuses[f.id]);
         const normalized = st === 'submitted' ? 'pending_review' : st;
         counts[normalized] = (counts[normalized] || 0) + 1;
+        if (normalized !== 'not_started') started++;
       });
-      stats[b.id] = { floorCount: floors.length, counts };
+      const floorCount = floors.length;
+      const progressPct = floorCount > 0 ? Math.round((started / floorCount) * 100) : 0;
+      const allStarted = started === floorCount && floorCount > 0;
+      const noneStarted = started === 0;
+      const accentBorder = allStarted ? 'border-r-4 border-green-400' : noneStarted ? 'border-r-4 border-slate-200' : 'border-r-4 border-amber-400';
+      const barColor = progressPct === 0 ? 'bg-slate-200' : progressPct > 70 ? 'bg-green-400' : progressPct > 30 ? 'bg-amber-400' : 'bg-red-400';
+      stats[b.id] = { floorCount, counts, progressPct, accentBorder, barColor };
     });
     return stats;
   }, [hierarchy, qcStatuses]);
@@ -219,18 +227,29 @@ export default function QCFloorSelectionPage() {
               <button
                 key={building.id}
                 onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc`)}
-                className="w-full bg-white rounded-xl border border-slate-200 px-4 py-3.5 hover:bg-slate-50 hover:border-slate-300 transition-all text-right"
+                className={`w-full bg-white rounded-xl border border-slate-100 ${stats.accentBorder} px-4 py-3.5 hover:border-amber-200 hover:shadow transition-all text-right`}
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Building2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-sm font-bold text-slate-700 truncate">{building.name}</span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-[38px] h-[38px] bg-emerald-50 rounded-[10px] flex items-center justify-center flex-shrink-0">
+                      <Building2 className="w-5 h-5 text-emerald-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[15px] font-bold text-slate-700 truncate block">{building.name}</span>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {summaryParts.join(' · ')}
+                      </p>
+                    </div>
                   </div>
                   <ChevronLeft className="w-4 h-4 text-slate-300 flex-shrink-0" />
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1 mr-[26px]">
-                  {summaryParts.join(' · ')}
-                </p>
+                <div className="mt-2.5 flex items-center gap-2">
+                  <span className="text-[10px] text-slate-400 flex-shrink-0">התקדמות</span>
+                  <div className="flex-1 bg-slate-100 rounded-full h-1.5">
+                    <div className={`h-1.5 rounded-full transition-all ${stats.barColor}`} style={{ width: `${stats.progressPct}%` }} />
+                  </div>
+                  <span className="text-[11px] font-bold text-slate-500 flex-shrink-0">{stats.progressPct}%</span>
+                </div>
               </button>
             );
           })}
