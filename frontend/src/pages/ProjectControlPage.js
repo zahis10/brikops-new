@@ -200,12 +200,11 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
 
   return (
     <div className="space-y-3">
-      <div className="overflow-hidden rounded-xl shadow-lg"
+      <div className="rounded-xl shadow-lg"
         onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-        <div className="flex transition-transform duration-300 ease-out" dir="ltr"
-          style={{ width: `${cardCount * 100}%`, transform: `translateX(-${activeCard * (100 / cardCount)}%)` }}>
-          <div className="p-4 md:p-5 text-white" dir="rtl"
-            style={{ width: `${100 / cardCount}%`, flexShrink: 0, background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' }}>
+        {activeCard === 0 && (
+          <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
+            style={{ background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' }}>
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
@@ -220,25 +219,25 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
               </button>
             </div>
           </div>
-          {hasQc && (
-            <div className="p-4 md:p-5 text-white" dir="rtl"
-              style={{ width: `${100 / cardCount}%`, flexShrink: 0, background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-4xl md:text-5xl font-black leading-none">{qcPct}%</p>
-                  <p className="text-sm font-medium mt-1 text-white/90">התקדמות בקרת ביצוע</p>
-                  {qcSubParts.length > 0 && (
-                    <p className="text-xs mt-1.5 text-white/70">{qcSubParts.join(' · ')}</p>
-                  )}
-                </div>
-                <button onClick={onViewQc}
-                  className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
-                  צפה בבקרת ביצוע
-                </button>
+        )}
+        {activeCard === 1 && hasQc && (
+          <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
+            style={{ background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-4xl md:text-5xl font-black leading-none">{qcPct}%</p>
+                <p className="text-sm font-medium mt-1 text-white/90">התקדמות בקרת ביצוע</p>
+                {qcSubParts.length > 0 && (
+                  <p className="text-xs mt-1.5 text-white/70">{qcSubParts.join(' · ')}</p>
+                )}
               </div>
+              <button onClick={onViewQc}
+                className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
+                צפה בבקרת ביצוע
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
       {cardCount > 1 && (
         <div className="flex justify-center gap-1.5">
