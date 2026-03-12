@@ -257,7 +257,7 @@ export default function ProjectDashboardPage() {
         <div className="bg-white rounded-xl border shadow-sm p-3">
           <div className="flex items-center gap-2 mb-2">
             <Timer className="w-4 h-4 text-indigo-500" />
-            <h3 className="text-sm font-bold text-slate-700">SLA</h3>
+            <h3 className="text-sm font-bold text-slate-700">לוחות זמנים</h3>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="text-center p-2 bg-slate-50 rounded-lg">

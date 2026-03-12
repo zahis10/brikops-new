@@ -160,6 +160,10 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
   const hasQc = qcSummary && qcSummary.totalFloors > 0;
   const cardCount = hasQc ? 2 : 1;
 
+  useEffect(() => {
+    setActiveCard(prev => Math.min(prev, cardCount - 1));
+  }, [cardCount]);
+
   const handleTouchStart = useCallback((e) => {
     touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
   }, []);
@@ -195,10 +199,10 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
   return (
     <div className="space-y-3">
       <div className="overflow-hidden rounded-xl shadow-lg"
-        onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} dir="ltr">
         <div className="flex transition-transform duration-300 ease-out"
-          style={{ transform: `translateX(${activeCard * 100}%)` }}>
-          <div className="w-full flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 p-4 md:p-5 text-white">
+          style={{ transform: `translateX(-${activeCard * 100}%)` }}>
+          <div className="w-full flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 p-4 md:p-5 text-white" dir="rtl">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
@@ -214,7 +218,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
             </div>
           </div>
           {hasQc && (
-            <div className="w-full flex-shrink-0 bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 md:p-5 text-white">
+            <div className="w-full flex-shrink-0 bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 md:p-5 text-white" dir="rtl">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-4xl md:text-5xl font-black leading-none">{qcPct}%</p>
@@ -2562,6 +2566,7 @@ const ProjectControlPage = () => {
   const [billingEnabled, setBillingEnabled] = useState(false);
   const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
+  const [qcSummary, setQcSummary] = useState(null);
 
   const [workMode, setWorkMode] = useState(() => {
     try {
@@ -2682,6 +2687,25 @@ const ProjectControlPage = () => {
   }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades]);
 
   useEffect(() => {
+    if (!hierarchy?.length) { setQcSummary(null); return; }
+    const floorIds = [];
+    hierarchy.forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
+    if (floorIds.length === 0) { setQcSummary(null); return; }
+    qcService.getFloorsBatchStatus(floorIds, { projectId }).then(data => {
+      const totalFloors = floorIds.length;
+      let completed = 0, pending = 0, failed = 0;
+      for (const fid of floorIds) {
+        const f = data[fid];
+        if (!f || f.total === 0) continue;
+        if (f.fail_count > 0) { failed++; continue; }
+        if (f.badge === 'submitted' || (f.pass_count === f.total && f.total > 0)) { completed++; }
+        else if (f.badge === 'in_progress' || f.badge === 'pending_review') { pending++; }
+      }
+      setQcSummary({ totalFloors, completed, pending, failed });
+    }).catch(() => setQcSummary(null));
+  }, [hierarchy, projectId]);
+
+  useEffect(() => {
     configService.getFeatures().then(data => {
       setBillingEnabled(!!data.feature_flags?.billing_v1_enabled);
       setDefectsV2Enabled(!!data.feature_flags?.defects_v2);
@@ -2763,7 +2787,7 @@ const ProjectControlPage = () => {
 
       {workMode === 'structure' && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
-          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} />
+          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
 
           <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {MGMT_TABS.map(tab => (
