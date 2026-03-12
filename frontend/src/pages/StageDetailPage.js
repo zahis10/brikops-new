@@ -592,7 +592,7 @@ const ApproverInfoCard = ({ approvers, stageId, canManage, projectId, navigate }
           className="flex items-center justify-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 border border-amber-200 rounded-xl px-3 py-2.5 mt-3 min-h-[44px] w-full transition-all"
         >
           <Settings className="w-3.5 h-3.5" />
-          ניהול מאשרי QC
+          ניהול מאשרי בקרת ביצוע
         </button>
       )}
     </div>
@@ -1570,10 +1570,10 @@ export default function StageDetailPage() {
               </div>
               <p className="text-xs text-slate-500 mt-1" dir="rtl">
                 {approverStatus.reason_code === 'role_not_allowed'
-                  ? 'קבלנים אינם יכולים לאשר שלבי QC.'
+                  ? 'קבלנים אינם יכולים לאשר שלבי בקרת ביצוע.'
                   : approverStatus.reason_code === 'not_configured'
                     ? 'אין לך הרשאת אישור לשלב זה.'
-                    : 'ממתין לאישור מנהל פרויקט / מאשרי QC.'}
+                    : 'ממתין לאישור מנהל פרויקט / מאשרי בקרת ביצוע.'}
               </p>
               {approverStatus.can_manage_approvers && (
                 <button
@@ -1581,7 +1581,7 @@ export default function StageDetailPage() {
                   className="flex items-center justify-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 border border-amber-200 rounded-xl px-3 py-2.5 mt-2.5 min-h-[44px] w-full transition-all"
                 >
                   <Settings className="w-3.5 h-3.5" />
-                  ניהול מאשרי QC
+                  ניהול מאשרי בקרת ביצוע
                 </button>
               )}
             </div>

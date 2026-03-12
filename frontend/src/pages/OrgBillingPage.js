@@ -941,7 +941,7 @@ export default function OrgBillingPage() {
         )}
       </div>
 
-      {!isSuspended && canManageBilling && !isSA && (
+      {!isSuspended && (canManageBilling || isOwner) && !isSA && (
         <div ref={renewRef} id="renew" className="bg-white rounded-xl border-2 border-amber-200 p-6 space-y-5 transition-all duration-300" style={{ scrollMarginTop: '1rem' }}>
           <div className="space-y-1">
             <h2 className="text-lg font-semibold text-slate-800">
@@ -966,7 +966,7 @@ export default function OrgBillingPage() {
             <UpgradeWizard
               orgId={orgId}
               projects={data.projects}
-              canManageBilling={canManageBilling}
+              canManageBilling={canManageBilling || isOwner}
               onPaymentRequested={(result) => {
                 setPaymentRequestResult(result);
                 loadPaymentRequests(paymentRequestsFilter);
@@ -1457,7 +1457,7 @@ export default function OrgBillingPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {(canManageBilling || isSA) && (
+                      {(canManageBilling || isSA || isOwner) && (
                         <button
                           onClick={() => setEditingProjectBilling(pb)}
                           className="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded transition-colors"

@@ -70,7 +70,7 @@ const KIND_COLORS = {
 const SECONDARY_TABS = [
   { id: 'team', label: 'צוות' },
   { id: 'companies', label: 'חברות' },
-  { id: 'settings', label: 'מאשרי QC' },
+  { id: 'settings', label: 'מאשרי בקרת ביצוע' },
 ];
 
 const BILLING_TAB = { id: 'billing', label: 'חיוב' };
@@ -945,6 +945,61 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
       <InputField label="טלפון" value={contactPhone} onChange={setContactPhone} placeholder="050-1234567" dir="ltr" />
       <Button onClick={handleSubmit} disabled={submitting || !allFilled} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg">
         {submitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'הוסף חברה'}
+      </Button>
+    </BottomSheetModal>
+  );
+};
+
+const EditCompanyForm = ({ projectId, company, onClose, onSuccess }) => {
+  const [name, setName] = useState(company.name || '');
+  const [trade, setTrade] = useState(company.trade || '');
+  const [contactName, setContactName] = useState(company.contact_name || '');
+  const [contactPhone, setContactPhone] = useState(company.contact_phone || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [tradeOptions, setTradeOptions] = useState([]);
+  const [tradesLoading, setTradesLoading] = useState(true);
+
+  useEffect(() => {
+    tradeService.listForProject(projectId)
+      .then(data => {
+        const opts = (data.trades || []).map(t => ({ value: t.key, label: t.label_he }));
+        setTradeOptions(opts);
+      })
+      .catch(() => toast.error('שגיאה בטעינת תחומים'))
+      .finally(() => setTradesLoading(false));
+  }, [projectId]);
+
+  const handleSubmit = async () => {
+    const errs = {};
+    if (!name.trim()) errs.name = 'שדה חובה';
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setSubmitting(true);
+    try {
+      const payload = { name: name.trim() };
+      payload.trade = trade || null;
+      payload.contact_name = contactName.trim() || null;
+      payload.contact_phone = contactPhone.trim() || null;
+      await projectCompanyService.update(projectId, company.id, payload);
+      toast.success('חברה עודכנה בהצלחה');
+      onSuccess();
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בעדכון');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <BottomSheetModal open onClose={onClose} title="עריכת חברה">
+      <InputField label="שם חברה *" value={name} onChange={setName} placeholder="למשל: חברת חשמל" error={errors.name} />
+      <SelectField label="תחום" value={trade} onChange={setTrade} options={tradeOptions} isLoading={tradesLoading} />
+      <InputField label="שם איש קשר" value={contactName} onChange={setContactName} placeholder="שם מלא" />
+      <InputField label="טלפון" value={contactPhone} onChange={setContactPhone} placeholder="050-1234567" dir="ltr" />
+      <Button onClick={handleSubmit} disabled={submitting || !name.trim()} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg">
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'שמור שינויים'}
       </Button>
     </BottomSheetModal>
   );
@@ -2302,6 +2357,7 @@ const CompaniesTab = ({ projectId }) => {
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingCompany, setEditingCompany] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [tradeMap, setTradeMap] = useState({});
 
@@ -2370,6 +2426,9 @@ const CompaniesTab = ({ projectId }) => {
                   {c.contact_phone ? ` · ${c.contact_phone}` : ''}
                 </p>
               </div>
+              <button onClick={() => setEditingCompany(c)} className="p-1.5 hover:bg-amber-50 rounded-lg text-amber-600 transition-colors">
+                <Edit3 className="w-4 h-4" />
+              </button>
               <button onClick={() => handleDelete(c.id)} disabled={deleting === c.id}
                 className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors">
                 {deleting === c.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -2380,6 +2439,7 @@ const CompaniesTab = ({ projectId }) => {
       )}
 
       {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={loadCompanies} />}
+      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={loadCompanies} />}
     </div>
   );
 };

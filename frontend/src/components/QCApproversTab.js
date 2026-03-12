@@ -76,10 +76,10 @@ const QCApproversTab = ({ projectId, canManageApprovers = false }) => {
         <div>
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-amber-600" />
-            <h3 className="font-bold text-slate-800 text-base">מאשרי QC</h3>
+            <h3 className="font-bold text-slate-800 text-base">מאשרי בקרת ביצוע</h3>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            {canManageApprovers ? 'ניהול מי יכול לאשר / לדחות שלבי QC' : 'צפייה במאשרי QC בפרויקט'}
+            {canManageApprovers ? 'ניהול מי יכול לאשר / לדחות שלבי בקרת ביצוע' : 'צפייה במאשרי בקרת ביצוע בפרויקט'}
           </p>
         </div>
         {canManageApprovers && approvers.length > 0 && (
@@ -144,7 +144,7 @@ const QCApproversTab = ({ projectId, canManageApprovers = false }) => {
                     {approver.invalid_role ? (
                       <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600/80 bg-red-50 border border-red-100 rounded-lg px-2.5 py-2">
                         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                        <span className="leading-relaxed">הרשאה לא פעילה — קבלנים אינם יכולים לאשר שלבי QC. רשומה ישנה שלא תחשב כמאשר.</span>
+                        <span className="leading-relaxed">הרשאה לא פעילה — קבלנים אינם יכולים לאשר שלבי בקרת ביצוע. רשומה ישנה שלא תחשב כמאשר.</span>
                       </div>
                     ) : (
                       <div className="mt-2">
