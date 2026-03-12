@@ -1704,8 +1704,9 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
         if not reviewer_rejection and item.get("status") != "fail":
             raise HTTPException(status_code=400, detail="הסעיף לא נדחה — לא ניתן לשלוח הודעת דחייה")
         rejection_reason = (reviewer_rejection or {}).get("reason", "")
-        tpl_item = TPL_ITEM_MAP.get(body.item_id, {})
-        item_title = tpl_item.get("title", body.item_id)
+        tpl_item_key = item.get("item_id") or body.item_id
+        tpl_item = TPL_ITEM_MAP.get(tpl_item_key, {})
+        item_title = tpl_item.get("title", tpl_item_key)
         photos = item.get("photos", [])
         if photos:
             first_photo_url = _resolve_photo_url(photos[0].get("url"))
