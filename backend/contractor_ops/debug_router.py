@@ -62,11 +62,6 @@ async def readiness_check():
     except Exception:
         checks["database"] = "not_ready"
         all_ok = False
-    user_count = await db.users.count_documents({})
-    checks["users_count"] = user_count
-    project_count = await db.projects.count_documents({})
-    checks["projects_count"] = project_count
-    checks["app_id"] = APP_ID
     status_code = 200 if all_ok else 503
     from starlette.responses import JSONResponse
     return JSONResponse(

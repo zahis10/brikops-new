@@ -184,7 +184,7 @@ SMTP_FROM_NAME = os.environ.get('SMTP_FROM_NAME', 'BrikOps')
 SMTP_REPLY_TO = os.environ.get('SMTP_REPLY_TO', 'support@brikops.com')
 
 RESET_TOKEN_TTL_MINUTES = int(os.environ.get('RESET_TOKEN_TTL_MINUTES', '60'))
-PASSWORD_RESET_BASE_URL = os.environ.get('PASSWORD_RESET_BASE_URL', 'https://www.brikops.com')
+PASSWORD_RESET_BASE_URL = os.environ.get('PASSWORD_RESET_BASE_URL', 'https://app.brikops.com')
 
 
 def log_sanitized_startup():

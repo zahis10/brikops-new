@@ -160,7 +160,8 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
         logger.info(f"[WA:WEBHOOK] received body_len={len(raw_body)} has_signature={bool(sig_header)} content_type={request.headers.get('content-type', '')}")
         if _meta_app_secret:
             if not sig_header:
-                logger.warning("[WA] signature_missing - X-Hub-Signature-256 header absent, allowing request")
+                logger.error("[WA] signature_missing - X-Hub-Signature-256 header absent, rejecting request")
+                raise HTTPException(status_code=401, detail='Missing signature')
             else:
                 if not _verify_signature(raw_body, sig_header):
                     logger.error("[WA] signature_invalid - HMAC mismatch, rejecting request")

@@ -71,6 +71,10 @@ BrikOps is a full-stack application with a clear separation between frontend and
 ### Security Enhancements
 -   **JWT Implementation**: Migrated to `PyJWT==2.11.0` for all JWT encode/decode operations to address previous `ecdsa` dependency issues, ensuring HS256 algorithm usage and consistent validation.
 -   **OTP Flow Hardening**: Implemented comprehensive protections including send and verify rate limits (per-IP, per-phone, per-phone+IP combo), brute-force lockout, one-time use of OTPs, 6-digit SHA-256 hashed codes, generic error messages, and structured audit logging. All OTP rate limits are persistent in MongoDB.
+-   **Webhook Signature Enforcement**: When `META_APP_SECRET` is configured, all incoming webhook requests MUST include a valid `X-Hub-Signature-256` header. Missing signatures are rejected with 401 (previously only warned).
+-   **CORS Hardening**: Production must set `CORS_ORIGINS` env var (e.g., `https://app.brikops.com,https://www.brikops.com`). Defaults to `*` only when unset (dev convenience).
+-   **PASSWORD_RESET_BASE_URL**: Defaults to `https://app.brikops.com` (not `www`). Set explicitly in production env vars.
+-   **/ready Endpoint Minimized**: Returns only `ready` boolean and `database` status. No user/project counts or app_id exposed.
 
 ## External Dependencies
 
