@@ -1796,30 +1796,33 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
     try:
         engine = get_notification_engine()
         if engine and engine.wa_client:
-            wa_payload = {
-                "title": f"דחייה — {stage_title}",
-                "project_name": project_name,
-                "building_name": "",
-                "floor_name": floor_name,
-                "category": "",
-                "priority": "",
-                "status": "נדחה",
-                "custom_message": message_text,
-            }
-            if first_photo_url:
-                wa_payload["image_url"] = first_photo_url
+            button_path = ""
+            if direct_link:
+                from urllib.parse import urlparse
+                parsed = urlparse(direct_link)
+                button_path = parsed.path
 
-            result = await engine.wa_client.send_message(recipient_phone, wa_payload)
+            success = await _send_qc_rejection_wa(
+                engine.wa_client, recipient_phone,
+                project_name=project_name,
+                floor_name=floor_name,
+                stage_name=stage_title,
+                item_name=item_title or stage_title,
+                rejection_reason=rejection_reason or body.message or "",
+                button_path=button_path,
+            )
 
             await _audit("qc_stage", stage_id, "qc_rejection_whatsapp_sent_manual", user["id"], {
                 **audit_payload,
-                "result_status": "success",
-                "provider_message_id": result.get("provider_message_id", ""),
-                "dry_run": result.get("dry_run", False),
+                "result_status": "success" if success else "failed",
+                "dry_run": False,
             })
 
-            logger.info(f"[QC-WA] Rejection WhatsApp sent for run={run_id} stage={stage_id} to user={body.recipient_user_id}")
-            return {"ok": True, "message": "הודעת דחייה נשלחה בהצלחה", "dry_run": result.get("dry_run", False)}
+            if success:
+                logger.info(f"[QC-WA] Rejection WhatsApp sent for run={run_id} stage={stage_id} to user={body.recipient_user_id}")
+                return {"ok": True, "message": "הודעת דחייה נשלחה בהצלחה", "dry_run": False}
+            else:
+                raise RuntimeError("WhatsApp send returned false")
         else:
             raise RuntimeError("WhatsApp client not available")
 
