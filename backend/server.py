@@ -22,6 +22,7 @@ from config import (
     TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER,
     OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS, OTP_RATE_LIMIT_SECONDS,
     STEPUP_EMAIL, SMTP_USER, SMTP_PASS,
+    ENABLE_DEMO_USERS, DEMO_DEFAULT_PASSWORD, DEMO_RESET_PASSWORDS,
 )
 
 logging.basicConfig(
@@ -596,6 +597,13 @@ async def _deferred_db_init():
 
     if APP_MODE == 'dev':
         await ensure_demo_users()
+
+    if ENABLE_DEMO_USERS:
+        from contractor_ops.demo_seed import ensure_demo_reviewer_accounts, ensure_demo_org
+        user_map = await ensure_demo_reviewer_accounts(db, DEMO_DEFAULT_PASSWORD, DEMO_RESET_PASSWORDS)
+        await ensure_demo_org(db, user_map)
+    else:
+        logger.info("[DEMO] Skipped (ENABLE_DEMO_USERS not set)")
 
     try:
         await bootstrap_super_admin()

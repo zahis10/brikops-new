@@ -47,6 +47,13 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Defects V2**: Parallel building-level and apartment-level defect views, gated by `ENABLE_DEFECTS_V2` feature flag, including `BuildingDefectsPage` and `ApartmentDashboardPage`.
     -   **Defects Export (Excel + PDF)**: `POST /api/defects/export` endpoint supporting `unit` or `building` scope and `excel` or `pdf` format. Excel exports are `.xlsx` with Hebrew headers and RTL. PDF exports are A4 with Rubik font and Hebrew RTL, designed to keep defect cards and images together.
 
+### Demo / Reviewer Access System
+-   **Controlled enablement**: `ENABLE_DEMO_USERS` env var (defaults to `true` in dev, `false` in prod). Also supports `DEMO_DEFAULT_PASSWORD` and `DEMO_RESET_PASSWORDS`.
+-   **Demo accounts**: 4 stable reviewer accounts (`demo-pm@brikops.com`, `demo-team@brikops.com`, `demo-contractor@brikops.com`, `demo-viewer@brikops.com`) — all with `is_demo: true`, email+password auth.
+-   **Demo org**: "חברת הדגמה" with `is_demo: true`, owned by demo-pm, subscription comped until 2030-12-31 (uses existing `is_comped` mechanism — zero changes to billing logic).
+-   **Isolation**: All demo records tagged `is_demo: true`. Seeding is fully idempotent. No changes to billing.py, auth_router.py, or paywall middleware.
+-   **Module**: `backend/contractor_ops/demo_seed.py` — isolated demo seeding logic.
+
 ### Workflow Configuration
 -   **Single-process mode**: Backend serves pre-built static frontend.
 

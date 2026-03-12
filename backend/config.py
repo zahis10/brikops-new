@@ -152,6 +152,10 @@ TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
 TWILIO_MESSAGING_SERVICE_SID = os.environ.get('TWILIO_MESSAGING_SERVICE_SID', '')
 SMS_ENABLED = os.environ.get('SMS_ENABLED', 'false').lower() == 'true'
 
+ENABLE_DEMO_USERS = os.environ.get('ENABLE_DEMO_USERS', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
+DEMO_DEFAULT_PASSWORD = os.environ.get('DEMO_DEFAULT_PASSWORD', 'BrikOpsDemo2026!')
+DEMO_RESET_PASSWORDS = os.environ.get('DEMO_RESET_PASSWORDS', 'false').lower() == 'true'
+
 ENABLE_QUICK_LOGIN = os.environ.get('ENABLE_QUICK_LOGIN', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
 ENABLE_DEBUG_ENDPOINTS = os.environ.get('ENABLE_DEBUG_ENDPOINTS', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
 
@@ -220,6 +224,8 @@ def log_sanitized_startup():
     logger.info(f"  SMS_ENABLED:        {SMS_ENABLED}")
     logger.info(f"  SMS_MODE:           {SMS_MODE}")
     logger.info(f"  TWILIO_MSG_SVC:     {'SET' if TWILIO_MESSAGING_SERVICE_SID else 'NOT SET'}")
+    logger.info(f"  ENABLE_DEMO_USERS:  {ENABLE_DEMO_USERS}")
+    logger.info(f"  DEMO_RESET_PW:      {DEMO_RESET_PASSWORDS}")
     logger.info(f"  ENABLE_QUICK_LOGIN: {ENABLE_QUICK_LOGIN}")
     logger.info(f"  ENABLE_DEBUG_EP:    {ENABLE_DEBUG_ENDPOINTS}")
     logger.info(f"  ONBOARDING_V2:     {ENABLE_ONBOARDING_V2}")
