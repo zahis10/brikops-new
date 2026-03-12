@@ -199,10 +199,10 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
   return (
     <div className="space-y-3">
       <div className="overflow-hidden rounded-xl shadow-lg"
-        onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} dir="ltr">
-        <div className="flex transition-transform duration-300 ease-out"
-          style={{ transform: `translateX(-${activeCard * 100}%)` }}>
-          <div className="w-full flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 p-4 md:p-5 text-white" dir="rtl">
+        onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div className="flex transition-transform duration-300 ease-out" dir="ltr"
+          style={{ width: `${cardCount * 100}%`, transform: `translateX(-${activeCard * (100 / cardCount)}%)` }}>
+          <div className="flex-1 min-w-0 bg-gradient-to-br from-red-500 to-red-600 p-4 md:p-5 text-white" dir="rtl">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
@@ -218,7 +218,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
             </div>
           </div>
           {hasQc && (
-            <div className="w-full flex-shrink-0 bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 md:p-5 text-white" dir="rtl">
+            <div className="flex-1 min-w-0 bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 md:p-5 text-white" dir="rtl">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-4xl md:text-5xl font-black leading-none">{qcPct}%</p>
@@ -246,11 +246,12 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
         </div>
       )}
       {hasOverdue && stats.overdue_defects > 0 && (
-        <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5">
+        <button type="button" onClick={onViewDefects}
+          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 transition-colors text-right">
           <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
           <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים באיחור טיפול</span>
           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>
-        </div>
+        </button>
       )}
       <div className="grid grid-cols-3 gap-2">
         <div className="bg-amber-50 rounded-lg border-r-4 border-amber-400 py-2.5 px-3 text-center">
