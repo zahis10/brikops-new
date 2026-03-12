@@ -1765,24 +1765,6 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
     if base_url:
         direct_link = f"{base_url}/projects/{project_id}/qc/floors/{run.get('floor_id')}/run/{run_id}/stage/{stage_id}"
 
-    if body.message:
-        message_text = body.message
-    else:
-        lines = [
-            f"🔴 *הודעת דחייה — {project_name}*",
-            "",
-            f"🏗️ פרויקט: {project_name}",
-            f"🔢 קומה: {floor_name}",
-            f"📋 שלב: {stage_title}",
-        ]
-        if item_title:
-            lines.append(f"📌 סעיף: {item_title}")
-        if rejection_reason:
-            lines.append(f"\n❌ סיבת דחייה: {rejection_reason}")
-        if direct_link:
-            lines.append(f"\n🔗 קישור: {direct_link}")
-        message_text = "\n".join(lines)
-
     audit_payload = {
         "project_id": project_id,
         "run_id": run_id,
