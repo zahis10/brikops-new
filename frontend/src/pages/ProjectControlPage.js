@@ -159,9 +159,8 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
 
   const hasQc = qcSummary && qcSummary.totalFloors > 0 &&
     (qcSummary.completed > 0 || qcSummary.pending > 0 || qcSummary.failed > 0);
-  const showQcLoading = qcLoading && !hasQc;
-  const cardCount = (hasQc || showQcLoading) ? 2 : 1;
-  console.log('[QC-DEBUG] KpiSection render:', { qcSummary, hasQc, showQcLoading, cardCount, qcLoading });
+  const cardCount = hasQc ? 2 : 1;
+  console.log('[QC-DEBUG] KpiSection render:', { qcSummary, hasQc, cardCount, qcLoading });
 
   useEffect(() => {
     setActiveCard(prev => Math.min(prev, cardCount - 1));
@@ -236,18 +235,6 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
                   className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
                   צפה בבקרת ביצוע
                 </button>
-              </div>
-            </div>
-          )}
-          {showQcLoading && (
-            <div className="p-4 md:p-5 text-white flex items-center justify-center" dir="rtl"
-              style={{ width: `${100 / cardCount}%`, flexShrink: 0, background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
-              <div className="text-center">
-                <svg className="animate-spin h-8 w-8 text-emerald-200 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <p className="text-sm font-medium text-white/90">טוען נתוני בקרה...</p>
               </div>
             </div>
           )}
