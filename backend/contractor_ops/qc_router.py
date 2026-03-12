@@ -1693,7 +1693,9 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
     first_photo_url = None
 
     if body.item_id:
-        item = await db.qc_items.find_one({"run_id": run_id, "item_id": body.item_id}, {"_id": 0})
+        item = await db.qc_items.find_one({"run_id": run_id, "id": body.item_id}, {"_id": 0})
+        if not item:
+            item = await db.qc_items.find_one({"run_id": run_id, "item_id": body.item_id}, {"_id": 0})
         if not item:
             raise HTTPException(status_code=404, detail="סעיף לא נמצא בשלב זה")
         if item.get("stage_id") != stage_id:

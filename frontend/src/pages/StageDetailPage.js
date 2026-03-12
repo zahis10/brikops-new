@@ -376,7 +376,7 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
           )}
           {canSendWhatsApp && onWhatsAppCta && !rejection.returned_to_user_id && (
             <button
-              onClick={() => onWhatsAppCta(item.id, item.title, rejection.reason)}
+              onClick={() => onWhatsAppCta(item.item_id, item.title, rejection.reason)}
               className="mt-2 w-full flex items-center justify-center gap-2 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 active:bg-green-200 border border-green-200 rounded-lg px-3 py-2 min-h-[40px] transition-all"
               dir="rtl"
             >
