@@ -56,6 +56,9 @@ const LoginPage = () => {
         setAppMode(d.feature_flags?.app_mode || '');
         setQuickLoginEnabled(d.feature_flags?.enable_quick_login === true);
         setOnboardingEnabled(d.feature_flags?.onboarding_v2 === true);
+        if (d.feature_flags?.enable_demo_users === true) {
+          setAuthMethod('email');
+        }
       })
       .catch(() => { setOnboardingEnabled(false); });
   }, []);

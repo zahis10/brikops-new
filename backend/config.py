@@ -153,7 +153,15 @@ TWILIO_MESSAGING_SERVICE_SID = os.environ.get('TWILIO_MESSAGING_SERVICE_SID', ''
 SMS_ENABLED = os.environ.get('SMS_ENABLED', 'false').lower() == 'true'
 
 ENABLE_DEMO_USERS = os.environ.get('ENABLE_DEMO_USERS', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
-DEMO_DEFAULT_PASSWORD = os.environ.get('DEMO_DEFAULT_PASSWORD', 'BrikOpsDemo2026!')
+_demo_pw_raw = os.environ.get('DEMO_DEFAULT_PASSWORD', '')
+if ENABLE_DEMO_USERS and APP_MODE != 'dev' and not _demo_pw_raw:
+    logging.getLogger('config').error(
+        "[DEMO-SAFETY] ENABLE_DEMO_USERS=true in non-dev mode but DEMO_DEFAULT_PASSWORD "
+        "is not set. Demo user seeding DISABLED for safety. Set DEMO_DEFAULT_PASSWORD "
+        "explicitly to enable demo accounts in this environment."
+    )
+    ENABLE_DEMO_USERS = False
+DEMO_DEFAULT_PASSWORD = _demo_pw_raw or 'BrikOpsDemo2026!'
 DEMO_RESET_PASSWORDS = os.environ.get('DEMO_RESET_PASSWORDS', 'false').lower() == 'true'
 
 ENABLE_QUICK_LOGIN = os.environ.get('ENABLE_QUICK_LOGIN', 'true' if APP_MODE == 'dev' else 'false').lower() == 'true'
