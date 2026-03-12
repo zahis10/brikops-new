@@ -153,34 +153,98 @@ const InputField = ({ label, value, onChange, placeholder, error, type = 'text',
   </div>
 );
 
-const KpiSection = ({ stats, onViewDefects }) => {
+const KpiSection = ({ stats, onViewDefects, qcSummary, onViewQc }) => {
+  const [activeCard, setActiveCard] = useState(0);
+  const touchRef = useRef(null);
+
+  const hasQc = qcSummary && qcSummary.totalFloors > 0;
+  const cardCount = hasQc ? 2 : 1;
+
+  const handleTouchStart = useCallback((e) => {
+    touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
+  }, []);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (!touchRef.current || cardCount < 2) return;
+    const dx = e.changedTouches[0].clientX - touchRef.current.x;
+    const dy = e.changedTouches[0].clientY - touchRef.current.y;
+    const dt = Date.now() - touchRef.current.time;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40 && dt < 500) {
+      if (dx > 0) setActiveCard(prev => Math.max(0, prev - 1));
+      else setActiveCard(prev => Math.min(cardCount - 1, prev + 1));
+    }
+    touchRef.current = null;
+  }, [cardCount]);
+
   if (!stats) return null;
+
   const hasCritical = typeof stats.critical_defects === 'number';
   const hasOverdue = typeof stats.overdue_defects === 'number';
   const subParts = [];
   if (hasCritical && stats.critical_defects > 0) subParts.push(`${stats.critical_defects} קריטיים`);
   if (hasOverdue && stats.overdue_defects > 0) subParts.push(`${stats.overdue_defects} באיחור`);
+
+  const qcPct = hasQc ? Math.round((qcSummary.completed / qcSummary.totalFloors) * 100) : 0;
+  const qcSubParts = [];
+  if (hasQc) {
+    if (qcSummary.completed > 0) qcSubParts.push(`${qcSummary.completed} הושלמו`);
+    if (qcSummary.pending > 0) qcSubParts.push(`${qcSummary.pending} ממתינות`);
+    if (qcSummary.failed > 0) qcSubParts.push(`${qcSummary.failed} נכשלו`);
+  }
+
   return (
     <div className="space-y-3">
-      <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 md:p-5 shadow-lg shadow-red-500/20 text-white">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
-            <p className="text-sm font-medium mt-1 text-white/90">ליקויים פתוחים</p>
-            {subParts.length > 0 && (
-              <p className="text-xs mt-1.5 text-white/70">{subParts.join(' · ')}</p>
-            )}
+      <div className="overflow-hidden rounded-xl shadow-lg"
+        onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div className="flex transition-transform duration-300 ease-out"
+          style={{ transform: `translateX(${activeCard * 100}%)` }}>
+          <div className="w-full flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 p-4 md:p-5 text-white">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
+                <p className="text-sm font-medium mt-1 text-white/90">ליקויים פתוחים</p>
+                {subParts.length > 0 && (
+                  <p className="text-xs mt-1.5 text-white/70">{subParts.join(' · ')}</p>
+                )}
+              </div>
+              <button onClick={onViewDefects}
+                className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
+                צפה בליקויים
+              </button>
+            </div>
           </div>
-          <button onClick={onViewDefects}
-            className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
-            צפה בליקויים
-          </button>
+          {hasQc && (
+            <div className="w-full flex-shrink-0 bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 md:p-5 text-white">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-4xl md:text-5xl font-black leading-none">{qcPct}%</p>
+                  <p className="text-sm font-medium mt-1 text-white/90">התקדמות בקרת ביצוע</p>
+                  {qcSubParts.length > 0 && (
+                    <p className="text-xs mt-1.5 text-white/70">{qcSubParts.join(' · ')}</p>
+                  )}
+                </div>
+                <button onClick={onViewQc}
+                  className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
+                  צפה בבקרת ביצוע
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+      {cardCount > 1 && (
+        <div className="flex justify-center gap-1.5">
+          {Array.from({ length: cardCount }).map((_, i) => (
+            <button key={i} onClick={() => setActiveCard(i)}
+              className={`w-2 h-2 rounded-full transition-all ${i === activeCard ? 'bg-slate-700 w-4' : 'bg-slate-300'}`}
+              aria-label={`כרטיס ${i + 1}`} />
+          ))}
+        </div>
+      )}
       {hasOverdue && stats.overdue_defects > 0 && (
         <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5">
           <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
-          <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים עברו SLA</span>
+          <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים באיחור טיפול</span>
           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>
         </div>
       )}
