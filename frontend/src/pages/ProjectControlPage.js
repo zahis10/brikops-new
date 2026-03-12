@@ -200,7 +200,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl shadow-lg"
+      <div className="overflow-hidden rounded-xl shadow-lg"
         onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         {activeCard === 0 && (
           <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
