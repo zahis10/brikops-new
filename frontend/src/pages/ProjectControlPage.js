@@ -68,12 +68,12 @@ const KIND_COLORS = {
 };
 
 const SECONDARY_TABS = [
-  { id: 'team', label: 'צוות' },
-  { id: 'companies', label: 'חברות' },
-  { id: 'settings', label: 'מאשרי בקרת ביצוע' },
+  { id: 'team', label: 'צוות', icon: '👥' },
+  { id: 'companies', label: 'חברות', icon: '🏢' },
+  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
 ];
 
-const BILLING_TAB = { id: 'billing', label: 'חיוב' };
+const BILLING_TAB = { id: 'billing', label: 'חיוב', icon: '💳' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   if (!open) return null;
@@ -153,22 +153,51 @@ const InputField = ({ label, value, onChange, placeholder, error, type = 'text',
   </div>
 );
 
-const KpiRow = ({ stats }) => {
+const KpiSection = ({ stats, onViewDefects }) => {
   if (!stats) return null;
-  const items = [
-    { label: 'בניינים', value: stats.buildings, color: 'text-amber-600' },
-    { label: 'קומות', value: stats.floors, color: 'text-blue-600' },
-    { label: 'דירות', value: stats.units, color: 'text-green-600' },
-    { label: 'ליקויים פתוחים', value: stats.open_defects, color: 'text-red-600' },
-  ];
+  const hasCritical = typeof stats.critical_defects === 'number';
+  const hasOverdue = typeof stats.overdue_defects === 'number';
+  const subParts = [];
+  if (hasCritical && stats.critical_defects > 0) subParts.push(`${stats.critical_defects} קריטיים`);
+  if (hasOverdue && stats.overdue_defects > 0) subParts.push(`${stats.overdue_defects} באיחור`);
   return (
-    <div className="flex gap-2">
-      {items.map(item => (
-        <div key={item.label} className="flex-1 bg-white rounded-lg border border-slate-100 py-2 px-1 text-center">
-          <p className={`text-base font-bold ${item.color}`}>{item.value ?? 0}</p>
-          <p className="text-[10px] text-slate-400 leading-tight">{item.label}</p>
+    <div className="space-y-3">
+      <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 md:p-5 shadow-lg shadow-red-500/20 text-white">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
+            <p className="text-sm font-medium mt-1 text-white/90">ליקויים פתוחים</p>
+            {subParts.length > 0 && (
+              <p className="text-xs mt-1.5 text-white/70">{subParts.join(' · ')}</p>
+            )}
+          </div>
+          <button onClick={onViewDefects}
+            className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
+            צפה בליקויים
+          </button>
         </div>
-      ))}
+      </div>
+      {hasOverdue && stats.overdue_defects > 0 && (
+        <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5">
+          <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
+          <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים עברו SLA</span>
+          <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>
+        </div>
+      )}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-amber-50 rounded-lg border-r-4 border-amber-400 py-2.5 px-3 text-center">
+          <p className="text-2xl font-extrabold text-amber-600">{stats.buildings ?? 0}</p>
+          <p className="text-xs text-slate-400">בניינים</p>
+        </div>
+        <div className="bg-blue-50 rounded-lg border-r-4 border-blue-500 py-2.5 px-3 text-center">
+          <p className="text-2xl font-extrabold text-blue-600">{stats.floors ?? 0}</p>
+          <p className="text-xs text-slate-400">קומות</p>
+        </div>
+        <div className="bg-green-50 rounded-lg border-r-4 border-green-500 py-2.5 px-3 text-center">
+          <p className="text-2xl font-extrabold text-green-600">{stats.units ?? 0}</p>
+          <p className="text-xs text-slate-400">דירות</p>
+        </div>
+      </div>
     </div>
   );
 };
@@ -2637,29 +2666,29 @@ const ProjectControlPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-      <header className="bg-slate-800 text-white sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-2 flex items-center gap-2">
-          <button onClick={() => navigate('/projects')} className="p-1 hover:bg-slate-700 rounded-lg transition-colors" title="חזרה לפרויקטים">
+      <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
+        <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+          <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
             <ArrowRight className="w-5 h-5" />
           </button>
           <div className="flex-1 min-w-0">
             <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
           </div>
           <NotificationBell />
-          <button onClick={() => navigate('/settings/account')} className="p-1 hover:bg-slate-700 rounded-lg transition-colors" title="הגדרות חשבון">
+          <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
             <Settings className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      <div className="sticky top-[40px] z-40 bg-white border-b border-slate-200">
-        <div className="max-w-4xl mx-auto flex" dir="rtl">
+      <div className="sticky top-[48px] z-40 bg-white border-b border-slate-200">
+        <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2" dir="rtl">
           {workTabs.map(wt => {
             const Icon = wt.icon;
             const isActive = workMode === wt.id;
             return (
               <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-sm font-semibold transition-all touch-manipulation ${isActive ? 'text-amber-700 border-b-[3px] border-amber-500' : 'text-slate-500 hover:text-slate-700 border-b-[3px] border-transparent'}`}>
+                className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'}`}>
                 <Icon className="w-4 h-4" />
                 {wt.label}
               </button>
@@ -2669,13 +2698,14 @@ const ProjectControlPage = () => {
       </div>
 
       {workMode === 'structure' && (
-        <div className="max-w-4xl mx-auto px-4 pt-2 space-y-2">
-          <KpiRow stats={stats} />
+        <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
+          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} />
 
-          <div className="flex gap-1 overflow-x-auto">
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {MGMT_TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-                className={`px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${activeTab === tab.id ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+                {tab.icon && <span className="text-xs">{tab.icon}</span>}
                 {tab.label}
               </button>
             ))}
@@ -2700,8 +2730,11 @@ const ProjectControlPage = () => {
       )}
 
       {workMode === 'defects' && (
-        <div className="max-w-4xl mx-auto px-4 pt-4 space-y-2">
-          <p className="text-sm font-semibold text-slate-600 mb-3">בחר בניין לצפייה בליקויים</p>
+        <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-bold text-slate-700">בניינים</p>
+            <span className="text-xs bg-slate-100 text-slate-400 rounded-full px-2.5 py-0.5">{hierarchy.length} בניינים</span>
+          </div>
           {hierarchyLoading ? (
             <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 text-amber-500 animate-spin" /></div>
           ) : hierarchy.length === 0 ? (
@@ -2709,16 +2742,62 @@ const ProjectControlPage = () => {
               <Building2 className="w-10 h-10 mx-auto mb-2 opacity-50" />
               <p className="text-sm">אין בניינים בפרויקט</p>
             </div>
-          ) : hierarchy.map(building => (
-            <button key={building.id} onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/defects`)}
-              className="w-full flex items-center gap-3 p-3.5 bg-white rounded-xl border border-slate-200 hover:border-amber-300 hover:bg-amber-50 transition-all text-right active:scale-[0.98]">
-              <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Building2 className="w-5 h-5 text-amber-500" />
-              </div>
-              <span className="flex-1 text-sm font-bold text-slate-800">{building.name}{building.code ? ` (${building.code})` : ''}</span>
-              <ChevronRight className="w-4 h-4 text-amber-400 rotate-180" />
-            </button>
-          ))}
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {hierarchy.map(building => {
+                const floorCount = (building.floors || []).length;
+                const unitCount = (building.floors || []).reduce((sum, f) => sum + (f.units || []).length, 0);
+                const bd = stats?.per_building_defects?.[building.id];
+                const hasDefectData = !!bd;
+                const openD = bd?.open ?? 0;
+                const criticalD = bd?.critical ?? 0;
+                const closedD = bd?.closed ?? 0;
+                const totalD = bd?.total ?? 0;
+                const closedPct = totalD > 0 ? Math.round((closedD / totalD) * 100) : 0;
+                const healthColor = hasDefectData
+                  ? (criticalD > 3 || openD > 20 ? 'border-r-red-500' : criticalD > 0 || openD > 10 ? 'border-r-orange-400' : 'border-r-green-500')
+                  : 'border-r-slate-200';
+                return (
+                  <button key={building.id} onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/defects`)}
+                    className={`w-full bg-white rounded-xl border border-slate-200 border-r-4 ${healthColor} p-4 md:p-[18px_20px] text-right hover:-translate-x-0.5 hover:shadow-lg hover:border-amber-300 transition-all active:scale-[0.98]`}>
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-[42px] h-[42px] bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                        <Building2 className="w-5 h-5 text-amber-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-800 truncate">{building.name}</span>
+                          {building.code && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-medium flex-shrink-0">{building.code}</span>}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">{floorCount} קומות · {unitCount} דירות</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-amber-400 rotate-180 flex-shrink-0" />
+                    </div>
+                    {hasDefectData && (
+                      <div className="grid grid-cols-4 gap-1.5 mt-2.5">
+                        <div className="bg-red-50 rounded-lg py-1.5 px-1 text-center">
+                          <p className="text-base font-bold text-red-600">{openD}</p>
+                          <p className="text-[10px] text-slate-400">ליקויים</p>
+                        </div>
+                        <div className="bg-amber-50 rounded-lg py-1.5 px-1 text-center">
+                          <p className="text-base font-bold text-amber-600">{criticalD}</p>
+                          <p className="text-[10px] text-slate-400">קריטיים</p>
+                        </div>
+                        <div className="bg-green-50 rounded-lg py-1.5 px-1 text-center">
+                          <p className="text-base font-bold text-green-600">{closedPct}%</p>
+                          <p className="text-[10px] text-slate-400">סגורים</p>
+                        </div>
+                        <div className="bg-blue-50 rounded-lg py-1.5 px-1 text-center">
+                          <p className="text-base font-bold text-blue-600">{totalD}</p>
+                          <p className="text-[10px] text-slate-400">סה״כ</p>
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

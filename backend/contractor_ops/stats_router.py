@@ -34,8 +34,10 @@ async def get_my_memberships(user: dict = Depends(get_current_user)):
 # ── Project stats (KPI) ──
 @router.get("/projects/{project_id}/stats")
 async def get_project_stats(project_id: str, user: dict = Depends(get_current_user)):
+    from datetime import datetime, timezone
     db = get_db()
     await _check_project_access(user, project_id)
+    now = datetime.now(timezone.utc)
     buildings_count = await db.buildings.count_documents({'project_id': project_id, 'archived': {'$ne': True}})
     floors_count = await db.floors.count_documents({'project_id': project_id, 'archived': {'$ne': True}})
     units_count = await db.units.count_documents({'project_id': project_id, 'archived': {'$ne': True}})
@@ -44,6 +46,20 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
     invites_count += await db.team_invites.count_documents({'project_id': project_id, 'status': 'pending'})
     companies_count = await db.project_companies.count_documents({'project_id': project_id})
     open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed']}})
+    critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed']}})
+    now_str = now.strftime('%Y-%m-%d')
+    overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed']}})
+    building_defects_agg = await db.tasks.aggregate([
+        {'$match': {'project_id': project_id, 'building_id': {'$ne': None}}},
+        {'$group': {
+            '_id': '$building_id',
+            'open': {'$sum': {'$cond': [{'$ne': ['$status', 'closed']}, 1, 0]}},
+            'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$ne': ['$status', 'closed']}]}, 1, 0]}},
+            'closed': {'$sum': {'$cond': [{'$eq': ['$status', 'closed']}, 1, 0]}},
+            'total': {'$sum': 1},
+        }}
+    ]).to_list(500)
+    per_building = {r['_id']: {'open': r['open'], 'critical': r['critical'], 'closed': r['closed'], 'total': r['total']} for r in building_defects_agg}
     return {
         'buildings': buildings_count,
         'floors': floors_count,
@@ -52,6 +68,9 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
         'pending_invites': invites_count,
         'companies': companies_count,
         'open_defects': open_defects,
+        'critical_defects': critical_defects,
+        'overdue_defects': overdue_defects,
+        'per_building_defects': per_building,
     }
 
 
