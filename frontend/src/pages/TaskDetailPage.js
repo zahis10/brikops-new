@@ -552,6 +552,8 @@ const TaskDetailPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
+      <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -881,8 +883,6 @@ const TaskDetailPage = () => {
 
             <input ref={proofCameraRef} type="file" accept="image/*" capture="environment" onChange={handleProofFileChange} className="hidden" />
             <input ref={proofGalleryRef} type="file" accept="image/*" onChange={handleProofFileChange} className="hidden" />
-            <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
-            <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
 
             {proofFiles.length > 0 && (
               <div className="mb-4 grid grid-cols-2 gap-3">
