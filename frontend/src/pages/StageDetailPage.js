@@ -1954,13 +1954,14 @@ export default function StageDetailPage() {
                   <AlertCircle className="w-3 h-3 flex-shrink-0" />
                   <span>לא ניתן לשלוח — {validationErrors.length} שדות חסרים</span>
                 </div>
-                {validationErrors.length <= 2 && (
-                  <ul className="mt-0.5 pr-4" dir="rtl">
-                    {validationErrors.slice(0, 2).map((e, i) => (
-                      <li key={i} className="text-[10px] text-red-600">• {e.reason}</li>
-                    ))}
-                  </ul>
-                )}
+                <ul className="mt-0.5 pr-4" dir="rtl">
+                  {validationErrors.slice(0, 2).map((e, i) => (
+                    <li key={i} className="text-[10px] text-red-600">• {e.reason}</li>
+                  ))}
+                  {validationErrors.length > 2 && (
+                    <li className="text-[10px] text-red-500">...ועוד {validationErrors.length - 2}</li>
+                  )}
+                </ul>
               </div>
             )}
 
@@ -1974,9 +1975,9 @@ export default function StageDetailPage() {
                       <span className="text-[11px] font-medium text-amber-800 truncate">
                         {totalBlockers} סעיפים חסרים
                       </span>
-                      <span className="text-[10px] bg-amber-200 text-amber-800 font-bold px-1.5 py-0.5 rounded-full flex-shrink-0">{totalBlockers}</span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className="text-[10px] bg-amber-200 text-amber-800 font-bold px-1.5 py-0.5 rounded-full">{totalBlockers}</span>
                       {submitBlockers.firstMissingId && (
                         <button onClick={scrollToFirstMissing}
                           className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-md px-2.5 py-1 transition-all">
