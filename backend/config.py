@@ -72,9 +72,9 @@ WA_TEMPLATE_INVITE = os.environ.get('WA_TEMPLATE_INVITE', '')
 WA_TEMPLATE_INVITE_LANG = os.environ.get('WA_TEMPLATE_INVITE_LANG', 'he')
 
 WA_DEFECT_TEMPLATES = {
-    'he': {'name': os.environ.get('WA_DEFECT_TEMPLATE_HE', 'brikops_defect_new_he'), 'lang': 'he'},
-    'en': {'name': os.environ.get('WA_DEFECT_TEMPLATE_EN', 'brikops_defect_new'), 'lang': 'en'},
-    'ar': {'name': os.environ.get('WA_DEFECT_TEMPLATE_AR', 'brikops_defect_new_ar'), 'lang': 'ar'},
+    'he': {'name': os.environ.get('WA_DEFECT_TEMPLATE_HE', 'brikops_defect_new_he_v2'), 'lang': 'he'},
+    'en': {'name': os.environ.get('WA_DEFECT_TEMPLATE_EN', 'brikops_defect_new_en_v2'), 'lang': 'en'},
+    'ar': {'name': os.environ.get('WA_DEFECT_TEMPLATE_AR', 'brikops_defect_new_ar_v2'), 'lang': 'ar'},
     'zh': {'name': os.environ.get('WA_DEFECT_TEMPLATE_ZH', 'brikops_defect_new_zh_v2'), 'lang': 'zh_CN'},
 }
 WA_DEFECT_DEFAULT_LANG = 'he'
