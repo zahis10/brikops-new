@@ -31,6 +31,7 @@ const PRIORITY_BADGE = {
 };
 
 const OPEN_STATUSES = ['open', 'assigned', 'in_progress', 'pending_contractor_proof', 'reopened', 'waiting_verify'];
+const WAITING_FOR_ME_STATUSES = ['assigned', 'in_progress', 'pending_contractor_proof'];
 const HANDLED_STATUSES = ['closed', 'pending_manager_approval'];
 
 function getInitials(name) {
@@ -148,30 +149,24 @@ const ContractorDashboard = () => {
 
   const stats = useMemo(() => {
     const handled = projectTasks.filter(t => HANDLED_STATUSES.includes(t.status));
-    const closed = projectTasks.filter(t => t.status === 'closed');
     const reopened = projectTasks.filter(t => t.status === 'reopened');
     const totalHandled = handled.length;
     const successRate = totalHandled > 0 ? Math.round(((totalHandled - reopened.length) / totalHandled) * 100) : 0;
-    const waiting = openTasks.length;
+    const waiting = projectTasks.filter(t => WAITING_FOR_ME_STATUSES.includes(t.status)).length;
 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const closedThisMonth = closed.filter(t => {
-      const d = t.updated_at || t.created_at;
-      return d && new Date(d) >= monthStart;
-    }).length;
-    const openThisMonth = openTasks.filter(t => {
-      const d = t.created_at;
-      return d && new Date(d) >= monthStart;
-    }).length;
-    const inProgressThisMonth = projectTasks.filter(t =>
-      t.status === 'in_progress' && t.created_at && new Date(t.created_at) >= monthStart
+    const tasksThisMonth = projectTasks.filter(t => t.created_at && new Date(t.created_at) >= monthStart);
+    const closedThisMonth = tasksThisMonth.filter(t => HANDLED_STATUSES.includes(t.status)).length;
+    const inProgressThisMonth = tasksThisMonth.filter(t => t.status === 'in_progress').length;
+    const waitingThisMonth = tasksThisMonth.filter(t =>
+      OPEN_STATUSES.includes(t.status) && t.status !== 'in_progress'
     ).length;
-    const totalThisMonth = closedThisMonth + openThisMonth;
+    const totalThisMonth = closedThisMonth + inProgressThisMonth + waitingThisMonth;
     const monthlyPct = totalThisMonth > 0 ? Math.round((closedThisMonth / totalThisMonth) * 100) : 0;
 
-    return { totalHandled, successRate, waiting, closedThisMonth, openThisMonth, inProgressThisMonth, monthlyPct };
-  }, [projectTasks, openTasks]);
+    return { totalHandled, successRate, waiting, closedThisMonth, waitingThisMonth, inProgressThisMonth, monthlyPct };
+  }, [projectTasks]);
 
   if (loading) {
     return (
@@ -292,7 +287,7 @@ const ContractorDashboard = () => {
                   <p className="text-[10px] text-slate-500">בטיפול</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-slate-600">{stats.openThisMonth}</p>
+                  <p className="text-lg font-bold text-slate-600">{stats.waitingThisMonth}</p>
                   <p className="text-[10px] text-slate-500">ממתינים</p>
                 </div>
               </div>
@@ -323,7 +318,7 @@ const ContractorDashboard = () => {
                 const priBorder = PRIORITY_BORDER[task.priority] || 'border-r-slate-300';
                 const priBadge = PRIORITY_BADGE[task.priority] || PRIORITY_BADGE.medium;
                 const waitStr = getWaitingTime(task);
-                const location = [task.project_name, task.building_name, task.floor_name].filter(Boolean).join(' · ');
+                const location = [task.project_name, task.building_name, task.floor_name, task.unit_name].filter(Boolean).join(' · ');
 
                 return (
                   <Card key={task.id} className={`p-0 overflow-hidden border-r-4 ${priBorder}`}>
