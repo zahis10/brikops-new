@@ -50,6 +50,18 @@ import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
+const SCROLL_RESET_PATTERNS = [/^\/tasks\//, /^\/settings\//, /^\/onboarding$/];
+
+const ScrollToTop = () => {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (SCROLL_RESET_PATTERNS.some(p => p.test(pathname))) {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname]);
+  return null;
+};
+
 const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -335,6 +347,7 @@ function App() {
       <BillingProvider>
         <IdentityProvider>
           <BrowserRouter>
+            <ScrollToTop />
             <div className="App">
               <PaywallConnector />
               <TrialBanner />
