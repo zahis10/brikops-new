@@ -1,168 +1,183 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useBilling } from '../contexts/BillingContext';
-import { projectService, taskService, feedService, membershipService, BACKEND_URL } from '../services/api';
-import { tRole } from '../i18n';
+import { projectService, taskService } from '../services/api';
+import { tCategory } from '../i18n';
 import { toast } from 'sonner';
 import {
-  HardHat, LogOut, FolderOpen, ListTodo, Clock, CheckCircle2,
-  AlertTriangle, ArrowLeftRight, MessageSquare, ChevronLeft,
-  Building2, Plus, Search, Settings
+  LogOut, Clock, CheckCircle2, AlertTriangle,
+  Camera, Eye, Settings, ChevronLeft, Flame
 } from 'lucide-react';
-import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { tCategory } from '../i18n';
-import NewDefectModal from '../components/NewDefectModal';
-import {
-  ManagementToggle, ProjectFilters, ManagementFAB,
-  ProjectCardMenu, ManagementModals,
-} from '../components/ManagementPanel';
 
 const STATUS_CONFIG = {
-  open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700', icon: FolderOpen },
-  assigned: { label: 'שויך', color: 'bg-purple-100 text-purple-700', icon: ListTodo },
-  in_progress: { label: 'בביצוע', color: 'bg-amber-100 text-amber-700', icon: Clock },
-  waiting_verify: { label: 'ממתין לאימות', color: 'bg-orange-100 text-orange-700', icon: AlertTriangle },
-  pending_contractor_proof: { label: 'ממתין להוכחת קבלן', color: 'bg-orange-100 text-orange-700', icon: AlertTriangle },
-  pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-indigo-100 text-indigo-700', icon: Clock },
-  closed: { label: 'סגור', color: 'bg-green-100 text-green-700', icon: CheckCircle2 },
-  reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700', icon: ArrowLeftRight },
+  open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
+  assigned: { label: 'שויך', color: 'bg-purple-100 text-purple-700' },
+  in_progress: { label: 'בביצוע', color: 'bg-amber-100 text-amber-700' },
+  waiting_verify: { label: 'ממתין לאימות', color: 'bg-orange-100 text-orange-700' },
+  pending_contractor_proof: { label: 'ממתין להוכחת קבלן', color: 'bg-orange-100 text-orange-700' },
+  pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-indigo-100 text-indigo-700' },
+  closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+  reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
 };
 
-const PRIORITY_CONFIG = {
-  low: { label: 'נמוך', color: 'text-slate-500' },
-  medium: { label: 'בינוני', color: 'text-blue-600' },
-  high: { label: 'גבוה', color: 'text-amber-600' },
-  critical: { label: 'קריטי', color: 'text-red-600' },
+const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+const PRIORITY_BORDER = { critical: 'border-r-red-500', high: 'border-r-orange-500', medium: 'border-r-blue-400', low: 'border-r-slate-300' };
+const PRIORITY_BADGE = {
+  critical: { label: 'קריטי', cls: 'bg-red-100 text-red-700' },
+  high: { label: 'גבוה', cls: 'bg-orange-100 text-orange-700' },
+  medium: { label: 'בינוני', cls: 'bg-blue-100 text-blue-600' },
+  low: { label: 'נמוך', cls: 'bg-slate-100 text-slate-500' },
 };
 
+const OPEN_STATUSES = ['open', 'assigned', 'in_progress', 'pending_contractor_proof', 'reopened', 'waiting_verify'];
+const HANDLED_STATUSES = ['closed', 'pending_manager_approval'];
+
+function getInitials(name) {
+  if (!name) return '??';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getWaitingTime(task) {
+  const ref = task.assigned_at || task.updated_at || task.created_at;
+  if (!ref) return null;
+  const diff = Date.now() - new Date(ref).getTime();
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  if (hours < 1) return 'עכשיו';
+  if (hours < 24) return `${hours} שעות`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'יום';
+  return `${days} ימים`;
+}
+
+function getWaitingHours(task) {
+  const ref = task.assigned_at || task.updated_at || task.created_at;
+  if (!ref) return 0;
+  return (Date.now() - new Date(ref).getTime()) / (1000 * 60 * 60);
+}
+
+function ProgressRing({ percentage, size = 90, strokeWidth = 8 }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percentage / 100) * circumference;
+  return (
+    <svg width={size} height={size} className="transform -rotate-90">
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+        stroke="#e2e8f0" strokeWidth={strokeWidth} />
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+        stroke="#3b82f6" strokeWidth={strokeWidth}
+        strokeDasharray={circumference} strokeDashoffset={offset}
+        strokeLinecap="round" className="transition-all duration-700" />
+    </svg>
+  );
+}
 
 const ContractorDashboard = () => {
   const { user, logout } = useAuth();
-  const { isOwner: billingIsOwner } = useBilling();
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [feed, setFeed] = useState([]);
-  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview');
-  const [taskStatusFilter, setTaskStatusFilter] = useState('');
-  const [taskSearchQuery, setTaskSearchQuery] = useState('');
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [showNewDefect, setShowNewDefect] = useState(false);
-  const canCreate = user?.role === 'project_manager';
-  const isPM = user?.role === 'project_manager';
-  const isOwner = billingIsOwner || user?.platform_role === 'super_admin';
-  const [gitSha, setGitSha] = useState('');
-
-  const [isManageMode, setManageMode] = useState(false);
-  const [projectSearchQuery, setProjectSearchQuery] = useState('');
-  const [projectStatusFilter, setProjectStatusFilter] = useState('');
-  const [hideTestProjects, setHideTestProjects] = useState(true);
-  const [myMemberships, setMyMemberships] = useState([]);
-
-  const [activeModal, setActiveModal] = useState(null);
-  const [modalProject, setModalProject] = useState(null);
-
-  useEffect(() => {
-    fetch(`${BACKEND_URL}/api/debug/version`)
-      .then(r => r.json())
-      .then(d => setGitSha(d.git_sha || ''))
-      .catch(() => {});
-  }, []);
+  const [selectedProjectId, setSelectedProjectId] = useState('all');
+  const urgentRef = useRef(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const promises = [
+      const [projectList, taskList] = await Promise.all([
         projectService.list(),
         taskService.list(),
-        feedService.list(null, 20),
-      ];
-      if (isPM) {
-        promises.push(membershipService.getMyMemberships());
-      }
-      const results = await Promise.all(promises);
-      const [projectList, taskList, feedList] = results;
+      ]);
       setProjects(Array.isArray(projectList) ? projectList : []);
       setTasks(Array.isArray(taskList) ? taskList : []);
-      setFeed(Array.isArray(feedList) ? feedList : []);
-      if (isPM && results[3]) {
-        setMyMemberships(Array.isArray(results[3]) ? results[3] : []);
-      }
-
-      const pList = Array.isArray(projectList) ? projectList : [];
-      if (pList.length > 0) {
-        const dash = await projectService.getDashboard(pList[0].id);
-        setDashboard(dash);
-        setSelectedProject(pList[0]);
-      }
     } catch (error) {
       console.error('Failed to load data:', error);
       toast.error('שגיאה בטעינת נתונים');
     } finally {
       setLoading(false);
     }
-  }, [isPM]);
+  }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
+  const handleLogout = () => { logout(); navigate('/login'); };
 
-  const canManageProject = useCallback((project) => {
-    if (isOwner) return true;
-    if (isPM) {
-      return myMemberships.some(m => m.project_id === project.id);
-    }
-    return false;
-  }, [isOwner, isPM, myMemberships]);
+  const membership = useMemo(() => {
+    const summaries = user?.project_memberships_summary;
+    if (!summaries || summaries.length === 0) return null;
+    return summaries[0];
+  }, [user]);
 
-  const filteredProjects = projects.filter(p => {
-    if (hideTestProjects) {
-      const nameLC = (p.name || '').toLowerCase();
-      const codeLC = (p.code || '').toLowerCase();
-      if (nameLC.includes('e2e') || nameLC.includes('test') || codeLC.includes('e2e') || codeLC.includes('test')) {
-        return false;
-      }
-    }
-    if (projectStatusFilter && p.status !== projectStatusFilter) return false;
-    if (projectSearchQuery) {
-      const q = projectSearchQuery.toLowerCase();
-      return (p.name || '').toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q);
-    }
-    return true;
-  });
+  const companyName = membership?.company_name || '';
+  const tradeName = membership?.contractor_trade_key ? tCategory(membership.contractor_trade_key) : '';
 
-  const filteredTasks = tasks.filter(t => {
-    if (taskStatusFilter && t.status !== taskStatusFilter) return false;
-    if (taskSearchQuery) {
-      const q = taskSearchQuery.toLowerCase();
-      return t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
-    }
-    return true;
-  });
+  const projectTasks = useMemo(() => {
+    if (selectedProjectId === 'all') return tasks;
+    return tasks.filter(t => t.project_id === selectedProjectId);
+  }, [tasks, selectedProjectId]);
 
-  const handleManagementAction = useCallback((action, project = null) => {
-    setModalProject(project);
-    setActiveModal(action);
-  }, []);
+  const openTasks = useMemo(() =>
+    projectTasks.filter(t => OPEN_STATUSES.includes(t.status)),
+    [projectTasks]
+  );
 
-  const handleModalSuccess = useCallback(() => {
-    setActiveModal(null);
-    setModalProject(null);
-    loadData();
-  }, [loadData]);
+  const completedTasks = useMemo(() =>
+    projectTasks
+      .filter(t => HANDLED_STATUSES.includes(t.status))
+      .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
+      .slice(0, 10),
+    [projectTasks]
+  );
+
+  const sortedOpenTasks = useMemo(() =>
+    [...openTasks].sort((a, b) => {
+      const pa = PRIORITY_ORDER[a.priority] ?? 2;
+      const pb = PRIORITY_ORDER[b.priority] ?? 2;
+      if (pa !== pb) return pa - pb;
+      return getWaitingHours(b) - getWaitingHours(a);
+    }),
+    [openTasks]
+  );
+
+  const urgentTasks = useMemo(() =>
+    openTasks.filter(t => t.priority === 'critical' || getWaitingHours(t) > 48),
+    [openTasks]
+  );
+
+  const stats = useMemo(() => {
+    const handled = projectTasks.filter(t => HANDLED_STATUSES.includes(t.status));
+    const closed = projectTasks.filter(t => t.status === 'closed');
+    const reopened = projectTasks.filter(t => t.status === 'reopened');
+    const totalHandled = handled.length;
+    const successRate = totalHandled > 0 ? Math.round(((totalHandled - reopened.length) / totalHandled) * 100) : 0;
+    const waiting = openTasks.length;
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const closedThisMonth = closed.filter(t => {
+      const d = t.updated_at || t.created_at;
+      return d && new Date(d) >= monthStart;
+    }).length;
+    const openThisMonth = openTasks.filter(t => {
+      const d = t.created_at;
+      return d && new Date(d) >= monthStart;
+    }).length;
+    const inProgressThisMonth = projectTasks.filter(t =>
+      t.status === 'in_progress' && t.created_at && new Date(t.created_at) >= monthStart
+    ).length;
+    const totalThisMonth = closedThisMonth + openThisMonth;
+    const monthlyPct = totalThisMonth > 0 ? Math.round((closedThisMonth / totalThisMonth) * 100) : 0;
+
+    return { totalHandled, successRate, waiting, closedThisMonth, openThisMonth, inProgressThisMonth, monthlyPct };
+  }, [projectTasks, openTasks]);
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
           <p className="text-slate-500 mt-4">טוען נתונים...</p>
         </div>
       </div>
@@ -170,350 +185,228 @@ const ContractorDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center">
-              <HardHat className="w-5 h-5 text-white" />
+    <div className="min-h-screen bg-slate-50" dir="rtl">
+      <header className="text-white sticky top-0 z-50 shadow-lg" style={{ background: 'linear-gradient(135deg, #3b82f6, #60a5fa)' }}>
+        <div className="max-w-lg mx-auto px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-base">
+                {getInitials(user?.name)}
+              </div>
+              <div>
+                <h1 className="text-base font-bold leading-tight">{user?.name || 'קבלן'}</h1>
+                <p className="text-xs text-blue-100">
+                  {[companyName, tradeName].filter(Boolean).join(' · ') || 'BrikOps'}
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg font-bold leading-tight">BrikOps</h1>
-              <p className="text-xs text-slate-400">{user?.name} • {tRole(user?.role)}</p>
+            <div className="flex items-center gap-1">
+              <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="הגדרות חשבון">
+                <Settings className="w-5 h-5" />
+              </button>
+              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="יציאה">
+                <LogOut className="w-5 h-5" />
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <ManagementToggle
-              isManageMode={isManageMode}
-              setManageMode={setManageMode}
-              isOwner={isOwner}
-              isPM={isPM}
-            />
-            {isOwner && (
-              <Button size="sm" onClick={() => navigate('/admin')} className="bg-blue-500 hover:bg-blue-600 text-white">
-                <Building2 className="w-4 h-4 ml-1" />
-                <span className="hidden sm:inline">ניהול מערכת</span>
-              </Button>
-            )}
-            {isPM && (
-              <Button size="sm" onClick={() => navigate('/join-requests')} className="bg-green-500 hover:bg-green-600 text-white">
-                <ListTodo className="w-4 h-4 ml-1" />
-                <span className="hidden sm:inline">בקשות הצטרפות</span>
-              </Button>
-            )}
-            {canCreate && !isManageMode && (
-              <Button size="sm" onClick={() => setShowNewDefect(true)} className="bg-amber-500 hover:bg-amber-600 text-white">
-                <Plus className="w-4 h-4 ml-1" />
-                <span className="hidden sm:inline">ליקוי חדש</span>
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={() => navigate('/settings/account')} className="text-slate-300 hover:text-white hover:bg-slate-700" title="הגדרות חשבון">
-              <Settings className="w-4 h-4 ml-1" />
-              <span className="hidden sm:inline">חשבון</span>
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-slate-300 hover:text-white hover:bg-slate-700">
-              <LogOut className="w-4 h-4 ml-1" />
-              <span className="hidden sm:inline">יציאה</span>
-            </Button>
+
+          <div className="mt-3 grid grid-cols-4 gap-2 bg-white/10 rounded-xl p-2.5">
+            <div className="text-center">
+              <p className="text-xl font-bold">{stats.totalHandled}</p>
+              <p className="text-[10px] text-blue-100">סה"כ טופלו</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-bold">{stats.successRate}%</p>
+              <p className="text-[10px] text-blue-100">שיעור הצלחה</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-bold">—</p>
+              <p className="text-[10px] text-blue-100">שע׳ ממוצע</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-bold">{stats.waiting}</p>
+              <p className="text-[10px] text-blue-100">ממתינים לי</p>
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-4">
-        <div className="flex gap-2 mb-4 p-1 bg-white rounded-lg shadow-sm border">
-          {[
-            { id: 'overview', label: 'סקירה', icon: Building2 },
-            { id: 'tasks', label: 'משימות', icon: ListTodo },
-            { id: 'feed', label: 'עדכונים', icon: MessageSquare },
-          ].map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 py-2.5 rounded-md text-sm font-medium transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+      <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
+        {projects.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <button
+              onClick={() => setSelectedProjectId('all')}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                selectedProjectId === 'all' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
               }`}
             >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
+              הכל ({tasks.length})
             </button>
-          ))}
-        </div>
-
-        {activeTab === 'overview' && (
-          <div className="space-y-4">
-            {dashboard && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Card className="p-4 text-center">
-                  <p className="text-3xl font-bold text-slate-800">{dashboard.total_tasks}</p>
-                  <p className="text-xs text-slate-500 mt-1">סה"כ משימות</p>
-                </Card>
-                <Card className="p-4 text-center">
-                  <p className="text-3xl font-bold text-amber-600">{dashboard.by_status?.in_progress || 0}</p>
-                  <p className="text-xs text-slate-500 mt-1">בביצוע</p>
-                </Card>
-                <Card className="p-4 text-center">
-                  <p className="text-3xl font-bold text-green-600">{dashboard.by_status?.closed || 0}</p>
-                  <p className="text-xs text-slate-500 mt-1">הושלמו</p>
-                </Card>
-                <Card
-                  className="p-4 text-center cursor-pointer hover:shadow-md hover:border-red-200 transition-all active:scale-95"
-                  onClick={() => selectedProject && navigate(`/projects/${selectedProject.id}/tasks?status=open`)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && selectedProject) { e.preventDefault(); navigate(`/projects/${selectedProject.id}/tasks?status=open`); } }}
+            {projects.map(p => {
+              const count = tasks.filter(t => t.project_id === p.id).length;
+              return (
+                <button key={p.id}
+                  onClick={() => setSelectedProjectId(p.id)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                    selectedProjectId === p.id ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
+                  }`}
                 >
-                  <p className="text-3xl font-bold text-red-600">{(dashboard.by_status?.open || 0) + (dashboard.by_status?.assigned || 0) + (dashboard.by_status?.in_progress || 0)}</p>
-                  <p className="text-xs text-slate-500 mt-1">ליקויים פתוחים ←</p>
-                </Card>
-              </div>
-            )}
+                  {p.name} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-            {dashboard && Object.keys(dashboard.by_status || {}).length > 0 && (
-              <Card className="p-4">
-                <h3 className="text-sm font-medium text-slate-700 mb-3">משימות לפי סטטוס</h3>
-                <div className="space-y-2">
-                  {Object.entries(dashboard.by_status).map(([status, count]) => {
-                    const config = STATUS_CONFIG[status];
-                    const pct = dashboard.total_tasks > 0 ? Math.round((count / dashboard.total_tasks) * 100) : 0;
-                    return (
-                      <div key={status} className="flex items-center gap-3">
-                        <span className={`text-xs font-medium px-2 py-1 rounded-md min-w-[90px] text-center ${config?.color || 'bg-slate-100'}`}>
-                          {config?.label || status}
+        {urgentTasks.length > 0 && (
+          <button
+            onClick={() => urgentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="w-full rounded-xl p-3 text-white font-medium text-sm flex items-center justify-between touch-manipulation active:scale-[0.98] transition-transform"
+            style={{ background: 'linear-gradient(135deg, #ef4444, #f87171)' }}
+          >
+            <span className="flex items-center gap-2">
+              <Flame className="w-5 h-5" />
+              <span>{urgentTasks.length} ליקויים דורשים טיפול מיידי</span>
+            </span>
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
+
+        <Card className="p-4">
+          <div className="flex items-center gap-4">
+            <div className="relative flex-shrink-0">
+              <ProgressRing percentage={stats.monthlyPct} />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-lg font-bold text-blue-600">{stats.monthlyPct}%</span>
+              </div>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">התקדמות החודש</h3>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-lg font-bold text-green-600">{stats.closedThisMonth}</p>
+                  <p className="text-[10px] text-slate-500">טופלו</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-amber-600">{stats.inProgressThisMonth}</p>
+                  <p className="text-[10px] text-slate-500">בטיפול</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-slate-600">{stats.openThisMonth}</p>
+                  <p className="text-[10px] text-slate-500">ממתינים</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <div ref={urgentRef}>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 text-slate-500" />
+              דורשים טיפול
+            </h2>
+            <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+              {sortedOpenTasks.length}
+            </span>
+          </div>
+
+          {sortedOpenTasks.length === 0 ? (
+            <Card className="p-8 text-center">
+              <CheckCircle2 className="w-12 h-12 text-green-300 mx-auto mb-3" />
+              <p className="text-sm text-slate-500">אין ליקויים פתוחים — כל הכבוד!</p>
+            </Card>
+          ) : (
+            <div className="space-y-2.5">
+              {sortedOpenTasks.map(task => {
+                const statusCfg = STATUS_CONFIG[task.status] || {};
+                const priBorder = PRIORITY_BORDER[task.priority] || 'border-r-slate-300';
+                const priBadge = PRIORITY_BADGE[task.priority] || PRIORITY_BADGE.medium;
+                const waitStr = getWaitingTime(task);
+                const location = [task.project_name, task.building_name, task.floor_name].filter(Boolean).join(' · ');
+
+                return (
+                  <Card key={task.id} className={`p-0 overflow-hidden border-r-4 ${priBorder}`}>
+                    <div className="p-3">
+                      <div className="flex items-start justify-between mb-1.5">
+                        <h4 className="text-sm font-medium text-slate-800 flex-1 leading-snug">{task.title}</h4>
+                        <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap mr-2 ${statusCfg.color || 'bg-slate-100'}`}>
+                          {statusCfg.label || task.status}
                         </span>
-                        <div className="flex-1 bg-slate-100 rounded-full h-2.5">
-                          <div className="h-2.5 rounded-full bg-amber-500 transition-all" style={{width: `${pct}%`}}></div>
-                        </div>
-                        <span className="text-sm font-medium text-slate-700 min-w-[32px] text-left">{count}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            )}
 
-            {dashboard && Object.keys(dashboard.by_category || {}).length > 0 && (
-              <Card className="p-4">
-                <h3 className="text-sm font-medium text-slate-700 mb-3">משימות לפי קטגוריה</h3>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(dashboard.by_category).map(([cat, count]) => (
-                    <span key={cat} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium">
-                      {tCategory(cat)}: {count}
-                    </span>
-                  ))}
-                </div>
-              </Card>
-            )}
+                      {location && (
+                        <p className="text-xs text-slate-400 mb-1.5">{location}</p>
+                      )}
 
-            <Card className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-slate-700">פרויקטים ({filteredProjects.length})</h3>
-              </div>
-
-              <ProjectFilters
-                searchQuery={projectSearchQuery}
-                setSearchQuery={setProjectSearchQuery}
-                statusFilter={projectStatusFilter}
-                setStatusFilter={setProjectStatusFilter}
-                hideTestProjects={hideTestProjects}
-                setHideTestProjects={setHideTestProjects}
-              />
-
-              {filteredProjects.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-4">אין פרויקטים</p>
-              ) : (
-                <div className="space-y-2 mt-3">
-                  {filteredProjects.map(project => (
-                    <div key={project.id}
-                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => {
-                        if (isOwner || isPM) {
-                          navigate(`/projects/${project.id}/control`);
-                        } else {
-                          setSelectedProject(project);
-                          projectService.getDashboard(project.id).then(setDashboard).catch(() => {});
-                        }
-                      }}>
-                        <Building2 className="w-5 h-5 text-amber-500" />
-                        <div>
-                          <p className="text-sm font-medium text-slate-800">{project.name}</p>
-                          <p className="text-xs text-slate-500">קוד: {project.code} {project.status !== 'active' ? `• ${project.status}` : ''}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {isManageMode && (
-                          <ProjectCardMenu
-                            project={project}
-                            isOwner={isOwner}
-                            isPM={isPM}
-                            canManage={canManageProject(project)}
-                            onAction={handleManagementAction}
-                          />
+                      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                        <span className={`px-1.5 py-0.5 rounded ${priBadge.cls}`}>{priBadge.label}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{tCategory(task.category)}</span>
+                        {waitStr && (
+                          <span className="text-slate-400 flex items-center gap-0.5">
+                            <Clock className="w-3 h-3" /> ממתין {waitStr}
+                          </span>
                         )}
-                        <ChevronLeft className="w-4 h-4 text-slate-400" />
+                      </div>
+
+                      <div className="flex items-center gap-2 mt-3">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.id}?action=proof`, { state: { returnTo: '/' } }); }}
+                          className="flex-1 py-2.5 rounded-lg bg-green-500 hover:bg-green-600 text-white text-sm font-medium flex items-center justify-center gap-1.5 touch-manipulation active:scale-[0.97] transition-all"
+                        >
+                          <Camera className="w-4 h-4" />
+                          צלם ותקן
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.id}`, { state: { returnTo: '/' } }); }}
+                          className="py-2.5 px-4 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium flex items-center justify-center gap-1 touch-manipulation active:scale-[0.97] transition-all"
+                        >
+                          <Eye className="w-4 h-4" />
+                          פרטים
+                        </button>
                       </div>
                     </div>
-                  ))}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {completedTasks.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-green-500" />
+                טופלו לאחרונה
+              </h2>
+              <span className="text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                {completedTasks.length}
+              </span>
+            </div>
+            <Card className="divide-y divide-slate-100">
+              {completedTasks.map(task => (
+                <div key={task.id}
+                  className="flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-50 transition-colors touch-manipulation"
+                  onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: '/' } })}
+                >
+                  <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-slate-600 line-through truncate">{task.title}</p>
+                    <p className="text-[11px] text-slate-400">
+                      {task.project_name && <span>{task.project_name}</span>}
+                      {task.updated_at && <span> · {new Date(task.updated_at).toLocaleDateString('he-IL')}</span>}
+                    </p>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-300 flex-shrink-0" />
                 </div>
-              )}
+              ))}
             </Card>
           </div>
         )}
 
-        {activeTab === 'tasks' && (
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input type="text" placeholder="חיפוש משימות..." value={taskSearchQuery}
-                  onChange={e => setTaskSearchQuery(e.target.value)}
-                  className="w-full h-10 pr-9 pl-3 text-sm text-right bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                />
-              </div>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const statuses = ['', ...Object.keys(STATUS_CONFIG)];
-                    const idx = statuses.indexOf(taskStatusFilter);
-                    setTaskStatusFilter(statuses[(idx + 1) % statuses.length]);
-                  }}
-                  className="h-10 px-3 text-sm bg-white border border-slate-200 rounded-lg whitespace-nowrap"
-                >
-                  {taskStatusFilter ? STATUS_CONFIG[taskStatusFilter]?.label : 'כל הסטטוסים'}
-                </button>
-              </div>
-            </div>
-
-            {filteredTasks.length === 0 ? (
-              <Card className="p-8 text-center">
-                <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-sm text-slate-500">אין משימות להצגה</p>
-              </Card>
-            ) : (
-              <div className="space-y-2">
-                {filteredTasks.map(task => {
-                  const statusCfg = STATUS_CONFIG[task.status] || {};
-                  const priorityCfg = PRIORITY_CONFIG[task.priority] || {};
-                  return (
-                    <Card key={task.id} className="p-3 hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: '/' } })}>
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <h4 className="text-sm font-medium text-slate-800">{task.title}</h4>
-                          {task.description && (
-                            <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{task.description}</p>
-                          )}
-                        </div>
-                        <span className={`text-xs font-medium px-2 py-1 rounded-md whitespace-nowrap mr-2 ${statusCfg.color || 'bg-slate-100'}`}>
-                          {statusCfg.label || task.status}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-slate-500">
-                        <span className="bg-slate-100 px-2 py-0.5 rounded">{tCategory(task.category)}</span>
-                        <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
-                        {task.due_date && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> {task.due_date}
-                          </span>
-                        )}
-                        {task.comments_count > 0 && (
-                          <span className="flex items-center gap-1">
-                            <MessageSquare className="w-3 h-3" /> {task.comments_count}
-                          </span>
-                        )}
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'feed' && (
-          <div className="space-y-2">
-            {feed.length === 0 ? (
-              <Card className="p-8 text-center">
-                <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-sm text-slate-500">אין עדכונים</p>
-              </Card>
-            ) : (
-              feed.map(update => (
-                <Card key={update.id} className="p-3">
-                  <div className="flex items-start gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      update.update_type === 'status_change' ? 'bg-amber-100' :
-                      update.update_type === 'attachment' ? 'bg-blue-100' : 'bg-slate-100'
-                    }`}>
-                      {update.update_type === 'status_change' ? (
-                        <ArrowLeftRight className="w-4 h-4 text-amber-600" />
-                      ) : update.update_type === 'attachment' ? (
-                        <Plus className="w-4 h-4 text-blue-600" />
-                      ) : (
-                        <MessageSquare className="w-4 h-4 text-slate-600" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-slate-800">{update.content}</p>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
-                        <span>{update.user_name || 'מערכת'}</span>
-                        {update.created_at && (
-                          <span>{new Date(update.created_at).toLocaleDateString('he-IL')}</span>
-                        )}
-                        {update.old_status && update.new_status && (
-                          <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded">
-                            {STATUS_CONFIG[update.old_status]?.label || update.old_status} → {STATUS_CONFIG[update.new_status]?.label || update.new_status}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-        )}
+        <div className="h-8" />
       </div>
-
-      {canCreate && !isManageMode && (
-        <button
-          onClick={() => setShowNewDefect(true)}
-          className="fixed bottom-6 left-6 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-lg flex items-center justify-center transition-colors z-40 md:hidden"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
-      )}
-
-      <ManagementFAB
-        isManageMode={isManageMode}
-        isOwner={isOwner}
-        isPM={isPM}
-        onAction={handleManagementAction}
-      />
-
-      <ManagementModals
-        activeModal={activeModal}
-        modalProject={modalProject}
-        onClose={() => { setActiveModal(null); setModalProject(null); }}
-        onSuccess={handleModalSuccess}
-        isOwner={isOwner}
-        isPM={isPM}
-        myMemberships={myMemberships}
-      />
-
-      <NewDefectModal
-        isOpen={showNewDefect}
-        onClose={() => setShowNewDefect(false)}
-        onSuccess={(taskId) => {
-          setShowNewDefect(false);
-          loadData();
-          navigate(`/tasks/${taskId}`);
-        }}
-      />
-
-      {gitSha && (
-        <div className="text-center py-2">
-          <p className="text-[10px] text-slate-300">v{gitSha}</p>
-        </div>
-      )}
     </div>
   );
 };
