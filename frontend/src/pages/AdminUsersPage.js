@@ -382,7 +382,7 @@ const AdminUsersPage = () => {
                         <div className="flex items-center gap-2 mb-0.5">
                           <span className="text-sm font-bold text-slate-800 truncate">{u.name}</span>
                           <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${rs.badge}`}>
-                            {rs.label}
+                            {u.platform_role === 'super_admin' ? rs.label : tRole(u.role || 'default')}
                           </span>
                           {isDemo(u) && (
                             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-600 flex-shrink-0">דמו</span>
@@ -406,6 +406,7 @@ const AdminUsersPage = () => {
                       <div className="flex flex-col items-end gap-1 flex-shrink-0">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full ${st.color}`}>{st.label}</span>
                         <span className="text-[10px] text-slate-400">{u.project_count || 0} פרויקטים</span>
+                        <span className="text-[10px] text-slate-300">{u.created_at ? new Date(u.created_at).toLocaleDateString('he-IL') : ''}</span>
                       </div>
                     </div>
                   </div>
