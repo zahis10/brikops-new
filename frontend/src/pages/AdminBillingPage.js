@@ -7,10 +7,9 @@ import {
   ArrowRight, Building2, Clock, ShieldCheck, ShieldOff,
   CalendarPlus, Gift, Ban, Unlock, RefreshCw, Loader2,
   FileText, User, KeyRound, X, Package, Database, Play,
-  CheckCircle2, AlertTriangle, ChevronDown, ChevronUp
+  CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, Users
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
 
 import {
   getBillingStatusLabel, getBillingStatusColor,
@@ -25,6 +24,37 @@ const ACCESS_LABELS = {
 };
 
 import { getActionLabel } from '../utils/actionLabels';
+
+const getAuditDescription = (ev) => {
+  if (ev.payload?.note) return ev.payload.note;
+  const action = getActionLabel(ev.action);
+  const actor = ev.actor_name || 'מערכת';
+  const orgName = ev.payload?.org_name || ev.payload?.organization_name || '';
+  if (action !== '—' && orgName) return `${actor} — ${action} (${orgName})`;
+  if (action !== '—') return `${actor} — ${action}`;
+  return `${actor} — ${ev.action || 'פעולה'}`;
+};
+
+const getActionDotColor = (action) => {
+  if (['extend_trial', 'billing_extend_trial', 'comp', 'billing_comp', 'activate'].includes(action)) return 'bg-green-400';
+  if (['suspend', 'billing_suspend', 'billing_override'].includes(action)) return 'bg-red-400';
+  if (['unsuspend', 'billing_unsuspend'].includes(action)) return 'bg-blue-400';
+  if (['invoice_generated', 'invoice_marked_paid'].includes(action)) return 'bg-amber-400';
+  return 'bg-slate-400';
+};
+
+const getOrgBorderColor = (org) => {
+  if (org.subscription?.manual_override?.is_suspended) return 'border-r-red-400';
+  if (org.effective_access === 'full_access') return 'border-r-green-400';
+  return 'border-r-amber-400';
+};
+
+const getInitials = (name) => {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return parts[0][0] + parts[1][0];
+  return parts[0][0];
+};
 
 const AdminBillingPage = () => {
   const { user } = useAuth();
@@ -309,25 +339,35 @@ const AdminBillingPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={goBack} className="text-slate-500 hover:text-slate-700">
+      <header className="bg-gradient-to-l from-slate-900 to-slate-800 text-white">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+          <button onClick={goBack} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
             <ArrowRight className="w-5 h-5" />
           </button>
-          <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <Building2 className="w-5 h-5 text-amber-500" />
-            ניהול חיוב ומנויים
-          </h1>
-        </div>
-        <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={() => navigate('/admin/users', { state: { from: '/admin/billing' } })}>
-          <User className="w-4 h-4 ml-1" />
-          משתמשים
-        </Button>
-        <Button variant="outline" size="sm" onClick={loadData} disabled={refreshing}>
-          <RefreshCw className={`w-4 h-4 ml-1 ${refreshing ? 'animate-spin' : ''}`} />
-          רענון
-        </Button>
+          <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center">
+            <Building2 className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-bold leading-tight">ניהול חיוב ומנויים</h1>
+            <p className="text-xs text-slate-400">{orgs.length} ארגונים</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => navigate('/admin/users', { state: { from: '/admin/billing' } })}
+              className="px-3 py-1.5 text-xs bg-white/[0.07] border border-white/10 rounded-lg hover:bg-white/[0.14] transition-colors flex items-center gap-1"
+            >
+              <Users className="w-3.5 h-3.5" />
+              משתמשים
+            </button>
+            <button
+              onClick={loadData}
+              disabled={refreshing}
+              className="px-3 py-1.5 text-xs bg-white/[0.07] border border-white/10 rounded-lg hover:bg-white/[0.14] transition-colors flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              רענון
+            </button>
+          </div>
         </div>
       </header>
 
@@ -348,48 +388,49 @@ const AdminBillingPage = () => {
             }
           });
           return (
-            <section className="grid grid-cols-4 gap-3">
-              <Card className="p-3 text-center">
-                <div className="text-xs text-slate-500">סה״כ ארגונים</div>
-                <div className="text-xl font-bold text-slate-800">{orgs.length}</div>
-              </Card>
-              <Card className="p-3 text-center">
-                <div className="text-xs text-slate-500">ארגונים פעילים</div>
-                <div className="text-xl font-bold text-emerald-700">{activeOrgs}</div>
-              </Card>
-              <Card className="p-3 text-center">
-                <div className="text-xs text-slate-500">צפי MRR</div>
-                <div className="text-xl font-bold text-slate-800">{formatCurrency(totalMonthly)}</div>
-              </Card>
-              <Card className="p-3 text-center">
-                <div className="text-xs text-slate-500">שולם החודש</div>
-                <div className="text-xl font-bold text-emerald-700">{formatCurrency(paidThisMonth)}</div>
+            <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-blue-50 rounded-xl border border-blue-100 border-r-[3px] border-r-blue-400 p-3">
+                <div className="text-xs text-blue-600 font-medium mb-1">סה״כ ארגונים</div>
+                <div className="text-2xl font-bold text-slate-800">{orgs.length}</div>
+              </div>
+              <div className="bg-green-50 rounded-xl border border-green-100 border-r-[3px] border-r-green-400 p-3">
+                <div className="text-xs text-green-600 font-medium mb-1">ארגונים פעילים</div>
+                <div className="text-2xl font-bold text-green-700">{activeOrgs}</div>
+              </div>
+              <div className="bg-amber-50 rounded-xl border border-amber-100 border-r-[3px] border-r-amber-400 p-3">
+                <div className="text-xs text-amber-600 font-medium mb-1">צפי MRR</div>
+                <div className="text-2xl font-bold text-slate-800">{formatCurrency(totalMonthly)}</div>
+              </div>
+              <div className="bg-emerald-50 rounded-xl border border-emerald-100 border-r-[3px] border-r-emerald-400 p-3">
+                <div className="text-xs text-emerald-600 font-medium mb-1">שולם החודש</div>
+                <div className={`text-2xl font-bold ${paidThisMonth > 0 ? 'text-emerald-700' : 'text-red-500'}`}>{formatCurrency(paidThisMonth)}</div>
                 <div className="text-[10px] text-slate-400 mt-0.5">(לפי חשבונית אחרונה)</div>
-              </Card>
+              </div>
             </section>
           );
         })()}
 
-        <section className="bg-white rounded-xl border border-slate-200 p-4">
+        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <button
             onClick={() => setOpenRequestsExpanded(!openRequestsExpanded)}
-            className="flex items-center justify-between w-full"
+            className="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition-colors"
           >
-            <h2 className="text-base font-bold text-slate-700 flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              בקשות תשלום פתוחות
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-500" />
+              <span className="text-sm font-bold text-slate-700">בקשות תשלום פתוחות</span>
               {openRequests.open_count > 0 && (
-                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{openRequests.open_count}</span>
+                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">{openRequests.open_count}</span>
               )}
-            </h2>
+            </div>
             {openRequestsExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
           {openRequestsExpanded && (
-            <div className="mt-3 space-y-2">
+            <div className="px-4 pb-4 space-y-2">
               {openRequests.requests.length === 0 ? (
                 <div className="text-sm text-slate-400 py-2">אין בקשות פתוחות</div>
               ) : (
                 openRequests.requests.map(req => {
+                  const statusBorderColors = { requested: 'border-r-amber-400', sent: 'border-r-blue-400', pending_review: 'border-r-orange-400' };
                   const statusColors = { requested: 'bg-amber-100 text-amber-700', sent: 'bg-blue-100 text-blue-700', pending_review: 'bg-amber-100 text-amber-800' };
                   const statusLabels = { requested: 'ממתין לתשלום', sent: 'נשלח', pending_review: 'ממתין לאישור' };
                   const cycleLabels = { monthly: 'חודשי', yearly: 'שנתי' };
@@ -402,26 +443,25 @@ const AdminBillingPage = () => {
                     return `${dd}/${mm}/${yyyy}`;
                   };
                   return (
-                    <div key={req.id} className="bg-slate-50 rounded-lg p-3 text-sm space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${statusColors[req.status] || 'bg-slate-100 text-slate-500'}`}>
-                            {statusLabels[req.status] || req.status}
-                          </span>
-                          <span className="font-medium text-slate-700 truncate">{req.org_name}</span>
-                          {req.amount_ils > 0 && (
-                            <>
-                              <span className="text-slate-400 text-xs flex-shrink-0">•</span>
-                              <span className="text-slate-600 text-xs font-medium flex-shrink-0">
-                                <bdi dir="ltr">₪{req.amount_ils.toLocaleString('he-IL')}</bdi>
-                              </span>
-                            </>
-                          )}
-                          <span className="text-slate-400 text-xs flex-shrink-0">•</span>
-                          <span className="text-slate-500 text-xs flex-shrink-0">{cycleLabels[req.cycle] || req.cycle}</span>
-                          {req.has_receipt && (
-                            <span className="text-xs text-emerald-600 flex-shrink-0">📎</span>
-                          )}
+                    <div key={req.id} className={`bg-slate-50 rounded-xl border border-slate-200 border-r-[3px] ${statusBorderColors[req.status] || 'border-r-slate-300'} p-3 text-sm`}>
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
+                          {getInitials(req.org_name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800 truncate">{req.org_name}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${statusColors[req.status] || 'bg-slate-100 text-slate-500'}`}>
+                              {statusLabels[req.status] || req.status}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                            {req.amount_ils > 0 && (
+                              <span className="font-medium text-slate-700"><bdi dir="ltr">₪{req.amount_ils.toLocaleString('he-IL')}</bdi></span>
+                            )}
+                            <span>{cycleLabels[req.cycle] || req.cycle}</span>
+                            {req.has_receipt && <span className="text-emerald-600">📎</span>}
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center justify-between gap-2 text-xs">
@@ -431,9 +471,9 @@ const AdminBillingPage = () => {
                         </div>
                         <button
                           onClick={() => navigate(`/billing/org/${req.org_id}?highlight=${req.id}#requests`)}
-                          className="text-xs text-amber-600 hover:text-amber-700 font-medium whitespace-nowrap"
+                          className="text-xs text-amber-600 hover:text-amber-700 font-semibold whitespace-nowrap px-2 py-1 rounded-lg hover:bg-amber-50 transition-colors"
                         >
-                          פתח חיוב ארגון
+                          פתח חיוב ארגון ←
                         </button>
                       </div>
                     </div>
@@ -444,38 +484,47 @@ const AdminBillingPage = () => {
           )}
         </section>
 
-        <section>
+        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <button
             onClick={() => { const next = !showOrgs; setShowOrgs(next); if (next && orgs.length > 0) loadOrgInvoices(orgs); }}
-            className="w-full text-base font-bold text-slate-700 mb-3 flex items-center gap-2 hover:text-slate-900"
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
           >
-            <Building2 className="w-4 h-4" />
-            ארגונים ({orgs.length})
-            {showOrgs ? <ChevronUp className="w-4 h-4 mr-auto" /> : <ChevronDown className="w-4 h-4 mr-auto" />}
+            <div className="flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-blue-500" />
+              <span className="text-sm font-bold text-slate-700">ארגונים</span>
+              <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{orgs.length}</span>
+            </div>
+            {showOrgs ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
           {showOrgs && (
-            <div className="space-y-3">
+            <div className="px-4 pb-4 space-y-3">
               {orgs.map(org => {
                 const accessInfo = ACCESS_LABELS[org.effective_access] || ACCESS_LABELS.read_only;
                 const AccessIcon = accessInfo.icon;
                 const sub = org.subscription || {};
+                const borderColor = getOrgBorderColor(org);
                 return (
-                  <Card key={org.id} className="p-4">
+                  <div key={org.id} className={`bg-white rounded-xl border border-slate-200 border-r-[3px] ${borderColor} p-4 hover:shadow-sm transition-shadow`}>
                     <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <h3 className="font-bold text-slate-800">{org.name}</h3>
-                        <p className="text-xs text-slate-500">
-                          {org.owner?.name || '—'} | {org.owner?.email || (org.owner?.phone_e164 ? <bdi className="font-mono" dir="ltr">{org.owner.phone_e164}</bdi> : '—')}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
+                          {getInitials(org.name)}
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-slate-800">{org.name}</h3>
+                          <p className="text-xs text-slate-500">
+                            {org.owner?.name || '—'} | {org.owner?.email || (org.owner?.phone_e164 ? <bdi className="font-mono" dir="ltr">{org.owner.phone_e164}</bdi> : '—')}
+                          </p>
+                        </div>
                       </div>
-                      <div className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${accessInfo.color}`}>
+                      <div className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${accessInfo.color}`}>
                         <AccessIcon className="w-3 h-3" />
                         {accessInfo.label}
                       </div>
                     </div>
 
                     {org.read_only_reason && (
-                      <div className={`mb-2 px-2 py-1.5 rounded border text-xs flex items-center gap-1.5 ${
+                      <div className={`mb-3 px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 ${
                         org.read_only_reason === 'suspended'
                           ? 'bg-red-50 border-red-200 text-red-800'
                           : 'bg-amber-50 border-amber-200 text-amber-800'
@@ -521,7 +570,7 @@ const AdminBillingPage = () => {
                         <Button
                           size="sm" variant="outline"
                           onClick={() => setActionModal({ orgId: org.id, action: 'activate', orgName: org.name })}
-                          className="text-xs text-emerald-600 border-emerald-300"
+                          className="text-xs text-emerald-600 border-emerald-300 hover:bg-emerald-50"
                         >
                           <Play className="w-3 h-3 ml-1" />
                           הפעלת מנוי
@@ -530,7 +579,7 @@ const AdminBillingPage = () => {
                         <Button
                           size="sm" variant="outline"
                           onClick={() => setActionModal({ orgId: org.id, action: 'extend_trial', orgName: org.name })}
-                          className="text-xs"
+                          className="text-xs text-emerald-600 border-emerald-300 hover:bg-emerald-50"
                         >
                           <CalendarPlus className="w-3 h-3 ml-1" />
                           הארכת ניסיון
@@ -539,7 +588,7 @@ const AdminBillingPage = () => {
                       <Button
                         size="sm" variant="outline"
                         onClick={() => setActionModal({ orgId: org.id, action: 'comp', orgName: org.name })}
-                        className="text-xs"
+                        className="text-xs text-slate-600 border-slate-300 hover:bg-slate-50"
                       >
                         <Gift className="w-3 h-3 ml-1" />
                         מתנה עד תאריך
@@ -548,7 +597,7 @@ const AdminBillingPage = () => {
                         <Button
                           size="sm" variant="outline"
                           onClick={() => setActionModal({ orgId: org.id, action: 'unsuspend', orgName: org.name })}
-                          className="text-xs text-green-600 border-green-300"
+                          className="text-xs text-green-600 border-green-300 hover:bg-green-50"
                         >
                           <Unlock className="w-3 h-3 ml-1" />
                           ביטול חסימה
@@ -557,7 +606,7 @@ const AdminBillingPage = () => {
                         <Button
                           size="sm" variant="outline"
                           onClick={() => setActionModal({ orgId: org.id, action: 'suspend', orgName: org.name })}
-                          className="text-xs text-red-600 border-red-300"
+                          className="text-xs text-red-600 border-red-300 hover:bg-red-50"
                         >
                           <Ban className="w-3 h-3 ml-1" />
                           חסימה
@@ -578,35 +627,38 @@ const AdminBillingPage = () => {
                         </div>
                       );
                     })()}
-                  </Card>
+                  </div>
                 );
               })}
             </div>
           )}
         </section>
 
-        <section>
+        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <button
             onClick={() => { setShowPlans(!showPlans); if (!showPlans && plans.length === 0) loadPlans(); }}
-            className="w-full text-base font-bold text-slate-700 mb-3 flex items-center gap-2 hover:text-slate-900"
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
           >
-            <Package className="w-4 h-4" />
-            תוכניות תמחור
-            {showPlans ? <ChevronUp className="w-4 h-4 mr-auto" /> : <ChevronDown className="w-4 h-4 mr-auto" />}
+            <div className="flex items-center gap-2">
+              <Package className="w-4 h-4 text-purple-500" />
+              <span className="text-sm font-bold text-slate-700">תוכניות תמחור</span>
+              {plans.length > 0 && <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{plans.length}</span>}
+            </div>
+            {showPlans ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
           {showPlans && (
-            <div className="space-y-3 mb-4">
+            <div className="px-4 pb-4 space-y-3">
               {plansLoading ? (
                 <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
               ) : plans.length === 0 ? (
-                <Card className="p-4 text-sm text-slate-400">אין תוכניות — תכונת חיוב אינה מופעלת או לא הוגדרו תוכניות</Card>
+                <div className="p-4 text-sm text-slate-400">אין תוכניות — תכונת חיוב אינה מופעלת או לא הוגדרו תוכניות</div>
               ) : (
                 plans.map(plan => {
                   const cat = getPlanCatalog(plan.id);
                   const badge = getPlanBadge(plan.id);
                   const isPro = plan.id === 'plan_pro';
                   return (
-                    <Card key={plan.id} className={`p-4 ${!plan.is_active ? 'opacity-50' : ''} ${isPro && plan.is_active ? 'border-amber-300 border-2' : ''}`}>
+                    <div key={plan.id} className={`rounded-xl border p-4 ${!plan.is_active ? 'opacity-50 border-slate-200' : ''} ${isPro && plan.is_active ? 'border-amber-300 border-2 bg-amber-50/30' : 'border-slate-200'}`}>
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <div className="flex items-center gap-2">
@@ -624,12 +676,12 @@ const AdminBillingPage = () => {
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {plan.is_active ? (
-                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">פעיל</span>
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">פעיל</span>
                           ) : (
-                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded">מושבת</span>
+                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">מושבת</span>
                           )}
                           {plan.is_active && (
-                            <Button size="sm" variant="outline" className="text-xs text-red-600 border-red-300" onClick={() => handleDeactivatePlan(plan.id)}>
+                            <Button size="sm" variant="outline" className="text-xs text-red-600 border-red-300 hover:bg-red-50" onClick={() => handleDeactivatePlan(plan.id)}>
                               השבת
                             </Button>
                           )}
@@ -642,9 +694,9 @@ const AdminBillingPage = () => {
                       {plan.unit_tiers && (
                         <div className="mt-1 border-t border-slate-100 pt-2">
                           <div className="text-xs text-slate-500 mb-1">מדרגות יחידות:</div>
-                          <div className="space-y-1">
-                            {plan.unit_tiers.map(t => (
-                              <div key={t.code} className="flex items-center justify-between text-xs bg-slate-50 rounded px-2 py-1">
+                          <div className="space-y-0.5">
+                            {plan.unit_tiers.map((t, idx) => (
+                              <div key={t.code} className={`flex items-center justify-between text-xs rounded px-2 py-1.5 ${idx % 2 === 0 ? 'bg-slate-50' : 'bg-white'}`}>
                                 <span className="text-slate-600">{getTierLabel(t.code)}</span>
                                 <span className="font-medium text-slate-800">{formatCurrency(t.monthly_fee)}</span>
                               </div>
@@ -652,7 +704,7 @@ const AdminBillingPage = () => {
                           </div>
                         </div>
                       )}
-                    </Card>
+                    </div>
                   );
                 })
               )}
@@ -664,17 +716,19 @@ const AdminBillingPage = () => {
           )}
         </section>
 
-        <section>
+        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <button
             onClick={() => { setShowMigration(!showMigration); }}
-            className="w-full text-base font-bold text-slate-700 mb-3 flex items-center gap-2 hover:text-slate-900"
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
           >
-            <Database className="w-4 h-4" />
-            מיגרציה
-            {showMigration ? <ChevronUp className="w-4 h-4 mr-auto" /> : <ChevronDown className="w-4 h-4 mr-auto" />}
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-slate-400" />
+              <span className="text-sm font-bold text-slate-700">מיגרציה</span>
+            </div>
+            {showMigration ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
           {showMigration && (
-            <div className="space-y-3 mb-4">
+            <div className="px-4 pb-3 space-y-3">
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={runDryRun} disabled={migrationLoading}>
                   {migrationLoading ? <Loader2 className="w-3 h-3 animate-spin ml-1" /> : <Play className="w-3 h-3 ml-1" />}
@@ -688,8 +742,8 @@ const AdminBillingPage = () => {
                 )}
               </div>
               {migrationResult && (
-                <Card className="p-4 space-y-3">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                <div className="border border-slate-200 rounded-lg p-3 space-y-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
                     <div className="bg-slate-50 rounded p-2">
                       <div className="text-slate-500 text-xs">סה״כ פרויקטים</div>
                       <div className="font-bold text-slate-800">{migrationResult.total_projects}</div>
@@ -732,43 +786,49 @@ const AdminBillingPage = () => {
                       </div>
                     </div>
                   )}
-                </Card>
+                </div>
               )}
             </div>
           )}
         </section>
 
         <section>
-          <h2 className="text-base font-bold text-slate-700 mb-3 flex items-center gap-2">
-            <FileText className="w-4 h-4" />
-            יומן פעולות
-          </h2>
+          <div className="flex items-center gap-2 mb-3">
+            <FileText className="w-4 h-4 text-slate-500" />
+            <h2 className="text-sm font-bold text-slate-700">יומן פעולות</h2>
+            {audit.length > 0 && <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{Math.min(audit.length, 50)}</span>}
+          </div>
           {audit.length === 0 ? (
             <p className="text-sm text-slate-400">אין אירועים</p>
           ) : (
             <>
-              <div className="hidden sm:block bg-white rounded-lg border border-slate-200 overflow-hidden">
+              <div className="hidden sm:block bg-white rounded-xl border border-slate-200 overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-slate-50 text-slate-500">
                     <tr>
                       <th className="px-3 py-2 text-right">תאריך</th>
                       <th className="px-3 py-2 text-right">פעולה</th>
                       <th className="px-3 py-2 text-right">משתמש</th>
-                      <th className="px-3 py-2 text-right">הערה</th>
+                      <th className="px-3 py-2 text-right">תיאור</th>
                     </tr>
                   </thead>
                   <tbody>
                     {audit.slice(0, 50).map(ev => (
-                      <tr key={ev.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2 text-slate-600">{formatDateTime(ev.created_at)}</td>
-                        <td className="px-3 py-2 font-medium text-slate-700">{getActionLabel(ev.action)}</td>
+                      <tr key={ev.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                        <td className="px-3 py-2 text-slate-500">{formatDateTime(ev.created_at)}</td>
+                        <td className="px-3 py-2">
+                          <span className="flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getActionDotColor(ev.action)}`} />
+                            <span className="font-medium text-slate-700">{getActionLabel(ev.action)}</span>
+                          </span>
+                        </td>
                         <td className="px-3 py-2 text-slate-600">
                           <span className="flex items-center gap-1">
                             <User className="w-3 h-3" />
                             {ev.actor_name || ev.actor_id?.slice(0, 8)}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-slate-500">{ev.payload?.note || '—'}</td>
+                        <td className="px-3 py-2 text-slate-500">{getAuditDescription(ev)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -776,19 +836,20 @@ const AdminBillingPage = () => {
               </div>
               <div className="sm:hidden space-y-2">
                 {audit.slice(0, 50).map(ev => (
-                  <Card key={ev.id} className="p-3 space-y-1">
+                  <div key={ev.id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-slate-700">{getActionLabel(ev.action)}</span>
-                      <span className="text-xs text-slate-400">{formatDateTime(ev.created_at)}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getActionDotColor(ev.action)}`} />
+                        <span className="text-xs font-medium text-slate-700">{getActionLabel(ev.action)}</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400">{formatDateTime(ev.created_at)}</span>
                     </div>
                     <div className="text-xs text-slate-600 flex items-center gap-1">
                       <User className="w-3 h-3" />
                       {ev.actor_name || ev.actor_id?.slice(0, 8)}
                     </div>
-                    {ev.payload?.note && (
-                      <div className="text-xs text-slate-500">{ev.payload.note}</div>
-                    )}
-                  </Card>
+                    <div className="text-xs text-slate-500">{getAuditDescription(ev)}</div>
+                  </div>
                 ))}
               </div>
             </>
