@@ -18,6 +18,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Framework**: React (Create React App with CRACO).
 -   **UI/UX**: Leverages Radix UI, TailwindCSS, and shadcn/ui for a modern, responsive user experience. Features include dynamic dashboards, hierarchical navigation, a consistent color palette (amber for CTA/brand, slate for neutral, emerald for success, red for failure), multi-step task management with visual timelines and proof galleries, email/password and OTP-based authentication, and role-based dynamic routing.
 -   **Key Pages**: ProjectControlPage, InnerBuildingPage, BuildingQCPage, ProjectPlansPage, ProjectPlansArchivePage, ProjectPlanHistoryPage, UnitPlansPage are designed with mobile-first principles, client-side search, discipline filters, and role-based actions.
+-   **Admin Panel**: Tab-based layout at `/admin` with סקירה/משתמשים/ארגונים/חיובים/יומן tabs. MyProjectsPage shows an "אדמין פאנל" banner link for SA users (replaces old 3-card grid). AdminPage has gradient header, stat cards, payment requests, audit activity, and system info.
 -   **Plans Read Tracking MVP**: Lightweight seen/unseen tracking for active project plans with manager-specific visibility and detailed user lists.
 -   **Plans Archive & Replace System**: Implements an archive-first approach with automatic archival on plan replacement and a comprehensive version history/timeline view.
 

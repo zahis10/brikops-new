@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   Search, Plus, FolderOpen, ArrowLeft, LogOut, HardHat, Loader2, Building2, Phone,
-  Users, CreditCard, Settings
+  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -30,7 +30,6 @@ const MyProjectsPage = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [lastProject, setLastProject] = useState(null);
-  const [showProjects, setShowProjects] = useState(false);
 
   const isPM = user?.role === 'project_manager';
   const isSuperAdmin = user?.platform_role === 'super_admin';
@@ -145,51 +144,23 @@ const MyProjectsPage = () => {
       </header>
 
       <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
-        {isSuperAdmin && !showProjects && (
-          <div className="grid grid-cols-3 gap-3">
-            <button
-              onClick={() => setShowProjects(true)}
-              className="bg-white border-2 border-amber-200 hover:border-amber-400 rounded-xl p-4 flex flex-col items-center gap-2 transition-colors shadow-sm"
-            >
-              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
-                <FolderOpen className="w-6 h-6 text-amber-600" />
-              </div>
-              <span className="text-sm font-bold text-slate-700">פרויקטים</span>
-            </button>
-            <button
-              onClick={() => navigate('/admin/users', { state: { from: '/projects' } })}
-              className="bg-white border-2 border-blue-200 hover:border-blue-400 rounded-xl p-4 flex flex-col items-center gap-2 transition-colors shadow-sm"
-            >
-              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Users className="w-6 h-6 text-blue-600" />
-              </div>
-              <span className="text-sm font-bold text-slate-700">משתמשים</span>
-            </button>
-            <button
-              onClick={() => navigate('/admin/billing', { state: { from: '/projects' } })}
-              className="bg-white border-2 border-green-200 hover:border-green-400 rounded-xl p-4 flex flex-col items-center gap-2 transition-colors shadow-sm"
-            >
-              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                <CreditCard className="w-6 h-6 text-green-600" />
-              </div>
-              <span className="text-sm font-bold text-slate-700">חיובים</span>
-            </button>
-          </div>
+        {isSuperAdmin && (
+          <button
+            onClick={() => navigate('/admin')}
+            className="w-full flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl hover:border-amber-300 hover:shadow-sm transition-all"
+          >
+            <div className="w-10 h-10 bg-amber-500 rounded-lg flex items-center justify-center shrink-0">
+              <Shield className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 text-right min-w-0">
+              <p className="text-sm font-bold text-slate-800">אדמין פאנל</p>
+              <p className="text-xs text-slate-400">סקירה, משתמשים, ארגונים, חיובים</p>
+            </div>
+            <ArrowLeft className="w-5 h-5 text-slate-300 shrink-0" />
+          </button>
         )}
 
-        {(!isSuperAdmin || showProjects) && (
-          <>
-            {isSuperAdmin && showProjects && (
-              <button
-                onClick={() => setShowProjects(false)}
-                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                חזרה לדף ניהול
-              </button>
-            )}
-
-            {lastProject && (
+        {lastProject && (
               <Card className="p-4 bg-amber-50 border-amber-200">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -283,8 +254,6 @@ const MyProjectsPage = () => {
                 })}
               </div>
             )}
-          </>
-        )}
       </div>
 
     </div>
