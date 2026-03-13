@@ -103,11 +103,8 @@ async def billing_payment_request(org_id: str, request: Request, user: dict = De
         requested_by_kind = 'billing_manager'
     else:
         billing_role = await check_org_billing_role(user['id'], org_id)
-        is_pm = await check_org_pm_role(user['id'], org_id)
         if billing_role in ('org_admin', 'billing_admin', 'owner'):
             requested_by_kind = 'billing_manager'
-        elif is_pm:
-            requested_by_kind = 'pm_handoff'
         else:
             raise HTTPException(status_code=403, detail='אין הרשאה ליצירת בקשת תשלום')
     body = await request.json()
@@ -383,16 +380,7 @@ async def billing_project_update(project_id: str, request: Request, user: dict =
     if not _is_super_admin(user):
         billing_role = await check_org_billing_role(user['id'], org_id)
         if not billing_role:
-            from contractor_ops.billing import check_org_pm_role
-            is_pm = await check_org_pm_role(user['id'], org_id)
-            if not is_pm:
-                raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט')
-            pm_project = await db.project_memberships.find_one(
-                {'user_id': user['id'], 'project_id': project_id, 'role': 'project_manager'},
-                {'_id': 0}
-            )
-            if not pm_project:
-                raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט זה')
+            raise HTTPException(status_code=403, detail='אין הרשאת עדכון חיוב פרויקט')
     body = await request.json()
     allowed_fields = {'plan_id', 'contracted_units', 'status', 'setup_state', 'billing_contact_note'}
     updates = {k: v for k, v in body.items() if k in allowed_fields}

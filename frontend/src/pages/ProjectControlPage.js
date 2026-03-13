@@ -2714,6 +2714,8 @@ const ProjectControlPage = () => {
   const [billingEnabled, setBillingEnabled] = useState(false);
   const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
+  const [canManageBilling, setCanManageBilling] = useState(false);
+  const [isBillingViewer, setIsBillingViewer] = useState(false);
   const [qcSummary, setQcSummary] = useState(null);
   const [qcLoading, setQcLoading] = useState(false);
   const [memberCount, setMemberCount] = useState(null);
@@ -2738,7 +2740,8 @@ const ProjectControlPage = () => {
     } catch { setWorkMode('structure'); }
   }, [projectId]);
 
-  const MGMT_TABS = billingEnabled ? [...SECONDARY_TABS, BILLING_TAB] : SECONDARY_TABS;
+  const showBillingTab = billingEnabled && (isBillingViewer || user?.platform_role === 'super_admin');
+  const MGMT_TABS = showBillingTab ? [...SECONDARY_TABS, BILLING_TAB] : SECONDARY_TABS;
   const VALID_TABS = MGMT_TABS.map(t => t.id);
   const rawTab = searchParams.get('tab') || '';
   const activeTab = VALID_TABS.includes(rawTab) ? rawTab : '';
@@ -2758,7 +2761,11 @@ const ProjectControlPage = () => {
           return;
         }
         setAccessChecked(true);
-        billingService.me().then(b => setIsOrgOwner(!!b?.is_owner)).catch(() => {});
+        billingService.me().then(b => {
+          setIsOrgOwner(!!b?.is_owner);
+          setCanManageBilling(!!b?.can_manage_billing);
+          setIsBillingViewer(!!b?.is_org_pm || !!b?.can_manage_billing || !!b?.is_owner);
+        }).catch(() => {});
       } catch (err) {
         if (err?.response?.status === 403) {
           toast.error('אין לך גישה לפרויקט זה');
@@ -3031,7 +3038,7 @@ const ProjectControlPage = () => {
           )}
 
           {activeTab === 'billing' && billingEnabled && (
-            <ProjectBillingCard projectId={projectId} userRole={myRole} canEdit={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
+            <ProjectBillingCard projectId={projectId} userRole={myRole} canEdit={canManageBilling || user?.platform_role === 'super_admin'} />
           )}
         </div>
       )}

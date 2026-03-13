@@ -355,8 +355,6 @@ async def get_billing_info(user_id: str) -> dict:
     is_pm = False
     if not can_manage:
         is_pm = await check_org_pm_role(user_id, org_id)
-        if is_pm:
-            can_manage = True
 
     mem = await db.organization_memberships.find_one(
         {'org_id': org_id, 'user_id': user_id}, {'_id': 0, 'role': 1}
