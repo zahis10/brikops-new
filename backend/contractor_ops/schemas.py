@@ -130,6 +130,8 @@ class Project(BaseModel):
     join_code: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    onboarding_complete: Optional[bool] = None
+    onboarding_completed_at: Optional[str] = None
 
 
 class Building(BaseModel):

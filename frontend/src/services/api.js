@@ -85,6 +85,10 @@ export const projectService = {
     const response = await axios.put(`${API}/projects/${projectId}/members/${userId}/contractor-profile`, body, { headers: getAuthHeader() });
     return response.data;
   },
+  async markOnboardingComplete(projectId) {
+    const response = await axios.put(`${API}/projects/${projectId}/onboarding-complete`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const buildingService = {

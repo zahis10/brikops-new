@@ -126,6 +126,18 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
     return Project(**{k: v for k, v in doc.items() if k != '_id'})
 
 
+@router.put("/projects/{project_id}/onboarding-complete")
+async def mark_onboarding_complete(project_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    await _check_project_access(user, project_id)
+    await db.projects.update_one(
+        {'id': project_id},
+        {'$set': {'onboarding_complete': True, 'onboarding_completed_at': _now()}}
+    )
+    await _audit('project', project_id, 'onboarding_complete', user['id'], {})
+    return {'success': True}
+
+
 @router.post("/projects/{project_id}/assign-pm")
 async def assign_pm(project_id: str, body: dict, user: dict = Depends(require_roles('project_manager'))):
     db = get_db()

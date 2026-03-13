@@ -288,7 +288,7 @@ const OnboardingPage = () => {
         toast.success('הארגון נוצר בהצלחה! תקופת ניסיון 7 ימים.');
         if (result.project?.id) {
           localStorage.setItem('lastProjectId', result.project.id);
-          navigate(`/control?project=${result.project.id}`);
+          navigate(`/projects/${result.project.id}/control?showQuickSetup=true`);
         } else {
           navigate('/projects');
         }

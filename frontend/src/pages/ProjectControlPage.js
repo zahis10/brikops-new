@@ -1471,7 +1471,7 @@ const QC_BADGE_COLORS = {
   submitted: 'bg-slate-100 text-slate-600',
 };
 
-const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled }) => {
+const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding }) => {
   const navigate = useNavigate();
   const [expandedBuildings, setExpandedBuildings] = useState({});
   const [expandedFloors, setExpandedFloors] = useState({});
@@ -1717,8 +1717,17 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
       <Card className="p-8">
         <div className="flex flex-col items-center justify-center text-slate-400">
           <Building2 className="w-12 h-12 mb-3" />
-          <p className="text-lg font-medium text-slate-600">אין בניינים בפרויקט</p>
-          <p className="text-sm mt-1 mb-4">התחל בהוספת בניין ראשון לפרויקט</p>
+          {isOnboarding ? (
+            <>
+              <p className="text-lg font-medium text-slate-600">ברוך הבא לפרויקט! 🎉</p>
+              <p className="text-sm mt-1 mb-4 text-slate-500">בוא נתחיל בהקמת מבנה הפרויקט</p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-medium text-slate-600">אין בניינים בפרויקט</p>
+              <p className="text-sm mt-1 mb-4">התחל בהוספת בניין ראשון לפרויקט</p>
+            </>
+          )}
           <div className="flex gap-2">
             {onQuickSetup && (
               <Button
@@ -1729,7 +1738,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                 הקמה מהירה
               </Button>
             )}
-            {onAddBuilding && (
+            {!isOnboarding && onAddBuilding && (
               <Button
                 onClick={onAddBuilding}
                 variant="outline"
@@ -2634,6 +2643,52 @@ const CompaniesTab = ({ projectId }) => {
   );
 };
 
+const OnboardingChecklist = ({ hierarchy, companies, stats, memberCount, projectId, onQuickSetup, onCompanies, onTeam, onDefects, onDismiss }) => {
+  const items = [
+    { label: 'ארגון ופרויקט', done: true },
+    { label: 'בניינים וקומות', done: (hierarchy || []).length > 0, cta: 'הוסף בניין', action: onQuickSetup },
+    { label: 'חברה קבלנית', done: (companies || []).length > 0, cta: 'הוסף חברה', action: onCompanies },
+    { label: 'איש צוות', done: (memberCount || 0) > 1, cta: 'הזמן צוות', action: onTeam },
+    { label: 'ליקוי ראשון', done: ((stats?.open_defects || 0) + (stats?.closed_total || 0)) > 0, cta: 'צור ליקוי', action: onDefects },
+  ];
+  const completedCount = items.filter(i => i.done).length;
+
+  useEffect(() => {
+    if (completedCount === 5 && onDismiss) {
+      onDismiss(true);
+    }
+  }, [completedCount, onDismiss]);
+
+  return (
+    <Card className="p-4 border-amber-200 bg-amber-50/50">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm font-bold text-slate-700">הקמת הפרויקט — {completedCount} מתוך 5 הושלמו</p>
+        <button onClick={() => onDismiss(false)} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+          דלג לעת עתה
+        </button>
+      </div>
+      <div className="w-full bg-slate-200 rounded-full h-1.5 mb-3">
+        <div className="bg-amber-500 h-1.5 rounded-full transition-all" style={{ width: `${(completedCount / 5) * 100}%` }} />
+      </div>
+      <div className="space-y-2">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-2.5">
+            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0 ${item.done ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-400'}`}>
+              {item.done ? <Check className="w-3 h-3" /> : (i + 1)}
+            </span>
+            <span className={`text-sm flex-1 ${item.done ? 'text-slate-500 line-through' : 'text-slate-700 font-medium'}`}>{item.label}</span>
+            {!item.done && item.action && (
+              <button onClick={item.action} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg transition-colors font-medium">
+                {item.cta}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+};
+
 const ProjectControlPage = () => {
   const { projectId } = useParams();
   const { user } = useAuth();
@@ -2661,6 +2716,8 @@ const ProjectControlPage = () => {
   const [isOrgOwner, setIsOrgOwner] = useState(false);
   const [qcSummary, setQcSummary] = useState(null);
   const [qcLoading, setQcLoading] = useState(false);
+  const [memberCount, setMemberCount] = useState(null);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
 
   const [workMode, setWorkMode] = useState(() => {
     try {
@@ -2728,6 +2785,19 @@ const ProjectControlPage = () => {
     }
   }, [searchParams, loading, openInviteTriggered, setSearchParams]);
 
+  useEffect(() => {
+    if (loading) return;
+    const shouldShowQuickSetup = searchParams.get('showQuickSetup');
+    if (shouldShowQuickSetup === 'true') {
+      setShowQuickSetup(true);
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('showQuickSetup');
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, loading, setSearchParams]);
+
   const loadProject = useCallback(async () => {
     try {
       const data = await projectService.get(projectId);
@@ -2774,6 +2844,14 @@ const ProjectControlPage = () => {
     } catch {}
   }, [projectId]);
 
+  const loadMemberCount = useCallback(async () => {
+    try {
+      const data = await projectService.getMemberships(projectId);
+      const members = Array.isArray(data) ? data : (data?.items || data?.memberships || []);
+      setMemberCount(members.length);
+    } catch { setMemberCount(0); }
+  }, [projectId]);
+
   useEffect(() => {
     if (accessChecked) {
       loadProject();
@@ -2781,8 +2859,9 @@ const ProjectControlPage = () => {
       loadStats();
       loadCompanies();
       loadTrades();
+      loadMemberCount();
     }
-  }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades]);
+  }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
 
   useEffect(() => {
     if (!hierarchy?.length) { setQcSummary(null); setQcLoading(false); return; }
@@ -2826,7 +2905,16 @@ const ProjectControlPage = () => {
     loadStats();
     loadCompanies();
     loadTrades();
-  }, [loadHierarchy, loadStats, loadCompanies, loadTrades]);
+    loadMemberCount();
+  }, [loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
+
+  const handleOnboardingDismiss = useCallback(async (isAutoComplete) => {
+    setOnboardingDismissed(true);
+    try {
+      await projectService.markOnboardingComplete(projectId);
+      setProject(prev => prev ? { ...prev, onboarding_complete: true } : prev);
+    } catch {}
+  }, [projectId]);
 
   if (loading || !accessChecked) {
     return (
@@ -2842,6 +2930,14 @@ const ProjectControlPage = () => {
   if (!project) return null;
 
   const buildings = hierarchy;
+
+  const hasBuildings = hierarchy.length > 0;
+  const hasCompanies = companies.length > 0;
+  const hasTeam = (memberCount || 0) > 1;
+  const totalDefects = (stats?.open_defects || 0) + (stats?.closed_total || 0);
+  const hasDefects = totalDefects > 0;
+  const allOnboardingDone = hasBuildings && hasCompanies && hasTeam && hasDefects;
+  const isOnboarding = !project.onboarding_complete && !onboardingDismissed && !allOnboardingDone;
 
   const workTabs = [
     { id: 'dashboard', label: 'דשבורד', icon: BarChart3, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
@@ -2897,6 +2993,21 @@ const ProjectControlPage = () => {
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
           <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} qcLoading={qcLoading} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
 
+          {isOnboarding && (
+            <OnboardingChecklist
+              hierarchy={hierarchy}
+              companies={companies}
+              stats={stats}
+              memberCount={memberCount}
+              projectId={projectId}
+              onQuickSetup={() => setShowQuickSetup(true)}
+              onCompanies={() => setActiveTab('companies')}
+              onTeam={() => setActiveTab('team')}
+              onDefects={() => handleWorkTab('defects')}
+              onDismiss={handleOnboardingDismiss}
+            />
+          )}
+
           <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {MGMT_TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
@@ -2908,7 +3019,7 @@ const ProjectControlPage = () => {
           </div>
 
           {!activeTab && (
-            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={() => setShowAddBuilding(true)} onQuickSetup={() => setShowQuickSetup(true)} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={user?.platform_role === 'super_admin'} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} />
+            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={() => setShowAddBuilding(true)} onQuickSetup={() => setShowQuickSetup(true)} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={user?.platform_role === 'super_admin'} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} />
           )}
 
           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
@@ -2927,6 +3038,21 @@ const ProjectControlPage = () => {
 
       {workMode === 'defects' && (
         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
+          {hasBuildings && totalDefects === 0 && (
+            <Card className="p-4 border-green-200 bg-green-50/50">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">💪</span>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-slate-700">עדיין אין ליקויים בפרויקט</p>
+                  <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
+                </div>
+                <button onClick={() => { if (hierarchy.length > 0) navigate(`/projects/${projectId}/buildings/${hierarchy[0].id}/defects`); }}
+                  className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium whitespace-nowrap">
+                  צור ליקוי →
+                </button>
+              </div>
+            </Card>
+          )}
           <div className="flex items-center justify-between">
             <p className="text-sm font-bold text-slate-700">בניינים</p>
             <span className="text-xs bg-slate-100 text-slate-400 rounded-full px-2.5 py-0.5">{hierarchy.length} בניינים</span>
