@@ -996,7 +996,7 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
     debounceRef.current = setTimeout(async () => {
       try {
         const data = await companySearchService.search(val.trim());
-        const items = data.suggestions || [];
+        const items = (data.suggestions || []).filter(s => s.source_project_id !== projectId);
         setSuggestions(items);
         setShowSuggestions(items.length > 0);
       } catch {
