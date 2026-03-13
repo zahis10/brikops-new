@@ -188,6 +188,63 @@ async def admin_org_projects(org_id: str, user: dict = Depends(require_super_adm
     return projects
 
 
+@router.put("/admin/orgs/{org_id}")
+async def admin_update_org(org_id: str, request: Request, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    body = await request.json()
+    name = body.get('name', '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail='שם ארגון לא יכול להיות ריק')
+    org = await db.organizations.find_one({'id': org_id})
+    if not org:
+        raise HTTPException(status_code=404, detail='ארגון לא נמצא')
+    await db.organizations.update_one({'id': org_id}, {'$set': {'name': name}})
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'update_org',
+        'entity_type': 'organization',
+        'actor_id': user['id'],
+        'payload': {'org_id': org_id, 'name': name, 'old_name': org.get('name')},
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'success': True, 'name': name}
+
+
+@router.put("/admin/orgs/{org_id}/owner")
+async def admin_change_org_owner(org_id: str, request: Request, user: dict = Depends(require_stepup)):
+    db = get_db()
+    body = await request.json()
+    new_owner_id = body.get('user_id', '').strip()
+    if not new_owner_id:
+        raise HTTPException(status_code=400, detail='חובה לציין user_id')
+    org = await db.organizations.find_one({'id': org_id})
+    if not org:
+        raise HTTPException(status_code=404, detail='ארגון לא נמצא')
+    membership = await db.org_memberships.find_one({'org_id': org_id, 'user_id': new_owner_id})
+    if not membership:
+        raise HTTPException(status_code=400, detail='המשתמש אינו חבר בארגון')
+    old_owner_id = org.get('owner_user_id')
+    await db.organizations.update_one({'id': org_id}, {'$set': {'owner_user_id': new_owner_id}})
+    if old_owner_id and old_owner_id != new_owner_id:
+        await db.org_memberships.update_one(
+            {'org_id': org_id, 'user_id': old_owner_id},
+            {'$set': {'role': 'member', 'is_owner': False}}
+        )
+    await db.org_memberships.update_one(
+        {'org_id': org_id, 'user_id': new_owner_id},
+        {'$set': {'role': 'owner', 'is_owner': True}}
+    )
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'change_org_owner',
+        'entity_type': 'organization',
+        'actor_id': user['id'],
+        'payload': {'org_id': org_id, 'old_owner_id': old_owner_id, 'new_owner_id': new_owner_id},
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'success': True}
+
+
 @router.get("/admin/billing/audit")
 async def admin_billing_audit(user: dict = Depends(require_super_admin)):
     db = get_db()

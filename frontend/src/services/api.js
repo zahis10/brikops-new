@@ -869,6 +869,14 @@ export const adminOrgService = {
     const response = await axios.get(`${API}/orgs/${orgId}/members`, { headers: getAuthHeader() });
     return response.data;
   },
+  async updateOrg(orgId, data) {
+    const response = await axios.put(`${API}/admin/orgs/${orgId}`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async changeOwner(orgId, userId) {
+    const response = await axios.put(`${API}/admin/orgs/${orgId}/owner`, { user_id: userId }, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const orgMemberService = {
