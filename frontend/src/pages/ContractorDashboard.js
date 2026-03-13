@@ -148,10 +148,10 @@ const ContractorDashboard = () => {
   );
 
   const stats = useMemo(() => {
+    const closed = projectTasks.filter(t => t.status === 'closed');
     const handled = projectTasks.filter(t => HANDLED_STATUSES.includes(t.status));
-    const reopened = projectTasks.filter(t => t.status === 'reopened');
     const totalHandled = handled.length;
-    const successRate = totalHandled > 0 ? Math.round(((totalHandled - reopened.length) / totalHandled) * 100) : 0;
+    const successRate = totalHandled > 0 ? Math.max(0, Math.round((closed.length / totalHandled) * 100)) : 0;
     const waiting = projectTasks.filter(t => WAITING_FOR_ME_STATUSES.includes(t.status)).length;
 
     const now = new Date();
