@@ -1,882 +1,377 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { projectService, buildingService, floorService, companyService, userService, BACKEND_URL } from '../services/api';
+import { BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
-import { formatUnitLabel } from '../utils/formatters';
 import {
-  HardHat, LogOut, Building2, Layers, DoorOpen, Users, Plus, ChevronDown, ChevronUp,
-  Loader2, ArrowRight, Briefcase, FolderOpen, RefreshCw, UserPlus, ChevronRight,
-  Server, Database, Shield
+  HardHat, ArrowRight, Users, Loader2, RefreshCw,
+  Shield, BarChart3, Building2, CreditCard, ClipboardList,
+  TrendingUp, Clock, ChevronLeft
 } from 'lucide-react';
-import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
 
-const CATEGORIES = [
-  { value: 'electrical', label: 'חשמל' },
-  { value: 'plumbing', label: 'אינסטלציה' },
-  { value: 'hvac', label: 'מיזוג' },
-  { value: 'painting', label: 'צביעה' },
-  { value: 'flooring', label: 'ריצוף' },
-  { value: 'carpentry', label: 'נגרות' },
-  { value: 'masonry', label: 'בנייה' },
-  { value: 'windows', label: 'חלונות' },
-  { value: 'doors', label: 'דלתות' },
-  { value: 'general', label: 'כללי' },
-];
-
-const normalizeList = (data) => {
-  if (Array.isArray(data)) return data;
-  if (data && Array.isArray(data.items)) return data.items;
-  if (data && Array.isArray(data.projects)) return data.projects;
-  if (data && Array.isArray(data.buildings)) return data.buildings;
-  if (data && Array.isArray(data.floors)) return data.floors;
-  if (data && Array.isArray(data.units)) return data.units;
-  if (data && Array.isArray(data.companies)) return data.companies;
-  return [];
+const ACTION_LABELS = {
+  create: 'יצירה',
+  update: 'עדכון',
+  delete: 'מחיקה',
+  activate: 'הפעלה',
+  deactivate: 'השבתה',
+  override: 'שינוי ידני',
+  upgrade: 'שדרוג',
+  downgrade: 'שנמוך',
+  cancel: 'ביטול',
+  renew: 'חידוש',
+  trial_start: 'תחילת ניסיון',
+  payment: 'תשלום',
+  refund: 'החזר',
 };
 
-const SectionHeader = ({ icon: Icon, title, isOpen, onToggle, count }) => (
-  <button
-    onClick={onToggle}
-    className="w-full flex items-center justify-between p-4 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors touch-manipulation"
-    dir="rtl"
-  >
-    <div className="flex items-center gap-3">
-      <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
-        <Icon className="w-5 h-5 text-amber-600" />
-      </div>
-      <div className="text-right">
-        <h3 className="text-base font-semibold text-slate-800">{title}</h3>
-        {count !== undefined && <p className="text-xs text-slate-500">{count} פריטים</p>}
-      </div>
-    </div>
-    {isOpen ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-  </button>
-);
+const ENTITY_LABELS = {
+  subscription: 'מנוי',
+  billing_plan: 'תוכנית',
+  project_billing: 'חיוב פרויקט',
+  project: 'פרויקט',
+};
 
-const InputField = ({ label, value, onChange, placeholder, required, type = 'text' }) => (
-  <div className="space-y-1" dir="rtl">
-    <label className="block text-sm font-medium text-slate-700">
-      {label} {required && <span className="text-red-500">*</span>}
-    </label>
-    <input
-      type={type}
-      value={value}
-      onChange={onChange}
-      placeholder={placeholder}
-      className="w-full h-10 px-3 py-2 text-right text-sm text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
-    />
+const getActionDotColor = (action) => {
+  if (['create', 'activate', 'trial_start'].includes(action)) return 'bg-green-400';
+  if (['update', 'upgrade', 'downgrade'].includes(action)) return 'bg-blue-400';
+  if (['payment', 'refund', 'override'].includes(action)) return 'bg-amber-400';
+  return 'bg-slate-400';
+};
+
+const formatAuditDescription = (ev) => {
+  const action = ACTION_LABELS[ev.action] || ev.action || 'פעולה';
+  const entity = ENTITY_LABELS[ev.entity_type] || ev.entity_type || '';
+  const actor = ev.actor_name || 'מערכת';
+  const detail = ev.description && ev.description !== '—' ? ev.description : '';
+  if (detail) return `${actor}: ${detail}`;
+  return `${actor} — ${action} ${entity}`;
+};
+
+const formatTimeAgo = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = Math.floor((now - d) / 1000);
+  if (diff < 60) return 'עכשיו';
+  if (diff < 3600) return `לפני ${Math.floor(diff / 60)} דק׳`;
+  if (diff < 86400) return `לפני ${Math.floor(diff / 3600)} שע׳`;
+  if (diff < 604800) return `לפני ${Math.floor(diff / 86400)} ימים`;
+  return d.toLocaleDateString('he-IL');
+};
+
+const TABS = [
+  { id: 'overview', label: 'סקירה', icon: BarChart3 },
+  { id: 'users', label: 'משתמשים', icon: Users },
+  { id: 'orgs', label: 'ארגונים', icon: Building2 },
+  { id: 'billing', label: 'חיובים', icon: CreditCard },
+  { id: 'log', label: 'יומן', icon: ClipboardList },
+];
+
+const StatCard = ({ icon: Icon, label, value, bg, borderColor, numberColor, onClick }) => (
+  <div
+    onClick={onClick}
+    className={`rounded-xl p-4 transition-all border-r-4 ${bg} ${
+      onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98]' : ''
+    }`}
+    style={{ borderRightColor: borderColor }}
+  >
+    <div className="flex items-center gap-2 mb-2">
+      <Icon className="w-4 h-4" style={{ color: borderColor }} />
+      <span className="text-xs text-slate-500 font-medium">{label}</span>
+    </div>
+    <p className={`text-3xl font-black ${numberColor}`}>{value}</p>
   </div>
 );
 
 const AdminPage = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [projects, setProjects] = useState([]);
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [buildings, setBuildings] = useState([]);
-  const [selectedBuilding, setSelectedBuilding] = useState(null);
-  const [floors, setFloors] = useState([]);
-  const [selectedFloor, setSelectedFloor] = useState(null);
-  const [units, setUnits] = useState([]);
-  const [companies, setCompanies] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState({});
-  const [openSections, setOpenSections] = useState({ projects: true });
-  const [openProjects, setOpenProjects] = useState({});
-
-  const [newProject, setNewProject] = useState({ name: '', code: '', description: '', client_name: '' });
-  const [newBuilding, setNewBuilding] = useState({ name: '', code: '' });
-  const [newFloor, setNewFloor] = useState({ name: '', floor_number: '' });
-  const [newUnit, setNewUnit] = useState({ unit_no: '', unit_type: 'apartment' });
-  const [newCompany, setNewCompany] = useState({ name: '', trade: '', contact_name: '', contact_phone: '' });
-  const [pmAssignment, setPmAssignment] = useState({ user_id: '' });
-
-  const [showForm, setShowForm] = useState({});
   const [systemInfo, setSystemInfo] = useState(null);
   const [systemInfoLoading, setSystemInfoLoading] = useState(false);
+  const [paymentRequests, setPaymentRequests] = useState(null);
+  const [auditEvents, setAuditEvents] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
+
+  const authHeaders = useCallback(() => {
+    const token = localStorage.getItem('token');
+    return { 'Authorization': `Bearer ${token}` };
+  }, []);
 
   const loadSystemInfo = useCallback(async () => {
     setSystemInfoLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${BACKEND_URL}/api/admin/system-info`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(`${BACKEND_URL}/api/admin/system-info`, { headers: authHeaders() });
+      if (res.ok) setSystemInfo(await res.json());
+    } catch {}
+    finally { setSystemInfoLoading(false); }
+  }, [authHeaders]);
+
+  const loadPaymentRequests = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/admin/billing/payment-requests-summary`, { headers: authHeaders() });
+      if (res.ok) setPaymentRequests(await res.json());
+    } catch {}
+  }, [authHeaders]);
+
+  const loadAuditEvents = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/admin/billing/audit`, { headers: authHeaders() });
       if (res.ok) {
-        setSystemInfo(await res.json());
+        const data = await res.json();
+        setAuditEvents(Array.isArray(data) ? data : []);
       }
-    } catch (err) {
-      // silently fail for non-super-admins
-    } finally {
-      setSystemInfoLoading(false);
-    }
-  }, []);
-
-  const toggleSection = (section) => {
-    setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
-
-  const toggleForm = (form) => {
-    setShowForm(prev => ({ ...prev, [form]: !prev[form] }));
-  };
-
-  const toggleProject = (project) => {
-    const projectId = project.id;
-    const isCurrentlyOpen = openProjects[projectId];
-    if (!isCurrentlyOpen) {
-      selectProject(project);
-    }
-    setOpenProjects(prev => ({ ...prev, [projectId]: !prev[projectId] }));
-  };
-
-  const loadProjects = useCallback(async () => {
-    setLoading(l => ({ ...l, projects: true }));
-    try {
-      const data = await projectService.list();
-      setProjects(normalizeList(data));
-    } catch (err) {
-      toast.error('שגיאה בטעינת פרויקטים');
-    } finally {
-      setLoading(l => ({ ...l, projects: false }));
-    }
-  }, []);
-
-  const loadBuildings = useCallback(async (projectId) => {
-    setLoading(l => ({ ...l, buildings: true }));
-    try {
-      const data = await projectService.getBuildings(projectId);
-      setBuildings(normalizeList(data));
-    } catch (err) {
-      toast.error('שגיאה בטעינת בניינים');
-    } finally {
-      setLoading(l => ({ ...l, buildings: false }));
-    }
-  }, []);
-
-  const loadFloors = useCallback(async (buildingId) => {
-    setLoading(l => ({ ...l, floors: true }));
-    try {
-      const data = await buildingService.getFloors(buildingId);
-      setFloors(normalizeList(data));
-    } catch (err) {
-      toast.error('שגיאה בטעינת קומות');
-    } finally {
-      setLoading(l => ({ ...l, floors: false }));
-    }
-  }, []);
-
-  const loadUnits = useCallback(async (floorId) => {
-    setLoading(l => ({ ...l, units: true }));
-    try {
-      const data = await floorService.getUnits(floorId);
-      setUnits(normalizeList(data));
-    } catch (err) {
-      toast.error('שגיאה בטעינת דירות');
-    } finally {
-      setLoading(l => ({ ...l, units: false }));
-    }
-  }, []);
-
-  const loadCompanies = useCallback(async () => {
-    setLoading(l => ({ ...l, companies: true }));
-    try {
-      const data = await companyService.list();
-      setCompanies(normalizeList(data));
-    } catch (err) {
-      toast.error('שגיאה בטעינת חברות');
-    } finally {
-      setLoading(l => ({ ...l, companies: false }));
-    }
-  }, []);
-
-  const loadUsers = useCallback(async () => {
-    setLoading(l => ({ ...l, users: true }));
-    try {
-      const data = await userService.list();
-      setUsers(normalizeList(data));
-    } catch (err) {
-      toast.error('שגיאה בטעינת משתמשים');
-    } finally {
-      setLoading(l => ({ ...l, users: false }));
-    }
-  }, []);
+    } catch {}
+  }, [authHeaders]);
 
   useEffect(() => {
-    loadProjects();
-    loadCompanies();
-    loadUsers();
     loadSystemInfo();
-  }, [loadProjects, loadCompanies, loadUsers, loadSystemInfo]);
+    loadPaymentRequests();
+    loadAuditEvents();
+  }, [loadSystemInfo, loadPaymentRequests, loadAuditEvents]);
 
-  const handleCreateProject = async (e) => {
-    e.preventDefault();
-    if (!newProject.name.trim() || !newProject.code.trim()) {
-      toast.error('שם וקוד פרויקט הם שדות חובה');
-      return;
-    }
-    setLoading(l => ({ ...l, createProject: true }));
-    try {
-      await projectService.create(newProject);
-      toast.success('פרויקט נוצר בהצלחה!');
-      setNewProject({ name: '', code: '', description: '', client_name: '' });
-      setShowForm(f => ({ ...f, project: false }));
-      loadProjects();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת פרויקט');
-    } finally {
-      setLoading(l => ({ ...l, createProject: false }));
-    }
+  const handleTabClick = (tabId) => {
+    if (tabId === 'users') { navigate('/admin/users'); return; }
+    if (tabId === 'orgs') { navigate('/admin/billing?view=orgs'); return; }
+    if (tabId === 'billing') { navigate('/admin/billing?view=billing'); return; }
+    setActiveTab(tabId);
   };
 
-  const handleCreateBuilding = async (e) => {
-    e.preventDefault();
-    if (!newBuilding.name.trim() || !selectedProject) {
-      toast.error('יש לבחור פרויקט ולהזין שם בניין');
-      return;
-    }
-    setLoading(l => ({ ...l, createBuilding: true }));
-    try {
-      await projectService.createBuilding(selectedProject.id, {
-        ...newBuilding,
-        project_id: selectedProject.id,
-      });
-      toast.success('בניין נוצר בהצלחה!');
-      setNewBuilding({ name: '', code: '' });
-      setShowForm(f => ({ ...f, building: false }));
-      loadBuildings(selectedProject.id);
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת בניין');
-    } finally {
-      setLoading(l => ({ ...l, createBuilding: false }));
-    }
+  const counts = systemInfo?.counts || {};
+  const openRequests = paymentRequests?.requests || [];
+  const openCount = paymentRequests?.open_count || 0;
+  const recentAudit = (auditEvents || []).slice(0, 8);
+
+  const statusBadge = (status) => {
+    if (status === 'requested' || status === 'sent') return { label: 'ממתין לתשלום', cls: 'bg-amber-100 text-amber-700' };
+    if (status === 'pending_review') return { label: 'ממתין לאישור', cls: 'bg-orange-100 text-orange-700' };
+    return { label: status, cls: 'bg-slate-100 text-slate-600' };
   };
 
-  const handleCreateFloor = async (e) => {
-    e.preventDefault();
-    if (!newFloor.name.trim() || !selectedBuilding) {
-      toast.error('יש לבחור בניין ולהזין שם קומה');
-      return;
-    }
-    setLoading(l => ({ ...l, createFloor: true }));
-    try {
-      await buildingService.createFloor(selectedBuilding.id, {
-        ...newFloor,
-        building_id: selectedBuilding.id,
-        project_id: selectedProject.id,
-        floor_number: parseInt(newFloor.floor_number) || 0,
-      });
-      toast.success('קומה נוצרה בהצלחה!');
-      setNewFloor({ name: '', floor_number: '' });
-      setShowForm(f => ({ ...f, floor: false }));
-      loadFloors(selectedBuilding.id);
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת קומה');
-    } finally {
-      setLoading(l => ({ ...l, createFloor: false }));
-    }
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    return parts.length >= 2 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2);
   };
 
-  const handleCreateUnit = async (e) => {
-    e.preventDefault();
-    if (!newUnit.unit_no.trim() || !selectedFloor) {
-      toast.error('יש לבחור קומה ולהזין מספר יחידה');
-      return;
-    }
-    setLoading(l => ({ ...l, createUnit: true }));
-    try {
-      await floorService.createUnit(selectedFloor.id, {
-        ...newUnit,
-        floor_id: selectedFloor.id,
-        building_id: selectedBuilding.id,
-        project_id: selectedProject.id,
-      });
-      toast.success('יחידה נוצרה בהצלחה!');
-      setNewUnit({ unit_no: '', unit_type: 'apartment' });
-      setShowForm(f => ({ ...f, unit: false }));
-      loadUnits(selectedFloor.id);
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת יחידה');
-    } finally {
-      setLoading(l => ({ ...l, createUnit: false }));
-    }
-  };
-
-  const handleCreateCompany = async (e) => {
-    e.preventDefault();
-    if (!newCompany.name.trim()) {
-      toast.error('שם חברה הוא שדה חובה');
-      return;
-    }
-    setLoading(l => ({ ...l, createCompany: true }));
-    try {
-      const payload = { ...newCompany };
-      if (payload.trade) {
-        payload.specialties = [payload.trade];
-      }
-      await companyService.create(payload);
-      toast.success('חברה נוצרה בהצלחה!');
-      setNewCompany({ name: '', trade: '', contact_name: '', contact_phone: '' });
-      setShowForm(f => ({ ...f, company: false }));
-      loadCompanies();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת חברה');
-    } finally {
-      setLoading(l => ({ ...l, createCompany: false }));
-    }
-  };
-
-  const handleAssignPM = async (e) => {
-    e.preventDefault();
-    if (!pmAssignment.user_id || !selectedProject) {
-      toast.error('יש לבחור פרויקט ומשתמש');
-      return;
-    }
-    setLoading(l => ({ ...l, assignPM: true }));
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${BACKEND_URL}/api/projects/${selectedProject.id}/assign-pm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ user_id: pmAssignment.user_id }),
-      });
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || 'שגיאה');
-      }
-      toast.success('מנהל פרויקט מונה בהצלחה!');
-      setPmAssignment({ user_id: '' });
-      setShowForm(f => ({ ...f, pm: false }));
-      loadUsers();
-    } catch (err) {
-      toast.error(err.message || 'שגיאה במינוי מנהל פרויקט');
-    } finally {
-      setLoading(l => ({ ...l, assignPM: false }));
-    }
-  };
-
-  const selectProject = (project) => {
-    setSelectedProject(project);
-    setSelectedBuilding(null);
-    setSelectedFloor(null);
-    setBuildings([]);
-    setFloors([]);
-    setUnits([]);
-    loadBuildings(project.id);
-    setOpenSections(prev => ({ ...prev, buildings: true }));
-  };
-
-  const selectBuilding = (building) => {
-    setSelectedBuilding(building);
-    setSelectedFloor(null);
-    setFloors([]);
-    setUnits([]);
-    loadFloors(building.id);
-    setOpenSections(prev => ({ ...prev, floors: true }));
-  };
-
-  const selectFloor = (floor) => {
-    setSelectedFloor(floor);
-    setUnits([]);
-    loadUnits(floor.id);
-    setOpenSections(prev => ({ ...prev, units: true }));
-  };
-
-  const pmCandidates = users.filter(u =>
-    u.role === 'project_manager'
-  );
+  if (systemInfoLoading && !systemInfo) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center">
-              <HardHat className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold leading-tight">ניהול מערכת</h1>
-              <p className="text-xs text-slate-400">{user?.name} • בעלים</p>
-            </div>
+    <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+        <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
+          <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+            <ArrowRight className="w-5 h-5" />
+          </button>
+          <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center">
+            <Shield className="w-5 h-5 text-white" />
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/projects')} className="text-slate-300 hover:text-white hover:bg-slate-700">
-              <ArrowRight className="w-4 h-4 ml-1" />
-              חזרה
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => { logout(); navigate('/login'); }} className="text-slate-300 hover:text-white hover:bg-slate-700">
-              <LogOut className="w-4 h-4 ml-1" />
-              יציאה
-            </Button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-bold leading-tight">אדמין פאנל</h1>
+            <p className="text-xs text-slate-400">{user?.name} • Super Admin</p>
           </div>
+          <button onClick={() => { loadSystemInfo(); loadPaymentRequests(); loadAuditEvents(); }} disabled={systemInfoLoading} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="רענן">
+            <RefreshCw className={`w-5 h-5 ${systemInfoLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-4 space-y-4">
+      <div className="sticky top-[52px] z-40 bg-white border-b border-slate-200">
+        <div className="max-w-[1100px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
+          {TABS.map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button key={tab.id} onClick={() => handleTabClick(tab.id)}
+                className={`flex items-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation whitespace-nowrap ${
+                  isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'
+                }`}>
+                <Icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-        {systemInfo && (
-          <Card className="overflow-hidden">
-            <div className="p-4 bg-slate-50 rounded-xl" dir="rtl">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <Server className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-slate-800">מידע מערכת</h3>
-                  <p className="text-xs text-slate-500">System Info</p>
-                </div>
-                <Button variant="ghost" size="sm" onClick={loadSystemInfo} className="mr-auto" disabled={systemInfoLoading}>
-                  <RefreshCw className={`w-4 h-4 ${systemInfoLoading ? 'animate-spin' : ''}`} />
-                </Button>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                <div className="bg-white rounded-lg p-3 border border-slate-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Database className="w-4 h-4 text-blue-500" />
-                    <span className="text-xs font-medium text-slate-500">DB Host</span>
-                  </div>
-                  <p className="text-sm font-semibold text-slate-800 break-all">{systemInfo.db_host}</p>
-                </div>
-                <div className="bg-white rounded-lg p-3 border border-slate-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Database className="w-4 h-4 text-green-500" />
-                    <span className="text-xs font-medium text-slate-500">DB Name</span>
-                  </div>
-                  <p className="text-sm font-semibold text-slate-800">{systemInfo.db_name}</p>
-                </div>
-                <div className="bg-white rounded-lg p-3 border border-slate-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Shield className="w-4 h-4 text-amber-500" />
-                    <span className="text-xs font-medium text-slate-500">App Mode</span>
-                  </div>
-                  <p className={`text-sm font-semibold ${systemInfo.app_mode === 'prod' ? 'text-red-600' : 'text-green-600'}`}>
-                    {systemInfo.app_mode}
-                  </p>
-                </div>
-                <div className="bg-white rounded-lg p-3 border border-slate-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Server className="w-4 h-4 text-slate-500" />
-                    <span className="text-xs font-medium text-slate-500">Git SHA</span>
-                  </div>
-                  <p className="text-sm font-mono font-semibold text-slate-800">{systemInfo.git_sha}</p>
-                </div>
-              </div>
-              {systemInfo.counts && (
-                <div className="mt-3 grid grid-cols-3 sm:grid-cols-5 gap-2">
-                  {Object.entries(systemInfo.counts).map(([key, val]) => (
-                    <div key={key} className="bg-white rounded-lg p-2 border border-slate-200 text-center">
-                      <p className="text-lg font-bold text-amber-600">{val.toLocaleString()}</p>
-                      <p className="text-xs text-slate-500">{key}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {systemInfo.seed_guard && (
-                <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 bg-white rounded-lg p-2 border border-slate-200" dir="ltr">
-                  <Shield className="w-3 h-3 text-green-500" />
-                  <span>Seed Guard: {systemInfo.seed_guard.seed_blocked_in_prod ? 'ACTIVE' : 'INACTIVE'}</span>
-                  <span className="text-slate-400">|</span>
-                  <span>RUN_SEED: {systemInfo.seed_guard.run_seed}</span>
-                </div>
-              )}
+      <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-4">
+        {activeTab === 'overview' && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard
+                icon={Building2}
+                label="ארגונים"
+                value={counts.organizations ?? counts.orgs ?? '—'}
+                bg="bg-blue-50"
+                borderColor="#60a5fa"
+                numberColor="text-blue-600"
+                onClick={() => handleTabClick('orgs')}
+              />
+              <StatCard
+                icon={Users}
+                label="משתמשים"
+                value={counts.users ?? '—'}
+                bg="bg-purple-50"
+                borderColor="#c084fc"
+                numberColor="text-purple-600"
+                onClick={() => handleTabClick('users')}
+              />
+              <StatCard
+                icon={HardHat}
+                label="פרויקטים"
+                value={counts.projects ?? '—'}
+                bg="bg-amber-50"
+                borderColor="#fbbf24"
+                numberColor="text-amber-600"
+              />
+              <StatCard
+                icon={TrendingUp}
+                label="MRR"
+                value="—"
+                bg="bg-green-50"
+                borderColor="#4ade80"
+                numberColor="text-green-600"
+              />
             </div>
-          </Card>
-        )}
 
-        {/* Projects Section */}
-        <Card className="overflow-hidden">
-          <SectionHeader icon={FolderOpen} title="פרויקטים" isOpen={openSections.projects}
-            onToggle={() => toggleSection('projects')} count={projects.length} />
-          {openSections.projects && (
-            <div className="p-4 space-y-3">
-              <Button size="sm" onClick={() => toggleForm('project')}
-                className="bg-amber-500 hover:bg-amber-600 text-white w-full sm:w-auto">
-                <Plus className="w-4 h-4 ml-1" />
-                פרויקט חדש
-              </Button>
-
-              {showForm.project && (
-                <form onSubmit={handleCreateProject} className="bg-amber-50 rounded-xl p-4 space-y-3 border border-amber-200">
-                  <h4 className="text-sm font-semibold text-amber-800 text-right">פרויקט חדש</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <InputField label="שם פרויקט" value={newProject.name} required
-                      onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} placeholder="לדוגמה: מגדל הים" />
-                    <InputField label="קוד פרויקט" value={newProject.code} required
-                      onChange={e => setNewProject(p => ({ ...p, code: e.target.value }))} placeholder="לדוגמה: SEA-001" />
-                    <InputField label="שם לקוח" value={newProject.client_name}
-                      onChange={e => setNewProject(p => ({ ...p, client_name: e.target.value }))} placeholder="שם החברה/לקוח" />
-                    <InputField label="תיאור" value={newProject.description}
-                      onChange={e => setNewProject(p => ({ ...p, description: e.target.value }))} placeholder="תיאור קצר" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl border shadow-sm p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-amber-500" />
+                    <h3 className="text-sm font-bold text-slate-700">בקשות תשלום פתוחות</h3>
+                    {openCount > 0 && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">{openCount}</span>
+                    )}
                   </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(f => ({ ...f, project: false }))}>ביטול</Button>
-                    <Button type="submit" size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" disabled={loading.createProject}>
-                      {loading.createProject ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור פרויקט'}
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {loading.projects ? (
-                <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
-              ) : projects.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-4">אין פרויקטים עדיין</p>
-              ) : (
-                <div className="space-y-2">
-                  {projects.map(project => {
-                    const isExpanded = !!openProjects[project.id];
-                    const isSelected = selectedProject?.id === project.id;
-                    return (
-                      <Card key={project.id} className="overflow-hidden border border-slate-200">
+                  <button onClick={() => handleTabClick('billing')} className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1">
+                    הכל <ChevronLeft className="w-3 h-3" />
+                  </button>
+                </div>
+                {openRequests.length === 0 ? (
+                  <div className="text-center py-6 text-sm text-slate-400">אין בקשות פתוחות</div>
+                ) : (
+                  <div className="space-y-2">
+                    {openRequests.slice(0, 5).map((req, i) => {
+                      const badge = statusBadge(req.status);
+                      return (
                         <button
-                          onClick={() => toggleProject(project)}
-                          className={`w-full flex items-center justify-between p-4 transition-colors touch-manipulation ${
-                            isExpanded ? 'bg-amber-50 border-b border-amber-200' : 'bg-white hover:bg-slate-50'
-                          }`}
-                          dir="rtl"
+                          key={req.id || i}
+                          onClick={() => handleTabClick('billing')}
+                          className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-amber-50 border border-transparent hover:border-amber-200 transition-all text-right"
                         >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${isExpanded ? 'bg-amber-200' : 'bg-amber-100'}`}>
-                              <Building2 className="w-5 h-5 text-amber-600" />
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm font-semibold text-slate-800">{project.name}</p>
-                              <p className="text-xs text-slate-500">קוד: {project.code}{project.client_name ? ` • ${project.client_name}` : ''}</p>
-                            </div>
+                          <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600 shrink-0">
+                            {getInitials(req.org_name)}
                           </div>
-                          <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : 'rotate-0'}`} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-slate-700 truncate">{req.org_name || 'ארגון'}</p>
+                            <p className="text-xs text-slate-400">
+                              {req.amount ? `₪${req.amount.toLocaleString()}` : ''}
+                              {req.cycle ? ` • ${req.cycle === 'monthly' ? 'חודשי' : req.cycle}` : ''}
+                            </p>
+                          </div>
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${badge.cls}`}>
+                            {badge.label}
+                          </span>
                         </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
-                        <div
-                          className="overflow-hidden transition-all duration-300 ease-in-out"
-                          style={{ maxHeight: isExpanded ? '2000px' : '0', opacity: isExpanded ? 1 : 0 }}
-                        >
-                          {isExpanded && isSelected && (
-                            <div className="p-4 space-y-4 bg-slate-50/50">
-
-                              {/* PM Assignment inline */}
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2 mb-2" dir="rtl">
-                                  <UserPlus className="w-4 h-4 text-blue-500" />
-                                  <h4 className="text-sm font-semibold text-slate-700">מינוי מנהל פרויקט</h4>
-                                </div>
-                                <Button size="sm" onClick={() => toggleForm('pm')}
-                                  className="bg-blue-500 hover:bg-blue-600 text-white w-full sm:w-auto">
-                                  <UserPlus className="w-4 h-4 ml-1" />
-                                  מנה מנהל פרויקט
-                                </Button>
-
-                                {showForm.pm && (
-                                  <form onSubmit={handleAssignPM} className="bg-blue-50 rounded-xl p-4 space-y-3 border border-blue-200">
-                                    <h4 className="text-sm font-semibold text-blue-800 text-right">מינוי מנהל פרויקט</h4>
-                                    <div className="space-y-1" dir="rtl">
-                                      <label className="block text-sm font-medium text-slate-700">בחר משתמש <span className="text-red-500">*</span></label>
-                                      <select
-                                        value={pmAssignment.user_id}
-                                        onChange={e => setPmAssignment({ user_id: e.target.value })}
-                                        className="w-full h-10 px-3 py-2 text-right text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
-                                      >
-                                        <option value="">בחר משתמש...</option>
-                                        {pmCandidates.map(u => (
-                                          <option key={u.id} value={u.id}>{u.name} ({u.email || u.phone_e164 || 'ללא'})</option>
-                                        ))}
-                                      </select>
-                                      {pmCandidates.length === 0 && (
-                                        <p className="text-xs text-slate-500 mt-1">אין משתמשים מתאימים. יש להוסיף משתמשים עם תפקיד מנהל פרויקט.</p>
-                                      )}
-                                    </div>
-                                    <div className="flex gap-2 justify-end">
-                                      <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(f => ({ ...f, pm: false }))}>ביטול</Button>
-                                      <Button type="submit" size="sm" className="bg-blue-500 hover:bg-blue-600 text-white" disabled={loading.assignPM}>
-                                        {loading.assignPM ? <Loader2 className="w-4 h-4 animate-spin" /> : 'מנה PM'}
-                                      </Button>
-                                    </div>
-                                  </form>
-                                )}
-
-                                <div className="bg-slate-50 rounded-lg p-3" dir="rtl">
-                                  <h5 className="text-xs font-medium text-slate-500 mb-2">מנהלי פרויקטים רשומים</h5>
-                                  {users.filter(u => u.role === 'project_manager').length === 0 ? (
-                                    <p className="text-xs text-slate-400">אין מנהלי פרויקטים</p>
-                                  ) : (
-                                    <div className="space-y-1">
-                                      {users.filter(u => u.role === 'project_manager').map(u => (
-                                        <div key={u.id} className="flex items-center gap-2 text-sm text-slate-700">
-                                          <Users className="w-4 h-4 text-blue-500" />
-                                          <span>{u.name}</span>
-                                          <span className="text-xs text-slate-400">{u.email || (u.phone_e164 ? <bdi className="font-mono" dir="ltr">{u.phone_e164}</bdi> : '')}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <hr className="border-slate-200" />
-
-                              {/* Buildings inline */}
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2 mb-2" dir="rtl">
-                                  <Building2 className="w-4 h-4 text-amber-500" />
-                                  <h4 className="text-sm font-semibold text-slate-700">בניינים ({buildings.length})</h4>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button size="sm" onClick={() => toggleForm('building')}
-                                    className="bg-amber-500 hover:bg-amber-600 text-white">
-                                    <Plus className="w-4 h-4 ml-1" />
-                                    בניין חדש
-                                  </Button>
-                                  <Button size="sm" variant="outline" onClick={() => loadBuildings(selectedProject.id)}>
-                                    <RefreshCw className="w-4 h-4" />
-                                  </Button>
-                                </div>
-
-                                {showForm.building && (
-                                  <form onSubmit={handleCreateBuilding} className="bg-amber-50 rounded-xl p-4 space-y-3 border border-amber-200">
-                                    <h4 className="text-sm font-semibold text-amber-800 text-right">בניין חדש</h4>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                      <InputField label="שם בניין" value={newBuilding.name} required
-                                        onChange={e => setNewBuilding(b => ({ ...b, name: e.target.value }))} placeholder="לדוגמה: בניין A" />
-                                      <InputField label="קוד" value={newBuilding.code}
-                                        onChange={e => setNewBuilding(b => ({ ...b, code: e.target.value }))} placeholder="A" />
-                                    </div>
-                                    <div className="flex gap-2 justify-end">
-                                      <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(f => ({ ...f, building: false }))}>ביטול</Button>
-                                      <Button type="submit" size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" disabled={loading.createBuilding}>
-                                        {loading.createBuilding ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור בניין'}
-                                      </Button>
-                                    </div>
-                                  </form>
-                                )}
-
-                                {loading.buildings ? (
-                                  <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
-                                ) : buildings.length === 0 ? (
-                                  <p className="text-sm text-slate-400 text-center py-4">אין בניינים בפרויקט זה</p>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {buildings.map(building => (
-                                      <div key={building.id}
-                                        onClick={() => selectBuilding(building)}
-                                        className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors touch-manipulation ${
-                                          selectedBuilding?.id === building.id ? 'bg-amber-100 border border-amber-300' : 'bg-white border border-slate-200 hover:bg-slate-50'
-                                        }`} dir="rtl"
-                                      >
-                                        <div className="flex items-center gap-3">
-                                          <Building2 className="w-4 h-4 text-slate-500" />
-                                          <p className="text-sm font-medium text-slate-800">{building.name}</p>
-                                        </div>
-                                        <ChevronDown className="w-4 h-4 text-slate-400" />
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Floors inline */}
-                              {selectedBuilding && (
-                                <>
-                                  <hr className="border-slate-200" />
-                                  <div className="space-y-3">
-                                    <div className="flex items-center gap-2 mb-2" dir="rtl">
-                                      <Layers className="w-4 h-4 text-slate-500" />
-                                      <h4 className="text-sm font-semibold text-slate-700">קומות - {selectedBuilding.name} ({floors.length})</h4>
-                                    </div>
-                                    <Button size="sm" onClick={() => toggleForm('floor')}
-                                      className="bg-amber-500 hover:bg-amber-600 text-white">
-                                      <Plus className="w-4 h-4 ml-1" />
-                                      קומה חדשה
-                                    </Button>
-
-                                    {showForm.floor && (
-                                      <form onSubmit={handleCreateFloor} className="bg-amber-50 rounded-xl p-4 space-y-3 border border-amber-200">
-                                        <h4 className="text-sm font-semibold text-amber-800 text-right">קומה חדשה</h4>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                          <InputField label="שם קומה" value={newFloor.name} required
-                                            onChange={e => setNewFloor(f => ({ ...f, name: e.target.value }))} placeholder="לדוגמה: קומה 1" />
-                                          <InputField label="מספר קומה" value={newFloor.floor_number} type="number"
-                                            onChange={e => setNewFloor(f => ({ ...f, floor_number: e.target.value }))} placeholder="1" />
-                                        </div>
-                                        <div className="flex gap-2 justify-end">
-                                          <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(f => ({ ...f, floor: false }))}>ביטול</Button>
-                                          <Button type="submit" size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" disabled={loading.createFloor}>
-                                            {loading.createFloor ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור קומה'}
-                                          </Button>
-                                        </div>
-                                      </form>
-                                    )}
-
-                                    {loading.floors ? (
-                                      <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
-                                    ) : floors.length === 0 ? (
-                                      <p className="text-sm text-slate-400 text-center py-4">אין קומות בבניין זה</p>
-                                    ) : (
-                                      <div className="space-y-2">
-                                        {floors.map(floor => (
-                                          <div key={floor.id}
-                                            onClick={() => selectFloor(floor)}
-                                            className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors touch-manipulation ${
-                                              selectedFloor?.id === floor.id ? 'bg-amber-100 border border-amber-300' : 'bg-white border border-slate-200 hover:bg-slate-50'
-                                            }`} dir="rtl"
-                                          >
-                                            <div className="flex items-center gap-3">
-                                              <Layers className="w-4 h-4 text-slate-500" />
-                                              <p className="text-sm font-medium text-slate-800">{floor.name}</p>
-                                            </div>
-                                            <ChevronDown className="w-4 h-4 text-slate-400" />
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-
-                              {/* Units inline */}
-                              {selectedFloor && (
-                                <>
-                                  <hr className="border-slate-200" />
-                                  <div className="space-y-3">
-                                    <div className="flex items-center gap-2 mb-2" dir="rtl">
-                                      <DoorOpen className="w-4 h-4 text-slate-500" />
-                                      <h4 className="text-sm font-semibold text-slate-700">דירות - {selectedFloor.name} ({units.length})</h4>
-                                    </div>
-                                    <Button size="sm" onClick={() => toggleForm('unit')}
-                                      className="bg-amber-500 hover:bg-amber-600 text-white">
-                                      <Plus className="w-4 h-4 ml-1" />
-                                      יחידה חדשה
-                                    </Button>
-
-                                    {showForm.unit && (
-                                      <form onSubmit={handleCreateUnit} className="bg-amber-50 rounded-xl p-4 space-y-3 border border-amber-200">
-                                        <h4 className="text-sm font-semibold text-amber-800 text-right">יחידה חדשה</h4>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                          <InputField label="מספר יחידה" value={newUnit.unit_no} required
-                                            onChange={e => setNewUnit(u => ({ ...u, unit_no: e.target.value }))} placeholder="לדוגמה: 101" />
-                                          <div className="space-y-1" dir="rtl">
-                                            <label className="block text-sm font-medium text-slate-700">סוג יחידה</label>
-                                            <select value={newUnit.unit_type}
-                                              onChange={e => setNewUnit(u => ({ ...u, unit_type: e.target.value }))}
-                                              className="w-full h-10 px-3 py-2 text-right text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                                            >
-                                              <option value="apartment">דירה</option>
-                                              <option value="office">משרד</option>
-                                              <option value="commercial">מסחרי</option>
-                                              <option value="storage">מחסן</option>
-                                              <option value="parking">חניה</option>
-                                            </select>
-                                          </div>
-                                        </div>
-                                        <div className="flex gap-2 justify-end">
-                                          <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(f => ({ ...f, unit: false }))}>ביטול</Button>
-                                          <Button type="submit" size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" disabled={loading.createUnit}>
-                                            {loading.createUnit ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור יחידה'}
-                                          </Button>
-                                        </div>
-                                      </form>
-                                    )}
-
-                                    {loading.units ? (
-                                      <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
-                                    ) : units.length === 0 ? (
-                                      <p className="text-sm text-slate-400 text-center py-4">אין דירות בקומה זו</p>
-                                    ) : (
-                                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                        {units.map(unit => (
-                                          <div key={unit.id} className="p-3 bg-white border border-slate-200 rounded-lg text-center">
-                                            <DoorOpen className="w-4 h-4 text-slate-400 mx-auto mb-1" />
-                                            <p className="text-sm font-medium text-slate-800">{formatUnitLabel(unit.unit_no)}</p>
-                                            <p className="text-xs text-slate-500">{unit.status || 'פנויה'}</p>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-
-                            </div>
-                          )}
-                        </div>
-                      </Card>
-                    );
-                  })}
+              <div className="bg-white rounded-xl border shadow-sm p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4 text-blue-500" />
+                    <h3 className="text-sm font-bold text-slate-700">פעילות אחרונה</h3>
+                  </div>
+                  <button onClick={() => setActiveTab('log')} className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1">
+                    הכל <ChevronLeft className="w-3 h-3" />
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
-        </Card>
-
-        {/* Companies Section */}
-        <Card className="overflow-hidden">
-          <SectionHeader icon={Briefcase} title="חברות קבלן" isOpen={openSections.companies}
-            onToggle={() => toggleSection('companies')} count={companies.length} />
-          {openSections.companies && (
-            <div className="p-4 space-y-3">
-              <Button size="sm" onClick={() => toggleForm('company')}
-                className="bg-amber-500 hover:bg-amber-600 text-white w-full sm:w-auto">
-                <Plus className="w-4 h-4 ml-1" />
-                חברה חדשה
-              </Button>
-
-              {showForm.company && (
-                <form onSubmit={handleCreateCompany} className="bg-amber-50 rounded-xl p-4 space-y-3 border border-amber-200">
-                  <h4 className="text-sm font-semibold text-amber-800 text-right">חברה חדשה</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <InputField label="שם חברה" value={newCompany.name} required
-                      onChange={e => setNewCompany(c => ({ ...c, name: e.target.value }))} placeholder="שם החברה" />
-                    <div className="space-y-1" dir="rtl">
-                      <label className="block text-sm font-medium text-slate-700">תחום</label>
-                      <select value={newCompany.trade}
-                        onChange={e => setNewCompany(c => ({ ...c, trade: e.target.value }))}
-                        className="w-full h-10 px-3 py-2 text-right text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                      >
-                        <option value="">בחר תחום...</option>
-                        {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </select>
-                    </div>
-                    <InputField label="איש קשר" value={newCompany.contact_name}
-                      onChange={e => setNewCompany(c => ({ ...c, contact_name: e.target.value }))} placeholder="שם איש קשר" />
-                    <InputField label="טלפון" value={newCompany.contact_phone}
-                      onChange={e => setNewCompany(c => ({ ...c, contact_phone: e.target.value }))} placeholder="050-1234567" />
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(f => ({ ...f, company: false }))}>ביטול</Button>
-                    <Button type="submit" size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" disabled={loading.createCompany}>
-                      {loading.createCompany ? <Loader2 className="w-4 h-4 animate-spin" /> : 'צור חברה'}
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {loading.companies ? (
-                <div className="flex justify-center py-4"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
-              ) : companies.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-4">אין חברות</p>
-              ) : (
-                <div className="space-y-2">
-                  {companies.map(company => (
-                    <div key={company.id} className="p-3 bg-white border border-slate-200 rounded-lg" dir="rtl">
-                      <div className="flex items-center gap-3">
-                        <Briefcase className="w-4 h-4 text-amber-500" />
-                        <div>
-                          <p className="text-sm font-medium text-slate-800">{company.name}</p>
-                          <p className="text-xs text-slate-500">
-                            {company.trade ? CATEGORIES.find(c => c.value === company.trade)?.label || company.trade : 'כללי'}
-                            {company.contact_name ? ` • ${company.contact_name}` : ''}
-                          </p>
+                {recentAudit.length === 0 ? (
+                  <div className="text-center py-6 text-sm text-slate-400">אין פעילות אחרונה</div>
+                ) : (
+                  <div className="space-y-2">
+                    {recentAudit.map((ev, i) => (
+                      <div key={ev.id || i} className="flex items-start gap-2.5 py-1.5">
+                        <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${getActionDotColor(ev.action)}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-700 leading-snug">{formatAuditDescription(ev)}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{formatTimeAgo(ev.created_at)}</p>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {systemInfo && (
+              <div className="flex flex-wrap items-center gap-2 pt-2 pb-4">
+                <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-green-100 text-green-700 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  API תקין
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-medium">
+                  DB: {systemInfo.db_name}
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium ${
+                  systemInfo.app_mode === 'prod' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
+                }`}>
+                  Mode: {systemInfo.app_mode}
+                </span>
+                {systemInfo.git_sha && (
+                  <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 font-mono">
+                    {systemInfo.git_sha}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'log' && (
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <ClipboardList className="w-4 h-4 text-blue-500" />
+              <h3 className="text-sm font-bold text-slate-700">יומן פעילות</h3>
+              {auditEvents && (
+                <span className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">{auditEvents.length}</span>
               )}
             </div>
-          )}
-        </Card>
-
+            {!auditEvents || auditEvents.length === 0 ? (
+              <div className="text-center py-8 text-sm text-slate-400">אין רשומות ביומן</div>
+            ) : (
+              <div className="space-y-1">
+                {auditEvents.map((ev, i) => (
+                  <div key={ev.id || i} className={`flex items-start gap-3 py-2.5 px-2 rounded-lg ${i % 2 === 1 ? 'bg-slate-50' : ''}`}>
+                    <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${getActionDotColor(ev.action)}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-slate-700">{formatAuditDescription(ev)}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-xs text-slate-400">{formatTimeAgo(ev.created_at)}</span>
+                        {ev.entity_type && (
+                          <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">
+                            {ENTITY_LABELS[ev.entity_type] || ev.entity_type}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
