@@ -150,6 +150,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [companies, setCompanies] = useState([]);
   const [contractors, setContractors] = useState([]);
   const [projectMembers, setProjectMembers] = useState([]);
+  const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
+  const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitStep, setSubmitStep] = useState(null);
   const [errors, setErrors] = useState({});
@@ -236,6 +238,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setUnitId('');
     setCompanyId('');
     setAssigneeId('');
+    setAutoSelectedCompany(false);
+    setAutoSelectedAssignee(false);
     setBuildings([]);
     setFloors([]);
     setUnits([]);
@@ -272,11 +276,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setCategory(v);
     setCompanyId('');
     setAssigneeId('');
+    setAutoSelectedCompany(false);
+    setAutoSelectedAssignee(false);
   }, []);
 
   const handleCompanyChange = useCallback((v) => {
     setCompanyId(v);
     setAssigneeId('');
+    setAutoSelectedCompany(false);
+    setAutoSelectedAssignee(false);
   }, []);
 
   useEffect(() => {
@@ -286,6 +294,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         (m.company_id === companyId || m.user_company_id === companyId)
       );
       setContractors(matched);
+      if (matched.length === 1) {
+        setAssigneeId(matched[0].user_id || matched[0].id);
+        setAutoSelectedAssignee(true);
+      }
     } else if (!companyId) {
       setContractors([]);
     }
@@ -303,6 +315,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (!companyId && filteredCompanies.length === 1) {
       setCompanyId(filteredCompanies[0].id);
       setAssigneeId('');
+      setAutoSelectedCompany(true);
+      setAutoSelectedAssignee(false);
     }
   }, [category, filteredCompanies, companyId]);
 
@@ -523,6 +537,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setPriority('medium');
     setCompanyId('');
     setAssigneeId('');
+    setAutoSelectedCompany(false);
+    setAutoSelectedAssignee(false);
     setImages([]);
     setErrors({});
     setCreatedTaskId(null);
@@ -789,6 +805,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                     isLoading={loading.companies}
                     disabled={!category}
                   />
+                  {autoSelectedCompany && companyId && (
+                    <p className="text-[11px] text-blue-500 font-medium">נבחר אוטומטית</p>
+                  )}
                   {category && (
                     <button
                       type="button"
@@ -804,13 +823,16 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                   <SelectField
                     label="קבלן מבצע *"
                     value={assigneeId}
-                    onChange={v => setAssigneeId(v)}
+                    onChange={v => { setAssigneeId(v); setAutoSelectedAssignee(false); }}
                     options={contractors.map(m => ({ value: m.user_id, label: m.user_name || m.name || 'קבלן' }))}
                     error={errors.assignee_id}
                     placeholder={companyId ? 'בחר קבלן' : 'בחר חברה קודם'}
                     isLoading={loading.contractors}
                     disabled={!companyId}
                   />
+                  {autoSelectedAssignee && assigneeId && (
+                    <p className="text-[11px] text-blue-500 font-medium">נבחר אוטומטית</p>
+                  )}
                   {companyId && !loading.contractors && contractors.length === 0 && (
                     <div className="space-y-1">
                       <p className="text-xs text-amber-700">אין קבלנים משויכים לחברה זו</p>
