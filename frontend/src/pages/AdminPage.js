@@ -209,7 +209,7 @@ const AdminPage = () => {
               <StatCard
                 icon={Building2}
                 label="ארגונים"
-                value={counts.organizations ?? counts.orgs ?? '—'}
+                value={counts.organizations ?? '—'}
                 bg="bg-blue-50"
                 borderColor="#60a5fa"
                 numberColor="text-blue-600"

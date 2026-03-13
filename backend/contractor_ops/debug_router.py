@@ -79,6 +79,7 @@ async def admin_system_info(request: Request, user: dict = Depends(require_super
     tasks_count = await db.tasks.count_documents({})
     memberships_count = await db.project_memberships.count_documents({})
     audit_count = await db.audit_events.count_documents({})
+    organizations_count = await db.organizations.count_documents({})
 
     if '@' in MONGO_URL:
         parts = MONGO_URL.split('@', 1)
@@ -100,6 +101,7 @@ async def admin_system_info(request: Request, user: dict = Depends(require_super
             "tasks": tasks_count,
             "memberships": memberships_count,
             "audit_events": audit_count,
+            "organizations": organizations_count,
         },
         "seed_guard": {
             "run_seed": _os.environ.get('RUN_SEED', 'not set'),

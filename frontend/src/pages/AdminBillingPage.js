@@ -32,7 +32,7 @@ const AdminBillingPage = () => {
   const location = useLocation();
   const goBack = () => {
     if (location.state?.from) navigate(location.state.from);
-    else navigate('/projects');
+    else navigate('/admin');
   };
   const [orgs, setOrgs] = useState([]);
   const [audit, setAudit] = useState([]);

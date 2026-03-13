@@ -27,7 +27,7 @@ const AdminUsersPage = () => {
   const location = useLocation();
   const goBack = () => {
     if (location.state?.from) navigate(location.state.from);
-    else navigate('/projects');
+    else navigate('/admin');
   };
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
