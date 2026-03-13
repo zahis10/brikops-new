@@ -33,6 +33,7 @@ import ProjectPlansPage from './pages/ProjectPlansPage';
 import ProjectPlansArchivePage from './pages/ProjectPlansArchivePage';
 import ProjectPlanHistoryPage from './pages/ProjectPlanHistoryPage';
 import MyProjectsPage from './pages/MyProjectsPage';
+import ContractorDashboard from './pages/ContractorDashboard';
 import WaLoginPage from './pages/WaLoginPage';
 import OwnershipTransferPage from './pages/OwnershipTransferPage';
 import ProjectDashboardPage from './pages/ProjectDashboardPage';
@@ -86,6 +87,12 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   return children;
 };
 
+const ProjectsHome = () => {
+  const { user } = useAuth();
+  if (user?.role === 'contractor') return <ContractorDashboard />;
+  return <MyProjectsPage />;
+};
+
 const PaywallConnector = () => {
   const { setShowPaywall } = useBilling();
   useEffect(() => {
@@ -119,7 +126,7 @@ const AppRoutes = () => {
         path="/projects"
         element={
           <ProtectedRoute>
-            <MyProjectsPage />
+            <ProjectsHome />
           </ProtectedRoute>
         }
       />
