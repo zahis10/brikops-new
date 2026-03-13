@@ -134,7 +134,7 @@ const AdminPage = () => {
 
   const handleTabClick = (tabId) => {
     if (tabId === 'users') { navigate('/admin/users'); return; }
-    if (tabId === 'orgs') { navigate('/admin/billing?view=orgs'); return; }
+    if (tabId === 'orgs') { navigate('/admin/orgs'); return; }
     if (tabId === 'billing') { navigate('/admin/billing?view=billing'); return; }
     setActiveTab(tabId);
   };

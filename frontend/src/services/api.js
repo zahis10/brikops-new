@@ -856,6 +856,21 @@ export const invoiceService = {
   },
 };
 
+export const adminOrgService = {
+  async listOrgs() {
+    const response = await axios.get(`${API}/admin/billing/orgs`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getOrgProjects(orgId) {
+    const response = await axios.get(`${API}/admin/orgs/${orgId}/projects`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getOrgMembers(orgId) {
+    const response = await axios.get(`${API}/orgs/${orgId}/members`, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const orgMemberService = {
   async listMembers(orgId) {
     const response = await axios.get(`${API}/orgs/${orgId}/members`, { headers: getAuthHeader() });

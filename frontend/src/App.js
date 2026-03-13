@@ -23,6 +23,7 @@ import AdminPage from './pages/AdminPage';
 import AdminBillingPage from './pages/AdminBillingPage';
 import OrgBillingPage from './pages/OrgBillingPage';
 import AdminUsersPage from './pages/AdminUsersPage';
+import AdminOrgsPage from './pages/AdminOrgsPage';
 import ProjectControlPage from './pages/ProjectControlPage';
 import UnitDetailPage from './pages/UnitDetailPage';
 import UnitHomePage from './pages/UnitHomePage';
@@ -143,6 +144,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <OrgBillingPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/orgs"
+        element={
+          <ProtectedRoute requireSuperAdmin>
+            <AdminOrgsPage />
           </ProtectedRoute>
         }
       />

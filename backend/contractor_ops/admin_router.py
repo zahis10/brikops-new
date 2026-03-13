@@ -176,6 +176,18 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
     return result
 
 
+@router.get("/admin/orgs/{org_id}/projects")
+async def admin_org_projects(org_id: str, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    projects = await db.projects.find(
+        {"org_id": org_id}, {"_id": 0}
+    ).to_list(100)
+    for p in projects:
+        member_count = await db.project_memberships.count_documents({"project_id": p["id"]})
+        p["member_count"] = member_count
+    return projects
+
+
 @router.get("/admin/billing/audit")
 async def admin_billing_audit(user: dict = Depends(require_super_admin)):
     db = get_db()
