@@ -369,7 +369,7 @@ const AdminUsersPage = () => {
           </div>
         ) : (
           <>
-            <div className="space-y-2">
+            <div className="space-y-2 lg:grid lg:grid-cols-2 lg:gap-3 lg:space-y-0">
               {filteredUsers.map(u => {
                 const rs = getRoleStyle(u);
                 const st = STATUS_LABELS[u.billing_status] || STATUS_LABELS.none;
