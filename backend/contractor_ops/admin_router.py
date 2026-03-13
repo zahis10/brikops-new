@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from typing import Optional
 from datetime import datetime, timezone
 import uuid
+import re
 
 from contractor_ops.router import (
     get_db, get_current_user,
@@ -270,10 +271,15 @@ async def admin_list_users(
     query = {}
     if q and q.strip():
         q_stripped = q.strip()
+        q_escaped = re.escape(q_stripped)
+        digits = re.sub(r'[-\s()\u200e\u200f]', '', q_stripped)
+        phone_conditions = [{'phone_e164': {'$regex': q_escaped}}]
+        if digits.startswith('0') and 5 <= len(digits) <= 10:
+            phone_conditions.append({'phone_e164': {'$regex': re.escape('+972' + digits[1:])}})
         query['$or'] = [
-            {'name': {'$regex': q_stripped, '$options': 'i'}},
-            {'phone_e164': {'$regex': q_stripped}},
-            {'email': {'$regex': q_stripped, '$options': 'i'}},
+            {'name': {'$regex': q_escaped, '$options': 'i'}},
+            *phone_conditions,
+            {'email': {'$regex': q_escaped, '$options': 'i'}},
             {'id': q_stripped},
         ]
 
