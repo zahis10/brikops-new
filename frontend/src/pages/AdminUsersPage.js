@@ -41,6 +41,13 @@ const getRoleStyle = (u) => ROLE_STYLE[getUserRole(u)] || ROLE_STYLE.default;
 
 const isDemo = (u) => u.is_demo === true || (u.email && /demo.*@brikops\.com/i.test(u.email));
 
+const getInitials = (name) => {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return parts[0][0] + parts[1][0];
+  return parts[0][0];
+};
+
 const FILTERS = [
   { id: 'all', label: 'הכל', countLabel: 'משתמשים' },
   { id: 'super_admin', label: 'אדמין מערכת', countLabel: 'אדמיני מערכת' },
@@ -353,14 +360,12 @@ const AdminUsersPage = () => {
             <UserX className="w-14 h-14 text-slate-300 mb-3" />
             <p className="text-sm font-semibold text-slate-500 mb-1">לא נמצאו משתמשים</p>
             <p className="text-xs text-slate-400 mb-4">נסה לשנות את החיפוש או הפילטר</p>
-            {activeFilter !== 'all' && (
-              <button
-                onClick={() => setActiveFilter('all')}
-                className="text-xs text-amber-600 font-semibold hover:text-amber-700"
-              >
-                הצג את כל המשתמשים
-              </button>
-            )}
+            <button
+              onClick={() => { setActiveFilter('all'); setSearchInput(''); setQuery(''); }}
+              className="text-xs text-amber-600 font-semibold hover:text-amber-700"
+            >
+              נקה חיפוש ופילטרים
+            </button>
           </div>
         ) : (
           <>
@@ -375,8 +380,8 @@ const AdminUsersPage = () => {
                     className={`bg-white rounded-xl border border-slate-200 border-r-[3px] ${rs.border} p-3 cursor-pointer hover:border-amber-200 hover:shadow-sm transition-all active:bg-slate-50`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full ${rs.avatar} flex items-center justify-center text-sm font-bold flex-shrink-0`}>
-                        {(u.name || '?')[0]}
+                      <div className={`w-10 h-10 rounded-full ${rs.avatar} flex items-center justify-center text-xs font-bold flex-shrink-0`}>
+                        {getInitials(u.name)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
@@ -457,8 +462,8 @@ const AdminUsersPage = () => {
             ) : selectedUser && (
               <div className="p-4 space-y-3">
                 <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl">
-                  <div className={`w-14 h-14 rounded-full ${drawerRoleStyle.avatar} flex items-center justify-center text-xl font-bold flex-shrink-0`}>
-                    {(selectedUser.name || '?')[0]}
+                  <div className={`w-14 h-14 rounded-full ${drawerRoleStyle.avatar} flex items-center justify-center text-lg font-bold flex-shrink-0`}>
+                    {getInitials(selectedUser.name)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
