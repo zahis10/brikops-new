@@ -10,7 +10,8 @@ import { toast } from 'sonner';
 import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
   ChevronLeft, Building2, HardHat, Loader2, RefreshCw,
-  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings
+  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings,
+  Construction
 } from 'lucide-react';
 
 const formatHours = (h) => {
@@ -21,18 +22,19 @@ const formatHours = (h) => {
   return `${days} ימים`;
 };
 
-const KpiCard = ({ icon: Icon, label, value, sub, color, onClick, accent }) => (
+const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg, borderColor, numberColor }) => (
   <div
     onClick={onClick}
-    className={`bg-white rounded-xl border p-3 shadow-sm transition-all ${
-      onClick ? 'cursor-pointer hover:shadow-md hover:border-amber-200 active:scale-[0.98]' : ''
+    className={`rounded-xl p-3 transition-all border-r-4 ${bg} ${
+      onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98]' : ''
     }`}
+    style={{ borderRightColor: borderColor }}
   >
     <div className="flex items-center justify-between mb-1">
-      <Icon className={`w-4 h-4 ${color}`} />
+      <Icon className="w-4 h-4" style={{ color: borderColor }} />
       {onClick && <ExternalLink className="w-3 h-3 text-slate-300" />}
     </div>
-    <p className={`text-2xl font-bold ${accent || 'text-slate-800'}`}>{value ?? 0}</p>
+    <p className={`text-3xl font-black ${numberColor}`}>{value ?? 0}</p>
     <p className="text-xs text-slate-500 mt-0.5">{label}</p>
     {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
   </div>
@@ -76,6 +78,29 @@ const EMPTY_KPIS = {
   open_total: 0, open_last7: 0, in_progress: 0, closed_total: 0, closed_last7: 0,
   pending_approval: 0, overdue: 0, team_count: 0,
   sla_response_7d: 0, sla_close_7d: 0, sla_response_30d: 0, sla_close_30d: 0,
+};
+
+const getSlaBoxBg = (hours) => {
+  if (!hours || hours === 0) return 'bg-slate-50';
+  if (hours < 24) return 'bg-green-50';
+  if (hours > 48) return 'bg-orange-50';
+  return 'bg-slate-50';
+};
+
+const getBarColor = (index, total) => {
+  if (total <= 1) return 'from-red-500 to-red-400';
+  const ratio = index / (total - 1);
+  if (ratio < 0.33) return 'from-red-500 to-red-400';
+  if (ratio < 0.66) return 'from-orange-500 to-amber-400';
+  return 'from-green-500 to-emerald-400';
+};
+
+const getBarTextColor = (index, total) => {
+  if (total <= 1) return 'text-red-600';
+  const ratio = index / (total - 1);
+  if (ratio < 0.33) return 'text-red-600';
+  if (ratio < 0.66) return 'text-orange-600';
+  return 'text-green-600';
 };
 
 export default function ProjectDashboardPage() {
@@ -160,18 +185,19 @@ export default function ProjectDashboardPage() {
   const role = data.role || '';
   const isPmOrOwner = role === 'project_manager';
   const showPendingApprovals = isPmOrOwner && pending_approvals.length > 0;
+  const qcProgress = qcSummary && qcSummary.total > 0 ? Math.round((qcSummary.submitted / qcSummary.total) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
-      <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors" title="חזרה">
+      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+        <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+          <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
             <ArrowRight className="w-5 h-5" />
           </button>
           <div className="flex-1 min-w-0">
             <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
             <div className="flex items-center gap-2">
-              <p className="text-xs text-slate-400">מרכז ניהול</p>
+              <p className="text-xs text-slate-400">דשבורד ניהול</p>
               {role && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 ${
                   isPmOrOwner ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-600 text-slate-300'
@@ -183,57 +209,54 @@ export default function ProjectDashboardPage() {
             </div>
           </div>
           <NotificationBell />
-          <button
-            onClick={() => navigate('/settings/account')}
-            className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors"
-            title="הגדרות חשבון"
-          >
+          <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
             <Settings className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => load(true)}
-            disabled={refreshing}
-            className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors"
-            title="רענן"
-          >
+          <button onClick={() => load(true)} disabled={refreshing} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="רענן">
             <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto px-4 pt-4 space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+      <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-4">
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
           <KpiCard
             icon={AlertTriangle}
-            label="ליקויים פתוחים"
+            label="פתוחים"
             value={kpis.open_total}
-            sub={`+${kpis.open_last7} בשבוע האחרון`}
-            color="text-red-500"
-            accent={kpis.open_total > 0 ? 'text-red-600' : 'text-slate-800'}
+            sub={kpis.open_last7 > 0 ? `+${kpis.open_last7} השבוע` : undefined}
+            bg="bg-red-50"
+            borderColor="#f87171"
+            numberColor={kpis.open_total > 0 ? 'text-red-600' : 'text-slate-800'}
             onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=open&from=dashboard`)}
           />
           <KpiCard
             icon={TrendingUp}
             label="בביצוע"
             value={kpis.in_progress}
-            color="text-blue-500"
+            bg="bg-blue-50"
+            borderColor="#60a5fa"
+            numberColor="text-blue-600"
             onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=in_progress&from=dashboard`)}
           />
           <KpiCard
             icon={CheckCircle2}
             label="נסגרו"
             value={kpis.closed_total}
-            sub={`${kpis.closed_last7} בשבוע האחרון`}
-            color="text-green-500"
+            sub={kpis.closed_last7 > 0 ? `${kpis.closed_last7} השבוע` : undefined}
+            bg="bg-green-50"
+            borderColor="#4ade80"
+            numberColor="text-green-600"
             onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=closed&from=dashboard`)}
           />
           {isPmOrOwner && (
             <KpiCard
               icon={Clock}
-              label="ממתינות לאישור"
+              label="לאישורי"
               value={kpis.pending_approval}
-              color="text-amber-500"
-              accent={kpis.pending_approval > 0 ? 'text-amber-600' : 'text-slate-800'}
+              bg="bg-amber-50"
+              borderColor="#fbbf24"
+              numberColor={kpis.pending_approval > 0 ? 'text-amber-600' : 'text-slate-800'}
               onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
             />
           )}
@@ -241,227 +264,246 @@ export default function ProjectDashboardPage() {
             icon={AlertCircle}
             label="באיחור"
             value={kpis.overdue}
-            color="text-orange-500"
-            accent={kpis.overdue > 0 ? 'text-orange-600' : 'text-slate-800'}
+            bg="bg-orange-50"
+            borderColor="#fb923c"
+            numberColor={kpis.overdue > 0 ? 'text-orange-600' : 'text-slate-800'}
             onClick={() => navigate(`/projects/${projectId}/tasks?overdue=true&from=dashboard`)}
           />
           <KpiCard
             icon={Users}
-            label="חברי צוות"
+            label="צוות"
             value={kpis.team_count}
-            color="text-purple-500"
+            bg="bg-purple-50"
+            borderColor="#c084fc"
+            numberColor="text-purple-600"
             onClick={() => navigate(`/projects/${projectId}/control?tab=team`)}
           />
         </div>
 
-        <div className="bg-white rounded-xl border shadow-sm p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Timer className="w-4 h-4 text-indigo-500" />
-            <h3 className="text-sm font-bold text-slate-700">לוחות זמנים</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Timer className="w-4 h-4 text-indigo-500" />
+              <h3 className="text-sm font-bold text-slate-700">לוחות זמנים</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_response_7d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_response_7d)}</p>
+                <p className="text-[10px] text-slate-400">7 ימים</p>
+              </div>
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_close_7d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_close_7d)}</p>
+                <p className="text-[10px] text-slate-400">7 ימים</p>
+              </div>
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_response_30d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_response_30d)}</p>
+                <p className="text-[10px] text-slate-400">30 ימים</p>
+              </div>
+              <div className={`text-center p-3 rounded-lg ${getSlaBoxBg(kpis.sla_close_30d)}`}>
+                <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
+                <p className="text-2xl font-extrabold text-slate-800">{formatHours(kpis.sla_close_30d)}</p>
+                <p className="text-[10px] text-slate-400">30 ימים</p>
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="text-center p-2 bg-slate-50 rounded-lg">
-              <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
-              <p className="text-lg font-bold text-slate-800">{formatHours(kpis.sla_response_7d)}</p>
-              <p className="text-[10px] text-slate-400">7 ימים</p>
-            </div>
-            <div className="text-center p-2 bg-slate-50 rounded-lg">
-              <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
-              <p className="text-lg font-bold text-slate-800">{formatHours(kpis.sla_close_7d)}</p>
-              <p className="text-[10px] text-slate-400">7 ימים</p>
-            </div>
-            <div className="text-center p-2 bg-slate-50 rounded-lg">
-              <p className="text-xs text-slate-500 mb-1">זמן תגובה ממוצע</p>
-              <p className="text-lg font-bold text-slate-800">{formatHours(kpis.sla_response_30d)}</p>
-              <p className="text-[10px] text-slate-400">30 ימים</p>
-            </div>
-            <div className="text-center p-2 bg-slate-50 rounded-lg">
-              <p className="text-xs text-slate-500 mb-1">זמן סגירה ממוצע</p>
-              <p className="text-lg font-bold text-slate-800">{formatHours(kpis.sla_close_30d)}</p>
-              <p className="text-[10px] text-slate-400">30 ימים</p>
-            </div>
-          </div>
-        </div>
 
-        {qcSummary && qcSummary.total > 0 && (
-          <div className="bg-white rounded-xl border shadow-sm p-3">
-            <div className="flex items-center justify-between mb-2">
-              <SectionHeader icon={ClipboardCheck} title="בקרת ביצוע" count={null} color="text-amber-500" />
-              <button
-                onClick={() => navigate(`/projects/${projectId}/qc`)}
-                className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
-              >
-                פתח <ChevronLeft className="w-3 h-3" />
-              </button>
-            </div>
-            <div className="grid grid-cols-4 gap-2 text-center">
-              <div className="bg-slate-50 rounded-lg p-2">
-                <div className="text-lg font-bold text-slate-500">{qcSummary.not_started}</div>
-                <div className="text-[10px] text-slate-400 font-medium">{qcFloorStatusLabel('not_started')}</div>
-              </div>
-              <div className="bg-amber-50 rounded-lg p-2">
-                <div className="text-lg font-bold text-amber-600">{qcSummary.in_progress}</div>
-                <div className="text-[10px] text-amber-500 font-medium">{qcFloorStatusLabel('in_progress')}</div>
-              </div>
-              <div className="bg-slate-50 rounded-lg p-2">
-                <div className="text-lg font-bold text-slate-600">{qcSummary.pending_review}</div>
-                <div className="text-[10px] text-slate-400 font-medium">{qcFloorStatusLabel('pending_review')}</div>
-              </div>
-              <div className="bg-slate-50 rounded-lg p-2">
-                <div className="text-lg font-bold text-slate-600">{qcSummary.submitted}</div>
-                <div className="text-[10px] text-slate-400 font-medium">{qcFloorStatusLabel('submitted')}</div>
-              </div>
-            </div>
-            {qcSummary.total > 0 && (
-              <div className="mt-2">
-                <div className="w-full bg-slate-100 rounded-full h-2">
-                  <div
-                    className="h-2 rounded-full bg-amber-400 transition-all"
-                    style={{ width: `${Math.round((qcSummary.submitted / qcSummary.total) * 100)}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1 text-center">
-                  {qcSummary.submitted}/{qcSummary.total} קומות נבדקו
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {showPendingApprovals && (
-          <div className="bg-white rounded-xl border shadow-sm p-3">
-            <SectionHeader icon={Clock} title="ממתין לאישור שלי" count={pending_approvals.length} color="text-amber-500" />
-            <div className="space-y-1.5">
-              {pending_approvals.slice(0, 10).map(task => (
+          {qcSummary && qcSummary.total > 0 && (
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <div className="flex items-center justify-between mb-3">
+                <SectionHeader icon={ClipboardCheck} title="בקרת ביצוע" count={null} color="text-emerald-500" />
                 <button
-                  key={task.id}
-                  onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
-                  className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-amber-50 border border-transparent hover:border-amber-200 transition-all text-right"
+                  onClick={() => navigate(`/projects/${projectId}/qc`)}
+                  className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
                 >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-700 truncate">{task.title}</p>
-                    <p className="text-xs text-slate-400">{task.updated_at ? new Date(task.updated_at).toLocaleDateString('he-IL') : ''}</p>
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${statusColors[task.status] || 'bg-slate-100 text-slate-600'}`}>
-                    {statusLabels[task.status] || task.status}
-                  </span>
-                  <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                  פתח <ChevronLeft className="w-3 h-3" />
                 </button>
-              ))}
-              {pending_approvals.length > 10 && (
-                <button
-                  onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
-                  className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
-                >
-                  הצג את כל {pending_approvals.length} המשימות →
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {stuck_contractors.length > 0 && (
-          <div className="bg-white rounded-xl border shadow-sm p-3">
-            <SectionHeader icon={AlertCircle} title="תקוע אצל קבלנים" count={stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0)} color="text-orange-500" />
-            <div className="space-y-2">
-              {stuck_contractors.map(contractor => (
-                <div key={contractor.contractor_id} className="border border-orange-100 rounded-lg p-2.5 bg-orange-50/50">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <HardHat className="w-4 h-4 text-orange-500" />
-                      <span className="text-sm font-medium text-slate-700">{contractor.contractor_name || 'קבלן'}</span>
-                    </div>
-                    <span className="text-xs font-bold text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full">
-                      {contractor.stuck_count} תקועות
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    {contractor.tasks.slice(0, 3).map(task => (
-                      <button
-                        key={task.id}
-                        onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
-                        className="w-full flex items-center gap-2 text-right text-xs text-slate-600 hover:text-amber-700 py-0.5"
-                      >
-                        <span className="truncate flex-1">• {task.title}</span>
-                        <ChevronLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                      </button>
-                    ))}
-                  </div>
+              </div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg font-extrabold text-emerald-600">{qcProgress}%</span>
+                <span className="text-xs text-slate-400">התקדמות כללית</span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-2.5 mb-3">
+                <div
+                  className="h-2.5 rounded-full transition-all"
+                  style={{ width: `${qcProgress}%`, background: 'linear-gradient(90deg, #10b981, #34d399)' }}
+                />
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="bg-slate-50 rounded-lg p-2">
+                  <div className="text-lg font-bold text-slate-500">{qcSummary.not_started}</div>
+                  <div className="text-[10px] text-slate-400 font-medium">◷ {qcFloorStatusLabel('not_started')}</div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {load_by_building.length > 0 && (
-          <div className="bg-white rounded-xl border shadow-sm p-3">
-            <SectionHeader icon={Building2} title="עומס לפי מבנה" count={null} color="text-blue-500" />
-            <div className="space-y-1.5">
-              {load_by_building.map((b, i) => {
-                const max = load_by_building[0]?.open_count || 1;
-                const pct = Math.round((b.open_count / max) * 100);
-                return (
-                  <div key={b.building_id} className="flex items-center gap-3">
-                    <span className="text-xs text-slate-600 w-24 truncate font-medium">{b.building_name || `מבנה ${i + 1}`}</span>
-                    <div className="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden relative">
-                      <div
-                        className="h-full bg-gradient-to-l from-blue-500 to-blue-400 rounded-full transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                        {b.open_count}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <div className="bg-white rounded-xl border shadow-sm p-3">
-          <SectionHeader icon={BarChart3} title="קבלנים — איכות" count={contractor_quality.length} color="text-purple-500" />
-          {contractor_quality.length === 0 ? (
-            <EmptySection text="אין נתוני קבלנים" />
-          ) : (
-            <div className="overflow-x-auto -mx-1">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-slate-500 border-b">
-                    <th className="text-right py-2 px-1 font-medium">קבלן</th>
-                    <th className="text-center py-2 px-1 font-medium">פתוח</th>
-                    <th className="text-center py-2 px-1 font-medium">סגור</th>
-                    <th className="text-center py-2 px-1 font-medium">דחיות</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contractor_quality.slice(0, 15).map(c => (
-                    <tr key={c.contractor_id} className="border-b border-slate-50 hover:bg-slate-50">
-                      <td className="py-2 px-1 font-medium text-slate-700 truncate max-w-[120px]">
-                        {c.contractor_name || 'קבלן'}
-                      </td>
-                      <td className="text-center py-2 px-1">
-                        <span className={`text-xs font-bold ${c.open > 0 ? 'text-red-600' : 'text-slate-400'}`}>{c.open}</span>
-                      </td>
-                      <td className="text-center py-2 px-1">
-                        <span className="text-xs font-bold text-green-600">{c.closed}</span>
-                      </td>
-                      <td className="text-center py-2 px-1">
-                        <span className={`text-xs font-bold ${c.rework > 0 ? 'text-orange-600' : 'text-slate-400'}`}>{c.rework}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                <div className="bg-amber-50 rounded-lg p-2">
+                  <div className="text-lg font-bold text-amber-600">{qcSummary.in_progress}</div>
+                  <div className="text-[10px] text-amber-500 font-medium">◐ {qcFloorStatusLabel('in_progress')}</div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-2">
+                  <div className="text-lg font-bold text-blue-600">{qcSummary.pending_review}</div>
+                  <div className="text-[10px] text-blue-500 font-medium">{qcFloorStatusLabel('pending_review')}</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-2">
+                  <div className="text-lg font-bold text-green-600">{qcSummary.submitted}</div>
+                  <div className="text-[10px] text-green-500 font-medium">✓ {qcFloorStatusLabel('submitted')}</div>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {showPendingApprovals && (
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <SectionHeader icon={Clock} title="ממתין לאישור שלי" count={pending_approvals.length} color="text-amber-500" />
+              <div className="space-y-1.5">
+                {pending_approvals.slice(0, 10).map(task => (
+                  <button
+                    key={task.id}
+                    onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
+                    className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-amber-50 border border-transparent hover:border-amber-200 transition-all text-right border-r-[3px] border-r-amber-400"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{task.title}</p>
+                      <p className="text-xs text-slate-400">{task.updated_at ? new Date(task.updated_at).toLocaleDateString('he-IL') : ''}</p>
+                    </div>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${statusColors[task.status] || 'bg-slate-100 text-slate-600'}`}>
+                      {statusLabels[task.status] || task.status}
+                    </span>
+                    <ChevronLeft className="w-4 h-4 text-slate-300 shrink-0" />
+                  </button>
+                ))}
+                {pending_approvals.length > 10 && (
+                  <button
+                    onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
+                    className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
+                  >
+                    הצג את כל {pending_approvals.length} המשימות →
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {stuck_contractors.length > 0 && (
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <SectionHeader icon={AlertCircle} title="תקוע אצל קבלנים" count={stuck_contractors.reduce((sum, c) => sum + c.stuck_count, 0)} color="text-orange-500" />
+              <div className="space-y-2">
+                {stuck_contractors.map(contractor => (
+                  <div
+                    key={contractor.contractor_id}
+                    className={`rounded-lg p-2.5 bg-white border border-slate-100 border-r-[3px] ${
+                      contractor.stuck_count > 5 ? 'border-r-red-400' : 'border-r-orange-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <HardHat className="w-4 h-4 text-orange-500" />
+                        <span className="text-sm font-bold text-slate-700">{contractor.contractor_name || 'קבלן'}</span>
+                      </div>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                        contractor.stuck_count > 5 ? 'text-red-600 bg-red-100' : 'text-orange-600 bg-orange-100'
+                      }`}>
+                        {contractor.stuck_count} תקועות
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {contractor.tasks.slice(0, 3).map(task => (
+                        <button
+                          key={task.id}
+                          onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/dashboard` } })}
+                          className="w-full flex items-center gap-2 text-right text-xs text-slate-600 hover:text-amber-700 py-0.5"
+                        >
+                          <span className="truncate flex-1">• {task.title}</span>
+                          <ChevronLeft className="w-3 h-3 text-slate-300 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {load_by_building.length > 0 && (
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <SectionHeader icon={Building2} title="עומס לפי מבנה" count={null} color="text-blue-500" />
+              <div className="space-y-2.5">
+                {load_by_building.map((b, i) => {
+                  const max = load_by_building[0]?.open_count || 1;
+                  const pct = Math.round((b.open_count / max) * 100);
+                  const barColor = getBarColor(i, load_by_building.length);
+                  const textColor = getBarTextColor(i, load_by_building.length);
+                  return (
+                    <div key={b.building_id} className="flex items-center gap-3">
+                      <span className="text-xs text-slate-700 w-24 truncate font-semibold">{b.building_name || `מבנה ${i + 1}`}</span>
+                      <div className="flex-1 bg-slate-100 rounded-full overflow-hidden" style={{ height: '10px' }}>
+                        <div
+                          className={`h-full bg-gradient-to-l ${barColor} rounded-full transition-all`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className={`text-sm font-extrabold ${textColor} w-8 text-center`}>{b.open_count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <SectionHeader icon={BarChart3} title="קבלנים — איכות" count={contractor_quality.length} color="text-purple-500" />
+            {contractor_quality.length === 0 ? (
+              <EmptySection text="אין נתוני קבלנים" />
+            ) : (
+              <div className="overflow-x-auto -mx-1">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-slate-500 border-b">
+                      <th className="text-right py-2.5 px-2 font-medium">קבלן</th>
+                      <th className="text-center py-2.5 px-2 font-medium">פתוח</th>
+                      <th className="text-center py-2.5 px-2 font-medium">סגור</th>
+                      <th className="text-center py-2.5 px-2 font-medium">דחיות</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contractor_quality.slice(0, 15).map((c, idx) => (
+                      <tr key={c.contractor_id} className={`border-b border-slate-50 hover:bg-amber-50 transition-colors ${idx % 2 === 1 ? 'bg-slate-50' : ''}`}>
+                        <td className="py-2.5 px-2 font-medium text-slate-700 truncate max-w-[140px]">
+                          {c.contractor_name || 'קבלן'}
+                        </td>
+                        <td className="text-center py-2.5 px-2">
+                          <span className={`text-sm ${c.open > 5 ? 'font-bold text-red-600' : c.open > 0 ? 'font-bold text-red-500' : 'text-slate-400'}`}>{c.open}</span>
+                        </td>
+                        <td className="text-center py-2.5 px-2">
+                          <span className={`text-sm ${c.closed > 0 ? 'font-bold text-green-600' : 'text-slate-400'}`}>{c.closed}</span>
+                        </td>
+                        <td className="text-center py-2.5 px-2">
+                          <span className={`text-sm ${c.rework > 2 ? 'font-bold text-orange-600' : c.rework > 0 ? 'font-bold text-orange-500' : 'text-slate-400'}`}>{c.rework}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
         {kpis.open_total === 0 && kpis.closed_total === 0 && (
           <div className="bg-white rounded-xl border shadow-sm p-8 text-center">
-            <CheckCircle2 className="w-12 h-12 text-green-300 mx-auto mb-3" />
-            <p className="text-slate-500 text-sm">אין ליקויים בפרויקט זה עדיין</p>
-            <p className="text-slate-400 text-xs mt-1">צרו ליקוי ראשון כדי לראות נתוני מרכז ניהול</p>
+            <Construction className="w-14 h-14 text-amber-300 mx-auto mb-4" />
+            <p className="text-slate-700 text-base font-semibold mb-1">הפרויקט מוכן לפעולה</p>
+            <p className="text-slate-400 text-sm mb-4">צרו את הליקוי הראשון כדי לראות את הנתונים כאן</p>
+            <button
+              onClick={() => navigate(`/projects/${projectId}/control`)}
+              className="px-5 py-2.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors shadow-sm"
+            >
+              מעבר לפרויקט
+            </button>
           </div>
         )}
       </div>

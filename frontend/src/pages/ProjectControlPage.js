@@ -2751,6 +2751,7 @@ const ProjectControlPage = () => {
   const buildings = hierarchy;
 
   const workTabs = [
+    { id: 'dashboard', label: 'דשבורד', icon: BarChart3, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
     { id: 'structure', label: 'מבנה', icon: Building2 },
     { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
@@ -2758,6 +2759,7 @@ const ProjectControlPage = () => {
   ].filter(t => !t.hidden);
 
   const handleWorkTab = (id) => {
+    if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`); return; }
     if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
     setWorkMode(id);
@@ -2783,7 +2785,7 @@ const ProjectControlPage = () => {
       </header>
 
       <div className="sticky top-[48px] z-40 bg-white border-b border-slate-200">
-        <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2" dir="rtl">
+        <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
           {workTabs.map(wt => {
             const Icon = wt.icon;
             const isActive = workMode === wt.id;
