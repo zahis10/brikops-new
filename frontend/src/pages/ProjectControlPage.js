@@ -2575,6 +2575,8 @@ const ProjectControlPage = () => {
 
   const [workMode, setWorkMode] = useState(() => {
     try {
+      const urlWorkMode = new URLSearchParams(window.location.search).get('workMode');
+      if (urlWorkMode === 'structure' || urlWorkMode === 'defects') return urlWorkMode;
       const saved = localStorage.getItem(`brikops_workMode_${projectId}`);
       return (saved === 'structure' || saved === 'defects') ? saved : 'structure';
     } catch { return 'structure'; }
@@ -2583,6 +2585,8 @@ const ProjectControlPage = () => {
 
   useEffect(() => {
     try {
+      const urlWorkMode = new URLSearchParams(window.location.search).get('workMode');
+      if (urlWorkMode === 'structure' || urlWorkMode === 'defects') { setWorkMode(urlWorkMode); return; }
       const saved = localStorage.getItem(`brikops_workMode_${projectId}`);
       setWorkMode((saved === 'structure' || saved === 'defects') ? saved : 'structure');
     } catch { setWorkMode('structure'); }
