@@ -606,7 +606,7 @@ const TaskDetailPage = () => {
             <p className="text-sm text-slate-600 leading-relaxed">{task.description}</p>
           )}
 
-          {canManage && task.assignee_id && (
+          {canManage && (
             <div className="mt-4 pt-3 border-t border-slate-100">
               {allAttachments.length === 0 ? (
                 <div>
@@ -633,15 +633,19 @@ const TaskDetailPage = () => {
                   </div>
                 </div>
               ) : (
-                <Button
-                  onClick={handleSendWhatsApp}
-                  disabled={sendingWhatsApp}
-                  size="sm"
-                  className="bg-green-600 hover:bg-green-700 text-white gap-2"
-                >
-                  <Phone className="w-4 h-4" />
-                  {sendingWhatsApp ? 'שולח...' : 'שלח עדכון בוואטסאפ'}
-                </Button>
+                <>
+                  {task.assignee_id && (
+                    <Button
+                      onClick={handleSendWhatsApp}
+                      disabled={sendingWhatsApp}
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white gap-2"
+                    >
+                      <Phone className="w-4 h-4" />
+                      {sendingWhatsApp ? 'שולח...' : 'שלח עדכון בוואטסאפ'}
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           )}
