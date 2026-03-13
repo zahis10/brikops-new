@@ -188,6 +188,13 @@ export const companyService = {
   },
 };
 
+export const companySearchService = {
+  async search(query) {
+    const response = await axios.get(`${API}/companies/search`, { headers: getAuthHeader(), params: { q: query } });
+    return response.data;
+  },
+};
+
 export const projectCompanyService = {
   async list(projectId) {
     const response = await axios.get(`${API}/projects/${projectId}/companies`, { headers: getAuthHeader() });

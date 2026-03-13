@@ -156,6 +156,41 @@ async def create_project_trade(project_id: str, body: dict = Body(...), user: di
     return {k: v for k, v in doc.items() if k != '_id'}
 
 
+@router.get("/companies/search")
+async def search_companies(q: str = Query('', min_length=2), user: dict = Depends(get_current_user)):
+    db = get_db()
+    memberships = await db.project_memberships.find(
+        {'user_id': user['id']}, {'_id': 0, 'project_id': 1}
+    ).to_list(500)
+    project_ids = [m['project_id'] for m in memberships]
+    if not project_ids:
+        return {'suggestions': []}
+    escaped_q = re.escape(q.strip())
+    regex = re.compile(escaped_q, re.IGNORECASE)
+    companies = await db.project_companies.find(
+        {
+            'project_id': {'$in': project_ids},
+            'name': {'$regex': regex},
+            'deletedAt': {'$exists': False},
+        },
+        {'_id': 0, 'name': 1, 'trade': 1, 'contact_name': 1, 'contact_phone': 1, 'project_id': 1}
+    ).to_list(200)
+    seen = {}
+    for c in companies:
+        norm_name = re.sub(r'\s+', ' ', (c.get('name') or '').strip()).lower()
+        if norm_name and norm_name not in seen:
+            seen[norm_name] = {
+                'name': c.get('name', '').strip(),
+                'trade': c.get('trade'),
+                'contact_name': c.get('contact_name'),
+                'contact_phone': c.get('contact_phone'),
+                'source_project_id': c.get('project_id'),
+            }
+        if len(seen) >= 10:
+            break
+    return {'suggestions': list(seen.values())}
+
+
 @router.get("/trades")
 async def list_trades():
     trades = []

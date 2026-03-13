@@ -6,7 +6,7 @@ import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
   sortIndexService, versionService, configService, archiveService, stepupService, isStepupError, billingService,
-  qcService
+  qcService, companySearchService
 } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -69,7 +69,7 @@ const KIND_COLORS = {
 
 const SECONDARY_TABS = [
   { id: 'team', label: 'צוות', icon: '👥' },
-  { id: 'companies', label: 'חברות', icon: '🏢' },
+  { id: 'companies', label: 'קבלנים וחברות', icon: '🏢' },
   { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
 ];
 
@@ -960,6 +960,11 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
   const [newTradeLabel, setNewTradeLabel] = useState('');
   const [creatingTrade, setCreatingTrade] = useState(false);
 
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const debounceRef = useRef(null);
+  const blurTimeoutRef = useRef(null);
+
   const fetchTrades = useCallback(() => {
     setTradesLoading(true);
     tradeService.listForProject(projectId)
@@ -972,6 +977,51 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
   }, [projectId]);
 
   useEffect(() => { fetchTrades(); }, [fetchTrades]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+    };
+  }, []);
+
+  const handleNameChange = (val) => {
+    setName(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (val.trim().length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await companySearchService.search(val.trim());
+        const items = data.suggestions || [];
+        setSuggestions(items);
+        setShowSuggestions(items.length > 0);
+      } catch {
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }
+    }, 300);
+  };
+
+  const handleSelectSuggestion = (s) => {
+    setName(s.name || '');
+    if (s.trade) setTrade(s.trade);
+    if (s.contact_name) setContactName(s.contact_name);
+    if (s.contact_phone) setContactPhone(s.contact_phone);
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
+  const handleNameBlur = () => {
+    blurTimeoutRef.current = setTimeout(() => setShowSuggestions(false), 200);
+  };
+
+  const handleNameKeyDown = (e) => {
+    if (e.key === 'Escape') setShowSuggestions(false);
+  };
 
   const handleAddTrade = async () => {
     if (!newTradeLabel.trim()) return;
@@ -1015,9 +1065,47 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
     }
   };
 
+  const tradeMap = {};
+  tradeOptions.forEach(t => { tradeMap[t.value] = t.label; });
+
   return (
     <BottomSheetModal open onClose={onClose} title="הוסף חברה חדשה">
-      <InputField label="שם חברה *" value={name} onChange={setName} placeholder="למשל: חברת חשמל" error={errors.name} />
+      <p className="text-xs text-slate-500 -mt-2 mb-1">הוספת חברה קבלנית חיצונית (ספק, קבלן משנה)</p>
+      <div className="relative">
+        <div className="space-y-1">
+          <label className="block text-sm font-medium text-slate-700">שם חברה *</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => handleNameChange(e.target.value)}
+            onBlur={handleNameBlur}
+            onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
+            onKeyDown={handleNameKeyDown}
+            placeholder="למשל: חברת חשמל"
+            className={`w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 ${errors.name ? 'border-red-400' : 'border-slate-300'}`}
+          />
+          {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
+        </div>
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); handleSelectSuggestion(s); }}
+                className="w-full text-right px-3 py-2.5 hover:bg-amber-50 transition-colors border-b border-slate-100 last:border-b-0"
+              >
+                <span className="text-sm font-medium text-slate-800">{s.name}</span>
+                <span className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
+                  {s.trade && tradeMap[s.trade] && <span>{tradeMap[s.trade]}</span>}
+                  {s.trade && tradeMap[s.trade] && <span className="text-slate-300">·</span>}
+                  <span className="text-amber-600">(מפרויקט אחר)</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <SelectField label="תחום" value={trade} onChange={setTrade} options={tradeOptions} isLoading={tradesLoading} />
       {!showNewTrade && (
         <button
@@ -2508,12 +2596,13 @@ const CompaniesTab = ({ projectId }) => {
         <Card className="p-8">
           <div className="flex flex-col items-center text-slate-400">
             <Briefcase className="w-12 h-12 mb-3" />
-            <p className="text-lg font-medium">אין חברות</p>
-            <p className="text-sm mt-1">לחץ "הוסף חברה חדשה" להתחיל</p>
+            <p className="text-lg font-medium">אין חברות קבלניות משויכות לפרויקט</p>
+            <p className="text-sm mt-1">הוסף חברות קבלניות כדי לשייך אנשי מקצוע לפרויקט</p>
           </div>
         </Card>
       ) : (
         <div className="space-y-2">
+          <p className="text-xs text-slate-500 -mt-1 mb-1">חברות וקבלנים המשויכים לפרויקט זה</p>
           {companies.map(c => (
             <Card key={c.id} className="p-3 flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
