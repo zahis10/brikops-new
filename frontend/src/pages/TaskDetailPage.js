@@ -473,7 +473,7 @@ const TaskDetailPage = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" />
       </div>
     );
@@ -487,7 +487,7 @@ const TaskDetailPage = () => {
       || (task?.building_id && task?.project_id ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
         : task?.project_id ? `/projects/${task.project_id}/control?tab=defects` : '/projects');
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50" dir="rtl">
         <div className="text-center space-y-4 p-8">
           {isForbidden ? (
             <ShieldX className="w-16 h-16 text-red-400 mx-auto" />
@@ -551,7 +551,7 @@ const TaskDetailPage = () => {
   const hasCreatedEvent = timelineEvents.length > 0;
 
   return (
-    <div className="min-h-screen bg-slate-50 relative">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50" style={{ WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}>
       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
