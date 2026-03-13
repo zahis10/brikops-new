@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
@@ -303,22 +303,27 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     }
   }, [companyId, projectMembers]);
 
-  const filteredCompanies = category
-    ? companies.filter(c =>
-        c.trade === category ||
-        (c.specialties && c.specialties.includes(category))
-      )
-    : companies;
+  const categoryMatchedCompanies = useMemo(() => {
+    if (!category) return [];
+    return companies.filter(c =>
+      c.trade === category ||
+      (c.specialties && c.specialties.includes(category))
+    );
+  }, [category, companies]);
+
+  const filteredCompanies = category && categoryMatchedCompanies.length === 0
+    ? companies
+    : (category ? categoryMatchedCompanies : companies);
 
   useEffect(() => {
     if (!category) return;
-    if (!companyId && filteredCompanies.length === 1) {
-      setCompanyId(filteredCompanies[0].id);
+    if (!companyId && categoryMatchedCompanies.length === 1) {
+      setCompanyId(categoryMatchedCompanies[0].id);
       setAssigneeId('');
       setAutoSelectedCompany(true);
       setAutoSelectedAssignee(false);
     }
-  }, [category, filteredCompanies, companyId]);
+  }, [category, categoryMatchedCompanies, companyId]);
 
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
