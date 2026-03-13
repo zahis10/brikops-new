@@ -2,11 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { BACKEND_URL } from '../services/api';
-import { toast } from 'sonner';
 import {
   HardHat, ArrowRight, Users, Loader2, RefreshCw,
   Shield, BarChart3, Building2, CreditCard, ClipboardList,
-  TrendingUp, Clock, ChevronLeft
+  TrendingUp, ChevronLeft
 } from 'lucide-react';
 
 const ACTION_LABELS = {
@@ -90,6 +89,7 @@ const AdminPage = () => {
 
   const [systemInfo, setSystemInfo] = useState(null);
   const [systemInfoLoading, setSystemInfoLoading] = useState(false);
+  const [apiHealthy, setApiHealthy] = useState(null);
   const [paymentRequests, setPaymentRequests] = useState(null);
   const [auditEvents, setAuditEvents] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -103,8 +103,9 @@ const AdminPage = () => {
     setSystemInfoLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/admin/system-info`, { headers: authHeaders() });
-      if (res.ok) setSystemInfo(await res.json());
-    } catch {}
+      if (res.ok) { setSystemInfo(await res.json()); setApiHealthy(true); }
+      else { setApiHealthy(false); }
+    } catch { setApiHealthy(false); }
     finally { setSystemInfoLoading(false); }
   }, [authHeaders]);
 
@@ -315,24 +316,30 @@ const AdminPage = () => {
               </div>
             </div>
 
-            {systemInfo && (
+            {(systemInfo || apiHealthy === false) && (
               <div className="flex flex-wrap items-center gap-2 pt-2 pb-4">
-                <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-green-100 text-green-700 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                  API תקין
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-medium">
-                  DB: {systemInfo.db_name}
-                </span>
                 <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium ${
-                  systemInfo.app_mode === 'prod' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
+                  apiHealthy === false ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
                 }`}>
-                  Mode: {systemInfo.app_mode}
+                  <span className={`w-1.5 h-1.5 rounded-full ${apiHealthy === false ? 'bg-red-500' : 'bg-green-500'}`} />
+                  {apiHealthy === false ? 'API שגיאה' : 'API תקין'}
                 </span>
-                {systemInfo.git_sha && (
-                  <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 font-mono">
-                    {systemInfo.git_sha}
-                  </span>
+                {systemInfo && (
+                  <>
+                    <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-medium">
+                      DB: {systemInfo.db_name}
+                    </span>
+                    <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium ${
+                      systemInfo.app_mode === 'prod' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      Mode: {systemInfo.app_mode}
+                    </span>
+                    {systemInfo.git_sha && (
+                      <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 font-mono">
+                        {systemInfo.git_sha}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             )}
