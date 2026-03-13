@@ -6,7 +6,7 @@ import { authService } from '../services/api';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
-  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase
+  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle
 } from 'lucide-react';
 import PhoneChangeModal from '../components/PhoneChangeModal';
 import { tRole, tTrade } from '../i18n';
@@ -45,6 +45,8 @@ const AccountSettingsPage = () => {
   const location = useLocation();
   const phoneRef = useRef(null);
   const [showPhoneChange, setShowPhoneChange] = useState(false);
+  const [waLang, setWaLang] = useState(user?.preferred_language || 'he');
+  const [waLangSaving, setWaLangSaving] = useState(false);
 
   useEffect(() => {
     if (location.hash === '#phone') {
@@ -266,6 +268,43 @@ const AccountSettingsPage = () => {
           >
             שינוי מספר טלפון
           </Button>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <MessageCircle className="w-5 h-5 text-amber-500" />
+            <h2 className="text-lg font-semibold text-slate-900">שפת הודעות WhatsApp</h2>
+          </div>
+          <p className="text-sm text-slate-500 mb-4">בחר את השפה שבה תקבל הודעות WhatsApp</p>
+          <select
+            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            value={waLang}
+            disabled={waLangSaving}
+            onChange={async (e) => {
+              const newLang = e.target.value;
+              setWaLangSaving(true);
+              try {
+                await authService.updateMyPreferredLanguage(newLang);
+                setWaLang(newLang);
+                toast.success('שפת WhatsApp עודכנה בהצלחה');
+              } catch (err) {
+                toast.error(err.response?.data?.detail || 'שגיאה בעדכון שפה');
+              } finally {
+                setWaLangSaving(false);
+              }
+            }}
+          >
+            <option value="he">עברית</option>
+            <option value="en">English</option>
+            <option value="ar">العربية</option>
+            <option value="zh">中文</option>
+          </select>
+          {waLangSaving && (
+            <div className="flex items-center gap-2 mt-2 text-sm text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>שומר...</span>
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">

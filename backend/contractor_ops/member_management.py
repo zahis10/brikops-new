@@ -163,6 +163,43 @@ async def _get_org_owner_id(db, project_id: str):
     return org.get('owner_user_id'), org['id']
 
 
+@router.put("/projects/{project_id}/members/{target_user_id}/preferred-language")
+async def update_member_preferred_language(project_id: str, target_user_id: str, request: Request,
+                                           user: dict = Depends(get_current_user)):
+    from config import ALLOWED_LANGUAGES
+    db = get_db()
+    await _require_pm_or_owner(user, project_id)
+    target_membership = await db.project_memberships.find_one({
+        'project_id': project_id,
+        'user_id': target_user_id,
+    })
+    if not target_membership:
+        raise HTTPException(status_code=403, detail='המשתמש אינו חבר בפרויקט זה')
+    body = await request.json()
+    lang = body.get('preferred_language', '').strip().lower()
+    if lang not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f'שפה לא נתמכת. ערכים אפשריים: {", ".join(ALLOWED_LANGUAGES)}')
+    target_user = await db.users.find_one({'id': target_user_id}, {'_id': 0, 'id': 1, 'preferred_language': 1})
+    if not target_user:
+        raise HTTPException(status_code=404, detail='משתמש לא נמצא')
+    old_lang = target_user.get('preferred_language', 'he')
+    await db.users.update_one({'id': target_user_id}, {'$set': {'preferred_language': lang}})
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'entity_type': 'user',
+        'entity_id': target_user_id,
+        'action': 'pm_preferred_language_change',
+        'actor_id': user['id'],
+        'payload': {
+            'project_id': project_id,
+            'old_language': old_lang,
+            'new_language': lang,
+        },
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'success': True, 'preferred_language': lang}
+
+
 @router.put("/projects/{project_id}/members/{target_user_id}/role")
 async def change_member_role(project_id: str, target_user_id: str, request: Request,
                              user: dict = Depends(get_current_user)):

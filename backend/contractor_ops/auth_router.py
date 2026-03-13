@@ -8,7 +8,7 @@ from contractor_ops.router import (
     _get_otp_service, _audit, _now,
     ensure_user_org, MANAGEMENT_ROLES, logger,
 )
-from config import is_super_admin_phone, ENABLE_COMPLETE_ACCOUNT_GATE, SA_PHONES_SOURCE, SUPER_ADMIN_PHONES, _mask_phone
+from config import is_super_admin_phone, ENABLE_COMPLETE_ACCOUNT_GATE, SA_PHONES_SOURCE, SUPER_ADMIN_PHONES, _mask_phone, ALLOWED_LANGUAGES
 from contractor_ops.phone_utils import normalize_israeli_phone
 from contractor_ops.schemas import (
     UserCreate, UserLogin, UserResponse, Role,
@@ -116,6 +116,22 @@ async def verify_phone_change(request: Request, user: dict = Depends(get_current
     })
 
     return {'success': True, 'phone_e164': new_phone, 'force_logout': True}
+
+
+@router.put("/auth/me/preferred-language")
+async def update_my_preferred_language(request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    body = await request.json()
+    lang = body.get('preferred_language', '').strip().lower()
+    if lang not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f'שפה לא נתמכת. ערכים אפשריים: {", ".join(ALLOWED_LANGUAGES)}')
+    old_lang = user.get('preferred_language', 'he')
+    await db.users.update_one({'id': user['id']}, {'$set': {'preferred_language': lang}})
+    await _audit('user', user['id'], 'self_preferred_language_change', user['id'], {
+        'old_language': old_lang,
+        'new_language': lang,
+    })
+    return {'success': True, 'preferred_language': lang}
 
 
 @router.post("/auth/register", response_model=UserResponse)
@@ -416,6 +432,7 @@ async def get_me(user: dict = Depends(get_current_user)):
         user_status=user.get('user_status', 'active'),
         created_at=user.get('created_at'),
         platform_role=user.get('platform_role', 'none'),
+        preferred_language=user.get('preferred_language'),
         organization=org_summary,
         project_memberships_summary=proj_summaries,
     )

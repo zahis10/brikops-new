@@ -78,6 +78,7 @@ WA_DEFECT_TEMPLATES = {
     'zh': {'name': os.environ.get('WA_DEFECT_TEMPLATE_ZH', 'brikops_defect_new_zh_v2'), 'lang': 'zh_CN'},
 }
 WA_DEFECT_DEFAULT_LANG = 'he'
+ALLOWED_LANGUAGES = ['he', 'en', 'ar', 'zh']
 WA_TEMPLATE_PARAM_MODE = os.environ.get('WA_TEMPLATE_PARAM_MODE', 'named')
 WA_QC_REJECT_TEMPLATE_HE = os.environ.get('WA_QC_REJECT_TEMPLATE_HE', 'qc_item_rejected_he')
 WA_QC_REJECT_TEMPLATE_LANG = 'he'

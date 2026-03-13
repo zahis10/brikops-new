@@ -392,6 +392,14 @@ export const membershipService = {
     const response = await axios.get(`${API}/my-memberships`, { headers: getAuthHeader() });
     return response.data;
   },
+  async updatePreferredLanguage(projectId, userId, lang) {
+    const response = await axios.put(
+      `${API}/projects/${projectId}/members/${userId}/preferred-language`,
+      { preferred_language: lang },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
 };
 
 export const sortIndexService = {
@@ -1025,6 +1033,10 @@ export const authService = {
   },
   async changeEmail(current_password, new_email) {
     const response = await axios.post(`${API}/auth/change-email`, { current_password, new_email }, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async updateMyPreferredLanguage(lang) {
+    const response = await axios.put(`${API}/auth/me/preferred-language`, { preferred_language: lang }, { headers: getAuthHeader() });
     return response.data;
   },
 };

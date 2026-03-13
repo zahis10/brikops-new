@@ -5,7 +5,7 @@ import {
 } from './ui/drawer';
 import { Button } from './ui/button';
 import { tRole, tSubRole, tTrade } from '../i18n';
-import { projectService, adminUserService, tradeService, projectCompanyService } from '../services/api';
+import { projectService, adminUserService, membershipService, tradeService, projectCompanyService } from '../services/api';
 import { toast } from 'sonner';
 import {
   Phone, Shield, Crown, UserMinus, ArrowRightLeft, Loader2, ChevronDown, AlertTriangle,
@@ -370,7 +370,7 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
             </div>
           )}
 
-          {isSA && (
+          {(isSA || isPMorOwner) && (
             <div className="border-t pt-3">
               <label className="text-xs font-semibold text-slate-500 block mb-2">שפת הודעות WhatsApp</label>
               <select
@@ -381,7 +381,11 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
                   const newLang = e.target.value;
                   setWaLangSaving(true);
                   try {
-                    await adminUserService.updatePreferredLanguage(member.user_id, newLang);
+                    if (isSA) {
+                      await adminUserService.updatePreferredLanguage(member.user_id, newLang);
+                    } else {
+                      await membershipService.updatePreferredLanguage(projectId, member.user_id, newLang);
+                    }
                     setWaLang(newLang);
                     toast.success('שפת WhatsApp עודכנה');
                   } catch (err) {

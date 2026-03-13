@@ -230,6 +230,7 @@ class UserResponse(BaseModel):
     user_status: Optional[str] = None
     created_at: Optional[str] = None
     platform_role: Optional[str] = 'none'
+    preferred_language: Optional[str] = None
     organization: Optional[OrgSummary] = None
     project_memberships_summary: Optional[List[ProjectMembershipSummary]] = None
 
