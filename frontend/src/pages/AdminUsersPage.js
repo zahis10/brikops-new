@@ -824,13 +824,16 @@ const AdminUsersPage = () => {
         document.body
       )}
 
-      {drawerMember && (
-        <UserDrawer
-          member={drawerMember}
-          projectId={drawerProjectId}
-          onClose={() => { setDrawerMember(null); setDrawerProjectId(null); }}
-        />
-      )}
+      <UserDrawer
+        open={!!drawerMember}
+        onClose={() => { setDrawerMember(null); setDrawerProjectId(null); }}
+        member={drawerMember}
+        projectId={drawerProjectId}
+        currentUserRole="project_manager"
+        currentUserId={user?.id}
+        currentUserPlatformRole={user?.platform_role}
+        onRefresh={() => { if (selectedUser) openDetail(selectedUser.id); loadUsers(); }}
+      />
     </div>
   );
 };
