@@ -164,10 +164,6 @@ const TaskDetailPage = () => {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [id]);
-
-  useEffect(() => {
     if (location.state?.returnTo) {
       sessionStorage.setItem(RETURN_TO_KEY, location.state.returnTo);
     } else {
@@ -555,7 +551,7 @@ const TaskDetailPage = () => {
   const hasCreatedEvent = timelineEvents.length > 0;
 
   return (
-    <div className="min-h-screen bg-slate-50 relative" style={{ isolation: 'isolate' }}>
+    <div className="min-h-screen bg-slate-50 relative">
       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
