@@ -3132,8 +3132,8 @@ const ProjectControlPage = () => {
 
       {showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
       <div className={`fixed bottom-20 left-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-        <button onClick={() => { setShowAddBuilding(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
-          <Building2 className="w-4 h-4 text-amber-500" />הוסף בניין
+        <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-green-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-green-600 whitespace-nowrap">
+          <Zap className="w-4 h-4" />הקמה מהירה
         </button>
         <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
           <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
@@ -3144,11 +3144,6 @@ const ProjectControlPage = () => {
         <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
           <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
         </button>
-        {hierarchy.length === 0 && (
-          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-green-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-green-600 whitespace-nowrap">
-            <Zap className="w-4 h-4" />הקמה מהירה
-          </button>
-        )}
       </div>
       <button onClick={() => setShowFab(prev => !prev)} className={`fixed bottom-6 left-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
         <Plus className="w-6 h-6 text-white" />
