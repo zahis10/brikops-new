@@ -674,9 +674,8 @@ async def admin_list_qc_templates(
     request: Request,
     user: dict = Depends(require_super_admin),
     search: str = Query(default="", description="Search by name"),
-    include_archived: bool = Query(default=False, description="Include archived families"),
-    sort_by: str = Query(default="name", description="Sort field: name, version, created_at"),
-    sort_dir: str = Query(default="asc", description="Sort direction: asc, desc"),
+    archived: bool = Query(default=False, description="Include archived families"),
+    sort: str = Query(default="name", description="Sort: name, last_modified, created"),
 ):
     db = get_db()
     query_filter = {}
@@ -698,8 +697,13 @@ async def admin_list_qc_templates(
                 "archived": doc.get("archived", False),
                 "stage_count": len(doc.get("stages", [])),
                 "created_at": doc.get("created_at"),
+                "last_modified": doc.get("created_at"),
                 "versions": [],
             }
+        else:
+            v_created = doc.get("created_at")
+            if v_created and (not families[fid]["created_at"] or v_created < families[fid]["created_at"]):
+                families[fid]["created_at"] = v_created
         families[fid]["versions"].append({
             "id": doc["id"],
             "version": doc["version"],
@@ -709,16 +713,15 @@ async def admin_list_qc_templates(
 
     result = list(families.values())
 
-    if not include_archived:
+    if not archived:
         result = [f for f in result if not f.get("archived")]
 
-    reverse = sort_dir == "desc"
-    if sort_by == "last_modified":
-        result.sort(key=lambda f: f.get("created_at") or "", reverse=reverse)
-    elif sort_by == "created_at":
-        result.sort(key=lambda f: f.get("created_at") or "", reverse=reverse)
+    if sort == "last_modified":
+        result.sort(key=lambda f: f.get("last_modified") or "", reverse=True)
+    elif sort == "created":
+        result.sort(key=lambda f: f.get("created_at") or "", reverse=True)
     else:
-        result.sort(key=lambda f: f.get("name", "").lower(), reverse=reverse)
+        result.sort(key=lambda f: f.get("name", "").lower())
 
     return result
 

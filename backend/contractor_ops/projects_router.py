@@ -1074,7 +1074,6 @@ async def assign_project_qc_template(project_id: str, request: Request, user: di
 
     body = await request.json()
     template_version_id = body.get("template_version_id")
-    template_family_id = body.get("template_family_id")
     if not template_version_id:
         raise HTTPException(status_code=400, detail="template_version_id is required")
 
@@ -1082,7 +1081,7 @@ async def assign_project_qc_template(project_id: str, request: Request, user: di
     if not tpl:
         raise HTTPException(status_code=404, detail="Template version not found")
 
-    family_id = template_family_id or tpl.get("family_id")
+    family_id = tpl.get("family_id")
 
     active_runs = await db.qc_runs.count_documents({"project_id": project_id})
     warning = None

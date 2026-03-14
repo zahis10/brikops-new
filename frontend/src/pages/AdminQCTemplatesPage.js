@@ -38,7 +38,6 @@ const AdminQCTemplatesPage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [sortBy, setSortBy] = useState('name');
-  const [sortDir, setSortDir] = useState('asc');
   const [archiving, setArchiving] = useState(null);
 
   const loadFamilies = useCallback(async () => {
@@ -47,9 +46,8 @@ const AdminQCTemplatesPage = () => {
       setError(null);
       const data = await templateService.list({
         search: searchQuery,
-        include_archived: showArchived,
-        sort_by: sortBy,
-        sort_dir: sortDir,
+        archived: showArchived,
+        sort: sortBy,
       });
       setFamilies(data);
     } catch (e) {
@@ -57,7 +55,7 @@ const AdminQCTemplatesPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, showArchived, sortBy, sortDir]);
+  }, [searchQuery, showArchived, sortBy]);
 
   useEffect(() => { loadFamilies(); }, [loadFamilies]);
 
@@ -480,12 +478,7 @@ const AdminQCTemplatesPage = () => {
   };
 
   const toggleSort = (field) => {
-    if (sortBy === field) {
-      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(field);
-      setSortDir('asc');
-    }
+    setSortBy(field);
   };
 
   return (
@@ -531,13 +524,13 @@ const AdminQCTemplatesPage = () => {
 
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-500">מיון:</span>
-          {[{ key: 'name', label: 'שם' }, { key: 'last_modified', label: 'עדכון אחרון' }, { key: 'created_at', label: 'תאריך יצירה' }].map(s => (
+          {[{ key: 'name', label: 'שם' }, { key: 'last_modified', label: 'עדכון אחרון' }, { key: 'created', label: 'תאריך יצירה' }].map(s => (
             <button
               key={s.key}
               onClick={() => toggleSort(s.key)}
               className={`px-2 py-1 rounded-md border transition-colors ${sortBy === s.key ? 'bg-blue-50 border-blue-300 text-blue-700 font-medium' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
             >
-              {s.label} {sortBy === s.key && (sortDir === 'asc' ? '↑' : '↓')}
+              {s.label} {sortBy === s.key && '•'}
             </button>
           ))}
         </div>
