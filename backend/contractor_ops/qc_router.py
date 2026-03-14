@@ -108,6 +108,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_ceiling_prep",
             "title": "הכנה ליציקת תקרה",
             "order": 1,
+            "scope": "floor",
             "items": [
                 {"id": "cp_1", "title": "בדיקת תבניות וטפסנות", "order": 1, "required_photo": True, "required_note": False},
                 {"id": "cp_2", "title": "בדיקת ברזל זיון", "order": 2, "required_photo": True, "required_note": False},
@@ -122,6 +123,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_blocks_row1",
             "title": "בלוקים — שורה ראשונה",
             "order": 2,
+            "scope": "floor",
             "items": [
                 {"id": "br_pw1", "title": "פתיחת מלאכה - בלוקים", "order": 0, "required_photo": True, "required_note": False, "pre_work_documentation": True},
                 {"id": "br_pw2", "title": "הערות לפני עבודה", "order": 0, "required_photo": False, "required_note": False, "pre_work_documentation": True},
@@ -137,6 +139,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_plumbing",
             "title": "הכנות אינסטלציה בקומה",
             "order": 3,
+            "scope": "floor",
             "items": [
                 {"id": "pl_pw1", "title": "פתיחת מלאכה - אינסטלציה", "order": 0, "required_photo": True, "required_note": False, "pre_work_documentation": True},
                 {"id": "pl_pw2", "title": "הערות לפני עבודה", "order": 0, "required_photo": False, "required_note": False, "pre_work_documentation": True},
@@ -154,6 +157,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_electrical",
             "title": "הכנות חשמל בקומה",
             "order": 4,
+            "scope": "floor",
             "items": [
                 {"id": "el_pw1", "title": "פתיחת מלאכה - חשמל", "order": 0, "required_photo": True, "required_note": False, "pre_work_documentation": True},
                 {"id": "el_pw2", "title": "הערות לפני עבודה", "order": 0, "required_photo": False, "required_note": False, "pre_work_documentation": True},
@@ -169,6 +173,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_plaster",
             "title": "טיח בקומה",
             "order": 5,
+            "scope": "floor",
             "items": [
                 {"id": "pt_pw1", "title": "פתיחת מלאכה - טיח", "order": 0, "required_photo": True, "required_note": False, "pre_work_documentation": True},
                 {"id": "pt_pw2", "title": "הערות לפני עבודה", "order": 0, "required_photo": False, "required_note": False, "pre_work_documentation": True},
@@ -185,6 +190,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_waterproof",
             "title": "הצפה/אטימות",
             "order": 6,
+            "scope": "floor",
             "items": [
                 {"id": "wp_1", "title": "ניקיון משטח לפני איטום", "order": 1, "required_photo": False, "required_note": False},
                 {"id": "wp_2", "title": "מריחת פריימר", "order": 2, "required_photo": True, "required_note": False},
@@ -200,6 +206,7 @@ FLOOR_TEMPLATE = {
             "id": "stage_acoustic",
             "title": "אישור סומסום אחרי איטום/אקוסטיקה",
             "order": 7,
+            "scope": "floor",
             "items": [
                 {"id": "ac_1", "title": "בדיקת שכבת אקוסטיקה", "order": 1, "required_photo": True, "required_note": False},
                 {"id": "ac_2", "title": "בדיקת חיבורים בין קירות לרצפה", "order": 2, "required_photo": True, "required_note": False},
@@ -450,6 +457,8 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
         now = _now()
         items = []
         for stage in tpl["stages"]:
+            if stage.get("scope", "floor") != "floor":
+                continue
             for item in stage["items"]:
                 items.append({
                     "id": str(uuid.uuid4()),
@@ -469,6 +478,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
             "building_id": building["id"],
             "floor_id": floor_id,
             "template_id": FLOOR_TEMPLATE_ID,
+            "scope": "floor",
             "stage_statuses": {},
             "created_at": now,
             "created_by": user["id"],
@@ -490,7 +500,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
     for it in run_items:
         items_by_stage.setdefault(it.get("stage_id"), []).append(it)
 
-    effective_stages = list(tpl["stages"])
+    effective_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
 
     total_pass = 0
     total_fail = 0
@@ -510,10 +520,12 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
 
         computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses)
 
+        all_marked = len(enriched) > 0 and all(i["status"] in ("pass", "fail") for i in enriched)
         stage_out = {
             "id": stage["id"],
             "title": stage["title"],
             "order": stage["order"],
+            "scope": stage.get("scope", "floor"),
             "items": enriched,
             "total": len(enriched),
             "done": done_count,
@@ -521,6 +533,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
             "fail_count": fail_count,
             "pending_count": pending_count,
             "computed_status": computed_status,
+            "is_completable": all_marked,
         }
         if stage.get("pre_work_documentation"):
             stage_out["pre_work_documentation"] = True
@@ -558,6 +571,150 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
     }
 
 
+@router.get("/units/{unit_id}/run")
+async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+
+    unit = await db.units.find_one({"id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    floor = await db.floors.find_one({"id": unit["floor_id"], "archived": {"$ne": True}}, {"_id": 0})
+    if not floor:
+        raise HTTPException(status_code=404, detail="Floor not found")
+
+    building = await db.buildings.find_one({"id": floor["building_id"], "archived": {"$ne": True}}, {"_id": 0})
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    project_id = building["project_id"]
+    role = await _check_qc_access(user, project_id)
+    can_edit = role in MANAGEMENT_ROLES
+
+    run = await db.qc_runs.find_one(
+        {"unit_id": unit_id, "template_id": FLOOR_TEMPLATE_ID, "scope": "unit"},
+        {"_id": 0}
+    )
+
+    tpl = _get_template()
+    unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
+
+    if not run:
+        run_id = str(uuid.uuid4())
+        now = _now()
+        items = []
+        for stage in unit_stages:
+            for item in stage["items"]:
+                items.append({
+                    "id": str(uuid.uuid4()),
+                    "run_id": run_id,
+                    "stage_id": stage["id"],
+                    "item_id": item["id"],
+                    "status": "pending",
+                    "note": "",
+                    "photos": [],
+                    "updated_by": None,
+                    "updated_at": None,
+                })
+
+        run = {
+            "id": run_id,
+            "project_id": project_id,
+            "building_id": building["id"],
+            "floor_id": floor["id"],
+            "unit_id": unit_id,
+            "template_id": FLOOR_TEMPLATE_ID,
+            "scope": "unit",
+            "stage_statuses": {},
+            "created_at": now,
+            "created_by": user["id"],
+        }
+        await db.qc_runs.insert_one(run)
+        if items:
+            await db.qc_items.insert_many(items)
+
+        run.pop("_id", None)
+        logger.info(f"[QC] Created unit run {run_id} for unit {unit_id} with {len(items)} items")
+
+    stage_statuses = run.get("stage_statuses", {})
+    run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
+    run_items = await _ensure_inline_prework_items(run["id"], run_items, db)
+
+    stages_out = []
+    items_by_stage = {}
+    for it in run_items:
+        items_by_stage.setdefault(it.get("stage_id"), []).append(it)
+
+    total_pass = 0
+    total_fail = 0
+    total_pending = 0
+
+    for stage in unit_stages:
+        stage_items = items_by_stage.get(stage["id"], [])
+        enriched = _enrich_items(stage_items, stage, viewer_id=user["id"], viewer_role=role)
+
+        done_count = sum(1 for i in enriched if i["status"] in ("pass", "fail"))
+        pass_count = sum(1 for i in enriched if i["status"] == "pass")
+        fail_count = sum(1 for i in enriched if i["status"] == "fail")
+        pending_count = sum(1 for i in enriched if i["status"] == "pending")
+        total_pass += pass_count
+        total_fail += fail_count
+        total_pending += pending_count
+
+        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses)
+
+        all_marked = len(enriched) > 0 and all(i["status"] in ("pass", "fail") for i in enriched)
+        stage_out = {
+            "id": stage["id"],
+            "title": stage["title"],
+            "order": stage["order"],
+            "scope": "unit",
+            "items": enriched,
+            "total": len(enriched),
+            "done": done_count,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "pending_count": pending_count,
+            "computed_status": computed_status,
+            "is_completable": all_marked,
+        }
+        if stage.get("pre_work_documentation"):
+            stage_out["pre_work_documentation"] = True
+        has_prework_items = any(item.get("pre_work_documentation") for item in stage.get("items", []))
+        if has_prework_items:
+            stage_out["has_prework_items"] = True
+        stages_out.append(stage_out)
+
+    total_items = total_pass + total_fail + total_pending
+
+    return {
+        "run": {
+            "id": run["id"],
+            "project_id": run["project_id"],
+            "building_id": run["building_id"],
+            "floor_id": run["floor_id"],
+            "unit_id": unit_id,
+            "template_id": run["template_id"],
+            "scope": "unit",
+            "stage_statuses": stage_statuses,
+            "created_at": run.get("created_at"),
+        },
+        "template_name": tpl["name"],
+        "stages": stages_out,
+        "can_edit": can_edit,
+        "role": role,
+        "building_name": building.get("name", ""),
+        "floor_name": floor.get("name", ""),
+        "unit_name": unit.get("name", unit.get("unit_no", "")),
+        "summary": {
+            "total": total_items,
+            "pass": total_pass,
+            "fail": total_fail,
+            "pending": total_pending,
+        },
+    }
+
+
 @router.get("/run/{run_id}")
 async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -576,7 +733,8 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
     for it in run_items:
         items_by_stage.setdefault(it.get("stage_id"), []).append(it)
 
-    effective_stages = list(tpl["stages"])
+    run_scope = run.get("scope", "floor")
+    effective_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == run_scope]
 
     stages_out = []
     total_pass = 0
@@ -597,10 +755,12 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
 
         computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses)
 
+        all_marked = len(enriched) > 0 and all(i["status"] in ("pass", "fail") for i in enriched)
         stage_out = {
             "id": stage["id"],
             "title": stage["title"],
             "order": stage["order"],
+            "scope": stage.get("scope", "floor"),
             "items": enriched,
             "total": len(enriched),
             "done": done_count,
@@ -608,6 +768,7 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
             "fail_count": fail_count,
             "pending_count": pending_count,
             "computed_status": computed_status,
+            "is_completable": all_marked,
         }
         if stage.get("pre_work_documentation"):
             stage_out["pre_work_documentation"] = True
@@ -618,16 +779,21 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
 
     total_items = total_pass + total_fail + total_pending
 
+    run_out = {
+        "id": run["id"],
+        "project_id": run["project_id"],
+        "building_id": run["building_id"],
+        "floor_id": run["floor_id"],
+        "template_id": run["template_id"],
+        "scope": run.get("scope", "floor"),
+        "stage_statuses": stage_statuses,
+        "created_at": run.get("created_at"),
+    }
+    if run.get("unit_id"):
+        run_out["unit_id"] = run["unit_id"]
+
     return {
-        "run": {
-            "id": run["id"],
-            "project_id": run["project_id"],
-            "building_id": run["building_id"],
-            "floor_id": run["floor_id"],
-            "template_id": run["template_id"],
-            "stage_statuses": stage_statuses,
-            "created_at": run.get("created_at"),
-        },
+        "run": run_out,
         "template_name": tpl["name"],
         "stages": stages_out,
         "can_edit": can_edit,

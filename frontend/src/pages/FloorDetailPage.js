@@ -4,7 +4,7 @@ import { qcService } from '../services/api';
 import {
   ArrowRight, Loader2, ClipboardCheck,
   CheckCircle2, XCircle, Clock, Building2, Layers, RefreshCw, Lock,
-  AlertCircle, RotateCcw, ShieldCheck, FileText
+  AlertCircle, RotateCcw, ShieldCheck, FileText, Home
 } from 'lucide-react';
 import { qcStageStatusLabel } from '../utils/qcLabels';
 import { getStageVisualStatusLite, getFloorVisualStatus, getQualityBadge, getReviewBadge, getFloorQualityBadge } from '../utils/qcVisualStatus';
@@ -84,6 +84,12 @@ const StageCard = ({ stage, onClick, isActive }) => {
         </span>
       </div>
       <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        {stage.scope === 'unit' && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+            <Home className="w-3 h-3" />
+            לפי דירות
+          </span>
+        )}
         {stage.has_prework_items && (
           <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
             <FileText className="w-3 h-3" />
