@@ -951,7 +951,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         total = tiling_item_count
 
         stage_statuses = run.get("stage_statuses", {})
-        tiling_status = stage_statuses.get("stage_tiling", "draft")
+        tiling_status = stage_statuses.get(tiling_stage_id, "draft")
         if tiling_status == "approved":
             status = "approved"
         elif handled_count > 0 or tiling_status not in ("draft", "not_started"):
