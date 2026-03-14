@@ -692,7 +692,7 @@ const TaskDetailPage = () => {
                   <img
                     src={beforePhoto.attachment_url}
                     alt="לפני"
-                    className="w-full h-48 object-cover rounded-lg border-2 border-red-100 cursor-pointer"
+                    className="w-full h-48 object-cover rounded-lg border-2 border-red-50 cursor-pointer"
                     onClick={() => setImageModal(beforePhoto.attachment_url)}
                   />
                   <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-red-100 text-red-600">לפני</span>
@@ -702,7 +702,7 @@ const TaskDetailPage = () => {
                   <img
                     src={afterPhoto.attachment_url}
                     alt="אחרי"
-                    className="w-full h-48 object-cover rounded-lg border-2 border-green-100 cursor-pointer"
+                    className="w-full h-48 object-cover rounded-lg border-2 border-green-50 cursor-pointer"
                     onClick={() => setImageModal(afterPhoto.attachment_url)}
                   />
                   <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-green-100 text-green-600">אחרי</span>
