@@ -384,7 +384,7 @@ export default function BuildingQCPage() {
                     <span className="text-sm font-bold text-slate-700 block">
                       {floor.display_label || floor.name || `קומה ${floor.floor_number}`}
                     </span>
-                    {floorTotal > 0 && status !== 'not_started' && (
+                    {floorTotal > 0 && (
                       <div className="flex items-center gap-1.5 mt-1">
                         <div className="flex-1 bg-slate-100 rounded-full h-1">
                           <div className={`h-1 rounded-full transition-all ${floorPct === 100 ? 'bg-green-400' : floorPct > 50 ? 'bg-blue-400' : 'bg-amber-400'}`}

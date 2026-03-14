@@ -967,7 +967,7 @@ export default function StageDetailPage() {
     }
   };
 
-  const [flashItemId, setFlashItemId] = useState(null);
+  const [flashItems, setFlashItems] = useState({});
 
   const handleToggle = (itemId, newStatus) => {
     setLocalChanges(prev => {
@@ -977,8 +977,8 @@ export default function StageDetailPage() {
     setHasChanges(true);
     setValidationErrors(prev => prev.filter(e => e.item_id !== itemId || e.field !== 'status'));
     if (newStatus === 'pass') {
-      setFlashItemId(itemId);
-      setTimeout(() => setFlashItemId(null), 600);
+      setFlashItems(prev => ({ ...prev, [itemId]: true }));
+      setTimeout(() => setFlashItems(prev => { const next = { ...prev }; delete next[itemId]; return next; }), 600);
     }
   };
 
@@ -1858,7 +1858,7 @@ export default function StageDetailPage() {
               onRetryUpload={(clientId) => handleRetryUpload(item.id, clientId)}
               itemErrors={validationErrors.filter(e => e.item_id === item.id)}
               isHighlighted={highlightedItemId === item.id}
-              isGreenFlash={flashItemId === item.id}
+              isGreenFlash={!!flashItems[item.id]}
               isPendingReview={isLocked}
               canApproveThis={canApproveThis || isPM}
               onRejectItem={handleRejectItem}
