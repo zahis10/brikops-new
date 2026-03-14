@@ -350,9 +350,9 @@ function App() {
                 <PaywallConnector />
                 <TrialBanner />
                 <CompleteAccountBanner />
-                <div id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
+                <main id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
                   <AppRoutes />
-                </div>
+                </main>
                 <PaywallModal />
                 <CompleteAccountModal />
                 <Toaster position="top-center" dir="rtl" />

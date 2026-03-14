@@ -290,7 +290,7 @@ const AdminOrgsPage = () => {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-4 space-y-4">
+      <section className="max-w-4xl mx-auto px-4 py-4 space-y-4">
         <div className="relative">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
@@ -685,7 +685,7 @@ const AdminOrgsPage = () => {
             })}
           </div>
         )}
-      </main>
+      </section>
 
       {confirmDialog && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setConfirmDialog(null)}>

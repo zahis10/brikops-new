@@ -372,7 +372,7 @@ const AdminBillingPage = () => {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+      <section className="max-w-4xl mx-auto px-4 py-6 space-y-6">
         {(() => {
           const activeOrgs = orgs.filter(o => o.effective_access === 'full_access').length;
           const totalMonthly = orgs.reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
@@ -866,7 +866,7 @@ const AdminBillingPage = () => {
             </div>
           )}
         </section>
-      </main>
+      </section>
 
       {actionModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
