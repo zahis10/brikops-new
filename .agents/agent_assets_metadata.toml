@@ -18,3 +18,9 @@ id = "AWBwNTn8NTAzcXNCYDixT"
 uri = "file://brikops-slim.zip"
 type = "unspecified"
 title = "BrikOps Source Code (8.2MB)"
+
+[[outputs]]
+id = "GYLksbxKV7S1clpc_ExyA"
+uri = "file://SECURITY_AUDIT_REPORT.md"
+type = "text"
+title = "BrikOps Security Audit Report"
