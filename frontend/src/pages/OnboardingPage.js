@@ -388,25 +388,11 @@ const OnboardingPage = () => {
 
   const isRegistrationIntent = new URLSearchParams(location.search).get('mode') === 'register';
 
-  if (onboardingEnabled === false && !incomingPhone && !isRegistrationIntent) {
-    if (!isInviteFlow) {
-      sessionStorage.removeItem('onboarding_phone');
-      sessionStorage.removeItem('onboarding_step');
-      navigate('/login', { replace: true });
-      return null;
-    }
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
-        <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl text-center" dir="rtl">
-          <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-slate-900 mb-2">הרשמה אינה זמינה כרגע</h2>
-          <p className="text-slate-600 mb-4">ניתן להתחבר עם חשבון קיים.</p>
-          <Button onClick={() => navigate('/login')} className="bg-amber-500 hover:bg-amber-600 text-white w-full">
-            מעבר להתחברות
-          </Button>
-        </Card>
-      </div>
-    );
+  if (onboardingEnabled === false && !incomingPhone && !isRegistrationIntent && !isInviteFlow) {
+    sessionStorage.removeItem('onboarding_phone');
+    sessionStorage.removeItem('onboarding_step');
+    navigate('/login', { replace: true });
+    return null;
   }
 
   const renderHeader = () => (
