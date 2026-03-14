@@ -90,11 +90,13 @@ export default function QCFloorSelectionPage() {
       const counts = {};
       let totalItems = 0;
       let passItems = 0;
+      let failingFloors = 0;
       floors.forEach(f => {
         const qd = qcStatuses[f.id];
         const st = getFloorBadge(qd);
         const normalized = st === 'submitted' ? 'pending_review' : st;
         counts[normalized] = (counts[normalized] || 0) + 1;
+        if (normalized === 'rejected' || (qd?.fail_count || 0) > 0) failingFloors++;
         if (qd && typeof qd === 'object' && qd.total > 0) {
           totalItems += qd.total;
           passItems += qd.pass_count || 0;
@@ -109,7 +111,7 @@ export default function QCFloorSelectionPage() {
       const progressPct = totalItems > 0 ? Math.round((passItems / totalItems) * 100) : 0;
       const accentBorder = progressPct === 100 ? 'border-r-4 border-green-400' : progressPct > 50 ? 'border-r-4 border-blue-400' : progressPct > 0 ? 'border-r-4 border-amber-400' : 'border-r-4 border-slate-300';
       const ringColor = progressPct === 100 ? '#22C55E' : progressPct > 50 ? '#3B82F6' : progressPct > 0 ? '#F59E0B' : '#CBD5E1';
-      stats[b.id] = { floorCount, counts, progressPct, accentBorder, ringColor };
+      stats[b.id] = { floorCount, counts, failingFloors, progressPct, accentBorder, ringColor };
     });
     return stats;
   }, [hierarchy, qcStatuses]);
@@ -126,7 +128,7 @@ export default function QCFloorSelectionPage() {
       const s = buildingStats[b.id]?.counts || {};
       approved += s.approved || 0;
       inProgress += (s.in_progress || 0) + (s.pending_review || 0);
-      rejected += s.rejected || 0;
+      rejected += buildingStats[b.id]?.failingFloors || 0;
       pending += s.not_started || 0;
     });
     return { pending, inProgress, approved, rejected };
@@ -280,8 +282,8 @@ export default function QCFloorSelectionPage() {
                         {(stats.counts.not_started || 0) > 0 && (
                           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">◷ {stats.counts.not_started} לא התחיל</span>
                         )}
-                        {(stats.counts.rejected || 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600">✗ {stats.counts.rejected} נכשלו</span>
+                        {(stats.failingFloors || 0) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600">✗ {stats.failingFloors} נכשלו</span>
                         )}
                       </div>
                     </div>
