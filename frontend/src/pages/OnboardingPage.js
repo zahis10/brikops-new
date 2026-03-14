@@ -324,7 +324,7 @@ const OnboardingPage = () => {
         password: password || undefined,
       };
       if (inviteEmail.trim()) payload.email = inviteEmail.trim();
-      if (inviteLang && inviteLang !== 'he') payload.preferred_language = inviteLang;
+      if (inviteLang) payload.preferred_language = inviteLang;
       const result = await onboardingService.acceptInvite(payload);
       if (result.success && result.token) {
         loginWithOtp(result.token, result.user, result.user?.platform_role);
