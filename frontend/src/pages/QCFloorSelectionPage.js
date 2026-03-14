@@ -88,20 +88,31 @@ export default function QCFloorSelectionPage() {
     hierarchy.forEach(b => {
       const floors = b.floors || [];
       const counts = {};
-      let started = 0;
+      let totalItems = 0;
+      let passItems = 0;
+      let hasItemData = false;
       floors.forEach(f => {
-        const st = getFloorBadge(qcStatuses[f.id]);
+        const qd = qcStatuses[f.id];
+        const st = getFloorBadge(qd);
         const normalized = st === 'submitted' ? 'pending_review' : st;
         counts[normalized] = (counts[normalized] || 0) + 1;
-        if (normalized !== 'not_started') started++;
+        if (qd && typeof qd === 'object' && qd.total > 0) {
+          hasItemData = true;
+          totalItems += qd.total;
+          passItems += qd.pass_count || 0;
+        }
       });
       const floorCount = floors.length;
-      const progressPct = floorCount > 0 ? Math.round((started / floorCount) * 100) : 0;
-      const allStarted = started === floorCount && floorCount > 0;
-      const noneStarted = started === 0;
-      const accentBorder = allStarted ? 'border-r-4 border-green-400' : noneStarted ? 'border-r-4 border-slate-200' : 'border-r-4 border-amber-400';
-      const barColor = progressPct === 0 ? 'bg-slate-200' : progressPct > 70 ? 'bg-green-400' : progressPct > 30 ? 'bg-amber-400' : 'bg-red-400';
-      stats[b.id] = { floorCount, counts, progressPct, accentBorder, barColor };
+      let progressPct;
+      if (hasItemData && totalItems > 0) {
+        progressPct = Math.round((passItems / totalItems) * 100);
+      } else {
+        const approved = counts['approved'] || 0;
+        progressPct = floorCount > 0 ? Math.round((approved / floorCount) * 100) : 0;
+      }
+      const accentBorder = progressPct === 100 ? 'border-r-4 border-green-400' : progressPct > 50 ? 'border-r-4 border-blue-400' : progressPct > 0 ? 'border-r-4 border-amber-400' : 'border-r-4 border-slate-300';
+      const ringColor = progressPct === 100 ? '#22C55E' : progressPct > 50 ? '#3B82F6' : progressPct > 0 ? '#F59E0B' : '#CBD5E1';
+      stats[b.id] = { floorCount, counts, progressPct, accentBorder, ringColor };
     });
     return stats;
   }, [hierarchy, qcStatuses]);
@@ -111,6 +122,18 @@ export default function QCFloorSelectionPage() {
     const q = search.trim().toLowerCase();
     return hierarchy.filter(b => (b.name || '').toLowerCase().includes(q));
   }, [hierarchy, search]);
+
+  const globalStats = useMemo(() => {
+    let pending = 0, inProgress = 0, approved = 0, rejected = 0;
+    hierarchy.forEach(b => {
+      const s = buildingStats[b.id]?.counts || {};
+      approved += s.approved || 0;
+      inProgress += (s.in_progress || 0) + (s.pending_review || 0);
+      rejected += s.rejected || 0;
+      pending += s.not_started || 0;
+    });
+    return { pending, inProgress, approved, rejected };
+  }, [hierarchy, buildingStats]);
 
   const totalFloors = hierarchy.reduce((s, b) => s + (b.floors?.length || 0), 0);
 
@@ -187,6 +210,25 @@ export default function QCFloorSelectionPage() {
       {headerBlock}
 
       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+        <div className="grid grid-cols-4 gap-2 text-center">
+          <div className="bg-slate-50 rounded-lg p-2">
+            <div className="text-lg font-bold text-slate-500">{globalStats.pending}</div>
+            <div className="text-[10px] text-slate-500 font-medium">בהמתנה</div>
+          </div>
+          <div className="bg-red-50 rounded-lg p-2">
+            <div className="text-lg font-bold text-red-500">{globalStats.rejected}</div>
+            <div className="text-[10px] text-red-500 font-medium">נכשלו</div>
+          </div>
+          <div className="bg-amber-50 rounded-lg p-2">
+            <div className="text-lg font-bold text-amber-500">{globalStats.inProgress}</div>
+            <div className="text-[10px] text-amber-600 font-medium">בביצוע</div>
+          </div>
+          <div className="bg-emerald-50 rounded-lg p-2">
+            <div className="text-lg font-bold text-emerald-600">{globalStats.approved}</div>
+            <div className="text-[10px] text-emerald-600 font-medium">הושלמו</div>
+          </div>
+        </div>
+
         <p className="text-[11px] text-slate-400 px-1">
           {hierarchy.length} מבנים · {totalFloors} קומות
         </p>
@@ -214,14 +256,9 @@ export default function QCFloorSelectionPage() {
 
         <div className="space-y-2">
           {filteredBuildings.map(building => {
-            const stats = buildingStats[building.id] || { floorCount: 0, counts: {} };
-            const summaryParts = [];
-            summaryParts.push(`${stats.floorCount} קומות`);
-            STATUS_KEYS.forEach(key => {
-              if (stats.counts[key]) {
-                summaryParts.push(`${stats.counts[key]} ${qcFloorStatusLabel(key)}`);
-              }
-            });
+            const stats = buildingStats[building.id] || { floorCount: 0, counts: {}, progressPct: 0, ringColor: '#CBD5E1' };
+            const r = 16, sw = 3, cx = 18, circ = 2 * Math.PI * r;
+            const offset = circ - (stats.progressPct / 100) * circ;
 
             return (
               <button
@@ -236,19 +273,33 @@ export default function QCFloorSelectionPage() {
                     </div>
                     <div className="min-w-0">
                       <span className="text-[15px] font-bold text-slate-700 truncate block">{building.name}</span>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        {summaryParts.join(' · ')}
-                      </p>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(stats.counts.approved || 0) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">✓ {stats.counts.approved} הושלמו</span>
+                        )}
+                        {(stats.counts.in_progress || 0) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">◐ {stats.counts.in_progress} בביצוע</span>
+                        )}
+                        {(stats.counts.not_started || 0) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">{stats.counts.not_started} לא התחיל</span>
+                        )}
+                        {(stats.counts.rejected || 0) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600">✗ {stats.counts.rejected} נכשלו</span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  <ChevronLeft className="w-4 h-4 text-slate-300 flex-shrink-0" />
-                </div>
-                <div className="mt-2.5 flex items-center gap-2">
-                  <span className="text-[10px] text-slate-400 flex-shrink-0">התקדמות</span>
-                  <div className="flex-1 bg-slate-100 rounded-full h-1.5">
-                    <div className={`h-1.5 rounded-full transition-all ${stats.barColor}`} style={{ width: `${stats.progressPct}%` }} />
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 36 36">
+                      <circle cx={cx} cy={cx} r={r} fill="none" stroke="#E2E8F0" strokeWidth={sw} />
+                      <circle cx={cx} cy={cx} r={r} fill="none" stroke={stats.ringColor} strokeWidth={sw}
+                        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+                        transform={`rotate(-90 ${cx} ${cx})`} style={{ transition: 'stroke-dashoffset 0.5s' }} />
+                      <text x={cx} y={cx} textAnchor="middle" dominantBaseline="central"
+                        fill="#334155" fontSize="10" fontWeight="bold">{stats.progressPct}%</text>
+                    </svg>
+                    <ChevronLeft className="w-4 h-4 text-slate-300" />
                   </div>
-                  <span className="text-[11px] font-bold text-slate-500 flex-shrink-0">{stats.progressPct}%</span>
                 </div>
               </button>
             );

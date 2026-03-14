@@ -78,7 +78,7 @@ const StageCard = ({ stage, onClick, isActive }) => {
       }`}
     >
       <div className="flex items-center justify-between mb-1">
-        <span className="text-sm font-bold text-slate-700 leading-tight">{stage.title}</span>
+        <span className="text-sm font-bold text-slate-700 leading-tight">{stage._tradeEmoji ? `${stage._tradeEmoji} ` : ''}{stage.title}</span>
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${vs.chipColor}`}>
           {stage.done}/{stage.total}
         </span>
@@ -164,7 +164,31 @@ export default function FloorDetailPage() {
 
   if (!data) return null;
 
-  const { stages, building_name, floor_name, template_name, summary } = data;
+  const { stages: rawStages, building_name, floor_name, template_name, summary } = data;
+
+  const TRADE_EMOJIS = {
+    'חשמל': '⚡', 'אינסטלציה': '🔧', 'אלומיניום': '🪟', 'טיח': '🧱', 'צבע': '🎨',
+    'ריצוף': '🪨', 'מסגרות': '🔩', 'גבס': '📐', 'איטום': '💧', 'בטון': '🏗️',
+    'שיש': '🪨', 'נגרות': '🪵', 'מיזוג': '❄️', 'גינון': '🌿', 'ניקיון': '🧹',
+  };
+  const getTradeEmoji = (title) => {
+    const t = (title || '').trim();
+    for (const [key, emoji] of Object.entries(TRADE_EMOJIS)) {
+      if (t.includes(key)) return emoji;
+    }
+    return '';
+  };
+
+  const statusPriority = { rejected: 0, reopened: 1, draft: 2, ready: 2, pending_review: 3, approved: 4 };
+  const stages = [...rawStages].sort((a, b) => {
+    const pa = statusPriority[a.computed_status] ?? 2;
+    const pb = statusPriority[b.computed_status] ?? 2;
+    if (pa !== pb) return pa - pb;
+    const pctA = a.total > 0 ? a.done / a.total : 0;
+    const pctB = b.total > 0 ? b.done / b.total : 0;
+    return pctB - pctA;
+  });
+
   const totalDone = stages.reduce((s, st) => s + st.done, 0);
   const totalItems = stages.reduce((s, st) => s + st.total, 0);
   const totalPct = totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
@@ -217,11 +241,24 @@ export default function FloorDetailPage() {
 
         <div className="text-xs text-slate-400 font-medium">{template_name}</div>
 
+        {(() => {
+          const approvedStages = stages.filter(s => s.computed_status === 'approved').length;
+          const remaining = stages.length - approvedStages;
+          if (approvedStages > 0 && remaining > 0 && remaining <= 2) {
+            return (
+              <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-center">
+                <span className="text-sm font-bold text-green-700">🎯 עוד {remaining === 1 ? 'שלב אחד' : `${remaining} שלבים`} וקומה מושלמת!</span>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         <div className="grid grid-cols-2 gap-2">
           {stages.map(stage => (
             <StageCard
               key={stage.id}
-              stage={stage}
+              stage={{ ...stage, _tradeEmoji: getTradeEmoji(stage.title) }}
               isActive={false}
               onClick={() => navigate(`/projects/${projectId}/qc/floors/${floorId}/run/${data.run.id}/stage/${stage.id}`)}
             />

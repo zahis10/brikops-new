@@ -287,6 +287,18 @@ export default function BuildingQCPage() {
 
       <div className="px-4 pt-2.5 pb-1">
         <p className="text-[11px] text-slate-400">{summaryParts}</p>
+        {(() => {
+          const approvedCount = statusCounts.approved || 0;
+          const remaining = floors.length - approvedCount;
+          if (approvedCount > 0 && remaining > 0 && remaining <= 3) {
+            return (
+              <div className="mt-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-center">
+                <span className="text-sm font-bold text-green-700">🎯 עוד {remaining} קומות והבניין מושלם!</span>
+              </div>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       <div className="px-4 pt-1.5 space-y-2">
@@ -341,7 +353,11 @@ export default function BuildingQCPage() {
             const vs = getFloorBadgeVisualStatus(status);
             const Icon = QC_STATUS_ICONS[status] || Clock;
             const showQuality = quality && quality.label !== qcFloorStatusLabel(status);
-            const failCount = qcStatuses[floor.id]?.fail_count || 0;
+            const qd = qcStatuses[floor.id];
+            const failCount = qd?.fail_count || 0;
+            const floorTotal = qd?.total || 0;
+            const floorPass = qd?.pass_count || 0;
+            const floorPct = floorTotal > 0 ? Math.round((floorPass / floorTotal) * 100) : 0;
             const floorAccent = failCount > 0 ? 'border-r-4 border-red-400'
               : status === 'in_progress' ? 'border-r-4 border-amber-400'
               : status === 'not_started' ? 'border-r-4 border-slate-300'
@@ -360,13 +376,24 @@ export default function BuildingQCPage() {
                 onClick={() => navigate(`/projects/${projectId}/floors/${floor.id}`)}
                 className={`w-full flex items-center justify-between px-3.5 py-3 bg-white rounded-xl border border-slate-100 ${floorAccent} hover:border-amber-200 hover:shadow active:bg-slate-50 transition-all text-right`}
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
                   <Layers className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
-                  <span className="text-sm font-bold text-slate-700">
-                    {floor.display_label || floor.name || `קומה ${floor.floor_number}`}
-                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-sm font-bold text-slate-700 block">
+                      {floor.display_label || floor.name || `קומה ${floor.floor_number}`}
+                    </span>
+                    {floorTotal > 0 && status !== 'not_started' && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <div className="flex-1 bg-slate-100 rounded-full h-1">
+                          <div className={`h-1 rounded-full transition-all ${floorPct === 100 ? 'bg-green-400' : floorPct > 50 ? 'bg-blue-400' : 'bg-amber-400'}`}
+                            style={{ width: `${floorPct}%` }} />
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">{floorPct}%</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
                   {showQuality && (
                     <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${quality.color}`}>
                       {quality.label}

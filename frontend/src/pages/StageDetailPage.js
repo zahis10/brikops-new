@@ -967,6 +967,8 @@ export default function StageDetailPage() {
     }
   };
 
+  const [flashItemId, setFlashItemId] = useState(null);
+
   const handleToggle = (itemId, newStatus) => {
     setLocalChanges(prev => {
       const existing = prev[itemId] || {};
@@ -974,6 +976,10 @@ export default function StageDetailPage() {
     });
     setHasChanges(true);
     setValidationErrors(prev => prev.filter(e => e.item_id !== itemId || e.field !== 'status'));
+    if (newStatus === 'pass') {
+      setFlashItemId(itemId);
+      setTimeout(() => setFlashItemId(null), 600);
+    }
   };
 
   const handleNoteChange = (itemId, note) => {
@@ -1823,6 +1829,14 @@ export default function StageDetailPage() {
           </div>
         )}
 
+        {pct === 100 && passCount === stage.total && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-center shadow-sm">
+            <div className="text-2xl mb-1">🎉</div>
+            <div className="text-sm font-bold text-emerald-700">כל הסעיפים תקינים!</div>
+            <div className="text-xs text-emerald-600 mt-0.5">ניתן לשלוח לאישור</div>
+          </div>
+        )}
+
         <div className="space-y-2">
           {filteredItems.map(item => (
             <StageItemRow
@@ -1838,7 +1852,7 @@ export default function StageDetailPage() {
               uploadState={uploadingItems[item.id] || null}
               onRetryUpload={(clientId) => handleRetryUpload(item.id, clientId)}
               itemErrors={validationErrors.filter(e => e.item_id === item.id)}
-              isHighlighted={highlightedItemId === item.id}
+              isHighlighted={highlightedItemId === item.id || flashItemId === item.id}
               isPendingReview={isLocked}
               canApproveThis={canApproveThis || isPM}
               onRejectItem={handleRejectItem}
