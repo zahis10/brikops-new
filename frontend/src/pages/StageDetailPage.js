@@ -1830,9 +1830,8 @@ export default function StageDetailPage() {
         )}
 
         {pct === 100 && pendingCount === 0 && (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-center shadow-sm">
-            <div className="text-2xl mb-1">🎉</div>
-            <div className="text-sm font-bold text-emerald-700">כל הסעיפים הושלמו!</div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-center shadow-sm animate-pulse" style={{ animationDuration: '2s', animationIterationCount: '3' }}>
+            <div className="text-sm font-bold text-emerald-700">✅ שלב הושלם! כל הסעיפים הושלמו</div>
             <div className="text-xs text-emerald-600 mt-0.5">{failCount > 0 ? `${failCount} לא תקין — תקן לפני שליחה` : 'ניתן לשלוח לאישור'}</div>
           </div>
         )}
@@ -1969,7 +1968,7 @@ export default function StageDetailPage() {
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-sm border-t border-slate-200 shadow-lg"
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
           <div className="max-w-2xl mx-auto px-4 pt-2 space-y-1.5">
-            {(passCount + failCount) > 0 && canSubmitOrEdit && (
+            {(passCount + failCount) > 0 && (
               <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 py-0.5">
                 <span className="font-medium">{passCount + failCount}/{stage.total} סעיפים הושלמו</span>
               </div>

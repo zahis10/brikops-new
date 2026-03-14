@@ -180,12 +180,12 @@ export default function FloorDetailPage() {
     return '🔨';
   };
 
-  const statusPriority = { rejected: 0, reopened: 1, in_progress: 2, draft: 3, ready: 3, not_started: 4, pending_review: 5, approved: 6 };
+  const statusPriority = { in_progress: 0, reopened: 0, rejected: 1, draft: 2, ready: 2, not_started: 3, pending_review: 4, approved: 5 };
   const stages = [...rawStages].sort((a, b) => {
     const sa = a.done > 0 && a.computed_status === 'draft' ? 'in_progress' : a.computed_status;
     const sb = b.done > 0 && b.computed_status === 'draft' ? 'in_progress' : b.computed_status;
-    const pa = statusPriority[sa] ?? 3;
-    const pb = statusPriority[sb] ?? 3;
+    const pa = statusPriority[sa] ?? 2;
+    const pb = statusPriority[sb] ?? 2;
     if (pa !== pb) return pa - pb;
     const pctA = a.total > 0 ? a.done / a.total : 0;
     const pctB = b.total > 0 ? b.done / b.total : 0;
@@ -246,11 +246,11 @@ export default function FloorDetailPage() {
 
         {(() => {
           const approvedStages = stages.filter(s => s.computed_status === 'approved').length;
-          const remaining = stages.length - approvedStages;
-          if (approvedStages > 0 && remaining > 0 && remaining <= 2) {
+          const activeRemaining = stages.filter(s => s.computed_status !== 'approved' && s.computed_status !== 'not_started' && !(s.computed_status === 'draft' && s.done === 0)).length;
+          if (approvedStages > 0 && activeRemaining > 0 && activeRemaining <= 2) {
             return (
-              <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-center">
-                <span className="text-sm font-bold text-green-700">🎯 עוד {remaining === 1 ? 'שלב אחד' : `${remaining} שלבים`} וקומה מושלמת!</span>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-center">
+                <span className="text-sm font-bold text-amber-700">🎯 עוד {activeRemaining === 1 ? 'שלב אחד' : `${activeRemaining} שלבים`} וקומה מושלמת!</span>
               </div>
             );
           }

@@ -291,7 +291,8 @@ export default function BuildingQCPage() {
         {(() => {
           const approvedCount = statusCounts.approved || 0;
           const remaining = floors.length - approvedCount;
-          if (approvedCount > 0 && remaining > 0 && remaining <= 3) {
+          const approvedRatio = floors.length > 0 ? approvedCount / floors.length : 0;
+          if (approvedRatio >= 0.7 && remaining > 0 && remaining <= 3) {
             return (
               <div className="mt-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-center">
                 <span className="text-sm font-bold text-green-700">🎯 עוד {remaining} קומות והבניין מושלם!</span>
