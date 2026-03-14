@@ -68,7 +68,11 @@ export default function UnitQCSelectionPage() {
   };
 
   const goBack = () => {
-    navigate(`/projects/${projectId}/floors/${floorId}`);
+    if (window.history.length > 2) {
+      navigate(-1);
+    } else {
+      navigate(`/projects/${projectId}/floors/${floorId}`);
+    }
   };
 
   if (loading) {

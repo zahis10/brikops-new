@@ -1455,10 +1455,10 @@ export default function StageDetailPage() {
   }, [stage, scrollToItem]);
 
   const goBack = () => {
-    if (returnToPath) {
-      navigate(returnToPath);
-    } else if (window.history.length > 2) {
+    if (window.history.length > 2) {
       navigate(-1);
+    } else if (returnToPath) {
+      navigate(returnToPath);
     } else {
       navigate(`/projects/${projectId}/floors/${floorId}`);
     }
