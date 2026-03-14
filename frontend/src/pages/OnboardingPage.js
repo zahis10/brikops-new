@@ -472,11 +472,12 @@ const OnboardingPage = () => {
 
         <form onSubmit={handleAcceptInvite} className="space-y-4">
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">
+            <label htmlFor="invite-fullname" className="block text-sm font-medium text-slate-700">
               שם מלא <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <input
+                id="invite-fullname"
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -489,11 +490,12 @@ const OnboardingPage = () => {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">
+            <label htmlFor="invite-password" className="block text-sm font-medium text-slate-700">
               סיסמה {!status?.has_account && <span className="text-red-500">*</span>}
             </label>
             <div className="relative">
               <input
+                id="invite-password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -536,11 +538,12 @@ const OnboardingPage = () => {
       </div>
       <form onSubmit={handleAcceptInvite} className="space-y-4">
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">
+          <label htmlFor="join-fullname" className="block text-sm font-medium text-slate-700">
             שם מלא <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
+              id="join-fullname"
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
@@ -552,11 +555,12 @@ const OnboardingPage = () => {
           </div>
         </div>
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">
+          <label htmlFor="join-password" className="block text-sm font-medium text-slate-700">
             סיסמה <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
+              id="join-password"
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -656,9 +660,10 @@ const OnboardingPage = () => {
         נמצא חשבון קיים. הזן סיסמה להתחברות.
       </div>
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-slate-700">סיסמה</label>
+        <label htmlFor="login-password" className="block text-sm font-medium text-slate-700">סיסמה</label>
         <div className="relative">
           <input
+            id="login-password"
             type={showPassword ? 'text' : 'password'}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -751,11 +756,12 @@ const OnboardingPage = () => {
 
         {isCode && (
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">
+            <label htmlFor="onb-joincode" className="block text-sm font-medium text-slate-700">
               קוד הצטרפות <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <input
+                id="onb-joincode"
                 type="text"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
@@ -769,11 +775,12 @@ const OnboardingPage = () => {
         )}
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">
+          <label htmlFor="onb-fullname" className="block text-sm font-medium text-slate-700">
             שם מלא <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
+              id="onb-fullname"
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
@@ -788,9 +795,10 @@ const OnboardingPage = () => {
         {isNew && (
           <>
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700">אימייל <span className="text-red-500">*</span></label>
+              <label htmlFor="onb-email" className="block text-sm font-medium text-slate-700">אימייל <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
+                  id="onb-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -802,9 +810,10 @@ const OnboardingPage = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700">שם הארגון <span className="text-red-500">*</span></label>
+              <label htmlFor="onb-orgname" className="block text-sm font-medium text-slate-700">שם הארגון <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
+                  id="onb-orgname"
                   type="text"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
@@ -815,9 +824,10 @@ const OnboardingPage = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700">שם הפרויקט <span className="text-red-500">*</span></label>
+              <label htmlFor="onb-projectname" className="block text-sm font-medium text-slate-700">שם הפרויקט <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
+                  id="onb-projectname"
                   type="text"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
@@ -831,11 +841,12 @@ const OnboardingPage = () => {
         )}
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">
+          <label htmlFor="onb-password" className="block text-sm font-medium text-slate-700">
             סיסמה {(isNew || !status?.has_account) && <span className="text-red-500">*</span>}
           </label>
           <div className="relative">
             <input
+              id="onb-password"
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => { setPassword(e.target.value); setPasswordError(''); }}

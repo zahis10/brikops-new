@@ -196,10 +196,10 @@ const ContractorDashboard = () => {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="הגדרות חשבון">
+              <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label="הגדרות חשבון">
                 <Settings className="w-5 h-5" />
               </button>
-              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="יציאה">
+              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label="יציאה">
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
@@ -231,6 +231,7 @@ const ContractorDashboard = () => {
           <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
             <button
               onClick={() => setSelectedProjectId('all')}
+              aria-pressed={selectedProjectId === 'all'}
               className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
                 selectedProjectId === 'all' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
               }`}
@@ -242,6 +243,7 @@ const ContractorDashboard = () => {
               return (
                 <button key={p.id}
                   onClick={() => setSelectedProjectId(p.id)}
+                  aria-pressed={selectedProjectId === p.id}
                   className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
                     selectedProjectId === p.id ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
                   }`}

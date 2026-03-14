@@ -320,6 +320,7 @@ export default function BuildingQCPage() {
             <button
               key={opt.id}
               onClick={() => setFilter(opt.id)}
+              aria-pressed={filter === opt.id}
               className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 filter === opt.id
                   ? 'bg-amber-500 text-white shadow-sm'

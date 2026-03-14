@@ -149,10 +149,11 @@ const RegisterPage = () => {
 
         <form onSubmit={handleSubmit} className="space-y-4" dir="rtl">
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">
+            <label htmlFor="phone_display" className="block text-sm font-medium text-slate-700">
               מספר טלפון
             </label>
             <input
+              id="phone_display"
               type="text"
               value={formData.phone_e164}
               readOnly
@@ -178,10 +179,10 @@ const RegisterPage = () => {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">
+            <span className="block text-sm font-medium text-slate-700">
               מסלול
               <span className="text-red-500 mr-1">*</span>
-            </label>
+            </span>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"

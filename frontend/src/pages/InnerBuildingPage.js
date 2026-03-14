@@ -354,8 +354,9 @@ const InnerBuildingPage = () => {
               <p className="text-xs font-medium text-amber-700 mb-2">הוסף קומה ל{building.name}</p>
               <div className="flex gap-2 items-start flex-wrap">
                 <div className="flex-1 min-w-[120px]">
-                  <label className="block text-[11px] font-medium text-amber-800 mb-1">שם/מספר קומה</label>
+                  <label htmlFor="add-floor-name" className="block text-[11px] font-medium text-amber-800 mb-1">שם/מספר קומה</label>
                   <input
+                    id="add-floor-name"
                     type="text"
                     value={newFloorName}
                     onChange={e => setNewFloorName(e.target.value)}
@@ -366,8 +367,9 @@ const InnerBuildingPage = () => {
                   />
                 </div>
                 <div className="w-28">
-                  <label className="block text-[11px] font-medium text-amber-800 mb-1">מס׳ דירות בקומה</label>
+                  <label htmlFor="add-floor-units" className="block text-[11px] font-medium text-amber-800 mb-1">מס׳ דירות בקומה</label>
                   <input
+                    id="add-floor-units"
                     type="number"
                     min="0"
                     value={newFloorUnitCount}
