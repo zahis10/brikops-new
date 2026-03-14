@@ -672,6 +672,47 @@ const TaskDetailPage = () => {
           );
         })()}
 
+        {openingAttachments.length > 0 && attachments.length > 0 && (() => {
+          const sortedOpening = [...openingAttachments].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+          const sortedProof = [...attachments].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+          const beforePhoto = sortedOpening[0];
+          const afterPhoto = sortedProof[sortedProof.length - 1];
+          if (!beforePhoto?.attachment_url || !afterPhoto?.attachment_url) return null;
+          const fmtDate = (d) => {
+            if (!d) return '';
+            try { return new Date(d).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; }
+          };
+          return (
+            <Card className="p-4 rounded-xl shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-600 mb-3 flex items-center gap-2">
+                📸 השוואה — לפני / אחרי
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col items-center">
+                  <img
+                    src={beforePhoto.attachment_url}
+                    alt="לפני"
+                    className="w-full h-48 object-cover rounded-lg border-2 border-red-100 cursor-pointer"
+                    onClick={() => setImageModal(beforePhoto.attachment_url)}
+                  />
+                  <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-red-100 text-red-600">לפני</span>
+                  {beforePhoto.created_at && <span className="text-[11px] text-slate-400 mt-1">{fmtDate(beforePhoto.created_at)}</span>}
+                </div>
+                <div className="flex flex-col items-center">
+                  <img
+                    src={afterPhoto.attachment_url}
+                    alt="אחרי"
+                    className="w-full h-48 object-cover rounded-lg border-2 border-green-100 cursor-pointer"
+                    onClick={() => setImageModal(afterPhoto.attachment_url)}
+                  />
+                  <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-green-100 text-green-600">אחרי</span>
+                  {afterPhoto.created_at && <span className="text-[11px] text-slate-400 mt-1">{fmtDate(afterPhoto.created_at)}</span>}
+                </div>
+              </div>
+            </Card>
+          );
+        })()}
+
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
             <Building2 className="w-4 h-4" />
