@@ -170,19 +170,22 @@ export default function FloorDetailPage() {
     'חשמל': '⚡', 'אינסטלציה': '🔧', 'אלומיניום': '🪟', 'טיח': '🧱', 'צבע': '🎨',
     'ריצוף': '🪨', 'מסגרות': '🔩', 'גבס': '📐', 'איטום': '💧', 'בטון': '🏗️',
     'שיש': '🪨', 'נגרות': '🪵', 'מיזוג': '❄️', 'גינון': '🌿', 'ניקיון': '🧹',
+    'שלד': '🏗️', 'אלומ': '🪟', 'מתכת': '🔩', 'פיתוח': '🌿', 'מעלית': '🛗',
   };
   const getTradeEmoji = (title) => {
     const t = (title || '').trim();
     for (const [key, emoji] of Object.entries(TRADE_EMOJIS)) {
       if (t.includes(key)) return emoji;
     }
-    return '';
+    return '🔨';
   };
 
-  const statusPriority = { rejected: 0, reopened: 1, draft: 2, ready: 2, pending_review: 3, approved: 4 };
+  const statusPriority = { rejected: 0, reopened: 1, in_progress: 2, draft: 3, ready: 3, not_started: 4, pending_review: 5, approved: 6 };
   const stages = [...rawStages].sort((a, b) => {
-    const pa = statusPriority[a.computed_status] ?? 2;
-    const pb = statusPriority[b.computed_status] ?? 2;
+    const sa = a.done > 0 && a.computed_status === 'draft' ? 'in_progress' : a.computed_status;
+    const sb = b.done > 0 && b.computed_status === 'draft' ? 'in_progress' : b.computed_status;
+    const pa = statusPriority[sa] ?? 3;
+    const pb = statusPriority[sb] ?? 3;
     if (pa !== pb) return pa - pb;
     const pctA = a.total > 0 ? a.done / a.total : 0;
     const pctB = b.total > 0 ? b.done / b.total : 0;

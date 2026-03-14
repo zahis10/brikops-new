@@ -154,12 +154,13 @@ export default function BuildingQCPage() {
   }, [floors, qcStatuses]);
 
   const summaryParts = useMemo(() => {
-    const parts = [`${floors.length} קומות`];
+    const parts = [];
+    if (statusCounts.approved) parts.push(`${statusCounts.approved} הושלמו`);
     if (statusCounts.in_progress) parts.push(`${statusCounts.in_progress} בביצוע`);
     if (statusCounts.pending_review) parts.push(`${statusCounts.pending_review} ממתין לאישור`);
     if (statusCounts.rejected) parts.push(`${statusCounts.rejected} נדחה`);
-    if (statusCounts.approved) parts.push(`${statusCounts.approved} אושר`);
-    return parts.join(' · ');
+    if (statusCounts.not_started) parts.push(`${statusCounts.not_started} לא התחיל`);
+    return parts.length > 0 ? parts.join(' · ') : `${floors.length} קומות`;
   }, [floors.length, statusCounts]);
 
   const filteredFloors = useMemo(() => {
@@ -388,7 +389,7 @@ export default function BuildingQCPage() {
                           <div className={`h-1 rounded-full transition-all ${floorPct === 100 ? 'bg-green-400' : floorPct > 50 ? 'bg-blue-400' : 'bg-amber-400'}`}
                             style={{ width: `${floorPct}%` }} />
                         </div>
-                        <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">{floorPct}%</span>
+                        <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">{floorPass}/{floorTotal} סעיפים</span>
                       </div>
                     )}
                   </div>

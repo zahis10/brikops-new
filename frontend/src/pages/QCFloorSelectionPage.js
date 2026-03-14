@@ -90,26 +90,23 @@ export default function QCFloorSelectionPage() {
       const counts = {};
       let totalItems = 0;
       let passItems = 0;
-      let hasItemData = false;
       floors.forEach(f => {
         const qd = qcStatuses[f.id];
         const st = getFloorBadge(qd);
         const normalized = st === 'submitted' ? 'pending_review' : st;
         counts[normalized] = (counts[normalized] || 0) + 1;
         if (qd && typeof qd === 'object' && qd.total > 0) {
-          hasItemData = true;
           totalItems += qd.total;
           passItems += qd.pass_count || 0;
+        } else if (normalized === 'approved') {
+          totalItems += 1;
+          passItems += 1;
+        } else if (normalized !== 'not_started') {
+          totalItems += 1;
         }
       });
       const floorCount = floors.length;
-      let progressPct;
-      if (hasItemData && totalItems > 0) {
-        progressPct = Math.round((passItems / totalItems) * 100);
-      } else {
-        const approved = counts['approved'] || 0;
-        progressPct = floorCount > 0 ? Math.round((approved / floorCount) * 100) : 0;
-      }
+      const progressPct = totalItems > 0 ? Math.round((passItems / totalItems) * 100) : 0;
       const accentBorder = progressPct === 100 ? 'border-r-4 border-green-400' : progressPct > 50 ? 'border-r-4 border-blue-400' : progressPct > 0 ? 'border-r-4 border-amber-400' : 'border-r-4 border-slate-300';
       const ringColor = progressPct === 100 ? '#22C55E' : progressPct > 50 ? '#3B82F6' : progressPct > 0 ? '#F59E0B' : '#CBD5E1';
       stats[b.id] = { floorCount, counts, progressPct, accentBorder, ringColor };

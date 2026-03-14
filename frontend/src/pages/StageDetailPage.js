@@ -84,7 +84,7 @@ const PhotoThumbnail = ({ photo, isPM }) => {
   );
 };
 
-const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, localState, onNoteChange, onUploadPhotos, uploadState, onRetryUpload, itemErrors, isHighlighted, isPendingReview, canApproveThis, onRejectItem, canSendWhatsApp, onWhatsAppCta }, ref) => {
+const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, localState, onNoteChange, onUploadPhotos, uploadState, onRetryUpload, itemErrors, isHighlighted, isGreenFlash, isPendingReview, canApproveThis, onRejectItem, canSendWhatsApp, onWhatsAppCta }, ref) => {
   const currentStatus = localState?.status ?? item.status;
   const currentNote = localState?.note ?? item.note ?? '';
   const cfg = STATUS_CONFIG[currentStatus] || STATUS_CONFIG.pending;
@@ -153,7 +153,7 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
   const badgeText = noteBadgeLabel();
 
   return (
-    <div ref={ref} className={`border rounded-xl p-4 transition-all ${isHighlighted ? 'ring-2 ring-amber-400 bg-amber-50 border-amber-300' : hasError ? 'bg-red-50 border-red-300 ring-2 ring-red-200' : isLocked ? 'bg-slate-50 border-slate-300 opacity-80' : 'bg-white border-slate-200'}`}>
+    <div ref={ref} className={`border rounded-xl p-4 transition-all ${isGreenFlash ? 'ring-2 ring-green-400 bg-green-50 border-green-300' : isHighlighted ? 'ring-2 ring-amber-400 bg-amber-50 border-amber-300' : hasError ? 'bg-red-50 border-red-300 ring-2 ring-red-200' : isLocked ? 'bg-slate-50 border-slate-300 opacity-80' : 'bg-white border-slate-200'}`}>
       {/* 1. Title + always-visible status pill */}
       <div className="flex items-start justify-between gap-3">
         <span className="text-[15px] text-slate-800 font-semibold leading-snug flex-1">
@@ -1829,11 +1829,17 @@ export default function StageDetailPage() {
           </div>
         )}
 
-        {pct === 100 && passCount === stage.total && (
+        {pct === 100 && pendingCount === 0 && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-center shadow-sm">
             <div className="text-2xl mb-1">🎉</div>
-            <div className="text-sm font-bold text-emerald-700">כל הסעיפים תקינים!</div>
-            <div className="text-xs text-emerald-600 mt-0.5">ניתן לשלוח לאישור</div>
+            <div className="text-sm font-bold text-emerald-700">כל הסעיפים הושלמו!</div>
+            <div className="text-xs text-emerald-600 mt-0.5">{failCount > 0 ? `${failCount} לא תקין — תקן לפני שליחה` : 'ניתן לשלוח לאישור'}</div>
+          </div>
+        )}
+
+        {pct < 100 && pendingCount > 0 && pendingCount <= 3 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-center">
+            <span className="text-sm font-bold text-amber-700">🎯 עוד {pendingCount} סעיפים!</span>
           </div>
         )}
 
@@ -1852,7 +1858,8 @@ export default function StageDetailPage() {
               uploadState={uploadingItems[item.id] || null}
               onRetryUpload={(clientId) => handleRetryUpload(item.id, clientId)}
               itemErrors={validationErrors.filter(e => e.item_id === item.id)}
-              isHighlighted={highlightedItemId === item.id || flashItemId === item.id}
+              isHighlighted={highlightedItemId === item.id}
+              isGreenFlash={flashItemId === item.id}
               isPendingReview={isLocked}
               canApproveThis={canApproveThis || isPM}
               onRejectItem={handleRejectItem}
@@ -1962,6 +1969,11 @@ export default function StageDetailPage() {
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-sm border-t border-slate-200 shadow-lg"
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
           <div className="max-w-2xl mx-auto px-4 pt-2 space-y-1.5">
+            {(passCount + failCount) > 0 && canSubmitOrEdit && (
+              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 py-0.5">
+                <span className="font-medium">{passCount + failCount}/{stage.total} סעיפים הושלמו</span>
+              </div>
+            )}
             {validationErrors.length > 0 && (
               <div className="bg-red-50 border border-red-300 rounded-lg px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-red-700 font-bold text-[11px]">
