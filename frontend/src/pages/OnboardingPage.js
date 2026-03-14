@@ -938,6 +938,46 @@ const OnboardingPage = () => {
           {passwordError && <p className="text-xs text-red-500 mt-1">{passwordError}</p>}
         </div>
 
+        {isInvite && (
+          <>
+            <div className="space-y-2">
+              <label htmlFor="onb-invite-email" className="block text-sm font-medium text-slate-700">
+                כתובת אימייל (אופציונלי)
+              </label>
+              <div className="relative">
+                <input
+                  id="onb-invite-email"
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="example@email.com"
+                  className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
+                  dir="ltr"
+                />
+                <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              </div>
+              <p className="text-xs text-slate-400">לשחזור סיסמה והתראות</p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="onb-invite-lang" className="block text-sm font-medium text-slate-700">
+                שפת WhatsApp
+              </label>
+              <select
+                id="onb-invite-lang"
+                value={inviteLang}
+                onChange={(e) => setInviteLang(e.target.value)}
+                className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+              >
+                <option value="he">עברית</option>
+                <option value="en">English</option>
+                <option value="ar">العربية</option>
+                <option value="zh">中文</option>
+              </select>
+            </div>
+          </>
+        )}
+
         {isNew && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
             <Building2 className="w-4 h-4 inline ml-1" />
