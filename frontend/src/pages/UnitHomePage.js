@@ -88,7 +88,7 @@ const UnitHomePage = () => {
               onClick={() => {
                 const role = user?.role;
                 if (role === 'contractor') {
-                  navigate(`/projects/${projectId}/tasks?assignee=me`);
+                  navigate('/projects');
                 } else if (role === 'viewer') {
                   navigate(`/projects/${projectId}/tasks`);
                 } else {

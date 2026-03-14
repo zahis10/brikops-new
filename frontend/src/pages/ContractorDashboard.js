@@ -81,7 +81,9 @@ const ContractorDashboard = () => {
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedProjectId, setSelectedProjectId] = useState('all');
+  const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    return localStorage.getItem('lastProjectId') || 'all';
+  });
   const urgentRef = useRef(null);
 
   const loadData = useCallback(async () => {
@@ -102,6 +104,13 @@ const ContractorDashboard = () => {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    if (!loading && projects.length > 0 && selectedProjectId !== 'all') {
+      const exists = projects.some(p => p.id === selectedProjectId);
+      if (!exists) setSelectedProjectId('all');
+    }
+  }, [loading, projects, selectedProjectId]);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 

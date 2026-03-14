@@ -1151,6 +1151,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         phone = body.get('phone')
         full_name = body.get('full_name', '').strip()
         password = body.get('password')
+        opt_email = (body.get('email') or '').strip().lower() or None
+        opt_lang = body.get('preferred_language') or None
 
         if not invite_id:
             raise HTTPException(status_code=400, detail='מזהה הזמנה נדרש')
@@ -1180,11 +1182,14 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         existing_user = await db.users.find_one({'phone_e164': phone_e164}, {'_id': 0})
         if existing_user:
             user_id = existing_user['id']
+            update_fields = {'name': full_name, 'user_status': 'active', 'updated_at': ts}
             if password:
-                await db.users.update_one(
-                    {'id': user_id},
-                    {'$set': {'name': full_name, 'password_hash': await _hash_password(password), 'user_status': 'active', 'updated_at': ts}}
-                )
+                update_fields['password_hash'] = await _hash_password(password)
+            if opt_email and not existing_user.get('email'):
+                update_fields['email'] = opt_email
+            if opt_lang:
+                update_fields['preferred_language'] = opt_lang
+            await db.users.update_one({'id': user_id}, {'$set': update_fields})
         else:
             if not password or len(password) < 6:
                 raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 6 תווים)')
@@ -1200,6 +1205,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 'platform_role': 'none',
                 'created_at': ts,
             }
+            if opt_email:
+                new_invite_doc['email'] = opt_email
+            if opt_lang:
+                new_invite_doc['preferred_language'] = opt_lang
             if ENABLE_COMPLETE_ACCOUNT_GATE != 'off' and invite_role in ('project_manager', 'management_team'):
                 new_invite_doc['account_complete'] = False
             await db.users.insert_one(new_invite_doc)
@@ -1322,6 +1331,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             },
             'project_id': invite['project_id'],
             'project_name': project_name,
+            'invite_role': invite.get('role', 'viewer'),
             'org_id': org_info['org_id'],
             'org_name': org_info['org_name'],
             'is_owner': org_info['is_owner'],

@@ -10,6 +10,7 @@ import {
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
+import { navigateToProject } from '../utils/navigation';
 
 const OnboardingPage = () => {
   const [searchParams] = useSearchParams();
@@ -36,6 +37,8 @@ const OnboardingPage = () => {
   const [passwordError, setPasswordError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [joinCode, setJoinCode] = useState(searchParams.get('code') || '');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteLang, setInviteLang] = useState('he');
 
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -314,12 +317,15 @@ const OnboardingPage = () => {
     }
     setLoading(true);
     try {
-      const result = await onboardingService.acceptInvite({
+      const payload = {
         invite_id: invite.invite_id,
         phone: phoneE164,
         full_name: fullName.trim(),
         password: password || undefined,
-      });
+      };
+      if (inviteEmail.trim()) payload.email = inviteEmail.trim();
+      if (inviteLang && inviteLang !== 'he') payload.preferred_language = inviteLang;
+      const result = await onboardingService.acceptInvite(payload);
       if (result.success && result.token) {
         loginWithOtp(result.token, result.user, result.user?.platform_role);
         if (result.org_name && result.project_name) {
@@ -333,9 +339,9 @@ const OnboardingPage = () => {
           toast('הגישה מוגבלת כרגע — פנה למנהל הארגון להפעלת המנוי', { icon: 'ℹ️', duration: 6000 });
         }
         const projectId = result.project_id || invite.project_id;
+        const memberRole = result.invite_role || invite.role || 'viewer';
         if (projectId) {
-          localStorage.setItem('lastProjectId', projectId);
-          navigate(`/projects/${projectId}/tasks`);
+          navigateToProject({ id: projectId, my_role: memberRole }, navigate);
         } else {
           navigate('/projects');
         }
@@ -346,7 +352,7 @@ const OnboardingPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedInvite, inviteInfo, inviteToken, phoneE164, fullName, password, loginWithOtp, navigate]);
+  }, [selectedInvite, inviteInfo, inviteToken, phoneE164, fullName, password, inviteEmail, inviteLang, loginWithOtp, navigate]);
 
   const handleJoinByCode = useCallback(async (e) => {
     e.preventDefault();
@@ -508,6 +514,42 @@ const OnboardingPage = () => {
             </div>
           </div>
 
+          <div className="space-y-2">
+            <label htmlFor="invite-email" className="block text-sm font-medium text-slate-700">
+              כתובת אימייל (אופציונלי)
+            </label>
+            <div className="relative">
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="example@email.com"
+                className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
+                dir="ltr"
+              />
+              <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            </div>
+            <p className="text-xs text-slate-400">לשחזור סיסמה והתראות</p>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="invite-lang" className="block text-sm font-medium text-slate-700">
+              שפת WhatsApp
+            </label>
+            <select
+              id="invite-lang"
+              value={inviteLang}
+              onChange={(e) => setInviteLang(e.target.value)}
+              className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+            >
+              <option value="he">עברית</option>
+              <option value="en">English</option>
+              <option value="ar">العربية</option>
+              <option value="zh">中文</option>
+            </select>
+          </div>
+
           <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
             {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
             המשך לפרויקט
@@ -572,6 +614,42 @@ const OnboardingPage = () => {
             </button>
           </div>
         </div>
+        <div className="space-y-2">
+          <label htmlFor="join-email" className="block text-sm font-medium text-slate-700">
+            כתובת אימייל (אופציונלי)
+          </label>
+          <div className="relative">
+            <input
+              id="join-email"
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="example@email.com"
+              className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
+              dir="ltr"
+            />
+            <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          </div>
+          <p className="text-xs text-slate-400">לשחזור סיסמה והתראות</p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="join-lang" className="block text-sm font-medium text-slate-700">
+            שפת WhatsApp
+          </label>
+          <select
+            id="join-lang"
+            value={inviteLang}
+            onChange={(e) => setInviteLang(e.target.value)}
+            className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+          >
+            <option value="he">עברית</option>
+            <option value="en">English</option>
+            <option value="ar">العربية</option>
+            <option value="zh">中文</option>
+          </select>
+        </div>
+
         <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
           {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
           צור חשבון והצטרף

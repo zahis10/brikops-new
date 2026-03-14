@@ -8,7 +8,7 @@ export function navigateToProject(project, navigate) {
   if (MANAGEMENT_ROLES.includes(role)) {
     navigate(`/projects/${id}/control`);
   } else if (role === 'contractor') {
-    navigate(`/projects/${id}/tasks?assignee=me`);
+    navigate('/projects');
   } else {
     navigate(`/projects/${id}/tasks`);
   }

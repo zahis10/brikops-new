@@ -246,7 +246,7 @@ const ProjectPlansPage = () => {
     if (window.history.length > 2) {
       navigate(-1);
     } else {
-      if (myRole === 'contractor') navigate(`/projects/${projectId}/tasks?assignee=me`);
+      if (myRole === 'contractor') navigate('/projects');
       else if (myRole === 'viewer') navigate(`/projects/${projectId}/tasks`);
       else navigate(`/projects/${projectId}/control`);
     }
