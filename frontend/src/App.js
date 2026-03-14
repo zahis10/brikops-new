@@ -46,6 +46,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccountSettingsPage from './pages/AccountSettingsPage';
 import BuildingDefectsPage from './pages/BuildingDefectsPage';
 import BuildingQCPage from './pages/BuildingQCPage';
+import UnitQCSelectionPage from './pages/UnitQCSelectionPage';
 import InnerBuildingPage from './pages/InnerBuildingPage';
 import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
 import AccessibilityPage from './pages/AccessibilityPage';
@@ -206,6 +207,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <FloorDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/buildings/:buildingId/floors/:floorId/qc/units"
+        element={
+          <ProtectedRoute>
+            <UnitQCSelectionPage />
           </ProtectedRoute>
         }
       />

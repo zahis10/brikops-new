@@ -102,7 +102,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 FLOOR_TEMPLATE = {
     "id": FLOOR_TEMPLATE_ID,
     "name": "ביצוע – קומה",
-    "version": 3,
+    "version": 4,
     "stages": [
         {
             "id": "stage_ceiling_prep",
@@ -213,6 +213,23 @@ FLOOR_TEMPLATE = {
                 {"id": "ac_3", "title": "בדיקת מעברי צנרת דרך קירות", "order": 3, "required_photo": True, "required_note": False},
                 {"id": "ac_4", "title": "בדיקת אטימות פתחים", "order": 4, "required_photo": False, "required_note": True},
                 {"id": "ac_5", "title": "אישור סומסום — חתימת מפקח", "order": 5, "required_photo": False, "required_note": True},
+            ],
+        },
+        {
+            "id": "stage_tiling",
+            "title": "ריצוף דירה",
+            "order": 8,
+            "scope": "unit",
+            "items": [
+                {"id": "tl_1", "title": "תיעוד מצב רצפה לפני ריצוף", "order": 1, "required_photo": True, "required_note": False, "pre_work_documentation": True},
+                {"id": "tl_2", "title": "בדיקת מפלסים ושיפועים", "order": 2, "required_photo": False, "required_note": True},
+                {"id": "tl_3", "title": "בדיקת מדבקה/דבק — סוג ומינון", "order": 3, "required_photo": True, "required_note": False},
+                {"id": "tl_4", "title": "בדיקת פריסה — חיתוכים וסימטריה", "order": 4, "required_photo": True, "required_note": False},
+                {"id": "tl_5", "title": "בדיקת רווחי פוגות", "order": 5, "required_photo": True, "required_note": False},
+                {"id": "tl_6", "title": "בדיקת ישרות ומפלס אריחים", "order": 6, "required_photo": False, "required_note": True},
+                {"id": "tl_7", "title": "מילוי פוגות — בדיקת גמר", "order": 7, "required_photo": True, "required_note": False},
+                {"id": "tl_8", "title": "ניקיון סופי — בדיקת שריטות וכתמים", "order": 8, "required_photo": True, "required_note": False},
+                {"id": "tl_9", "title": "דירה מרוצפת קומפלט", "order": 9, "required_photo": False, "required_note": True},
             ],
         },
     ],
@@ -640,6 +657,28 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
 
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
+
+    existing_stage_item_ids = {(it["stage_id"], it["item_id"]) for it in run_items}
+    backfill = []
+    for stage in unit_stages:
+        for item in stage["items"]:
+            if (stage["id"], item["id"]) not in existing_stage_item_ids:
+                backfill.append({
+                    "id": str(uuid.uuid4()),
+                    "run_id": run["id"],
+                    "stage_id": stage["id"],
+                    "item_id": item["id"],
+                    "status": "pending",
+                    "note": "",
+                    "photos": [],
+                    "updated_by": None,
+                    "updated_at": None,
+                })
+    if backfill:
+        await db.qc_items.insert_many(backfill)
+        run_items.extend(backfill)
+        logger.info(f"[QC] Backfilled {len(backfill)} items for unit run {run['id']}")
+
     run_items = await _ensure_inline_prework_items(run["id"], run_items, db, run_scope="unit")
 
     stages_out = []
@@ -714,6 +753,104 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
             "fail": total_fail,
             "pending": total_pending,
         },
+    }
+
+
+@router.get("/floors/{floor_id}/units-status")
+async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+
+    floor = await db.floors.find_one({"id": floor_id, "archived": {"$ne": True}}, {"_id": 0})
+    if not floor:
+        raise HTTPException(status_code=404, detail="Floor not found")
+
+    building = await db.buildings.find_one({"id": floor["building_id"], "archived": {"$ne": True}}, {"_id": 0})
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    project_id = building["project_id"]
+    await _check_qc_access(user, project_id)
+
+    units = await db.units.find(
+        {"floor_id": floor_id, "archived": {"$ne": True}},
+        {"_id": 0}
+    ).to_list(200)
+    units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+
+    unit_ids = [u["id"] for u in units]
+
+    unit_runs = {}
+    if unit_ids:
+        runs_cursor = db.qc_runs.find(
+            {"unit_id": {"$in": unit_ids}, "template_id": FLOOR_TEMPLATE_ID, "scope": "unit"},
+            {"_id": 0}
+        )
+        async for r in runs_cursor:
+            unit_runs[r["unit_id"]] = r
+
+    run_ids = [r["id"] for r in unit_runs.values()]
+    items_by_run = {}
+    if run_ids:
+        all_items = await db.qc_items.find(
+            {"run_id": {"$in": run_ids}, "stage_id": "stage_tiling"},
+            {"_id": 0, "run_id": 1, "status": 1}
+        ).to_list(5000)
+        for item in all_items:
+            items_by_run.setdefault(item["run_id"], []).append(item)
+
+    tpl = _get_template()
+    tiling_stage = next((s for s in tpl["stages"] if s["id"] == "stage_tiling"), None)
+    tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
+
+    result = []
+    for unit in units:
+        uid = unit["id"]
+        run = unit_runs.get(uid)
+        if not run:
+            result.append({
+                "unit_id": uid,
+                "unit_name": unit.get("name", ""),
+                "unit_no": unit.get("unit_no", ""),
+                "status": "not_started",
+                "pass_count": 0,
+                "fail_count": 0,
+                "handled_count": 0,
+                "total": tiling_item_count,
+            })
+            continue
+
+        run_items = items_by_run.get(run["id"], [])
+        pass_count = sum(1 for i in run_items if i.get("status") == "pass")
+        fail_count = sum(1 for i in run_items if i.get("status") == "fail")
+        handled_count = pass_count + fail_count
+        total = tiling_item_count
+
+        stage_statuses = run.get("stage_statuses", {})
+        tiling_status = stage_statuses.get("stage_tiling", "draft")
+        if tiling_status == "approved":
+            status = "approved"
+        elif handled_count > 0 or tiling_status not in ("draft", "not_started"):
+            status = "in_progress"
+        else:
+            status = "not_started"
+
+        result.append({
+            "unit_id": uid,
+            "unit_name": unit.get("name", ""),
+            "unit_no": unit.get("unit_no", ""),
+            "status": status,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "handled_count": handled_count,
+            "total": total,
+        })
+
+    return {
+        "floor_id": floor_id,
+        "floor_name": floor.get("name", ""),
+        "building_id": building["id"],
+        "building_name": building.get("name", ""),
+        "units": result,
     }
 
 
@@ -1429,11 +1566,12 @@ async def get_floors_qc_status(
 
         stage_statuses = run.get("stage_statuses", {})
         tpl = _get_template()
+        floor_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
         stages_data = []
         total_pass = 0
         total_fail = 0
         total_items = 0
-        for stage in tpl["stages"]:
+        for stage in floor_stages:
             stage_items = items_by_stage.get(stage["id"], [])
             done_count = sum(1 for i in stage_items if i.get("status") in ("pass", "fail"))
             computed = _compute_stage_status(stage_items, stage["id"], stage_statuses)

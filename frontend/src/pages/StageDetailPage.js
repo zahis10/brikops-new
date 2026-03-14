@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { qcService, BACKEND_URL } from '../services/api';
 import { getStageVisualStatus, getQualityBadge, getReviewBadge } from '../utils/qcVisualStatus';
 import { toast } from 'sonner';
@@ -707,6 +707,11 @@ const TimelineCard = ({ timeline, canSeeFull, defaultExpanded }) => {
 export default function StageDetailPage() {
   const { projectId, floorId, runId, stageId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const navState = location.state || {};
+  const isUnitMode = navState.scope === 'unit';
+  const unitName = navState.unitName || '';
+  const returnToPath = navState.returnTo || '';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1450,7 +1455,9 @@ export default function StageDetailPage() {
   }, [stage, scrollToItem]);
 
   const goBack = () => {
-    if (window.history.length > 2) {
+    if (returnToPath) {
+      navigate(returnToPath);
+    } else if (window.history.length > 2) {
       navigate(-1);
     } else {
       navigate(`/projects/${projectId}/floors/${floorId}`);
@@ -1520,7 +1527,7 @@ export default function StageDetailPage() {
               <div>
                 <h1 className="text-base font-bold flex items-center gap-2">
                   <ClipboardCheck className="w-4 h-4 text-amber-400" />
-                  {stage.title}
+                  {isUnitMode && unitName ? `${stage.title} — ${unitName}` : stage.title}
                 </h1>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   {(stage.pre_work_documentation || stage.has_prework_items) && (

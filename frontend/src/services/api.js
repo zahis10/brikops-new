@@ -956,6 +956,10 @@ export const qcService = {
     const response = await axios.get(`${API}/qc/units/${unitId}/run`, { headers: getAuthHeader() });
     return response.data;
   },
+  async getUnitsStatus(floorId) {
+    const response = await axios.get(`${API}/qc/floors/${floorId}/units-status`, { headers: getAuthHeader() });
+    return response.data;
+  },
   async getRun(runId) {
     const response = await axios.get(`${API}/qc/run/${runId}`, { headers: getAuthHeader() });
     return response.data;

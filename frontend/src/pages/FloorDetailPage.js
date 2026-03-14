@@ -4,7 +4,7 @@ import { qcService } from '../services/api';
 import {
   ArrowRight, Loader2, ClipboardCheck,
   CheckCircle2, XCircle, Clock, Building2, Layers, RefreshCw, Lock,
-  AlertCircle, RotateCcw, ShieldCheck, FileText, Home
+  AlertCircle, RotateCcw, ShieldCheck, FileText, Home, ChevronLeft
 } from 'lucide-react';
 import { qcStageStatusLabel } from '../utils/qcLabels';
 import { getStageVisualStatusLite, getFloorVisualStatus, getQualityBadge, getReviewBadge, getFloorQualityBadge } from '../utils/qcVisualStatus';
@@ -129,6 +129,7 @@ export default function FloorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const [unitsStatus, setUnitsStatus] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -136,6 +137,7 @@ export default function FloorDetailPage() {
       setError(null);
       const result = await qcService.getFloorRun(floorId);
       setData(result);
+      qcService.getUnitsStatus(floorId).then(setUnitsStatus).catch(() => {});
     } catch (err) {
       if (err.response?.status === 403) {
         setError('אין הרשאה לצפות בבקרת ביצוע');
@@ -170,7 +172,8 @@ export default function FloorDetailPage() {
 
   if (!data) return null;
 
-  const { stages: rawStages, building_name, floor_name, template_name, summary } = data;
+  const { stages: rawStages, building_name, floor_name, template_name, summary, run } = data;
+  const buildingId = run?.building_id || unitsStatus?.building_id || '';
 
   const TRADE_EMOJIS = {
     'חשמל': '⚡', 'אינסטלציה': '🔧', 'סניטריה': '🔧', 'מים': '🔧',
@@ -270,7 +273,7 @@ export default function FloorDetailPage() {
         })()}
 
         <div className="grid grid-cols-2 gap-2">
-          {stages.map(stage => (
+          {stages.filter(s => s.scope !== 'unit').map(stage => (
             <StageCard
               key={stage.id}
               stage={{ ...stage, _tradeEmoji: getTradeEmoji(stage.title) }}
@@ -279,6 +282,43 @@ export default function FloorDetailPage() {
             />
           ))}
         </div>
+
+        {unitsStatus && unitsStatus.units && unitsStatus.units.length > 0 && (() => {
+          const units = unitsStatus.units;
+          const completedUnits = units.filter(u => u.status === 'approved').length;
+          const totalUnits = units.length;
+          const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
+          const totalItemsUnit = units.reduce((s, u) => s + u.total, 0);
+          const pct = totalItemsUnit > 0 ? Math.round((totalHandled / totalItemsUnit) * 100) : 0;
+
+          return (
+            <button
+              onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`)}
+              className="w-full text-right p-4 rounded-xl border border-violet-200 bg-white hover:border-violet-300 hover:shadow-sm transition-all border-r-4 border-r-violet-400"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🟫</span>
+                  <span className="text-sm font-bold text-slate-700">ריצוף דירה</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+                    <Home className="w-3 h-3" />
+                    לפי דירות
+                  </span>
+                </div>
+                <ChevronLeft className="w-4 h-4 text-slate-400" />
+              </div>
+              <div className="text-xs text-slate-500 mb-1.5">
+                {completedUnits}/{totalUnits} דירות הושלמו
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ריצוף ${pct}%`}>
+                <div
+                  className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : pct > 0 ? 'bg-violet-400' : 'bg-slate-200'}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </button>
+          );
+        })()}
       </div>
     </div>
   );
