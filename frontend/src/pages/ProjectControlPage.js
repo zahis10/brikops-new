@@ -9,7 +9,7 @@ import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
   sortIndexService, versionService, configService, archiveService, stepupService, isStepupError, billingService,
-  qcService, companySearchService
+  qcService, companySearchService, templateService, projectQcService
 } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -74,6 +74,7 @@ const SECONDARY_TABS = [
   { id: 'team', label: 'צוות', icon: '👥' },
   { id: 'companies', label: 'קבלנים וחברות', icon: '🏢' },
   { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
+  { id: 'qc-template', label: 'תבנית QC', icon: '📝' },
 ];
 
 const BILLING_TAB = { id: 'billing', label: 'חיוב', icon: '💳' };
@@ -2720,6 +2721,170 @@ const OnboardingChecklist = ({ hierarchy, companies, stats, memberCount, project
   );
 };
 
+const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
+  const [assignment, setAssignment] = useState(null);
+  const [families, setFamilies] = useState([]);
+  const [loadingAssignment, setLoadingAssignment] = useState(true);
+  const [loadingFamilies, setLoadingFamilies] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [selectedFamily, setSelectedFamily] = useState('');
+  const [selectedVersion, setSelectedVersion] = useState('');
+
+  const loadAssignment = useCallback(async () => {
+    try {
+      setLoadingAssignment(true);
+      const data = isSuperAdmin
+        ? await templateService.getProjectAssignment(projectId)
+        : await projectQcService.getAssignment(projectId);
+      setAssignment(data);
+      if (data?.template_family_id) setSelectedFamily(data.template_family_id);
+      if (data?.template_version_id) setSelectedVersion(data.template_version_id);
+    } catch {
+      setAssignment(null);
+    } finally {
+      setLoadingAssignment(false);
+    }
+  }, [projectId, isSuperAdmin]);
+
+  const loadFamilies = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    try {
+      setLoadingFamilies(true);
+      const data = await templateService.list();
+      setFamilies(data);
+    } catch {} finally {
+      setLoadingFamilies(false);
+    }
+  }, [isSuperAdmin]);
+
+  useEffect(() => { loadAssignment(); }, [loadAssignment]);
+  useEffect(() => { loadFamilies(); }, [loadFamilies]);
+
+  const handleFamilyChange = (familyId) => {
+    setSelectedFamily(familyId);
+    const fam = families.find(f => f.family_id === familyId);
+    if (fam) setSelectedVersion(fam.latest_id);
+  };
+
+  const handleSave = async () => {
+    if (!selectedVersion) return;
+    try {
+      setSaving(true);
+      const fam = families.find(f => f.family_id === selectedFamily);
+      await templateService.assignToProject(projectId, {
+        template_version_id: selectedVersion,
+        template_family_id: selectedFamily,
+      });
+      toast.success(`תבנית "${fam?.name || ''}" שויכה לפרויקט`);
+      await loadAssignment();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בשיוך תבנית');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpgrade = async () => {
+    if (!assignment?.template_family_id) return;
+    const fam = families.find(f => f.family_id === assignment.template_family_id);
+    if (!fam) return;
+    try {
+      setSaving(true);
+      await templateService.assignToProject(projectId, {
+        template_version_id: fam.latest_id,
+        template_family_id: fam.family_id,
+      });
+      toast.success('התבנית שודרגה לגרסה האחרונה');
+      await loadAssignment();
+      setSelectedVersion(fam.latest_id);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בשדרוג');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loadingAssignment) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+      </div>
+    );
+  }
+
+  const currentFamily = families.find(f => f.family_id === selectedFamily);
+  const familyOptions = families.map(f => ({ value: f.family_id, label: `${f.name} (v${f.latest_version})` }));
+  const versionOptions = currentFamily?.versions?.map(v => ({ value: v.id, label: `גרסה ${v.version}${v.is_active ? ' (פעילה)' : ''}` })) || [];
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <ClipboardCheck className="w-5 h-5 text-amber-500" />
+          <h3 className="text-sm font-bold text-slate-800">תבנית בקרת ביצוע</h3>
+        </div>
+
+        {!isSuperAdmin ? (
+          <div className="space-y-2">
+            {assignment?.assigned ? (
+              <div className="bg-slate-50 rounded-lg p-3 space-y-1">
+                <p className="text-sm text-slate-700"><span className="font-medium">תבנית:</span> {assignment.template_name}</p>
+                {assignment.template_version && <p className="text-xs text-slate-500">גרסה {assignment.template_version}</p>}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">לא שויכה תבנית לפרויקט זה. נעשה שימוש בתבנית ברירת מחדל.</p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {assignment?.newer_version_available && (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <span className="text-xs text-amber-800 flex-1">קיימת גרסה חדשה יותר לתבנית זו</span>
+                <button onClick={handleUpgrade} disabled={saving} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'שדרג'}
+                </button>
+              </div>
+            )}
+
+            {loadingFamilies ? (
+              <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-400 animate-spin" /></div>
+            ) : (
+              <>
+                <SelectField
+                  label="משפחת תבנית"
+                  value={selectedFamily}
+                  options={familyOptions}
+                  onChange={handleFamilyChange}
+                  emptyMessage="אין תבניות זמינות"
+                />
+                {versionOptions.length > 1 && (
+                  <SelectField
+                    label="גרסה"
+                    value={selectedVersion}
+                    options={versionOptions}
+                    onChange={setSelectedVersion}
+                  />
+                )}
+                <Button onClick={handleSave} disabled={saving || !selectedVersion}
+                  className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg disabled:opacity-50">
+                  {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שמור תבנית'}
+                </Button>
+              </>
+            )}
+
+            {assignment?.assigned && (
+              <div className="bg-slate-50 rounded-lg p-3 mt-2 space-y-1">
+                <p className="text-xs text-slate-500">תבנית נוכחית: <span className="font-medium text-slate-700">{assignment.template_name}</span> (v{assignment.template_version})</p>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 const ProjectControlPage = () => {
   const { projectId } = useParams();
   const { user } = useAuth();
@@ -3066,6 +3231,10 @@ const ProjectControlPage = () => {
 
           {activeTab === 'settings' && (
             <QCApproversTab projectId={projectId} canManageApprovers={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />
+          )}
+
+          {activeTab === 'qc-template' && (
+            <QCTemplateTab projectId={projectId} isSuperAdmin={user?.platform_role === 'super_admin'} />
           )}
 
           {activeTab === 'billing' && billingEnabled && (

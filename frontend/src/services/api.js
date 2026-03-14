@@ -1101,8 +1101,8 @@ export const authService = {
 };
 
 export const templateService = {
-  async list() {
-    const response = await axios.get(`${API}/admin/qc/templates`, { headers: getAuthHeader() });
+  async list(params = {}) {
+    const response = await axios.get(`${API}/admin/qc/templates`, { headers: getAuthHeader(), params });
     return response.data;
   },
   async get(templateId) {
@@ -1121,8 +1121,23 @@ export const templateService = {
     const response = await axios.post(`${API}/admin/qc/templates/${templateId}/clone`, data || {}, { headers: getAuthHeader() });
     return response.data;
   },
-  async assignToProject(projectId, templateId) {
-    const response = await axios.put(`${API}/admin/projects/${projectId}/qc-template`, { template_id: templateId }, { headers: getAuthHeader() });
+  async assignToProject(projectId, data) {
+    const response = await axios.put(`${API}/admin/projects/${projectId}/qc-template`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getProjectAssignment(projectId) {
+    const response = await axios.get(`${API}/admin/projects/${projectId}/qc-template`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async archiveFamily(familyId, archive = true) {
+    const response = await axios.put(`${API}/admin/qc/templates/family/${familyId}/archive`, { archive }, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
+export const projectQcService = {
+  async getAssignment(projectId) {
+    const response = await axios.get(`${API}/projects/${projectId}/qc-template`, { headers: getAuthHeader() });
     return response.data;
   },
 };

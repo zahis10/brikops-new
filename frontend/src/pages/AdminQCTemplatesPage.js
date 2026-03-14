@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { templateService } from '../services/api';
+import { toast } from 'sonner';
 import {
   ChevronRight, ChevronDown, ChevronUp, ChevronLeft,
   Plus, Trash2, Copy, Save, Loader2, AlertTriangle,
   Camera, FileText, GripVertical, Edit2, Check, X,
-  ArrowUp, ArrowDown, Star
+  ArrowUp, ArrowDown, Star, Search, Archive, Undo2
 } from 'lucide-react';
 
 const SCOPE_OPTIONS = [
@@ -34,18 +35,29 @@ const AdminQCTemplatesPage = () => {
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
+  const [archiving, setArchiving] = useState(null);
+
   const loadFamilies = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await templateService.list();
+      const data = await templateService.list({
+        search: searchQuery,
+        include_archived: showArchived,
+        sort_by: sortBy,
+        sort_dir: sortDir,
+      });
       setFamilies(data);
     } catch (e) {
       setError('שגיאה בטעינת תבניות');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [searchQuery, showArchived, sortBy, sortDir]);
 
   useEffect(() => { loadFamilies(); }, [loadFamilies]);
 
@@ -453,6 +465,29 @@ const AdminQCTemplatesPage = () => {
     );
   }
 
+  const handleArchiveFamily = async (e, familyId, archive) => {
+    e.stopPropagation();
+    try {
+      setArchiving(familyId);
+      await templateService.archiveFamily(familyId, archive);
+      toast.success(archive ? 'התבנית הועברה לארכיון' : 'התבנית שוחזרה');
+      await loadFamilies();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה');
+    } finally {
+      setArchiving(null);
+    }
+  };
+
+  const toggleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortDir('asc');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <div className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3">
@@ -473,7 +508,40 @@ const AdminQCTemplatesPage = () => {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-4 py-4">
+      <div className="max-w-3xl mx-auto px-4 py-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 relative">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="חיפוש תבנית..."
+              className="w-full pr-9 pl-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            onClick={() => setShowArchived(prev => !prev)}
+            className={`flex items-center gap-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${showArchived ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            {showArchived ? 'הצג הכל' : 'ארכיון'}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-slate-500">מיון:</span>
+          {[{ key: 'name', label: 'שם' }, { key: 'version', label: 'גרסה' }, { key: 'created_at', label: 'תאריך' }].map(s => (
+            <button
+              key={s.key}
+              onClick={() => toggleSort(s.key)}
+              className={`px-2 py-1 rounded-md border transition-colors ${sortBy === s.key ? 'bg-blue-50 border-blue-300 text-blue-700 font-medium' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+            >
+              {s.label} {sortBy === s.key && (sortDir === 'asc' ? '↑' : '↓')}
+            </button>
+          ))}
+        </div>
+
         {loading && (
           <div className="flex justify-center py-12">
             <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -488,7 +556,7 @@ const AdminQCTemplatesPage = () => {
         )}
         {!loading && !error && families.length === 0 && (
           <div className="text-center py-12 text-slate-400">
-            <p className="text-sm">אין תבניות עדיין</p>
+            <p className="text-sm">{searchQuery ? 'לא נמצאו תבניות' : 'אין תבניות עדיין'}</p>
           </div>
         )}
         {!loading && !error && families.length > 0 && (
@@ -496,17 +564,20 @@ const AdminQCTemplatesPage = () => {
             {families.map(f => (
               <div
                 key={f.family_id}
-                onClick={() => openEditor(f.latest_id)}
-                className="bg-white rounded-xl border border-slate-200 p-4 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all"
+                onClick={() => !f.archived && openEditor(f.latest_id)}
+                className={`bg-white rounded-xl border p-4 transition-all ${f.archived ? 'border-slate-200 opacity-60' : 'border-slate-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5'}`}
               >
                 <div className="flex items-center justify-between">
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold text-slate-800">{f.name}</h3>
+                      <h3 className="text-sm font-bold text-slate-800 truncate">{f.name}</h3>
                       {f.is_default && (
                         <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
                           <Star className="w-2.5 h-2.5" /> ברירת מחדל
                         </span>
+                      )}
+                      {f.archived && (
+                        <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-medium">ארכיון</span>
                       )}
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
@@ -515,7 +586,28 @@ const AdminQCTemplatesPage = () => {
                       <span>{f.versions?.length || 1} גרסאות</span>
                     </div>
                   </div>
-                  <ChevronLeft className="w-4 h-4 text-slate-400" />
+                  <div className="flex items-center gap-2">
+                    {f.archived ? (
+                      <button
+                        onClick={(e) => handleArchiveFamily(e, f.family_id, false)}
+                        disabled={archiving === f.family_id}
+                        className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
+                      >
+                        {archiving === f.family_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                        שחזר
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => handleArchiveFamily(e, f.family_id, true)}
+                        disabled={archiving === f.family_id}
+                        className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100"
+                        title="העבר לארכיון"
+                      >
+                        {archiving === f.family_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Archive className="w-3 h-3" />}
+                      </button>
+                    )}
+                    {!f.archived && <ChevronLeft className="w-4 h-4 text-slate-400" />}
+                  </div>
                 </div>
               </div>
             ))}

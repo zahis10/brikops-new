@@ -670,9 +670,20 @@ async def admin_change_user_role(user_id: str, project_id: str, request: Request
 
 
 @router.get("/admin/qc/templates")
-async def admin_list_qc_templates(user: dict = Depends(require_super_admin)):
+async def admin_list_qc_templates(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    search: str = Query(default="", description="Search by name"),
+    include_archived: bool = Query(default=False, description="Include archived families"),
+    sort_by: str = Query(default="name", description="Sort field: name, version, created_at"),
+    sort_dir: str = Query(default="asc", description="Sort direction: asc, desc"),
+):
     db = get_db()
-    all_docs = await db.qc_templates.find({}, {"_id": 0}).sort([("family_id", 1), ("version", -1)]).to_list(500)
+    query_filter = {}
+    if search.strip():
+        query_filter["name"] = {"$regex": search.strip(), "$options": "i"}
+
+    all_docs = await db.qc_templates.find(query_filter, {"_id": 0}).sort([("family_id", 1), ("version", -1)]).to_list(500)
     families = {}
     for doc in all_docs:
         fid = doc["family_id"]
@@ -684,7 +695,9 @@ async def admin_list_qc_templates(user: dict = Depends(require_super_admin)):
                 "latest_id": doc["id"],
                 "is_default": doc.get("is_default", False),
                 "is_active": doc.get("is_active", False),
+                "archived": doc.get("archived", False),
                 "stage_count": len(doc.get("stages", [])),
+                "created_at": doc.get("created_at"),
                 "versions": [],
             }
         families[fid]["versions"].append({
@@ -693,7 +706,52 @@ async def admin_list_qc_templates(user: dict = Depends(require_super_admin)):
             "is_active": doc.get("is_active", False),
             "created_at": doc.get("created_at"),
         })
-    return list(families.values())
+
+    result = list(families.values())
+
+    if not include_archived:
+        result = [f for f in result if not f.get("archived")]
+
+    reverse = sort_dir == "desc"
+    if sort_by == "version":
+        result.sort(key=lambda f: f.get("latest_version", 0), reverse=reverse)
+    elif sort_by == "created_at":
+        result.sort(key=lambda f: f.get("created_at") or "", reverse=reverse)
+    else:
+        result.sort(key=lambda f: f.get("name", "").lower(), reverse=reverse)
+
+    return result
+
+
+@router.put("/admin/qc/templates/family/{family_id}/archive")
+async def admin_archive_qc_template_family(family_id: str, request: Request, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    docs = await db.qc_templates.find({"family_id": family_id}, {"_id": 0, "id": 1}).to_list(100)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Template family not found")
+
+    body = await request.json()
+    archive = body.get("archive", True)
+
+    if archive:
+        version_ids = [d["id"] for d in docs]
+        active_projects = await db.projects.count_documents({
+            "$or": [
+                {"qc_template_family_id": family_id},
+                {"qc_template_version_id": {"$in": version_ids}},
+                {"qc_template_id": {"$in": version_ids}},
+            ]
+        })
+        if active_projects > 0:
+            raise HTTPException(status_code=400, detail=f"לא ניתן לארכב — התבנית משויכת ל-{active_projects} פרויקטים פעילים")
+
+    await db.qc_templates.update_many(
+        {"family_id": family_id},
+        {"$set": {"archived": archive}}
+    )
+    action = "archived" if archive else "restored"
+    logger.info(f"[QC-TPL] Family {family_id} {action} by user={user['id']}")
+    return {"success": True, "family_id": family_id, "archived": archive}
 
 
 @router.get("/admin/qc/templates/{template_id}")
@@ -822,13 +880,16 @@ async def admin_assign_qc_template(project_id: str, request: Request, user: dict
         raise HTTPException(status_code=404, detail="Project not found")
 
     body = await request.json()
-    template_id = body.get("template_id")
-    if not template_id:
-        raise HTTPException(status_code=400, detail="template_id is required")
+    template_version_id = body.get("template_version_id") or body.get("template_id")
+    template_family_id = body.get("template_family_id")
+    if not template_version_id:
+        raise HTTPException(status_code=400, detail="template_version_id is required")
 
-    tpl = await db.qc_templates.find_one({"id": template_id}, {"_id": 0, "id": 1, "name": 1, "version": 1})
+    tpl = await db.qc_templates.find_one({"id": template_version_id}, {"_id": 0, "id": 1, "name": 1, "version": 1, "family_id": 1})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template version not found")
+
+    family_id = template_family_id or tpl.get("family_id")
 
     active_runs = await db.qc_runs.count_documents({"project_id": project_id})
     warning = None
@@ -837,15 +898,56 @@ async def admin_assign_qc_template(project_id: str, request: Request, user: dict
 
     await db.projects.update_one(
         {"id": project_id},
-        {"$set": {"qc_template_id": template_id}}
+        {"$set": {
+            "qc_template_version_id": template_version_id,
+            "qc_template_family_id": family_id,
+        }}
     )
-    logger.info(f"[QC-TPL] Assigned template={template_id} to project={project_id} by user={user['id']}")
+    logger.info(f"[QC-TPL] Assigned template={template_version_id} family={family_id} to project={project_id} by user={user['id']}")
 
     return {
         "success": True,
         "project_id": project_id,
-        "template_id": template_id,
+        "template_version_id": template_version_id,
+        "template_family_id": family_id,
         "template_name": tpl["name"],
         "template_version": tpl["version"],
         "warning": warning,
+    }
+
+
+@router.get("/admin/projects/{project_id}/qc-template")
+async def admin_get_project_qc_template(project_id: str, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1, "qc_template_version_id": 1, "qc_template_family_id": 1, "qc_template_id": 1})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    version_id = project.get("qc_template_version_id") or project.get("qc_template_id")
+    family_id = project.get("qc_template_family_id")
+
+    if not version_id:
+        return {"assigned": False, "template_version_id": None, "template_family_id": None, "template_name": None, "template_version": None, "newer_version_available": False}
+
+    tpl = await db.qc_templates.find_one({"id": version_id}, {"_id": 0, "id": 1, "name": 1, "version": 1, "family_id": 1})
+    if not tpl:
+        return {"assigned": True, "template_version_id": version_id, "template_family_id": family_id, "template_name": "(נמחקה)", "template_version": None, "newer_version_available": False}
+
+    resolved_family = family_id or tpl.get("family_id")
+    newer_version_available = False
+    if resolved_family:
+        newer = await db.qc_templates.find_one(
+            {"family_id": resolved_family, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
+            {"_id": 0, "id": 1}
+        )
+        if newer:
+            newer_version_available = True
+
+    return {
+        "assigned": True,
+        "template_version_id": version_id,
+        "template_family_id": resolved_family,
+        "template_name": tpl["name"],
+        "template_version": tpl["version"],
+        "newer_version_available": newer_version_available,
     }

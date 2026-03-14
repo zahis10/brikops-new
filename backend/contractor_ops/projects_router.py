@@ -1063,3 +1063,73 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
         },
         'floors': floor_results,
     }
+
+
+@router.get("/projects/{project_id}/qc-template")
+async def get_project_qc_template(project_id: str, user: dict = Depends(get_current_user)):
+    if _is_super_admin(user):
+        pass
+    else:
+        db_check = get_db()
+        membership = await db_check.project_memberships.find_one({
+            'user_id': user['id'],
+            'project_id': project_id,
+        })
+        if not membership:
+            raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
+        allowed_roles = ['owner', 'admin', 'project_manager', 'management_team']
+        if membership.get('role') not in allowed_roles:
+            raise HTTPException(status_code=403, detail='אין הרשאה לצפות בתבנית QC')
+    db = get_db()
+    project = await db.projects.find_one(
+        {"id": project_id},
+        {"_id": 0, "qc_template_version_id": 1, "qc_template_family_id": 1, "qc_template_id": 1}
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    version_id = project.get("qc_template_version_id") or project.get("qc_template_id")
+    family_id = project.get("qc_template_family_id")
+
+    if not version_id:
+        return {
+            "assigned": False,
+            "template_version_id": None,
+            "template_family_id": None,
+            "template_name": None,
+            "template_version": None,
+            "newer_version_available": False,
+        }
+
+    tpl = await db.qc_templates.find_one(
+        {"id": version_id},
+        {"_id": 0, "id": 1, "name": 1, "version": 1, "family_id": 1}
+    )
+    if not tpl:
+        return {
+            "assigned": True,
+            "template_version_id": version_id,
+            "template_family_id": family_id,
+            "template_name": "(נמחקה)",
+            "template_version": None,
+            "newer_version_available": False,
+        }
+
+    resolved_family = family_id or tpl.get("family_id")
+    newer_version_available = False
+    if resolved_family:
+        newer = await db.qc_templates.find_one(
+            {"family_id": resolved_family, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
+            {"_id": 0, "id": 1}
+        )
+        if newer:
+            newer_version_available = True
+
+    return {
+        "assigned": True,
+        "template_version_id": version_id,
+        "template_family_id": resolved_family,
+        "template_name": tpl["name"],
+        "template_version": tpl["version"],
+        "newer_version_available": newer_version_available,
+    }
