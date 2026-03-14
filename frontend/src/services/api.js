@@ -1034,6 +1034,10 @@ export const qcService = {
     const response = await axios.post(`${API}/qc/run/${runId}/stage/${stageId}/notify-rejection`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async getExecutionSummary(projectId) {
+    const response = await axios.get(`${API}/qc/projects/${projectId}/execution-summary`, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const identityService = {

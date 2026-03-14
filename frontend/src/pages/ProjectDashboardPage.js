@@ -9,7 +9,7 @@ import { tRole } from '../i18n';
 import { toast } from 'sonner';
 import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
-  ChevronLeft, Building2, HardHat, Loader2, RefreshCw,
+  ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
   ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings,
   Construction
 } from 'lucide-react';
@@ -113,11 +113,14 @@ export default function ProjectDashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [qcSummary, setQcSummary] = useState(null);
+  const [execSummary, setExecSummary] = useState(null);
+  const [expandedStages, setExpandedStages] = useState({});
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
     setError(null);
     setQcSummary(null);
+    setExecSummary(null);
     try {
       const [dashData, projData] = await Promise.all([
         projectService.getDashboard(projectId),
@@ -127,15 +130,23 @@ export default function ProjectDashboardPage() {
       setProject(projData);
 
       try {
-        const hierarchy = await buildingService.getHierarchy(projectId);
-        const floorIds = [];
-        (hierarchy || []).forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
-        if (floorIds.length > 0) {
-          const statuses = await qcService.getFloorsBatchStatus(floorIds);
-          const counts = { not_started: 0, in_progress: 0, pending_review: 0, submitted: 0, total: floorIds.length };
-          Object.values(statuses).forEach(raw => { const s = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; if (counts[s] !== undefined) counts[s]++; });
-          setQcSummary(counts);
-        }
+        const [hierarchyResult, execResult] = await Promise.allSettled([
+          (async () => {
+            const hierarchy = await buildingService.getHierarchy(projectId);
+            const floorIds = [];
+            (hierarchy || []).forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
+            if (floorIds.length > 0) {
+              const statuses = await qcService.getFloorsBatchStatus(floorIds);
+              const counts = { not_started: 0, in_progress: 0, pending_review: 0, submitted: 0, total: floorIds.length };
+              Object.values(statuses).forEach(raw => { const s = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; if (counts[s] !== undefined) counts[s]++; });
+              return counts;
+            }
+            return null;
+          })(),
+          qcService.getExecutionSummary(projectId),
+        ]);
+        if (hierarchyResult.status === 'fulfilled') setQcSummary(hierarchyResult.value);
+        if (execResult.status === 'fulfilled') setExecSummary(execResult.value);
       } catch {}
     } catch (err) {
       if (err.response?.status === 403) {
@@ -492,6 +503,112 @@ export default function ProjectDashboardPage() {
             )}
           </div>
         </div>
+
+        {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <div className="flex items-center justify-between mb-4">
+              <SectionHeader icon={ClipboardCheck} title="סטטוס ביצוע" count={null} color="text-indigo-500" />
+              <button
+                onClick={() => navigate(`/projects/${projectId}/qc`)}
+                className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
+              >
+                בקרת ביצוע <ChevronLeft className="w-3 h-3" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 mb-4 p-3 bg-gradient-to-l from-indigo-50 to-slate-50 rounded-xl">
+              <div className="text-3xl font-black text-indigo-600">{execSummary.overall.completion_pct}%</div>
+              <div className="flex-1">
+                <p className="text-xs text-slate-500 mb-1">התקדמות כללית</p>
+                <div className="w-full bg-slate-200 rounded-full h-2.5">
+                  <div
+                    className="h-2.5 rounded-full transition-all"
+                    style={{
+                      width: `${execSummary.overall.completion_pct}%`,
+                      background: execSummary.overall.completion_pct === 100
+                        ? 'linear-gradient(90deg, #10b981, #34d399)'
+                        : execSummary.overall.completion_pct >= 50
+                          ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+                          : 'linear-gradient(90deg, #6366f1, #818cf8)',
+                    }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">{execSummary.overall.completed}/{execSummary.overall.total} שלבים הושלמו</p>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              {execSummary.stages.map(stage => {
+                const isExpanded = expandedStages[stage.stage_id];
+                const pct = stage.completion_pct;
+                const barBg = pct === 100 ? '#10b981' : pct >= 50 ? '#f59e0b' : pct > 0 ? '#6366f1' : '#cbd5e1';
+                const statusIcon = pct === 100 ? '✅' : pct > 0 ? '🟡' : '⚪';
+
+                return (
+                  <div key={stage.stage_id}>
+                    <button
+                      onClick={() => setExpandedStages(prev => ({ ...prev, [stage.stage_id]: !prev[stage.stage_id] }))}
+                      className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="text-lg w-7 text-center shrink-0">{stage.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-semibold text-slate-700 truncate">{stage.title}</span>
+                          <span className="text-xs text-slate-400 whitespace-nowrap mr-2">
+                            {statusIcon} {stage.completed}/{stage.total} {stage.entity_label}
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-1.5">
+                          <div
+                            className="h-1.5 rounded-full transition-all"
+                            style={{ width: `${pct}%`, backgroundColor: barBg }}
+                          />
+                        </div>
+                      </div>
+                      <ChevronDown className={`w-4 h-4 text-slate-300 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {isExpanded && stage.buildings && (
+                      <div className="mr-9 mb-2 space-y-2">
+                        {stage.buildings.map(bld => (
+                          <div key={bld.building_id} className="bg-slate-50 rounded-lg p-2.5">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-xs font-bold text-slate-600">{bld.building_name}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {bld.children.map(child => {
+                                const badge = child.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200'
+                                  : child.status === 'in_progress' ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                  : child.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200';
+                                const icon = child.status === 'completed' ? '✅'
+                                  : child.status === 'in_progress' ? '🟡'
+                                  : child.status === 'failed' ? '🔴'
+                                  : '⚪';
+                                const label = child.type === 'unit'
+                                  ? `${child.floor_name ? child.floor_name + ' / ' : ''}${child.name}`
+                                  : child.name;
+                                return (
+                                  <span
+                                    key={child.id}
+                                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border font-medium ${badge}`}
+                                  >
+                                    {icon} {label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {kpis.open_total === 0 && kpis.closed_total === 0 && (
           <div className="bg-white rounded-xl border shadow-sm p-8 text-center">

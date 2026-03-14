@@ -102,7 +102,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 FLOOR_TEMPLATE = {
     "id": FLOOR_TEMPLATE_ID,
     "name": "ביצוע – קומה",
-    "version": 4,
+    "version": 5,
     "stages": [
         {
             "id": "stage_ceiling_prep",
@@ -117,6 +117,7 @@ FLOOR_TEMPLATE = {
                 {"id": "cp_5", "title": "בדיקת גבהים ומפלסים", "order": 5, "required_photo": False, "required_note": True},
                 {"id": "cp_6", "title": "אישור מהנדס קונסטרוקציה", "order": 6, "required_photo": True, "required_note": True},
                 {"id": "cp_7", "title": "בדיקת עוגנים ושרוולים", "order": 7, "required_photo": True, "required_note": False},
+                {"id": "cp_complete", "title": "קומה שלמה — הכנה ליציקה קומפלט", "order": 8, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -133,6 +134,7 @@ FLOOR_TEMPLATE = {
                 {"id": "br_4", "title": "מילוי דבק/טיט בין בלוקים", "order": 4, "required_photo": False, "required_note": False},
                 {"id": "br_5", "title": "בדיקת פתחי חלונות ודלתות", "order": 5, "required_photo": True, "required_note": False},
                 {"id": "br_6", "title": "חיבור ברזל אנכי", "order": 6, "required_photo": True, "required_note": False},
+                {"id": "br_complete", "title": "קומה שלמה — בלוקים קומפלט", "order": 7, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -151,6 +153,7 @@ FLOOR_TEMPLATE = {
                 {"id": "pl_6", "title": "תיעוד מיקומים לפני סגירה", "order": 6, "required_photo": True, "required_note": True},
                 {"id": "pl_7", "title": "בדיקת שיפועי ניקוז", "order": 7, "required_photo": False, "required_note": True},
                 {"id": "pl_8", "title": "אישור מפקח אינסטלציה", "order": 8, "required_photo": False, "required_note": True},
+                {"id": "pl_complete", "title": "קומה שלמה — אינסטלציה קומפלט", "order": 9, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -167,6 +170,7 @@ FLOOR_TEMPLATE = {
                 {"id": "el_4", "title": "בדיקת הארקה", "order": 4, "required_photo": False, "required_note": True},
                 {"id": "el_5", "title": "חיבור ללוח חשמל קומתי", "order": 5, "required_photo": True, "required_note": False},
                 {"id": "el_6", "title": "תיעוד מיקומים לפני טיח", "order": 6, "required_photo": True, "required_note": True},
+                {"id": "el_complete", "title": "קומה שלמה — חשמל קומפלט", "order": 7, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -184,6 +188,7 @@ FLOOR_TEMPLATE = {
                 {"id": "pt_5", "title": "בדיקת פינות ומפגשים", "order": 5, "required_photo": False, "required_note": False},
                 {"id": "pt_6", "title": "ריפוי (Curing) — בדיקת לחות", "order": 6, "required_photo": False, "required_note": True},
                 {"id": "pt_7", "title": "אישור מפקח טיח", "order": 7, "required_photo": False, "required_note": True},
+                {"id": "pt_complete", "title": "קומה שלמה — טיח קומפלט", "order": 8, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -200,6 +205,7 @@ FLOOR_TEMPLATE = {
                 {"id": "wp_6", "title": "תיקון נקודות דליפה", "order": 6, "required_photo": True, "required_note": True},
                 {"id": "wp_7", "title": "בדיקת הצפה חוזרת", "order": 7, "required_photo": True, "required_note": False},
                 {"id": "wp_8", "title": "אישור מפקח איטום", "order": 8, "required_photo": False, "required_note": True},
+                {"id": "wp_complete", "title": "קומה שלמה — הצפה/איטום קומפלט", "order": 9, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -213,6 +219,7 @@ FLOOR_TEMPLATE = {
                 {"id": "ac_3", "title": "בדיקת מעברי צנרת דרך קירות", "order": 3, "required_photo": True, "required_note": False},
                 {"id": "ac_4", "title": "בדיקת אטימות פתחים", "order": 4, "required_photo": False, "required_note": True},
                 {"id": "ac_5", "title": "אישור סומסום — חתימת מפקח", "order": 5, "required_photo": False, "required_note": True},
+                {"id": "ac_complete", "title": "קומה שלמה — אקוסטיקה קומפלט", "order": 6, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -277,6 +284,39 @@ async def _ensure_inline_prework_items(run_id, run_items, db, run_scope="floor")
     created_ids = [f"{d['stage_id']}/{d['item_id']}" for d in to_insert]
     logger.info(f"[QC:BACKFILL] run={run_id} created {len(to_insert)} inline prework items: {created_ids}")
     return updated
+
+
+async def _backfill_missing_items(run_id, run_items, db, run_scope="floor"):
+    tpl = _get_template()
+    existing_ids = {(it["stage_id"], it["item_id"]) for it in run_items}
+    to_insert = []
+    for stage in tpl["stages"]:
+        if stage.get("scope", "floor") != run_scope:
+            continue
+        for item in stage["items"]:
+            if (stage["id"], item["id"]) in existing_ids:
+                continue
+            to_insert.append({
+                "id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "stage_id": stage["id"],
+                "item_id": item["id"],
+                "status": "pending",
+                "note": "",
+                "photos": [],
+                "updated_by": None,
+                "updated_at": None,
+            })
+    if not to_insert:
+        return run_items
+    try:
+        await db.qc_items.insert_many(to_insert, ordered=False)
+    except Exception:
+        pass
+    run_items = await db.qc_items.find({"run_id": run_id}, {"_id": 0}).to_list(500)
+    created_ids = [f"{d['stage_id']}/{d['item_id']}" for d in to_insert]
+    logger.info(f"[QC:BACKFILL] run={run_id} scope={run_scope} created {len(to_insert)} missing items: {created_ids}")
+    return run_items
 
 
 def _build_tpl_item_map():
@@ -512,6 +552,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
     run_items = await _ensure_inline_prework_items(run["id"], run_items, db)
+    run_items = await _backfill_missing_items(run["id"], run_items, db, run_scope="floor")
 
     tpl = _get_template()
     stages_out = []
@@ -868,6 +909,7 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
     run_items = await db.qc_items.find({"run_id": run_id}, {"_id": 0}).to_list(500)
     run_scope = run.get("scope", "floor")
     run_items = await _ensure_inline_prework_items(run_id, run_items, db, run_scope=run_scope)
+    run_items = await _backfill_missing_items(run_id, run_items, db, run_scope=run_scope)
     tpl = _get_template()
     items_by_stage = {}
     for it in run_items:
@@ -1780,6 +1822,175 @@ async def revoke_approver(project_id: str, target_user_id: str, user: dict = Dep
 
     logger.info(f"[QC] Approver {target_user_id} revoked from project {project_id}")
     return {"status": "revoked"}
+
+
+STAGE_ICONS = {
+    "stage_ceiling_prep": "🏗️",
+    "stage_blocks_row1": "🧱",
+    "stage_plumbing": "🔧",
+    "stage_electrical": "⚡",
+    "stage_plaster": "🪣",
+    "stage_waterproof": "💧",
+    "stage_acoustic": "🔇",
+    "stage_tiling": "🟫",
+}
+
+
+@router.get("/projects/{project_id}/execution-summary")
+async def get_execution_summary(project_id: str, user: dict = Depends(get_current_user)):
+    await _check_qc_access(user, project_id)
+    db = get_db()
+
+    buildings = await db.buildings.find(
+        {"project_id": project_id, "archived": {"$ne": True}},
+        {"_id": 0, "id": 1, "name": 1}
+    ).to_list(200)
+    if not buildings:
+        return {"stages": [], "overall": {"total": 0, "completed": 0, "completion_pct": 0}}
+
+    building_ids = [b["id"] for b in buildings]
+    building_map = {b["id"]: b["name"] for b in buildings}
+
+    floors = await db.floors.find(
+        {"building_id": {"$in": building_ids}, "archived": {"$ne": True}},
+        {"_id": 0, "id": 1, "building_id": 1, "name": 1}
+    ).to_list(2000)
+    floor_ids = [f["id"] for f in floors]
+    floors_by_building = {}
+    for f in floors:
+        floors_by_building.setdefault(f["building_id"], []).append(f)
+
+    units = await db.units.find(
+        {"floor_id": {"$in": floor_ids}, "archived": {"$ne": True}},
+        {"_id": 0, "id": 1, "floor_id": 1, "unit_no": 1, "building_id": 1}
+    ).to_list(5000)
+    units_by_floor = {}
+    for u in units:
+        units_by_floor.setdefault(u["floor_id"], []).append(u)
+
+    runs = await db.qc_runs.find(
+        {"project_id": project_id},
+        {"_id": 0, "id": 1, "floor_id": 1, "unit_id": 1, "scope": 1, "stage_statuses": 1}
+    ).to_list(5000)
+
+    floor_runs = {}
+    unit_runs = {}
+    for r in runs:
+        scope = r.get("scope", "floor")
+        if scope == "unit" and r.get("unit_id"):
+            unit_runs[r["unit_id"]] = r.get("stage_statuses", {})
+        elif scope != "unit":
+            floor_runs[r["floor_id"]] = r.get("stage_statuses", {})
+
+    tpl = _get_template()
+    overall_total = 0
+    overall_completed = 0
+    stages_out = []
+
+    for stage in tpl["stages"]:
+        stage_id = stage["id"]
+        scope = stage.get("scope", "floor")
+        icon = STAGE_ICONS.get(stage_id, "📋")
+
+        completed = 0
+        in_progress = 0
+        not_started = 0
+        failed = 0
+        building_details = []
+
+        for bld in buildings:
+            bld_id = bld["id"]
+            bld_floors = floors_by_building.get(bld_id, [])
+            children = []
+
+            if scope == "floor":
+                for fl in bld_floors:
+                    ss = floor_runs.get(fl["id"], {})
+                    st = ss.get(stage_id)
+                    if st == "approved":
+                        status = "completed"
+                        completed += 1
+                    elif st == "rejected":
+                        status = "failed"
+                        failed += 1
+                    elif st in ("pending_review", "reopened", "ready"):
+                        status = "in_progress"
+                        in_progress += 1
+                    else:
+                        status = "not_started"
+                        not_started += 1
+
+                    children.append({
+                        "id": fl["id"],
+                        "name": fl.get("name", ""),
+                        "type": "floor",
+                        "status": status,
+                    })
+            else:
+                for fl in bld_floors:
+                    fl_units = units_by_floor.get(fl["id"], [])
+                    for unit in fl_units:
+                        ss = unit_runs.get(unit["id"], {})
+                        st = ss.get(stage_id)
+                        if st == "approved":
+                            status = "completed"
+                            completed += 1
+                        elif st == "rejected":
+                            status = "failed"
+                            failed += 1
+                        elif st in ("pending_review", "reopened", "ready"):
+                            status = "in_progress"
+                            in_progress += 1
+                        else:
+                            status = "not_started"
+                            not_started += 1
+
+                        children.append({
+                            "id": unit["id"],
+                            "name": unit.get("unit_no", ""),
+                            "type": "unit",
+                            "floor_name": fl.get("name", ""),
+                            "status": status,
+                        })
+
+            if children:
+                building_details.append({
+                    "building_id": bld_id,
+                    "building_name": building_map.get(bld_id, ""),
+                    "children": children,
+                })
+
+        total = completed + in_progress + not_started + failed
+        completion_pct = round(completed / total * 100) if total > 0 else 0
+        overall_total += total
+        overall_completed += completed
+
+        stages_out.append({
+            "stage_id": stage_id,
+            "title": stage["title"],
+            "scope": scope,
+            "icon": icon,
+            "order": stage["order"],
+            "total": total,
+            "completed": completed,
+            "in_progress": in_progress,
+            "not_started": not_started,
+            "failed": failed,
+            "completion_pct": completion_pct,
+            "entity_label": "קומות" if scope == "floor" else "דירות",
+            "buildings": building_details,
+        })
+
+    overall_pct = round(overall_completed / overall_total * 100) if overall_total > 0 else 0
+
+    return {
+        "stages": stages_out,
+        "overall": {
+            "total": overall_total,
+            "completed": overall_completed,
+            "completion_pct": overall_pct,
+        },
+    }
 
 
 async def _check_approver_authorization(user, project_id, stage_id):
