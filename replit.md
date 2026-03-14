@@ -37,7 +37,8 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Billing System**: Centralized billing management with RBAC — org owner/billing_admin/super_admin can edit; project_manager has read-only view; management_team/contractor/viewer have no billing access.
     -   **Admin & Member Management**: Tools for `super_admin`, PM, and owner-level team management.
     -   **QC (Quality Control) System**: Floor-level quality control with a hardcoded template, item management, RBAC, stage-based workflow, and an approver system.
-    -   **Identity System**: Manages user accounts, status, and audit logging.
+    -   **Identity System**: Manages user accounts, status, and audit logging. Includes WhatsApp notification opt-out preference (`whatsapp_notifications_enabled` field, `PUT /api/auth/me/whatsapp-notifications`).
+    -   **Accessibility**: Public `/accessibility` route with Hebrew accessibility statement (הצהרת נגישות) per Israeli law. Links from login page and account settings.
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
     -   **Defects V2**: Parallel building-level and apartment-level defect views.
     -   **Defects Export**: Supports Excel and PDF exports with Hebrew RTL formatting.

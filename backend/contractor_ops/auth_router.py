@@ -134,6 +134,21 @@ async def update_my_preferred_language(request: Request, user: dict = Depends(ge
     return {'success': True, 'preferred_language': lang}
 
 
+@router.put("/auth/me/whatsapp-notifications")
+async def update_my_whatsapp_notifications(request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    body = await request.json()
+    enabled = body.get('enabled')
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail='שדה enabled חייב להיות true או false')
+    await db.users.update_one({'id': user['id']}, {'$set': {'whatsapp_notifications_enabled': enabled}})
+    await _audit('user', user['id'], 'self_whatsapp_notifications_change', user['id'], {
+        'old_value': user.get('whatsapp_notifications_enabled', True),
+        'new_value': enabled,
+    })
+    return {'success': True, 'whatsapp_notifications_enabled': enabled}
+
+
 @router.post("/auth/register", response_model=UserResponse)
 async def register(user: UserCreate):
     db = get_db()
@@ -318,7 +333,8 @@ async def login(credentials: UserLogin):
                           company_id=user.get('company_id'),
                           specialties=user.get('specialties'), phone_e164=user.get('phone_e164'),
                           user_status=user.get('user_status', 'active'),
-                          created_at=user.get('created_at'))
+                          created_at=user.get('created_at'),
+                          whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True))
     return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}
 
 
@@ -361,7 +377,8 @@ async def dev_login(request: Request):
                           company_id=user.get('company_id'),
                           specialties=user.get('specialties'), phone_e164=user.get('phone_e164'),
                           user_status=user.get('user_status', 'active'),
-                          created_at=user.get('created_at'))
+                          created_at=user.get('created_at'),
+                          whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True))
     return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}
 
 
@@ -433,6 +450,7 @@ async def get_me(user: dict = Depends(get_current_user)):
         created_at=user.get('created_at'),
         platform_role=user.get('platform_role', 'none'),
         preferred_language=user.get('preferred_language'),
+        whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True),
         organization=org_summary,
         project_memberships_summary=proj_summaries,
     )

@@ -1082,6 +1082,10 @@ export const authService = {
     const response = await axios.put(`${API}/auth/me/preferred-language`, { preferred_language: lang }, { headers: getAuthHeader() });
     return response.data;
   },
+  async updateWhatsAppNotifications(enabled) {
+    const response = await axios.put(`${API}/auth/me/whatsapp-notifications`, { enabled }, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const exportService = {

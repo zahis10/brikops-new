@@ -233,6 +233,7 @@ class UserResponse(BaseModel):
     created_at: Optional[str] = None
     platform_role: Optional[str] = 'none'
     preferred_language: Optional[str] = None
+    whatsapp_notifications_enabled: Optional[bool] = True
     organization: Optional[OrgSummary] = None
     project_memberships_summary: Optional[List[ProjectMembershipSummary]] = None
 

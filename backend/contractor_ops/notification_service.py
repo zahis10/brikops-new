@@ -396,6 +396,11 @@ class NotificationEngine:
         preferred_language = resolved['preferred_language']
 
         assignee_id = task.get('assignee_id', '')
+        if assignee_id:
+            assignee_user = await self.db.users.find_one({'id': assignee_id}, {'_id': 0, 'whatsapp_notifications_enabled': 1})
+            if assignee_user and assignee_user.get('whatsapp_notifications_enabled') is False:
+                logger.info(f"[NOTIFY] notification skipped — user disabled WhatsApp notifications (task={task_id}, user={assignee_id})")
+                return {'status': 'skipped_optout', 'id': str(uuid.uuid4()), 'task_id': task_id}
         idem_key = generate_idempotency_key(task_id, event_type, assignee_id)
 
         existing = await self.db.notification_jobs.find_one({

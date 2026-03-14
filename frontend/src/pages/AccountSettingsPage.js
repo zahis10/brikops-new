@@ -5,8 +5,9 @@ import { useIdentity } from '../contexts/IdentityContext';
 import { authService } from '../services/api';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
+import { Link } from 'react-router-dom';
 import {
-  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle
+  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle, Bell, Accessibility, FileText
 } from 'lucide-react';
 import PhoneChangeModal from '../components/PhoneChangeModal';
 import { tRole, tTrade } from '../i18n';
@@ -47,6 +48,9 @@ const AccountSettingsPage = () => {
   const [showPhoneChange, setShowPhoneChange] = useState(false);
   const [waLang, setWaLang] = useState(user?.preferred_language || 'he');
   const [waLangSaving, setWaLangSaving] = useState(false);
+  const [waNotifEnabled, setWaNotifEnabled] = useState(user?.whatsapp_notifications_enabled !== false);
+  const [waNotifSaving, setWaNotifSaving] = useState(false);
+  const [showWaConfirm, setShowWaConfirm] = useState(false);
 
   useEffect(() => {
     if (location.hash === '#phone') {
@@ -309,6 +313,86 @@ const AccountSettingsPage = () => {
 
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
+            <Bell className="w-5 h-5 text-amber-500" />
+            <h2 className="text-lg font-semibold text-slate-900">הודעות WhatsApp</h2>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-700">קבל הודעות WhatsApp על ליקויים ועדכונים</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={waNotifEnabled}
+              disabled={waNotifSaving}
+              onClick={() => {
+                if (waNotifEnabled) {
+                  setShowWaConfirm(true);
+                } else {
+                  (async () => {
+                    setWaNotifSaving(true);
+                    try {
+                      await authService.updateWhatsAppNotifications(true);
+                      setWaNotifEnabled(true);
+                      toast.success('הודעות WhatsApp הופעלו');
+                    } catch (err) {
+                      toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+                    } finally {
+                      setWaNotifSaving(false);
+                    }
+                  })();
+                }
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 ${waNotifEnabled ? 'bg-amber-500' : 'bg-slate-300'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${waNotifEnabled ? '-translate-x-1' : '-translate-x-6'}`} />
+            </button>
+          </div>
+          {waNotifSaving && (
+            <div className="flex items-center gap-2 mt-2 text-sm text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>שומר...</span>
+            </div>
+          )}
+        </div>
+
+        {showWaConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowWaConfirm(false)}>
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 mx-4 max-w-sm w-full" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-slate-900 mb-3">כיבוי הודעות WhatsApp</h3>
+              <p className="text-sm text-slate-600 mb-5">
+                לא תקבל עדכונים על ליקויים חדשים או שינויים. ניתן להפעיל מחדש בכל עת.
+              </p>
+              <div className="flex gap-3">
+                <Button
+                  onClick={async () => {
+                    setShowWaConfirm(false);
+                    setWaNotifSaving(true);
+                    try {
+                      await authService.updateWhatsAppNotifications(false);
+                      setWaNotifEnabled(false);
+                      toast.success('הודעות WhatsApp כובו');
+                    } catch (err) {
+                      toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+                    } finally {
+                      setWaNotifSaving(false);
+                    }
+                  }}
+                  className="flex-1 h-10 bg-red-500 hover:bg-red-600 text-white font-medium"
+                >
+                  כבה הודעות
+                </Button>
+                <Button
+                  onClick={() => setShowWaConfirm(false)}
+                  className="flex-1 h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                >
+                  ביטול
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+          <div className="flex items-center gap-2 mb-4">
             <Lock className="w-5 h-5 text-amber-500" />
             <h2 className="text-lg font-semibold text-slate-900">שינוי סיסמה</h2>
           </div>
@@ -370,6 +454,19 @@ const AccountSettingsPage = () => {
               </Button>
             </form>
           )}
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText className="w-5 h-5 text-amber-500" />
+            <h2 className="text-lg font-semibold text-slate-900">מידע משפטי</h2>
+          </div>
+          <div className="space-y-3">
+            <Link to="/accessibility" className="flex items-center gap-2 text-sm text-amber-600 hover:text-amber-700 font-medium">
+              <Accessibility className="w-4 h-4" />
+              הצהרת נגישות
+            </Link>
+          </div>
         </div>
       </div>
 

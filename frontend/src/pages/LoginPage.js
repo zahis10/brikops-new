@@ -519,6 +519,12 @@ const LoginPage = () => {
           </p>
         </div>
 
+        <div className="mt-3 text-center">
+          <a href="/accessibility" className="text-xs text-slate-400 hover:text-amber-600 transition-colors">
+            הצהרת נגישות
+          </a>
+        </div>
+
         {quickLoginEnabled && (
           <div className="mt-6 pt-5 border-t border-slate-200">
             <p className="text-xs text-slate-500 font-medium text-center mb-3">כניסה מהירה לדמו</p>

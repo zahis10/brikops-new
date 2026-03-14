@@ -48,6 +48,7 @@ import BuildingDefectsPage from './pages/BuildingDefectsPage';
 import BuildingQCPage from './pages/BuildingQCPage';
 import InnerBuildingPage from './pages/InnerBuildingPage';
 import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
+import AccessibilityPage from './pages/AccessibilityPage';
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
@@ -117,6 +118,7 @@ const AppRoutes = () => {
       <Route path="/register-management" element={<RegisterManagementPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/accessibility" element={<AccessibilityPage />} />
       <Route
         path="/settings/account"
         element={
