@@ -910,19 +910,22 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         async for r in runs_cursor:
             unit_runs[r["unit_id"]] = r
 
+    tpl = await _get_template(db, project_id=project_id)
+    unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
+    unit_stage_ids = [s["id"] for s in unit_stages]
+    tiling_stage = unit_stages[0] if unit_stages else None
+    tiling_stage_id = tiling_stage["id"] if tiling_stage else "stage_tiling"
+    tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
+
     run_ids = [r["id"] for r in unit_runs.values()]
     items_by_run = {}
     if run_ids:
         all_items = await db.qc_items.find(
-            {"run_id": {"$in": run_ids}, "stage_id": "stage_tiling"},
+            {"run_id": {"$in": run_ids}, "stage_id": tiling_stage_id},
             {"_id": 0, "run_id": 1, "status": 1}
         ).to_list(5000)
         for item in all_items:
             items_by_run.setdefault(item["run_id"], []).append(item)
-
-    tpl = await _get_template(db, project_id=project_id)
-    tiling_stage = next((s for s in tpl["stages"] if s["id"] == "stage_tiling"), None)
-    tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
 
     result = []
     for unit in units:
@@ -1670,7 +1673,10 @@ async def get_floors_qc_status(
             raise HTTPException(status_code=400, detail="floor_ids contain floors not belonging to the specified project")
         logger.info(f"[QC:BATCH_STATUS] user={user['id']} project={project_id} floors={len(ids)}")
     else:
-        logger.warning(f"[QC:BATCH_STATUS:DEPRECATION] user={user['id']} project_id=missing floors={len(ids)} — callers should provide project_id for scoping")
+        first_floor = await db.floors.find_one({"id": ids[0]}, {"_id": 0, "project_id": 1})
+        if first_floor:
+            project_id = first_floor.get("project_id")
+        logger.warning(f"[QC:BATCH_STATUS:DEPRECATION] user={user['id']} project_id=derived:{project_id} floors={len(ids)} — callers should provide project_id for scoping")
 
     runs = await db.qc_runs.find(
         {"floor_id": {"$in": ids}, "scope": {"$ne": "unit"}},
