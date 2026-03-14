@@ -250,16 +250,17 @@ _DEFAULT_CACHE_TTL = 60
 
 
 async def _get_template(db=None, *, project_id=None, run=None):
-    if run and run.get("template_version_id"):
-        vid = run["template_version_id"]
-        if vid in _template_version_cache:
-            return _template_version_cache[vid]
-        if db is not None:
-            doc = await db.qc_templates.find_one({"id": vid}, {"_id": 0})
-            if doc:
-                _template_version_cache[vid] = doc
-                return doc
-        logger.warning(f"[QC-TPL] template_version_id={vid} not found, fallback to FLOOR_TEMPLATE")
+    if run:
+        vid = run.get("template_version_id")
+        if vid:
+            if vid in _template_version_cache:
+                return _template_version_cache[vid]
+            if db is not None:
+                doc = await db.qc_templates.find_one({"id": vid}, {"_id": 0})
+                if doc:
+                    _template_version_cache[vid] = doc
+                    return doc
+            logger.warning(f"[QC-TPL] template_version_id={vid} not found, fallback to FLOOR_TEMPLATE")
         return FLOOR_TEMPLATE
 
     if db is not None and project_id:
@@ -1678,6 +1679,8 @@ async def get_floors_qc_status(
 
     runs_by_floor = {r["floor_id"]: r for r in runs}
 
+    project_tpl = await _get_template(db, project_id=project_id)
+
     result = {}
     for fid in ids:
         run = runs_by_floor.get(fid)
@@ -1695,7 +1698,7 @@ async def get_floors_qc_status(
             items_by_stage.setdefault(it.get("stage_id"), []).append(it)
 
         stage_statuses = run.get("stage_statuses", {})
-        tpl = await _get_template(db, project_id=project_id)
+        tpl = project_tpl
         floor_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
         stages_data = []
         total_pass = 0
