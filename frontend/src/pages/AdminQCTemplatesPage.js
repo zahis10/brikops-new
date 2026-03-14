@@ -525,13 +525,13 @@ const AdminQCTemplatesPage = () => {
             className={`flex items-center gap-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${showArchived ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
           >
             <Archive className="w-3.5 h-3.5" />
-            {showArchived ? 'הצג הכל' : 'ארכיון'}
+            {showArchived ? 'הסתר ארכיון' : 'הצג ארכיון'}
           </button>
         </div>
 
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-500">מיון:</span>
-          {[{ key: 'name', label: 'שם' }, { key: 'version', label: 'גרסה' }, { key: 'created_at', label: 'תאריך' }].map(s => (
+          {[{ key: 'name', label: 'שם' }, { key: 'last_modified', label: 'עדכון אחרון' }, { key: 'created_at', label: 'תאריך יצירה' }].map(s => (
             <button
               key={s.key}
               onClick={() => toggleSort(s.key)}

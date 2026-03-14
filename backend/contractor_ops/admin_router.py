@@ -713,8 +713,8 @@ async def admin_list_qc_templates(
         result = [f for f in result if not f.get("archived")]
 
     reverse = sort_dir == "desc"
-    if sort_by == "version":
-        result.sort(key=lambda f: f.get("latest_version", 0), reverse=reverse)
+    if sort_by == "last_modified":
+        result.sort(key=lambda f: f.get("created_at") or "", reverse=reverse)
     elif sort_by == "created_at":
         result.sort(key=lambda f: f.get("created_at") or "", reverse=reverse)
     else:
@@ -723,7 +723,7 @@ async def admin_list_qc_templates(
     return result
 
 
-@router.put("/admin/qc/templates/family/{family_id}/archive")
+@router.put("/admin/qc/templates/{family_id}/archive")
 async def admin_archive_qc_template_family(family_id: str, request: Request, user: dict = Depends(require_super_admin)):
     db = get_db()
     docs = await db.qc_templates.find({"family_id": family_id}, {"_id": 0, "id": 1}).to_list(100)
@@ -736,6 +736,7 @@ async def admin_archive_qc_template_family(family_id: str, request: Request, use
     if archive:
         version_ids = [d["id"] for d in docs]
         active_projects = await db.projects.count_documents({
+            "status": {"$in": ["active", "draft"]},
             "$or": [
                 {"qc_template_family_id": family_id},
                 {"qc_template_version_id": {"$in": version_ids}},
@@ -872,82 +873,3 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
     return doc
 
 
-@router.put("/admin/projects/{project_id}/qc-template")
-async def admin_assign_qc_template(project_id: str, request: Request, user: dict = Depends(require_super_admin)):
-    db = get_db()
-    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1, "name": 1})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    body = await request.json()
-    template_version_id = body.get("template_version_id") or body.get("template_id")
-    template_family_id = body.get("template_family_id")
-    if not template_version_id:
-        raise HTTPException(status_code=400, detail="template_version_id is required")
-
-    tpl = await db.qc_templates.find_one({"id": template_version_id}, {"_id": 0, "id": 1, "name": 1, "version": 1, "family_id": 1})
-    if not tpl:
-        raise HTTPException(status_code=404, detail="Template version not found")
-
-    family_id = template_family_id or tpl.get("family_id")
-
-    active_runs = await db.qc_runs.count_documents({"project_id": project_id})
-    warning = None
-    if active_runs > 0:
-        warning = f"לפרויקט יש {active_runs} ביצועים קיימים. שינוי תבנית ישפיע רק על בדיקות חדשות."
-
-    await db.projects.update_one(
-        {"id": project_id},
-        {"$set": {
-            "qc_template_version_id": template_version_id,
-            "qc_template_family_id": family_id,
-        }}
-    )
-    logger.info(f"[QC-TPL] Assigned template={template_version_id} family={family_id} to project={project_id} by user={user['id']}")
-
-    return {
-        "success": True,
-        "project_id": project_id,
-        "template_version_id": template_version_id,
-        "template_family_id": family_id,
-        "template_name": tpl["name"],
-        "template_version": tpl["version"],
-        "warning": warning,
-    }
-
-
-@router.get("/admin/projects/{project_id}/qc-template")
-async def admin_get_project_qc_template(project_id: str, user: dict = Depends(require_super_admin)):
-    db = get_db()
-    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1, "qc_template_version_id": 1, "qc_template_family_id": 1, "qc_template_id": 1})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    version_id = project.get("qc_template_version_id") or project.get("qc_template_id")
-    family_id = project.get("qc_template_family_id")
-
-    if not version_id:
-        return {"assigned": False, "template_version_id": None, "template_family_id": None, "template_name": None, "template_version": None, "newer_version_available": False}
-
-    tpl = await db.qc_templates.find_one({"id": version_id}, {"_id": 0, "id": 1, "name": 1, "version": 1, "family_id": 1})
-    if not tpl:
-        return {"assigned": True, "template_version_id": version_id, "template_family_id": family_id, "template_name": "(נמחקה)", "template_version": None, "newer_version_available": False}
-
-    resolved_family = family_id or tpl.get("family_id")
-    newer_version_available = False
-    if resolved_family:
-        newer = await db.qc_templates.find_one(
-            {"family_id": resolved_family, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
-            {"_id": 0, "id": 1}
-        )
-        if newer:
-            newer_version_available = True
-
-    return {
-        "assigned": True,
-        "template_version_id": version_id,
-        "template_family_id": resolved_family,
-        "template_name": tpl["name"],
-        "template_version": tpl["version"],
-        "newer_version_available": newer_version_available,
-    }

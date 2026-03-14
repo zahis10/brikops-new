@@ -264,10 +264,8 @@ async def _get_template(db=None, *, project_id=None, run=None):
         return FLOOR_TEMPLATE
 
     if db is not None and project_id:
-        proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "qc_template_version_id": 1, "qc_template_id": 1})
-        vid = None
-        if proj:
-            vid = proj.get("qc_template_version_id") or proj.get("qc_template_id")
+        proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "qc_template_version_id": 1})
+        vid = proj.get("qc_template_version_id") if proj else None
         if vid:
             if vid in _template_version_cache:
                 return _template_version_cache[vid]

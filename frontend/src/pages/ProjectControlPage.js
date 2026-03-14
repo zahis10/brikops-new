@@ -2729,13 +2729,12 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
   const [saving, setSaving] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState('');
   const [selectedVersion, setSelectedVersion] = useState('');
+  const [confirmUpgrade, setConfirmUpgrade] = useState(false);
 
   const loadAssignment = useCallback(async () => {
     try {
       setLoadingAssignment(true);
-      const data = isSuperAdmin
-        ? await templateService.getProjectAssignment(projectId)
-        : await projectQcService.getAssignment(projectId);
+      const data = await projectQcService.getAssignment(projectId);
       setAssignment(data);
       if (data?.template_family_id) setSelectedFamily(data.template_family_id);
       if (data?.template_version_id) setSelectedVersion(data.template_version_id);
@@ -2744,7 +2743,7 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
     } finally {
       setLoadingAssignment(false);
     }
-  }, [projectId, isSuperAdmin]);
+  }, [projectId]);
 
   const loadFamilies = useCallback(async () => {
     if (!isSuperAdmin) return;
@@ -2832,18 +2831,33 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
                 {assignment.template_version && <p className="text-xs text-slate-500">גרסה {assignment.template_version}</p>}
               </div>
             ) : (
-              <p className="text-sm text-slate-500">לא שויכה תבנית לפרויקט זה. נעשה שימוש בתבנית ברירת מחדל.</p>
+              <p className="text-sm text-slate-500">לא נבחרה תבנית QC</p>
             )}
           </div>
         ) : (
           <div className="space-y-3">
             {assignment?.newer_version_available && (
-              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                <span className="text-xs text-amber-800 flex-1">קיימת גרסה חדשה יותר לתבנית זו</span>
-                <button onClick={handleUpgrade} disabled={saving} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
-                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'שדרג'}
-                </button>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span className="text-xs text-amber-800 flex-1">
+                    גרסה {assignment.newer_version || ''} זמינה — עדכן?
+                  </span>
+                  {!confirmUpgrade ? (
+                    <button onClick={() => setConfirmUpgrade(true)} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium">
+                      עדכן
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => { handleUpgrade(); setConfirmUpgrade(false); }} disabled={saving} className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
+                        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'אשר עדכון'}
+                      </button>
+                      <button onClick={() => setConfirmUpgrade(false)} className="text-xs text-slate-500 px-2 py-1 hover:text-slate-700">
+                        ביטול
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

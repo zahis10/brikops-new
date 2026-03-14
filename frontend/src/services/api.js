@@ -1122,15 +1122,15 @@ export const templateService = {
     return response.data;
   },
   async assignToProject(projectId, data) {
-    const response = await axios.put(`${API}/admin/projects/${projectId}/qc-template`, data, { headers: getAuthHeader() });
+    const response = await axios.put(`${API}/projects/${projectId}/qc-template`, data, { headers: getAuthHeader() });
     return response.data;
   },
   async getProjectAssignment(projectId) {
-    const response = await axios.get(`${API}/admin/projects/${projectId}/qc-template`, { headers: getAuthHeader() });
+    const response = await axios.get(`${API}/projects/${projectId}/qc-template`, { headers: getAuthHeader() });
     return response.data;
   },
   async archiveFamily(familyId, archive = true) {
-    const response = await axios.put(`${API}/admin/qc/templates/family/${familyId}/archive`, { archive }, { headers: getAuthHeader() });
+    const response = await axios.put(`${API}/admin/qc/templates/${familyId}/archive`, { archive }, { headers: getAuthHeader() });
     return response.data;
   },
 };
