@@ -294,6 +294,161 @@ export default function ProjectDashboardPage() {
           />
         </div>
 
+        {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
+          <div className="bg-white rounded-xl border shadow-sm p-4">
+            <div className="flex items-center justify-between mb-4">
+              <SectionHeader icon={ClipboardCheck} title="סטטוס ביצוע" count={null} color="text-indigo-500" />
+              <button
+                onClick={() => navigate(`/projects/${projectId}/qc`)}
+                className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
+              >
+                בקרת ביצוע <ChevronLeft className="w-3 h-3" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 mb-4 p-3 bg-gradient-to-l from-indigo-50 to-slate-50 rounded-xl">
+              <div className="text-3xl font-black text-indigo-600">{execSummary.overall.completion_pct}%</div>
+              <div className="flex-1">
+                <p className="text-xs text-slate-500 mb-1">התקדמות כללית</p>
+                <div className="w-full bg-slate-200 rounded-full h-2.5">
+                  <div
+                    className="h-2.5 rounded-full transition-all"
+                    style={{
+                      width: `${execSummary.overall.completion_pct}%`,
+                      background: execSummary.overall.completion_pct === 100
+                        ? 'linear-gradient(90deg, #10b981, #34d399)'
+                        : execSummary.overall.completion_pct >= 50
+                          ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+                          : 'linear-gradient(90deg, #6366f1, #818cf8)',
+                    }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">{execSummary.overall.completed}/{execSummary.overall.total} שלבים הושלמו</p>
+              </div>
+            </div>
+
+            {execSummary.alerts && execSummary.alerts.length > 0 && (() => {
+              const visibleAlerts = alertsExpanded ? execSummary.alerts : execSummary.alerts.slice(0, 3);
+              const hiddenCount = execSummary.alerts.length - 3;
+              return (
+                <div className="mb-4 space-y-2">
+                  {visibleAlerts.map((alert, idx) => {
+                    const cfg = alert.severity === 'high'
+                      ? { bg: 'bg-red-50', border: 'border-red-200', prefix: '⚠️ צוואר בקבוק', text: 'text-red-800' }
+                      : alert.severity === 'medium'
+                        ? { bg: 'bg-amber-50', border: 'border-amber-200', prefix: '🔶 שלב תקוע', text: 'text-amber-800' }
+                        : { bg: 'bg-slate-50', border: 'border-slate-200', prefix: 'ℹ️', text: 'text-slate-700' };
+                    return (
+                      <button
+                        key={idx}
+                        className={`w-full text-right ${cfg.bg} border ${cfg.border} rounded-lg p-3 transition-colors hover:opacity-90`}
+                        onClick={() => {
+                          if (alert.type === 'bottleneck' && alert.stage_id) {
+                            const el = stageRefs.current[alert.stage_id];
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          } else if (alert.type === 'stuck' && alert.stage_id) {
+                            setExpandedStages(prev => ({ ...prev, [alert.stage_id]: true }));
+                            if (alert.entity_id) setHighlightEntity(alert.entity_id);
+                            setTimeout(() => {
+                              const el = stageRefs.current[alert.stage_id];
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 100);
+                            setTimeout(() => setHighlightEntity(null), 3000);
+                          }
+                        }}
+                      >
+                        <div className={`text-sm font-semibold ${cfg.text}`}>{cfg.prefix}</div>
+                        <p className={`text-sm ${cfg.text} mt-0.5`}>{alert.message}</p>
+                        {alert.detail && <p className="text-xs text-slate-500 mt-0.5">{alert.detail}</p>}
+                      </button>
+                    );
+                  })}
+                  {!alertsExpanded && hiddenCount > 0 && (
+                    <button
+                      onClick={() => setAlertsExpanded(true)}
+                      className="w-full text-center text-xs font-medium text-indigo-600 hover:text-indigo-700 py-1"
+                    >
+                      הצג עוד ({hiddenCount})
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="space-y-1">
+              {execSummary.stages.map(stage => {
+                const isExpanded = expandedStages[stage.stage_id];
+                const pct = stage.completion_pct;
+                const barBg = pct === 100 ? '#10b981' : pct >= 50 ? '#f59e0b' : pct > 0 ? '#6366f1' : '#cbd5e1';
+                const statusIcon = pct === 100 ? '✅' : pct > 0 ? '🟡' : '⚪';
+
+                return (
+                  <div key={stage.stage_id} ref={el => stageRefs.current[stage.stage_id] = el}>
+                    <button
+                      onClick={() => setExpandedStages(prev => ({ ...prev, [stage.stage_id]: !prev[stage.stage_id] }))}
+                      className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="text-lg w-7 text-center shrink-0">{stage.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-semibold text-slate-700 truncate">{stage.title}</span>
+                          <span className="text-xs text-slate-400 whitespace-nowrap mr-2">
+                            {statusIcon} {stage.completed}/{stage.total} {stage.entity_label}
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-1.5">
+                          <div
+                            className="h-1.5 rounded-full transition-all"
+                            style={{ width: `${pct}%`, backgroundColor: barBg }}
+                          />
+                        </div>
+                      </div>
+                      <ChevronDown className={`w-4 h-4 text-slate-300 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {isExpanded && stage.buildings && (
+                      <div className="mr-9 mb-2 space-y-2">
+                        {stage.buildings.map(bld => (
+                          <div key={bld.building_id} className="bg-slate-50 rounded-lg p-2.5">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-xs font-bold text-slate-600">{bld.building_name}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {bld.children.map(child => {
+                                const badge = child.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200'
+                                  : child.status === 'in_progress' ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                  : child.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200';
+                                const icon = child.status === 'completed' ? '✅'
+                                  : child.status === 'in_progress' ? '🟡'
+                                  : child.status === 'failed' ? '🔴'
+                                  : '⚪';
+                                const label = child.type === 'unit'
+                                  ? `${child.floor_name ? child.floor_name + ' / ' : ''}${child.name}`
+                                  : child.name;
+                                const isHighlighted = highlightEntity === child.id;
+                                return (
+                                  <span
+                                    key={child.id}
+                                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border font-medium ${badge} ${isHighlighted ? 'ring-2 ring-amber-400 ring-offset-1 animate-pulse' : ''}`}
+                                  >
+                                    {icon} {label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-xl border shadow-sm p-4">
             <div className="flex items-center gap-2 mb-3">
@@ -506,161 +661,6 @@ export default function ProjectDashboardPage() {
             )}
           </div>
         </div>
-
-        {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
-          <div className="bg-white rounded-xl border shadow-sm p-4">
-            <div className="flex items-center justify-between mb-4">
-              <SectionHeader icon={ClipboardCheck} title="סטטוס ביצוע" count={null} color="text-indigo-500" />
-              <button
-                onClick={() => navigate(`/projects/${projectId}/qc`)}
-                className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
-              >
-                בקרת ביצוע <ChevronLeft className="w-3 h-3" />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3 mb-4 p-3 bg-gradient-to-l from-indigo-50 to-slate-50 rounded-xl">
-              <div className="text-3xl font-black text-indigo-600">{execSummary.overall.completion_pct}%</div>
-              <div className="flex-1">
-                <p className="text-xs text-slate-500 mb-1">התקדמות כללית</p>
-                <div className="w-full bg-slate-200 rounded-full h-2.5">
-                  <div
-                    className="h-2.5 rounded-full transition-all"
-                    style={{
-                      width: `${execSummary.overall.completion_pct}%`,
-                      background: execSummary.overall.completion_pct === 100
-                        ? 'linear-gradient(90deg, #10b981, #34d399)'
-                        : execSummary.overall.completion_pct >= 50
-                          ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
-                          : 'linear-gradient(90deg, #6366f1, #818cf8)',
-                    }}
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">{execSummary.overall.completed}/{execSummary.overall.total} שלבים הושלמו</p>
-              </div>
-            </div>
-
-            {execSummary.alerts && execSummary.alerts.length > 0 && (() => {
-              const visibleAlerts = alertsExpanded ? execSummary.alerts : execSummary.alerts.slice(0, 3);
-              const hiddenCount = execSummary.alerts.length - 3;
-              return (
-                <div className="mb-4 space-y-2">
-                  {visibleAlerts.map((alert, idx) => {
-                    const cfg = alert.severity === 'high'
-                      ? { bg: 'bg-red-50', border: 'border-red-200', prefix: '⚠️ צוואר בקבוק', text: 'text-red-800' }
-                      : alert.severity === 'medium'
-                        ? { bg: 'bg-amber-50', border: 'border-amber-200', prefix: '🔶 שלב תקוע', text: 'text-amber-800' }
-                        : { bg: 'bg-slate-50', border: 'border-slate-200', prefix: 'ℹ️', text: 'text-slate-700' };
-                    return (
-                      <button
-                        key={idx}
-                        className={`w-full text-right ${cfg.bg} border ${cfg.border} rounded-lg p-3 transition-colors hover:opacity-90`}
-                        onClick={() => {
-                          if (alert.type === 'bottleneck' && alert.stage_id) {
-                            const el = stageRefs.current[alert.stage_id];
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          } else if (alert.type === 'stuck' && alert.stage_id) {
-                            setExpandedStages(prev => ({ ...prev, [alert.stage_id]: true }));
-                            if (alert.entity_id) setHighlightEntity(alert.entity_id);
-                            setTimeout(() => {
-                              const el = stageRefs.current[alert.stage_id];
-                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }, 100);
-                            setTimeout(() => setHighlightEntity(null), 3000);
-                          }
-                        }}
-                      >
-                        <div className={`text-sm font-semibold ${cfg.text}`}>{cfg.prefix}</div>
-                        <p className={`text-sm ${cfg.text} mt-0.5`}>{alert.message}</p>
-                        {alert.detail && <p className="text-xs text-slate-500 mt-0.5">{alert.detail}</p>}
-                      </button>
-                    );
-                  })}
-                  {!alertsExpanded && hiddenCount > 0 && (
-                    <button
-                      onClick={() => setAlertsExpanded(true)}
-                      className="w-full text-center text-xs font-medium text-indigo-600 hover:text-indigo-700 py-1"
-                    >
-                      הצג עוד ({hiddenCount})
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div className="space-y-1">
-              {execSummary.stages.map(stage => {
-                const isExpanded = expandedStages[stage.stage_id];
-                const pct = stage.completion_pct;
-                const barBg = pct === 100 ? '#10b981' : pct >= 50 ? '#f59e0b' : pct > 0 ? '#6366f1' : '#cbd5e1';
-                const statusIcon = pct === 100 ? '✅' : pct > 0 ? '🟡' : '⚪';
-
-                return (
-                  <div key={stage.stage_id} ref={el => stageRefs.current[stage.stage_id] = el}>
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, [stage.stage_id]: !prev[stage.stage_id] }))}
-                      className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-slate-50 transition-colors"
-                    >
-                      <span className="text-lg w-7 text-center shrink-0">{stage.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-semibold text-slate-700 truncate">{stage.title}</span>
-                          <span className="text-xs text-slate-400 whitespace-nowrap mr-2">
-                            {statusIcon} {stage.completed}/{stage.total} {stage.entity_label}
-                          </span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-1.5">
-                          <div
-                            className="h-1.5 rounded-full transition-all"
-                            style={{ width: `${pct}%`, backgroundColor: barBg }}
-                          />
-                        </div>
-                      </div>
-                      <ChevronDown className={`w-4 h-4 text-slate-300 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {isExpanded && stage.buildings && (
-                      <div className="mr-9 mb-2 space-y-2">
-                        {stage.buildings.map(bld => (
-                          <div key={bld.building_id} className="bg-slate-50 rounded-lg p-2.5">
-                            <div className="flex items-center gap-1.5 mb-1.5">
-                              <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="text-xs font-bold text-slate-600">{bld.building_name}</span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {bld.children.map(child => {
-                                const badge = child.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200'
-                                  : child.status === 'in_progress' ? 'bg-amber-100 text-amber-700 border-amber-200'
-                                  : child.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200'
-                                  : 'bg-slate-100 text-slate-500 border-slate-200';
-                                const icon = child.status === 'completed' ? '✅'
-                                  : child.status === 'in_progress' ? '🟡'
-                                  : child.status === 'failed' ? '🔴'
-                                  : '⚪';
-                                const label = child.type === 'unit'
-                                  ? `${child.floor_name ? child.floor_name + ' / ' : ''}${child.name}`
-                                  : child.name;
-                                const isHighlighted = highlightEntity === child.id;
-                                return (
-                                  <span
-                                    key={child.id}
-                                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border font-medium ${badge} ${isHighlighted ? 'ring-2 ring-amber-400 ring-offset-1 animate-pulse' : ''}`}
-                                  >
-                                    {icon} {label}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {kpis.open_total === 0 && kpis.closed_total === 0 && (
           <div className="bg-white rounded-xl border shadow-sm p-8 text-center">
