@@ -102,7 +102,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 FLOOR_TEMPLATE = {
     "id": FLOOR_TEMPLATE_ID,
     "name": "ביצוע – קומה",
-    "version": 5,
+    "version": 6,
     "stages": [
         {
             "id": "stage_ceiling_prep",
@@ -117,7 +117,7 @@ FLOOR_TEMPLATE = {
                 {"id": "cp_5", "title": "בדיקת גבהים ומפלסים", "order": 5, "required_photo": False, "required_note": True},
                 {"id": "cp_6", "title": "אישור מהנדס קונסטרוקציה", "order": 6, "required_photo": True, "required_note": True},
                 {"id": "cp_7", "title": "בדיקת עוגנים ושרוולים", "order": 7, "required_photo": True, "required_note": False},
-                {"id": "cp_complete", "title": "קומה שלמה — הכנה ליציקה קומפלט", "order": 8, "required_photo": True, "required_note": False},
+                {"id": "cp_complete", "title": "סיום קומה — הכנה ליציקה", "order": 8, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -134,7 +134,7 @@ FLOOR_TEMPLATE = {
                 {"id": "br_4", "title": "מילוי דבק/טיט בין בלוקים", "order": 4, "required_photo": False, "required_note": False},
                 {"id": "br_5", "title": "בדיקת פתחי חלונות ודלתות", "order": 5, "required_photo": True, "required_note": False},
                 {"id": "br_6", "title": "חיבור ברזל אנכי", "order": 6, "required_photo": True, "required_note": False},
-                {"id": "br_complete", "title": "קומה שלמה — בלוקים קומפלט", "order": 7, "required_photo": True, "required_note": False},
+                {"id": "br_complete", "title": "סיום קומה — בלוקים", "order": 7, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -153,7 +153,7 @@ FLOOR_TEMPLATE = {
                 {"id": "pl_6", "title": "תיעוד מיקומים לפני סגירה", "order": 6, "required_photo": True, "required_note": True},
                 {"id": "pl_7", "title": "בדיקת שיפועי ניקוז", "order": 7, "required_photo": False, "required_note": True},
                 {"id": "pl_8", "title": "אישור מפקח אינסטלציה", "order": 8, "required_photo": False, "required_note": True},
-                {"id": "pl_complete", "title": "קומה שלמה — אינסטלציה קומפלט", "order": 9, "required_photo": True, "required_note": False},
+                {"id": "pl_complete", "title": "סיום קומה — אינסטלציה", "order": 9, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -170,7 +170,7 @@ FLOOR_TEMPLATE = {
                 {"id": "el_4", "title": "בדיקת הארקה", "order": 4, "required_photo": False, "required_note": True},
                 {"id": "el_5", "title": "חיבור ללוח חשמל קומתי", "order": 5, "required_photo": True, "required_note": False},
                 {"id": "el_6", "title": "תיעוד מיקומים לפני טיח", "order": 6, "required_photo": True, "required_note": True},
-                {"id": "el_complete", "title": "קומה שלמה — חשמל קומפלט", "order": 7, "required_photo": True, "required_note": False},
+                {"id": "el_complete", "title": "סיום קומה — חשמל", "order": 7, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -188,7 +188,7 @@ FLOOR_TEMPLATE = {
                 {"id": "pt_5", "title": "בדיקת פינות ומפגשים", "order": 5, "required_photo": False, "required_note": False},
                 {"id": "pt_6", "title": "ריפוי (Curing) — בדיקת לחות", "order": 6, "required_photo": False, "required_note": True},
                 {"id": "pt_7", "title": "אישור מפקח טיח", "order": 7, "required_photo": False, "required_note": True},
-                {"id": "pt_complete", "title": "קומה שלמה — טיח קומפלט", "order": 8, "required_photo": True, "required_note": False},
+                {"id": "pt_complete", "title": "סיום קומה — טיח", "order": 8, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -205,7 +205,7 @@ FLOOR_TEMPLATE = {
                 {"id": "wp_6", "title": "תיקון נקודות דליפה", "order": 6, "required_photo": True, "required_note": True},
                 {"id": "wp_7", "title": "בדיקת הצפה חוזרת", "order": 7, "required_photo": True, "required_note": False},
                 {"id": "wp_8", "title": "אישור מפקח איטום", "order": 8, "required_photo": False, "required_note": True},
-                {"id": "wp_complete", "title": "קומה שלמה — הצפה/איטום קומפלט", "order": 9, "required_photo": True, "required_note": False},
+                {"id": "wp_complete", "title": "סיום קומה — הצפה/איטום", "order": 9, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -219,7 +219,7 @@ FLOOR_TEMPLATE = {
                 {"id": "ac_3", "title": "בדיקת מעברי צנרת דרך קירות", "order": 3, "required_photo": True, "required_note": False},
                 {"id": "ac_4", "title": "בדיקת אטימות פתחים", "order": 4, "required_photo": False, "required_note": True},
                 {"id": "ac_5", "title": "אישור סומסום — חתימת מפקח", "order": 5, "required_photo": False, "required_note": True},
-                {"id": "ac_complete", "title": "קומה שלמה — אקוסטיקה קומפלט", "order": 6, "required_photo": True, "required_note": False},
+                {"id": "ac_complete", "title": "סיום קומה — אקוסטיקה", "order": 6, "required_photo": True, "required_note": False},
             ],
         },
         {
@@ -228,15 +228,15 @@ FLOOR_TEMPLATE = {
             "order": 8,
             "scope": "unit",
             "items": [
-                {"id": "tl_1", "title": "תיעוד מצב רצפה לפני ריצוף", "order": 1, "required_photo": True, "required_note": False, "pre_work_documentation": True},
-                {"id": "tl_2", "title": "בדיקת מפלסים ושיפועים", "order": 2, "required_photo": False, "required_note": True},
-                {"id": "tl_3", "title": "בדיקת מדבקה/דבק — סוג ומינון", "order": 3, "required_photo": True, "required_note": False},
-                {"id": "tl_4", "title": "בדיקת פריסה — חיתוכים וסימטריה", "order": 4, "required_photo": True, "required_note": False},
-                {"id": "tl_5", "title": "בדיקת רווחי פוגות", "order": 5, "required_photo": True, "required_note": False},
-                {"id": "tl_6", "title": "בדיקת ישרות ומפלס אריחים", "order": 6, "required_photo": False, "required_note": True},
-                {"id": "tl_7", "title": "מילוי פוגות — בדיקת גמר", "order": 7, "required_photo": True, "required_note": False},
-                {"id": "tl_8", "title": "ניקיון סופי — בדיקת שריטות וכתמים", "order": 8, "required_photo": True, "required_note": False},
-                {"id": "tl_9", "title": "דירה מרוצפת קומפלט", "order": 9, "required_photo": False, "required_note": True},
+                {"id": "tl_1", "title": "פתיחת מלאכה — תמונת מצב לפני ריצוף", "order": 1, "required_photo": True, "required_note": False, "pre_work_documentation": True},
+                {"id": "tl_2", "title": "התאמת ריצוף — תעודת משלוח מול תיק דייר", "order": 2, "required_photo": True, "required_note": False},
+                {"id": "tl_3", "title": "התאמה לפריסת קרמיקה לפי תוכנית", "order": 3, "required_photo": False, "required_note": False},
+                {"id": "tl_4", "title": "בדיקת מפלסים", "order": 4, "required_photo": True, "required_note": True},
+                {"id": "tl_5", "title": "יישור ופילוס לפני הדבקה", "order": 5, "required_photo": True, "required_note": False},
+                {"id": "tl_6", "title": "בדיקת הדבקת קרמיקה", "order": 6, "required_photo": True, "required_note": False},
+                {"id": "tl_7", "title": "חיתוכים וגמרים", "order": 7, "required_photo": True, "required_note": False},
+                {"id": "tl_8", "title": "בדיקת שיפועים — מקלחונים ומרפסות", "order": 8, "required_photo": True, "required_note": True},
+                {"id": "tl_9", "title": "סיום דירה — ריצוף", "order": 9, "required_photo": True, "required_note": False},
             ],
         },
     ],
@@ -1983,6 +1983,91 @@ async def get_execution_summary(project_id: str, user: dict = Depends(get_curren
 
     overall_pct = round(overall_completed / overall_total * 100) if overall_total > 0 else 0
 
+    alerts = []
+
+    floor_stages = [s for s in stages_out if s["scope"] == "floor"]
+    for i in range(len(floor_stages) - 1):
+        prev = floor_stages[i]
+        nxt = floor_stages[i + 1]
+        if prev["completed"] >= 3 and prev["completion_pct"] > 40 and nxt["completion_pct"] < 20:
+            gap = prev["completion_pct"] - nxt["completion_pct"]
+            if gap > 25:
+                severity = "high" if gap > 40 else "medium"
+                alerts.append({
+                    "type": "bottleneck",
+                    "severity": severity,
+                    "stage_id": nxt["stage_id"],
+                    "message": f"{nxt['title']} מפגרת משמעותית — {nxt['completion_pct']}% לעומת {prev['title']} ב-{prev['completion_pct']}%",
+                    "detail": f"{nxt['completed']}/{nxt['total']} {nxt['entity_label']} לעומת {prev['completed']}/{prev['total']} בשלב הקודם",
+                })
+
+    stuck_candidates = []
+    for stage in floor_stages:
+        for bld in stage.get("buildings", []):
+            bld_children = bld["children"]
+            if len(bld_children) < 2:
+                continue
+            statuses = [c["status"] for c in bld_children]
+            has_completed = "completed" in statuses
+            if not has_completed:
+                continue
+            later_stages = [ls for ls in floor_stages if ls["order"] > stage["order"]]
+            for child in bld_children:
+                if child["status"] != "not_started":
+                    continue
+                for ls in later_stages:
+                    ls_bld = next((b for b in ls.get("buildings", []) if b["building_id"] == bld["building_id"]), None)
+                    if not ls_bld:
+                        continue
+                    peer = next((c for c in ls_bld["children"] if c["id"] == child["id"]), None)
+                    if peer and peer["status"] in ("completed", "in_progress"):
+                        continue
+                    sibling_ids = {c["id"] for c in bld_children if c["id"] != child["id"]}
+                    ls_siblings = [c for c in ls_bld["children"] if c["id"] in sibling_ids]
+                    siblings_ahead = sum(1 for c in ls_siblings if c["status"] in ("completed", "in_progress"))
+                    if siblings_ahead >= 2:
+                        stuck_candidates.append({
+                            "type": "stuck",
+                            "severity": "medium",
+                            "stage_id": stage["stage_id"],
+                            "entity_id": child["id"],
+                            "building_id": bld["building_id"],
+                            "message": f"{bld['building_name']} {child['name']} — {stage['title']} לא התחיל, קומות סמוכות כבר ב{ls['title']}",
+                        })
+                        break
+    seen_entities = set()
+    for sc in stuck_candidates[:5]:
+        key = (sc["building_id"], sc["entity_id"], sc["stage_id"])
+        if key not in seen_entities:
+            seen_entities.add(key)
+            alerts.append(sc)
+
+    for bld in buildings:
+        bld_id = bld["id"]
+        bld_floors_list = floors_by_building.get(bld_id, [])
+        if len(bld_floors_list) < 2:
+            continue
+        has_any = False
+        for stage in stages_out:
+            stage_bld = next((b for b in stage.get("buildings", []) if b["building_id"] == bld_id), None)
+            if stage_bld:
+                for child in stage_bld["children"]:
+                    if child["status"] != "not_started":
+                        has_any = True
+                        break
+            if has_any:
+                break
+        if not has_any:
+            alerts.append({
+                "type": "no_progress",
+                "severity": "low",
+                "message": f"{building_map.get(bld_id, '')} — 0% התקדמות בכל השלבים",
+            })
+
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    alerts.sort(key=lambda a: severity_order.get(a.get("severity"), 3))
+    alerts = alerts[:10]
+
     return {
         "stages": stages_out,
         "overall": {
@@ -1990,6 +2075,7 @@ async def get_execution_summary(project_id: str, user: dict = Depends(get_curren
             "completed": overall_completed,
             "completion_pct": overall_pct,
         },
+        "alerts": alerts,
     }
 
 

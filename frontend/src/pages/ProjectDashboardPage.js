@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projectService, buildingService, qcService } from '../services/api';
 import { qcFloorStatusLabel } from '../utils/qcLabels';
@@ -115,6 +115,9 @@ export default function ProjectDashboardPage() {
   const [qcSummary, setQcSummary] = useState(null);
   const [execSummary, setExecSummary] = useState(null);
   const [expandedStages, setExpandedStages] = useState({});
+  const [alertsExpanded, setAlertsExpanded] = useState(false);
+  const [highlightEntity, setHighlightEntity] = useState(null);
+  const stageRefs = useRef({});
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -537,6 +540,54 @@ export default function ProjectDashboardPage() {
               </div>
             </div>
 
+            {execSummary.alerts && execSummary.alerts.length > 0 && (() => {
+              const visibleAlerts = alertsExpanded ? execSummary.alerts : execSummary.alerts.slice(0, 3);
+              const hiddenCount = execSummary.alerts.length - 3;
+              return (
+                <div className="mb-4 space-y-2">
+                  {visibleAlerts.map((alert, idx) => {
+                    const cfg = alert.severity === 'high'
+                      ? { bg: 'bg-red-50', border: 'border-red-200', prefix: '⚠️ צוואר בקבוק', text: 'text-red-800' }
+                      : alert.severity === 'medium'
+                        ? { bg: 'bg-amber-50', border: 'border-amber-200', prefix: '🔶 שלב תקוע', text: 'text-amber-800' }
+                        : { bg: 'bg-slate-50', border: 'border-slate-200', prefix: 'ℹ️', text: 'text-slate-700' };
+                    return (
+                      <button
+                        key={idx}
+                        className={`w-full text-right ${cfg.bg} border ${cfg.border} rounded-lg p-3 transition-colors hover:opacity-90`}
+                        onClick={() => {
+                          if (alert.type === 'bottleneck' && alert.stage_id) {
+                            const el = stageRefs.current[alert.stage_id];
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          } else if (alert.type === 'stuck' && alert.stage_id) {
+                            setExpandedStages(prev => ({ ...prev, [alert.stage_id]: true }));
+                            if (alert.entity_id) setHighlightEntity(alert.entity_id);
+                            setTimeout(() => {
+                              const el = stageRefs.current[alert.stage_id];
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 100);
+                            setTimeout(() => setHighlightEntity(null), 3000);
+                          }
+                        }}
+                      >
+                        <div className={`text-sm font-semibold ${cfg.text}`}>{cfg.prefix}</div>
+                        <p className={`text-sm ${cfg.text} mt-0.5`}>{alert.message}</p>
+                        {alert.detail && <p className="text-xs text-slate-500 mt-0.5">{alert.detail}</p>}
+                      </button>
+                    );
+                  })}
+                  {!alertsExpanded && hiddenCount > 0 && (
+                    <button
+                      onClick={() => setAlertsExpanded(true)}
+                      className="w-full text-center text-xs font-medium text-indigo-600 hover:text-indigo-700 py-1"
+                    >
+                      הצג עוד ({hiddenCount})
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="space-y-1">
               {execSummary.stages.map(stage => {
                 const isExpanded = expandedStages[stage.stage_id];
@@ -545,7 +596,7 @@ export default function ProjectDashboardPage() {
                 const statusIcon = pct === 100 ? '✅' : pct > 0 ? '🟡' : '⚪';
 
                 return (
-                  <div key={stage.stage_id}>
+                  <div key={stage.stage_id} ref={el => stageRefs.current[stage.stage_id] = el}>
                     <button
                       onClick={() => setExpandedStages(prev => ({ ...prev, [stage.stage_id]: !prev[stage.stage_id] }))}
                       className="w-full flex items-center gap-2 p-2.5 rounded-lg hover:bg-slate-50 transition-colors"
@@ -589,10 +640,11 @@ export default function ProjectDashboardPage() {
                                 const label = child.type === 'unit'
                                   ? `${child.floor_name ? child.floor_name + ' / ' : ''}${child.name}`
                                   : child.name;
+                                const isHighlighted = highlightEntity === child.id;
                                 return (
                                   <span
                                     key={child.id}
-                                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border font-medium ${badge}`}
+                                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border font-medium ${badge} ${isHighlighted ? 'ring-2 ring-amber-400 ring-offset-1 animate-pulse' : ''}`}
                                   >
                                     {icon} {label}
                                   </span>
