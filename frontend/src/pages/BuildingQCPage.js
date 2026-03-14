@@ -390,7 +390,7 @@ export default function BuildingQCPage() {
                           <div className={`h-1 rounded-full transition-all ${floorPct === 100 ? 'bg-green-400' : floorPct > 50 ? 'bg-blue-400' : 'bg-amber-400'}`}
                             style={{ width: `${floorPct}%` }} />
                         </div>
-                        <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">{floorPass}/{floorTotal} סעיפים</span>
+                        <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">{floorPass}/{floorTotal} שלבים</span>
                       </div>
                     )}
                   </div>

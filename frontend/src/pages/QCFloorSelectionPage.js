@@ -274,11 +274,11 @@ export default function QCFloorSelectionPage() {
                         {(stats.counts.approved || 0) > 0 && (
                           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">✓ {stats.counts.approved} הושלמו</span>
                         )}
-                        {(stats.counts.in_progress || 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">◐ {stats.counts.in_progress} בביצוע</span>
+                        {((stats.counts.in_progress || 0) + (stats.counts.pending_review || 0)) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">◐ {(stats.counts.in_progress || 0) + (stats.counts.pending_review || 0)} בביצוע</span>
                         )}
                         {(stats.counts.not_started || 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">{stats.counts.not_started} לא התחיל</span>
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">◷ {stats.counts.not_started} לא התחיל</span>
                         )}
                         {(stats.counts.rejected || 0) > 0 && (
                           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600">✗ {stats.counts.rejected} נכשלו</span>
