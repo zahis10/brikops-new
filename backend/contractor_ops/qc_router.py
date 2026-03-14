@@ -225,11 +225,13 @@ def _get_template():
     return FLOOR_TEMPLATE
 
 
-async def _ensure_inline_prework_items(run_id, run_items, db):
+async def _ensure_inline_prework_items(run_id, run_items, db, run_scope="floor"):
     tpl = _get_template()
     existing_ids = {(it["stage_id"], it["item_id"]) for it in run_items}
     to_insert = []
     for stage in tpl["stages"]:
+        if stage.get("scope", "floor") != run_scope:
+            continue
         if stage["id"] not in PREWORK_TARGET_STAGES:
             continue
         for item in stage["items"]:
@@ -447,7 +449,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
     can_edit = role in MANAGEMENT_ROLES
 
     run = await db.qc_runs.find_one(
-        {"floor_id": floor_id, "template_id": FLOOR_TEMPLATE_ID},
+        {"floor_id": floor_id, "template_id": FLOOR_TEMPLATE_ID, "scope": {"$ne": "unit"}},
         {"_id": 0}
     )
 
@@ -638,7 +640,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
 
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
-    run_items = await _ensure_inline_prework_items(run["id"], run_items, db)
+    run_items = await _ensure_inline_prework_items(run["id"], run_items, db, run_scope="unit")
 
     stages_out = []
     items_by_stage = {}
@@ -727,13 +729,13 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
 
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run_id}, {"_id": 0}).to_list(500)
-    run_items = await _ensure_inline_prework_items(run_id, run_items, db)
+    run_scope = run.get("scope", "floor")
+    run_items = await _ensure_inline_prework_items(run_id, run_items, db, run_scope=run_scope)
     tpl = _get_template()
     items_by_stage = {}
     for it in run_items:
         items_by_stage.setdefault(it.get("stage_id"), []).append(it)
 
-    run_scope = run.get("scope", "floor")
     effective_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == run_scope]
 
     stages_out = []
@@ -1403,7 +1405,7 @@ async def get_floors_qc_status(
         logger.warning(f"[QC:BATCH_STATUS:DEPRECATION] user={user['id']} project_id=missing floors={len(ids)} — callers should provide project_id for scoping")
 
     runs = await db.qc_runs.find(
-        {"floor_id": {"$in": ids}, "template_id": FLOOR_TEMPLATE_ID},
+        {"floor_id": {"$in": ids}, "template_id": FLOOR_TEMPLATE_ID, "scope": {"$ne": "unit"}},
         {"_id": 0, "id": 1, "floor_id": 1, "stage_statuses": 1}
     ).to_list(500)
 
