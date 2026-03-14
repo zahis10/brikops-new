@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import uuid
 import logging
+import time
 import httpx
 from contractor_ops.router import get_db, get_current_user, _get_project_role, _is_super_admin, _now, _audit, MANAGEMENT_ROLES, get_notification_engine, get_public_base_url
 from contractor_ops.msg_logger import mask_phone
@@ -21,8 +22,6 @@ PM_ROLES = {'project_manager', 'owner'}
 
 NOTIFY_ELIGIBLE_ROLES = {'project_manager', 'owner', 'management_team'}
 
-PREWORK_TARGET_STAGES = {'stage_blocks_row1', 'stage_plumbing', 'stage_electrical', 'stage_plaster'}
-
 VALID_STAGE_STATUSES_FULL = {"draft", "ready", "pending_review", "approved", "rejected", "reopened"}
 
 
@@ -30,8 +29,8 @@ def _actor_name(user):
     return user.get("name") or user.get("full_name") or ""
 
 
-def _stage_label(stage_id):
-    for s in FLOOR_TEMPLATE["stages"]:
+def _stage_label(tpl, stage_id):
+    for s in tpl["stages"]:
         if s["id"] == stage_id:
             return s["title"]
     return stage_id
@@ -245,31 +244,105 @@ FLOOR_TEMPLATE = {
 
 
 
-def _get_template():
+_template_version_cache = {}
+_default_template_cache = {"tpl": None, "ts": 0}
+_DEFAULT_CACHE_TTL = 60
+
+
+async def _get_template(db=None, *, project_id=None, run=None):
+    if run and run.get("template_version_id"):
+        vid = run["template_version_id"]
+        if vid in _template_version_cache:
+            return _template_version_cache[vid]
+        if db is not None:
+            doc = await db.qc_templates.find_one({"id": vid}, {"_id": 0})
+            if doc:
+                _template_version_cache[vid] = doc
+                return doc
+        logger.warning(f"[QC-TPL] template_version_id={vid} not found, fallback to FLOOR_TEMPLATE")
+        return FLOOR_TEMPLATE
+
+    if db is not None and project_id:
+        proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "qc_template_id": 1})
+        if proj and proj.get("qc_template_id"):
+            vid = proj["qc_template_id"]
+            if vid in _template_version_cache:
+                return _template_version_cache[vid]
+            doc = await db.qc_templates.find_one({"id": vid}, {"_id": 0})
+            if doc:
+                _template_version_cache[vid] = doc
+                return doc
+            logger.warning(f"[QC-TPL] project qc_template_id={vid} not found in DB")
+
+    if db is not None:
+        now_ts = time.time()
+        if _default_template_cache["tpl"] and (now_ts - _default_template_cache["ts"]) < _DEFAULT_CACHE_TTL:
+            return _default_template_cache["tpl"]
+        doc = await db.qc_templates.find_one(
+            {"is_default": True, "is_active": True},
+            {"_id": 0}
+        )
+        if doc:
+            _default_template_cache["tpl"] = doc
+            _default_template_cache["ts"] = now_ts
+            _template_version_cache[doc["id"]] = doc
+            return doc
+
     return FLOOR_TEMPLATE
 
 
-async def _resolve_template_version_id(db, project_id):
-    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "qc_template_id": 1})
-    if project and project.get("qc_template_id"):
-        return project["qc_template_id"]
-    default_tpl = await db.qc_templates.find_one(
-        {"is_default": True, "is_active": True},
-        {"_id": 0, "id": 1}
-    )
-    if default_tpl:
-        return default_tpl["id"]
-    return None
+def _template_ids(tpl):
+    if tpl.get("family_id"):
+        return tpl["family_id"], tpl["id"]
+    return FLOOR_TEMPLATE_ID, None
 
 
-async def _ensure_inline_prework_items(run_id, run_items, db, run_scope="floor"):
-    tpl = _get_template()
+def _build_item_map(tpl):
+    m = {}
+    for stage in tpl["stages"]:
+        for item in stage["items"]:
+            m[item["id"]] = {**item, "stage_id": stage["id"]}
+    return m
+
+
+def _get_prework_stages(tpl):
+    stages = set()
+    for s in tpl["stages"]:
+        for item in s["items"]:
+            if item.get("pre_work_documentation"):
+                stages.add(s["id"])
+                break
+    return stages
+
+
+def _get_valid_stage_codes(tpl):
+    return {s["id"] for s in tpl["stages"]}
+
+
+def _get_stage_labels_from_tpl(tpl):
+    return [
+        {"code": s["id"], "label_he": s["title"]}
+        for s in tpl["stages"]
+    ]
+
+
+def _get_stage_icon(tpl, stage_id):
+    for s in tpl["stages"]:
+        if s["id"] == stage_id:
+            if s.get("icon"):
+                return s["icon"]
+            break
+    return STAGE_ICONS.get(stage_id, "📋")
+
+
+async def _ensure_inline_prework_items(run_id, run_items, db, tpl, run_scope="floor"):
+    prework_stages = _get_prework_stages(tpl)
     existing_ids = {(it["stage_id"], it["item_id"]) for it in run_items}
     to_insert = []
     for stage in tpl["stages"]:
         if stage.get("scope", "floor") != run_scope:
             continue
-        if stage["id"] not in PREWORK_TARGET_STAGES:
+        if stage["id"] not in prework_stages:
             continue
         for item in stage["items"]:
             if not item.get("pre_work_documentation"):
@@ -299,8 +372,7 @@ async def _ensure_inline_prework_items(run_id, run_items, db, run_scope="floor")
     return updated
 
 
-async def _backfill_missing_items(run_id, run_items, db, run_scope="floor"):
-    tpl = _get_template()
+async def _backfill_missing_items(run_id, run_items, db, tpl, run_scope="floor"):
     existing_ids = {(it["stage_id"], it["item_id"]) for it in run_items}
     to_insert = []
     for stage in tpl["stages"]:
@@ -332,18 +404,6 @@ async def _backfill_missing_items(run_id, run_items, db, run_scope="floor"):
     return run_items
 
 
-def _build_tpl_item_map():
-    m = {}
-    for stage in FLOOR_TEMPLATE["stages"]:
-        for item in stage["items"]:
-            m[item["id"]] = {**item, "stage_id": stage["id"]}
-    return m
-
-
-TPL_ITEM_MAP = _build_tpl_item_map()
-
-STAGE_ID_TO_INDEX = {s["id"]: i for i, s in enumerate(FLOOR_TEMPLATE["stages"])}
-
 VALID_STAGE_STATUSES = {"draft", "ready", "pending_review", "approved", "rejected", "reopened"}
 
 
@@ -354,13 +414,14 @@ async def _check_qc_access(user, project_id):
     return role
 
 
-def _compute_stage_status(stage_items, stage_id, stage_statuses):
+def _compute_stage_status(stage_items, stage_id, stage_statuses, tpl=None):
     stored = stage_statuses.get(stage_id)
     if stored in ("pending_review", "approved", "rejected", "reopened"):
         return stored
 
+    src = tpl if tpl else FLOOR_TEMPLATE
     tpl_stage = None
-    for s in FLOOR_TEMPLATE["stages"]:
+    for s in src["stages"]:
         if s["id"] == stage_id:
             tpl_stage = s
             break
@@ -498,7 +559,8 @@ class QCItemUpdate(BaseModel):
 
 @router.get("/templates")
 async def list_templates(user: dict = Depends(get_current_user)):
-    tpl = _get_template()
+    db = get_db()
+    tpl = await _get_template(db)
     return [{"id": tpl["id"], "name": tpl["name"], "stages_count": len(tpl["stages"])}]
 
 
@@ -519,15 +581,15 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
     can_edit = role in MANAGEMENT_ROLES
 
     run = await db.qc_runs.find_one(
-        {"floor_id": floor_id, "template_id": FLOOR_TEMPLATE_ID, "scope": {"$ne": "unit"}},
+        {"floor_id": floor_id, "scope": {"$ne": "unit"}},
         {"_id": 0}
     )
 
     if not run:
-        tpl = _get_template()
+        tpl = await _get_template(db, project_id=project_id)
+        tpl_id, tpl_version_id = _template_ids(tpl)
         run_id = str(uuid.uuid4())
         now = _now()
-        tpl_version_id = await _resolve_template_version_id(db, project_id)
         items = []
         for stage in tpl["stages"]:
             if stage.get("scope", "floor") != "floor":
@@ -550,7 +612,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
             "project_id": project_id,
             "building_id": building["id"],
             "floor_id": floor_id,
-            "template_id": FLOOR_TEMPLATE_ID,
+            "template_id": tpl_id,
             "template_version_id": tpl_version_id,
             "scope": "floor",
             "stage_statuses": {},
@@ -564,12 +626,11 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
         run.pop("_id", None)
         logger.info(f"[QC] Created run {run_id} for floor {floor_id} tpl_version={tpl_version_id} with {len(items)} items")
 
+    tpl = await _get_template(db, run=run, project_id=project_id)
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
-    run_items = await _ensure_inline_prework_items(run["id"], run_items, db)
-    run_items = await _backfill_missing_items(run["id"], run_items, db, run_scope="floor")
-
-    tpl = _get_template()
+    run_items = await _ensure_inline_prework_items(run["id"], run_items, db, tpl)
+    run_items = await _backfill_missing_items(run["id"], run_items, db, tpl, run_scope="floor")
     stages_out = []
     items_by_stage = {}
     for it in run_items:
@@ -593,7 +654,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
         total_fail += fail_count
         total_pending += pending_count
 
-        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses)
+        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses, tpl=tpl)
 
         all_marked = len(enriched) > 0 and all(i["status"] in ("pass", "fail") for i in enriched)
         stage_out = {
@@ -667,17 +728,16 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
     can_edit = role in MANAGEMENT_ROLES
 
     run = await db.qc_runs.find_one(
-        {"unit_id": unit_id, "template_id": FLOOR_TEMPLATE_ID, "scope": "unit"},
+        {"unit_id": unit_id, "scope": "unit"},
         {"_id": 0}
     )
 
-    tpl = _get_template()
-    unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
-
     if not run:
+        tpl = await _get_template(db, project_id=project_id)
+        tpl_id, tpl_version_id = _template_ids(tpl)
+        unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
         run_id = str(uuid.uuid4())
         now = _now()
-        tpl_version_id = await _resolve_template_version_id(db, project_id)
         items = []
         for stage in unit_stages:
             for item in stage["items"]:
@@ -699,7 +759,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
             "building_id": building["id"],
             "floor_id": floor["id"],
             "unit_id": unit_id,
-            "template_id": FLOOR_TEMPLATE_ID,
+            "template_id": tpl_id,
             "template_version_id": tpl_version_id,
             "scope": "unit",
             "stage_statuses": {},
@@ -712,6 +772,9 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
 
         run.pop("_id", None)
         logger.info(f"[QC] Created unit run {run_id} for unit {unit_id} tpl_version={tpl_version_id} with {len(items)} items")
+
+    tpl = await _get_template(db, run=run, project_id=project_id)
+    unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
 
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
@@ -737,7 +800,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
         run_items.extend(backfill)
         logger.info(f"[QC] Backfilled {len(backfill)} items for unit run {run['id']}")
 
-    run_items = await _ensure_inline_prework_items(run["id"], run_items, db, run_scope="unit")
+    run_items = await _ensure_inline_prework_items(run["id"], run_items, db, tpl, run_scope="unit")
 
     stages_out = []
     items_by_stage = {}
@@ -760,7 +823,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
         total_fail += fail_count
         total_pending += pending_count
 
-        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses)
+        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses, tpl=tpl)
 
         all_marked = len(enriched) > 0 and all(i["status"] in ("pass", "fail") for i in enriched)
         stage_out = {
@@ -840,7 +903,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
     unit_runs = {}
     if unit_ids:
         runs_cursor = db.qc_runs.find(
-            {"unit_id": {"$in": unit_ids}, "template_id": FLOOR_TEMPLATE_ID, "scope": "unit"},
+            {"unit_id": {"$in": unit_ids}, "scope": "unit"},
             {"_id": 0}
         )
         async for r in runs_cursor:
@@ -856,7 +919,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         for item in all_items:
             items_by_run.setdefault(item["run_id"], []).append(item)
 
-    tpl = _get_template()
+    tpl = await _get_template(db, project_id=project_id)
     tiling_stage = next((s for s in tpl["stages"] if s["id"] == "stage_tiling"), None)
     tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
 
@@ -925,9 +988,9 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run_id}, {"_id": 0}).to_list(500)
     run_scope = run.get("scope", "floor")
-    run_items = await _ensure_inline_prework_items(run_id, run_items, db, run_scope=run_scope)
-    run_items = await _backfill_missing_items(run_id, run_items, db, run_scope=run_scope)
-    tpl = _get_template()
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    run_items = await _ensure_inline_prework_items(run_id, run_items, db, tpl, run_scope=run_scope)
+    run_items = await _backfill_missing_items(run_id, run_items, db, tpl, run_scope=run_scope)
     items_by_stage = {}
     for it in run_items:
         items_by_stage.setdefault(it.get("stage_id"), []).append(it)
@@ -951,7 +1014,7 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
         total_fail += fail_count
         total_pending += pending_count
 
-        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses)
+        computed_status = _compute_stage_status(stage_items, stage["id"], stage_statuses, tpl=tpl)
 
         all_marked = len(enriched) > 0 and all(i["status"] in ("pass", "fail") for i in enriched)
         stage_out = {
@@ -1088,8 +1151,11 @@ async def update_qc_item(run_id: str, item_id: str, update: QCItemUpdate, user: 
     effective_status = update.status if update.status is not None else item.get("status", "pending")
     effective_note = update.note if update.note is not None else (item.get("note") or "")
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    item_map = _build_item_map(tpl)
+
     if effective_status in ("pass", "fail"):
-        tpl_item = TPL_ITEM_MAP.get(item.get("item_id"), {})
+        tpl_item = item_map.get(item.get("item_id"), {})
         if tpl_item.get("required_photo") and not item.get("photos"):
             raise HTTPException(status_code=422, detail="חובה לצרף תמונה לפני סימון סעיף זה")
 
@@ -1135,7 +1201,7 @@ async def update_qc_item(run_id: str, item_id: str, update: QCItemUpdate, user: 
         "run_id": run_id,
         "stage_id": item["stage_id"],
         "item_id": tpl_item_id,
-        "item_title": TPL_ITEM_MAP.get(tpl_item_id, {}).get("title", tpl_item_id),
+        "item_title": item_map.get(tpl_item_id, {}).get("title", tpl_item_id),
         "from_status": old_status,
         "to_status": effective_status,
         "note": effective_note,
@@ -1242,6 +1308,8 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
     if not item:
         raise HTTPException(status_code=404, detail="QC item not found")
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    item_map = _build_item_map(tpl)
     stage_id = item["stage_id"]
     stage_statuses = run.get("stage_statuses", {})
     if stage_statuses.get(stage_id) != "pending_review":
@@ -1302,7 +1370,7 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
         "run_id": run_id,
         "stage_id": stage_id,
         "item_id": item.get("item_id"),
-        "item_title": TPL_ITEM_MAP.get(item.get("item_id"), {}).get("title", item_id),
+        "item_title": item_map.get(item.get("item_id"), {}).get("title", item_id),
         "reason": body.reason.strip(),
         "actor_name": actor,
         "previous_status": old_status,
@@ -1321,7 +1389,7 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
                 db, [returned_to_user_id],
                 project_id=run["project_id"], stage_id=stage_id,
                 floor_id=run.get("floor_id"), building_id=run.get("building_id"),
-                stage_code=stage_id, stage_label_he=_stage_label(stage_id),
+                stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
                 actor_id=user["id"], actor_name_str=actor,
                 action="item_rejected", reason=body.reason.strip(), run_id=run_id,
             )
@@ -1337,8 +1405,8 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
                     project_name = project.get("name", "") if project else ""
                     floor = await db.floors.find_one({"id": run.get("floor_id")}, {"_id": 0, "name": 1})
                     floor_name = floor.get("name", "") if floor else ""
-                    stage_title = _stage_label(stage_id)
-                    tpl_item_title = TPL_ITEM_MAP.get(item.get("item_id"), {}).get("title", "")
+                    stage_title = _stage_label(tpl, stage_id)
+                    tpl_item_title = item_map.get(item.get("item_id"), {}).get("title", "")
 
                     button_path = (
                         f"projects/{run['project_id']}/qc/floors/{run.get('floor_id')}"
@@ -1429,12 +1497,14 @@ async def upload_qc_photo(
         photo_update_ops
     )
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    photo_item_map = _build_item_map(tpl)
     tpl_item_id = item.get("item_id", "")
     await _audit("qc_photo", photo_id, "upload", user["id"], {
         "run_id": run_id,
         "item_id": tpl_item_id,
         "stage_id": item["stage_id"],
-        "item_title": TPL_ITEM_MAP.get(tpl_item_id, {}).get("title", tpl_item_id),
+        "item_title": photo_item_map.get(tpl_item_id, {}).get("title", tpl_item_id),
         "filename": filename,
         "actor_name": actor,
     })
@@ -1464,8 +1534,9 @@ async def submit_stage(run_id: str, stage_id: str, user: dict = Depends(get_curr
     if current not in (None, "draft", "ready", "rejected", "reopened"):
         raise HTTPException(status_code=400, detail="לא ניתן לשלוח שלב במצב הנוכחי")
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
     tpl_stage = None
-    for s in FLOOR_TEMPLATE["stages"]:
+    for s in tpl["stages"]:
         if s["id"] == stage_id:
             tpl_stage = s
             break
@@ -1554,7 +1625,7 @@ async def submit_stage(run_id: str, stage_id: str, user: dict = Depends(get_curr
         "project_id": run.get("project_id"),
         "stage_id": stage_id,
         "actor_name": actor,
-        "stage_label": _stage_label(stage_id),
+        "stage_label": _stage_label(tpl, stage_id),
     })
 
     try:
@@ -1563,7 +1634,7 @@ async def submit_stage(run_id: str, stage_id: str, user: dict = Depends(get_curr
             db, recipients,
             project_id=run["project_id"], stage_id=stage_id,
             floor_id=run.get("floor_id"), building_id=run.get("building_id"),
-            stage_code=stage_id, stage_label_he=_stage_label(stage_id),
+            stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
             actor_id=user["id"], actor_name_str=actor,
             action="submitted", run_id=run_id,
         )
@@ -1601,7 +1672,7 @@ async def get_floors_qc_status(
         logger.warning(f"[QC:BATCH_STATUS:DEPRECATION] user={user['id']} project_id=missing floors={len(ids)} — callers should provide project_id for scoping")
 
     runs = await db.qc_runs.find(
-        {"floor_id": {"$in": ids}, "template_id": FLOOR_TEMPLATE_ID, "scope": {"$ne": "unit"}},
+        {"floor_id": {"$in": ids}, "scope": {"$ne": "unit"}},
         {"_id": 0, "id": 1, "floor_id": 1, "stage_statuses": 1}
     ).to_list(500)
 
@@ -1624,7 +1695,7 @@ async def get_floors_qc_status(
             items_by_stage.setdefault(it.get("stage_id"), []).append(it)
 
         stage_statuses = run.get("stage_statuses", {})
-        tpl = _get_template()
+        tpl = await _get_template(db, project_id=project_id)
         floor_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
         stages_data = []
         total_pass = 0
@@ -1633,7 +1704,7 @@ async def get_floors_qc_status(
         for stage in floor_stages:
             stage_items = items_by_stage.get(stage["id"], [])
             done_count = sum(1 for i in stage_items if i.get("status") in ("pass", "fail"))
-            computed = _compute_stage_status(stage_items, stage["id"], stage_statuses)
+            computed = _compute_stage_status(stage_items, stage["id"], stage_statuses, tpl=tpl)
             s_pass = sum(1 for i in stage_items if i.get("status") == "pass")
             s_fail = sum(1 for i in stage_items if i.get("status") == "fail")
             total_pass += s_pass
@@ -1656,19 +1727,11 @@ async def get_floors_qc_status(
     return result
 
 
-def _get_stage_labels():
-    return [
-        {"code": s["id"], "label_he": s["title"]}
-        for s in FLOOR_TEMPLATE["stages"]
-    ]
-
-
-VALID_STAGE_CODES = {s["id"] for s in FLOOR_TEMPLATE["stages"]}
-
-
 @router.get("/meta/stages")
 async def get_qc_stage_meta(user: dict = Depends(get_current_user)):
-    return _get_stage_labels()
+    db = get_db()
+    tpl = await _get_template(db)
+    return _get_stage_labels_from_tpl(tpl)
 
 
 class ApproverCreateBody(BaseModel):
@@ -1719,7 +1782,8 @@ async def list_approvers(project_id: str, user: dict = Depends(get_current_user)
         ).to_list(200)
         memberships = {m["user_id"]: m.get("role") for m in membership_docs}
 
-    stage_map = {s["code"]: s["label_he"] for s in _get_stage_labels()}
+    tpl = await _get_template(db, project_id=project_id)
+    stage_map = {s["code"]: s["label_he"] for s in _get_stage_labels_from_tpl(tpl)}
     result = []
     for a in approvers:
         u = users.get(a["user_id"], {})
@@ -1758,7 +1822,9 @@ async def add_approver(project_id: str, body: ApproverCreateBody, user: dict = D
     if body.mode == "stages":
         if not body.stages or len(body.stages) == 0:
             raise HTTPException(status_code=400, detail="יש לבחור לפחות שלב אחד")
-        invalid = set(body.stages) - VALID_STAGE_CODES
+        tpl = await _get_template(db, project_id=project_id)
+        valid_codes = _get_valid_stage_codes(tpl)
+        invalid = set(body.stages) - valid_codes
         if invalid:
             raise HTTPException(status_code=400, detail=f"שלבים לא חוקיים: {', '.join(invalid)}")
 
@@ -1899,7 +1965,7 @@ async def get_execution_summary(project_id: str, user: dict = Depends(get_curren
         elif scope != "unit":
             floor_runs[r["floor_id"]] = r.get("stage_statuses", {})
 
-    tpl = _get_template()
+    tpl = await _get_template(db, project_id=project_id)
     overall_total = 0
     overall_completed = 0
     stages_out = []
@@ -1907,7 +1973,7 @@ async def get_execution_summary(project_id: str, user: dict = Depends(get_curren
     for stage in tpl["stages"]:
         stage_id = stage["id"]
         scope = stage.get("scope", "floor")
-        icon = STAGE_ICONS.get(stage_id, "📋")
+        icon = _get_stage_icon(tpl, stage_id)
 
         completed = 0
         in_progress = 0
@@ -2145,13 +2211,16 @@ async def approve_stage(run_id: str, stage_id: str, body: ApproveRejectBody, use
 
     await _check_approver_authorization(user, run["project_id"], stage_id)
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    item_map = _build_item_map(tpl)
+
     stage_items = await db.qc_items.find(
         {"run_id": run_id, "stage_id": stage_id}, {"_id": 0, "item_id": 1, "status": 1, "reviewer_rejection": 1}
     ).to_list(200)
     blocked_items = []
     for si in stage_items:
         if si.get("status") == "fail" or si.get("reviewer_rejection"):
-            tpl_item = TPL_ITEM_MAP.get(si.get("item_id"), {})
+            tpl_item = item_map.get(si.get("item_id"), {})
             blocked_items.append({
                 "item_id": si.get("item_id"),
                 "title": tpl_item.get("title", si.get("item_id", "")),
@@ -2191,7 +2260,7 @@ async def approve_stage(run_id: str, stage_id: str, body: ApproveRejectBody, use
         "stage_id": stage_id,
         "note": body.note,
         "actor_name": actor,
-        "stage_label": _stage_label(stage_id),
+        "stage_label": _stage_label(tpl, stage_id),
     })
 
     try:
@@ -2202,7 +2271,7 @@ async def approve_stage(run_id: str, stage_id: str, body: ApproveRejectBody, use
             db, recipients,
             project_id=run["project_id"], stage_id=stage_id,
             floor_id=run.get("floor_id"), building_id=run.get("building_id"),
-            stage_code=stage_id, stage_label_he=_stage_label(stage_id),
+            stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
             actor_id=user["id"], actor_name_str=actor,
             action="approved", run_id=run_id,
         )
@@ -2230,6 +2299,7 @@ async def reject_stage(run_id: str, stage_id: str, body: ApproveRejectBody, user
 
     await _check_approver_authorization(user, run["project_id"], stage_id)
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
     actor = _actor_name(user)
     now = _now()
 
@@ -2251,7 +2321,7 @@ async def reject_stage(run_id: str, stage_id: str, body: ApproveRejectBody, user
         "stage_id": stage_id,
         "reason": body.reason,
         "actor_name": actor,
-        "stage_label": _stage_label(stage_id),
+        "stage_label": _stage_label(tpl, stage_id),
     })
 
     try:
@@ -2262,7 +2332,7 @@ async def reject_stage(run_id: str, stage_id: str, body: ApproveRejectBody, user
             db, recipients,
             project_id=run["project_id"], stage_id=stage_id,
             floor_id=run.get("floor_id"), building_id=run.get("building_id"),
-            stage_code=stage_id, stage_label_he=_stage_label(stage_id),
+            stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
             actor_id=user["id"], actor_name_str=actor,
             action="rejected", reason=body.reason, run_id=run_id,
         )
@@ -2307,6 +2377,9 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
     if role == "contractor":
         raise HTTPException(status_code=403, detail="קבלן לא יכול לשלוח הודעת דחייה")
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    wa_item_map = _build_item_map(tpl)
+
     stage_statuses = run.get("stage_statuses", {})
     rejection_reason = None
     item_title = None
@@ -2325,7 +2398,7 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
             raise HTTPException(status_code=400, detail="הסעיף לא נדחה — לא ניתן לשלוח הודעת דחייה")
         rejection_reason = (reviewer_rejection or {}).get("reason", "")
         tpl_item_key = item.get("item_id") or body.item_id
-        tpl_item = TPL_ITEM_MAP.get(tpl_item_key, {})
+        tpl_item = wa_item_map.get(tpl_item_key, {})
         item_title = tpl_item.get("title", tpl_item_key)
         photos = item.get("photos", [])
         if photos:
@@ -2378,7 +2451,7 @@ async def notify_rejection_whatsapp(run_id: str, stage_id: str, body: NotifyReje
     floor = await db.floors.find_one({"id": run.get("floor_id")}, {"_id": 0, "name": 1})
     floor_name = floor.get("name", "") if floor else ""
 
-    stage_title = _stage_label(stage_id)
+    stage_title = _stage_label(tpl, stage_id)
 
     base_url = get_public_base_url()
     direct_link = ""
@@ -2566,6 +2639,7 @@ async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict 
     if current not in ("approved", "rejected"):
         raise HTTPException(status_code=400, detail="לא ניתן לפתוח מחדש את השלב במצב הנוכחי")
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
     actor = _actor_name(user)
     now = _now()
 
@@ -2589,7 +2663,7 @@ async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict 
         "to_status": "reopened",
         "reason": body.reason,
         "actor_name": actor,
-        "stage_label": _stage_label(stage_id),
+        "stage_label": _stage_label(tpl, stage_id),
     })
 
     try:
@@ -2600,7 +2674,7 @@ async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict 
             db, recipients,
             project_id=run["project_id"], stage_id=stage_id,
             floor_id=run.get("floor_id"), building_id=run.get("building_id"),
-            stage_code=stage_id, stage_label_he=_stage_label(stage_id),
+            stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
             actor_id=user["id"], actor_name_str=actor,
             action="reopened", reason=body.reason, run_id=run_id,
         )
@@ -2673,11 +2747,14 @@ async def get_stage_timeline(run_id: str, stage_id: str, user: dict = Depends(ge
     all_events = stage_events + item_events
     events = sorted(all_events, key=lambda e: (e.get("created_at", ""), e.get("id", "")), reverse=True)[:30]
 
+    tpl = await _get_template(db, run=run, project_id=run.get("project_id"))
+    timeline_item_map = _build_item_map(tpl)
+
     timeline = []
     for ev in events:
         payload = ev.get("payload", {})
         action = ev.get("action", "")
-        item_title = payload.get("item_title") or TPL_ITEM_MAP.get(payload.get("item_id"), {}).get("title", "")
+        item_title = payload.get("item_title") or timeline_item_map.get(payload.get("item_id"), {}).get("title", "")
 
         if action == "item_rejected" and item_title:
             action_label = f'סעיף נדחה: {item_title}'
