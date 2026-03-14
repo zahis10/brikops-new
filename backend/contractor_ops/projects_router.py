@@ -6,7 +6,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
 from contractor_ops.router import (
     get_db, get_current_user, require_roles, require_super_admin,
-    _check_project_access, _check_project_read_access,
+    _check_project_access, _check_project_read_access, _check_structure_admin,
     _audit, _now, _is_super_admin, _priority_sort_key, logger,
 )
 from contractor_ops.billing import get_user_org, get_subscription
@@ -241,12 +241,12 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/projects/{project_id}/buildings", response_model=Building)
-async def create_building(project_id: str, building: Building, user: dict = Depends(require_roles('project_manager'))):
+async def create_building(project_id: str, building: Building, user: dict = Depends(get_current_user)):
     db = get_db()
     project = await db.projects.find_one({'id': project_id}, {'_id': 0})
     if not project:
         raise HTTPException(status_code=404, detail='Project not found')
-    await _check_project_access(user, project_id)
+    await _check_structure_admin(user, project_id)
     building_id = str(uuid.uuid4())
     doc = {
         'id': building_id, 'project_id': project_id, 'name': building.name,
@@ -267,12 +267,12 @@ async def list_buildings(project_id: str, user: dict = Depends(get_current_user)
 
 
 @router.post("/buildings/{building_id}/floors", response_model=Floor)
-async def create_floor(building_id: str, floor: Floor, user: dict = Depends(require_roles('project_manager'))):
+async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_current_user)):
     db = get_db()
     building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not building:
         raise HTTPException(status_code=404, detail='Building not found')
-    await _check_project_access(user, building['project_id'])
+    await _check_structure_admin(user, building['project_id'])
 
     is_numeric_floor = False
     try:
@@ -383,12 +383,12 @@ async def list_floors(building_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/floors/{floor_id}/units")
-async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(require_roles('project_manager'))):
+async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_current_user)):
     db = get_db()
     floor = await db.floors.find_one({'id': floor_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not floor:
         raise HTTPException(status_code=404, detail='Floor not found')
-    await _check_project_access(user, floor['project_id'])
+    await _check_structure_admin(user, floor['project_id'])
     building_id = floor['building_id']
     project_id = floor['project_id']
     ts = _now()
@@ -474,9 +474,9 @@ async def list_units_by_floor(floor_id: str, user: dict = Depends(get_current_us
 
 
 @router.post("/floors/bulk")
-async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(require_roles('project_manager'))):
+async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_current_user)):
     db = get_db()
-    await _check_project_access(user, body.project_id)
+    await _check_structure_admin(user, body.project_id)
     building = await db.buildings.find_one({'id': body.building_id, 'project_id': body.project_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not building:
         raise HTTPException(status_code=404, detail='Building not found in this project')
@@ -543,12 +543,12 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(requir
 
 
 @router.post("/units/bulk")
-async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(require_roles('project_manager'))):
+async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_current_user)):
     import time as _time
     rid = str(uuid.uuid4())[:8]
     t0 = _time.time()
     db = get_db()
-    await _check_project_access(user, body.project_id)
+    await _check_structure_admin(user, body.project_id)
     building = await db.buildings.find_one({'id': body.building_id, 'project_id': body.project_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not building:
         raise HTTPException(status_code=404, detail='Building not found in this project')
@@ -804,12 +804,12 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/buildings/{building_id}/resequence")
-async def resequence_building(building_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager'))):
+async def resequence_building(building_id: str, body: dict = Body(...), user: dict = Depends(get_current_user)):
     db = get_db()
     building = await db.buildings.find_one({'id': building_id}, {'_id': 0})
     if not building:
         raise HTTPException(status_code=404, detail='Building not found')
-    await _check_project_access(user, building['project_id'])
+    await _check_structure_admin(user, building['project_id'])
     dry_run = body.get('dry_run', False)
 
     floor_changes, unit_changes = await _compute_building_resequence(db, building_id)
@@ -852,12 +852,12 @@ async def resequence_building(building_id: str, body: dict = Body(...), user: di
 
 
 @router.post("/projects/{project_id}/insert-floor")
-async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = Depends(require_roles('project_manager'))):
+async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = Depends(get_current_user)):
     db = get_db()
     project = await db.projects.find_one({'id': project_id})
     if not project:
         raise HTTPException(status_code=404, detail='Project not found')
-    await _check_project_access(user, project_id)
+    await _check_structure_admin(user, project_id)
     building = await db.buildings.find_one({'id': body.building_id, 'project_id': project_id})
     if not building:
         raise HTTPException(status_code=404, detail='Building not found in this project')

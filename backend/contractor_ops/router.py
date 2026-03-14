@@ -313,6 +313,25 @@ async def _check_project_access(user: dict, project_id: str):
     return True
 
 
+async def _check_structure_admin(user: dict, project_id: str):
+    if _is_super_admin(user):
+        return True
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    if not project or not project.get('org_id'):
+        raise HTTPException(status_code=403, detail='אין הרשאה לשנות מבנה פרויקט זה')
+    org_id = project['org_id']
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'owner_user_id': 1})
+    if org and org.get('owner_user_id') == user['id']:
+        return True
+    org_mem = await db.organization_memberships.find_one(
+        {'org_id': org_id, 'user_id': user['id']}, {'_id': 0, 'role': 1}
+    )
+    if org_mem and org_mem.get('role') in ('owner', 'billing_admin'):
+        return True
+    raise HTTPException(status_code=403, detail='רק בעל הארגון או מנהל חיוב יכולים לשנות מבנה')
+
+
 async def _get_project_role(user: dict, project_id: str) -> str:
     if _is_super_admin(user):
         return 'project_manager'

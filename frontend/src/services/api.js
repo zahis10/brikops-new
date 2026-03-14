@@ -521,7 +521,7 @@ export const onboardingService = {
     return response.data;
   },
   async getInviteInfo(inviteId) {
-    const response = await axios.get(`${API}/invites/${inviteId}/info`, { headers: getAuthHeader() });
+    const response = await axios.get(`${API}/invites/${inviteId}/info`);
     return response.data;
   },
   async acceptInvite(data) {

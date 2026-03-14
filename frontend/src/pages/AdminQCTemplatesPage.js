@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { templateService } from '../services/api';
+import { templateService, projectService } from '../services/api';
 import { toast } from 'sonner';
 import {
   ChevronRight, ChevronDown, ChevronUp, ChevronLeft,
   Plus, Trash2, Copy, Save, Loader2, AlertTriangle,
   Camera, FileText, GripVertical, Edit2, Check, X,
-  ArrowUp, ArrowDown, Star, Search, Archive, Undo2
+  ArrowUp, ArrowDown, Star, Search, Archive, Undo2,
+  Link2
 } from 'lucide-react';
 
 const SCOPE_OPTIONS = [
@@ -39,6 +40,63 @@ const AdminQCTemplatesPage = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [sortBy, setSortBy] = useState('name');
   const [archiving, setArchiving] = useState(null);
+
+  const [assignFamily, setAssignFamily] = useState(null);
+  const [assignProjects, setAssignProjects] = useState([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assigningTo, setAssigningTo] = useState(null);
+
+  const openAssignModal = async (e, family) => {
+    e.stopPropagation();
+    setAssignFamily(family);
+    setAssignLoading(true);
+    try {
+      const projects = await projectService.list();
+      const projectsWithAssignment = await Promise.all(
+        projects.map(async (p) => {
+          try {
+            const assignment = await templateService.getProjectAssignment(p.id);
+            return { ...p, currentTemplate: assignment };
+          } catch {
+            return { ...p, currentTemplate: null };
+          }
+        })
+      );
+      setAssignProjects(projectsWithAssignment);
+    } catch {
+      toast.error('שגיאה בטעינת פרויקטים');
+      setAssignFamily(null);
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const handleAssignToProject = async (project) => {
+    if (!assignFamily) return;
+    const hasExisting = project.currentTemplate?.template_family_id && project.currentTemplate.template_family_id !== assignFamily.family_id;
+    if (hasExisting) {
+      const confirmed = window.confirm(
+        `לפרויקט "${project.name}" כבר משויכת תבנית "${project.currentTemplate.template_name || ''}". להחליף?`
+      );
+      if (!confirmed) return;
+    }
+    setAssigningTo(project.id);
+    try {
+      await templateService.assignToProject(project.id, {
+        template_version_id: assignFamily.latest_id,
+      });
+      toast.success(`התבנית "${assignFamily.name}" שויכה לפרויקט "${project.name}"`);
+      setAssignProjects(prev => prev.map(p =>
+        p.id === project.id
+          ? { ...p, currentTemplate: { template_family_id: assignFamily.family_id, template_name: assignFamily.name, template_version_id: assignFamily.latest_id } }
+          : p
+      ));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בשיוך תבנית');
+    } finally {
+      setAssigningTo(null);
+    }
+  };
 
   const loadFamilies = useCallback(async () => {
     try {
@@ -590,14 +648,24 @@ const AdminQCTemplatesPage = () => {
                         שחזר
                       </button>
                     ) : (
-                      <button
-                        onClick={(e) => handleArchiveFamily(e, f.family_id, true)}
-                        disabled={archiving === f.family_id}
-                        className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100"
-                        title="העבר לארכיון"
-                      >
-                        {archiving === f.family_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Archive className="w-3 h-3" />}
-                      </button>
+                      <>
+                        <button
+                          onClick={(e) => openAssignModal(e, f)}
+                          className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                          title="שייך לפרויקט"
+                        >
+                          <Link2 className="w-3 h-3" />
+                          שייך
+                        </button>
+                        <button
+                          onClick={(e) => handleArchiveFamily(e, f.family_id, true)}
+                          disabled={archiving === f.family_id}
+                          className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100"
+                          title="העבר לארכיון"
+                        >
+                          {archiving === f.family_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Archive className="w-3 h-3" />}
+                        </button>
+                      </>
                     )}
                     {!f.archived && <ChevronLeft className="w-4 h-4 text-slate-400" />}
                   </div>
@@ -607,6 +675,68 @@ const AdminQCTemplatesPage = () => {
           </div>
         )}
       </div>
+
+      {assignFamily && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" dir="rtl">
+          <div className="fixed inset-0 bg-black/40" onClick={() => setAssignFamily(null)} />
+          <div className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-xl">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">שיוך תבנית לפרויקט</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{assignFamily.name}</p>
+              </div>
+              <button onClick={() => setAssignFamily(null)} className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {assignLoading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                </div>
+              ) : assignProjects.length === 0 ? (
+                <p className="text-center text-sm text-slate-400 py-8">לא נמצאו פרויקטים</p>
+              ) : (
+                assignProjects.map(p => {
+                  const isAssigned = p.currentTemplate?.template_family_id === assignFamily.family_id;
+                  const hasOther = p.currentTemplate?.template_family_id && !isAssigned;
+                  return (
+                    <div key={p.id} className={`flex items-center justify-between p-3 rounded-lg border ${isAssigned ? 'bg-green-50 border-green-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                        {isAssigned && (
+                          <p className="text-[10px] text-green-600 mt-0.5">תבנית זו כבר משויכת</p>
+                        )}
+                        {hasOther && (
+                          <p className="text-[10px] text-amber-600 mt-0.5">משויכת: {p.currentTemplate.template_name || 'תבנית אחרת'}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleAssignToProject(p)}
+                        disabled={isAssigned || assigningTo === p.id}
+                        className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                          isAssigned
+                            ? 'bg-green-100 text-green-700 cursor-default'
+                            : 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
+                        }`}
+                      >
+                        {assigningTo === p.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : isAssigned ? (
+                          <Check className="w-3 h-3" />
+                        ) : (
+                          <Link2 className="w-3 h-3" />
+                        )}
+                        {isAssigned ? 'משויך' : hasOther ? 'החלף' : 'שייך'}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

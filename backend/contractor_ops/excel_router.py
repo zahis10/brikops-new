@@ -1,16 +1,16 @@
 import uuid
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
-from contractor_ops.router import get_db, require_roles, _check_project_access, _now, _audit
+from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_structure_admin, _now, _audit
 
 router = APIRouter(prefix="/api")
 
 
 # ── Excel import ──
 @router.get("/projects/{project_id}/excel-template")
-async def download_excel_template(project_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def download_excel_template(project_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
-    await _check_project_access(user, project_id)
+    await _check_structure_admin(user, project_id)
     import io, csv
     output = io.StringIO()
     writer = csv.writer(output)
@@ -28,9 +28,9 @@ async def download_excel_template(project_id: str, user: dict = Depends(require_
 
 
 @router.post("/projects/{project_id}/excel-import")
-async def import_excel(project_id: str, file: UploadFile = File(...), user: dict = Depends(require_roles('project_manager'))):
+async def import_excel(project_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     db = get_db()
-    await _check_project_access(user, project_id)
+    await _check_structure_admin(user, project_id)
     import io, csv
     content = await file.read()
     try:
@@ -85,11 +85,12 @@ async def import_excel(project_id: str, file: UploadFile = File(...), user: dict
 
 
 @router.post("/projects/{project_id}/migrate-sort-index")
-async def migrate_sort_index(project_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def migrate_sort_index(project_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
     project = await db.projects.find_one({'id': project_id})
     if not project:
         raise HTTPException(status_code=404, detail='Project not found')
+    await _check_structure_admin(user, project_id)
     floors_updated = 0
     units_updated = 0
     buildings = await db.buildings.find({'project_id': project_id}, {'_id': 0}).to_list(1000)

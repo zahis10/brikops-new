@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 import uuid
 import logging
 
-from contractor_ops.router import get_db, get_current_user, require_roles, _now, _audit, _check_project_access
+from contractor_ops.router import get_db, get_current_user, require_roles, _now, _audit, _check_project_access, _check_structure_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["archive"])
@@ -43,12 +43,12 @@ async def _get_dependency_counts(db, entity_type: str, entity_id: str) -> dict:
 
 
 @router.post("/buildings/{building_id}/archive")
-async def archive_building(building_id: str, body: ArchiveRequest = ArchiveRequest(), user: dict = Depends(require_roles('project_manager'))):
+async def archive_building(building_id: str, body: ArchiveRequest = ArchiveRequest(), user: dict = Depends(get_current_user)):
     db = get_db()
     building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not building:
         raise HTTPException(status_code=404, detail='בניין לא נמצא')
-    await _check_project_access(user, building['project_id'])
+    await _check_structure_admin(user, building['project_id'])
 
     ts = _now()
     archive_meta = {
@@ -77,12 +77,12 @@ async def archive_building(building_id: str, body: ArchiveRequest = ArchiveReque
 
 
 @router.post("/floors/{floor_id}/archive")
-async def archive_floor(floor_id: str, body: ArchiveRequest = ArchiveRequest(), user: dict = Depends(require_roles('project_manager'))):
+async def archive_floor(floor_id: str, body: ArchiveRequest = ArchiveRequest(), user: dict = Depends(get_current_user)):
     db = get_db()
     floor = await db.floors.find_one({'id': floor_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not floor:
         raise HTTPException(status_code=404, detail='קומה לא נמצאה')
-    await _check_project_access(user, floor['project_id'])
+    await _check_structure_admin(user, floor['project_id'])
 
     ts = _now()
     archive_meta = {
@@ -108,12 +108,12 @@ async def archive_floor(floor_id: str, body: ArchiveRequest = ArchiveRequest(), 
 
 
 @router.post("/units/{unit_id}/archive")
-async def archive_unit(unit_id: str, body: ArchiveRequest = ArchiveRequest(), user: dict = Depends(require_roles('project_manager'))):
+async def archive_unit(unit_id: str, body: ArchiveRequest = ArchiveRequest(), user: dict = Depends(get_current_user)):
     db = get_db()
     unit = await db.units.find_one({'id': unit_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not unit:
         raise HTTPException(status_code=404, detail='דירה לא נמצאה')
-    await _check_project_access(user, unit['project_id'])
+    await _check_structure_admin(user, unit['project_id'])
 
     ts = _now()
     deps = await _get_dependency_counts(db, 'unit', unit_id)
@@ -132,12 +132,12 @@ async def archive_unit(unit_id: str, body: ArchiveRequest = ArchiveRequest(), us
 
 
 @router.post("/buildings/{building_id}/restore")
-async def restore_building(building_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def restore_building(building_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
     building = await db.buildings.find_one({'id': building_id, 'archived': True}, {'_id': 0})
     if not building:
         raise HTTPException(status_code=404, detail='בניין לא נמצא בארכיון')
-    await _check_project_access(user, building['project_id'])
+    await _check_structure_admin(user, building['project_id'])
 
     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
     await db.buildings.update_one({'id': building_id}, {'$unset': unset_fields})
@@ -156,12 +156,12 @@ async def restore_building(building_id: str, user: dict = Depends(require_roles(
 
 
 @router.post("/floors/{floor_id}/restore")
-async def restore_floor(floor_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def restore_floor(floor_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
     floor = await db.floors.find_one({'id': floor_id, 'archived': True}, {'_id': 0})
     if not floor:
         raise HTTPException(status_code=404, detail='קומה לא נמצאה בארכיון')
-    await _check_project_access(user, floor['project_id'])
+    await _check_structure_admin(user, floor['project_id'])
 
     parent_building = await db.buildings.find_one({'id': floor['building_id']}, {'_id': 0})
     if parent_building and parent_building.get('archived'):
@@ -182,12 +182,12 @@ async def restore_floor(floor_id: str, user: dict = Depends(require_roles('proje
 
 
 @router.post("/units/{unit_id}/restore")
-async def restore_unit(unit_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def restore_unit(unit_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
     unit = await db.units.find_one({'id': unit_id, 'archived': True}, {'_id': 0})
     if not unit:
         raise HTTPException(status_code=404, detail='דירה לא נמצאה בארכיון')
-    await _check_project_access(user, unit['project_id'])
+    await _check_structure_admin(user, unit['project_id'])
 
     parent_floor = await db.floors.find_one({'id': unit['floor_id']}, {'_id': 0})
     if parent_floor and parent_floor.get('archived'):
@@ -204,7 +204,7 @@ async def restore_unit(unit_id: str, user: dict = Depends(require_roles('project
 
 
 @router.post("/batches/{batch_id}/undo")
-async def undo_batch(batch_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def undo_batch(batch_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
     sample = await db.buildings.find_one({'batch_id': batch_id})
     if not sample:
@@ -214,7 +214,7 @@ async def undo_batch(batch_id: str, user: dict = Depends(require_roles('project_
     if not sample:
         raise HTTPException(status_code=404, detail='באץ׳ לא נמצא')
 
-    await _check_project_access(user, sample['project_id'])
+    await _check_structure_admin(user, sample['project_id'])
 
     created_at = sample.get('created_at', '')
     if created_at:

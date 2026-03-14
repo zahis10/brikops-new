@@ -79,13 +79,15 @@ const OnboardingPage = () => {
   }, [incomingPhone, phoneVerified, isInviteFlow]);
 
   useEffect(() => {
-    if (isInviteFlow && authToken && !inviteInfo && !inviteError) {
+    if (isInviteFlow && inviteToken && !inviteInfo && !inviteError) {
       setInviteLoading(true);
       onboardingService.getInviteInfo(inviteToken)
         .then(info => {
           setInviteInfo(info);
           setSelectedInvite({ invite_id: info.invite_id, project_name: info.project_name, role: info.role });
-          setStep('invite-accept');
+          if (authToken) {
+            setStep('invite-accept');
+          }
         })
         .catch(err => {
           const detail = err.response?.data?.detail || 'ההזמנה לא נמצאה או שפגה תוקפה';
@@ -315,6 +317,13 @@ const OnboardingPage = () => {
       toast.error('שם מלא נדרש');
       return;
     }
+    if (!authToken) {
+      const pwError = validatePassword(password);
+      if (pwError) {
+        toast.error(pwError);
+        return;
+      }
+    }
     setLoading(true);
     try {
       const payload = {
@@ -352,7 +361,7 @@ const OnboardingPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedInvite, inviteInfo, inviteToken, phoneE164, fullName, password, inviteEmail, inviteLang, loginWithOtp, navigate]);
+  }, [selectedInvite, inviteInfo, inviteToken, phoneE164, fullName, password, inviteEmail, inviteLang, loginWithOtp, navigate, authToken, validatePassword]);
 
   const handleJoinByCode = useCallback(async (e) => {
     e.preventDefault();
@@ -575,8 +584,13 @@ const OnboardingPage = () => {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
         <Mail className="w-8 h-8 text-blue-500 mx-auto mb-2" />
         <p className="text-sm font-medium text-blue-800">
-          יש לך הזמנה לפרויקט. צור חשבון כדי להמשיך.
+          {inviteInfo?.project_name
+            ? `יש לך הזמנה לפרויקט "${inviteInfo.project_name}". צור חשבון כדי להמשיך.`
+            : 'יש לך הזמנה לפרויקט. צור חשבון כדי להמשיך.'}
         </p>
+        {inviteInfo?.role_display && (
+          <p className="text-xs text-blue-600 mt-1">תפקיד: {inviteInfo.role_display}</p>
+        )}
       </div>
       <form onSubmit={handleAcceptInvite} className="space-y-4">
         <div className="space-y-2">

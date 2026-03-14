@@ -1191,8 +1191,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 update_fields['preferred_language'] = opt_lang
             await db.users.update_one({'id': user_id}, {'$set': update_fields})
         else:
-            if not password or len(password) < 6:
-                raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 6 תווים)')
+            if not password or len(password) < 8:
+                raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 8 תווים)')
             user_id = str(uuid.uuid4())
             invite_role = invite.get('role', 'viewer')
             new_invite_doc = {
@@ -1346,7 +1346,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
     }
 
     @router.get("/invites/{invite_id}/info")
-    async def get_invite_info(invite_id: str, user: dict = Depends(get_current_user_fn)):
+    async def get_invite_info(invite_id: str):
         db = get_db()
         invite = await db.invites.find_one({'id': invite_id}, {'_id': 0})
         if not invite:
@@ -1409,8 +1409,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                     {'$set': {'name': full_name, 'password_hash': await _hash_password(password), 'updated_at': ts}}
                 )
         else:
-            if not password or len(password) < 6:
-                raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 6 תווים)')
+            if not password or len(password) < 8:
+                raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 8 תווים)')
             user_id = str(uuid.uuid4())
             role = 'contractor' if requested_role in ('contractor',) else 'viewer'
             await db.users.insert_one({
