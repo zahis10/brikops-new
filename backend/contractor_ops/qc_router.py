@@ -1676,6 +1676,18 @@ async def get_floors_qc_status(
         first_floor = await db.floors.find_one({"id": ids[0]}, {"_id": 0, "project_id": 1})
         if first_floor:
             project_id = first_floor.get("project_id")
+        if not project_id:
+            raise HTTPException(status_code=400, detail="Cannot determine project for floors")
+        await _check_qc_access(user, project_id)
+        owned_floors = await db.floors.find(
+            {"id": {"$in": ids}, "project_id": project_id},
+            {"_id": 0, "id": 1}
+        ).to_list(len(ids))
+        owned_ids = {f["id"] for f in owned_floors}
+        rogue = [fid for fid in ids if fid not in owned_ids]
+        if rogue:
+            logger.warning(f"[QC:BATCH_STATUS:SCOPE_VIOLATION] user={user['id']} derived_project={project_id} rogue_floor_count={len(rogue)}")
+            raise HTTPException(status_code=400, detail="floor_ids contain floors not belonging to the same project")
         logger.warning(f"[QC:BATCH_STATUS:DEPRECATION] user={user['id']} project_id=derived:{project_id} floors={len(ids)} — callers should provide project_id for scoping")
 
     runs = await db.qc_runs.find(
