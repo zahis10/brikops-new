@@ -17,6 +17,16 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => {
+    const hash = window.location.hash;
+    if (hash) {
+      const hashParams = new URLSearchParams(hash.substring(1));
+      const hashToken = hashParams.get('token');
+      if (hashToken) {
+        localStorage.setItem('token', hashToken);
+        window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        return hashToken;
+      }
+    }
     const urlParams = new URLSearchParams(window.location.search);
     const urlToken = urlParams.get('_token');
     if (urlToken) {

@@ -17,6 +17,7 @@ from config import (
 
 from contractor_ops.phone_utils import normalize_israeli_phone
 import secrets as _secrets
+import hashlib as _hashlib
 import smtplib
 import re as _re_module
 from email.mime.text import MIMEText
@@ -598,7 +599,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         if user['role'] == 'project_manager':
             await ensure_user_org(user['id'], user.get('name', ''))
 
-        token = _create_token(user['id'], user['phone_e164'], user['role'])
+        sa_check = is_super_admin_phone(user.get('phone_e164', ''))
+        platform_role = 'super_admin' if sa_check['matched'] else user.get('platform_role', 'none')
+        token = _create_token(user['id'], user['phone_e164'], user['role'], platform_role=platform_role, session_version=user.get('session_version', 0))
         return TokenResponse(
             token=token,
             user=UserResponse(
@@ -1521,7 +1524,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         if ',' in client_ip:
             client_ip = client_ip.split(',')[0].strip()
 
-        if not _check_rate_limit(f"forgot_pw_ip:{client_ip}", max_requests=5, window_seconds=900):
+        if not await _check_rate_limit_mongo(db, "forgot_pw_ip", client_ip, max_requests=5, window_seconds=900):
             logger.warning(f"[FORGOT-PW] rid={request_id} IP_RATE_LIMITED ip={client_ip}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
@@ -1534,7 +1537,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             logger.info(f"[FORGOT-PW] rid={request_id} invalid_email")
             return safe_response
 
-        if not _check_rate_limit(f"forgot_pw_email:{email_raw}", max_requests=3, window_seconds=900):
+        if not await _check_rate_limit_mongo(db, "forgot_pw_email", email_raw, max_requests=3, window_seconds=900):
             logger.warning(f"[FORGOT-PW] rid={request_id} EMAIL_RATE_LIMITED email_prefix={email_raw.split('@')[0][:3]}***")
             return safe_response
 
@@ -1560,13 +1563,15 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         email_prefix = email_raw.split('@')[0][:3] + '***'
 
         token = _secrets.token_urlsafe(48)
+        token_hash = _hashlib.sha256(token.encode('utf-8')).hexdigest()
         ts = _now()
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_TTL_MINUTES)
 
         await db.password_reset_tokens.delete_many({'user_id': user_id, 'used': False})
 
         await db.password_reset_tokens.insert_one({
-            'token': token,
+            'token_hash': token_hash,
+            'token_prefix': token[:8],
             'user_id': user_id,
             'email': email_raw,
             'created_at': ts,
@@ -1607,7 +1612,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         if ',' in client_ip:
             client_ip = client_ip.split(',')[0].strip()
 
-        if not _check_rate_limit(f"reset_pw_ip:{client_ip}", max_requests=10, window_seconds=900):
+        if not await _check_rate_limit_mongo(db, "reset_pw_ip", client_ip, max_requests=10, window_seconds=900):
             logger.warning(f"[RESET-PW] rid={request_id} IP_RATE_LIMITED ip={client_ip}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
@@ -1615,10 +1620,16 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             raise HTTPException(status_code=400, detail='קישור לא תקף או שפג תוקפו')
 
         now = datetime.now(timezone.utc)
+        token_hash = _hashlib.sha256(token.encode('utf-8')).hexdigest()
         token_doc = await db.password_reset_tokens.find_one({
-            'token': token,
+            'token_hash': token_hash,
             'used': False,
         })
+        if not token_doc:
+            token_doc = await db.password_reset_tokens.find_one({
+                'token': token,
+                'used': False,
+            })
 
         if not token_doc:
             logger.warning(f"[RESET-PW] rid={request_id} token_not_found_or_used")
@@ -1653,9 +1664,13 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         password_hash = await _hash_password(new_password)
         ts = _now()
 
+        existing_user = await db.users.find_one({'id': user_id}, {'session_version': 1})
+        old_sv = existing_user.get('session_version', 0) if existing_user else 0
+        new_sv = old_sv + 1
+
         await db.users.update_one(
             {'id': user_id},
-            {'$set': {'password_hash': password_hash, 'updated_at': ts}, '$unset': {'password': ''}}
+            {'$set': {'password_hash': password_hash, 'session_version': new_sv, 'updated_at': ts}, '$unset': {'password': ''}}
         )
 
         await db.password_reset_tokens.update_one(
@@ -1667,6 +1682,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'event': 'password_reset_completed',
             'user_id': user_id,
             'email_prefix': token_doc.get('email', '').split('@')[0][:3] + '***',
+            'session_version_change': f'{old_sv}->{new_sv}',
             'created_at': ts,
         })
 

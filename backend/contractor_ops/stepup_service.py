@@ -199,8 +199,8 @@ async def create_challenge(
         })
 
         logger.warning(
-            f"[STEPUP-FALLBACK] request_id={request_id} code={code} "
-            f"smtp_error={smtp_error_redacted}"
+            f"[STEPUP-FALLBACK] request_id={request_id} "
+            f"smtp_error={smtp_error_redacted} — code delivery failed, check admin fallback"
         )
 
         try:

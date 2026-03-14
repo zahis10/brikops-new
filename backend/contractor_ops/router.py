@@ -187,17 +187,40 @@ def require_roles(*roles: str):
     return checker
 
 
-_admin_rate_limits = {}
-
-def _check_admin_rate_limit(key: str, max_requests: int = 10, window_seconds: int = 60) -> bool:
-    now = datetime.now(timezone.utc).timestamp()
-    if key not in _admin_rate_limits:
-        _admin_rate_limits[key] = []
-    _admin_rate_limits[key] = [t for t in _admin_rate_limits[key] if t > now - window_seconds]
-    if len(_admin_rate_limits[key]) >= max_requests:
-        return False
-    _admin_rate_limits[key].append(now)
-    return True
+async def _check_admin_rate_limit(key: str, max_requests: int = 10, window_seconds: int = 60) -> bool:
+    from pymongo import ReturnDocument
+    from pymongo.errors import DuplicateKeyError
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    new_expires = now + timedelta(seconds=window_seconds)
+    pipeline = [
+        {"$set": {
+            "count": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": 1,
+                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
+            }},
+            "expires_at": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": new_expires,
+                "else": {"$ifNull": ["$expires_at", new_expires]},
+            }},
+            "updated_at": now,
+        }},
+    ]
+    for attempt in range(2):
+        try:
+            result = await db.otp_rate_limits.find_one_and_update(
+                {"kind": "admin_rl", "key": key},
+                pipeline,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            return result["count"] <= max_requests
+        except DuplicateKeyError:
+            if attempt == 0:
+                continue
+            return False
 
 
 def _is_super_admin(user: dict) -> bool:
@@ -232,7 +255,7 @@ async def require_super_admin(request: Request, user: dict = Depends(get_current
     ua = request.headers.get('user-agent', '')
 
     rl_max = 30 if method == 'GET' else 10
-    if not _check_admin_rate_limit(f"admin:{user.get('id', '')}:{method}", max_requests=rl_max, window_seconds=60):
+    if not await _check_admin_rate_limit(f"admin:{user.get('id', '')}:{method}", max_requests=rl_max, window_seconds=60):
         await _audit_admin_access(user.get('id', ''), route, method, 429, ip, ua, 'rate_limited')
         raise HTTPException(status_code=429, detail='יותר מדי בקשות. נסה שוב בעוד דקה.')
 

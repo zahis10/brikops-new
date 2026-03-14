@@ -42,7 +42,8 @@ def get_engine() -> NotificationEngine:
 
 def _verify_signature(raw_body: bytes, signature_header: str) -> bool:
     if not _meta_app_secret:
-        return True
+        logger.warning("[WEBHOOK] META_APP_SECRET not configured — rejecting webhook request")
+        return False
     expected = hmac.new(
         _meta_app_secret.encode('utf-8'),
         raw_body,
@@ -158,18 +159,16 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
 
         sig_header = request.headers.get('X-Hub-Signature-256', '')
         logger.info(f"[WA:WEBHOOK] received body_len={len(raw_body)} has_signature={bool(sig_header)} content_type={request.headers.get('content-type', '')}")
-        if _meta_app_secret:
-            if not sig_header:
-                logger.error("[WA] signature_missing - X-Hub-Signature-256 header absent, rejecting request")
-                raise HTTPException(status_code=401, detail='Missing signature')
-            else:
-                if not _verify_signature(raw_body, sig_header):
-                    logger.error("[WA] signature_invalid - HMAC mismatch, rejecting request")
-                    raise HTTPException(status_code=401, detail='Invalid signature')
-                logger.info("[WA] signature_valid")
-        else:
-            if sig_header:
-                logger.info("[WA] META_APP_SECRET not configured, skipping signature check")
+        if not _meta_app_secret:
+            logger.error("[WA] META_APP_SECRET not configured — rejecting webhook request")
+            raise HTTPException(status_code=503, detail='Webhook signature verification not configured')
+        if not sig_header:
+            logger.error("[WA] signature_missing - X-Hub-Signature-256 header absent, rejecting request")
+            raise HTTPException(status_code=401, detail='Missing signature')
+        if not _verify_signature(raw_body, sig_header):
+            logger.error("[WA] signature_invalid - HMAC mismatch, rejecting request")
+            raise HTTPException(status_code=401, detail='Invalid signature')
+        logger.info("[WA] signature_valid")
 
         try:
             import json

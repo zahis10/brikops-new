@@ -194,9 +194,11 @@ async def list_tasks(
         if 'status' not in query:
             query['status'] = {'$nin': ['closed']}
     if q:
+        import re as _re_mod
+        q_escaped = _re_mod.escape(q)
         text_or = [
-            {'title': {'$regex': q, '$options': 'i'}},
-            {'description': {'$regex': q, '$options': 'i'}},
+            {'title': {'$regex': q_escaped, '$options': 'i'}},
+            {'description': {'$regex': q_escaped, '$options': 'i'}},
         ]
         if '$or' in query:
             existing_or = query.pop('$or')
@@ -784,6 +786,13 @@ async def add_task_update(task_id: str, update: TaskUpdateCreate, user: dict = D
 @router.get("/tasks/{task_id}/updates", response_model=List[TaskUpdateResponse])
 async def list_task_updates(task_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0, 'project_id': 1, 'assignee_id': 1})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    membership = await _get_project_membership(user, task['project_id'])
+    is_assignee = task.get('assignee_id') == user['id']
+    if membership['role'] == 'none' and not is_assignee:
+        raise HTTPException(status_code=403, detail='No access to this task')
     updates = await db.task_updates.find({'task_id': task_id, 'deletedAt': {'$exists': False}}, {'_id': 0}).sort('created_at', -1).to_list(1000)
     from services.object_storage import resolve_urls_in_doc
     for u in updates:
@@ -884,11 +893,20 @@ async def updates_feed(
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
+    user_project_ids = await db.project_memberships.distinct(
+        'project_id', {'user_id': user['id']}
+    )
+    if not user_project_ids:
+        return []
     if project_id:
+        if project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail='No access to this project')
         task_ids = await db.tasks.distinct('id', {'project_id': project_id})
-        query = {'task_id': {'$in': task_ids}}
     else:
-        query = {}
+        task_ids = await db.tasks.distinct('id', {'project_id': {'$in': user_project_ids}})
+    if not task_ids:
+        return []
+    query = {'task_id': {'$in': task_ids}}
     updates = await db.task_updates.find(query, {'_id': 0}).sort('created_at', -1).to_list(limit)
     from services.object_storage import resolve_urls_in_doc
     for u in updates:

@@ -46,7 +46,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Workflow Configuration**: Single-process mode where backend serves pre-built static frontend.
 -   **Deploy Pipeline**: Automated build and deployment process with staleness detection, post-build verification, and fail-fast mechanisms.
 -   **Cloud Deployment**: Frontend on Cloudflare Pages, Backend on AWS Elastic Beanstalk (Docker), Database on MongoDB Atlas, PDF services S3-aware. CI/CD via GitHub Actions.
--   **Security**: Enhanced JWT implementation, hardened OTP flow with rate limits and audit logging, strict webhook signature enforcement, and configured CORS.
+-   **Security**: Enhanced JWT implementation, hardened OTP flow with MongoDB-backed rate limits and audit logging, strict webhook signature enforcement (fail-closed), configured CORS with explicit production origins, SHA-256 hashed password reset tokens, project-scoped task updates access control, session invalidation on password reset, and sanitized regex search inputs.
 
 ## External Dependencies
 

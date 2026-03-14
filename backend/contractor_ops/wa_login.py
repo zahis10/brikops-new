@@ -4,7 +4,6 @@ import hashlib
 import logging
 import time
 import httpx
-from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, parse_qs
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -66,27 +65,52 @@ def _phone_last4(phone: str) -> str:
     return phone[-4:] if phone and len(phone) >= 4 else "????"
 
 
-_rate_limits = defaultdict(list)
 _RATE_LIMITS_PHONE = [(60, 1), (900, 5)]
 _RATE_LIMITS_IP = [(900, 20)]
 
-def _check_rate_limit(key: str, rules: list) -> bool:
-    now = time.time()
-    _rate_limits[key] = [ts for ts in _rate_limits[key] if now - ts < 900]
-    for window_secs, max_count in rules:
-        count = sum(1 for ts in _rate_limits[key] if now - ts < window_secs)
-        if count >= max_count:
+async def _check_rate_limit_mongo(kind: str, key: str, max_requests: int, window_seconds: int) -> bool:
+    from pymongo import ReturnDocument
+    from pymongo.errors import DuplicateKeyError
+    db = _get_db()
+    now = datetime.now(timezone.utc)
+    new_expires = now + timedelta(seconds=window_seconds)
+    pipeline = [
+        {"$set": {
+            "count": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": 1,
+                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
+            }},
+            "expires_at": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - timedelta(seconds=1)]}, now]},
+                "then": new_expires,
+                "else": {"$ifNull": ["$expires_at", new_expires]},
+            }},
+            "updated_at": now,
+        }},
+    ]
+    for attempt in range(2):
+        try:
+            result = await db.otp_rate_limits.find_one_and_update(
+                {"kind": kind, "key": key},
+                pipeline,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            return result["count"] <= max_requests
+        except DuplicateKeyError:
+            if attempt == 0:
+                continue
             return False
-    return True
 
-def _record_rate_limit(key: str):
-    _rate_limits[key].append(time.time())
-
-def _cleanup_rate_limits():
-    now = time.time()
-    stale = [k for k, v in _rate_limits.items() if not v or now - max(v) > 900]
-    for k in stale:
-        del _rate_limits[k]
+async def _check_wa_rate_limits(phone_key: str, ip_key: str) -> Optional[str]:
+    for window_secs, max_count in _RATE_LIMITS_PHONE:
+        if not await _check_rate_limit_mongo(f"wa_phone_{window_secs}", phone_key, max_count, window_secs):
+            return "phone"
+    for window_secs, max_count in _RATE_LIMITS_IP:
+        if not await _check_rate_limit_mongo(f"wa_ip_{window_secs}", ip_key, max_count, window_secs):
+            return "ip"
+    return None
 
 
 async def _audit_wa_login(event: str, user_id: str = "", phone: str = "", extra: dict = None):
@@ -224,18 +248,12 @@ async def request_login(body: RequestLoginBody, request: Request):
 
     phone_e164 = phone_result["phone_e164"]
 
-    phone_key = f"rl:phone:{phone_e164}"
-    ip_key = f"rl:ip:{client_ip}"
+    phone_key = phone_e164
+    ip_key = client_ip
 
-    if not _check_rate_limit(phone_key, _RATE_LIMITS_PHONE):
+    blocked = await _check_wa_rate_limits(phone_key, ip_key)
+    if blocked:
         raise HTTPException(status_code=429, detail="נא לנסות שוב מאוחר יותר.")
-    if not _check_rate_limit(ip_key, _RATE_LIMITS_IP):
-        raise HTTPException(status_code=429, detail="נא לנסות שוב מאוחר יותר.")
-
-    _record_rate_limit(phone_key)
-    _record_rate_limit(ip_key)
-
-    _cleanup_rate_limits()
 
     link_result = await _create_magic_link_internal(phone=phone_e164)
 

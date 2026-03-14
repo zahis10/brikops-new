@@ -115,7 +115,16 @@ async def health_check():
     return {"status": "ok"}
 
 @app.get("/api/debug/db-ping")
-async def debug_db_ping():
+async def debug_db_ping(request: Request):
+    from contractor_ops.router import get_current_user
+    try:
+        user = await get_current_user(type('Creds', (), {'credentials': request.headers.get('authorization', '').replace('Bearer ', '')})())
+    except Exception:
+        from fastapi import HTTPException as _H
+        raise _H(status_code=401, detail='Authentication required')
+    if user.get('platform_role') != 'super_admin':
+        from fastapi import HTTPException as _H
+        raise _H(status_code=403, detail='Super admin access required')
     import socket
     results = {}
     for i in range(3):
@@ -824,10 +833,11 @@ if _allowed_hosts_raw and APP_MODE == 'prod':
         allowed_hosts=[h.strip() for h in _allowed_hosts_raw.split(',') if h.strip()],
     )
 
+_cors_default = 'https://app.brikops.com,https://www.brikops.com' if APP_MODE == 'prod' else '*'
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.environ.get('CORS_ORIGINS', _cors_default).split(','),
     allow_methods=['*'],
     allow_headers=['*'],
 )
