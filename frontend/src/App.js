@@ -344,10 +344,15 @@ function App() {
           <IdentityProvider>
             <BrowserRouter>
               <div className="App">
+                <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:right-2 focus:z-[9999] focus:bg-amber-500 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:text-sm focus:font-medium">
+                  דלג לתוכן הראשי
+                </a>
                 <PaywallConnector />
                 <TrialBanner />
                 <CompleteAccountBanner />
-                <AppRoutes />
+                <div id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
+                  <AppRoutes />
+                </div>
                 <PaywallModal />
                 <CompleteAccountModal />
                 <Toaster position="top-center" dir="rtl" />

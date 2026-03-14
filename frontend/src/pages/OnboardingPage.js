@@ -500,7 +500,7 @@ const OnboardingPage = () => {
                 placeholder={status?.has_account ? 'השאר ריק לשמירת סיסמה קיימת' : 'לפחות 8 תווים, אות + מספר'}
                 className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
               />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2">
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
                 {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
               </button>
             </div>
@@ -563,7 +563,7 @@ const OnboardingPage = () => {
               placeholder="לפחות 8 תווים, אות + מספר"
               className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
             />
-            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2">
+            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
               {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
             </button>
           </div>
@@ -665,7 +665,7 @@ const OnboardingPage = () => {
             className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
             autoFocus
           />
-          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2">
+          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
             {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
           </button>
         </div>
@@ -842,7 +842,7 @@ const OnboardingPage = () => {
               placeholder={status?.has_account ? 'השאר ריק לשמירת סיסמה קיימת' : 'לפחות 8 תווים, אות + מספר'}
               className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${passwordError ? 'border-red-400' : 'border-slate-300'}`}
             />
-            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2">
+            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
               {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
             </button>
           </div>

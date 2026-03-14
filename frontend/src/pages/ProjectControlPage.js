@@ -3176,7 +3176,7 @@ const ProjectControlPage = () => {
           <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
         </button>
       </div>
-      <button onClick={() => setShowFab(prev => !prev)} className={`fixed bottom-6 left-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
+      <button onClick={() => setShowFab(prev => !prev)} aria-label="תפריט פעולות" aria-expanded={showFab} className={`fixed bottom-6 left-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
         <Plus className="w-6 h-6 text-white" />
       </button>
 

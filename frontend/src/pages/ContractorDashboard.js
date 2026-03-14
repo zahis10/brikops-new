@@ -64,7 +64,7 @@ function ProgressRing({ percentage, size = 90, strokeWidth = 8 }) {
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (percentage / 100) * circumference;
   return (
-    <svg width={size} height={size} className="transform -rotate-90">
+    <svg width={size} height={size} className="transform -rotate-90" role="progressbar" aria-valuenow={Math.round(percentage)} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${Math.round(percentage)}%`}>
       <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
         stroke="#e2e8f0" strokeWidth={strokeWidth} />
       <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
@@ -381,8 +381,8 @@ const ContractorDashboard = () => {
             </div>
             <Card className="divide-y divide-slate-100">
               {completedTasks.map(task => (
-                <div key={task.id}
-                  className="flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-50 transition-colors touch-manipulation"
+                <button key={task.id}
+                  className="w-full flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-50 transition-colors touch-manipulation text-right"
                   onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: '/' } })}
                 >
                   <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
@@ -394,7 +394,7 @@ const ContractorDashboard = () => {
                     </p>
                   </div>
                   <ChevronLeft className="w-4 h-4 text-slate-300 flex-shrink-0" />
-                </div>
+                </button>
               ))}
             </Card>
           </div>

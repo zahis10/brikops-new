@@ -276,7 +276,7 @@ const LoginPage = () => {
         </div>
 
         <div className="flex gap-2 mb-6 p-1 bg-slate-100 rounded-lg" role="tablist">
-          <button type="button" role="tab" aria-selected={authMethod === 'phone'}
+          <button type="button" role="tab" id="tab-phone" aria-selected={authMethod === 'phone'} aria-controls="tabpanel-phone"
             className={`flex-1 py-2.5 rounded-md text-sm font-medium transition-all touch-manipulation flex items-center justify-center gap-1.5 ${
               authMethod === 'phone' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
@@ -285,7 +285,7 @@ const LoginPage = () => {
             <Phone className="w-4 h-4" />
             טלפון
           </button>
-          <button type="button" role="tab" aria-selected={authMethod === 'email'}
+          <button type="button" role="tab" id="tab-email" aria-selected={authMethod === 'email'} aria-controls="tabpanel-email"
             className={`flex-1 py-2.5 rounded-md text-sm font-medium transition-all touch-manipulation flex items-center justify-center gap-1.5 ${
               authMethod === 'email' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
@@ -297,6 +297,7 @@ const LoginPage = () => {
         </div>
 
         {authMethod === 'phone' && phoneStep === 'phone' && (
+          <div role="tabpanel" id="tabpanel-phone" aria-labelledby="tab-phone">
           <form onSubmit={handleRequestOtp} className="space-y-4" dir="rtl">
             <div className="space-y-2">
               <label htmlFor="phone" className="block text-sm font-medium text-slate-700">
@@ -335,9 +336,11 @@ const LoginPage = () => {
               </a>
             </div>
           </form>
+          </div>
         )}
 
         {authMethod === 'phone' && phoneStep === 'otp' && (
+          <div role="tabpanel" id="tabpanel-phone" aria-labelledby="tab-phone">
           <form onSubmit={handleVerifyOtp} className="space-y-4" dir="rtl">
             <button
               type="button"
@@ -389,9 +392,11 @@ const LoginPage = () => {
               שלח קוד חדש
             </button>
           </form>
+          </div>
         )}
 
         {authMethod === 'email' && (
+          <div role="tabpanel" id="tabpanel-email" aria-labelledby="tab-email">
           <form onSubmit={handleEmailLogin} className="space-y-4" dir="rtl">
             <div className="space-y-2">
               <label htmlFor="email" className="block text-sm font-medium text-slate-700">
@@ -422,7 +427,9 @@ const LoginPage = () => {
                   className={`w-full h-11 px-3 py-2 pl-10 text-right text-slate-900 bg-white border rounded-lg transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 ${errors.password ? 'border-red-500' : 'border-slate-300 hover:border-slate-400'}`}
                 />
                 <button type="button" onClick={() => setShowPassword(p => !p)}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation" tabIndex={-1}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation"
+                  aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                  aria-pressed={showPassword}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -451,6 +458,7 @@ const LoginPage = () => {
               ) : 'התחבר'}
             </Button>
           </form>
+          </div>
         )}
 
         {authMethod === 'phone' && phoneStep === 'phone' && (

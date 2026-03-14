@@ -29,7 +29,7 @@ const SummaryCard = ({ summary, floorVisual }) => {
         <h3 className="text-sm font-bold text-slate-700">סיכום קומה</h3>
         <span className={`text-lg font-bold ${floorVisual.pctColor}`}>{donePct}%</span>
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-2.5 mb-3">
+      <div className="w-full bg-slate-100 rounded-full h-2.5 mb-3" role="progressbar" aria-valuenow={donePct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות קומה ${donePct}%`}>
         <div className={`h-2.5 rounded-full transition-all ${floorVisual.barColor}`} style={{ width: `${donePct}%` }} />
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
@@ -106,7 +106,7 @@ const StageCard = ({ stage, onClick, isActive }) => {
           </span>
         )}
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-1.5">
+      <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות שלב ${pct}%`}>
         <div
           className={`h-1.5 rounded-full transition-all ${vs.barColor}`}
           style={{ width: `${pct}%` }}

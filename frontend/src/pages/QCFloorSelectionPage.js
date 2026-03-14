@@ -289,7 +289,7 @@ export default function QCFloorSelectionPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <svg width="36" height="36" viewBox="0 0 36 36">
+                    <svg width="36" height="36" viewBox="0 0 36 36" role="progressbar" aria-valuenow={stats.progressPct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${stats.progressPct}%`}>
                       <circle cx={cx} cy={cx} r={r} fill="none" stroke="#E2E8F0" strokeWidth={sw} />
                       <circle cx={cx} cy={cx} r={r} fill="none" stroke={stats.ringColor} strokeWidth={sw}
                         strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"

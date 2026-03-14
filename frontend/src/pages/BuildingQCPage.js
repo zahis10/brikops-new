@@ -386,7 +386,7 @@ export default function BuildingQCPage() {
                     </span>
                     {floorTotal > 0 && (
                       <div className="flex items-center gap-1.5 mt-1">
-                        <div className="flex-1 bg-slate-100 rounded-full h-1">
+                        <div className="flex-1 bg-slate-100 rounded-full h-1" role="progressbar" aria-valuenow={floorPct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות קומה ${floorPct}%`}>
                           <div className={`h-1 rounded-full transition-all ${floorPct === 100 ? 'bg-green-400' : floorPct > 50 ? 'bg-blue-400' : 'bg-amber-400'}`}
                             style={{ width: `${floorPct}%` }} />
                         </div>

@@ -148,7 +148,8 @@ const ResetPasswordPage = () => {
                       type="button"
                       onClick={() => setShowPassword(p => !p)}
                       className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation"
-                      tabIndex={-1}
+                      aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                      aria-pressed={showPassword}
                     >
                       {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
@@ -178,7 +179,8 @@ const ResetPasswordPage = () => {
                       type="button"
                       onClick={() => setShowConfirm(p => !p)}
                       className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation"
-                      tabIndex={-1}
+                      aria-label={showConfirm ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                      aria-pressed={showConfirm}
                     >
                       {showConfirm ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
