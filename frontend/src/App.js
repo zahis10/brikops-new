@@ -9,6 +9,7 @@ import TrialBanner from './components/TrialBanner';
 import CompleteAccountBanner from './components/CompleteAccountBanner';
 import CompleteAccountModal from './components/CompleteAccountModal';
 import PaywallModal from './components/PaywallModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import './App.css';
 import './index.css';
 
@@ -335,23 +336,25 @@ const AppRoutes = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <BillingProvider>
-        <IdentityProvider>
-          <BrowserRouter>
-            <div className="App">
-              <PaywallConnector />
-              <TrialBanner />
-              <CompleteAccountBanner />
-              <AppRoutes />
-              <PaywallModal />
-              <CompleteAccountModal />
-              <Toaster position="top-center" dir="rtl" />
-            </div>
-          </BrowserRouter>
-        </IdentityProvider>
-      </BillingProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <BillingProvider>
+          <IdentityProvider>
+            <BrowserRouter>
+              <div className="App">
+                <PaywallConnector />
+                <TrialBanner />
+                <CompleteAccountBanner />
+                <AppRoutes />
+                <PaywallModal />
+                <CompleteAccountModal />
+                <Toaster position="top-center" dir="rtl" />
+              </div>
+            </BrowserRouter>
+          </IdentityProvider>
+        </BillingProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

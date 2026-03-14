@@ -41,6 +41,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
     -   **Defects V2**: Parallel building-level and apartment-level defect views.
     -   **Defects Export**: Supports Excel and PDF exports with Hebrew RTL formatting.
+    -   **Observability**: Structured per-request logging with request ID correlation (X-Request-ID header), Hebrew error boundary for frontend crashes, `/health` (uptime) and `/ready` (DB connectivity with 503 on failure) endpoints.
 
 ### Deployment and Security
 -   **Workflow Configuration**: Single-process mode where backend serves pre-built static frontend.

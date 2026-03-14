@@ -18,6 +18,15 @@ axios.interceptors.response.use(
         _paywallCallback();
       }
     }
+    if (error.response) {
+      const requestId = error.response.headers?.['x-request-id'];
+      if (requestId) {
+        error.requestId = requestId;
+        console.error(
+          `[API Error] ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url} request_id=${requestId}`
+        );
+      }
+    }
     return Promise.reject(error);
   }
 );

@@ -54,6 +54,25 @@ app = FastAPI(
 
 import time as _time
 
+_server_start_time = _time.time()
+_SKIP_LOG_PATHS = {'/health', '/ready'}
+
+def _extract_user_id(request: Request) -> str:
+    try:
+        auth = request.headers.get('authorization', '')
+        if not auth.startswith('Bearer '):
+            return ''
+        import base64, json as _json
+        token = auth[7:]
+        parts = token.split('.')
+        if len(parts) != 3:
+            return ''
+        padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
+        payload = _json.loads(base64.urlsafe_b64decode(padded))
+        return payload.get('user_id', '')
+    except Exception:
+        return ''
+
 def _is_attach_upload(request: Request) -> bool:
     if request.method != 'POST':
         return False
@@ -98,21 +117,45 @@ async def timing_middleware(request: Request, call_next):
     response.headers["x-response-time-ms"] = str(elapsed_ms)
     response.headers["x-request-id"] = request_id
 
-    if is_attach:
-        logger.warning(
-            f"[ATTACH:RESPONSE] rid={request_id} path={request.url.path} "
-            f"status={response.status_code} elapsed={elapsed_ms}ms"
+    path = request.url.path
+    if path not in _SKIP_LOG_PATHS:
+        user_id = _extract_user_id(request)
+        log_line = (
+            f"[REQ] rid={request_id} {request.method} {path} "
+            f"status={response.status_code} duration={elapsed_ms}ms"
         )
-    elif elapsed_ms > 800:
-        logger.warning(
-            f"[SLOW] rid={request_id} {request.method} {request.url.path} "
-            f"status={response.status_code} time={elapsed_ms}ms"
-        )
+        if user_id:
+            log_line += f" user={user_id}"
+
+        if is_attach:
+            logger.warning(
+                f"[ATTACH:RESPONSE] rid={request_id} path={path} "
+                f"status={response.status_code} elapsed={elapsed_ms}ms"
+            )
+        elif elapsed_ms > 1000:
+            logger.warning(log_line)
+        else:
+            logger.info(log_line)
+
     return response
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "uptime_seconds": round(_time.time() - _server_start_time)}
+
+@app.get("/ready")
+async def readiness_check():
+    from starlette.responses import JSONResponse
+    try:
+        t0 = _time.perf_counter()
+        await db.command("ping")
+        latency = round((_time.perf_counter() - t0) * 1000, 1)
+        return {"status": "ok", "db_status": "connected", "db_latency_ms": latency}
+    except Exception:
+        return JSONResponse(
+            {"status": "error", "db_status": "disconnected"},
+            status_code=503,
+        )
 
 @app.get("/api/debug/db-ping")
 async def debug_db_ping(request: Request):
@@ -840,4 +883,5 @@ app.add_middleware(
     allow_origins=os.environ.get('CORS_ORIGINS', _cors_default).split(','),
     allow_methods=['*'],
     allow_headers=['*'],
+    expose_headers=['x-request-id', 'x-response-time-ms'],
 )
