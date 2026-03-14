@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import ReactDOM from 'react-dom';
 import { projectService, buildingService, floorService, companyService, userService, membershipService, inviteService, tradeService } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -11,6 +10,8 @@ import {
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { tRole, tSubRole } from '../i18n';
+import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
+import * as SheetPrimitive from '@radix-ui/react-dialog';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -31,44 +32,47 @@ const PROJECT_STATUSES = [
 ];
 
 const OptionsOverlay = ({ open, options, value, onChange, onClose, label, emptyMessage }) => {
-  if (!open) return null;
-  return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-end justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col"
-        dir="rtl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-          <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600">
-            <X className="w-5 h-5" />
-          </button>
-          <h3 className="text-sm font-semibold text-slate-700">{label}</h3>
-          <div className="w-6" />
-        </div>
-        <div className="overflow-y-auto flex-1 overscroll-contain">
-          {options.length === 0 ? (
-            <div className="px-4 py-8 text-sm text-slate-400 text-center">
-              {emptyMessage || 'אין אפשרויות'}
-            </div>
-          ) : (
-            options.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => { onChange(opt.value); onClose(); }}
-                className={`w-full px-4 py-3 text-sm text-right flex items-center justify-between border-b border-slate-100 last:border-0 active:bg-amber-50 ${opt.value === value ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-700'}`}
-              >
-                {opt.label}
-                {opt.value === value && <Check className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetPortal>
+        <SheetOverlay className="fixed inset-0 z-[9999] bg-black/40" />
+        <SheetPrimitive.Content
+          className="fixed inset-x-0 bottom-0 z-[9999] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col outline-none"
+          dir="rtl"
+        >
+          <SheetTitle className="sr-only">{label || 'בחר אפשרות'}</SheetTitle>
+          <SheetDescription className="sr-only">בחירת ערך מתוך רשימת אפשרויות</SheetDescription>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+            <SheetClose asChild>
+              <button type="button" className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
               </button>
-            ))
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body
+            </SheetClose>
+            <h3 className="text-sm font-semibold text-slate-700">{label}</h3>
+            <div className="w-6" />
+          </div>
+          <div className="overflow-y-auto flex-1 overscroll-contain">
+            {options.length === 0 ? (
+              <div className="px-4 py-8 text-sm text-slate-400 text-center">
+                {emptyMessage || 'אין אפשרויות'}
+              </div>
+            ) : (
+              options.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => { onChange(opt.value); onClose(); }}
+                  className={`w-full px-4 py-3 text-sm text-right flex items-center justify-between border-b border-slate-100 last:border-0 active:bg-amber-50 ${opt.value === value ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-700'}`}
+                >
+                  {opt.label}
+                  {opt.value === value && <Check className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+                </button>
+              ))
+            )}
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    </Sheet>
   );
 };
 
@@ -110,28 +114,31 @@ const SelectField = ({ label, value, onChange, options, error, icon: Icon, place
 };
 
 const BottomSheetModal = ({ isOpen, onClose, title, children }) => {
-  if (!isOpen) return null;
-  return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[9998] flex items-end justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/50" />
-      <div
-        className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[85vh] flex flex-col"
-        dir="rtl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-amber-500 text-white rounded-t-2xl">
-          <button type="button" onClick={onClose} className="p-1 hover:bg-amber-600 rounded-lg">
-            <X className="w-5 h-5" />
-          </button>
-          <h2 className="text-base font-bold">{title}</h2>
-          <div className="w-6" />
-        </div>
-        <div className="overflow-y-auto flex-1 p-4 space-y-4 overscroll-contain">
-          {children}
-        </div>
-      </div>
-    </div>,
-    document.body
+  return (
+    <Sheet open={isOpen} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetPortal>
+        <SheetOverlay className="fixed inset-0 z-[9998] bg-black/50" />
+        <SheetPrimitive.Content
+          className="fixed inset-x-0 bottom-0 z-[9998] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[85vh] flex flex-col outline-none"
+          dir="rtl"
+        >
+          <SheetTitle className="sr-only">{title}</SheetTitle>
+          <SheetDescription className="sr-only">טופס ניהול</SheetDescription>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-amber-500 text-white rounded-t-2xl">
+            <SheetClose asChild>
+              <button type="button" className="p-1 hover:bg-amber-600 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </SheetClose>
+            <h2 className="text-base font-bold">{title}</h2>
+            <div className="w-6" />
+          </div>
+          <div className="overflow-y-auto flex-1 p-4 space-y-4 overscroll-contain">
+            {children}
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    </Sheet>
   );
 };
 
@@ -246,18 +253,21 @@ export const ManagementFAB = ({ isManageMode, isOwner, isPM, onAction }) => {
       >
         <Plus className="w-6 h-6" />
       </button>
-      {open && ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[9998] flex items-end justify-center" onClick={() => setOpen(false)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <div
-            className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col"
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetPortal>
+          <SheetOverlay className="fixed inset-0 z-[9998] bg-black/40" />
+          <SheetPrimitive.Content
+            className="fixed inset-x-0 bottom-0 z-[9998] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col outline-none"
             dir="rtl"
-            onClick={e => e.stopPropagation()}
           >
+            <SheetTitle className="sr-only">פעולות ניהול</SheetTitle>
+            <SheetDescription className="sr-only">בחירת פעולת ניהול</SheetDescription>
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-amber-500 text-white rounded-t-2xl">
-              <button type="button" onClick={() => setOpen(false)} className="p-1 hover:bg-amber-600 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
+              <SheetClose asChild>
+                <button type="button" className="p-1 hover:bg-amber-600 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </SheetClose>
               <h3 className="text-sm font-bold">פעולות ניהול</h3>
               <div className="w-6" />
             </div>
@@ -274,10 +284,9 @@ export const ManagementFAB = ({ isManageMode, isOwner, isPM, onAction }) => {
                 </button>
               ))}
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </SheetPrimitive.Content>
+        </SheetPortal>
+      </Sheet>
     </>
   );
 };
@@ -306,18 +315,21 @@ export const ProjectCardMenu = ({ project, isOwner, isPM, canManage, onAction })
       >
         <MoreVertical className="w-4 h-4 text-slate-500" />
       </button>
-      {open && ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[9998] flex items-end justify-center" onClick={() => setOpen(false)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <div
-            className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col"
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetPortal>
+          <SheetOverlay className="fixed inset-0 z-[9998] bg-black/40" />
+          <SheetPrimitive.Content
+            className="fixed inset-x-0 bottom-0 z-[9998] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col outline-none"
             dir="rtl"
-            onClick={e => e.stopPropagation()}
           >
+            <SheetTitle className="sr-only">{project.name}</SheetTitle>
+            <SheetDescription className="sr-only">פעולות ניהול לפרויקט</SheetDescription>
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-amber-500 text-white rounded-t-2xl">
-              <button type="button" onClick={() => setOpen(false)} className="p-1 hover:bg-amber-600 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
+              <SheetClose asChild>
+                <button type="button" className="p-1 hover:bg-amber-600 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </SheetClose>
               <h3 className="text-sm font-bold">{project.name}</h3>
               <div className="w-6" />
             </div>
@@ -334,10 +346,9 @@ export const ProjectCardMenu = ({ project, isOwner, isPM, canManage, onAction })
                 </button>
               ))}
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </SheetPrimitive.Content>
+        </SheetPortal>
+      </Sheet>
     </>
   );
 };

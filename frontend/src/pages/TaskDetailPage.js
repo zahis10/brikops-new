@@ -13,6 +13,7 @@ import {
   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
   Copy, Smartphone
 } from 'lucide-react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 
@@ -1416,70 +1417,82 @@ const TaskDetailPage = () => {
         </div>
       </div>
 
-      {tradeMismatchModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setTradeMismatchModal(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" dir="rtl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
+      <DialogPrimitive.Root open={!!tradeMismatchModal} onOpenChange={(v) => { if (!v) setTradeMismatchModal(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
+          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
+            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+                <DialogPrimitive.Title className="text-lg font-bold text-slate-800">תחום לא תואם</DialogPrimitive.Title>
               </div>
-              <h3 className="text-lg font-bold text-slate-800">תחום לא תואם</h3>
+              <DialogPrimitive.Description className="sr-only">אזהרת אי התאמה בין תחום הליקוי לתחום הקבלן</DialogPrimitive.Description>
+              {tradeMismatchModal && (
+                <>
+                  <p className="text-sm text-slate-600 mb-2">
+                    תחום הליקוי הנוכחי: <span className="font-semibold text-slate-800">{tradeMismatchModal.taskCategoryLabel}</span>
+                  </p>
+                  <p className="text-sm text-slate-600 mb-4">
+                    תחום הקבלן ({tradeMismatchModal.contractorName}): <span className="font-semibold text-slate-800">{tradeMismatchModal.contractorTradeLabel}</span>
+                  </p>
+                  <p className="text-xs text-slate-500 mb-5 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                    לא ניתן לשייך קבלן שתחום ההתמחות שלו שונה מתחום הליקוי. ניתן לשנות את תחום הליקוי ולשייך, או לבטל.
+                  </p>
+                  <div className="flex gap-3">
+                    <DialogPrimitive.Close asChild>
+                      <button
+                        className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
+                      >
+                        בטל שיוך
+                      </button>
+                    </DialogPrimitive.Close>
+                    <button
+                      onClick={() => handleAssignContractor(tradeMismatchModal.contractorUserId, true)}
+                      disabled={savingField === 'assignee'}
+                      className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
+                    >
+                      {savingField === 'assignee' ? 'משייך...' : `שנה ל${tradeMismatchModal.contractorTradeLabel} + שייך`}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
-            <p className="text-sm text-slate-600 mb-2">
-              תחום הליקוי הנוכחי: <span className="font-semibold text-slate-800">{tradeMismatchModal.taskCategoryLabel}</span>
-            </p>
-            <p className="text-sm text-slate-600 mb-4">
-              תחום הקבלן ({tradeMismatchModal.contractorName}): <span className="font-semibold text-slate-800">{tradeMismatchModal.contractorTradeLabel}</span>
-            </p>
-            <p className="text-xs text-slate-500 mb-5 bg-amber-50 p-3 rounded-lg border border-amber-200">
-              לא ניתן לשייך קבלן שתחום ההתמחות שלו שונה מתחום הליקוי. ניתן לשנות את תחום הליקוי ולשייך, או לבטל.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setTradeMismatchModal(null)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
-              >
-                בטל שיוך
-              </button>
-              <button
-                onClick={() => handleAssignContractor(tradeMismatchModal.contractorUserId, true)}
-                disabled={savingField === 'assignee'}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
-              >
-                {savingField === 'assignee' ? 'משייך...' : `שנה ל${tradeMismatchModal.contractorTradeLabel} + שייך`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
-      {imageModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setImageModal(null)}
-        >
-          <div className="relative max-w-full max-h-full" onClick={e => e.stopPropagation()}>
-            <img src={imageModal} alt="" className="max-w-full max-h-[85vh] rounded-lg" />
-            <div className="absolute top-2 left-2 flex gap-2">
-              <button
-                onClick={() => setImageModal(null)}
-                className="bg-black/50 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-black/70"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <a
-                href={imageModal}
-                download
-                target="_blank"
-                rel="noopener noreferrer"
-                className="bg-black/50 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-black/70"
-              >
-                <Download className="w-5 h-5" />
-              </a>
+      <DialogPrimitive.Root open={!!imageModal} onOpenChange={(v) => { if (!v) setImageModal(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
+          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
+            <DialogPrimitive.Title className="sr-only">תצוגת תמונה</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="sr-only">תצוגה מוגדלת של תמונה מצורפת</DialogPrimitive.Description>
+            <div className="relative max-w-full max-h-full pointer-events-auto">
+              <img src={imageModal} alt="תמונה מצורפת לליקוי" className="max-w-full max-h-[85vh] rounded-lg" />
+              <div className="absolute top-2 left-2 flex gap-2">
+                <DialogPrimitive.Close asChild>
+                  <button
+                    className="bg-black/50 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-black/70"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </DialogPrimitive.Close>
+                <a
+                  href={imageModal}
+                  download
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-black/50 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-black/70"
+                >
+                  <Download className="w-5 h-5" />
+                </a>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
     </div>
   );

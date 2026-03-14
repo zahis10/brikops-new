@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
@@ -10,6 +9,9 @@ import {
 import { Button } from './ui/button';
 import { tCategory } from '../i18n';
 import { compressImage } from '../utils/imageCompress';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
+import * as SheetPrimitive from '@radix-ui/react-dialog';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -36,44 +38,47 @@ const PRIORITIES = [
 ];
 
 const OptionsOverlay = ({ open, options, value, onChange, onClose, label, emptyMessage }) => {
-  if (!open) return null;
-  return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-end justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col animate-in slide-in-from-bottom duration-200"
-        dir="rtl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-          <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600">
-            <X className="w-5 h-5" />
-          </button>
-          <h3 className="text-sm font-semibold text-slate-700">{label}</h3>
-          <div className="w-6" />
-        </div>
-        <div className="overflow-y-auto flex-1 overscroll-contain">
-          {options.length === 0 ? (
-            <div className="px-4 py-8 text-sm text-slate-400 text-center">
-              {emptyMessage || 'אין אפשרויות'}
-            </div>
-          ) : (
-            options.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => { onChange(opt.value); onClose(); }}
-                className={`w-full px-4 py-3 text-sm text-right flex items-center justify-between border-b border-slate-100 last:border-0 active:bg-amber-50 ${opt.value === value ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-700'}`}
-              >
-                {opt.label}
-                {opt.value === value && <Check className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetPortal>
+        <SheetOverlay className="fixed inset-0 z-[9999] bg-black/40" />
+        <SheetPrimitive.Content
+          className="fixed inset-x-0 bottom-0 z-[9999] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col outline-none animate-in slide-in-from-bottom duration-200"
+          dir="rtl"
+        >
+          <SheetTitle className="sr-only">{label || 'בחר אפשרות'}</SheetTitle>
+          <SheetDescription className="sr-only">בחירת ערך מתוך רשימת אפשרויות</SheetDescription>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+            <SheetClose asChild>
+              <button type="button" className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
               </button>
-            ))
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body
+            </SheetClose>
+            <h3 className="text-sm font-semibold text-slate-700">{label}</h3>
+            <div className="w-6" />
+          </div>
+          <div className="overflow-y-auto flex-1 overscroll-contain">
+            {options.length === 0 ? (
+              <div className="px-4 py-8 text-sm text-slate-400 text-center">
+                {emptyMessage || 'אין אפשרויות'}
+              </div>
+            ) : (
+              options.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => { onChange(opt.value); onClose(); }}
+                  className={`w-full px-4 py-3 text-sm text-right flex items-center justify-between border-b border-slate-100 last:border-0 active:bg-amber-50 ${opt.value === value ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-700'}`}
+                >
+                  {opt.label}
+                  {opt.value === value && <Check className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+                </button>
+              ))
+            )}
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    </Sheet>
   );
 };
 
@@ -628,12 +633,22 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 overflow-y-auto p-4">
+    <DialogPrimitive.Root open={true} onOpenChange={(open) => { if (!open) handleClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <DialogPrimitive.Content
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-8 overflow-hidden">
         <div className="bg-amber-500 text-white px-6 py-4 flex items-center justify-between">
-          <button onClick={handleClose} className="p-1 hover:bg-amber-600 rounded-lg transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+          <DialogPrimitive.Close asChild>
+            <button className="p-1 hover:bg-amber-600 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </DialogPrimitive.Close>
           <h2 className="text-lg font-bold">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</h2>
         </div>
 
@@ -936,7 +951,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           </Button>
         </div>
       </div>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 };
 

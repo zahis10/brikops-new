@@ -8,7 +8,8 @@ import {
   Loader2, ChevronLeft, ChevronRight, ChevronDown, X, Shield, Edit3, KeyRound, MoreVertical, Settings,
   Users, Mail, HardHat, UserX, Globe
 } from 'lucide-react';
-import ReactDOM from 'react-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from '../components/ui/sheet';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { tRole, tSubRole } from '../i18n';
@@ -444,15 +445,20 @@ const AdminUsersPage = () => {
         )}
       </div>
 
-      {(selectedUser || detailLoading) && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex justify-start">
-          <div className="bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl" dir="rtl">
+      <Sheet open={!!(selectedUser || detailLoading)} onOpenChange={(v) => { if (!v) setSelectedUser(null); }}>
+        <SheetPortal>
+          <SheetOverlay className="fixed inset-0 bg-black/40 z-50" />
+          <DialogPrimitive.Content className="fixed inset-y-0 right-0 z-50 bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl outline-none" dir="rtl">
+            <SheetTitle className="sr-only">פרטי משתמש</SheetTitle>
+            <SheetDescription className="sr-only">צפייה ועריכת פרטי משתמש</SheetDescription>
             <div className="sticky top-0 z-10" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
               <div className="px-4 py-3 flex items-center justify-between text-white">
                 <h2 className="font-bold text-sm">פרטי משתמש</h2>
-                <button onClick={() => setSelectedUser(null)} className="text-white/60 hover:text-white">
-                  <X className="w-5 h-5" />
-                </button>
+                <SheetClose asChild>
+                  <button className="text-white/60 hover:text-white">
+                    <X className="w-5 h-5" />
+                  </button>
+                </SheetClose>
               </div>
             </div>
             {detailLoading ? (
@@ -650,184 +656,218 @@ const AdminUsersPage = () => {
                 </Card>
               </div>
             )}
-          </div>
-          <div className="flex-1" onClick={() => setSelectedUser(null)} />
-        </div>
-      )}
+          </DialogPrimitive.Content>
+        </SheetPortal>
+      </Sheet>
 
-      {roleEdit && ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={() => setRoleEdit(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" dir="rtl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-800">שינוי תפקיד בפרויקט</h3>
-              <button onClick={() => setRoleEdit(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="text-sm text-slate-600 mb-4">
-              פרויקט: <span className="font-medium">{roleEdit.projectName}</span>
-              <br />
-              תפקיד נוכחי: <span className="font-medium">{tRole(roleEdit.currentRole)}</span>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-slate-700">תפקיד חדש *</label>
-                <select
-                  value={(roleEdit.isOrgOwner || ['org_admin', 'billing_admin'].includes(roleEdit.orgRole)) && roleEdit.newRole === 'contractor' ? roleEdit.currentRole : roleEdit.newRole}
-                  onChange={(e) => setRoleEdit({ ...roleEdit, newRole: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
-                >
-                  <option value="project_manager">{tRole('project_manager')}</option>
-                  <option value="management_team">{tRole('management_team')}</option>
-                  <option value="contractor" disabled={roleEdit.isOrgOwner || ['org_admin', 'billing_admin'].includes(roleEdit.orgRole)}>{tRole('contractor')}{(roleEdit.isOrgOwner || ['org_admin', 'billing_admin'].includes(roleEdit.orgRole)) ? ' (תפקיד ניהולי — לא זמין)' : ''}</option>
-                  <option value="viewer">{tRole('viewer')}</option>
-                </select>
+      <DialogPrimitive.Root open={!!roleEdit} onOpenChange={(v) => { if (!v) setRoleEdit(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <DialogPrimitive.Content className="fixed inset-0 z-[9999] flex items-center justify-center p-4 outline-none pointer-events-none">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <div className="flex justify-between items-center mb-4">
+                <DialogPrimitive.Title className="font-bold text-slate-800">שינוי תפקיד בפרויקט</DialogPrimitive.Title>
+                <DialogPrimitive.Close asChild>
+                  <button className="text-slate-400 hover:text-slate-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </DialogPrimitive.Close>
               </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700">סיבה (חובה) *</label>
-                <textarea
-                  value={roleNote}
-                  onChange={(e) => setRoleNote(e.target.value)}
-                  placeholder="למשל: שדרוג לאחר הכשרה, סיום עבודה..."
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
-                  rows={2}
-                />
-              </div>
-              <Button
-                onClick={handleRoleChange}
-                disabled={roleSubmitting || roleEdit.newRole === roleEdit.currentRole || !roleNote.trim()}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white"
-              >
-                {roleSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור שינוי'}
-              </Button>
+              <DialogPrimitive.Description className="sr-only">שינוי תפקיד משתמש בפרויקט</DialogPrimitive.Description>
+              {roleEdit && (
+                <>
+                  <div className="text-sm text-slate-600 mb-4">
+                    פרויקט: <span className="font-medium">{roleEdit.projectName}</span>
+                    <br />
+                    תפקיד נוכחי: <span className="font-medium">{tRole(roleEdit.currentRole)}</span>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">תפקיד חדש *</label>
+                      <select
+                        value={(roleEdit.isOrgOwner || ['org_admin', 'billing_admin'].includes(roleEdit.orgRole)) && roleEdit.newRole === 'contractor' ? roleEdit.currentRole : roleEdit.newRole}
+                        onChange={(e) => setRoleEdit({ ...roleEdit, newRole: e.target.value })}
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                      >
+                        <option value="project_manager">{tRole('project_manager')}</option>
+                        <option value="management_team">{tRole('management_team')}</option>
+                        <option value="contractor" disabled={roleEdit.isOrgOwner || ['org_admin', 'billing_admin'].includes(roleEdit.orgRole)}>{tRole('contractor')}{(roleEdit.isOrgOwner || ['org_admin', 'billing_admin'].includes(roleEdit.orgRole)) ? ' (תפקיד ניהולי — לא זמין)' : ''}</option>
+                        <option value="viewer">{tRole('viewer')}</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">סיבה (חובה) *</label>
+                      <textarea
+                        value={roleNote}
+                        onChange={(e) => setRoleNote(e.target.value)}
+                        placeholder="למשל: שדרוג לאחר הכשרה, סיום עבודה..."
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                        rows={2}
+                      />
+                    </div>
+                    <Button
+                      onClick={handleRoleChange}
+                      disabled={roleSubmitting || roleEdit.newRole === roleEdit.currentRole || !roleNote.trim()}
+                      className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                    >
+                      {roleSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור שינוי'}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
-      {phoneModal && ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={() => setPhoneModal(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" dir="rtl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-800">החלפת מספר טלפון</h3>
-              <button onClick={() => setPhoneModal(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="text-sm text-slate-600 mb-4">
-              משתמש: <span className="font-medium">{phoneModal.name}</span>
-              <br />
-              מספר נוכחי: <bdi className="font-mono" dir="ltr">{phoneModal.phone_e164 || '-'}</bdi>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-slate-700">מספר חדש *</label>
-                <input
-                  type="tel"
-                  value={newPhone}
-                  onChange={(e) => setNewPhone(e.target.value)}
-                  placeholder="050-1234567"
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
-                  dir="ltr"
-                />
+      <DialogPrimitive.Root open={!!phoneModal} onOpenChange={(v) => { if (!v) setPhoneModal(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <DialogPrimitive.Content className="fixed inset-0 z-[9999] flex items-center justify-center p-4 outline-none pointer-events-none">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <div className="flex justify-between items-center mb-4">
+                <DialogPrimitive.Title className="font-bold text-slate-800">החלפת מספר טלפון</DialogPrimitive.Title>
+                <DialogPrimitive.Close asChild>
+                  <button className="text-slate-400 hover:text-slate-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </DialogPrimitive.Close>
               </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700">סיבה / הערה *</label>
-                <textarea
-                  value={phoneNote}
-                  onChange={(e) => setPhoneNote(e.target.value)}
-                  placeholder="למשל: המשתמש החליף מספר, שחזור גישה..."
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
-                  rows={2}
-                />
-              </div>
-              <Button
-                onClick={handlePhoneChange}
-                disabled={phoneSubmitting || !newPhone.trim() || !phoneNote.trim()}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white"
-              >
-                {phoneSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'עדכן מספר'}
-              </Button>
+              <DialogPrimitive.Description className="sr-only">עדכון מספר טלפון של משתמש</DialogPrimitive.Description>
+              {phoneModal && (
+                <>
+                  <div className="text-sm text-slate-600 mb-4">
+                    משתמש: <span className="font-medium">{phoneModal.name}</span>
+                    <br />
+                    מספר נוכחי: <bdi className="font-mono" dir="ltr">{phoneModal.phone_e164 || '-'}</bdi>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">מספר חדש *</label>
+                      <input
+                        type="tel"
+                        value={newPhone}
+                        onChange={(e) => setNewPhone(e.target.value)}
+                        placeholder="050-1234567"
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                        dir="ltr"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">סיבה / הערה *</label>
+                      <textarea
+                        value={phoneNote}
+                        onChange={(e) => setPhoneNote(e.target.value)}
+                        placeholder="למשל: המשתמש החליף מספר, שחזור גישה..."
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                        rows={2}
+                      />
+                    </div>
+                    <Button
+                      onClick={handlePhoneChange}
+                      disabled={phoneSubmitting || !newPhone.trim() || !phoneNote.trim()}
+                      className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                    >
+                      {phoneSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'עדכן מספר'}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
-      {passwordModal && ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={() => setPasswordModal(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" dir="rtl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-800">איפוס סיסמה</h3>
-              <button onClick={() => setPasswordModal(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="text-sm text-slate-600 mb-4">
-              משתמש: <span className="font-medium">{passwordModal.name}</span>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-slate-700">סיסמה חדשה *</label>
-                <input
-                  type="text"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="לפחות 8 תווים"
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
-                  dir="ltr"
-                />
+      <DialogPrimitive.Root open={!!passwordModal} onOpenChange={(v) => { if (!v) setPasswordModal(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <DialogPrimitive.Content className="fixed inset-0 z-[9999] flex items-center justify-center p-4 outline-none pointer-events-none">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <div className="flex justify-between items-center mb-4">
+                <DialogPrimitive.Title className="font-bold text-slate-800">איפוס סיסמה</DialogPrimitive.Title>
+                <DialogPrimitive.Close asChild>
+                  <button className="text-slate-400 hover:text-slate-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </DialogPrimitive.Close>
               </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700">סיבה / הערה *</label>
-                <textarea
-                  value={passwordNote}
-                  onChange={(e) => setPasswordNote(e.target.value)}
-                  placeholder="למשל: שכח סיסמה, גישה חירום..."
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
-                  rows={2}
-                />
-              </div>
-              <Button
-                onClick={handleResetPassword}
-                disabled={passwordSubmitting || !newPassword.trim() || !passwordNote.trim()}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white"
-              >
-                {passwordSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'איפוס סיסמה'}
-              </Button>
+              <DialogPrimitive.Description className="sr-only">איפוס סיסמת משתמש</DialogPrimitive.Description>
+              {passwordModal && (
+                <>
+                  <div className="text-sm text-slate-600 mb-4">
+                    משתמש: <span className="font-medium">{passwordModal.name}</span>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">סיסמה חדשה *</label>
+                      <input
+                        type="text"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="לפחות 8 תווים"
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                        dir="ltr"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">סיבה / הערה *</label>
+                      <textarea
+                        value={passwordNote}
+                        onChange={(e) => setPasswordNote(e.target.value)}
+                        placeholder="למשל: שכח סיסמה, גישה חירום..."
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                        rows={2}
+                      />
+                    </div>
+                    <Button
+                      onClick={handleResetPassword}
+                      disabled={passwordSubmitting || !newPassword.trim() || !passwordNote.trim()}
+                      className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                    >
+                      {passwordSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'איפוס סיסמה'}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
-      {stepup && ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" dir="rtl">
-            <h3 className="font-bold text-slate-800 mb-2">אימות Step-Up נדרש</h3>
-            <p className="text-sm text-slate-600 mb-4">קוד נשלח ל-{stepup.maskedEmail}</p>
-            <input
-              type="text"
-              value={stepupCode}
-              onChange={(e) => setStepupCode(e.target.value)}
-              placeholder="הכנס קוד 6 ספרות"
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500 mb-3"
-              dir="ltr"
-              autoFocus
-            />
-            <div className="flex gap-2">
-              <Button onClick={handleStepupVerify} disabled={stepupLoading || !stepupCode.trim()} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
-                {stepupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אמת'}
-              </Button>
-              <Button variant="outline" onClick={() => { setStepup(null); setStepupCode(''); }} className="flex-1">
-                ביטול
-              </Button>
+      <DialogPrimitive.Root open={!!stepup} onOpenChange={(v) => { if (!v) { setStepup(null); setStepupCode(''); } }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <DialogPrimitive.Content
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4 outline-none pointer-events-none"
+            onEscapeKeyDown={(e) => e.preventDefault()}
+            onPointerDownOutside={(e) => e.preventDefault()}
+          >
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <DialogPrimitive.Title className="font-bold text-slate-800 mb-2">אימות Step-Up נדרש</DialogPrimitive.Title>
+              <DialogPrimitive.Description className="text-sm text-slate-600 mb-4">
+                {stepup ? `קוד נשלח ל-${stepup.maskedEmail}` : ''}
+              </DialogPrimitive.Description>
+              <input
+                type="text"
+                value={stepupCode}
+                onChange={(e) => setStepupCode(e.target.value)}
+                placeholder="הכנס קוד 6 ספרות"
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500 mb-3"
+                dir="ltr"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <Button onClick={handleStepupVerify} disabled={stepupLoading || !stepupCode.trim()} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
+                  {stepupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אמת'}
+                </Button>
+                <Button variant="outline" onClick={() => { setStepup(null); setStepupCode(''); }} className="flex-1">
+                  ביטול
+                </Button>
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
       <UserDrawer
         open={!!drawerMember}

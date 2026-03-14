@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import ReactDOM from 'react-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
+import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from '../components/ui/sheet';
+import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -76,53 +79,63 @@ const SECONDARY_TABS = [
 const BILLING_TAB = { id: 'billing', label: 'חיוב', icon: '💳' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
-  if (!open) return null;
-  return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[9998] flex items-end sm:items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
-        dir="rtl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between p-4 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800">{title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
-        </div>
-        <div className="p-4 overflow-y-auto flex-1 space-y-4">
-          {children}
-        </div>
-      </div>
-    </div>,
-    document.body
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetPortal>
+        <SheetOverlay className="fixed inset-0 z-[9998] bg-black/40" />
+        <SheetPrimitive.Content
+          className="fixed inset-x-0 bottom-0 sm:inset-0 z-[9998] sm:flex sm:items-center sm:justify-center w-full max-w-lg mx-auto bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col outline-none"
+          dir="rtl"
+        >
+          <SheetTitle className="sr-only">{title}</SheetTitle>
+          <SheetDescription className="sr-only">טופס ניהול</SheetDescription>
+          <div className="flex items-center justify-between p-4 border-b border-slate-200">
+            <h3 className="text-lg font-bold text-slate-800">{title}</h3>
+            <SheetClose asChild>
+              <button className="p-1 hover:bg-slate-100 rounded-full">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </SheetClose>
+          </div>
+          <div className="p-4 overflow-y-auto flex-1 space-y-4">
+            {children}
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    </Sheet>
   );
 };
 
 const OptionsOverlay = ({ open, options, value, onChange, onClose, label, emptyMessage }) => {
-  if (!open) return null;
-  return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-end justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-          <span className="font-bold text-slate-800">{label || 'בחר'}</span>
-          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="overflow-y-auto flex-1 p-2">
-          {options.length === 0 ? (
-            <p className="text-center text-slate-400 py-6">{emptyMessage || 'אין אפשרויות'}</p>
-          ) : options.map(opt => (
-            <button key={opt.value} onClick={() => { onChange(opt.value); onClose(); }}
-              className={`w-full text-right p-3 rounded-lg mb-1 transition-colors ${value === opt.value ? 'bg-amber-100 text-amber-800 font-bold' : 'hover:bg-slate-100 text-slate-700'}`}>
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>,
-    document.body
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetPortal>
+        <SheetOverlay className="fixed inset-0 z-[9999] bg-black/40" />
+        <SheetPrimitive.Content
+          className="fixed inset-x-0 bottom-0 z-[9999] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col outline-none"
+          dir="rtl"
+        >
+          <SheetTitle className="sr-only">{label || 'בחר'}</SheetTitle>
+          <SheetDescription className="sr-only">בחירת ערך מתוך רשימת אפשרויות</SheetDescription>
+          <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+            <span className="font-bold text-slate-800">{label || 'בחר'}</span>
+            <SheetClose asChild>
+              <button className="p-1 hover:bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
+            </SheetClose>
+          </div>
+          <div className="overflow-y-auto flex-1 p-2">
+            {options.length === 0 ? (
+              <p className="text-center text-slate-400 py-6">{emptyMessage || 'אין אפשרויות'}</p>
+            ) : options.map(opt => (
+              <button key={opt.value} onClick={() => { onChange(opt.value); onClose(); }}
+                className={`w-full text-right p-3 rounded-lg mb-1 transition-colors ${value === opt.value ? 'bg-amber-100 text-amber-800 font-bold' : 'hover:bg-slate-100 text-slate-700'}`}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    </Sheet>
   );
 };
 
@@ -1970,74 +1983,92 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
           </Button>
         </div>
       )}
-      {hardDeleteTarget && ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={() => setHardDeleteTarget(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" dir="rtl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-red-700">מחיקה לצמיתות</h3>
-              <button onClick={() => setHardDeleteTarget(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
+      <AlertDialogPrimitive.Root open={!!hardDeleteTarget} onOpenChange={(v) => { if (!v) setHardDeleteTarget(null); }}>
+        <AlertDialogPrimitive.Portal>
+          <AlertDialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <AlertDialogPrimitive.Content className="fixed inset-0 z-[9999] flex items-center justify-center p-4 outline-none pointer-events-none">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <div className="flex justify-between items-center mb-4">
+                <AlertDialogPrimitive.Title className="font-bold text-red-700">מחיקה לצמיתות</AlertDialogPrimitive.Title>
+                <AlertDialogPrimitive.Cancel asChild>
+                  <button className="text-slate-400 hover:text-slate-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </AlertDialogPrimitive.Cancel>
+              </div>
+              <AlertDialogPrimitive.Description className="text-sm text-red-600 mb-3">פעולה זו בלתי הפיכה. כל הנתונים ימחקו לצמיתות.</AlertDialogPrimitive.Description>
+              {hardDeleteTarget && (
+                <>
+                  <p className="text-sm text-slate-700 mb-4">פריט: <span className="font-bold">{hardDeleteTarget.name}</span></p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">הקלד "{hardDeleteTarget.name}" לאישור</label>
+                      <input
+                        type="text"
+                        value={hardDeleteConfirmation}
+                        onChange={e => setHardDeleteConfirmation(e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        placeholder={hardDeleteTarget.name}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <AlertDialogPrimitive.Cancel asChild>
+                        <Button variant="outline" className="flex-1">ביטול</Button>
+                      </AlertDialogPrimitive.Cancel>
+                      <AlertDialogPrimitive.Action asChild>
+                        <Button
+                          onClick={confirmHardDelete}
+                          disabled={hardDeleteLoading || hardDeleteConfirmation.trim() !== hardDeleteTarget.name.trim()}
+                          className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                        >
+                          {hardDeleteLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'מחק לצמיתות'}
+                        </Button>
+                      </AlertDialogPrimitive.Action>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-            <p className="text-sm text-red-600 mb-3">פעולה זו בלתי הפיכה. כל הנתונים ימחקו לצמיתות.</p>
-            <p className="text-sm text-slate-700 mb-4">פריט: <span className="font-bold">{hardDeleteTarget.name}</span></p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-slate-700">הקלד "{hardDeleteTarget.name}" לאישור</label>
+          </AlertDialogPrimitive.Content>
+        </AlertDialogPrimitive.Portal>
+      </AlertDialogPrimitive.Root>
+      <DialogPrimitive.Root open={!!stepup} onOpenChange={(v) => { if (!v) setStepup(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <DialogPrimitive.Content className="fixed inset-0 z-[9999] flex items-center justify-center p-4 outline-none pointer-events-none">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+              <div className="flex justify-between items-center mb-4">
+                <DialogPrimitive.Title className="font-bold text-slate-800">אימות נדרש</DialogPrimitive.Title>
+                <DialogPrimitive.Close asChild>
+                  <button className="text-slate-400 hover:text-slate-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </DialogPrimitive.Close>
+              </div>
+              <DialogPrimitive.Description className="text-sm text-slate-600 mb-4">
+                {stepup ? `קוד נשלח ל-${stepup.maskedEmail}` : ''}
+              </DialogPrimitive.Description>
+              <div className="space-y-3">
                 <input
                   type="text"
-                  value={hardDeleteConfirmation}
-                  onChange={e => setHardDeleteConfirmation(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  placeholder={hardDeleteTarget.name}
+                  value={stepupCode}
+                  onChange={e => setStepupCode(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-center tracking-widest"
+                  placeholder="קוד אימות"
+                  onKeyDown={e => e.key === 'Enter' && handleStepupVerify()}
                 />
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => setHardDeleteTarget(null)} variant="outline" className="flex-1">ביטול</Button>
                 <Button
-                  onClick={confirmHardDelete}
-                  disabled={hardDeleteLoading || hardDeleteConfirmation.trim() !== hardDeleteTarget.name.trim()}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                  onClick={handleStepupVerify}
+                  disabled={stepupLoading || !stepupCode.trim()}
+                  className="w-full bg-amber-500 hover:bg-amber-600 text-white"
                 >
-                  {hardDeleteLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'מחק לצמיתות'}
+                  {stepupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אמת'}
                 </Button>
               </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
-      {stepup && ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={() => setStepup(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" dir="rtl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-800">אימות נדרש</h3>
-              <button onClick={() => setStepup(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <p className="text-sm text-slate-600 mb-4">קוד נשלח ל-{stepup.maskedEmail}</p>
-            <div className="space-y-3">
-              <input
-                type="text"
-                value={stepupCode}
-                onChange={e => setStepupCode(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-center tracking-widest"
-                placeholder="קוד אימות"
-                onKeyDown={e => e.key === 'Enter' && handleStepupVerify()}
-              />
-              <Button
-                onClick={handleStepupVerify}
-                disabled={stepupLoading || !stepupCode.trim()}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white"
-              >
-                {stepupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אמת'}
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
       {hierarchy.map(building => {
         const isExpanded = expandedBuildings[building.id];
         const floors = building.floors || [];

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import PhoneChangeModal from '../components/PhoneChangeModal';
 import { tRole, tTrade } from '../i18n';
+import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 
 const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error }) => (
   <div className="space-y-1">
@@ -354,42 +355,48 @@ const AccountSettingsPage = () => {
           )}
         </div>
 
-        {showWaConfirm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowWaConfirm(false)}>
-            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 mx-4 max-w-sm w-full" dir="rtl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-lg font-semibold text-slate-900 mb-3">כיבוי הודעות WhatsApp</h3>
-              <p className="text-sm text-slate-600 mb-5">
-                לא תקבל עדכונים על ליקויים חדשים או שינויים. ניתן להפעיל מחדש בכל עת.
-              </p>
-              <div className="flex gap-3">
-                <Button
-                  onClick={async () => {
-                    setShowWaConfirm(false);
-                    setWaNotifSaving(true);
-                    try {
-                      await authService.updateWhatsAppNotifications(false);
-                      setWaNotifEnabled(false);
-                      toast.success('הודעות WhatsApp כובו');
-                    } catch (err) {
-                      toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
-                    } finally {
-                      setWaNotifSaving(false);
-                    }
-                  }}
-                  className="flex-1 h-10 bg-red-500 hover:bg-red-600 text-white font-medium"
-                >
-                  כבה הודעות
-                </Button>
-                <Button
-                  onClick={() => setShowWaConfirm(false)}
-                  className="flex-1 h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
-                >
-                  ביטול
-                </Button>
+        <AlertDialogPrimitive.Root open={showWaConfirm} onOpenChange={setShowWaConfirm}>
+          <AlertDialogPrimitive.Portal>
+            <AlertDialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
+            <AlertDialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center outline-none pointer-events-none">
+              <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 mx-4 max-w-sm w-full pointer-events-auto" dir="rtl">
+                <AlertDialogPrimitive.Title className="text-lg font-semibold text-slate-900 mb-3">כיבוי הודעות WhatsApp</AlertDialogPrimitive.Title>
+                <AlertDialogPrimitive.Description className="text-sm text-slate-600 mb-5">
+                  לא תקבל עדכונים על ליקויים חדשים או שינויים. ניתן להפעיל מחדש בכל עת.
+                </AlertDialogPrimitive.Description>
+                <div className="flex gap-3">
+                  <AlertDialogPrimitive.Action asChild>
+                    <Button
+                      onClick={async () => {
+                        setShowWaConfirm(false);
+                        setWaNotifSaving(true);
+                        try {
+                          await authService.updateWhatsAppNotifications(false);
+                          setWaNotifEnabled(false);
+                          toast.success('הודעות WhatsApp כובו');
+                        } catch (err) {
+                          toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+                        } finally {
+                          setWaNotifSaving(false);
+                        }
+                      }}
+                      className="flex-1 h-10 bg-red-500 hover:bg-red-600 text-white font-medium"
+                    >
+                      כבה הודעות
+                    </Button>
+                  </AlertDialogPrimitive.Action>
+                  <AlertDialogPrimitive.Cancel asChild>
+                    <Button
+                      className="flex-1 h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                    >
+                      ביטול
+                    </Button>
+                  </AlertDialogPrimitive.Cancel>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            </AlertDialogPrimitive.Content>
+          </AlertDialogPrimitive.Portal>
+        </AlertDialogPrimitive.Root>
 
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">

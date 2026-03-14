@@ -6,6 +6,7 @@ import { ShieldAlert, CreditCard, MessageCircle, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
 import { buildOrgBillingUrl } from '../utils/billingHub';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/forgot-password', '/reset-password'];
 
@@ -83,95 +84,110 @@ const PaywallModal = () => {
 
   if (!canAccessBilling) {
     return (
-      <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 relative" dir="rtl">
-          <button
-            onClick={() => setShowPaywall(false)}
-            className="absolute top-4 left-4 text-slate-400 hover:text-slate-600"
+      <DialogPrimitive.Root open={true} onOpenChange={(open) => { if (!open) setShowPaywall(false); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+          <DialogPrimitive.Content
+            className="fixed left-[50%] top-[50%] -translate-x-1/2 -translate-y-1/2 z-[9999] bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 outline-none"
+            dir="rtl"
           >
-            <X className="w-5 h-5" />
-          </button>
-          <div className="flex flex-col items-center text-center">
-            <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
-              <ShieldAlert className="w-8 h-8 text-slate-500" />
+            <DialogPrimitive.Title className="sr-only">הגישה מוגבלת</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="sr-only">נדרשת הפעלת מנוי על ידי בעלי הארגון</DialogPrimitive.Description>
+            <DialogPrimitive.Close asChild>
+              <button
+                className="absolute top-4 left-4 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </DialogPrimitive.Close>
+            <div className="flex flex-col items-center text-center">
+              <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+                <ShieldAlert className="w-8 h-8 text-slate-500" />
+              </div>
+              <h2 className="text-xl font-bold text-slate-800 mb-2">הגישה מוגבלת</h2>
+              <p className="text-slate-600 mb-6 text-sm leading-relaxed">
+                כדי להמשיך בעבודה מלאה, פנה לבעלי הארגון להפעלת המנוי.
+              </p>
+              <Button variant="outline" onClick={() => setShowPaywall(false)} className="w-full">
+                חזרה
+              </Button>
             </div>
-            <h2 className="text-xl font-bold text-slate-800 mb-2">הגישה מוגבלת</h2>
-            <p className="text-slate-600 mb-6 text-sm leading-relaxed">
-              כדי להמשיך בעבודה מלאה, פנה לבעלי הארגון להפעלת המנוי.
-            </p>
-            <Button variant="outline" onClick={() => setShowPaywall(false)} className="w-full">
-              חזרה
-            </Button>
-          </div>
-        </div>
-      </div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4">
-      <div
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 relative"
-        dir="rtl"
-      >
-        <button
-          onClick={() => setShowPaywall(false)}
-          className="absolute top-4 left-4 text-slate-400 hover:text-slate-600"
+    <DialogPrimitive.Root open={true} onOpenChange={(open) => { if (!open) setShowPaywall(false); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 bg-black/60 z-[9999]" />
+        <DialogPrimitive.Content
+          className="fixed left-[50%] top-[50%] -translate-x-1/2 -translate-y-1/2 z-[9999] bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 outline-none"
+          dir="rtl"
         >
-          <X className="w-5 h-5" />
-        </button>
-
-        <div className="flex flex-col items-center text-center">
-          <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${isTrialActive ? 'bg-amber-100' : 'bg-red-100'}`}>
-            <ShieldAlert className={`w-8 h-8 ${isTrialActive ? 'text-amber-600' : 'text-red-600'}`} />
-          </div>
-
-          <h2 className="text-xl font-bold text-slate-800 mb-2">
-            {isTrialActive ? 'שדרוג חשבון' : (reason === 'payment_expired' ? 'חידוש מנוי' : 'נדרש שדרוג')}
-          </h2>
-
-          <p className="text-slate-600 mb-6 text-sm leading-relaxed">
-            {isTrialActive ? (
-              <>
-                נשארו לך <strong>{daysLeft} ימים</strong> בתקופת הניסיון.
-                <br />
-                שדרג עכשיו כדי להבטיח גישה רציפה לכל היכולות.
-              </>
-            ) : getReasonDescription(reason)}
-          </p>
-
-          <div className="flex flex-col gap-3 w-full">
-            {orgId && (
-              <Button
-                onClick={handleGoToBilling}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white flex items-center justify-center gap-2"
-              >
-                <CreditCard className="w-4 h-4" />
-                מעבר לדף החיוב
-              </Button>
-            )}
-
+          <DialogPrimitive.Title className="sr-only">{isTrialActive ? 'שדרוג חשבון' : 'נדרש שדרוג'}</DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">מידע על מצב המנוי ואפשרויות שדרוג</DialogPrimitive.Description>
+          <DialogPrimitive.Close asChild>
             <button
-              onClick={() => {
-                window.open('https://wa.me/972500000001?text=שלום, אני מעוניין לשדרג את חשבון BrikOps', '_blank');
-              }}
-              className="text-xs text-slate-500 hover:text-green-600 flex items-center justify-center gap-1"
+              className="absolute top-4 left-4 text-slate-400 hover:text-slate-600"
             >
-              <MessageCircle className="w-3 h-3" />
-              צריך עזרה? דבר איתנו בוואטסאפ
+              <X className="w-5 h-5" />
             </button>
+          </DialogPrimitive.Close>
 
-            <Button
-              variant="outline"
-              onClick={() => setShowPaywall(false)}
-              className="w-full"
-            >
-              {isTrialActive ? 'אולי אחר כך' : 'חזרה לצפייה'}
-            </Button>
+          <div className="flex flex-col items-center text-center">
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${isTrialActive ? 'bg-amber-100' : 'bg-red-100'}`}>
+              <ShieldAlert className={`w-8 h-8 ${isTrialActive ? 'text-amber-600' : 'text-red-600'}`} />
+            </div>
+
+            <h2 className="text-xl font-bold text-slate-800 mb-2">
+              {isTrialActive ? 'שדרוג חשבון' : (reason === 'payment_expired' ? 'חידוש מנוי' : 'נדרש שדרוג')}
+            </h2>
+
+            <p className="text-slate-600 mb-6 text-sm leading-relaxed">
+              {isTrialActive ? (
+                <>
+                  נשארו לך <strong>{daysLeft} ימים</strong> בתקופת הניסיון.
+                  <br />
+                  שדרג עכשיו כדי להבטיח גישה רציפה לכל היכולות.
+                </>
+              ) : getReasonDescription(reason)}
+            </p>
+
+            <div className="flex flex-col gap-3 w-full">
+              {orgId && (
+                <Button
+                  onClick={handleGoToBilling}
+                  className="w-full bg-amber-500 hover:bg-amber-600 text-white flex items-center justify-center gap-2"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  מעבר לדף החיוב
+                </Button>
+              )}
+
+              <button
+                onClick={() => {
+                  window.open('https://wa.me/972500000001?text=שלום, אני מעוניין לשדרג את חשבון BrikOps', '_blank');
+                }}
+                className="text-xs text-slate-500 hover:text-green-600 flex items-center justify-center gap-1"
+              >
+                <MessageCircle className="w-3 h-3" />
+                צריך עזרה? דבר איתנו בוואטסאפ
+              </button>
+
+              <Button
+                variant="outline"
+                onClick={() => setShowPaywall(false)}
+                className="w-full"
+              >
+                {isTrialActive ? 'אולי אחר כך' : 'חזרה לצפייה'}
+              </Button>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 };
 

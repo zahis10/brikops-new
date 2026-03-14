@@ -10,6 +10,7 @@ import {
   Paperclip, FileText, Phone
 } from 'lucide-react';
 import WhatsAppRejectionModal from '../components/WhatsAppRejectionModal';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 const STATUS_CONFIG = {
   pass: { icon: CheckCircle2, label: 'תקין', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', btnBg: 'bg-emerald-500 text-white' },
@@ -1882,87 +1883,105 @@ export default function StageDetailPage() {
         )}
       </div>
 
-      {showRejectModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center" onClick={() => setShowRejectModal(false)}>
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                <ShieldX className="w-4 h-4 text-red-500" />
-                דחיית שלב
-              </h3>
-              <button onClick={() => setShowRejectModal(false)} className="p-1 hover:bg-slate-100 rounded-lg">
-                <XCircle className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">סיבת הדחייה</label>
-                <textarea
-                  value={rejectReason}
-                  onChange={e => setRejectReason(e.target.value)}
-                  placeholder="פרט את סיבת הדחייה..."
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-300"
-                  rows={3}
-                  dir="rtl"
-                />
+      <DialogPrimitive.Root open={showRejectModal} onOpenChange={setShowRejectModal}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-50" />
+          <DialogPrimitive.Content className="fixed inset-x-0 bottom-0 sm:inset-0 z-50 sm:flex sm:items-center sm:justify-center outline-none">
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto">
+              <DialogPrimitive.Title className="sr-only">דחיית שלב</DialogPrimitive.Title>
+              <DialogPrimitive.Description className="sr-only">טופס דחיית שלב בקרה</DialogPrimitive.Description>
+              <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <ShieldX className="w-4 h-4 text-red-500" />
+                  דחיית שלב
+                </h3>
+                <DialogPrimitive.Close asChild>
+                  <button className="p-1 hover:bg-slate-100 rounded-lg">
+                    <XCircle className="w-5 h-5 text-slate-400" />
+                  </button>
+                </DialogPrimitive.Close>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => setShowRejectModal(false)}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px]">
-                  ביטול
-                </button>
-                <button onClick={handleReject} disabled={rejecting || !rejectReason.trim()}
-                  className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
-                    rejectReason.trim() ? 'bg-red-500 hover:bg-red-600 active:bg-red-700 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}>
-                  {rejecting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'דחה שלב'}
-                </button>
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">סיבת הדחייה</label>
+                  <textarea
+                    value={rejectReason}
+                    onChange={e => setRejectReason(e.target.value)}
+                    placeholder="פרט את סיבת הדחייה..."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-300"
+                    rows={3}
+                    dir="rtl"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <DialogPrimitive.Close asChild>
+                    <button
+                      className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px]">
+                      ביטול
+                    </button>
+                  </DialogPrimitive.Close>
+                  <button onClick={handleReject} disabled={rejecting || !rejectReason.trim()}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
+                      rejectReason.trim() ? 'bg-red-500 hover:bg-red-600 active:bg-red-700 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}>
+                    {rejecting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'דחה שלב'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
-      {showReopenModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center" onClick={() => setShowReopenModal(false)}>
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                <RotateCcw className="w-4 h-4 text-orange-500" />
-                פתיחה מחדש של שלב
-              </h3>
-              <button onClick={() => setShowReopenModal(false)} className="p-1 hover:bg-slate-100 rounded-lg">
-                <XCircle className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">סיבת פתיחה מחדש</label>
-                <textarea
-                  value={reopenReason}
-                  onChange={e => setReopenReason(e.target.value)}
-                  placeholder="פרט את סיבת הפתיחה מחדש..."
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300"
-                  rows={3}
-                  dir="rtl"
-                />
+      <DialogPrimitive.Root open={showReopenModal} onOpenChange={setShowReopenModal}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-50" />
+          <DialogPrimitive.Content className="fixed inset-x-0 bottom-0 sm:inset-0 z-50 sm:flex sm:items-center sm:justify-center outline-none">
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto">
+              <DialogPrimitive.Title className="sr-only">פתיחה מחדש של שלב</DialogPrimitive.Title>
+              <DialogPrimitive.Description className="sr-only">טופס פתיחה מחדש של שלב בקרה</DialogPrimitive.Description>
+              <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <RotateCcw className="w-4 h-4 text-orange-500" />
+                  פתיחה מחדש של שלב
+                </h3>
+                <DialogPrimitive.Close asChild>
+                  <button className="p-1 hover:bg-slate-100 rounded-lg">
+                    <XCircle className="w-5 h-5 text-slate-400" />
+                  </button>
+                </DialogPrimitive.Close>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => setShowReopenModal(false)}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px]">
-                  ביטול
-                </button>
-                <button onClick={handleReopen} disabled={reopening || !reopenReason.trim()}
-                  className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
-                    reopenReason.trim() ? 'bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}>
-                  {reopening ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'פתח מחדש'}
-                </button>
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">סיבת פתיחה מחדש</label>
+                  <textarea
+                    value={reopenReason}
+                    onChange={e => setReopenReason(e.target.value)}
+                    placeholder="פרט את סיבת הפתיחה מחדש..."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300"
+                    rows={3}
+                    dir="rtl"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <DialogPrimitive.Close asChild>
+                    <button
+                      className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px]">
+                      ביטול
+                    </button>
+                  </DialogPrimitive.Close>
+                  <button onClick={handleReopen} disabled={reopening || !reopenReason.trim()}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
+                      reopenReason.trim() ? 'bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}>
+                    {reopening ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'פתח מחדש'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
       {(runData?.can_edit || isLocked || isApproved || isRejected || isReopened) && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-sm border-t border-slate-200 shadow-lg"

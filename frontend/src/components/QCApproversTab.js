@@ -7,6 +7,7 @@ import {
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { getRoleLabel, CONTRACTOR_ROLE } from '../utils/roleLabels';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 const QCApproversTab = ({ projectId, canManageApprovers = false }) => {
   const [approvers, setApprovers] = useState([]);
@@ -250,159 +251,168 @@ const AddApproverModal = ({ projectId, stages, members, onClose, onSuccess }) =>
   });
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center" onClick={onClose}>
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md flex flex-col"
-        style={{ maxHeight: 'min(85vh, 680px)' }}
-        onClick={e => e.stopPropagation()}>
+    <DialogPrimitive.Root open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-50" />
+        <DialogPrimitive.Content
+          className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-50 bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto flex flex-col outline-none"
+          style={{ maxHeight: 'min(85vh, 680px)' }}
+          dir="rtl"
+        >
+          <DialogPrimitive.Title className="sr-only">הוסף מאשר</DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">בחירת משתמש והגדרת היקף אישור לבקרת ביצוע</DialogPrimitive.Description>
 
-        <div className="flex-shrink-0 bg-white border-b border-slate-100 px-4 py-3 flex items-center justify-between rounded-t-2xl">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2 text-base">
-            <ShieldCheck className="w-4.5 h-4.5 text-amber-600" />
-            הוסף מאשר
-          </h3>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-xl min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors">
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
-        </div>
+          <div className="flex-shrink-0 bg-white border-b border-slate-100 px-4 py-3 flex items-center justify-between rounded-t-2xl">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2 text-base">
+              <ShieldCheck className="w-4.5 h-4.5 text-amber-600" />
+              הוסף מאשר
+            </h3>
+            <DialogPrimitive.Close asChild>
+              <button className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-xl min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </DialogPrimitive.Close>
+          </div>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-2">בחר משתמש</label>
+          <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-2">בחר משתמש</label>
 
-            {selectedUser && (
-              <div className="flex items-center gap-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl mb-2">
-                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 font-bold text-sm flex-shrink-0">
-                  {(selectedUser.user_name || selectedUser.user_email || '?')[0]}
+              {selectedUser && (
+                <div className="flex items-center gap-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl mb-2">
+                  <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 font-bold text-sm flex-shrink-0">
+                    {(selectedUser.user_name || selectedUser.user_email || '?')[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{selectedUser.user_name || selectedUser.user_email}</p>
+                    <p className="text-[11px] text-slate-500">{getRoleLabel(selectedUser.role)}</p>
+                  </div>
+                  <button onClick={() => setSelectedUserId('')} className="p-1.5 hover:bg-amber-100 rounded-lg transition-colors">
+                    <X className="w-3.5 h-3.5 text-amber-600" />
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{selectedUser.user_name || selectedUser.user_email}</p>
-                  <p className="text-[11px] text-slate-500">{getRoleLabel(selectedUser.role)}</p>
-                </div>
-                <button onClick={() => setSelectedUserId('')} className="p-1.5 hover:bg-amber-100 rounded-lg transition-colors">
-                  <X className="w-3.5 h-3.5 text-amber-600" />
+              )}
+
+              {!selectedUser && (
+                <>
+                  <div className="sticky top-0 z-10 bg-white pb-2">
+                    <div className="relative">
+                      <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        ref={searchRef}
+                        type="text"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        placeholder="חפש לפי שם או אימייל..."
+                        className="w-full pr-9 pl-3 py-2.5 border border-slate-200 rounded-xl text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 min-h-[44px] transition-all"
+                        dir="rtl"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="max-h-[200px] overflow-y-auto overscroll-contain border border-slate-200 rounded-xl divide-y divide-slate-100">
+                    {filteredMembers.length === 0 ? (
+                      <div className="px-4 py-6 text-center">
+                        <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                        <p className="text-sm text-slate-500 font-medium">
+                          {members.length === 0 ? 'אין משתמשים מתאימים להוספה' : 'לא נמצאו תוצאות'}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {members.length === 0 ? 'כל חברי הפרויקט כבר מוגדרים כמאשרים' : 'נסה מילות חיפוש אחרות'}
+                        </p>
+                      </div>
+                    ) : (
+                      filteredMembers.map(m => (
+                        <button
+                          key={m.user_id}
+                          onClick={() => { setSelectedUserId(m.user_id); setSearchQuery(''); }}
+                          className="w-full px-3 py-2.5 text-right hover:bg-amber-50 active:bg-amber-100 transition-colors flex items-center gap-2.5 min-h-[52px]"
+                        >
+                          <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-sm flex-shrink-0">
+                            {(m.user_name || m.user_email || '?')[0]}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-800 truncate">{m.user_name || m.user_email || m.user_id}</p>
+                            <p className="text-[11px] text-slate-400">{getRoleLabel(m.role)}</p>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-2">היקף אישור</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setMode('all')}
+                  className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all min-h-[44px] ${
+                    mode === 'all'
+                      ? 'bg-amber-50 border-amber-300 text-amber-700'
+                      : 'bg-white border-slate-200 text-slate-500 active:bg-slate-50'
+                  }`}
+                >
+                  כל השלבים
+                </button>
+                <button
+                  onClick={() => setMode('stages')}
+                  className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all min-h-[44px] ${
+                    mode === 'stages'
+                      ? 'bg-amber-50 border-amber-300 text-amber-700'
+                      : 'bg-white border-slate-200 text-slate-500 active:bg-slate-50'
+                  }`}
+                >
+                  שלבים נבחרים
                 </button>
               </div>
-            )}
+            </div>
 
-            {!selectedUser && (
-              <>
-                <div className="sticky top-0 z-10 bg-white pb-2">
-                  <div className="relative">
-                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      ref={searchRef}
-                      type="text"
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                      placeholder="חפש לפי שם או אימייל..."
-                      className="w-full pr-9 pl-3 py-2.5 border border-slate-200 rounded-xl text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 min-h-[44px] transition-all"
-                      dir="rtl"
-                    />
-                  </div>
-                </div>
-
-                <div className="max-h-[200px] overflow-y-auto overscroll-contain border border-slate-200 rounded-xl divide-y divide-slate-100">
-                  {filteredMembers.length === 0 ? (
-                    <div className="px-4 py-6 text-center">
-                      <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                      <p className="text-sm text-slate-500 font-medium">
-                        {members.length === 0 ? 'אין משתמשים מתאימים להוספה' : 'לא נמצאו תוצאות'}
-                      </p>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {members.length === 0 ? 'כל חברי הפרויקט כבר מוגדרים כמאשרים' : 'נסה מילות חיפוש אחרות'}
-                      </p>
-                    </div>
-                  ) : (
-                    filteredMembers.map(m => (
+            {mode === 'stages' && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-2">בחר שלבים</label>
+                <div className="space-y-1.5">
+                  {stages.map(s => {
+                    const isSelected = selectedStages.includes(s.code);
+                    return (
                       <button
-                        key={m.user_id}
-                        onClick={() => { setSelectedUserId(m.user_id); setSearchQuery(''); }}
-                        className="w-full px-3 py-2.5 text-right hover:bg-amber-50 active:bg-amber-100 transition-colors flex items-center gap-2.5 min-h-[52px]"
+                        key={s.code}
+                        onClick={() => toggleStage(s.code)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-sm text-right transition-all min-h-[44px] ${
+                          isSelected
+                            ? 'bg-amber-50 border-amber-300 text-amber-700'
+                            : 'bg-white border-slate-200 text-slate-600 active:bg-slate-50'
+                        }`}
                       >
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-sm flex-shrink-0">
-                          {(m.user_name || m.user_email || '?')[0]}
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? 'bg-amber-500 border-amber-500' : 'border-slate-300'
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{m.user_name || m.user_email || m.user_id}</p>
-                          <p className="text-[11px] text-slate-400">{getRoleLabel(m.role)}</p>
-                        </div>
+                        <span>{s.label_he}</span>
                       </button>
-                    ))
-                  )}
+                    );
+                  })}
                 </div>
-              </>
+              </div>
             )}
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-2">היקף אישור</label>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setMode('all')}
-                className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all min-h-[44px] ${
-                  mode === 'all'
-                    ? 'bg-amber-50 border-amber-300 text-amber-700'
-                    : 'bg-white border-slate-200 text-slate-500 active:bg-slate-50'
-                }`}
-              >
-                כל השלבים
-              </button>
-              <button
-                onClick={() => setMode('stages')}
-                className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all min-h-[44px] ${
-                  mode === 'stages'
-                    ? 'bg-amber-50 border-amber-300 text-amber-700'
-                    : 'bg-white border-slate-200 text-slate-500 active:bg-slate-50'
-                }`}
-              >
-                שלבים נבחרים
-              </button>
-            </div>
+          <div className="flex-shrink-0 border-t border-slate-100 px-4 py-3 bg-white rounded-b-2xl"
+            style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
+            <Button
+              onClick={handleSubmit}
+              disabled={submitting || !selectedUserId}
+              className="w-full bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white min-h-[48px] text-sm font-bold rounded-xl transition-all"
+            >
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin ml-1.5" /> : <Plus className="w-4 h-4 ml-1.5" />}
+              {submitting ? 'מוסיף...' : 'הוסף מאשר'}
+            </Button>
           </div>
-
-          {mode === 'stages' && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-2">בחר שלבים</label>
-              <div className="space-y-1.5">
-                {stages.map(s => {
-                  const isSelected = selectedStages.includes(s.code);
-                  return (
-                    <button
-                      key={s.code}
-                      onClick={() => toggleStage(s.code)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-sm text-right transition-all min-h-[44px] ${
-                        isSelected
-                          ? 'bg-amber-50 border-amber-300 text-amber-700'
-                          : 'bg-white border-slate-200 text-slate-600 active:bg-slate-50'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${
-                        isSelected ? 'bg-amber-500 border-amber-500' : 'border-slate-300'
-                      }`}>
-                        {isSelected && <Check className="w-3 h-3 text-white" />}
-                      </div>
-                      <span>{s.label_he}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex-shrink-0 border-t border-slate-100 px-4 py-3 bg-white rounded-b-2xl"
-          style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting || !selectedUserId}
-            className="w-full bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white min-h-[48px] text-sm font-bold rounded-xl transition-all"
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin ml-1.5" /> : <Plus className="w-4 h-4 ml-1.5" />}
-            {submitting ? 'מוסיף...' : 'הוסף מאשר'}
-          </Button>
-        </div>
-      </div>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 };
 
