@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projectService, qcService } from '../services/api';
-import { qcFloorStatusLabel } from '../utils/qcLabels';
+
 import {
   ArrowRight, Loader2, ClipboardCheck, Building2, Search,
   AlertCircle, ChevronLeft
@@ -13,7 +13,7 @@ const getFloorBadge = (qcData) => {
   return qcData.badge || 'not_started';
 };
 
-const STATUS_KEYS = ['rejected', 'pending_review', 'in_progress', 'approved', 'not_started'];
+
 
 export default function QCFloorSelectionPage() {
   const { projectId } = useParams();
