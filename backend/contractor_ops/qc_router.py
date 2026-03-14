@@ -260,8 +260,9 @@ async def _get_template(db=None, *, project_id=None, run=None):
                 if doc:
                     _template_version_cache[vid] = doc
                     return doc
-            logger.warning(f"[QC-TPL] template_version_id={vid} not found, fallback to FLOOR_TEMPLATE")
-        return FLOOR_TEMPLATE
+            logger.warning(f"[QC-TPL] run template_version_id={vid} not found, continuing fallback chain")
+        if not project_id:
+            project_id = run.get("project_id")
 
     if db is not None and project_id:
         proj = await db.projects.find_one({"id": project_id}, {"_id": 0, "qc_template_version_id": 1})
@@ -273,7 +274,7 @@ async def _get_template(db=None, *, project_id=None, run=None):
             if doc:
                 _template_version_cache[vid] = doc
                 return doc
-            logger.warning(f"[QC-TPL] project qc_template_id={vid} not found in DB")
+            logger.warning(f"[QC-TPL] project qc_template_version_id={vid} not found in DB")
 
     if db is not None:
         now_ts = time.time()
