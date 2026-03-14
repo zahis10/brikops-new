@@ -461,6 +461,7 @@ const InnerBuildingPage = () => {
                               value={newUnitsCount}
                               onChange={e => setNewUnitsCount(e.target.value)}
                               placeholder="כמות דירות"
+                              aria-label="כמות דירות להוספה"
                               className="flex-1 text-sm border border-blue-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
                               onKeyDown={e => e.key === 'Enter' && handleAddUnit(floor.id)}
                               autoFocus
