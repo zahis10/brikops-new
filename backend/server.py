@@ -391,6 +391,8 @@ async def create_indexes():
         await db.otp_rate_limits.create_index("expires_at", expireAfterSeconds=0)
         await db.qc_runs.create_index([("floor_id", 1), ("template_id", 1)])
         await db.qc_runs.create_index([("unit_id", 1), ("template_id", 1)], sparse=True)
+        await db.qc_templates.create_index([("family_id", 1), ("version", 1)], unique=True)
+        await db.qc_templates.create_index([("is_default", 1), ("is_active", 1)])
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")
@@ -619,6 +621,29 @@ def _mongo_sanity(url: str) -> str:
     )
 
 
+async def seed_qc_templates():
+    count = await db.qc_templates.count_documents({})
+    if count > 0:
+        logger.info(f"[QC-TEMPLATES] Already seeded ({count} documents), skipping")
+        return
+    from contractor_ops.qc_router import FLOOR_TEMPLATE
+    family_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "family_id": family_id,
+        "name": FLOOR_TEMPLATE["name"],
+        "version": 1,
+        "is_default": True,
+        "is_active": True,
+        "created_at": now,
+        "created_by": "system",
+        "stages": FLOOR_TEMPLATE["stages"],
+    }
+    await db.qc_templates.insert_one(doc)
+    logger.info(f"[QC-TEMPLATES] Seeded default template family_id={family_id} with {len(FLOOR_TEMPLATE['stages'])} stages")
+
+
 async def _deferred_db_init():
     mongo_info = _mongo_sanity(MONGO_URL)
     try:
@@ -665,6 +690,7 @@ async def _deferred_db_init():
         await migrate_billing_orgs()
         await migrate_remove_owner_admin_roles()
         await backfill_join_codes()
+        await seed_qc_templates()
     except Exception as e:
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")
 

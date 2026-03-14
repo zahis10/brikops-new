@@ -1100,6 +1100,33 @@ export const authService = {
   },
 };
 
+export const templateService = {
+  async list() {
+    const response = await axios.get(`${API}/admin/qc/templates`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async get(templateId) {
+    const response = await axios.get(`${API}/admin/qc/templates/${templateId}`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async create(data) {
+    const response = await axios.post(`${API}/admin/qc/templates`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async update(templateId, data) {
+    const response = await axios.put(`${API}/admin/qc/templates/${templateId}`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async clone(templateId, data) {
+    const response = await axios.post(`${API}/admin/qc/templates/${templateId}/clone`, data || {}, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async assignToProject(projectId, templateId) {
+    const response = await axios.put(`${API}/admin/projects/${projectId}/qc-template`, { template_id: templateId }, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const exportService = {
   async exportDefects({ scope, unit_id, building_id, filters, format = 'excel' }) {
     const response = await axios.post(

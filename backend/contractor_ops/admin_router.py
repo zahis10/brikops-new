@@ -3,6 +3,7 @@ from typing import Optional
 from datetime import datetime, timezone
 import uuid
 import re
+import copy
 
 from contractor_ops.router import (
     get_db, get_current_user,
@@ -665,4 +666,186 @@ async def admin_change_user_role(user_id: str, project_id: str, request: Request
         'new_role': new_role,
         'user_id': user_id,
         'project_id': project_id,
+    }
+
+
+@router.get("/admin/qc/templates")
+async def admin_list_qc_templates(user: dict = Depends(require_super_admin)):
+    db = get_db()
+    all_docs = await db.qc_templates.find({}, {"_id": 0}).sort([("family_id", 1), ("version", -1)]).to_list(500)
+    families = {}
+    for doc in all_docs:
+        fid = doc["family_id"]
+        if fid not in families:
+            families[fid] = {
+                "family_id": fid,
+                "name": doc["name"],
+                "latest_version": doc["version"],
+                "latest_id": doc["id"],
+                "is_default": doc.get("is_default", False),
+                "is_active": doc.get("is_active", False),
+                "stage_count": len(doc.get("stages", [])),
+                "versions": [],
+            }
+        families[fid]["versions"].append({
+            "id": doc["id"],
+            "version": doc["version"],
+            "is_active": doc.get("is_active", False),
+            "created_at": doc.get("created_at"),
+        })
+    return list(families.values())
+
+
+@router.get("/admin/qc/templates/{template_id}")
+async def admin_get_qc_template(template_id: str, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    doc = await db.qc_templates.find_one({"id": template_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return doc
+
+
+@router.post("/admin/qc/templates")
+async def admin_create_qc_template(request: Request, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    body = await request.json()
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    stages = body.get("stages", [])
+    if not stages:
+        raise HTTPException(status_code=400, detail="At least one stage is required")
+
+    family_id = str(uuid.uuid4())
+    doc_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    doc = {
+        "id": doc_id,
+        "family_id": family_id,
+        "name": name,
+        "version": 1,
+        "is_default": False,
+        "is_active": True,
+        "created_at": now,
+        "created_by": user["id"],
+        "stages": stages,
+    }
+    await db.qc_templates.insert_one(doc)
+    doc.pop("_id", None)
+    logger.info(f"[QC-TPL] Created template family={family_id} id={doc_id} by user={user['id']}")
+    return doc
+
+
+@router.put("/admin/qc/templates/{template_id}")
+async def admin_update_qc_template(template_id: str, request: Request, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    old = await db.qc_templates.find_one({"id": template_id}, {"_id": 0})
+    if not old:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    body = await request.json()
+    name = body.get("name", old["name"]).strip()
+    stages = body.get("stages", old["stages"])
+    if not stages:
+        raise HTTPException(status_code=400, detail="At least one stage is required")
+
+    family_id = old["family_id"]
+    max_doc = await db.qc_templates.find_one(
+        {"family_id": family_id},
+        {"_id": 0, "version": 1},
+        sort=[("version", -1)]
+    )
+    new_version = (max_doc["version"] if max_doc else old["version"]) + 1
+    new_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    new_doc = {
+        "id": new_id,
+        "family_id": family_id,
+        "name": name,
+        "version": new_version,
+        "is_default": old.get("is_default", False),
+        "is_active": True,
+        "created_at": now,
+        "created_by": user["id"],
+        "stages": stages,
+    }
+    await db.qc_templates.insert_one(new_doc)
+
+    await db.qc_templates.update_many(
+        {"family_id": family_id, "id": {"$ne": new_id}, "is_active": True},
+        {"$set": {"is_active": False}}
+    )
+
+    new_doc.pop("_id", None)
+    logger.info(f"[QC-TPL] Updated template family={family_id} v{old['version']}->v{new_version} new_id={new_id} by user={user['id']}")
+    return new_doc
+
+
+@router.post("/admin/qc/templates/{template_id}/clone")
+async def admin_clone_qc_template(template_id: str, request: Request, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    source = await db.qc_templates.find_one({"id": template_id}, {"_id": 0})
+    if not source:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    body = await request.json()
+    name = body.get("name", f"{source['name']} — עותק").strip()
+
+    new_family_id = str(uuid.uuid4())
+    new_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    doc = {
+        "id": new_id,
+        "family_id": new_family_id,
+        "name": name,
+        "version": 1,
+        "is_default": False,
+        "is_active": True,
+        "created_at": now,
+        "created_by": user["id"],
+        "stages": copy.deepcopy(source["stages"]),
+    }
+    await db.qc_templates.insert_one(doc)
+    doc.pop("_id", None)
+    logger.info(f"[QC-TPL] Cloned template from={template_id} to family={new_family_id} id={new_id} by user={user['id']}")
+    return doc
+
+
+@router.put("/admin/projects/{project_id}/qc-template")
+async def admin_assign_qc_template(project_id: str, request: Request, user: dict = Depends(require_super_admin)):
+    db = get_db()
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1, "name": 1})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    body = await request.json()
+    template_id = body.get("template_id")
+    if not template_id:
+        raise HTTPException(status_code=400, detail="template_id is required")
+
+    tpl = await db.qc_templates.find_one({"id": template_id}, {"_id": 0, "id": 1, "name": 1, "version": 1})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template version not found")
+
+    active_runs = await db.qc_runs.count_documents({"project_id": project_id})
+    warning = None
+    if active_runs > 0:
+        warning = f"לפרויקט יש {active_runs} ביצועים קיימים. שינוי תבנית ישפיע רק על בדיקות חדשות."
+
+    await db.projects.update_one(
+        {"id": project_id},
+        {"$set": {"qc_template_id": template_id}}
+    )
+    logger.info(f"[QC-TPL] Assigned template={template_id} to project={project_id} by user={user['id']}")
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "template_id": template_id,
+        "template_name": tpl["name"],
+        "template_version": tpl["version"],
+        "warning": warning,
     }

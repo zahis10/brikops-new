@@ -64,6 +64,7 @@ const TABS = [
   { id: 'users', label: 'משתמשים', icon: Users },
   { id: 'orgs', label: 'ארגונים', icon: Building2 },
   { id: 'billing', label: 'חיובים', icon: CreditCard },
+  { id: 'qc-templates', label: 'תבניות QC', icon: ClipboardList },
   { id: 'log', label: 'יומן', icon: ClipboardList },
 ];
 
@@ -136,6 +137,7 @@ const AdminPage = () => {
     if (tabId === 'users') { navigate('/admin/users'); return; }
     if (tabId === 'orgs') { navigate('/admin/orgs'); return; }
     if (tabId === 'billing') { navigate('/admin/billing?view=billing'); return; }
+    if (tabId === 'qc-templates') { navigate('/admin/qc-templates'); return; }
     setActiveTab(tabId);
   };
 

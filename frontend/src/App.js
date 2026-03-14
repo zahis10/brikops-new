@@ -48,6 +48,7 @@ import BuildingDefectsPage from './pages/BuildingDefectsPage';
 import BuildingQCPage from './pages/BuildingQCPage';
 import UnitQCSelectionPage from './pages/UnitQCSelectionPage';
 import InnerBuildingPage from './pages/InnerBuildingPage';
+import AdminQCTemplatesPage from './pages/AdminQCTemplatesPage';
 import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
 import AccessibilityPage from './pages/AccessibilityPage';
 
@@ -175,6 +176,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireSuperAdmin>
             <AdminUsersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/qc-templates"
+        element={
+          <ProtectedRoute requireSuperAdmin>
+            <AdminQCTemplatesPage />
           </ProtectedRoute>
         }
       />

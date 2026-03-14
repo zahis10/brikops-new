@@ -249,6 +249,19 @@ def _get_template():
     return FLOOR_TEMPLATE
 
 
+async def _resolve_template_version_id(db, project_id):
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "qc_template_id": 1})
+    if project and project.get("qc_template_id"):
+        return project["qc_template_id"]
+    default_tpl = await db.qc_templates.find_one(
+        {"is_default": True, "is_active": True},
+        {"_id": 0, "id": 1}
+    )
+    if default_tpl:
+        return default_tpl["id"]
+    return None
+
+
 async def _ensure_inline_prework_items(run_id, run_items, db, run_scope="floor"):
     tpl = _get_template()
     existing_ids = {(it["stage_id"], it["item_id"]) for it in run_items}
@@ -514,6 +527,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
         tpl = _get_template()
         run_id = str(uuid.uuid4())
         now = _now()
+        tpl_version_id = await _resolve_template_version_id(db, project_id)
         items = []
         for stage in tpl["stages"]:
             if stage.get("scope", "floor") != "floor":
@@ -537,6 +551,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
             "building_id": building["id"],
             "floor_id": floor_id,
             "template_id": FLOOR_TEMPLATE_ID,
+            "template_version_id": tpl_version_id,
             "scope": "floor",
             "stage_statuses": {},
             "created_at": now,
@@ -547,7 +562,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
             await db.qc_items.insert_many(items)
 
         run.pop("_id", None)
-        logger.info(f"[QC] Created run {run_id} for floor {floor_id} with {len(items)} items")
+        logger.info(f"[QC] Created run {run_id} for floor {floor_id} tpl_version={tpl_version_id} with {len(items)} items")
 
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
@@ -662,6 +677,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
     if not run:
         run_id = str(uuid.uuid4())
         now = _now()
+        tpl_version_id = await _resolve_template_version_id(db, project_id)
         items = []
         for stage in unit_stages:
             for item in stage["items"]:
@@ -684,6 +700,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
             "floor_id": floor["id"],
             "unit_id": unit_id,
             "template_id": FLOOR_TEMPLATE_ID,
+            "template_version_id": tpl_version_id,
             "scope": "unit",
             "stage_statuses": {},
             "created_at": now,
@@ -694,7 +711,7 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
             await db.qc_items.insert_many(items)
 
         run.pop("_id", None)
-        logger.info(f"[QC] Created unit run {run_id} for unit {unit_id} with {len(items)} items")
+        logger.info(f"[QC] Created unit run {run_id} for unit {unit_id} tpl_version={tpl_version_id} with {len(items)} items")
 
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
