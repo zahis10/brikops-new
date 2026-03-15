@@ -418,18 +418,20 @@ _DEMO_USERS = [
 
 async def ensure_demo_users():
     import bcrypt as _bcrypt
+    override_pw = DEMO_DEFAULT_PASSWORD if APP_MODE != 'dev' else None
     created = 0
     updated = 0
     for demo in _DEMO_USERS:
+        pw = override_pw or demo['password']
         existing = await db.users.find_one({'email': demo['email']}, {'_id': 0, 'id': 1, 'password_hash': 1})
         if existing:
             if not existing.get('password_hash') or not existing['password_hash'].startswith('$2'):
-                pw_hash = _bcrypt.hashpw(demo['password'].encode(), _bcrypt.gensalt()).decode()
+                pw_hash = _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
                 await db.users.update_one({'id': existing['id']}, {'$set': {'password_hash': pw_hash}})
                 updated += 1
         else:
             user_id = str(uuid.uuid4())
-            pw_hash = _bcrypt.hashpw(demo['password'].encode(), _bcrypt.gensalt()).decode()
+            pw_hash = _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
             await db.users.insert_one({
                 'id': user_id, 'email': demo['email'], 'password_hash': pw_hash,
                 'name': demo['name'], 'role': demo['role'], 'phone_e164': demo['phone_e164'],
@@ -741,7 +743,7 @@ async def _deferred_db_init():
     else:
         logger.info("[SEED] Seed skipped (RUN_SEED not set or APP_MODE != dev)")
 
-    if APP_MODE == 'dev':
+    if APP_MODE == 'dev' or ENABLE_DEMO_USERS:
         await ensure_demo_users()
 
     if ENABLE_DEMO_USERS:
