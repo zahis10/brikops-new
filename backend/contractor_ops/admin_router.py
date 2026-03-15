@@ -676,9 +676,12 @@ async def admin_list_qc_templates(
     search: str = Query(default="", description="Search by name"),
     archived: bool = Query(default=False, description="Include archived families"),
     sort: str = Query(default="name", description="Sort: name, last_modified, created"),
+    type: str = Query(default=None, description="Filter by type: qc or handover"),
 ):
     db = get_db()
     query_filter = {}
+    if type and type in ("qc", "handover"):
+        query_filter["type"] = type
     if search.strip():
         query_filter["name"] = {"$regex": search.strip(), "$options": "i"}
 
@@ -695,7 +698,8 @@ async def admin_list_qc_templates(
                 "is_default": doc.get("is_default", False),
                 "is_active": doc.get("is_active", False),
                 "archived": doc.get("archived", False),
-                "stage_count": len(doc.get("stages", [])),
+                "stage_count": len(doc.get("stages", doc.get("sections", []))),
+                "type": doc.get("type", "qc"),
                 "created_at": doc.get("created_at"),
                 "last_modified": doc.get("created_at"),
                 "versions": [],
