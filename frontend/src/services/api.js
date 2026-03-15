@@ -1142,6 +1142,65 @@ export const projectQcService = {
   },
 };
 
+export const handoverService = {
+  async listProtocols(projectId, params = {}) {
+    const query = new URLSearchParams();
+    if (params.unit_id) query.set('unit_id', params.unit_id);
+    if (params.building_id) query.set('building_id', params.building_id);
+    if (params.type) query.set('type', params.type);
+    if (params.status) query.set('status', params.status);
+    const qs = query.toString();
+    const url = `${API}/projects/${projectId}/handover/protocols${qs ? `?${qs}` : ''}`;
+    const response = await axios.get(url, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async createProtocol(projectId, data) {
+    const response = await axios.post(`${API}/projects/${projectId}/handover/protocols`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getProtocol(projectId, protocolId) {
+    const response = await axios.get(`${API}/projects/${projectId}/handover/protocols/${protocolId}`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async updateProtocol(projectId, protocolId, data) {
+    const response = await axios.put(`${API}/projects/${projectId}/handover/protocols/${protocolId}`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async updateItem(projectId, protocolId, sectionId, itemId, data) {
+    const response = await axios.put(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/sections/${sectionId}/items/${itemId}`,
+      data, { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async createDefectFromItem(projectId, protocolId, itemId, data) {
+    const response = await axios.post(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/items/${itemId}/create-defect`,
+      data, { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async signProtocol(projectId, protocolId, data) {
+    const response = await axios.post(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/sign`,
+      data, { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getSummary(projectId) {
+    const response = await axios.get(`${API}/projects/${projectId}/handover/summary`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getTemplate(projectId) {
+    const response = await axios.get(`${API}/projects/${projectId}/handover-template`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async assignTemplate(projectId, data) {
+    const response = await axios.put(`${API}/projects/${projectId}/handover-template`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const exportService = {
   async exportDefects({ scope, unit_id, building_id, filters, format = 'excel' }) {
     const response = await axios.post(

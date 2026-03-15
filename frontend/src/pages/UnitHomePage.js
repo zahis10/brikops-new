@@ -7,7 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Building2, Layers, DoorOpen,
-  AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText
+  AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
 
@@ -76,6 +76,15 @@ const UnitHomePage = () => {
       color: 'bg-blue-50 border-blue-200 hover:border-blue-300',
       iconColor: 'text-blue-500',
       onClick: () => navigate(`/projects/${projectId}/units/${unitId}/plans`),
+    },
+    {
+      key: 'handover',
+      icon: Home,
+      label: t('handover', 'tabTitle'),
+      description: t('handover', 'tabDesc'),
+      color: 'bg-purple-50 border-purple-200 hover:border-purple-300',
+      iconColor: 'text-purple-500',
+      onClick: () => navigate(`/projects/${projectId}/units/${unitId}/handover`),
     },
   ];
 

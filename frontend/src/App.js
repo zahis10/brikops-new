@@ -51,6 +51,9 @@ import InnerBuildingPage from './pages/InnerBuildingPage';
 import AdminQCTemplatesPage from './pages/AdminQCTemplatesPage';
 import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
 import AccessibilityPage from './pages/AccessibilityPage';
+import HandoverTabPage from './pages/HandoverTabPage';
+import HandoverProtocolPage from './pages/HandoverProtocolPage';
+import HandoverSectionPage from './pages/HandoverSectionPage';
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
@@ -297,6 +300,30 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <UnitPlansPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/units/:unitId/handover"
+        element={
+          <ProtectedRoute>
+            <HandoverTabPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/units/:unitId/handover/:protocolId"
+        element={
+          <ProtectedRoute>
+            <HandoverProtocolPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/units/:unitId/handover/:protocolId/sections/:sectionId"
+        element={
+          <ProtectedRoute>
+            <HandoverSectionPage />
           </ProtectedRoute>
         }
       />
