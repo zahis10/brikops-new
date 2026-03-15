@@ -38,7 +38,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Admin & Member Management**: Tools for super_admin, PM, and owner-level team management.
     -   **QC (Quality Control) System**: Floor-level and unit-level quality control with template versioning, item management, RBAC, stage-based workflow, and an approver system. Supports scope models for templates and QC runs.
     -   **QC Template Management**: `qc_templates` collection with family-based versioning. Admin CRUD for templates, including assignment to projects.
-    -   **Handover Protocol System**: Unit-level handover protocol management for initial and final inspections. Includes engine-managed forms, status flows (draft→in_progress→signed), and digital signatures for multiple roles.
+    -   **Handover Protocol System**: Unit-level handover protocol management for initial and final inspections. Includes engine-managed forms, status flows (draft→in_progress→partially_signed→signed), and digital signatures for multiple roles. Overview endpoint (`GET /projects/{id}/handover/overview`) returns all units grouped by building→floor→unit with summary stats, building-level progress, defect counts, and filter support (?building, ?status, ?type). Initial and final protocols are independent (no sequential enforcement).
     -   **Identity System**: Manages user accounts, status, and audit logging, including WhatsApp notification opt-out.
     -   **Structure Permissions**: Role-based restrictions for building/floor/unit mutations.
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.

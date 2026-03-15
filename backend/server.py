@@ -404,6 +404,7 @@ async def create_indexes():
         await db.handover_protocols.create_index([("project_id", 1), ("unit_id", 1), ("type", 1)], unique=True)
         await db.handover_protocols.create_index([("project_id", 1), ("building_id", 1), ("status", 1)])
         await db.handover_protocols.create_index([("project_id", 1), ("status", 1)])
+        await db.tasks.create_index([("handover_protocol_id", 1), ("source", 1), ("status", 1)])
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")
@@ -692,6 +693,27 @@ async def seed_handover_template():
     logger.info(f"[HANDOVER-TEMPLATES] Seeded default handover template family_id={family_id} with {len(HANDOVER_TEMPLATE['sections'])} sections")
 
 
+async def fix_empty_handover_template():
+    from contractor_ops.handover_router import HANDOVER_TEMPLATE
+    default_tpl = await db.qc_templates.find_one(
+        {"type": "handover", "is_default": True, "is_active": True},
+        {"_id": 0, "id": 1, "sections": 1, "name": 1}
+    )
+    if not default_tpl:
+        return
+    existing_sections = default_tpl.get("sections") or []
+    if len(existing_sections) >= 5:
+        return
+    await db.qc_templates.update_one(
+        {"id": default_tpl["id"]},
+        {"$set": {"sections": HANDOVER_TEMPLATE["sections"]}}
+    )
+    logger.info(
+        f"[HANDOVER-FIX] Re-populated empty default handover template id={default_tpl['id']} "
+        f"with {len(HANDOVER_TEMPLATE['sections'])} sections (had {len(existing_sections)})"
+    )
+
+
 async def dedup_default_templates():
     for tpl_type in ("qc", "handover"):
         defaults = await db.qc_templates.find(
@@ -763,6 +785,7 @@ async def _deferred_db_init():
         await seed_qc_templates()
         await migrate_qc_template_type()
         await seed_handover_template()
+        await fix_empty_handover_template()
         await dedup_default_templates()
     except Exception as e:
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")

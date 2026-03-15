@@ -1186,6 +1186,249 @@ async def reopen_protocol(project_id: str, protocol_id: str, request: Request, u
     return updated
 
 
+@router.get("/projects/{project_id}/handover/overview")
+async def handover_overview(
+    project_id: str,
+    building: str = Query(None),
+    status: str = Query(None),
+    type: str = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    await _check_handover_access(user, project_id)
+    db = get_db()
+
+    building_match = {"project_id": project_id, "archived": {"$ne": True}}
+    if building:
+        building_match["name"] = building
+
+    protocol_type_filter = type if type in ("initial", "final") else None
+
+    structure_pipeline = [
+        {"$match": {"project_id": project_id, "archived": {"$ne": True}}},
+        {"$lookup": {
+            "from": "floors",
+            "let": {"bid": "$id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$building_id", "$$bid"]}, "archived": {"$ne": True}}},
+                {"$project": {"_id": 0, "id": 1, "building_id": 1, "name": 1, "floor_number": 1, "sort_index": 1}},
+            ],
+            "as": "floors",
+        }},
+        {"$unwind": {"path": "$floors", "preserveNullAndEmptyArrays": False}},
+        {"$lookup": {
+            "from": "units",
+            "let": {"fid": "$floors.id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$floor_id", "$$fid"]}, "archived": {"$ne": True}}},
+                {"$project": {"_id": 0, "id": 1, "floor_id": 1, "building_id": 1, "unit_no": 1, "display_label": 1, "sort_index": 1}},
+            ],
+            "as": "units",
+        }},
+        {"$unwind": {"path": "$units", "preserveNullAndEmptyArrays": False}},
+        {"$lookup": {
+            "from": "handover_protocols",
+            "let": {"uid": "$units.id"},
+            "pipeline": [
+                {"$match": {
+                    "$expr": {"$and": [
+                        {"$eq": ["$unit_id", "$$uid"]},
+                        {"$eq": ["$project_id", project_id]},
+                    ]},
+                    **({"type": protocol_type_filter} if protocol_type_filter else {}),
+                }},
+                {"$project": {"_id": 0, "id": 1, "unit_id": 1, "type": 1, "status": 1, "locked": 1, "signatures": 1}},
+            ],
+            "as": "protocols",
+        }},
+        {"$project": {
+            "_id": 0,
+            "building_id": "$id",
+            "building_name": "$name",
+            "floor_id": "$floors.id",
+            "floor_name": "$floors.name",
+            "floor_number": "$floors.floor_number",
+            "floor_sort_index": "$floors.sort_index",
+            "unit_id": "$units.id",
+            "unit_no": "$units.unit_no",
+            "unit_display_label": "$units.display_label",
+            "unit_sort_index": "$units.sort_index",
+            "protocols": 1,
+        }},
+    ]
+
+    rows = await db.buildings.aggregate(structure_pipeline).to_list(50000)
+
+    all_building_names = sorted(set(r["building_name"] for r in rows))
+
+    if building:
+        rows = [r for r in rows if r["building_name"] == building]
+
+    all_protocol_ids = []
+    all_protocol_types = set()
+    for r in rows:
+        for p in r.get("protocols", []):
+            all_protocol_ids.append(p["id"])
+            all_protocol_types.add(p["type"])
+
+    defect_counts = {}
+    if all_protocol_ids:
+        defect_pipeline = [
+            {"$match": {
+                "handover_protocol_id": {"$in": all_protocol_ids},
+                "source": {"$in": ["handover_initial", "handover_final"]},
+                "status": {"$nin": ["closed", "done", "cancelled"]},
+            }},
+            {"$group": {"_id": "$handover_protocol_id", "count": {"$sum": 1}}},
+        ]
+        async for doc in db.tasks.aggregate(defect_pipeline):
+            defect_counts[doc["_id"]] = doc["count"]
+
+    summary_signed = 0
+    summary_partially_signed = 0
+    summary_pending = 0
+    summary_not_started = 0
+
+    building_data = {}
+
+    status_values = []
+    if status:
+        status_values = [s.strip() for s in status.split(",") if s.strip()]
+
+    for r in rows:
+        bid = r["building_id"]
+        bname = r["building_name"]
+        fid = r["floor_id"]
+        unit_protocols = r.get("protocols", [])
+
+        final_proto = None
+        initial_proto = None
+        for p in unit_protocols:
+            if p["type"] == "final":
+                final_proto = p
+            elif p["type"] == "initial":
+                initial_proto = p
+
+        determining_proto = final_proto if final_proto else initial_proto
+        effective_status = determining_proto["status"] if determining_proto else "none"
+
+        if status_values and effective_status not in status_values:
+            continue
+
+        unit_open_defects = 0
+        for p in unit_protocols:
+            unit_open_defects += defect_counts.get(p["id"], 0)
+
+        proto_list = []
+        for p in unit_protocols:
+            p_sigs = _normalize_signatures(p)
+            p_sig_count = sum(1 for role in VALID_SIGNATURE_ROLES if role in p_sigs and p_sigs[role])
+            proto_list.append({
+                "id": p["id"],
+                "type": p["type"],
+                "status": p["status"],
+                "locked": p.get("locked", False),
+                "signature_count": p_sig_count,
+                "signatures_total": 3,
+            })
+
+        if bid not in building_data:
+            building_data[bid] = {
+                "building_id": bid,
+                "building_name": bname,
+                "total_units": 0,
+                "signed_count": 0,
+                "progress_pct": 0,
+                "floors": {},
+            }
+
+        building_data[bid]["total_units"] += 1
+
+        if effective_status == "signed":
+            summary_signed += 1
+            building_data[bid]["signed_count"] += 1
+        elif effective_status == "partially_signed":
+            summary_partially_signed += 1
+        elif effective_status in ("draft", "in_progress"):
+            summary_pending += 1
+        elif effective_status == "none":
+            summary_not_started += 1
+
+        floor_name = r.get("floor_name", "")
+        try:
+            floor_num = int(floor_name)
+        except (ValueError, TypeError):
+            floor_num = r.get("floor_number") or 0
+
+        floor_sort = r.get("floor_sort_index") or 0
+
+        if fid not in building_data[bid]["floors"]:
+            building_data[bid]["floors"][fid] = {
+                "floor": floor_num,
+                "floor_name": floor_name,
+                "floor_sort": floor_sort,
+                "units": [],
+            }
+
+        building_data[bid]["floors"][fid]["units"].append({
+            "unit_id": r["unit_id"],
+            "apartment_number": r.get("unit_display_label") or r.get("unit_no", ""),
+            "status": effective_status,
+            "open_defects": unit_open_defects,
+            "protocols": proto_list,
+        })
+
+    total_units = summary_signed + summary_partially_signed + summary_pending + summary_not_started
+
+    result_buildings = []
+    for bid in sorted(building_data.keys(), key=lambda x: building_data[x]["building_name"]):
+        bd = building_data[bid]
+        if bd["total_units"] == 0 and (status or type):
+            continue
+        bd["progress_pct"] = int(bd["signed_count"] / bd["total_units"] * 100) if bd["total_units"] > 0 else 0
+
+        sorted_floors = sorted(bd["floors"].values(), key=lambda f: f["floor_sort"], reverse=True)
+        floor_list = []
+        for fl in sorted_floors:
+            fl["units"].sort(key=lambda u: u["apartment_number"])
+            floor_list.append({
+                "floor": fl["floor"],
+                "floor_name": fl["floor_name"],
+                "units": fl["units"],
+            })
+
+        result_buildings.append({
+            "building_id": bd["building_id"],
+            "building_name": bd["building_name"],
+            "total_units": bd["total_units"],
+            "signed_count": bd["signed_count"],
+            "progress_pct": bd["progress_pct"],
+            "floors": floor_list,
+        })
+
+    available_types = []
+    if "initial" in all_protocol_types:
+        available_types.append("initial")
+    if "final" in all_protocol_types:
+        available_types.append("final")
+    if not available_types:
+        available_types = ["initial", "final"]
+
+    return {
+        "summary": {
+            "total_units": total_units,
+            "signed": summary_signed,
+            "partially_signed": summary_partially_signed,
+            "pending": summary_pending,
+            "not_started": summary_not_started,
+        },
+        "buildings": result_buildings,
+        "filters": {
+            "buildings": all_building_names,
+            "types": available_types,
+        },
+    }
+
+
 @router.get("/projects/{project_id}/handover/summary")
 async def handover_summary(project_id: str, user: dict = Depends(get_current_user)):
     await _check_handover_access(user, project_id)
