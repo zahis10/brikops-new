@@ -203,6 +203,13 @@ git push origin "$branch"
 
 SHA="$(git rev-parse --short HEAD)"
 
+if [[ $frontend_changed -eq 1 ]]; then
+  echo
+  echo "[dev] Restoring local dev build (REACT_APP_BACKEND_URL=\"\")..."
+  (cd frontend && REACT_APP_BACKEND_URL="" npx craco build 2>&1 | tail -3)
+  echo "[dev] Dev preview restored — local build now uses relative URLs"
+fi
+
 echo
 echo "═══════════════════════════════════════════════════"
 echo " DEPLOY SUMMARY  (commit: $SHA)"
