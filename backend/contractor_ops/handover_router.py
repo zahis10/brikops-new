@@ -1389,7 +1389,13 @@ async def handover_overview(
         sorted_floors = sorted(bd["floors"].values(), key=lambda f: f["floor_sort"], reverse=True)
         floor_list = []
         for fl in sorted_floors:
-            fl["units"].sort(key=lambda u: u["apartment_number"])
+            def _unit_sort_key(u):
+                apt = u["apartment_number"]
+                try:
+                    return (0, int(apt), apt)
+                except (ValueError, TypeError):
+                    return (1, 0, apt)
+            fl["units"].sort(key=_unit_sort_key)
             floor_list.append({
                 "floor": fl["floor"],
                 "floor_name": fl["floor_name"],
