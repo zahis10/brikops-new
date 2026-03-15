@@ -786,20 +786,34 @@ async def admin_create_qc_template(request: Request, user: dict = Depends(requir
     doc_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    tpl_type = body.get("type", "qc")
+    if tpl_type not in ("qc", "handover"):
+        tpl_type = "qc"
+    is_default = bool(body.get("is_default", False))
+
     doc = {
         "id": doc_id,
         "family_id": family_id,
         "name": name,
         "version": 1,
-        "is_default": False,
+        "is_default": is_default,
         "is_active": True,
+        "type": tpl_type,
         "created_at": now,
         "created_by": user["id"],
         "stages": stages,
     }
+
+    if is_default:
+        await db.qc_templates.update_many(
+            {"type": tpl_type, "is_default": True, "family_id": {"$ne": family_id}},
+            {"$set": {"is_default": False}}
+        )
+        logger.info(f"[QC-TPL] Cleared other defaults for type={tpl_type} — new default family={family_id}")
+
     await db.qc_templates.insert_one(doc)
     doc.pop("_id", None)
-    logger.info(f"[QC-TPL] Created template family={family_id} id={doc_id} by user={user['id']}")
+    logger.info(f"[QC-TPL] Created template family={family_id} id={doc_id} type={tpl_type} by user={user['id']}")
     return doc
 
 
@@ -826,17 +840,30 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
     new_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    is_default = old.get("is_default", False)
+    if body.get("is_default") is not None:
+        is_default = bool(body["is_default"])
+    tpl_type = old.get("type", "qc")
+
     new_doc = {
         "id": new_id,
         "family_id": family_id,
         "name": name,
         "version": new_version,
-        "is_default": old.get("is_default", False),
+        "is_default": is_default,
         "is_active": True,
+        "type": tpl_type,
         "created_at": now,
         "created_by": user["id"],
         "stages": stages,
     }
+
+    if is_default:
+        await db.qc_templates.update_many(
+            {"type": tpl_type, "is_default": True, "family_id": {"$ne": family_id}},
+            {"$set": {"is_default": False}}
+        )
+
     await db.qc_templates.insert_one(new_doc)
 
     await db.qc_templates.update_many(

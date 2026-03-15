@@ -20,7 +20,7 @@ import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
-  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard
+  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -74,7 +74,7 @@ const SECONDARY_TABS = [
   { id: 'team', label: 'צוות', icon: '👥' },
   { id: 'companies', label: 'קבלנים וחברות', icon: '🏢' },
   { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
-  { id: 'qc-template', label: 'תבנית QC', icon: '📝' },
+  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: '📝' },
   { id: 'handover-template', label: 'תבנית מסירה', icon: '🔑' },
 ];
 
@@ -2828,44 +2828,45 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
           <h3 className="text-sm font-bold text-slate-800">תבנית בקרת ביצוע</h3>
         </div>
 
-        {!isSuperAdmin ? (
-          <div className="space-y-2">
-            {assignment?.assigned ? (
-              <div className="bg-slate-50 rounded-lg p-3 space-y-1">
-                <p className="text-sm text-slate-700"><span className="font-medium">תבנית:</span> {assignment.template_name}</p>
-                {assignment.template_version && <p className="text-xs text-slate-500">גרסה {assignment.template_version}</p>}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500">לא נבחרה תבנית QC</p>
-            )}
+        {assignment?.assigned ? (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-3 space-y-1">
+            <p className="text-sm text-indigo-800 font-medium">תבנית נוכחית: {assignment.template_name} <span className="text-indigo-500">(גרסה {assignment.template_version})</span></p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {assignment?.newer_version_available && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                  <span className="text-xs text-amber-800 flex-1">
-                    גרסה {assignment.newer_version || ''} זמינה — עדכן?
-                  </span>
-                  {!confirmUpgrade ? (
-                    <button onClick={() => setConfirmUpgrade(true)} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium">
-                      עדכן
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => { handleUpgrade(); setConfirmUpgrade(false); }} disabled={saving} className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
-                        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'אשר עדכון'}
-                      </button>
-                      <button onClick={() => setConfirmUpgrade(false)} className="text-xs text-slate-500 px-2 py-1 hover:text-slate-700">
-                        ביטול
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">
+            <p className="text-sm text-slate-500">לא נבחרה תבנית בקרת ביצוע</p>
+          </div>
+        )}
 
+        {assignment?.newer_version_available && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span className="text-xs text-amber-800 flex-1">
+                גרסה {assignment.newer_version || ''} זמינה — עדכן?
+              </span>
+              {isSuperAdmin && (
+                !confirmUpgrade ? (
+                  <button onClick={() => setConfirmUpgrade(true)} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium">
+                    עדכן
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => { handleUpgrade(); setConfirmUpgrade(false); }} disabled={saving} className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
+                      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'אשר עדכון'}
+                    </button>
+                    <button onClick={() => setConfirmUpgrade(false)} className="text-xs text-slate-500 px-2 py-1 hover:text-slate-700">
+                      ביטול
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
+        {isSuperAdmin && (
+          <div className="space-y-3">
             {loadingFamilies ? (
               <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-400 animate-spin" /></div>
             ) : (
@@ -2890,12 +2891,6 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
                   {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שמור תבנית'}
                 </Button>
               </>
-            )}
-
-            {assignment?.assigned && (
-              <div className="bg-slate-50 rounded-lg p-3 mt-2 space-y-1">
-                <p className="text-xs text-slate-500">תבנית נוכחית: <span className="font-medium text-slate-700">{assignment.template_name}</span> (v{assignment.template_version})</p>
-              </div>
             )}
           </div>
         )}
@@ -2985,18 +2980,50 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
           <h3 className="text-sm font-bold text-slate-800">תבנית מסירה</h3>
         </div>
 
-        {!isSuperAdmin ? (
-          <div className="space-y-2">
-            {assignment?.assigned ? (
-              <div className="bg-slate-50 rounded-lg p-3 space-y-1">
-                <p className="text-sm text-slate-700"><span className="font-medium">תבנית:</span> {assignment.template_name}</p>
-                {assignment.template_version && <p className="text-xs text-slate-500">גרסה {assignment.template_version}</p>}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500">לא נבחרה תבנית מסירה</p>
-            )}
+        {assignment?.assigned ? (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-3 space-y-1">
+            <p className="text-sm text-indigo-800 font-medium">תבנית נוכחית: {assignment.template_name} <span className="text-indigo-500">(גרסה {assignment.template_version})</span></p>
           </div>
         ) : (
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">
+            <p className="text-sm text-slate-500">לא נבחרה תבנית מסירה</p>
+          </div>
+        )}
+
+        {assignment?.newer_version_available && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span className="text-xs text-amber-800 flex-1">
+                גרסה {assignment.newer_version || ''} זמינה — עדכן?
+              </span>
+              {isSuperAdmin && (
+                <button onClick={async () => {
+                  try {
+                    setSaving(true);
+                    const fam = families.find(f => f.family_id === assignment.template_family_id);
+                    if (!fam) return;
+                    await handoverService.assignTemplate(projectId, {
+                      template_version_id: fam.latest_id,
+                      template_family_id: fam.family_id,
+                    });
+                    toast.success('תבנית המסירה שודרגה לגרסה האחרונה');
+                    await loadAssignment();
+                    setSelectedVersion(fam.latest_id);
+                  } catch (err) {
+                    toast.error(err.response?.data?.detail || 'שגיאה בשדרוג');
+                  } finally {
+                    setSaving(false);
+                  }
+                }} disabled={saving} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'עדכן'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {isSuperAdmin && (
           <div className="space-y-3">
             {loadingFamilies ? (
               <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-400 animate-spin" /></div>
@@ -3022,12 +3049,6 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
                   {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שמור תבנית מסירה'}
                 </Button>
               </>
-            )}
-
-            {assignment?.assigned && (
-              <div className="bg-slate-50 rounded-lg p-3 mt-2 space-y-1">
-                <p className="text-xs text-slate-500">תבנית נוכחית: <span className="font-medium text-slate-700">{assignment.template_name}</span> (v{assignment.template_version})</p>
-              </div>
             )}
           </div>
         )}
@@ -3300,12 +3321,14 @@ const ProjectControlPage = () => {
     { id: 'structure', label: 'מבנה', icon: Building2 },
     { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
+    { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
     { id: 'plans', label: 'תוכניות', icon: FileText },
   ].filter(t => !t.hidden);
 
   const handleWorkTab = (id) => {
     if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`); return; }
     if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
+    if (id === 'handover') { navigate(`/projects/${projectId}/handover`); return; }
     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
     setWorkMode(id);
     if (id !== 'structure') setActiveTab('');

@@ -550,7 +550,7 @@ const AdminQCTemplatesPage = () => {
             <button onClick={() => navigate('/admin')} className="text-slate-600">
               <ChevronRight className="w-5 h-5" />
             </button>
-            <h1 className="text-lg font-bold text-slate-800">תבניות QC</h1>
+            <h1 className="text-lg font-bold text-slate-800">תבניות בקרת ביצוע / מסירה</h1>
           </div>
           <button
             onClick={handleCreateNew}
@@ -596,7 +596,7 @@ const AdminQCTemplatesPage = () => {
           ))}
           <span className="text-slate-300 mx-1">|</span>
           <span className="text-slate-500">סוג:</span>
-          {[{ key: '', label: 'הכל' }, { key: 'qc', label: 'QC' }, { key: 'handover', label: 'מסירה' }].map(tf => (
+          {[{ key: '', label: 'הכל' }, { key: 'qc', label: 'ביצוע' }, { key: 'handover', label: 'מסירה' }].map(tf => (
             <button
               key={tf.key}
               onClick={() => setTypeFilter(tf.key)}

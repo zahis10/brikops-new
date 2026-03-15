@@ -689,6 +689,28 @@ async def seed_handover_template():
     logger.info(f"[HANDOVER-TEMPLATES] Seeded default handover template family_id={family_id} with {len(HANDOVER_TEMPLATE['sections'])} sections")
 
 
+async def dedup_default_templates():
+    for tpl_type in ("qc", "handover"):
+        defaults = await db.qc_templates.find(
+            {"type": tpl_type, "is_default": True, "is_active": True},
+            {"_id": 0, "id": 1, "family_id": 1, "name": 1, "version": 1, "created_at": 1}
+        ).sort("created_at", -1).to_list(100)
+        if len(defaults) <= 1:
+            continue
+        keep = defaults[0]
+        demote_ids = [d["id"] for d in defaults[1:]]
+        logger.warning(
+            f"[DEDUP-DEFAULTS] Found {len(defaults)} default templates for type={tpl_type}. "
+            f"Keeping id={keep['id']} (family={keep['family_id']}, name={keep['name']}, v{keep.get('version', '?')}). "
+            f"Unsetting is_default on {len(demote_ids)} others: {demote_ids}"
+        )
+        await db.qc_templates.update_many(
+            {"id": {"$in": demote_ids}},
+            {"$set": {"is_default": False}}
+        )
+        logger.info(f"[DEDUP-DEFAULTS] Dedup complete for type={tpl_type}: kept 1, demoted {len(demote_ids)}")
+
+
 async def _deferred_db_init():
     mongo_info = _mongo_sanity(MONGO_URL)
     try:
@@ -738,6 +760,7 @@ async def _deferred_db_init():
         await seed_qc_templates()
         await migrate_qc_template_type()
         await seed_handover_template()
+        await dedup_default_templates()
     except Exception as e:
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")
 
