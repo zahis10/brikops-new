@@ -15,6 +15,185 @@ const SCOPE_OPTIONS = [
   { value: 'unit', label: 'דירה' },
 ];
 
+const _hid = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+const DEFAULT_HANDOVER_SECTIONS = () => [
+  { id: _hid('sec'), name: 'כניסה לדירה', order: 1, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'משקוף', trade: 'אלומיניום', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'דלת כניסה', trade: 'דלתות', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'סגר עליון', trade: 'דלתות', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'עינית', trade: 'דלתות', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'אינטרקום', trade: 'חשמל', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'פעמון', trade: 'חשמל', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'ארון חשמל', trade: 'חשמל', input_type: 'status', order: 10 },
+    { id: _hid('i'), name: 'ארון תקשורת', trade: 'חשמל', input_type: 'status', order: 11 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 12 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 13 },
+  ]},
+  { id: _hid('sec'), name: 'מבואה', order: 2, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'ניקוז+צמה מיני מרכזי', trade: 'אינסטלציה', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 6 },
+  ]},
+  { id: _hid('sec'), name: 'מטבח', order: 3, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'ארונות עץ', trade: 'מטבחים', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'שיש', trade: 'שיש', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'חיפוי', trade: 'ריצוף', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'ברז', trade: 'אינסטלציה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'חשמל ותקשורת', trade: 'חשמל', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'אינסטלציה', trade: 'אינסטלציה', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 9 },
+  ]},
+  { id: _hid('sec'), name: 'שירותי אורחים', order: 4, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'חיפוי', trade: 'ריצוף', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'אסלה+מושב', trade: 'אינסטלציה', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'ברז כיור', trade: 'אינסטלציה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'אלומיניום/וונטה', trade: 'אלומיניום', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 10 },
+  ]},
+  { id: _hid('sec'), name: 'סלון', order: 5, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'חשמל ותקשורת', trade: 'חשמל', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 6 },
+  ]},
+  { id: _hid('sec'), name: 'מרפסת סלון', order: 6, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'חיפוי אבן חוץ', trade: 'ריצוף', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'זגוגית מעקה', trade: 'אלומיניום', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'מעקה אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'אינסטלציה', trade: 'אינסטלציה', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'שליכט צבעוני', trade: 'טיח', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'שיפועים', trade: 'ריצוף', input_type: 'status', order: 10 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 11 },
+  ]},
+  { id: _hid('sec'), name: 'ממ"ד', order: 7, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'משקוף', trade: 'אלומיניום', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'חשמל ותקשורת', trade: 'חשמל', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'דלת ברזל', trade: 'ברזל', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'חלון ברזל', trade: 'ברזל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'התקן עומר', trade: 'ברזל', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'מסנן אויר', trade: 'ברזל', input_type: 'status', order: 10 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 11 },
+  ]},
+  { id: _hid('sec'), name: 'אמבטיה כללית', order: 8, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'אמבטיה', trade: 'אינסטלציה', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'סוללה/אינטרפוץ', trade: 'אינסטלציה', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'ברז מקלחת', trade: 'אינסטלציה', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'ניאגרה+אסלה+מושב', trade: 'אינסטלציה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'ארון אמבט+מראה', trade: 'מטבחים', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'חיפוי', trade: 'ריצוף', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'איוורור', trade: 'חשמל', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 10 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 11 },
+    { id: _hid('i'), name: 'חלון', trade: 'אלומיניום', input_type: 'status', order: 12 },
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 13 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 14 },
+  ]},
+  { id: _hid('sec'), name: 'חדר כביסה', order: 9, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'חלון', trade: 'אלומיניום', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'דלת', trade: 'דלתות', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'אינסטלציה', trade: 'אינסטלציה', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'הכנה למייבש', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'תריס חלון', trade: 'אלומיניום', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 10 },
+  ]},
+  { id: _hid('sec'), name: 'חדר שינה 1', order: 10, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'ניקוז+חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 8 },
+  ]},
+  { id: _hid('sec'), name: 'חדר שינה 2', order: 11, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'ניקוז+חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 8 },
+  ]},
+  { id: _hid('sec'), name: 'חדר הורים', order: 12, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'אלומיניום', trade: 'אלומיניום', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'ניקוז+חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 8 },
+  ]},
+  { id: _hid('sec'), name: 'שירותי הורים', order: 13, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'דלת פנים', trade: 'דלתות', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'מקלחון+נקז', trade: 'אינסטלציה', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'ברזים', trade: 'אינסטלציה', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'אסלה+מושב', trade: 'אינסטלציה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'ארון אמבט+מראה', trade: 'מטבחים', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'חיפוי', trade: 'ריצוף', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'איוורור', trade: 'חשמל', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 10 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 11 },
+    { id: _hid('i'), name: 'חלון', trade: 'אלומיניום', input_type: 'status', order: 12 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 13 },
+  ]},
+  { id: _hid('sec'), name: 'מחסן', order: 14, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'דלת', trade: 'דלתות', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'משקוף', trade: 'אלומיניום', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'ריצוף+רובה', trade: 'ריצוף', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 7 },
+  ]},
+  { id: _hid('sec'), name: 'מסתור כביסה', order: 15, visible_in_initial: true, visible_in_final: true, items: [
+    { id: _hid('i'), name: 'אינסטלציה', trade: 'אינסטלציה', input_type: 'status', order: 1 },
+    { id: _hid('i'), name: 'צבע', trade: 'צביעה', input_type: 'status', order: 2 },
+    { id: _hid('i'), name: 'דוד חשמל+מערכת סולרית', trade: 'אינסטלציה', input_type: 'status', order: 3 },
+    { id: _hid('i'), name: 'טיח', trade: 'טיח', input_type: 'status', order: 4 },
+    { id: _hid('i'), name: 'איוורור', trade: 'חשמל', input_type: 'status', order: 5 },
+    { id: _hid('i'), name: 'הכנה למזגן', trade: 'חשמל', input_type: 'status', order: 6 },
+    { id: _hid('i'), name: 'חשמל', trade: 'חשמל', input_type: 'status', order: 7 },
+    { id: _hid('i'), name: 'רפפה', trade: 'אלומיניום', input_type: 'status', order: 8 },
+    { id: _hid('i'), name: 'חלון', trade: 'אלומיניום', input_type: 'status', order: 9 },
+    { id: _hid('i'), name: 'ניקוז מסתור', trade: 'אינסטלציה', input_type: 'status', order: 10 },
+    { id: _hid('i'), name: 'אחר', trade: 'כללי', input_type: 'status', order: 11 },
+  ]},
+];
+
 const EMOJI_OPTIONS = ['🏗️', '🧱', '🔧', '⚡', '🧹', '💧', '🔊', '🏠', '📋', '🔨', '🪟', '🚪', '🎨', '🔩', '🪣', '🧰'];
 
 const AdminQCTemplatesPage = () => {
@@ -123,10 +302,18 @@ const AdminQCTemplatesPage = () => {
 
   useEffect(() => { loadFamilies(); }, [loadFamilies]);
 
-  const openEditor = async (templateId) => {
+  const openEditor = async (templateId, templateType) => {
+    if (templateType === 'handover') {
+      navigate(`/admin/templates/handover/${templateId}/edit`);
+      return;
+    }
     try {
       setLoading(true);
       const tpl = await templateService.get(templateId);
+      if (tpl.type === 'handover') {
+        navigate(`/admin/templates/handover/${templateId}/edit`);
+        return;
+      }
       setEditingTemplate(tpl);
       setEditingName(tpl.name);
       setEditingStages(JSON.parse(JSON.stringify(tpl.stages)));
@@ -185,26 +372,36 @@ const AdminQCTemplatesPage = () => {
     setShowTypeDialog(false);
     try {
       setSaving(true);
-      const result = await templateService.create({
-        name: templateType === 'handover' ? 'תבנית מסירה חדשה' : 'תבנית ביצוע חדשה',
-        type: templateType,
-        stages: [{
-          id: `stage_${Date.now()}`,
-          title: 'שלב חדש',
-          order: 1,
-          scope: 'floor',
-          icon: '📋',
-          items: [{
-            id: `item_${Date.now()}`,
-            title: 'פריט חדש',
+      if (templateType === 'handover') {
+        const result = await templateService.create({
+          name: 'תבנית מסירה חדשה',
+          type: 'handover',
+          sections: DEFAULT_HANDOVER_SECTIONS(),
+        });
+        await loadFamilies();
+        navigate(`/admin/templates/handover/${result.id}/edit`);
+      } else {
+        const result = await templateService.create({
+          name: 'תבנית ביצוע חדשה',
+          type: 'qc',
+          stages: [{
+            id: `stage_${Date.now()}`,
+            title: 'שלב חדש',
             order: 1,
-            required_photo: false,
-            required_note: false,
+            scope: 'floor',
+            icon: '📋',
+            items: [{
+              id: `item_${Date.now()}`,
+              title: 'פריט חדש',
+              order: 1,
+              required_photo: false,
+              required_note: false,
+            }],
           }],
-        }],
-      });
-      await loadFamilies();
-      openEditor(result.id);
+        });
+        await loadFamilies();
+        openEditor(result.id, 'qc');
+      }
     } catch (e) {
       setError(e.response?.data?.detail || 'שגיאה ביצירת תבנית');
     } finally {
@@ -637,7 +834,7 @@ const AdminQCTemplatesPage = () => {
             {families.map(f => (
               <div
                 key={f.family_id}
-                onClick={() => !f.archived && openEditor(f.latest_id)}
+                onClick={() => !f.archived && openEditor(f.latest_id, f.type)}
                 className={`bg-white rounded-xl border p-4 transition-all ${f.archived ? 'border-slate-200 opacity-60' : 'border-slate-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5'}`}
               >
                 <div className="flex items-center justify-between">
@@ -671,6 +868,7 @@ const AdminQCTemplatesPage = () => {
                       </button>
                     ) : (
                       <>
+                        {f.type !== 'handover' && (
                         <button
                           onClick={(e) => openAssignModal(e, f)}
                           className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
@@ -679,6 +877,7 @@ const AdminQCTemplatesPage = () => {
                           <Link2 className="w-3 h-3" />
                           שייך
                         </button>
+                        )}
                         <button
                           onClick={(e) => handleArchiveFamily(e, f.family_id, true)}
                           disabled={archiving === f.family_id}

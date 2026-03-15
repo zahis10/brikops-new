@@ -778,17 +778,23 @@ async def admin_create_qc_template(request: Request, user: dict = Depends(requir
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
-    stages = body.get("stages", [])
-    if not stages:
-        raise HTTPException(status_code=400, detail="At least one stage is required")
+    tpl_type = body.get("type", "qc")
+    if tpl_type not in ("qc", "handover"):
+        tpl_type = "qc"
+
+    if tpl_type == "handover":
+        sections = body.get("sections", [])
+        if not sections:
+            raise HTTPException(status_code=400, detail="At least one section is required")
+    else:
+        stages = body.get("stages", [])
+        if not stages:
+            raise HTTPException(status_code=400, detail="At least one stage is required")
 
     family_id = str(uuid.uuid4())
     doc_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
-    tpl_type = body.get("type", "qc")
-    if tpl_type not in ("qc", "handover"):
-        tpl_type = "qc"
     is_default = bool(body.get("is_default", False))
 
     doc = {
@@ -801,8 +807,11 @@ async def admin_create_qc_template(request: Request, user: dict = Depends(requir
         "type": tpl_type,
         "created_at": now,
         "created_by": user["id"],
-        "stages": stages,
     }
+    if tpl_type == "handover":
+        doc["sections"] = sections
+    else:
+        doc["stages"] = stages
 
     if is_default:
         await db.qc_templates.update_many(
@@ -826,9 +835,16 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
 
     body = await request.json()
     name = body.get("name", old["name"]).strip()
-    stages = body.get("stages", old["stages"])
-    if not stages:
-        raise HTTPException(status_code=400, detail="At least one stage is required")
+    tpl_type = old.get("type", "qc")
+
+    if tpl_type == "handover":
+        sections = body.get("sections", old.get("sections", []))
+        if not sections:
+            raise HTTPException(status_code=400, detail="At least one section is required")
+    else:
+        stages = body.get("stages", old.get("stages", []))
+        if not stages:
+            raise HTTPException(status_code=400, detail="At least one stage is required")
 
     family_id = old["family_id"]
     max_doc = await db.qc_templates.find_one(
@@ -843,7 +859,6 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
     is_default = old.get("is_default", False)
     if body.get("is_default") is not None:
         is_default = bool(body["is_default"])
-    tpl_type = old.get("type", "qc")
 
     new_doc = {
         "id": new_id,
@@ -855,8 +870,11 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
         "type": tpl_type,
         "created_at": now,
         "created_by": user["id"],
-        "stages": stages,
     }
+    if tpl_type == "handover":
+        new_doc["sections"] = sections
+    else:
+        new_doc["stages"] = stages
 
     if is_default:
         await db.qc_templates.update_many(
@@ -890,6 +908,7 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
     new_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    tpl_type = source.get("type", "qc")
     doc = {
         "id": new_id,
         "family_id": new_family_id,
@@ -897,10 +916,14 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
         "version": 1,
         "is_default": False,
         "is_active": True,
+        "type": tpl_type,
         "created_at": now,
         "created_by": user["id"],
-        "stages": copy.deepcopy(source["stages"]),
     }
+    if tpl_type == "handover":
+        doc["sections"] = copy.deepcopy(source.get("sections", []))
+    else:
+        doc["stages"] = copy.deepcopy(source.get("stages", []))
     await db.qc_templates.insert_one(doc)
     doc.pop("_id", None)
     logger.info(f"[QC-TPL] Cloned template from={template_id} to family={new_family_id} id={new_id} by user={user['id']}")
