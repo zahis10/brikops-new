@@ -224,7 +224,13 @@ async def list_tasks(
     from services.object_storage import resolve_urls_in_doc
     result = []
     for t in tasks:
-        td = Task(**t).dict()
+        try:
+            td = Task(**t).dict()
+        except Exception:
+            raw = {k: v for k, v in t.items() if k != '_id'}
+            if 'category' in raw and raw['category'] not in [e.value for e in Category]:
+                raw['category'] = 'general'
+            td = Task(**raw).dict()
         resolve_urls_in_doc(td)
         result.append(td)
     return result

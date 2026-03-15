@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
@@ -975,6 +976,8 @@ if _allowed_hosts_raw and APP_MODE == 'prod':
         TrustedHostMiddleware,
         allowed_hosts=[h.strip() for h in _allowed_hosts_raw.split(',') if h.strip()],
     )
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 _cors_default = 'https://app.brikops.com,https://www.brikops.com' if APP_MODE == 'prod' else '*'
 app.add_middleware(

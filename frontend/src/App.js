@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BillingProvider, useBilling } from './contexts/BillingContext';
@@ -18,56 +18,59 @@ import RegisterPage from './pages/RegisterPage';
 import RegisterManagementPage from './pages/RegisterManagementPage';
 import OnboardingPage from './pages/OnboardingPage';
 import PendingApprovalPage from './pages/PendingApprovalPage';
-import JoinRequestsPage from './pages/JoinRequestsPage';
-import TaskDetailPage from './pages/TaskDetailPage';
-import AdminPage from './pages/AdminPage';
-import AdminBillingPage from './pages/AdminBillingPage';
-import OrgBillingPage from './pages/OrgBillingPage';
-import AdminUsersPage from './pages/AdminUsersPage';
-import AdminOrgsPage from './pages/AdminOrgsPage';
-import ProjectControlPage from './pages/ProjectControlPage';
-import UnitDetailPage from './pages/UnitDetailPage';
-import UnitHomePage from './pages/UnitHomePage';
-import UnitPlansPage from './pages/UnitPlansPage';
-import ProjectTasksPage from './pages/ProjectTasksPage';
-import ProjectPlansPage from './pages/ProjectPlansPage';
-import ProjectPlansArchivePage from './pages/ProjectPlansArchivePage';
-import ProjectPlanHistoryPage from './pages/ProjectPlanHistoryPage';
-import MyProjectsPage from './pages/MyProjectsPage';
-import ContractorDashboard from './pages/ContractorDashboard';
-import WaLoginPage from './pages/WaLoginPage';
-import OwnershipTransferPage from './pages/OwnershipTransferPage';
-import ProjectDashboardPage from './pages/ProjectDashboardPage';
-import FloorDetailPage from './pages/FloorDetailPage';
-import StageDetailPage from './pages/StageDetailPage';
-import QCFloorSelectionPage from './pages/QCFloorSelectionPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
-import AccountSettingsPage from './pages/AccountSettingsPage';
-import BuildingDefectsPage from './pages/BuildingDefectsPage';
-import BuildingQCPage from './pages/BuildingQCPage';
-import UnitQCSelectionPage from './pages/UnitQCSelectionPage';
-import InnerBuildingPage from './pages/InnerBuildingPage';
-import AdminQCTemplatesPage from './pages/AdminQCTemplatesPage';
-import ApartmentDashboardPage from './pages/ApartmentDashboardPage';
 import AccessibilityPage from './pages/AccessibilityPage';
-import HandoverOverviewPage from './pages/HandoverOverviewPage';
-import HandoverTabPage from './pages/HandoverTabPage';
-import HandoverProtocolPage from './pages/HandoverProtocolPage';
-import HandoverSectionPage from './pages/HandoverSectionPage';
+import WaLoginPage from './pages/WaLoginPage';
+
+const JoinRequestsPage = React.lazy(() => import('./pages/JoinRequestsPage'));
+const TaskDetailPage = React.lazy(() => import('./pages/TaskDetailPage'));
+const AdminPage = React.lazy(() => import('./pages/AdminPage'));
+const AdminBillingPage = React.lazy(() => import('./pages/AdminBillingPage'));
+const OrgBillingPage = React.lazy(() => import('./pages/OrgBillingPage'));
+const AdminUsersPage = React.lazy(() => import('./pages/AdminUsersPage'));
+const AdminOrgsPage = React.lazy(() => import('./pages/AdminOrgsPage'));
+const ProjectControlPage = React.lazy(() => import('./pages/ProjectControlPage'));
+const UnitDetailPage = React.lazy(() => import('./pages/UnitDetailPage'));
+const UnitHomePage = React.lazy(() => import('./pages/UnitHomePage'));
+const UnitPlansPage = React.lazy(() => import('./pages/UnitPlansPage'));
+const ProjectTasksPage = React.lazy(() => import('./pages/ProjectTasksPage'));
+const ProjectPlansPage = React.lazy(() => import('./pages/ProjectPlansPage'));
+const ProjectPlansArchivePage = React.lazy(() => import('./pages/ProjectPlansArchivePage'));
+const ProjectPlanHistoryPage = React.lazy(() => import('./pages/ProjectPlanHistoryPage'));
+const MyProjectsPage = React.lazy(() => import('./pages/MyProjectsPage'));
+const ContractorDashboard = React.lazy(() => import('./pages/ContractorDashboard'));
+const OwnershipTransferPage = React.lazy(() => import('./pages/OwnershipTransferPage'));
+const ProjectDashboardPage = React.lazy(() => import('./pages/ProjectDashboardPage'));
+const FloorDetailPage = React.lazy(() => import('./pages/FloorDetailPage'));
+const StageDetailPage = React.lazy(() => import('./pages/StageDetailPage'));
+const QCFloorSelectionPage = React.lazy(() => import('./pages/QCFloorSelectionPage'));
+const AccountSettingsPage = React.lazy(() => import('./pages/AccountSettingsPage'));
+const BuildingDefectsPage = React.lazy(() => import('./pages/BuildingDefectsPage'));
+const BuildingQCPage = React.lazy(() => import('./pages/BuildingQCPage'));
+const UnitQCSelectionPage = React.lazy(() => import('./pages/UnitQCSelectionPage'));
+const InnerBuildingPage = React.lazy(() => import('./pages/InnerBuildingPage'));
+const AdminQCTemplatesPage = React.lazy(() => import('./pages/AdminQCTemplatesPage'));
+const ApartmentDashboardPage = React.lazy(() => import('./pages/ApartmentDashboardPage'));
+const HandoverOverviewPage = React.lazy(() => import('./pages/HandoverOverviewPage'));
+const HandoverTabPage = React.lazy(() => import('./pages/HandoverTabPage'));
+const HandoverProtocolPage = React.lazy(() => import('./pages/HandoverProtocolPage'));
+const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage'));
 
 const INTENDED_PATH_KEY = 'intendedPath';
+
+const LoadingSpinner = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
+  </div>
+);
 
 const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   const { user, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
   if (!user) {
@@ -116,277 +119,279 @@ const AppRoutes = () => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
   return (
-    <Routes key={location.pathname}>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/phone-login" element={<Navigate to="/login" replace />} />
-      <Route path="/auth/wa" element={<WaLoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/register-management" element={<RegisterManagementPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route path="/accessibility" element={<AccessibilityPage />} />
-      <Route
-        path="/settings/account"
-        element={
-          <ProtectedRoute>
-            <AccountSettingsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route path="/onboarding" element={<OnboardingPage />} />
-      <Route path="/pending" element={<PendingApprovalPage />} />
-      <Route
-        path="/projects"
-        element={
-          <ProtectedRoute>
-            <ProjectsHome />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin"
-        element={
-          <ProtectedRoute requireSuperAdmin>
-            <AdminPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/billing"
-        element={
-          <ProtectedRoute requireSuperAdmin>
-            <AdminBillingPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/billing/org/:orgId"
-        element={
-          <ProtectedRoute>
-            <OrgBillingPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/orgs"
-        element={
-          <ProtectedRoute requireSuperAdmin>
-            <AdminOrgsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/users"
-        element={
-          <ProtectedRoute requireSuperAdmin>
-            <AdminUsersPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/qc-templates"
-        element={
-          <ProtectedRoute requireSuperAdmin>
-            <AdminQCTemplatesPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/join-requests"
-        element={
-          <ProtectedRoute allowedRoles={['project_manager']}>
-            <JoinRequestsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/control"
-        element={
-          <ProtectedRoute>
-            <ProjectControlPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/dashboard"
-        element={
-          <ProtectedRoute>
-            <ProjectDashboardPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/floors/:floorId"
-        element={
-          <ProtectedRoute>
-            <FloorDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/buildings/:buildingId/floors/:floorId/qc/units"
-        element={
-          <ProtectedRoute>
-            <UnitQCSelectionPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/qc/floors/:floorId/run/:runId/stage/:stageId"
-        element={
-          <ProtectedRoute>
-            <StageDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/qc"
-        element={
-          <ProtectedRoute>
-            <QCFloorSelectionPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route path="/" element={<Navigate to="/projects" replace />} />
-      <Route
-        path="/projects/:projectId/plans/archive"
-        element={
-          <ProtectedRoute>
-            <ProjectPlansArchivePage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/plans/:planId/history"
-        element={
-          <ProtectedRoute>
-            <ProjectPlanHistoryPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/plans"
-        element={
-          <ProtectedRoute>
-            <ProjectPlansPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/tasks"
-        element={
-          <ProtectedRoute>
-            <ProjectTasksPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId"
-        element={
-          <ProtectedRoute>
-            <UnitHomePage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId/tasks"
-        element={
-          <ProtectedRoute>
-            <UnitDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId/plans"
-        element={
-          <ProtectedRoute>
-            <UnitPlansPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/handover"
-        element={
-          <ProtectedRoute>
-            <HandoverOverviewPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId/handover"
-        element={
-          <ProtectedRoute>
-            <HandoverTabPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId/handover/:protocolId"
-        element={
-          <ProtectedRoute>
-            <HandoverProtocolPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId/handover/:protocolId/sections/:sectionId"
-        element={
-          <ProtectedRoute>
-            <HandoverSectionPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/buildings/:buildingId"
-        element={
-          <ProtectedRoute>
-            <InnerBuildingPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/buildings/:buildingId/qc"
-        element={
-          <ProtectedRoute>
-            <BuildingQCPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/buildings/:buildingId/defects"
-        element={
-          <ProtectedRoute>
-            <BuildingDefectsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId/units/:unitId/defects"
-        element={
-          <ProtectedRoute>
-            <ApartmentDashboardPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/tasks/:id"
-        element={
-          <ProtectedRoute>
-            <TaskDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-          path="/org/transfer/settings"
+    <Suspense fallback={<LoadingSpinner />}>
+      <Routes key={location.pathname}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/phone-login" element={<Navigate to="/login" replace />} />
+        <Route path="/auth/wa" element={<WaLoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/register-management" element={<RegisterManagementPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/accessibility" element={<AccessibilityPage />} />
+        <Route
+          path="/settings/account"
           element={
             <ProtectedRoute>
-              <OwnershipTransferPage />
+              <AccountSettingsPage />
             </ProtectedRoute>
           }
         />
-        <Route path="/org/transfer/:token" element={<OwnershipTransferPage />} />
-        <Route path="*" element={<Navigate to="/projects" replace />} />
-    </Routes>
+        <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/pending" element={<PendingApprovalPage />} />
+        <Route
+          path="/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectsHome />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute requireSuperAdmin>
+              <AdminPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/billing"
+          element={
+            <ProtectedRoute requireSuperAdmin>
+              <AdminBillingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing/org/:orgId"
+          element={
+            <ProtectedRoute>
+              <OrgBillingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/orgs"
+          element={
+            <ProtectedRoute requireSuperAdmin>
+              <AdminOrgsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute requireSuperAdmin>
+              <AdminUsersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/qc-templates"
+          element={
+            <ProtectedRoute requireSuperAdmin>
+              <AdminQCTemplatesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/join-requests"
+          element={
+            <ProtectedRoute allowedRoles={['project_manager']}>
+              <JoinRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/control"
+          element={
+            <ProtectedRoute>
+              <ProjectControlPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/dashboard"
+          element={
+            <ProtectedRoute>
+              <ProjectDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/floors/:floorId"
+          element={
+            <ProtectedRoute>
+              <FloorDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/buildings/:buildingId/floors/:floorId/qc/units"
+          element={
+            <ProtectedRoute>
+              <UnitQCSelectionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/qc/floors/:floorId/run/:runId/stage/:stageId"
+          element={
+            <ProtectedRoute>
+              <StageDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/qc"
+          element={
+            <ProtectedRoute>
+              <QCFloorSelectionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route
+          path="/projects/:projectId/plans/archive"
+          element={
+            <ProtectedRoute>
+              <ProjectPlansArchivePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/plans/:planId/history"
+          element={
+            <ProtectedRoute>
+              <ProjectPlanHistoryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/plans"
+          element={
+            <ProtectedRoute>
+              <ProjectPlansPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/tasks"
+          element={
+            <ProtectedRoute>
+              <ProjectTasksPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId"
+          element={
+            <ProtectedRoute>
+              <UnitHomePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/tasks"
+          element={
+            <ProtectedRoute>
+              <UnitDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/plans"
+          element={
+            <ProtectedRoute>
+              <UnitPlansPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/handover"
+          element={
+            <ProtectedRoute>
+              <HandoverOverviewPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/handover"
+          element={
+            <ProtectedRoute>
+              <HandoverTabPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/handover/:protocolId"
+          element={
+            <ProtectedRoute>
+              <HandoverProtocolPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/handover/:protocolId/sections/:sectionId"
+          element={
+            <ProtectedRoute>
+              <HandoverSectionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/buildings/:buildingId"
+          element={
+            <ProtectedRoute>
+              <InnerBuildingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/buildings/:buildingId/qc"
+          element={
+            <ProtectedRoute>
+              <BuildingQCPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/buildings/:buildingId/defects"
+          element={
+            <ProtectedRoute>
+              <BuildingDefectsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/units/:unitId/defects"
+          element={
+            <ProtectedRoute>
+              <ApartmentDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks/:id"
+          element={
+            <ProtectedRoute>
+              <TaskDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+            path="/org/transfer/settings"
+            element={
+              <ProtectedRoute>
+                <OwnershipTransferPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/org/transfer/:token" element={<OwnershipTransferPage />} />
+          <Route path="*" element={<Navigate to="/projects" replace />} />
+      </Routes>
+    </Suspense>
   );
 };
 

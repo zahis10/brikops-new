@@ -76,9 +76,12 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
 
 @router.get("/projects/{project_id}/dashboard")
 async def get_project_dashboard(project_id: str, user: dict = Depends(get_current_user)):
+    import time as _t
+    _t0 = _t.perf_counter()
     db = get_db()
     await _check_project_read_access(user, project_id)
     role = await _get_project_role(user, project_id)
+    _t_auth = _t.perf_counter()
     is_pm_or_owner = role in ('project_manager',)
     now = datetime.utcnow()
     seven_days_ago = (now - timedelta(days=7)).isoformat()
@@ -97,6 +100,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
          'building_id': 1, 'floor_id': 1, 'unit_id': 1,
          'created_at': 1, 'updated_at': 1, 'due_date': 1, 'category': 1, 'priority': 1}
     ).to_list(50000)
+    _t_tasks = _t.perf_counter()
 
     open_count = 0
     in_progress_count = 0
@@ -163,6 +167,8 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
                 contractor_map[aid]['closed'] += 1
             if s == 'returned_to_contractor':
                 contractor_map[aid]['rework'] += 1
+
+    _t_loop = _t.perf_counter()
 
     team_count = await db.project_memberships.count_documents({'project_id': project_id})
 
@@ -262,6 +268,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
             sla_close_30d = round(sum(close_deltas_30d) / len(close_deltas_30d), 1)
     except Exception as e:
         logger.warning(f"[DASHBOARD] SLA calculation error: {e}")
+    _t_sla = _t.perf_counter()
 
     stuck_threshold = (now - timedelta(hours=48)).isoformat()
     stuck_contractors = []
@@ -341,6 +348,13 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
         'by_status': by_status or {},
         'by_category': by_category or {},
     }
+    _t_end = _t.perf_counter()
+    logger.info(
+        f"[DASHBOARD-PERF] project={project_id[:8]} total={round((_t_end-_t0)*1000)}ms "
+        f"auth={round((_t_auth-_t0)*1000)}ms tasks_query={round((_t_tasks-_t_auth)*1000)}ms "
+        f"loop={round((_t_loop-_t_tasks)*1000)}ms sla={round((_t_sla-_t_loop)*1000)}ms "
+        f"enrichment={round((_t_end-_t_sla)*1000)}ms task_count={len(tasks)}"
+    )
     return result
 
 
