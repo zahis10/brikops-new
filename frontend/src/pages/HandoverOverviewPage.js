@@ -148,7 +148,7 @@ export default function HandoverOverviewPage() {
 
   const handleCreateFromPopover = (unitId, protocolType) => {
     setPopover(null);
-    navigate(`/projects/${projectId}/units/${unitId}/handover`);
+    navigate(`/projects/${projectId}/units/${unitId}/handover?create=${protocolType}`);
   };
 
   const summary = data?.summary || { total_units: 0, signed: 0, partially_signed: 0, pending: 0, not_started: 0 };
@@ -440,7 +440,7 @@ export default function HandoverOverviewPage() {
                                   }}
                                 >
                                   {unit.open_defects > 0 && (
-                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                                    <span className="absolute -top-1 -left-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
                                       {unit.open_defects > 9 ? '9+' : unit.open_defects}
                                     </span>
                                   )}

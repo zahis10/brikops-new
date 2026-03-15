@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { handoverService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -57,9 +57,11 @@ const HandoverTabPage = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [protocols, setProtocols] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [autoCreateDone, setAutoCreateDone] = useState(false);
 
   const loadProtocols = useCallback(async () => {
     try {
@@ -113,6 +115,21 @@ const HandoverTabPage = () => {
       setCreating(false);
     }
   };
+
+  useEffect(() => {
+    if (loading || autoCreateDone) return;
+    const createType = searchParams.get('create');
+    if (createType && ['initial', 'final'].includes(createType)) {
+      const exists = protocols.find(p => p.type === createType);
+      if (!exists) {
+        setAutoCreateDone(true);
+        setSearchParams({}, { replace: true });
+        handleCreate(createType);
+      } else {
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [loading, protocols, searchParams, autoCreateDone]);
 
   const renderProtocolCard = (protocol, typeLabel, typeIcon) => {
     if (!protocol) return null;
