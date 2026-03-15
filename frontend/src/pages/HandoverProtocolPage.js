@@ -9,6 +9,12 @@ import {
   AlertTriangle, Lock
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
+import HandoverPropertyForm from '../components/handover/HandoverPropertyForm';
+import HandoverTenantForm from '../components/handover/HandoverTenantForm';
+import HandoverMeterForm from '../components/handover/HandoverMeterForm';
+import HandoverDeliveredItems from '../components/handover/HandoverDeliveredItems';
+import HandoverGeneralNotes from '../components/handover/HandoverGeneralNotes';
+import HandoverLegalText from '../components/handover/HandoverLegalText';
 
 const ENGINE_SECTIONS = [
   { key: 'property', label: t('handover', 'propertyDetails'), icon: Home, visibleTypes: ['initial', 'final'] },
@@ -70,6 +76,10 @@ const HandoverProtocolPage = () => {
 
   useEffect(() => { loadProtocol(); }, [loadProtocol]);
 
+  const handleFormUpdated = useCallback(() => {
+    loadProtocol();
+  }, [loadProtocol]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -117,6 +127,21 @@ const HandoverProtocolPage = () => {
 
   const visibleEngineSections = ENGINE_SECTIONS.filter(es => es.visibleTypes.includes(protocol.type));
 
+  const renderEngineContent = (key) => {
+    const formProps = { protocol, projectId, isSigned, onUpdated: handleFormUpdated };
+    switch (key) {
+      case 'property': return <HandoverPropertyForm {...formProps} />;
+      case 'tenants': return <HandoverTenantForm {...formProps} />;
+      case 'meters': return <HandoverMeterForm {...formProps} />;
+      case 'delivered': return <HandoverDeliveredItems {...formProps} />;
+      case 'notes': return <HandoverGeneralNotes {...formProps} />;
+      case 'legal': return <HandoverLegalText {...formProps} />;
+      case 'signatures':
+        return <p className="text-xs text-slate-400 italic p-1">{t('handover', 'sectionPlaceholder')}</p>;
+      default: return null;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <div className={`bg-gradient-to-l ${isSigned ? 'from-green-600 to-green-700' : 'from-purple-600 to-purple-700'} text-white`}>
@@ -131,9 +156,7 @@ const HandoverProtocolPage = () => {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold">{typeLabel}</h1>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                  isSigned ? 'bg-white/20 text-white' : 'bg-white/20 text-white'
-                }`}>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
                   {statusInfo.label}
                 </span>
               </div>
@@ -193,6 +216,11 @@ const HandoverProtocolPage = () => {
                 <es.icon className="w-4 h-4 text-purple-500" />
               </div>
               <span className="flex-1 text-sm font-medium text-slate-700">{es.label}</span>
+              {es.key === 'legal' && protocol?.legal_text_edited === true && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                  {t('handover', 'legalTextEdited')}
+                </span>
+              )}
               {expandedEngine === es.key ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />
               ) : (
@@ -201,7 +229,7 @@ const HandoverProtocolPage = () => {
             </button>
             {expandedEngine === es.key && (
               <div className="px-3 pb-3 pt-1 border-t border-slate-100">
-                <p className="text-xs text-slate-400 italic">{t('handover', 'sectionPlaceholder')}</p>
+                {renderEngineContent(es.key)}
               </div>
             )}
           </Card>
