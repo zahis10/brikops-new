@@ -46,6 +46,9 @@ const AdminQCTemplatesPage = () => {
   const [assignProjects, setAssignProjects] = useState([]);
   const [assignLoading, setAssignLoading] = useState(false);
   const [assigningTo, setAssigningTo] = useState(null);
+  const [assignSearch, setAssignSearch] = useState('');
+
+  const [showTypeDialog, setShowTypeDialog] = useState(false);
 
   const openAssignModal = async (e, family) => {
     e.stopPropagation();
@@ -178,11 +181,13 @@ const AdminQCTemplatesPage = () => {
     }
   };
 
-  const handleCreateNew = async () => {
+  const handleCreateNew = async (templateType) => {
+    setShowTypeDialog(false);
     try {
       setSaving(true);
       const result = await templateService.create({
-        name: 'תבנית חדשה',
+        name: templateType === 'handover' ? 'תבנית מסירה חדשה' : 'תבנית ביצוע חדשה',
+        type: templateType,
         stages: [{
           id: `stage_${Date.now()}`,
           title: 'שלב חדש',
@@ -359,6 +364,9 @@ const AdminQCTemplatesPage = () => {
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
+              <span className={`px-2 py-0.5 rounded font-medium ${editingTemplate.type === 'handover' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                {editingTemplate.type === 'handover' ? 'תבנית מסירה' : 'תבנית בקרת ביצוע'}
+              </span>
               <span>גרסה: {editingTemplate.version}</span>
               <span>משפחה: {editingTemplate.family_id?.slice(0, 8)}</span>
               {editingTemplate.is_default && <span className="text-amber-600 font-medium flex items-center gap-1"><Star className="w-3 h-3" /> ברירת מחדל</span>}
@@ -553,7 +561,7 @@ const AdminQCTemplatesPage = () => {
             <h1 className="text-lg font-bold text-slate-800">תבניות בקרת ביצוע / מסירה</h1>
           </div>
           <button
-            onClick={handleCreateNew}
+            onClick={() => setShowTypeDialog(true)}
             disabled={saving}
             className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
           >
@@ -690,28 +698,82 @@ const AdminQCTemplatesPage = () => {
         )}
       </div>
 
+      {showTypeDialog && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" dir="rtl">
+          <div className="fixed inset-0 bg-black/40" onClick={() => setShowTypeDialog(false)} />
+          <div className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-sm shadow-xl">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800">איזה סוג תבנית ליצור?</h3>
+              <button onClick={() => setShowTypeDialog(false)} className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <button
+                onClick={() => handleCreateNew('qc')}
+                className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-blue-200 bg-blue-50 hover:bg-blue-100 hover:border-blue-300 transition-colors text-right"
+              >
+                <span className="text-2xl">🔍</span>
+                <div>
+                  <p className="text-sm font-bold text-blue-800">בקרת ביצוע</p>
+                  <p className="text-[11px] text-blue-600 mt-0.5">תבנית לביקורת איכות ביצוע</p>
+                </div>
+              </button>
+              <button
+                onClick={() => handleCreateNew('handover')}
+                className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-purple-200 bg-purple-50 hover:bg-purple-100 hover:border-purple-300 transition-colors text-right"
+              >
+                <span className="text-2xl">🔑</span>
+                <div>
+                  <p className="text-sm font-bold text-purple-800">מסירה</p>
+                  <p className="text-[11px] text-purple-600 mt-0.5">תבנית לפרוטוקול מסירת דירה</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {assignFamily && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" dir="rtl">
-          <div className="fixed inset-0 bg-black/40" onClick={() => setAssignFamily(null)} />
+          <div className="fixed inset-0 bg-black/40" onClick={() => { setAssignFamily(null); setAssignSearch(''); }} />
           <div className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-xl">
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-800">שיוך תבנית לפרויקט</h3>
                 <p className="text-xs text-slate-500 mt-0.5">{assignFamily.name}</p>
               </div>
-              <button onClick={() => setAssignFamily(null)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button onClick={() => { setAssignFamily(null); setAssignSearch(''); }} className="p-1 text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {!assignLoading && assignProjects.length > 0 && (
+              <div className="px-4 pt-3">
+                <div className="relative">
+                  <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={assignSearch}
+                    onChange={e => setAssignSearch(e.target.value)}
+                    placeholder="חפש פרויקט..."
+                    className="w-full pr-9 pl-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {assignLoading ? (
                 <div className="flex justify-center py-8">
                   <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                 </div>
-              ) : assignProjects.length === 0 ? (
-                <p className="text-center text-sm text-slate-400 py-8">לא נמצאו פרויקטים</p>
-              ) : (
-                assignProjects.map(p => {
+              ) : (() => {
+                const filtered = assignProjects.filter(p =>
+                  !assignSearch || p.name?.toLowerCase().includes(assignSearch.toLowerCase())
+                );
+                if (filtered.length === 0) return (
+                  <p className="text-center text-sm text-slate-400 py-8">לא נמצאו פרויקטים</p>
+                );
+                return filtered.map(p => {
                   const isAssigned = p.currentTemplate?.template_family_id === assignFamily.family_id;
                   const hasOther = p.currentTemplate?.template_family_id && !isAssigned;
                   return (
@@ -745,8 +807,8 @@ const AdminQCTemplatesPage = () => {
                       </button>
                     </div>
                   );
-                })
-              )}
+                });
+              })()}
             </div>
           </div>
         </div>
