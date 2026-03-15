@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
-const API = process.env.REACT_APP_API_URL || '';
+const API = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 
 export default function WaLoginPage() {
   const [searchParams] = useSearchParams();
