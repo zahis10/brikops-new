@@ -129,6 +129,7 @@ const HandoverTabPage = () => {
         setSearchParams({}, { replace: true });
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, protocols, searchParams, autoCreateDone]);
 
   const renderProtocolCard = (protocol, typeLabel, typeIcon) => {
