@@ -52,7 +52,7 @@ const HandoverSectionPage = () => {
   }
 
   const section = protocol?.sections?.find(s => s.section_id === sectionId);
-  const isSigned = protocol?.status === 'signed';
+  const isSigned = protocol?.locked === true;
 
   if (!section) {
     return (

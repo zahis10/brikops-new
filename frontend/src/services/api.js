@@ -1180,10 +1180,24 @@ export const handoverService = {
     );
     return response.data;
   },
-  async signProtocol(projectId, protocolId, data) {
-    const response = await axios.post(
-      `${API}/projects/${projectId}/handover/protocols/${protocolId}/sign`,
-      data, { headers: getAuthHeader() }
+  async signRole(projectId, protocolId, role, formData) {
+    const response = await axios.put(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/signatures/${role}`,
+      formData, { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+  async deleteSignature(projectId, protocolId, role) {
+    const response = await axios.delete(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/signatures/${role}`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getSignatureImage(projectId, protocolId, role) {
+    const response = await axios.get(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/signatures/${role}/image`,
+      { headers: getAuthHeader() }
     );
     return response.data;
   },

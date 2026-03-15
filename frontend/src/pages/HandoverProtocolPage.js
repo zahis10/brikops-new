@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { handoverService } from '../services/api';
 import { toast } from 'sonner';
 import { t } from '../i18n';
+import { useAuth } from '../contexts/AuthContext';
+import axios from 'axios';
 import {
   ArrowRight, Loader2, ChevronDown, ChevronUp, ShieldCheck,
   Home, Users, Gauge, Package, FileText, Scale, PenLine,
@@ -15,6 +17,9 @@ import HandoverMeterForm from '../components/handover/HandoverMeterForm';
 import HandoverDeliveredItems from '../components/handover/HandoverDeliveredItems';
 import HandoverGeneralNotes from '../components/handover/HandoverGeneralNotes';
 import HandoverLegalText from '../components/handover/HandoverLegalText';
+import SignatureSection from '../components/handover/SignatureSection';
+
+const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const ENGINE_SECTIONS = [
   { key: 'property', label: t('handover', 'propertyDetails'), icon: Home, visibleTypes: ['initial', 'final'] },
@@ -29,6 +34,7 @@ const ENGINE_SECTIONS = [
 const STATUS_BADGE = {
   draft: { label: t('handover', 'draft'), color: 'bg-slate-100 text-slate-600' },
   in_progress: { label: t('handover', 'inProgress'), color: 'bg-blue-100 text-blue-700' },
+  partially_signed: { label: t('handover', 'partiallySigned'), color: 'bg-amber-100 text-amber-700' },
   signed: { label: t('handover', 'signed'), color: 'bg-green-100 text-green-700' },
 };
 
@@ -56,10 +62,12 @@ const ProgressRing = ({ checked, total, size = 36, strokeWidth = 3 }) => {
 const HandoverProtocolPage = () => {
   const { projectId, unitId, protocolId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [protocol, setProtocol] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedEngine, setExpandedEngine] = useState(null);
+  const [userRole, setUserRole] = useState(null);
 
   const loadProtocol = useCallback(async () => {
     try {
@@ -75,6 +83,24 @@ const HandoverProtocolPage = () => {
   }, [projectId, protocolId]);
 
   useEffect(() => { loadProtocol(); }, [loadProtocol]);
+
+  useEffect(() => {
+    const fetchRole = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await axios.get(`${API}/api/projects/${projectId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setUserRole(res.data?.my_role || null);
+        if (user?.platform_role === 'super_admin') {
+          setUserRole('super_admin');
+        }
+      } catch {
+        setUserRole(null);
+      }
+    };
+    fetchRole();
+  }, [projectId, user]);
 
   const handleFormUpdated = useCallback(() => {
     loadProtocol();
@@ -102,7 +128,7 @@ const HandoverProtocolPage = () => {
     );
   }
 
-  const isSigned = protocol.status === 'signed';
+  const isLocked = protocol.locked === true;
   const statusInfo = STATUS_BADGE[protocol.status] || STATUS_BADGE.draft;
   const typeLabel = protocol.type === 'initial'
     ? t('handover', 'initialProtocol')
@@ -128,7 +154,7 @@ const HandoverProtocolPage = () => {
   const visibleEngineSections = ENGINE_SECTIONS.filter(es => es.visibleTypes.includes(protocol.type));
 
   const renderEngineContent = (key) => {
-    const formProps = { protocol, projectId, isSigned, onUpdated: handleFormUpdated };
+    const formProps = { protocol, projectId, isSigned: isLocked, onUpdated: handleFormUpdated };
     switch (key) {
       case 'property': return <HandoverPropertyForm {...formProps} />;
       case 'tenants': return <HandoverTenantForm {...formProps} />;
@@ -137,14 +163,14 @@ const HandoverProtocolPage = () => {
       case 'notes': return <HandoverGeneralNotes {...formProps} />;
       case 'legal': return <HandoverLegalText {...formProps} />;
       case 'signatures':
-        return <p className="text-xs text-slate-400 italic p-1">{t('handover', 'sectionPlaceholder')}</p>;
+        return <SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} />;
       default: return null;
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <div className={`bg-gradient-to-l ${isSigned ? 'from-green-600 to-green-700' : 'from-purple-600 to-purple-700'} text-white`}>
+      <div className={`bg-gradient-to-l ${isLocked ? 'from-green-600 to-green-700' : 'from-purple-600 to-purple-700'} text-white`}>
         <div className="max-w-lg mx-auto px-4 py-3">
           <div className="flex items-center gap-3">
             <button
@@ -165,12 +191,12 @@ const HandoverProtocolPage = () => {
                 {protocol.snapshot?.building_name && <><span>›</span><span>{protocol.snapshot.building_name}</span></>}
               </div>
             </div>
-            {isSigned && <Lock className="w-5 h-5 text-green-200" />}
+            {isLocked && <Lock className="w-5 h-5 text-green-200" />}
           </div>
         </div>
       </div>
 
-      {isSigned && (
+      {isLocked && (
         <div className="max-w-lg mx-auto px-4 mt-3">
           <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-green-600 flex-shrink-0" />
@@ -251,7 +277,7 @@ const HandoverProtocolPage = () => {
             <Card
               key={section.section_id}
               className={`p-3 border transition-all cursor-pointer active:scale-[0.98] ${
-                isSigned ? 'border-green-200 bg-green-50/30' : 'border-slate-200 hover:border-blue-300'
+                isLocked ? 'border-green-200 bg-green-50/30' : 'border-slate-200 hover:border-blue-300'
               }`}
               onClick={() => {
                 navigate(

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { projectService, buildingService, qcService } from '../services/api';
+import { projectService, buildingService, qcService, handoverService } from '../services/api';
 import { qcFloorStatusLabel } from '../utils/qcLabels';
 import { useAuth } from '../contexts/AuthContext';
 import ProjectSwitcher from '../components/ProjectSwitcher';
@@ -11,7 +11,7 @@ import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
   ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings,
-  Construction
+  Construction, FileSignature
 } from 'lucide-react';
 
 const formatHours = (h) => {
@@ -117,6 +117,7 @@ export default function ProjectDashboardPage() {
   const [expandedStages, setExpandedStages] = useState({});
   const [alertsExpanded, setAlertsExpanded] = useState(false);
   const [highlightEntity, setHighlightEntity] = useState(null);
+  const [handoverSummary, setHandoverSummary] = useState(null);
   const stageRefs = useRef({});
 
   const load = useCallback(async (isRefresh = false) => {
@@ -124,6 +125,7 @@ export default function ProjectDashboardPage() {
     setError(null);
     setQcSummary(null);
     setExecSummary(null);
+    setHandoverSummary(null);
     try {
       const [dashData, projData] = await Promise.all([
         projectService.getDashboard(projectId),
@@ -133,7 +135,7 @@ export default function ProjectDashboardPage() {
       setProject(projData);
 
       try {
-        const [hierarchyResult, execResult] = await Promise.allSettled([
+        const [hierarchyResult, execResult, handoverResult] = await Promise.allSettled([
           (async () => {
             const hierarchy = await buildingService.getHierarchy(projectId);
             const floorIds = [];
@@ -147,9 +149,11 @@ export default function ProjectDashboardPage() {
             return null;
           })(),
           qcService.getExecutionSummary(projectId),
+          handoverService.getSummary(projectId),
         ]);
         if (hierarchyResult.status === 'fulfilled') setQcSummary(hierarchyResult.value);
         if (execResult.status === 'fulfilled') setExecSummary(execResult.value);
+        if (handoverResult.status === 'fulfilled') setHandoverSummary(handoverResult.value);
       } catch {}
     } catch (err) {
       if (err.response?.status === 403) {
@@ -448,6 +452,79 @@ export default function ProjectDashboardPage() {
             </div>
           </div>
         )}
+
+        {handoverSummary && handoverSummary.total_units > 0 && (() => {
+          const hs = handoverSummary;
+          const initialTotal = (hs.initial_draft || 0) + (hs.initial_in_progress || 0) + (hs.initial_partially_signed || 0) + (hs.initial_signed || 0);
+          const finalTotal = (hs.final_draft || 0) + (hs.final_in_progress || 0) + (hs.final_partially_signed || 0) + (hs.final_signed || 0);
+          const initialSigned = hs.initial_signed || 0;
+          const finalSigned = hs.final_signed || 0;
+          const initialPct = initialTotal > 0 ? Math.round((initialSigned / initialTotal) * 100) : 0;
+          const finalPct = finalTotal > 0 ? Math.round((finalSigned / finalTotal) * 100) : 0;
+          const hasAny = initialTotal > 0 || finalTotal > 0;
+          if (!hasAny) return null;
+          return (
+            <div className="bg-white rounded-xl border shadow-sm p-4">
+              <div className="flex items-center justify-between mb-3">
+                <SectionHeader icon={FileSignature} title="מסירות" count={initialTotal + finalTotal} color="text-amber-500" />
+                <button
+                  onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)}
+                  className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
+                >
+                  צפה <ChevronLeft className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {initialTotal > 0 && (
+                  <div className="bg-slate-50 rounded-xl p-3">
+                    <p className="text-xs text-slate-500 mb-1">מסירה ראשונית</p>
+                    <div className="flex items-end gap-1 mb-2">
+                      <span className="text-2xl font-black text-slate-800">{initialSigned}</span>
+                      <span className="text-sm text-slate-400 mb-0.5">/ {initialTotal}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-1.5 mb-1">
+                      <div className="h-1.5 rounded-full transition-all" style={{
+                        width: `${initialPct}%`,
+                        background: initialPct === 100 ? '#22c55e' : '#f59e0b'
+                      }} />
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {(hs.initial_in_progress || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">בתהליך {hs.initial_in_progress}</span>}
+                      {(hs.initial_partially_signed || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">חתום חלקית {hs.initial_partially_signed}</span>}
+                      {initialSigned > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">חתום {initialSigned}</span>}
+                    </div>
+                  </div>
+                )}
+                {finalTotal > 0 && (
+                  <div className="bg-slate-50 rounded-xl p-3">
+                    <p className="text-xs text-slate-500 mb-1">מסירה סופית</p>
+                    <div className="flex items-end gap-1 mb-2">
+                      <span className="text-2xl font-black text-slate-800">{finalSigned}</span>
+                      <span className="text-sm text-slate-400 mb-0.5">/ {finalTotal}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-1.5 mb-1">
+                      <div className="h-1.5 rounded-full transition-all" style={{
+                        width: `${finalPct}%`,
+                        background: finalPct === 100 ? '#22c55e' : '#f59e0b'
+                      }} />
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {(hs.final_in_progress || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">בתהליך {hs.final_in_progress}</span>}
+                      {(hs.final_partially_signed || 0) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">חתום חלקית {hs.final_partially_signed}</span>}
+                      {finalSigned > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">חתום {finalSigned}</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {(hs.open_handover_defects || 0) > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2 text-red-600 text-sm">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>{hs.open_handover_defects} ליקויי מסירה פתוחים</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-xl border shadow-sm p-4">

@@ -39,6 +39,7 @@ const AdminQCTemplatesPage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [sortBy, setSortBy] = useState('name');
+  const [typeFilter, setTypeFilter] = useState('');
   const [archiving, setArchiving] = useState(null);
 
   const [assignFamily, setAssignFamily] = useState(null);
@@ -102,18 +103,20 @@ const AdminQCTemplatesPage = () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await templateService.list({
+      const params = {
         search: searchQuery,
         archived: showArchived,
         sort: sortBy,
-      });
+      };
+      if (typeFilter) params.type = typeFilter;
+      const data = await templateService.list(params);
       setFamilies(data);
     } catch (e) {
       setError('שגיאה בטעינת תבניות');
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, showArchived, sortBy]);
+  }, [searchQuery, showArchived, sortBy, typeFilter]);
 
   useEffect(() => { loadFamilies(); }, [loadFamilies]);
 
@@ -580,7 +583,7 @@ const AdminQCTemplatesPage = () => {
           </button>
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-2 text-xs flex-wrap">
           <span className="text-slate-500">מיון:</span>
           {[{ key: 'name', label: 'שם' }, { key: 'last_modified', label: 'עדכון אחרון' }, { key: 'created', label: 'תאריך יצירה' }].map(s => (
             <button
@@ -589,6 +592,17 @@ const AdminQCTemplatesPage = () => {
               className={`px-2 py-1 rounded-md border transition-colors ${sortBy === s.key ? 'bg-blue-50 border-blue-300 text-blue-700 font-medium' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
             >
               {s.label} {sortBy === s.key && '•'}
+            </button>
+          ))}
+          <span className="text-slate-300 mx-1">|</span>
+          <span className="text-slate-500">סוג:</span>
+          {[{ key: '', label: 'הכל' }, { key: 'qc', label: 'QC' }, { key: 'handover', label: 'מסירה' }].map(tf => (
+            <button
+              key={tf.key}
+              onClick={() => setTypeFilter(tf.key)}
+              className={`px-2 py-1 rounded-md border transition-colors ${typeFilter === tf.key ? 'bg-amber-50 border-amber-300 text-amber-700 font-medium' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+            >
+              {tf.label}
             </button>
           ))}
         </div>

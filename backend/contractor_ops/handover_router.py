@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File, Form
 from datetime import datetime, timezone
 import uuid
 import logging
 
 from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_project_read_access, _audit, _now, _is_super_admin
+from services.object_storage import save_bytes, generate_url
 
 logger = logging.getLogger("contractor_ops.handover")
 
@@ -386,9 +387,49 @@ async def _get_protocol_or_404(protocol_id: str, project_id: str):
     return protocol
 
 
-def _check_not_signed(protocol):
-    if protocol.get("status") in ("signed", "completed"):
-        raise HTTPException(status_code=403, detail="פרוטוקול חתום — לא ניתן לעריכה")
+VALID_SIGNATURE_ROLES = ("manager", "tenant", "contractor_rep")
+
+SIGNATURE_ROLE_LABELS = {
+    "manager": "מנהל פרויקט / מפקח",
+    "tenant": "דייר / רוכש",
+    "contractor_rep": "נציג קבלן",
+}
+
+
+def _check_not_locked(protocol):
+    if protocol.get("locked") is True:
+        raise HTTPException(status_code=403, detail="פרוטוקול חתום — לא ניתן לערוך")
+
+
+def _normalize_signatures(protocol):
+    sigs = protocol.get("signatures")
+    if isinstance(sigs, list):
+        return {}
+    if isinstance(sigs, dict):
+        return sigs
+    return {}
+
+
+def _count_signatures(protocol):
+    sigs = _normalize_signatures(protocol)
+    return sum(1 for role in VALID_SIGNATURE_ROLES if role in sigs and sigs[role])
+
+
+def _recalculate_signature_status(protocol):
+    count = _count_signatures(protocol)
+    if count >= 3:
+        return "signed", True
+    elif count >= 1:
+        return "partially_signed", False
+    else:
+        has_item_changes = any(
+            item.get("status") and item["status"] != "not_checked"
+            for section in protocol.get("sections", [])
+            for item in section.get("items", [])
+        )
+        if has_item_changes:
+            return "in_progress", False
+        return "draft", False
 
 
 @router.put("/projects/{project_id}/handover-template")
@@ -681,7 +722,7 @@ async def get_protocol(project_id: str, protocol_id: str, user: dict = Depends(g
 async def update_protocol(project_id: str, protocol_id: str, request: Request, user: dict = Depends(get_current_user)):
     await _check_handover_management(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
-    _check_not_signed(protocol)
+    _check_not_locked(protocol)
 
     body = await request.json()
     db = get_db()
@@ -717,7 +758,7 @@ async def update_item(
 ):
     await _check_handover_management(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
-    _check_not_signed(protocol)
+    _check_not_locked(protocol)
 
     body = await request.json()
     db = get_db()
@@ -787,7 +828,7 @@ async def create_defect_from_item(
 ):
     await _check_handover_management(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
-    _check_not_signed(protocol)
+    _check_not_locked(protocol)
 
     target_item = None
     target_section_name = None
@@ -896,46 +937,205 @@ async def create_defect_from_item(
     return task_doc
 
 
-@router.post("/projects/{project_id}/handover/protocols/{protocol_id}/sign")
-async def sign_protocol(project_id: str, protocol_id: str, request: Request, user: dict = Depends(get_current_user)):
-    await _check_handover_management(user, project_id)
+async def _get_user_project_role(user: dict, project_id: str) -> str:
+    if _is_super_admin(user):
+        return "super_admin"
+    db = get_db()
+    membership = await db.project_memberships.find_one(
+        {"user_id": user["id"], "project_id": project_id}
+    )
+    if not membership:
+        return None
+    return membership.get("role")
+
+
+def _check_signature_role_auth(user_role: str, signature_role: str):
+    if user_role == "super_admin":
+        return
+    if signature_role == "manager":
+        if user_role not in ("project_manager", "owner"):
+            raise HTTPException(status_code=403, detail="רק מנהל פרויקט או מפקח יכול לחתום בתפקיד זה")
+    elif signature_role == "contractor_rep":
+        if user_role != "contractor":
+            raise HTTPException(status_code=403, detail="רק נציג קבלן יכול לחתום בתפקיד זה")
+    elif signature_role == "tenant":
+        if user_role not in ("project_manager", "owner", "contractor"):
+            raise HTTPException(status_code=403, detail="רק מנהל פרויקט או נציג קבלן יכול להחתים דייר")
+
+
+@router.put("/projects/{project_id}/handover/protocols/{protocol_id}/signatures/{role}")
+async def sign_role(
+    project_id: str, protocol_id: str, role: str,
+    signer_name: str = Form(...),
+    signature_type: str = Form(...),
+    typed_name: str = Form(None),
+    signature_image: UploadFile = File(None),
+    user: dict = Depends(get_current_user),
+):
+    if role not in VALID_SIGNATURE_ROLES:
+        raise HTTPException(status_code=400, detail=f"תפקיד לא חוקי: {role}")
+
+    user_role = await _get_user_project_role(user, project_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="אין לך גישה לפרויקט זה")
+    _check_signature_role_auth(user_role, role)
+
     protocol = await _get_protocol_or_404(protocol_id, project_id)
-    _check_not_signed(protocol)
+    _check_not_locked(protocol)
 
-    body = await request.json()
-    signatures = body.get("signatures", [])
+    existing_sigs = _normalize_signatures(protocol)
+    if role in existing_sigs and existing_sigs[role]:
+        raise HTTPException(status_code=409, detail="חתימה כבר קיימת לתפקיד זה")
 
-    has_tenant = any(s.get("role") == "tenant" for s in signatures)
-    has_company = any(s.get("role") == "company_rep" for s in signatures)
+    if signature_type not in ("canvas", "typed"):
+        raise HTTPException(status_code=400, detail="סוג חתימה לא חוקי — canvas או typed")
 
-    if not has_tenant or not has_company:
-        raise HTTPException(status_code=400, detail="נדרשת חתימה של דייר אחד לפחות ונציג חברה אחד לפחות")
-
-    for sig in signatures:
-        if not sig.get("name") or not sig.get("signature_data"):
-            raise HTTPException(status_code=400, detail="שם וחתימה נדרשים לכל חותם")
+    signer_name = signer_name.strip()
+    if not signer_name:
+        raise HTTPException(status_code=400, detail="שם החותם נדרש")
 
     db = get_db()
     ts = _now()
 
+    sig_data = {
+        "type": signature_type,
+        "signer_name": signer_name,
+        "signer_user_id": user["id"],
+        "signed_at": ts,
+        "ip_address": None,
+    }
+
+    if signature_type == "canvas":
+        if not signature_image:
+            raise HTTPException(status_code=400, detail="נדרש קובץ חתימה לסוג canvas")
+        image_data = await signature_image.read()
+        if not image_data or len(image_data) < 100:
+            raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")
+        s3_key = f"signatures/{protocol_id}/{role}.png"
+        stored_ref = save_bytes(image_data, s3_key, "image/png")
+        sig_data["image_key"] = stored_ref
+    else:
+        typed_name_val = (typed_name or "").strip()
+        if not typed_name_val:
+            raise HTTPException(status_code=400, detail="שם מלא נדרש לחתימה מוקלדת")
+        sig_data["typed_name"] = typed_name_val
+
+    existing_sigs[role] = sig_data
+
+    new_status, new_locked = _recalculate_signature_status({**protocol, "signatures": existing_sigs})
+
+    raw_sigs = protocol.get("signatures")
+    if isinstance(raw_sigs, list):
+        await db.handover_protocols.update_one(
+            {"id": protocol_id, "project_id": project_id},
+            {"$set": {"signatures": {}}}
+        )
+
+    update_set = {
+        f"signatures.{role}": sig_data,
+        "status": new_status,
+        "locked": new_locked,
+        "updated_at": ts,
+    }
+    if new_locked:
+        update_set["signed_at"] = ts
+
     await db.handover_protocols.update_one(
         {"id": protocol_id, "project_id": project_id},
-        {"$set": {
-            "status": "signed",
-            "signed_at": ts,
-            "updated_at": ts,
-            "signatures": signatures,
-        }}
+        {"$set": update_set}
     )
 
-    await _audit("handover_protocol", protocol_id, "signed", user["id"], {
+    await _audit("handover_protocol", protocol_id, f"signed_{role}", user["id"], {
         "project_id": project_id,
-        "signature_count": len(signatures),
+        "signature_role": role,
+        "signature_type": signature_type,
+        "signer_name": signer_name,
     })
 
-    logger.info(f"[HANDOVER] Protocol={protocol_id} signed by user={user['id']} with {len(signatures)} signatures")
+    logger.info(f"[HANDOVER] Protocol={protocol_id} role={role} signed by user={user['id']} type={signature_type}")
     updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
     return updated
+
+
+@router.delete("/projects/{project_id}/handover/protocols/{protocol_id}/signatures/{role}")
+async def delete_signature(
+    project_id: str, protocol_id: str, role: str,
+    user: dict = Depends(get_current_user),
+):
+    if role not in VALID_SIGNATURE_ROLES:
+        raise HTTPException(status_code=400, detail=f"תפקיד לא חוקי: {role}")
+
+    user_role = await _get_user_project_role(user, project_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="אין לך גישה לפרויקט זה")
+    if user_role not in ("project_manager", "owner", "super_admin"):
+        raise HTTPException(status_code=403, detail="רק מנהל פרויקט יכול למחוק חתימות")
+
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    existing_sigs = _normalize_signatures(protocol)
+    if role not in existing_sigs or not existing_sigs[role]:
+        raise HTTPException(status_code=404, detail="אין חתימה לתפקיד זה")
+
+    db = get_db()
+    ts = _now()
+
+    raw_sigs = protocol.get("signatures")
+    if isinstance(raw_sigs, list):
+        await db.handover_protocols.update_one(
+            {"id": protocol_id, "project_id": project_id},
+            {"$set": {"signatures": {}}}
+        )
+
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        {"$unset": {f"signatures.{role}": ""}, "$set": {"updated_at": ts}}
+    )
+
+    refreshed = await db.handover_protocols.find_one({"id": protocol_id, "project_id": project_id}, {"_id": 0})
+    new_status, new_locked = _recalculate_signature_status(refreshed)
+
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        {"$set": {"status": new_status, "locked": new_locked, "updated_at": ts}}
+    )
+
+    await _audit("handover_protocol", protocol_id, f"signature_deleted_{role}", user["id"], {
+        "project_id": project_id, "deleted_role": role,
+    })
+
+    logger.info(f"[HANDOVER] Protocol={protocol_id} signature deleted for role={role} by user={user['id']}")
+    updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
+    return updated
+
+
+@router.get("/projects/{project_id}/handover/protocols/{protocol_id}/signatures/{role}/image")
+async def get_signature_image(
+    project_id: str, protocol_id: str, role: str,
+    user: dict = Depends(get_current_user),
+):
+    await _check_handover_access(user, project_id)
+
+    if role not in VALID_SIGNATURE_ROLES:
+        raise HTTPException(status_code=400, detail=f"תפקיד לא חוקי: {role}")
+
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    sigs = _normalize_signatures(protocol)
+
+    if role not in sigs or not sigs[role]:
+        raise HTTPException(status_code=404, detail="אין חתימה לתפקיד זה")
+
+    sig = sigs[role]
+    if sig.get("type") == "typed":
+        return {"type": "typed", "typed_name": sig.get("typed_name", ""), "signer_name": sig.get("signer_name", "")}
+
+    image_key = sig.get("image_key", "")
+    if image_key:
+        url = generate_url(image_key)
+        return {"type": "canvas", "url": url, "signer_name": sig.get("signer_name", "")}
+
+    raise HTTPException(status_code=404, detail="תמונת חתימה לא נמצאה")
 
 
 @router.post("/projects/{project_id}/handover/protocols/{protocol_id}/reopen")
@@ -944,7 +1144,7 @@ async def reopen_protocol(project_id: str, protocol_id: str, request: Request, u
         raise HTTPException(status_code=403, detail="רק מנהל מערכת יכול לפתוח מחדש פרוטוקול חתום")
 
     protocol = await _get_protocol_or_404(protocol_id, project_id)
-    if protocol.get("status") not in ("signed", "completed"):
+    if protocol.get("locked") is not True and protocol.get("status") not in ("signed", "completed"):
         raise HTTPException(status_code=400, detail="ניתן לפתוח מחדש רק פרוטוקול חתום")
 
     body = await request.json()
@@ -955,10 +1155,17 @@ async def reopen_protocol(project_id: str, protocol_id: str, request: Request, u
     db = get_db()
     ts = _now()
 
+    sig_count = _count_signatures(protocol)
+    if sig_count >= 1:
+        new_status = "partially_signed"
+    else:
+        new_status = "in_progress"
+
     await db.handover_protocols.update_one(
         {"id": protocol_id, "project_id": project_id},
         {"$set": {
-            "status": "in_progress",
+            "status": new_status,
+            "locked": False,
             "updated_at": ts,
         },
         "$push": {
@@ -1009,13 +1216,13 @@ async def handover_summary(project_id: str, user: dict = Depends(get_current_use
     ).to_list(10000)
 
     counts = {
-        "initial_draft": 0, "initial_in_progress": 0, "initial_signed": 0,
-        "final_draft": 0, "final_in_progress": 0, "final_signed": 0,
+        "initial_draft": 0, "initial_in_progress": 0, "initial_partially_signed": 0, "initial_signed": 0,
+        "final_draft": 0, "final_in_progress": 0, "final_partially_signed": 0, "final_signed": 0,
     }
     building_breakdown = {b["id"]: {
         "building_id": b["id"], "building_name": b["name"],
-        "initial_draft": 0, "initial_in_progress": 0, "initial_signed": 0,
-        "final_draft": 0, "final_in_progress": 0, "final_signed": 0,
+        "initial_draft": 0, "initial_in_progress": 0, "initial_partially_signed": 0, "initial_signed": 0,
+        "final_draft": 0, "final_in_progress": 0, "final_partially_signed": 0, "final_signed": 0,
     } for b in buildings}
 
     for p in protocols:
