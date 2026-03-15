@@ -77,18 +77,12 @@ const HandoverTabPage = () => {
   useEffect(() => { loadProtocols(); }, [loadProtocols]);
 
   const initial = protocols.find(p => p.type === 'initial');
-  const final = protocols.find(p => p.type === 'final');
+  const final_ = protocols.find(p => p.type === 'final');
 
+  const hasInitial = !!initial;
+  const hasFinal = !!final_;
   const initialSigned = initial?.status === 'signed';
-  const finalSigned = final?.status === 'signed';
-
-  let state;
-  if (!initial && !final) state = 'A';
-  else if (initial && !initialSigned && !final) state = 'B';
-  else if (initialSigned && !final) state = 'C';
-  else if (initial && final && !finalSigned) state = 'D';
-  else if (initialSigned && finalSigned) state = 'E';
-  else state = 'B';
+  const finalSigned = final_?.status === 'signed';
 
   const handleCreate = async (protocolType) => {
     if (creating) return;
@@ -180,6 +174,8 @@ const HandoverTabPage = () => {
     );
   }
 
+  const bothSigned = initialSigned && finalSigned;
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <div className="bg-gradient-to-l from-purple-600 to-purple-700 text-white">
@@ -200,116 +196,64 @@ const HandoverTabPage = () => {
       </div>
 
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-4">
-        {state === 'A' && (
-          <div className="text-center py-12 space-y-4">
-            <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto">
-              <Home className="w-8 h-8 text-purple-500" />
+        {bothSigned && (
+          <div className="text-center py-4">
+            <div className="w-14 h-14 bg-green-100 rounded-2xl flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-7 h-7 text-green-600" />
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-slate-800">{t('handover', 'stateEmpty')}</h2>
-              <p className="text-sm text-slate-500 mt-1">{t('handover', 'tabDesc')}</p>
-            </div>
-            <button
-              onClick={() => handleCreate('initial')}
-              disabled={creating}
-              className="inline-flex items-center gap-2 bg-purple-600 text-white px-6 py-3 rounded-xl font-medium
-                hover:bg-purple-700 active:scale-[0.98] transition-all disabled:opacity-50"
-            >
-              {creating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Plus className="w-4 h-4" />
-              )}
-              {t('handover', 'startInitial')}
-            </button>
+            <h2 className="text-lg font-bold text-green-700 mt-3">{t('handover', 'unitDelivered')}</h2>
+            {final_?.signed_at && (
+              <p className="text-sm text-green-600 mt-1">
+                {new Date(final_.signed_at).toLocaleDateString('he-IL')}
+              </p>
+            )}
           </div>
         )}
 
-        {state === 'B' && (
-          <>
-            {renderProtocolCard(
-              initial,
-              t('handover', 'initialProtocol'),
-              <FileCheck className="w-5 h-5 text-blue-500" />
-            )}
-          </>
-        )}
-
-        {state === 'C' && (
-          <>
-            {renderProtocolCard(
-              initial,
-              t('handover', 'initialProtocol'),
-              <FileCheck className="w-5 h-5 text-green-600" />
-            )}
-
-            <div className="pt-2">
-              <button
-                onClick={() => handleCreate('final')}
-                disabled={creating}
-                className="w-full flex items-center justify-center gap-2 bg-purple-600 text-white px-6 py-3
-                  rounded-xl font-medium hover:bg-purple-700 active:scale-[0.98] transition-all disabled:opacity-50"
-              >
-                {creating ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Plus className="w-4 h-4" />
-                )}
-                {t('handover', 'startFinal')}
-              </button>
+        {!hasInitial && !hasFinal && (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto">
+              <Home className="w-8 h-8 text-purple-500" />
             </div>
-          </>
+            <h2 className="text-lg font-bold text-slate-800 mt-3">{t('handover', 'stateEmpty')}</h2>
+            <p className="text-sm text-slate-500 mt-1">{t('handover', 'tabDesc')}</p>
+          </div>
         )}
 
-        {state === 'D' && (
-          <>
-            {renderProtocolCard(
-              initial,
-              t('handover', 'initialProtocol'),
-              <FileCheck className="w-5 h-5 text-green-600" />
-            )}
-
-            <Card className="p-3 border border-amber-200 bg-amber-50">
-              <div className="flex items-center gap-2 text-amber-700 text-sm">
-                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                <span>{t('handover', 'openDefects')}</span>
-              </div>
-            </Card>
-
-            {renderProtocolCard(
-              final,
-              t('handover', 'finalProtocol'),
-              <Clock className="w-5 h-5 text-blue-500" />
-            )}
-          </>
+        {hasInitial && renderProtocolCard(
+          initial,
+          t('handover', 'initialProtocol'),
+          <FileCheck className={`w-5 h-5 ${initialSigned ? 'text-green-600' : 'text-blue-500'}`} />
         )}
 
-        {state === 'E' && (
-          <>
-            <div className="text-center py-4">
-              <div className="w-14 h-14 bg-green-100 rounded-2xl flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-7 h-7 text-green-600" />
-              </div>
-              <h2 className="text-lg font-bold text-green-700 mt-3">{t('handover', 'unitDelivered')}</h2>
-              {final?.signed_at && (
-                <p className="text-sm text-green-600 mt-1">
-                  {new Date(final.signed_at).toLocaleDateString('he-IL')}
-                </p>
-              )}
-            </div>
+        {!hasInitial && (
+          <button
+            onClick={() => handleCreate('initial')}
+            disabled={creating}
+            className="w-full flex items-center justify-center gap-2 bg-purple-600 text-white px-5 py-3
+              rounded-xl font-medium hover:bg-purple-700 active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {t('handover', 'startInitial')}
+          </button>
+        )}
 
-            {renderProtocolCard(
-              initial,
-              t('handover', 'initialProtocol'),
-              <FileCheck className="w-5 h-5 text-green-600" />
-            )}
+        {hasFinal && renderProtocolCard(
+          final_,
+          t('handover', 'finalProtocol'),
+          <FileCheck className={`w-5 h-5 ${finalSigned ? 'text-green-600' : 'text-blue-500'}`} />
+        )}
 
-            {renderProtocolCard(
-              final,
-              t('handover', 'finalProtocol'),
-              <FileCheck className="w-5 h-5 text-green-600" />
-            )}
-          </>
+        {!hasFinal && (
+          <button
+            onClick={() => handleCreate('final')}
+            disabled={creating}
+            className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white px-5 py-3
+              rounded-xl font-medium hover:bg-amber-700 active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {t('handover', 'startFinal')}
+          </button>
         )}
       </div>
     </div>

@@ -1,91 +1,215 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { handoverService } from '../services/api';
 import {
   ChevronRight, Loader2, Building2, FileSignature, ChevronDown, ChevronUp,
-  AlertTriangle, CheckCircle2, Clock, Edit3
+  AlertTriangle, X, Filter, Plus
 } from 'lucide-react';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
 
-const STATUS_CONFIG = {
-  signed: { label: 'חתום', color: 'bg-green-100 text-green-700', icon: CheckCircle2 },
-  partially_signed: { label: 'חתום חלקית', color: 'bg-amber-100 text-amber-700', icon: Edit3 },
-  in_progress: { label: 'בביצוע', color: 'bg-blue-100 text-blue-700', icon: Clock },
-  draft: { label: 'טיוטה', color: 'bg-slate-100 text-slate-500', icon: Clock },
+const STATUS_COLORS = {
+  signed:            { bg: '#dcfce7', border: '#86efac', text: '#166534', icon: '✓',  label: 'נמסר' },
+  partially_signed:  { bg: '#fef3c7', border: '#fcd34d', text: '#92400e', icon: '✍', label: 'חתום חלקית' },
+  in_progress:       { bg: '#dbeafe', border: '#93c5fd', text: '#1e40af', icon: '⋯',  label: 'בתהליך' },
+  draft:             { bg: '#f1f5f9', border: '#cbd5e1', text: '#475569', icon: '○',  label: 'טיוטה' },
+  none:              { bg: '#ffffff', border: '#d1d5db', text: '#9ca3af', icon: '',   label: 'טרם התחיל' },
 };
 
-const StatusBadge = ({ status, count }) => {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
-  if (!count) return null;
-  const Icon = config.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${config.color}`}>
-      <Icon className="w-3 h-3" />
-      {count} {config.label}
-    </span>
-  );
-};
+const STATUS_OPTIONS = [
+  { value: 'none',              label: 'טרם התחיל' },
+  { value: 'draft',             label: 'טיוטה' },
+  { value: 'in_progress',       label: 'בתהליך' },
+  { value: 'partially_signed',  label: 'חתום חלקית' },
+  { value: 'signed',            label: 'נמסר' },
+];
 
-const ProgressBar = ({ label, signed, partial, inProgress, draft, total }) => {
-  if (total === 0) return null;
-  const signedPct = (signed / total) * 100;
-  const partialPct = (partial / total) * 100;
-  const inProgressPct = (inProgress / total) * 100;
+const TYPE_LABELS = { initial: 'ראשונית', final: 'חזקה' };
 
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-slate-600">{label}</span>
-        <span className="text-xs text-slate-400">{signed + partial + inProgress + draft} / {total} דירות</span>
-      </div>
-      <div className="h-2 bg-slate-100 rounded-full overflow-hidden flex">
-        {signedPct > 0 && <div className="bg-green-500 h-full" style={{ width: `${signedPct}%` }} />}
-        {partialPct > 0 && <div className="bg-amber-400 h-full" style={{ width: `${partialPct}%` }} />}
-        {inProgressPct > 0 && <div className="bg-blue-400 h-full" style={{ width: `${inProgressPct}%` }} />}
-      </div>
-    </div>
-  );
-};
+const STAT_CARDS = [
+  { key: 'total_units',      label: 'סה"כ יחידות',   color: 'bg-slate-100 text-slate-700',   dimStatuses: null },
+  { key: 'signed',           label: 'נמסר',           color: 'bg-green-100 text-green-700',   dimStatuses: ['signed'] },
+  { key: 'partially_signed', label: 'חתום חלקית',     color: 'bg-amber-100 text-amber-700',   dimStatuses: ['partially_signed'] },
+  { key: 'pending',          label: 'ממתין',           color: 'bg-blue-100 text-blue-700',     dimStatuses: ['draft', 'in_progress'] },
+  { key: 'not_started',      label: 'טרם התחילו',     color: 'bg-white text-slate-500 border border-slate-200', dimStatuses: ['none'] },
+];
 
 export default function HandoverOverviewPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [summary, setSummary] = useState(null);
+
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [filters, setFilters] = useState({ building: '', status: [], type: '' });
+  const [dimFilter, setDimFilter] = useState(null);
   const [expandedBuildings, setExpandedBuildings] = useState({});
+  const [popover, setPopover] = useState(null);
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+  const popoverRef = useRef(null);
 
-  const loadSummary = useCallback(async () => {
+  const fetchData = useCallback(async (currentFilters) => {
     try {
       setLoading(true);
       setError(null);
-      const data = await handoverService.getSummary(projectId);
-      setSummary(data);
+      const params = {};
+      if (currentFilters.building) params.building = currentFilters.building;
+      if (currentFilters.status.length > 0) params.status = currentFilters.status.join(',');
+      if (currentFilters.type) params.type = currentFilters.type;
+      const result = await handoverService.getOverview(projectId, params);
+      setData(result);
+      const expanded = {};
+      for (const b of result.buildings) {
+        expanded[b.building_id] = true;
+      }
+      setExpandedBuildings(prev => {
+        const merged = { ...expanded };
+        for (const key of Object.keys(prev)) {
+          if (key in merged) merged[key] = prev[key];
+        }
+        return merged;
+      });
     } catch (err) {
-      console.error('[HandoverOverview] Failed to load summary', err);
+      console.error('[HandoverOverview] load error', err);
       setError('שגיאה בטעינת נתוני מסירות');
     } finally {
       setLoading(false);
     }
   }, [projectId]);
 
-  useEffect(() => { loadSummary(); }, [loadSummary]);
+  useEffect(() => { fetchData(filters); }, [fetchData, filters]);
+
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setPopover(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const handleStatClick = (card) => {
+    if (!card.dimStatuses) return;
+    setDimFilter(prev => prev === card.key ? null : card.key);
+  };
+
+  const handleFilterChange = (key, value) => {
+    setDimFilter(null);
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleStatusToggle = (statusValue) => {
+    setDimFilter(null);
+    setFilters(prev => {
+      const current = prev.status;
+      const next = current.includes(statusValue)
+        ? current.filter(s => s !== statusValue)
+        : [...current, statusValue];
+      return { ...prev, status: next };
+    });
+  };
+
+  const handleClearAll = () => {
+    setDimFilter(null);
+    setFilters({ building: '', status: [], type: '' });
+  };
+
+  const hasActiveFilters = filters.building || filters.status.length > 0 || filters.type;
 
   const toggleBuilding = (id) => {
     setExpandedBuildings(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const initialTotal = summary
-    ? summary.initial_draft + summary.initial_in_progress + summary.initial_partially_signed + summary.initial_signed
-    : 0;
-  const finalTotal = summary
-    ? summary.final_draft + summary.final_in_progress + summary.final_partially_signed + summary.final_signed
-    : 0;
-  const hasData = initialTotal > 0 || finalTotal > 0;
+  const isDimmed = (unitStatus) => {
+    if (!dimFilter) return false;
+    const card = STAT_CARDS.find(c => c.key === dimFilter);
+    if (!card?.dimStatuses) return false;
+    return !card.dimStatuses.includes(unitStatus);
+  };
+
+  const handleCellClick = (unit, buildingName, e) => {
+    const protocols = unit.protocols || [];
+    if (protocols.length === 1) {
+      navigate(`/projects/${projectId}/units/${unit.unit_id}/handover/${protocols[0].id}`);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPopover({
+      unit,
+      buildingName,
+      x: rect.left + rect.width / 2,
+      y: rect.bottom + 4,
+    });
+  };
+
+  const handleCreateFromPopover = (unitId, protocolType) => {
+    setPopover(null);
+    navigate(`/projects/${projectId}/units/${unitId}/handover`);
+  };
+
+  const summary = data?.summary || { total_units: 0, signed: 0, partially_signed: 0, pending: 0, not_started: 0 };
+  const buildings = data?.buildings || [];
+  const filterOptions = data?.filters || { buildings: [], types: ['initial', 'final'] };
+
+  const FilterContent = () => (
+    <div className="flex flex-wrap items-center gap-2">
+      <select
+        value={filters.building}
+        onChange={(e) => handleFilterChange('building', e.target.value)}
+        className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 min-w-[120px]"
+      >
+        <option value="">כל המבנים</option>
+        {filterOptions.buildings.map(b => (
+          <option key={b} value={b}>{b}</option>
+        ))}
+      </select>
+
+      <div className="relative group">
+        <button className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 flex items-center gap-1">
+          סטטוס {filters.status.length > 0 && <span className="bg-blue-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">{filters.status.length}</span>}
+        </button>
+        <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 min-w-[180px] hidden group-focus-within:block hover:block">
+          {STATUS_OPTIONS.map(opt => (
+            <label key={opt.value} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={filters.status.includes(opt.value)}
+                onChange={() => handleStatusToggle(opt.value)}
+                className="rounded border-slate-300"
+              />
+              <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: STATUS_COLORS[opt.value].bg, border: `1px solid ${STATUS_COLORS[opt.value].border}` }} />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <select
+        value={filters.type}
+        onChange={(e) => handleFilterChange('type', e.target.value)}
+        className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
+      >
+        <option value="">הכל</option>
+        {filterOptions.types.map(t => (
+          <option key={t} value={t}>{TYPE_LABELS[t] || t}</option>
+        ))}
+      </select>
+
+      {hasActiveFilters && (
+        <button
+          onClick={handleClearAll}
+          className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1 px-2 py-1"
+        >
+          <X className="w-3.5 h-3.5" />
+          נקה הכל
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
@@ -101,13 +225,13 @@ export default function HandoverOverviewPage() {
         </div>
       </header>
 
-      <div className="max-w-[560px] mx-auto px-4 pt-4">
+      <div className="max-w-[1100px] mx-auto px-4 pt-4">
         <div className="flex items-center gap-2 mb-4">
           <FileSignature className="w-5 h-5 text-amber-500" />
           <h1 className="text-lg font-bold text-slate-800">מסירות</h1>
         </div>
 
-        {loading ? (
+        {loading && !data ? (
           <div className="flex justify-center py-16">
             <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
           </div>
@@ -115,119 +239,305 @@ export default function HandoverOverviewPage() {
           <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
             <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-2" />
             <p className="text-sm text-red-600">{error}</p>
-            <button onClick={loadSummary} className="mt-3 text-xs text-red-500 underline">נסה שוב</button>
+            <button onClick={() => fetchData(filters)} className="mt-3 text-xs text-red-500 underline">נסה שוב</button>
           </div>
-        ) : !hasData ? (
+        ) : summary.total_units === 0 && !hasActiveFilters ? (
           <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
             <FileSignature className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <h2 className="text-sm font-semibold text-slate-600 mb-1">אין נתוני מסירות</h2>
-            <p className="text-xs text-slate-400">טרם נוצרו פרוטוקולי מסירה בפרויקט זה</p>
+            <h2 className="text-sm font-semibold text-slate-600 mb-1">אין יחידות בפרויקט</h2>
+            <p className="text-xs text-slate-400">הגדירו מבנה פרויקט כדי להתחיל</p>
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-              <h2 className="text-sm font-bold text-slate-700">סיכום כללי</h2>
-
-              <ProgressBar
-                label="מסירה ראשונית"
-                signed={summary.initial_signed}
-                partial={summary.initial_partially_signed}
-                inProgress={summary.initial_in_progress}
-                draft={summary.initial_draft}
-                total={summary.total_units}
-              />
-
-              <ProgressBar
-                label="מסירה סופית"
-                signed={summary.final_signed}
-                partial={summary.final_partially_signed}
-                inProgress={summary.final_in_progress}
-                draft={summary.final_draft}
-                total={summary.total_units}
-              />
-
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <StatusBadge status="signed" count={summary.initial_signed + summary.final_signed} />
-                <StatusBadge status="partially_signed" count={summary.initial_partially_signed + summary.final_partially_signed} />
-                <StatusBadge status="in_progress" count={summary.initial_in_progress + summary.final_in_progress} />
-                <StatusBadge status="draft" count={summary.initial_draft + summary.final_draft} />
+            {/* Zone 1: Stats Bar */}
+            <div className="overflow-x-auto -mx-4 px-4">
+              <div className="flex gap-3 min-w-max">
+                {STAT_CARDS.map(card => {
+                  const value = summary[card.key];
+                  const pct = summary.total_units > 0 && card.key !== 'total_units'
+                    ? Math.round((value / summary.total_units) * 100)
+                    : null;
+                  const isActive = dimFilter === card.key;
+                  return (
+                    <button
+                      key={card.key}
+                      onClick={() => handleStatClick(card)}
+                      className={`flex-shrink-0 rounded-xl px-4 py-3 text-right transition-all min-w-[110px]
+                        ${card.color}
+                        ${isActive ? 'ring-2 ring-offset-1 ring-blue-500 shadow-md scale-[1.03]' : ''}
+                        ${card.dimStatuses ? 'cursor-pointer hover:shadow-sm active:scale-[0.98]' : 'cursor-default'}
+                      `}
+                    >
+                      <div className="text-3xl font-extrabold leading-none">{value}</div>
+                      <div className="text-xs mt-1 opacity-80">{card.label}</div>
+                      {pct !== null && <div className="text-[10px] mt-0.5 opacity-60">{pct}%</div>}
+                    </button>
+                  );
+                })}
               </div>
-
-              {summary.open_handover_defects > 0 && (
-                <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-                  <AlertTriangle className="w-4 h-4 text-red-500" />
-                  <span className="text-xs text-red-700 font-medium">{summary.open_handover_defects} ליקויי מסירה פתוחים</span>
-                </div>
-              )}
             </div>
 
-            {summary.buildings && summary.buildings.length > 0 && (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-100">
-                  <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-slate-400" />
-                    לפי מבנה
-                  </h2>
-                </div>
+            {/* Color Legend */}
+            <div className="flex flex-wrap gap-3 text-xs text-slate-600">
+              {Object.entries(STATUS_COLORS).map(([key, c]) => (
+                <span key={key} className="flex items-center gap-1">
+                  <span
+                    className="w-3 h-3 rounded-sm inline-block"
+                    style={{
+                      backgroundColor: c.bg,
+                      border: key === 'none' ? '1px dashed #9ca3af' : `1px solid ${c.border}`,
+                    }}
+                  />
+                  {c.label}
+                </span>
+              ))}
+            </div>
 
-                <div className="divide-y divide-slate-100">
-                  {summary.buildings.map(b => {
-                    const bInitial = b.initial_draft + b.initial_in_progress + b.initial_partially_signed + b.initial_signed;
-                    const bFinal = b.final_draft + b.final_in_progress + b.final_partially_signed + b.final_signed;
-                    const expanded = expandedBuildings[b.building_id];
+            {/* Zone 2: Filter Bar — Desktop */}
+            <div className="hidden sm:block bg-white border border-slate-200 rounded-xl p-3">
+              <FilterContent />
+            </div>
 
-                    return (
-                      <div key={b.building_id}>
-                        <button
-                          onClick={() => toggleBuilding(b.building_id)}
-                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Building2 className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm font-medium text-slate-700">{b.building_name}</span>
-                            <span className="text-[10px] text-slate-400">({bInitial + bFinal} פרוטוקולים)</span>
-                          </div>
-                          {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                        </button>
+            {/* Zone 2: Filter Bar — Mobile */}
+            <div className="sm:hidden">
+              <button
+                onClick={() => setMobileFilterOpen(true)}
+                className="flex items-center gap-2 text-sm text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-2.5 w-full justify-center"
+              >
+                <Filter className="w-4 h-4" />
+                סינון
+                {hasActiveFilters && <span className="bg-blue-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">{filters.status.length + (filters.building ? 1 : 0) + (filters.type ? 1 : 0)}</span>}
+              </button>
+            </div>
 
-                        {expanded && (
-                          <div className="px-4 pb-3 space-y-2 bg-slate-50/50">
-                            {bInitial > 0 && (
-                              <div className="space-y-1">
-                                <span className="text-[11px] font-medium text-slate-500">מסירה ראשונית</span>
-                                <div className="flex flex-wrap gap-1">
-                                  <StatusBadge status="signed" count={b.initial_signed} />
-                                  <StatusBadge status="partially_signed" count={b.initial_partially_signed} />
-                                  <StatusBadge status="in_progress" count={b.initial_in_progress} />
-                                  <StatusBadge status="draft" count={b.initial_draft} />
-                                </div>
-                              </div>
-                            )}
-                            {bFinal > 0 && (
-                              <div className="space-y-1">
-                                <span className="text-[11px] font-medium text-slate-500">מסירה סופית</span>
-                                <div className="flex flex-wrap gap-1">
-                                  <StatusBadge status="signed" count={b.final_signed} />
-                                  <StatusBadge status="partially_signed" count={b.final_partially_signed} />
-                                  <StatusBadge status="in_progress" count={b.final_in_progress} />
-                                  <StatusBadge status="draft" count={b.final_draft} />
-                                </div>
-                              </div>
-                            )}
-                            {bInitial === 0 && bFinal === 0 && (
-                              <p className="text-xs text-slate-400 py-1">אין פרוטוקולי מסירה במבנה זה</p>
-                            )}
-                          </div>
-                        )}
+            {/* Mobile filter bottom sheet */}
+            {mobileFilterOpen && (
+              <div className="fixed inset-0 z-50 sm:hidden">
+                <div className="absolute inset-0 bg-black/40" onClick={() => setMobileFilterOpen(false)} />
+                <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-800">סינון</h3>
+                    <button onClick={() => setMobileFilterOpen(false)} className="p-1">
+                      <X className="w-5 h-5 text-slate-400" />
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">מבנה</label>
+                      <select
+                        value={filters.building}
+                        onChange={(e) => handleFilterChange('building', e.target.value)}
+                        className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-700 w-full"
+                      >
+                        <option value="">כל המבנים</option>
+                        {filterOptions.buildings.map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">סטטוס</label>
+                      <div className="space-y-1">
+                        {STATUS_OPTIONS.map(opt => (
+                          <label key={opt.value} className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={filters.status.includes(opt.value)}
+                              onChange={() => handleStatusToggle(opt.value)}
+                              className="rounded border-slate-300"
+                            />
+                            <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: STATUS_COLORS[opt.value].bg, border: `1px solid ${STATUS_COLORS[opt.value].border}` }} />
+                            {opt.label}
+                          </label>
+                        ))}
                       </div>
-                    );
-                  })}
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">סוג</label>
+                      <select
+                        value={filters.type}
+                        onChange={(e) => handleFilterChange('type', e.target.value)}
+                        className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-700 w-full"
+                      >
+                        <option value="">הכל</option>
+                        {filterOptions.types.map(t => (
+                          <option key={t} value={t}>{TYPE_LABELS[t] || t}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {hasActiveFilters && (
+                      <button
+                        onClick={() => { handleClearAll(); setMobileFilterOpen(false); }}
+                        className="w-full text-sm text-red-500 border border-red-200 rounded-lg py-2.5 flex items-center justify-center gap-1"
+                      >
+                        <X className="w-3.5 h-3.5" /> נקה הכל
+                      </button>
+                    )}
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {loading && (
+              <div className="flex justify-center py-4">
+                <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+              </div>
+            )}
+
+            {/* Zone 3: Building Grid */}
+            {buildings.map(b => {
+              const expanded = expandedBuildings[b.building_id] !== false;
+              const floorCount = b.floors?.length || 0;
+              return (
+                <div key={b.building_id} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => toggleBuilding(b.building_id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors"
+                  >
+                    <Building2 className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                    <div className="flex-1 text-right min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-800">{b.building_name}</span>
+                        <span className="text-[10px] text-slate-400">דירות {b.total_units} · קומות {floorCount}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden" dir="ltr">
+                          <div
+                            className="h-full bg-green-500 rounded-full transition-all"
+                            style={{ width: `${b.progress_pct}%`, marginLeft: 'auto' }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-medium w-8 text-left">{b.progress_pct}%</span>
+                      </div>
+                    </div>
+                    {expanded ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
+                  </button>
+
+                  {expanded && (
+                    <div className="border-t border-slate-100">
+                      {b.floors?.map((floor, fi) => (
+                        <div key={fi} className={`flex items-start gap-2 px-3 py-2 ${fi > 0 ? 'border-t border-slate-50' : ''}`}>
+                          <div className="w-14 flex-shrink-0 text-left pt-1">
+                            <span className="text-[11px] font-medium text-slate-400">{floor.floor_name || `קומה ${floor.floor}`}</span>
+                          </div>
+                          <div className="flex-1 flex flex-wrap gap-1.5">
+                            {floor.units?.map(unit => {
+                              const sc = STATUS_COLORS[unit.status] || STATUS_COLORS.none;
+                              const dimmed = isDimmed(unit.status);
+                              const sigInfo = unit.protocols?.find(p => p.status === 'partially_signed');
+                              return (
+                                <button
+                                  key={unit.unit_id}
+                                  onClick={(e) => handleCellClick(unit, b.building_name, e)}
+                                  title={`${sc.label}${unit.open_defects > 0 ? ` · ${unit.open_defects} ליקויים` : ''}`}
+                                  className={`relative min-w-[44px] min-h-[44px] w-[52px] h-[52px] rounded-lg flex flex-col items-center justify-center
+                                    transition-all hover:scale-105 hover:shadow-md active:scale-95
+                                    ${dimmed ? 'opacity-25' : ''}
+                                  `}
+                                  style={{
+                                    backgroundColor: sc.bg,
+                                    border: unit.status === 'none' ? `1.5px dashed ${sc.border}` : `1.5px solid ${sc.border}`,
+                                  }}
+                                >
+                                  {unit.open_defects > 0 && (
+                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                                      {unit.open_defects > 9 ? '9+' : unit.open_defects}
+                                    </span>
+                                  )}
+                                  <span className="text-xs font-bold leading-none" style={{ color: sc.text }}>
+                                    {unit.apartment_number}
+                                  </span>
+                                  {sc.icon && (
+                                    <span className="text-[10px] mt-0.5 leading-none" style={{ color: sc.text }}>
+                                      {sc.icon}
+                                    </span>
+                                  )}
+                                  {unit.status === 'partially_signed' && sigInfo && (
+                                    <span className="text-[9px] leading-none mt-0.5" style={{ color: sc.text }}>
+                                      {sigInfo.signature_count}/{sigInfo.signatures_total}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {buildings.length === 0 && !loading && (
+              <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
+                <p className="text-sm text-slate-500">לא נמצאו תוצאות עם הסינון הנוכחי</p>
+                {hasActiveFilters && (
+                  <button onClick={handleClearAll} className="mt-2 text-xs text-blue-500 underline">נקה סינון</button>
+                )}
               </div>
             )}
           </div>
         )}
       </div>
+
+      {/* Unit popover */}
+      {popover && (
+        <div
+          ref={popoverRef}
+          className="fixed z-50 bg-white border border-slate-200 rounded-xl shadow-xl p-3 min-w-[220px]"
+          style={{
+            left: `${Math.min(popover.x, window.innerWidth - 240)}px`,
+            top: `${Math.min(popover.y, window.innerHeight - 200)}px`,
+            transform: 'translateX(-50%)',
+          }}
+        >
+          <div className="text-xs text-slate-400 mb-2">דירה {popover.unit.apartment_number} · {popover.buildingName}</div>
+
+          {popover.unit.protocols.length > 0 ? (
+            <div className="space-y-1.5">
+              {popover.unit.protocols.map(p => {
+                const sc = STATUS_COLORS[p.status] || STATUS_COLORS.draft;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => { setPopover(null); navigate(`/projects/${projectId}/units/${popover.unit.unit_id}/handover/${p.id}`); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-50 transition-colors text-right"
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: sc.border }} />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium text-slate-700">
+                        {p.type === 'initial' ? 'מסירה ראשונית' : 'מסירת חזקה'}
+                      </span>
+                      <span className="text-[11px] text-slate-400 mr-1">
+                        — {sc.label}
+                        {p.status === 'partially_signed' && ` (${p.signature_count}/${p.signatures_total})`}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <button
+                onClick={() => handleCreateFromPopover(popover.unit.unit_id, 'initial')}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-sm font-medium transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                התחל מסירה ראשונית
+              </button>
+              <button
+                onClick={() => handleCreateFromPopover(popover.unit.unit_id, 'final')}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                התחל מסירת חזקה
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

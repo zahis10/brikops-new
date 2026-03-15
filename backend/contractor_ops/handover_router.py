@@ -1197,10 +1197,6 @@ async def handover_overview(
     await _check_handover_access(user, project_id)
     db = get_db()
 
-    building_match = {"project_id": project_id, "archived": {"$ne": True}}
-    if building:
-        building_match["name"] = building
-
     protocol_type_filter = type if type in ("initial", "final") else None
 
     structure_pipeline = [

@@ -1205,6 +1205,10 @@ export const handoverService = {
     const response = await axios.get(`${API}/projects/${projectId}/handover/summary`, { headers: getAuthHeader() });
     return response.data;
   },
+  async getOverview(projectId, params = {}) {
+    const response = await axios.get(`${API}/projects/${projectId}/handover/overview`, { headers: getAuthHeader(), params });
+    return response.data;
+  },
   async getTemplate(projectId) {
     const response = await axios.get(`${API}/projects/${projectId}/handover-template`, { headers: getAuthHeader() });
     return response.data;
