@@ -419,11 +419,23 @@ def _count_signatures(protocol):
     return sum(1 for role in VALID_SIGNATURE_ROLES if role in sigs and sigs[role])
 
 
+def _is_protocol_fully_signed(protocol):
+    sigs = _normalize_signatures(protocol)
+    for role in VALID_SIGNATURE_ROLES:
+        if role not in sigs or not sigs[role]:
+            return False
+    for section in protocol.get("legal_sections", []):
+        if section.get("requires_signature") and not section.get("signed_at"):
+            return False
+    return True
+
+
 def _recalculate_signature_status(protocol):
-    count = _count_signatures(protocol)
-    if count >= 3:
+    if _is_protocol_fully_signed(protocol):
         return "signed", True
-    elif count >= 1:
+    count = _count_signatures(protocol)
+    legal_signed = sum(1 for s in protocol.get("legal_sections", []) if s.get("requires_signature") and s.get("signed_at"))
+    if count >= 1 or legal_signed >= 1:
         return "partially_signed", False
     else:
         has_item_changes = any(
@@ -549,6 +561,98 @@ async def get_handover_template(project_id: str, user: dict = Depends(get_curren
     }
 
 
+VALID_APPLIES_TO = {"initial", "final"}
+
+
+def _validate_legal_sections(sections):
+    validated = []
+    for idx, s in enumerate(sections):
+        title = (s.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: כותרת נדרשת")
+        body = (s.get("body") or "").strip()
+        if not body:
+            raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: תוכן נדרש")
+        requires_signature = s.get("requires_signature")
+        if not isinstance(requires_signature, bool):
+            raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: requires_signature חייב להיות boolean")
+        signature_role = s.get("signature_role")
+        if requires_signature:
+            if signature_role not in VALID_SIGNATURE_ROLES:
+                raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: signature_role חייב להיות manager/tenant/contractor_rep")
+        else:
+            if signature_role is not None:
+                raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: signature_role חייב להיות null כאשר requires_signature=false")
+            signature_role = None
+        applies_to = s.get("applies_to")
+        if not isinstance(applies_to, list) or not applies_to:
+            raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: applies_to חייב להיות מערך לא ריק")
+        if not all(v in VALID_APPLIES_TO for v in applies_to):
+            raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: applies_to חייב להכיל רק initial/final")
+        order = s.get("order")
+        if not isinstance(order, int) or order < 1:
+            raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: order חייב להיות מספר שלם >= 1")
+        section_id = s.get("id") or str(uuid.uuid4())
+        validated.append({
+            "id": section_id,
+            "title": title,
+            "body": body,
+            "requires_signature": requires_signature,
+            "signature_role": signature_role,
+            "applies_to": applies_to,
+            "order": order,
+        })
+    return validated
+
+
+@router.put("/organizations/{org_id}/handover-legal-sections")
+async def put_org_legal_sections(org_id: str, request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "id": 1, "owner_user_id": 1})
+    if not org:
+        raise HTTPException(status_code=404, detail="ארגון לא נמצא")
+    if not _is_super_admin(user):
+        is_owner = org.get("owner_user_id") == user["id"]
+        if not is_owner:
+            mem = await db.organization_memberships.find_one(
+                {"org_id": org_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
+            )
+            if not mem or mem.get("role") not in ("owner", "org_admin"):
+                raise HTTPException(status_code=403, detail="רק מנהל ארגון יכול לערוך נסחים משפטיים")
+    body = await request.json()
+    raw_sections = body.get("sections")
+    if not isinstance(raw_sections, list):
+        raise HTTPException(status_code=400, detail="sections חייב להיות מערך")
+    validated = _validate_legal_sections(raw_sections)
+    await db.organizations.update_one(
+        {"id": org_id},
+        {"$set": {"handover_legal_sections": validated}}
+    )
+    await _audit("organization", org_id, "legal_sections_updated", user["id"], {
+        "section_count": len(validated),
+    })
+    logger.info(f"[HANDOVER] Org={org_id} legal sections updated ({len(validated)} sections) by user={user['id']}")
+    return {"sections": validated}
+
+
+@router.get("/organizations/{org_id}/handover-legal-sections")
+async def get_org_legal_sections(org_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "id": 1, "owner_user_id": 1})
+    if not org:
+        raise HTTPException(status_code=404, detail="ארגון לא נמצא")
+    if not _is_super_admin(user):
+        is_owner = org.get("owner_user_id") == user["id"]
+        if not is_owner:
+            mem = await db.organization_memberships.find_one(
+                {"org_id": org_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
+            )
+            if not mem:
+                raise HTTPException(status_code=403, detail="אין לך גישה לארגון זה")
+    sections = (await db.organizations.find_one({"id": org_id}, {"_id": 0, "handover_legal_sections": 1})) or {}
+    return {"sections": sections.get("handover_legal_sections", [])}
+
+
 @router.post("/projects/{project_id}/handover/protocols")
 async def create_protocol(project_id: str, request: Request, user: dict = Depends(get_current_user)):
     await _check_handover_management(user, project_id)
@@ -601,6 +705,7 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
         })
 
     org_legal_text = "הנוסח המשפטי ייקבע על ידי הארגון."
+    legal_sections_snapshot = []
     if project.get("org_id"):
         org = await db.organizations.find_one({"id": project["org_id"]}, {"_id": 0})
         if org:
@@ -608,6 +713,20 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
             org_legal = org.get(legal_field, "").strip()
             if org_legal:
                 org_legal_text = org_legal
+            for ls in sorted(org.get("handover_legal_sections", []), key=lambda x: x.get("order", 0)):
+                if protocol_type in ls.get("applies_to", []):
+                    legal_sections_snapshot.append({
+                        "id": ls["id"],
+                        "title": ls["title"],
+                        "body": ls["body"],
+                        "requires_signature": ls.get("requires_signature", False),
+                        "signature_role": ls.get("signature_role"),
+                        "order": ls.get("order", 0),
+                        "edited": False,
+                        "signature": None,
+                        "signer_name": None,
+                        "signed_at": None,
+                    })
 
     company_name = ""
     company_logo_url = None
@@ -656,6 +775,7 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
         "legal_text": org_legal_text,
         "legal_text_edited": False,
         "legal_text_edit_log": [],
+        "legal_sections": legal_sections_snapshot,
         "signatures": [],
         "pdf_url": None,
         "created_by": user["id"],
@@ -1695,3 +1815,189 @@ async def handover_summary(project_id: str, user: dict = Depends(get_current_use
         "open_handover_defects": open_handover_defects,
         "buildings": list(building_breakdown.values()),
     }
+
+
+def _find_legal_section(protocol, section_id):
+    for idx, s in enumerate(protocol.get("legal_sections", [])):
+        if s.get("id") == section_id:
+            return idx, s
+    return None, None
+
+
+@router.put("/projects/{project_id}/handover/protocols/{protocol_id}/legal-sections/{section_id}")
+async def update_legal_section_body(
+    project_id: str, protocol_id: str, section_id: str,
+    request: Request, user: dict = Depends(get_current_user),
+):
+    await _check_handover_management(user, project_id)
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    idx, section = _find_legal_section(protocol, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="נסח משפטי לא נמצא")
+    if section.get("signed_at"):
+        raise HTTPException(status_code=403, detail="לא ניתן לערוך נסח חתום")
+
+    body = await request.json()
+    new_body = (body.get("body") or "").strip()
+    if not new_body:
+        raise HTTPException(status_code=400, detail="תוכן הנסח נדרש")
+
+    db = get_db()
+    ts = _now()
+    old_body = section.get("body", "")
+
+    result = await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id, f"legal_sections.{idx}.signed_at": None},
+        {"$set": {
+            f"legal_sections.{idx}.body": new_body,
+            f"legal_sections.{idx}.edited": True,
+            "updated_at": ts,
+        }, "$push": {
+            "legal_text_edit_log": {
+                "section_id": section_id,
+                "old_body": old_body,
+                "new_body": new_body,
+                "edited_by": user["id"],
+                "edited_at": ts,
+            }
+        }}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=409, detail="הנסח נחתם במקביל — לא ניתן לערוך")
+
+    await _audit("handover_protocol", protocol_id, "legal_section_edited", user["id"], {
+        "project_id": project_id,
+        "section_id": section_id,
+        "section_title": section.get("title"),
+    })
+
+    logger.info(f"[HANDOVER] Protocol={protocol_id} legal section={section_id} body edited by user={user['id']}")
+    updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
+    return updated
+
+
+@router.put("/projects/{project_id}/handover/protocols/{protocol_id}/legal-sections/{section_id}/sign")
+async def sign_legal_section(
+    project_id: str, protocol_id: str, section_id: str,
+    signer_name: str = Form(...),
+    signature_type: str = Form(...),
+    typed_name: str = Form(None),
+    signature_image: UploadFile = File(None),
+    user: dict = Depends(get_current_user),
+):
+    user_role = await _get_user_project_role(user, project_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="אין לך גישה לפרויקט זה")
+
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    idx, section = _find_legal_section(protocol, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="נסח משפטי לא נמצא")
+    if not section.get("requires_signature"):
+        raise HTTPException(status_code=400, detail="נסח זה לא דורש חתימה")
+    if section.get("signed_at"):
+        raise HTTPException(status_code=409, detail="נסח זה כבר חתום")
+
+    sig_role = section.get("signature_role")
+    if sig_role:
+        _check_signature_role_auth(user_role, sig_role)
+
+    if signature_type not in ("canvas", "typed"):
+        raise HTTPException(status_code=400, detail="סוג חתימה לא חוקי — canvas או typed")
+
+    signer_name = signer_name.strip()
+    if not signer_name:
+        raise HTTPException(status_code=400, detail="שם החותם נדרש")
+
+    db = get_db()
+    ts = _now()
+
+    sig_data = {
+        "type": signature_type,
+        "signer_user_id": user["id"],
+        "signed_at": ts,
+    }
+
+    if signature_type == "canvas":
+        if not signature_image:
+            raise HTTPException(status_code=400, detail="נדרש קובץ חתימה לסוג canvas")
+        image_data = await signature_image.read()
+        if not image_data or len(image_data) < 100:
+            raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")
+        s3_key = f"signatures/{protocol_id}/legal_{section_id}.png"
+        stored_ref = save_bytes(image_data, s3_key, "image/png")
+        sig_data["image_key"] = stored_ref
+    else:
+        typed_name_val = (typed_name or "").strip()
+        if not typed_name_val:
+            raise HTTPException(status_code=400, detail="שם מלא נדרש לחתימה מוקלדת")
+        sig_data["typed_name"] = typed_name_val
+
+    update_fields = {
+        f"legal_sections.{idx}.signature": sig_data,
+        f"legal_sections.{idx}.signer_name": signer_name,
+        f"legal_sections.{idx}.signed_at": ts,
+        "updated_at": ts,
+    }
+
+    refreshed_legal = list(protocol.get("legal_sections", []))
+    refreshed_legal[idx] = {**refreshed_legal[idx], "signed_at": ts, "signature": sig_data, "signer_name": signer_name}
+    virtual_protocol = {**protocol, "legal_sections": refreshed_legal}
+    new_status, new_locked = _recalculate_signature_status(virtual_protocol)
+    update_fields["status"] = new_status
+    update_fields["locked"] = new_locked
+    if new_locked:
+        update_fields["signed_at"] = ts
+
+    result = await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id, f"legal_sections.{idx}.signed_at": None},
+        {"$set": update_fields}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=409, detail="נסח זה כבר נחתם במקביל")
+
+    await _audit("handover_protocol", protocol_id, "legal_section_signed", user["id"], {
+        "project_id": project_id,
+        "section_id": section_id,
+        "section_title": section.get("title"),
+        "signature_role": sig_role,
+        "signature_type": signature_type,
+        "signer_name": signer_name,
+    })
+
+    logger.info(f"[HANDOVER] Protocol={protocol_id} legal section={section_id} signed by user={user['id']} type={signature_type}")
+    updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
+    return updated
+
+
+@router.get("/projects/{project_id}/handover/protocols/{protocol_id}/legal-sections/{section_id}/signature-image")
+async def get_legal_section_signature_image(
+    project_id: str, protocol_id: str, section_id: str,
+    user: dict = Depends(get_current_user),
+):
+    await _check_handover_access(user, project_id)
+
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _, section = _find_legal_section(protocol, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="נסח משפטי לא נמצא")
+    if not section.get("signed_at"):
+        raise HTTPException(status_code=404, detail="נסח זה לא חתום")
+
+    sig = section.get("signature")
+    if not sig:
+        raise HTTPException(status_code=404, detail="חתימה לא נמצאה")
+
+    if sig.get("type") == "typed":
+        return {"type": "typed", "typed_name": sig.get("typed_name", ""), "signer_name": section.get("signer_name", "")}
+
+    image_key = sig.get("image_key", "")
+    if image_key:
+        url = generate_url(image_key)
+        return {"type": "canvas", "url": url, "signer_name": section.get("signer_name", "")}
+
+    raise HTTPException(status_code=404, detail="תמונת חתימה לא נמצאה")
