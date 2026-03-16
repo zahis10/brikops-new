@@ -846,6 +846,58 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
         if not stages:
             raise HTTPException(status_code=400, detail="At least one stage is required")
 
+    default_delivered_items = None
+    default_property_fields = None
+    signature_labels = None
+
+    if tpl_type == "handover":
+        import re as _re
+
+        if "default_delivered_items" in body:
+            ddi = body["default_delivered_items"]
+            if not isinstance(ddi, list):
+                raise HTTPException(status_code=400, detail="default_delivered_items must be a list")
+            for i, item in enumerate(ddi):
+                if not isinstance(item, dict) or not item.get("name", "").strip():
+                    raise HTTPException(status_code=400, detail=f"default_delivered_items[{i}]: name is required")
+            default_delivered_items = [
+                {"name": it["name"].strip(), "quantity": it.get("quantity"), "notes": it.get("notes", "")}
+                for it in ddi
+            ]
+
+        if "default_property_fields" in body:
+            dpf = body["default_property_fields"]
+            if not isinstance(dpf, list):
+                raise HTTPException(status_code=400, detail="default_property_fields must be a list")
+            seen_keys = set()
+            for i, field in enumerate(dpf):
+                if not isinstance(field, dict):
+                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: must be an object")
+                key = (field.get("key") or "").strip()
+                label = (field.get("label") or "").strip()
+                if not key:
+                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: key is required")
+                if not _re.match(r"^[a-z][a-z0-9_]*$", key):
+                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: key must be lowercase alphanumeric+underscore (got '{key}')")
+                if key in seen_keys:
+                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: duplicate key '{key}'")
+                seen_keys.add(key)
+                if not label:
+                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: label is required")
+            default_property_fields = [{"key": f["key"].strip(), "label": f["label"].strip()} for f in dpf]
+
+        if "signature_labels" in body:
+            sl = body["signature_labels"]
+            if not isinstance(sl, dict):
+                raise HTTPException(status_code=400, detail="signature_labels must be an object")
+            required_keys = {"manager", "tenant", "contractor_rep"}
+            if set(sl.keys()) != required_keys:
+                raise HTTPException(status_code=400, detail=f"signature_labels must have exactly keys: {', '.join(sorted(required_keys))}")
+            for k in required_keys:
+                if not isinstance(sl[k], str):
+                    raise HTTPException(status_code=400, detail=f"signature_labels[{k}] must be a string")
+            signature_labels = {k: sl[k] for k in required_keys}
+
     family_id = old["family_id"]
     max_doc = await db.qc_templates.find_one(
         {"family_id": family_id},
@@ -873,6 +925,18 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
     }
     if tpl_type == "handover":
         new_doc["sections"] = sections
+        if default_delivered_items is not None:
+            new_doc["default_delivered_items"] = default_delivered_items
+        elif "default_delivered_items" in old:
+            new_doc["default_delivered_items"] = old["default_delivered_items"]
+        if default_property_fields is not None:
+            new_doc["default_property_fields"] = default_property_fields
+        elif "default_property_fields" in old:
+            new_doc["default_property_fields"] = old["default_property_fields"]
+        if signature_labels is not None:
+            new_doc["signature_labels"] = signature_labels
+        elif "signature_labels" in old:
+            new_doc["signature_labels"] = old["signature_labels"]
     else:
         new_doc["stages"] = stages
 
@@ -938,6 +1002,9 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
     }
     if tpl_type == "handover":
         doc["sections"] = copy.deepcopy(source.get("sections", []))
+        for extra_key in ("default_delivered_items", "default_property_fields", "signature_labels"):
+            if extra_key in source:
+                doc[extra_key] = copy.deepcopy(source[extra_key])
     else:
         doc["stages"] = copy.deepcopy(source.get("stages", []))
     await db.qc_templates.insert_one(doc)

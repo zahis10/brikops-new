@@ -683,7 +683,7 @@ async def seed_handover_template():
     if existing > 0:
         logger.info(f"[HANDOVER-TEMPLATES] Already seeded ({existing} documents), skipping")
         return
-    from contractor_ops.handover_router import HANDOVER_TEMPLATE
+    from contractor_ops.handover_router import HANDOVER_TEMPLATE, DEFAULT_DELIVERED_ITEMS, HARDCODED_PROPERTY_FIELDS, HARDCODED_SIGNATURE_LABELS
     family_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     doc = {
@@ -697,30 +697,53 @@ async def seed_handover_template():
         "created_at": now,
         "created_by": "system",
         "sections": HANDOVER_TEMPLATE["sections"],
+        "default_delivered_items": [dict(i) for i in DEFAULT_DELIVERED_ITEMS],
+        "default_property_fields": [dict(f) for f in HARDCODED_PROPERTY_FIELDS],
+        "signature_labels": dict(HARDCODED_SIGNATURE_LABELS),
     }
     await db.qc_templates.insert_one(doc)
     logger.info(f"[HANDOVER-TEMPLATES] Seeded default handover template family_id={family_id} with {len(HANDOVER_TEMPLATE['sections'])} sections")
 
 
 async def fix_empty_handover_template():
-    from contractor_ops.handover_router import HANDOVER_TEMPLATE
+    from contractor_ops.handover_router import HANDOVER_TEMPLATE, DEFAULT_DELIVERED_ITEMS, HARDCODED_PROPERTY_FIELDS, HARDCODED_SIGNATURE_LABELS
     default_tpl = await db.qc_templates.find_one(
         {"type": "handover", "is_default": True, "is_active": True},
-        {"_id": 0, "id": 1, "sections": 1, "name": 1}
+        {"_id": 0}
     )
     if not default_tpl:
         return
+
+    updates = {}
+
     existing_sections = default_tpl.get("sections") or []
-    if len(existing_sections) >= 5:
-        return
-    await db.qc_templates.update_one(
-        {"id": default_tpl["id"]},
-        {"$set": {"sections": HANDOVER_TEMPLATE["sections"]}}
-    )
-    logger.info(
-        f"[HANDOVER-FIX] Re-populated empty default handover template id={default_tpl['id']} "
-        f"with {len(HANDOVER_TEMPLATE['sections'])} sections (had {len(existing_sections)})"
-    )
+    if len(existing_sections) < 5:
+        updates["sections"] = HANDOVER_TEMPLATE["sections"]
+        logger.info(
+            f"[HANDOVER-FIX] Re-populating sections for id={default_tpl['id']} "
+            f"(had {len(existing_sections)}, adding {len(HANDOVER_TEMPLATE['sections'])})"
+        )
+
+    if "default_delivered_items" not in default_tpl:
+        updates["default_delivered_items"] = [dict(i) for i in DEFAULT_DELIVERED_ITEMS]
+        logger.info(f"[HANDOVER-FIX] Adding default_delivered_items to id={default_tpl['id']}")
+
+    if "default_property_fields" not in default_tpl:
+        updates["default_property_fields"] = [dict(f) for f in HARDCODED_PROPERTY_FIELDS]
+        logger.info(f"[HANDOVER-FIX] Adding default_property_fields to id={default_tpl['id']}")
+
+    if "signature_labels" not in default_tpl:
+        updates["signature_labels"] = dict(HARDCODED_SIGNATURE_LABELS)
+        logger.info(f"[HANDOVER-FIX] Adding signature_labels to id={default_tpl['id']}")
+
+    if updates:
+        await db.qc_templates.update_one(
+            {"id": default_tpl["id"]},
+            {"$set": updates}
+        )
+        logger.info(f"[HANDOVER-FIX] Updated default template id={default_tpl['id']} with {list(updates.keys())}")
+    else:
+        logger.info(f"[HANDOVER-FIX] Default template id={default_tpl['id']} already up to date")
 
 
 async def dedup_default_templates():

@@ -308,6 +308,23 @@ HANDOVER_TEMPLATE = {
     ],
 }
 
+HARDCODED_PROPERTY_FIELDS = [
+    {"key": "rooms", "label": "חדרים"},
+    {"key": "storage_num", "label": "מספר מחסנים"},
+    {"key": "parking_num", "label": "מספר חניות"},
+    {"key": "model", "label": "דגם"},
+    {"key": "area", "label": "שטח דירה"},
+    {"key": "balcony_area", "label": "שטח מרפסת"},
+    {"key": "parking_area", "label": "שטח חניה"},
+    {"key": "laundry_area", "label": "שטח מרפסת שירות"},
+]
+
+HARDCODED_SIGNATURE_LABELS = {
+    "manager": "אני מאשר/ת שבדיקת המסירה בוצעה בנוכחותי",
+    "tenant": "אני מאשר/ת קבלת הדירה בכפוף לליקויים שצוינו בפרוטוקול",
+    "contractor_rep": "אני מאשר/ת נוכחות במסירה ומתחייב/ת לטפל בליקויים",
+}
+
 DEFAULT_DELIVERED_ITEMS = [
     {"name": "מפתח דלת כניסה", "quantity": None, "notes": ""},
     {"name": "מפתחות דלתות פנים", "quantity": None, "notes": ""},
@@ -757,10 +774,9 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
             "company_name": company_name,
             "company_logo_url": company_logo_url,
         },
+        "property_fields_schema": tpl.get("default_property_fields") or [dict(f) for f in HARDCODED_PROPERTY_FIELDS],
         "property_details": {
-            "rooms": None, "storage_num": None, "parking_num": None,
-            "model": None, "area": None, "balcony_area": None,
-            "parking_area": None, "laundry_area": None,
+            f["key"]: None for f in (tpl.get("default_property_fields") or HARDCODED_PROPERTY_FIELDS)
         },
         "tenants": [
             {"name": "", "id_number": "", "phone": "", "email": "", "id_photo_url": None}
@@ -770,7 +786,8 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
             "electricity": {"reading": None, "photo_url": None},
         } if protocol_type == "final" else None,
         "sections": sections,
-        "delivered_items": [dict(item) for item in DEFAULT_DELIVERED_ITEMS] if protocol_type == "final" else [],
+        "delivered_items": [dict(item) for item in (tpl.get("default_delivered_items") or DEFAULT_DELIVERED_ITEMS)] if protocol_type == "final" else [],
+        "signature_labels": dict(tpl.get("signature_labels") or HARDCODED_SIGNATURE_LABELS),
         "general_notes": {"apartment": "", "storage": "", "parking": ""},
         "legal_text": org_legal_text,
         "legal_text_edited": False,
@@ -853,7 +870,7 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
     ts = _now()
     update_fields = {"updated_at": ts}
 
-    for field in ("property_details", "tenants", "meters", "delivered_items", "general_notes"):
+    for field in ("property_details", "tenants", "meters", "delivered_items", "general_notes", "signature_labels"):
         if field in body:
             update_fields[field] = body[field]
 

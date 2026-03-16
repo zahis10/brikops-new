@@ -4,8 +4,15 @@ import { templateService } from '../services/api';
 import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, Save, Plus, Trash2, ChevronDown, ChevronUp,
-  AlertTriangle, X, GripVertical
+  AlertTriangle, X, GripVertical, Package, LayoutList, FileSignature
 } from 'lucide-react';
+
+const TABS = [
+  { key: 'sections', label: 'סעיפי בדיקה', icon: LayoutList },
+  { key: 'delivered', label: 'פריטים שנמסרו', icon: Package },
+  { key: 'fields', label: 'שדות פרטי נכס', icon: LayoutList },
+  { key: 'signatures', label: 'טקסט חתימות', icon: FileSignature },
+];
 
 const TRADES = [
   'אלומיניום', 'דלתות', 'חשמל', 'טיח', 'ריצוף', 'צביעה',
@@ -79,6 +86,10 @@ const AdminHandoverTemplateEditor = () => {
   const [expandedSections, setExpandedSections] = useState({});
   const [malformedWarning, setMalformedWarning] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [activeTab, setActiveTab] = useState('sections');
+  const [defaultDeliveredItems, setDefaultDeliveredItems] = useState([]);
+  const [defaultPropertyFields, setDefaultPropertyFields] = useState([]);
+  const [signatureLabels, setSignatureLabels] = useState({ manager: '', tenant: '', contractor_rep: '' });
 
   const allTrades = useMemo(() => {
     const dynamic = new Set(TRADES);
@@ -115,6 +126,10 @@ const AdminHandoverTemplateEditor = () => {
       } else {
         setSections([]);
       }
+
+      setDefaultDeliveredItems(tpl.default_delivered_items || []);
+      setDefaultPropertyFields(tpl.default_property_fields || []);
+      setSignatureLabels(tpl.signature_labels || { manager: '', tenant: '', contractor_rep: '' });
 
       const expanded = {};
       const secs = tpl.sections || tpl.stages || [];
@@ -161,11 +176,23 @@ const AdminHandoverTemplateEditor = () => {
         })),
       }));
 
-      await templateService.update(templateId, {
+      const payload = {
         name: name.trim(),
         type: 'handover',
         sections: orderedSections,
-      });
+      };
+      if (defaultDeliveredItems.length > 0) {
+        payload.default_delivered_items = defaultDeliveredItems;
+      }
+      if (defaultPropertyFields.length > 0) {
+        payload.default_property_fields = defaultPropertyFields;
+      }
+      payload.signature_labels = {
+        manager: signatureLabels.manager || '',
+        tenant: signatureLabels.tenant || '',
+        contractor_rep: signatureLabels.contractor_rep || '',
+      };
+      await templateService.update(templateId, payload);
       setMalformedWarning(false);
       toast.success('התבנית נשמרה בהצלחה');
     } catch (err) {
@@ -360,6 +387,133 @@ const AdminHandoverTemplateEditor = () => {
           </div>
         </div>
 
+        <div className="flex gap-1 overflow-x-auto pb-1 -mx-1 px-1">
+          {TABS.map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors min-h-[40px] ${
+                  activeTab === tab.key
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'delivered' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-700">פריטים שנמסרו ({defaultDeliveredItems.length})</h3>
+            </div>
+            <p className="text-xs text-slate-400">פריטים שייכנסו אוטומטית לכל פרוטוקול חדש שנוצר מתבנית זו.</p>
+            <div className="space-y-2">
+              {defaultDeliveredItems.map((item, idx) => (
+                <div key={idx} className="flex items-center gap-2 p-2 border border-slate-100 rounded-lg bg-slate-50/50">
+                  <span className="text-xs text-slate-400 font-bold w-5 text-center">{idx + 1}</span>
+                  <input
+                    type="text"
+                    value={item.name}
+                    onChange={(e) => setDefaultDeliveredItems(prev => prev.map((it, i) => i === idx ? { ...it, name: e.target.value } : it))}
+                    placeholder="שם פריט"
+                    className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white min-h-[40px]"
+                  />
+                  <button
+                    onClick={() => setDefaultDeliveredItems(prev => prev.filter((_, i) => i !== idx))}
+                    className="p-1.5 text-red-400 hover:text-red-600 min-h-[36px] min-w-[36px] flex items-center justify-center"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setDefaultDeliveredItems(prev => [...prev, { name: '', quantity: null, notes: '' }])}
+              className="w-full py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-dashed border-purple-200 transition-colors font-medium"
+            >
+              <Plus className="w-4 h-4" />
+              הוסף פריט
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'fields' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-700">שדות פרטי נכס ({defaultPropertyFields.length})</h3>
+            </div>
+            <p className="text-xs text-slate-400">שדות שיופיעו בטופס פרטי הנכס בכל פרוטוקול חדש.</p>
+            <div className="space-y-2">
+              {defaultPropertyFields.map((field, idx) => (
+                <div key={idx} className="flex items-center gap-2 p-2 border border-slate-100 rounded-lg bg-slate-50/50">
+                  <span className="text-xs text-slate-400 font-bold w-5 text-center">{idx + 1}</span>
+                  <input
+                    type="text"
+                    value={field.key}
+                    onChange={(e) => setDefaultPropertyFields(prev => prev.map((f, i) => i === idx ? { ...f, key: e.target.value.replace(/[^a-z0-9_]/g, '').replace(/^[^a-z]/, '') } : f))}
+                    placeholder="key"
+                    dir="ltr"
+                    className="w-28 text-sm font-mono border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white min-h-[40px]"
+                  />
+                  <input
+                    type="text"
+                    value={field.label}
+                    onChange={(e) => setDefaultPropertyFields(prev => prev.map((f, i) => i === idx ? { ...f, label: e.target.value } : f))}
+                    placeholder="תווית"
+                    className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white min-h-[40px]"
+                  />
+                  <button
+                    onClick={() => setDefaultPropertyFields(prev => prev.filter((_, i) => i !== idx))}
+                    className="p-1.5 text-red-400 hover:text-red-600 min-h-[36px] min-w-[36px] flex items-center justify-center"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setDefaultPropertyFields(prev => [...prev, { key: '', label: '' }])}
+              className="w-full py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-dashed border-purple-200 transition-colors font-medium"
+            >
+              <Plus className="w-4 h-4" />
+              הוסף שדה
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'signatures' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-700">טקסט חתימות</h3>
+              <p className="text-xs text-slate-400 mt-1">טקסט שיופיע מעל כפתור החתימה של כל תפקיד. ניתן לערוך גם בכל פרוטוקול בנפרד.</p>
+            </div>
+            {[
+              { key: 'manager', label: 'מנהל פרויקט' },
+              { key: 'tenant', label: 'דייר / רוכש' },
+              { key: 'contractor_rep', label: 'נציג קבלן' },
+            ].map(role => (
+              <div key={role.key} className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-500">{role.label}</label>
+                <textarea
+                  value={signatureLabels[role.key] || ''}
+                  onChange={(e) => setSignatureLabels(prev => ({ ...prev, [role.key]: e.target.value }))}
+                  placeholder={`טקסט הצהרה עבור ${role.label}...`}
+                  rows={2}
+                  className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'sections' && (
+        <>
         <div className="flex items-center justify-between px-1">
           <h2 className="text-sm font-bold text-slate-600">סקשנים ({sections.length})</h2>
           <button
@@ -531,6 +685,8 @@ const AdminHandoverTemplateEditor = () => {
           <Plus className="w-5 h-5" />
           הוסף סקשן
         </button>
+        </>
+        )}
 
         <div className="pt-2 pb-8">
           <button

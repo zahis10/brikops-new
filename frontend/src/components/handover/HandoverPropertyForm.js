@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
 import { Loader2 } from 'lucide-react';
 
-const FIELDS = [
+const HARDCODED_FIELDS = [
   { key: 'rooms', label: t('handover', 'rooms'), type: 'number' },
   { key: 'storage_num', label: t('handover', 'storageNum'), type: 'number' },
   { key: 'parking_num', label: t('handover', 'parkingNum'), type: 'number' },
@@ -18,6 +18,14 @@ const FIELDS = [
 const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [values, setValues] = useState({});
   const [saving, setSaving] = useState(false);
+
+  const fields = useMemo(() => {
+    const schema = protocol?.property_fields_schema;
+    if (schema && Array.isArray(schema) && schema.length > 0) {
+      return schema.map(f => ({ key: f.key, label: f.label, type: 'text' }));
+    }
+    return HARDCODED_FIELDS;
+  }, [protocol?.property_fields_schema]);
 
   useEffect(() => {
     setValues(protocol?.property_details || {});
@@ -43,7 +51,7 @@ const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   return (
     <div className="space-y-3 p-1">
       <div className="grid grid-cols-2 gap-3">
-        {FIELDS.map(f => (
+        {fields.map(f => (
           <div key={f.key} className="space-y-1">
             <label className="text-xs font-medium text-slate-600">{f.label}</label>
             <input

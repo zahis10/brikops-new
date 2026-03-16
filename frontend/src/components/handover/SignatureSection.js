@@ -25,8 +25,11 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
   const [signatureImages, setSignatureImages] = useState({});
   const [deletingRole, setDeletingRole] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editingLabels, setEditingLabels] = useState({});
+  const [savingLabel, setSavingLabel] = useState(null);
 
   const isLocked = protocol?.locked === true;
+  const sigLabels = protocol?.signature_labels || {};
   const signatures = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
     ? protocol.signatures
     : {};
@@ -56,6 +59,28 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     };
     if (protocol?.id) loadImages();
   }, [protocol?.id, protocol?.signatures, projectId]);
+
+  const canEditLabel = (roleKey) => {
+    if (isLocked) return false;
+    if (signatures[roleKey]) return false;
+    return ['project_manager', 'owner', 'super_admin'].includes(userRole);
+  };
+
+  const handleLabelBlur = async (roleKey) => {
+    const newText = (editingLabels[roleKey] ?? '').trim();
+    const oldText = (sigLabels[roleKey] ?? '').trim();
+    if (newText === oldText) return;
+    try {
+      setSavingLabel(roleKey);
+      const updated = { ...sigLabels, [roleKey]: newText };
+      await handoverService.updateProtocol(projectId, protocol.id, { signature_labels: updated });
+      onUpdated?.();
+    } catch {
+      toast.error(t('handover', 'updateError'));
+    } finally {
+      setSavingLabel(null);
+    }
+  };
 
   const canSign = (roleKey) => {
     if (isLocked) return false;
@@ -120,6 +145,8 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
       {ROLES.map(({ key, label }) => {
         const sig = signatures[key];
         const isSigned = !!sig;
+        const labelText = (key in editingLabels) ? editingLabels[key] : (sigLabels[key] || '');
+        const showLabel = labelText || canEditLabel(key);
 
         return (
           <Card key={key} className={`p-3 border ${isSigned ? 'border-green-200 bg-green-50/30' : 'border-slate-200'}`}>
@@ -127,6 +154,25 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
               <span className="text-sm font-semibold text-slate-700">{label}</span>
               {isSigned && <CheckCircle2 className="w-4 h-4 text-green-500" />}
             </div>
+
+            {showLabel && (
+              canEditLabel(key) ? (
+                <div className="mb-2 relative">
+                  <textarea
+                    value={labelText}
+                    onChange={(e) => setEditingLabels(prev => ({ ...prev, [key]: e.target.value }))}
+                    onBlur={() => handleLabelBlur(key)}
+                    rows={2}
+                    placeholder="טקסט הצהרה..."
+                    className="w-full text-xs text-slate-600 border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-purple-300 resize-none bg-slate-50"
+                    dir="rtl"
+                  />
+                  {savingLabel === key && <Loader2 className="w-3 h-3 animate-spin text-purple-500 absolute top-2 left-2" />}
+                </div>
+              ) : labelText ? (
+                <p className="text-xs text-slate-500 mb-2 leading-relaxed bg-slate-50 rounded-lg px-2.5 py-2">{labelText}</p>
+              ) : null
+            )}
 
             {isSigned ? (
               <div className="space-y-2">
