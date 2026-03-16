@@ -1,0 +1,317 @@
+=== SECTION 1: PDF service — image fetching ===
+import os
+import io
+import re
+import asyncio
+import base64
+import logging
+from datetime import datetime
+from typing import Optional
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
+
+logger = logging.getLogger("contractor_ops.handover_pdf")
+
+_BACKEND_DIR = Path(__file__).parent.parent
+_TEMPLATES_DIR = _BACKEND_DIR / "templates"
+_FONTS_DIR = _BACKEND_DIR / "fonts"
+
+_IMAGE_FETCH_TIMEOUT = 5
+_MAX_IMAGE_WIDTH = 300
+_JPEG_QUALITY = 65
+
+HARDCODED_PROPERTY_LABELS = {
+    "address": "כתובת",
+    "building": "בניין",
+    "floor": "קומה",
+    "apartment": "דירה",
+    "rooms": "חדרים",
+    "parking": "חניה",
+    "storage": "מחסן",
+    "storage_num": "מספר מחסנים",
+    "parking_num": "מספר חניות",
+    "model": "דגם",
+    "area": "שטח דירה",
+    "balcony_area": "שטח מרפסת",
+    "parking_area": "שטח חניה",
+    "laundry_area": "שטח מרפסת שירות",
+}
+
+DEFAULT_SIGNATURE_LABELS = {
+    "manager": "מנהל פרויקט",
+    "tenant": "דייר / רוכש",
+    "contractor_rep": "נציג קבלן",
+}
+
+STATUS_LABELS = {
+    "ok": "תקין",
+    "partial": "חלקי",
+    "defective": "לא תקין",
+    "not_relevant": "לא רלוונטי",
+    "not_checked": "לא נבדק",
+}
+
+STATUS_COLORS = {
+    "ok": "#16a34a",
+    "partial": "#d97706",
+    "defective": "#dc2626",
+    "not_relevant": "#9ca3af",
+    "not_checked": "#e5e7eb",
+}
+
+SEVERITY_LABELS = {
+    "critical": "קריטי",
+    "normal": "רגיל",
+    "cosmetic": "קוסמטי",
+}
+
+SEVERITY_COLORS = {
+    "critical": "#dc2626",
+    "normal": "#d97706",
+    "cosmetic": "#6b7280",
+}
+
+HEBREW_MONTHS = {
+    1: "ינואר", 2: "פברואר", 3: "מרץ", 4: "אפריל",
+    5: "מאי", 6: "יוני", 7: "יולי", 8: "אוגוסט",
+    9: "ספטמבר", 10: "אוקטובר", 11: "נובמבר", 12: "דצמבר",
+}
+
+
+
+=== SECTION 2: PDF service — generate function ===
+190:async def generate_handover_pdf(protocol: dict, db) -> bytes:
+191-    try:
+192-        from weasyprint import HTML
+193-        use_weasyprint = True
+194-    except (ImportError, OSError) as e:
+195-        logger.warning(f"[PDF] WeasyPrint not available: {e}. Using fallback.")
+196-        use_weasyprint = False
+197-
+198-    context = await _build_template_context(protocol, db)
+199-
+200-    jinja_env = Environment(
+201-        loader=FileSystemLoader(str(_TEMPLATES_DIR)),
+202-        autoescape=True,
+203-    )
+204-    template = jinja_env.get_template("handover_protocol_pdf.html")
+205-    html_content = template.render(**context)
+206-
+207-    if use_weasyprint:
+208-        pdf_bytes = HTML(string=html_content, base_url=str(_BACKEND_DIR)).write_pdf()
+209-    else:
+210-        try:
+211-            from xhtml2pdf import pisa
+212-            result_buf = io.BytesIO()
+213-            pisa_status = pisa.CreatePDF(io.StringIO(html_content), dest=result_buf)
+214-            if pisa_status.err:
+215-                logger.error(f"[PDF] xhtml2pdf errors: {pisa_status.err}")
+216-            pdf_bytes = result_buf.getvalue()
+217-        except ImportError:
+218-            raise RuntimeError("PDF generation requires WeasyPrint (production) or xhtml2pdf. Neither is available in this environment.")
+219-
+220-    return pdf_bytes
+221-
+222-
+223-async def _build_template_context(protocol: dict, db) -> dict:
+224-    import aiohttp
+225-
+226-    snapshot = protocol.get("snapshot", {})
+227-    sections = protocol.get("sections", [])
+228-    signatures = protocol.get("signatures", {})
+229-    if isinstance(signatures, list):
+230-        signatures = {}
+
+=== SECTION 3: PDF endpoint ===
+1507-        raise HTTPException(status_code=400, detail="ניתן להוריד PDF רק לפרוטוקול חתום")
+1508-
+1509-    from services.handover_pdf_service import generate_handover_pdf
+1510-
+1511-    try:
+1512-        pdf_bytes = await _asyncio.wait_for(
+1513-            generate_handover_pdf(protocol, db),
+1514-            timeout=60
+1515-        )
+1516-    except _asyncio.TimeoutError:
+1517-        logger.error(f"[HANDOVER] PDF generation timeout for protocol={protocol_id}")
+1518-        raise HTTPException(status_code=504, detail="PDF generation timeout")
+1519-    except Exception as e:
+--
+1534:        media_type="application/pdf",
+1535-        headers={
+1536-            "Content-Disposition": f'attachment; filename="{filename}"',
+1537-        },
+1538-    )
+1539-
+1540-
+1541-@router.post("/projects/{project_id}/handover/protocols/{protocol_id}/reopen")
+1542-async def reopen_protocol(project_id: str, protocol_id: str, request: Request, user: dict = Depends(get_current_user)):
+1543-    if not _is_super_admin(user):
+1544-        raise HTTPException(status_code=403, detail="רק מנהל מערכת יכול לפתוח מחדש פרוטוקול חתום")
+1545-
+1546-    protocol = await _get_protocol_or_404(protocol_id, project_id)
+1547-    if protocol.get("locked") is not True and protocol.get("status") not in ("signed", "completed"):
+1548-        raise HTTPException(status_code=400, detail="ניתן לפתוח מחדש רק פרוטוקול חתום")
+1549-
+1550-    body = await request.json()
+1551-    reason = body.get("reason", "").strip()
+1552-    if not reason:
+1553-        raise HTTPException(status_code=400, detail="נדרשת סיבה לפתיחה מחדש")
+1554-
+1555-    db = get_db()
+1556-    ts = _now()
+1557-
+1558-    sig_count = _count_signatures(protocol)
+1559-    if sig_count >= 1:
+1560-        new_status = "partially_signed"
+1561-    else:
+1562-        new_status = "in_progress"
+1563-
+1564-    await db.handover_protocols.update_one(
+1565-        {"id": protocol_id, "project_id": project_id},
+1566-        {"$set": {
+1567-            "status": new_status,
+1568-            "locked": False,
+1569-            "updated_at": ts,
+
+=== SECTION 4: HTML template (first 80 lines) ===
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<style>
+@font-face {
+    font-family: 'Rubik';
+    src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype');
+    font-weight: normal;
+}
+@font-face {
+    font-family: 'Rubik';
+    src: url('file://{{ fonts_dir }}/Rubik-Bold.ttf') format('truetype');
+    font-weight: bold;
+}
+@font-face {
+    font-family: 'Caveat';
+    src: url('file://{{ fonts_dir }}/Caveat-Regular.ttf') format('truetype');
+    font-weight: normal;
+}
+
+@page {
+    size: A4;
+    margin: 20mm 15mm 20mm 15mm;
+    @bottom-center {
+        content: counter(page) " / " counter(pages);
+        font-family: 'Rubik', sans-serif;
+        font-size: 8pt;
+        color: #94a3b8;
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Rubik', sans-serif;
+    font-size: 10pt;
+    line-height: 1.5;
+    color: #1e293b;
+    direction: rtl;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 3px solid #312e81;
+}
+
+.header-logo {
+    max-height: 50px;
+    max-width: 180px;
+    margin-bottom: 10px;
+}
+
+.header-title {
+    font-size: 20pt;
+    font-weight: bold;
+    color: #312e81;
+    margin-bottom: 5px;
+}
+
+.header-subtitle {
+    font-size: 11pt;
+    color: #475569;
+}
+
+.header-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 9pt;
+    color: #64748b;
+}
+
+.header-meta-item {
+
+=== SECTION 5: Font embedding CSS ===
+6:@font-face {
+7:    font-family: 'Rubik';
+8:    src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype');
+9-    font-weight: normal;
+10-}
+11:@font-face {
+12:    font-family: 'Rubik';
+13:    src: url('file://{{ fonts_dir }}/Rubik-Bold.ttf') format('truetype');
+14-    font-weight: bold;
+15-}
+16:@font-face {
+17:    font-family: 'Caveat';
+18:    src: url('file://{{ fonts_dir }}/Caveat-Regular.ttf') format('truetype');
+19-    font-weight: normal;
+20-}
+21-
+22-@page {
+23-    size: A4;
+--
+27:        font-family: 'Rubik', sans-serif;
+28-        font-size: 8pt;
+29-        color: #94a3b8;
+30-    }
+31-}
+32-
+
+=== SECTION 6: Frontend download ===
+frontend/src/pages/HandoverProtocolPage.js:231:      await handoverService.downloadPdf(projectId, protocolId);
+frontend/src/pages/HandoverProtocolPage.js-232-      toast.success('PDF הורד בהצלחה');
+frontend/src/pages/HandoverProtocolPage.js-233-    } catch (err) {
+frontend/src/pages/HandoverProtocolPage.js-234-      console.error('PDF download error:', err);
+frontend/src/pages/HandoverProtocolPage.js-235-      if (err?.response?.status === 400) {
+frontend/src/pages/HandoverProtocolPage.js-236-        toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
+frontend/src/pages/HandoverProtocolPage.js-237-      } else if (err?.response?.status >= 500) {
+frontend/src/pages/HandoverProtocolPage.js-238-        toast.error('שגיאה ביצירת PDF, נסו שוב');
+frontend/src/pages/HandoverProtocolPage.js-239-      } else {
+frontend/src/pages/HandoverProtocolPage.js-240-        toast.error('שגיאת רשת');
+frontend/src/pages/HandoverProtocolPage.js-241-      }
+frontend/src/pages/HandoverProtocolPage.js-242-    } finally {
+frontend/src/pages/HandoverProtocolPage.js-243-      setPdfLoading(false);
+frontend/src/pages/HandoverProtocolPage.js-244-    }
+frontend/src/pages/HandoverProtocolPage.js-245-  };
+frontend/src/pages/HandoverProtocolPage.js-246-
+--
+frontend/src/pages/HandoverProtocolPage.js:358:              הורד PDF
+frontend/src/pages/HandoverProtocolPage.js-359-            </button>
+frontend/src/pages/HandoverProtocolPage.js-360-          </div>
+frontend/src/pages/HandoverProtocolPage.js-361-        </div>
+frontend/src/pages/HandoverProtocolPage.js-362-      )}
+frontend/src/pages/HandoverProtocolPage.js-363-
+frontend/src/pages/HandoverProtocolPage.js-364-      <div className="max-w-lg mx-auto px-4">
+frontend/src/pages/HandoverProtocolPage.js-365-        {continueSection && (
+frontend/src/pages/HandoverProtocolPage.js-366-          <button
+frontend/src/pages/HandoverProtocolPage.js-367-            onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${continueSection.section_id}`)}
+frontend/src/pages/HandoverProtocolPage.js-368-            className="w-full mt-4 flex items-center gap-3 p-3.5 rounded-xl bg-gradient-to-l from-purple-500 to-purple-600 text-white shadow-lg active:scale-[0.98] transition-all"
+frontend/src/pages/HandoverProtocolPage.js-369-          >
+frontend/src/pages/HandoverProtocolPage.js-370-            <div className="flex-1 text-right min-w-0">
