@@ -752,6 +752,7 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
 
 
 VALID_SEVERITIES = {"critical", "normal", "cosmetic"}
+TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
 
 STATUS_LABELS = {
     "defective": "לא תקין",
@@ -861,7 +862,6 @@ async def update_item(
     defect_id = None
 
     if is_defect_status:
-        existing_defect_id = target_item.get("defect_id")
         source = f"handover_{protocol['type']}"
         section_name = target_section.get("name", "")
         item_name = target_item.get("name", "")
@@ -872,33 +872,37 @@ async def update_item(
         defect_photos = list(photos or [])
         defect_severity = severity or "normal"
 
+        existing_defect = None
+        existing_defect_id = target_item.get("defect_id")
         if existing_defect_id:
-            existing_defect = await db.tasks.find_one({"id": existing_defect_id}, {"_id": 0, "status": 1})
-            if existing_defect and existing_defect.get("status") not in ("closed",):
-                await db.tasks.update_one(
-                    {"id": existing_defect_id},
-                    {"$set": {
-                        "title": defect_title,
-                        "description": defect_description,
-                        "severity": defect_severity,
-                        "priority": _severity_to_priority(defect_severity),
-                        "proof_urls": defect_photos,
-                        "attachments_count": len(defect_photos),
-                        "skip_photo_reason": skip_photo_reason,
-                        "updated_at": ts,
-                    }}
-                )
-                defect_id = existing_defect_id
-                logger.info(f"[HANDOVER] Updated existing defect={defect_id} for item={item_id}")
-            else:
-                defect_id = await _create_handover_defect(
-                    db, ts, user, project_id, protocol, section_id, item_id,
-                    defect_title, defect_description, defect_trade, defect_severity,
-                    defect_photos, skip_photo_reason, source,
-                )
+            existing_defect = await db.tasks.find_one({"id": existing_defect_id}, {"_id": 0, "id": 1, "status": 1})
+
+        if not existing_defect or existing_defect.get("status") in TERMINAL_TASK_STATUSES:
+            existing_defect = await db.tasks.find_one({
+                "handover_protocol_id": protocol["id"],
+                "handover_section_id": section_id,
+                "handover_item_id": item_id,
+                "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
+            }, {"_id": 0, "id": 1, "status": 1})
+
+        if existing_defect and existing_defect.get("status") not in TERMINAL_TASK_STATUSES:
+            defect_id = existing_defect["id"]
+            await db.tasks.update_one(
+                {"id": defect_id},
+                {"$set": {
+                    "title": defect_title,
+                    "description": defect_description,
+                    "severity": defect_severity,
+                    "priority": _severity_to_priority(defect_severity),
+                    "proof_urls": defect_photos,
+                    "attachments_count": len(defect_photos),
+                    "skip_photo_reason": skip_photo_reason,
+                    "updated_at": ts,
+                }}
+            )
+            if defect_id != existing_defect_id:
                 update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
-                defect_created = True
-                logger.info(f"[HANDOVER] Created new defect={defect_id} (old closed) for item={item_id}")
+            logger.info(f"[HANDOVER] Updated existing defect={defect_id} for item={item_id}")
         else:
             defect_id = await _create_handover_defect(
                 db, ts, user, project_id, protocol, section_id, item_id,

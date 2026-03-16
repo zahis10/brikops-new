@@ -1,87 +1,129 @@
 === SECTION 1: Backend update_item (auto-defect logic) ===
-765:async def update_item(
-766-    project_id: str, protocol_id: str, section_id: str, item_id: str,
-767-    request: Request, user: dict = Depends(get_current_user),
-768-):
-769-    await _check_handover_management(user, project_id)
-770-    protocol = await _get_protocol_or_404(protocol_id, project_id)
-771-    _check_not_locked(protocol)
-772-
-773-    body = await request.json()
-774-    db = get_db()
-775-    ts = _now()
-776-
-777-    target_section = None
-778-    target_item = None
-779-    for section in protocol.get("sections", []):
-780-        if section["section_id"] != section_id:
-781-            continue
-782-        target_section = section
-783-        for item in section.get("items", []):
-784-            if item["item_id"] != item_id:
-785-                continue
-786-            target_item = item
-787-            break
-788-        break
-789-
-790-    if not target_section:
-791-        raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
-792-    if not target_item:
-793-        raise HTTPException(status_code=404, detail="פריט לא נמצא בחלק")
-794-
-795-    new_status = body.get("status")
-796-    notes = body.get("notes")
-797-    description = body.get("description")
-798-    severity = body.get("severity")
-799-    photos = body.get("photos")
-800-    skip_photo_reason = body.get("skip_photo_reason")
-801-    photos_pending_count = body.get("photos_pending_count", 0)
-802-
-803-    if photos is not None and not isinstance(photos, list):
-804-        raise HTTPException(status_code=400, detail="photos חייב להיות רשימה")
-805-
-806-    is_defect_status = new_status in ("defective", "partial")
-807-
-808-    if is_defect_status:
-809-        if severity and severity not in VALID_SEVERITIES:
-810-            raise HTTPException(status_code=400, detail=f"חומרה לא חוקית: {severity}")
-811-        if not severity:
-812-            raise HTTPException(status_code=400, detail="חובה לבחור חומרה עבור סטטוס זה")
-813-        if new_status == "defective":
-814-            if not description or not description.strip():
-815-                raise HTTPException(status_code=400, detail="תיאור חובה עבור סטטוס 'לא תקין'")
-816-            has_photos = (photos and len(photos) > 0) or photos_pending_count > 0
-817-            if not has_photos and not skip_photo_reason:
-818-                raise HTTPException(status_code=400, detail="נדרשת תמונה או סיבת דילוג עבור סטטוס 'לא תקין'")
-819-
-820-    update_ops = {"$set": {"updated_at": ts}}
-821-    has_item_change = False
-822-
-823-    if new_status is not None:
-824-        if new_status not in VALID_ITEM_STATUSES:
-825-            raise HTTPException(status_code=400, detail=f"סטטוס לא חוקי: {new_status}")
-826-        update_ops["$set"]["sections.$[sec].items.$[itm].status"] = new_status
-827-        has_item_change = True
-828-
-829-    if notes is not None:
-830-        update_ops["$set"]["sections.$[sec].items.$[itm].notes"] = notes
-831-        has_item_change = True
-832-
-833-    if description is not None:
-834-        update_ops["$set"]["sections.$[sec].items.$[itm].description"] = description
-835-        has_item_change = True
-836-
-837-    if severity is not None:
-838-        update_ops["$set"]["sections.$[sec].items.$[itm].severity"] = severity
-839-        has_item_change = True
-840-
-841-    if photos is not None:
-842-        update_ops["$set"]["sections.$[sec].items.$[itm].photos"] = photos
-843-        has_item_change = True
-844-
-845-    if skip_photo_reason is not None:
+766:async def update_item(
+767-    project_id: str, protocol_id: str, section_id: str, item_id: str,
+768-    request: Request, user: dict = Depends(get_current_user),
+769-):
+770-    await _check_handover_management(user, project_id)
+771-    protocol = await _get_protocol_or_404(protocol_id, project_id)
+772-    _check_not_locked(protocol)
+773-
+774-    body = await request.json()
+775-    db = get_db()
+776-    ts = _now()
+777-
+778-    target_section = None
+779-    target_item = None
+780-    for section in protocol.get("sections", []):
+781-        if section["section_id"] != section_id:
+782-            continue
+783-        target_section = section
+784-        for item in section.get("items", []):
+785-            if item["item_id"] != item_id:
+786-                continue
+787-            target_item = item
+788-            break
+789-        break
+790-
+791-    if not target_section:
+792-        raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
+793-    if not target_item:
+794-        raise HTTPException(status_code=404, detail="פריט לא נמצא בחלק")
+795-
+796-    new_status = body.get("status")
+797-    notes = body.get("notes")
+798-    description = body.get("description")
+799-    severity = body.get("severity")
+800-    photos = body.get("photos")
+801-    skip_photo_reason = body.get("skip_photo_reason")
+802-    photos_pending_count = body.get("photos_pending_count", 0)
+803-
+804-    if photos is not None and not isinstance(photos, list):
+805-        raise HTTPException(status_code=400, detail="photos חייב להיות רשימה")
+806-
+807-    is_defect_status = new_status in ("defective", "partial")
+808-
+809-    if is_defect_status:
+810-        if severity and severity not in VALID_SEVERITIES:
+811-            raise HTTPException(status_code=400, detail=f"חומרה לא חוקית: {severity}")
+812-        if not severity:
+813-            raise HTTPException(status_code=400, detail="חובה לבחור חומרה עבור סטטוס זה")
+814-        if new_status == "defective":
+815-            if not description or not description.strip():
+816-                raise HTTPException(status_code=400, detail="תיאור חובה עבור סטטוס 'לא תקין'")
+817-            has_photos = (photos and len(photos) > 0) or photos_pending_count > 0
+818-            if not has_photos and not skip_photo_reason:
+819-                raise HTTPException(status_code=400, detail="נדרשת תמונה או סיבת דילוג עבור סטטוס 'לא תקין'")
+820-
+821-    update_ops = {"$set": {"updated_at": ts}}
+822-    has_item_change = False
+823-
+824-    if new_status is not None:
+825-        if new_status not in VALID_ITEM_STATUSES:
+826-            raise HTTPException(status_code=400, detail=f"סטטוס לא חוקי: {new_status}")
+827-        update_ops["$set"]["sections.$[sec].items.$[itm].status"] = new_status
+828-        has_item_change = True
+829-
+830-    if notes is not None:
+831-        update_ops["$set"]["sections.$[sec].items.$[itm].notes"] = notes
+832-        has_item_change = True
+833-
+834-    if description is not None:
+835-        update_ops["$set"]["sections.$[sec].items.$[itm].description"] = description
+836-        has_item_change = True
+837-
+838-    if severity is not None:
+839-        update_ops["$set"]["sections.$[sec].items.$[itm].severity"] = severity
+840-        has_item_change = True
+841-
+842-    if photos is not None:
+843-        update_ops["$set"]["sections.$[sec].items.$[itm].photos"] = photos
+844-        has_item_change = True
+845-
+846-    if skip_photo_reason is not None:
 
-=== SECTION 2: Defect creation logic ===
+=== SECTION 2: Defect creation logic + idempotency guard ===
+755:TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
+756-
+757-STATUS_LABELS = {
+758-    "defective": "לא תקין",
+759-    "partial": "חלקי",
+760-    "ok": "תקין",
+761-    "not_relevant": "לא רלוונטי",
+762-    "not_checked": "לא נבדק",
+763-}
+764-
+765-@router.put("/projects/{project_id}/handover/protocols/{protocol_id}/sections/{section_id}/items/{item_id}")
+766-async def update_item(
+767-    project_id: str, protocol_id: str, section_id: str, item_id: str,
+768-    request: Request, user: dict = Depends(get_current_user),
+769-):
+770-    await _check_handover_management(user, project_id)
+771-    protocol = await _get_protocol_or_404(protocol_id, project_id)
+772-    _check_not_locked(protocol)
+773-
+774-    body = await request.json()
+775-    db = get_db()
+776-    ts = _now()
+777-
+778-    target_section = None
+779-    target_item = None
+780-    for section in protocol.get("sections", []):
+781-        if section["section_id"] != section_id:
+782-            continue
+783-        target_section = section
+784-        for item in section.get("items", []):
+785-            if item["item_id"] != item_id:
+786-                continue
+787-            target_item = item
+788-            break
+789-        break
+790-
+791-    if not target_section:
+792-        raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
+793-    if not target_item:
+794-        raise HTTPException(status_code=404, detail="פריט לא נמצא בחלק")
+795-
+--
 865:        source = f"handover_{protocol['type']}"
 866-        section_name = target_section.get("name", "")
 867-        item_name = target_item.get("name", "")
@@ -92,56 +134,34 @@
 872-        defect_photos = list(photos or [])
 873-        defect_severity = severity or "normal"
 874-
-875-        if existing_defect_id:
-876-            existing_defect = await db.tasks.find_one({"id": existing_defect_id}, {"_id": 0, "status": 1})
-877-            if existing_defect and existing_defect.get("status") not in ("closed",):
-878-                await db.tasks.update_one(
-879-                    {"id": existing_defect_id},
-880-                    {"$set": {
-881-                        "title": defect_title,
-882-                        "description": defect_description,
-883-                        "severity": defect_severity,
-884-                        "priority": _severity_to_priority(defect_severity),
-885-                        "proof_urls": defect_photos,
-886-                        "attachments_count": len(defect_photos),
-887-                        "skip_photo_reason": skip_photo_reason,
-888-                        "updated_at": ts,
-889-                    }}
-890-                )
-891-                defect_id = existing_defect_id
-892-                logger.info(f"[HANDOVER] Updated existing defect={defect_id} for item={item_id}")
-893-            else:
-894:                defect_id = await _create_handover_defect(
-895-                    db, ts, user, project_id, protocol, section_id, item_id,
-896-                    defect_title, defect_description, defect_trade, defect_severity,
-897-                    defect_photos, skip_photo_reason, source,
-898-                )
-899-                update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
-900-                defect_created = True
-901-                logger.info(f"[HANDOVER] Created new defect={defect_id} (old closed) for item={item_id}")
-902-        else:
-903:            defect_id = await _create_handover_defect(
-904-                db, ts, user, project_id, protocol, section_id, item_id,
-905-                defect_title, defect_description, defect_trade, defect_severity,
-906-                defect_photos, skip_photo_reason, source,
-907-            )
-908-            update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
-909-            defect_created = True
-910-            logger.info(f"[HANDOVER] Created defect={defect_id} for item={item_id}")
-911-
-912-    await db.handover_protocols.update_one(
-913-        {"id": protocol_id, "project_id": project_id},
-914-        update_ops,
-915-        array_filters=array_filters,
-916-    )
-917-
-918-    updated = await db.handover_protocols.find_one({"id": protocol_id, "project_id": project_id}, {"_id": 0})
-919-    return {
-920-        "protocol": updated,
-921:        "defect_created": defect_created,
-922-        "defect_id": defect_id,
-923-    }
-924-
+875-        existing_defect = None
+876-        existing_defect_id = target_item.get("defect_id")
+877-        if existing_defect_id:
+878:            existing_defect = await db.tasks.find_one({"id": existing_defect_id}, {"_id": 0, "id": 1, "status": 1})
+879-
+880:        if not existing_defect or existing_defect.get("status") in TERMINAL_TASK_STATUSES:
+881:            existing_defect = await db.tasks.find_one({
+882-                "handover_protocol_id": protocol["id"],
+883-                "handover_section_id": section_id,
+884-                "handover_item_id": item_id,
+885:                "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
+886-            }, {"_id": 0, "id": 1, "status": 1})
+887-
+888:        if existing_defect and existing_defect.get("status") not in TERMINAL_TASK_STATUSES:
+889-            defect_id = existing_defect["id"]
+890-            await db.tasks.update_one(
+891-                {"id": defect_id},
+892-                {"$set": {
+893-                    "title": defect_title,
+894-                    "description": defect_description,
+895-                    "severity": defect_severity,
+896-                    "priority": _severity_to_priority(defect_severity),
+897-                    "proof_urls": defect_photos,
+898-                    "attachments_count": len(defect_photos),
+899-                    "skip_photo_reason": skip_photo_reason,
+900-                    "updated_at": ts,
+901-                }}
+902-            )
 
 === SECTION 3: HandoverItemModal (first 150 lines) ===
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -191,6 +211,8 @@ const HandoverItemModal = ({
   const [showSkipInput, setShowSkipInput] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  const [failedPhotoIndexes, setFailedPhotoIndexes] = useState(new Set());
+  const [savedDefectId, setSavedDefectId] = useState(null);
 
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -204,6 +226,8 @@ const HandoverItemModal = ({
     setSkipPhotoReason('');
     setShowSkipInput(false);
     setErrors({});
+    setFailedPhotoIndexes(new Set());
+    setSavedDefectId(null);
   }, []);
 
   const handleImageAdd = useCallback(async (e) => {
@@ -290,79 +314,357 @@ const HandoverItemModal = ({
         errs.photos = 'נדרשת תמונה או סיבת דילוג';
       }
     }
-    return errs;
-  };
 
-  const handleSaveAndAdvance = async () => {
-
-=== SECTION 4: HandoverItemModal (save function) ===
-150:  const handleSaveAndAdvance = async () => {
-151-    if (isSigned || saving) return;
-152-
-153-    if (isDefectStatus) {
-154-      const errs = validate();
-155-      if (Object.keys(errs).length > 0) {
-156-        setErrors(errs);
-157-        return;
-158-      }
-159-    }
-160-
-161-    try {
-162-      setSaving(true);
-163-
-164-      const payload = { status };
+=== SECTION 4: HandoverItemModal (save + retry functions) ===
+154:  const uploadPhotosToDefect = async (defectId, photosToUpload) => {
+155-    const uploadWithRetry = async (file, maxAttempts = 2) => {
+156-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+157-        try {
+158-          return await taskService.uploadAttachment(defectId, file);
+159-        } catch (err) {
+160-          if (attempt >= maxAttempts) throw err;
+161-          await new Promise(r => setTimeout(r, attempt * 2000));
+162-        }
+163-      }
+164-    };
 165-
-166-      if (isDefectStatus) {
-167-        payload.description = description.trim();
-168-        payload.severity = severity;
-169-        payload.photos = [];
-170-        payload.photos_pending_count = photos.length;
-171-        payload.skip_photo_reason = skipPhotoReason.trim() || null;
-172-      } else {
-173-        payload.notes = notes;
-174-      }
-175-
-176-      const result = await handoverService.updateItem(
-177-        projectId, protocolId, sectionId, item.item_id, payload
-178-      );
-179-
-180-      const defectId = result?.defect_id;
-181-
-182-      if (defectId && photos.length > 0) {
-183-        const uploadResults = await Promise.allSettled(
-184-          photos.map(img => {
-185-            const uploadWithRetry = async (file, maxAttempts = 2) => {
-186-              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-187-                try {
-188-                  return await taskService.uploadAttachment(defectId, file);
-189-                } catch (err) {
-190-                  if (attempt >= maxAttempts) throw err;
+166-    const uploadResults = await Promise.allSettled(
+167-      photosToUpload.map(img => uploadWithRetry(img.file))
+168-    );
+169-
+170-    const newFailed = new Set();
+171-    uploadResults.forEach((r, i) => {
+172-      if (r.status === 'rejected') newFailed.add(i);
+173-    });
+174-
+175-    return newFailed;
+176-  };
+177-
+178:  const advanceToNext = () => {
+179-    photos.forEach(img => URL.revokeObjectURL(img.preview));
+180-    onItemUpdated?.();
+181-    if (allItems && onSelectItem) {
+182-      const currentIdx = allItems.findIndex(i => i.item_id === item.item_id);
+183-      if (currentIdx >= 0 && currentIdx < allItems.length - 1) {
+184-        onSelectItem(allItems[currentIdx + 1].item_id);
+185-      } else {
+186-        onClose();
+187-      }
+188-    } else {
+189-      onClose();
+190-    }
+191-  };
+192-
+193:  const handleRetryFailedPhotos = async () => {
+194-    if (!savedDefectId || failedPhotoIndexes.size === 0) return;
+195-    try {
+196-      setSaving(true);
+197-      const failedPhotos = photos.filter((_, i) => failedPhotoIndexes.has(i));
+198:      const newFailed = await uploadPhotosToDefect(savedDefectId, failedPhotos);
+199-
+200-      if (newFailed.size > 0) {
+201-        const failedOriginalIndexes = new Set();
+202-        const failedArr = [...failedPhotoIndexes];
+203-        newFailed.forEach(i => failedOriginalIndexes.add(failedArr[i]));
+204-        setFailedPhotoIndexes(failedOriginalIndexes);
+205-        toast.error(`${newFailed.size} תמונות עדיין נכשלו`);
+206-      } else {
+207-        setFailedPhotoIndexes(new Set());
+208-        toast.success('כל התמונות הועלו בהצלחה');
+209-        onItemUpdated?.();
+210:        advanceToNext();
+211-      }
+212-    } catch (err) {
+213-      console.error(err);
+214-      toast.error('ניסיון חוזר נכשל');
+215-    } finally {
+216-      setSaving(false);
+217-    }
+218-  };
+219-
+220:  const handleSaveAndAdvance = async () => {
+221-    if (isSigned || saving) return;
+222-
+223-    if (isDefectStatus) {
+224-      const errs = validate();
+225-      if (Object.keys(errs).length > 0) {
+226-        setErrors(errs);
+227-        return;
+228-      }
+229-    }
+230-
+231-    try {
+232-      setSaving(true);
+233-      setFailedPhotoIndexes(new Set());
+234-
+235-      const payload = { status };
+236-
+237-      if (isDefectStatus) {
+238-        payload.description = description.trim();
+239-        payload.severity = severity;
+240-        payload.photos = [];
+241-        payload.photos_pending_count = photos.length;
+242-        payload.skip_photo_reason = skipPhotoReason.trim() || null;
+243-      } else {
+244-        payload.notes = notes;
+245-      }
+246-
+247-      const result = await handoverService.updateItem(
+248-        projectId, protocolId, sectionId, item.item_id, payload
+249-      );
+250-
+251-      const defectId = result?.defect_id;
+252-
+253-      if (defectId && photos.length > 0) {
+254-        setSavedDefectId(defectId);
+255:        const failedIndexes = await uploadPhotosToDefect(defectId, photos);
+256-
+257-        if (failedIndexes.size > 0) {
+258-          setFailedPhotoIndexes(failedIndexes);
+259-          const succeeded = photos.length - failedIndexes.size;
+260-          if (succeeded > 0) {
+261-            toast.warning(`שמירה הצליחה, ${failedIndexes.size} תמונות לא הועלו`);
+262-          } else {
+263-            toast.error('שמירה הצליחה, העלאת תמונות נכשלה');
+264-          }
+265-          onItemUpdated?.();
+266-          setSaving(false);
+267-          return;
+268-        }
+269-      }
+270-
+271-      if (result?.defect_created) {
+272-        toast.success('הפריט נשמר וליקוי נוצר');
+273-      } else if (defectId && !result?.defect_created) {
+274-        toast.success('הפריט נשמר והליקוי עודכן');
+275-      } else {
+276-        toast.success(t('handover', 'itemUpdated'));
+277-      }
+278-
+279:      advanceToNext();
+280-    } catch (err) {
+281-      console.error(err);
+282-      const detail = err.response?.data?.detail;
+283-      toast.error(typeof detail === 'string' ? detail : t('handover', 'updateError'));
+284-    } finally {
+285-      setSaving(false);
+286-    }
+287-  };
+288-
+289-  const handleSimpleStatusSave = async (newStatus) => {
+290-    if (isSigned || saving) return;
+291-    try {
+292-      setSaving(true);
+293-      await handoverService.updateItem(projectId, protocolId, sectionId, item.item_id, {
+294-        status: newStatus,
+295-        notes,
+296-      });
+297-      onItemUpdated?.();
+298-      if (allItems && onSelectItem) {
+299-        const currentIdx = allItems.findIndex(i => i.item_id === item.item_id);
+300-        if (currentIdx >= 0 && currentIdx < allItems.length - 1) {
+301-          onSelectItem(allItems[currentIdx + 1].item_id);
+302-        } else {
+303-          onClose();
+304-        }
+305-      }
+306-    } catch (err) {
+307-      console.error(err);
+308-      toast.error(t('handover', 'updateError'));
+309-    } finally {
+310-      setSaving(false);
+311-    }
+312-  };
+313-
+314-  return (
+315-    <Drawer open={open} onOpenChange={(o) => { if (!o) { photos.forEach(img => URL.revokeObjectURL(img.preview)); onClose(); } }}>
+316-      <DrawerContent className="max-h-[90vh]" dir="rtl">
+317-        <DrawerHeader className="text-right pb-2">
+318-          <div className="flex items-center justify-between">
+319-            <div className="flex-1 min-w-0">
+320-              <DrawerTitle className="text-base font-bold text-slate-800 truncate">
+321-                {item.name}
+322-              </DrawerTitle>
+323-              <DrawerDescription className="text-xs text-slate-500 mt-0.5">
+324-                מקצוע: {item.trade}
+325-              </DrawerDescription>
+326-            </div>
+327-            <button onClick={() => { photos.forEach(img => URL.revokeObjectURL(img.preview)); onClose(); }} className="p-1.5 hover:bg-slate-100 rounded-lg">
+328-              <X className="w-4 h-4 text-slate-400" />
+329-            </button>
 --
-528:              onClick={handleSaveAndAdvance}
-529-              disabled={saving}
-530-              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-medium transition-all
-531-                active:scale-[0.98] disabled:opacity-50
-532-                ${status === 'defective'
-533-                  ? 'bg-red-500 text-white hover:bg-red-600'
-534-                  : 'bg-amber-500 text-white hover:bg-amber-600'}`}
-535-            >
-536-              {saving ? (
-537-                <Loader2 className="w-4 h-4 animate-spin" />
-538-              ) : (
-539-                <ChevronLeft className="w-4 h-4" />
-540-              )}
-541-              שמור ועבור לפריט הבא
-542-            </button>
-543-          )}
-544-        </div>
-545-      </DrawerContent>
-546-    </Drawer>
-547-  );
-548-};
-549-
-550-export default HandoverItemModal;
+446:                    onClick={handleRetryFailedPhotos}
+447-                    disabled={saving}
+448-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-100 text-red-700 text-xs font-medium hover:bg-red-200 active:bg-red-300 disabled:opacity-50"
+449-                  >
+450-                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+451-                    נסה שוב להעלות {failedPhotoIndexes.size} תמונות
+452-                  </button>
+453-                )}
+454-
+455-                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
+456-                <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
+457-
+458-                <div className="flex gap-2">
+459-                  <button
+460-                    type="button"
+461-                    onClick={() => cameraInputRef.current?.click()}
+462-                    disabled={isSigned}
+463-                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-purple-300 text-purple-600 text-xs font-medium hover:bg-purple-50 active:bg-purple-100 disabled:opacity-50"
+464-                  >
+465-                    <Camera className="w-4 h-4" />
+466-                    צלם
+467-                  </button>
+468-                  <button
+469-                    type="button"
+470-                    onClick={() => galleryInputRef.current?.click()}
+471-                    disabled={isSigned}
+472-                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50"
+473-                  >
+474-                    <ImagePlus className="w-4 h-4" />
+475-                    גלריה
+476-                  </button>
+477-                </div>
+478-
+479-                {status === 'defective' && photos.length === 0 && (
+480-                  <div className="mt-1">
+481-                    {!showSkipInput ? (
+482-                      <button
+483-                        type="button"
+484-                        onClick={() => setShowSkipInput(true)}
+485-                        className="text-[11px] text-slate-500 hover:text-slate-700 underline"
+486-                      >
+487-                        אפשר לדלג עם סיבה
+488-                      </button>
+489-                    ) : (
+490-                      <div className="space-y-1.5">
+491-                        <div className="flex flex-wrap gap-1.5">
+492-                          {SKIP_REASONS.map(reason => (
+493-                            <button
+494-                              key={reason}
+495-                              type="button"
+496-                              onClick={() => {
+--
+600:              onClick={handleSaveAndAdvance}
+601-              disabled={saving}
+602-              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-medium transition-all
+603-                active:scale-[0.98] disabled:opacity-50
+604-                ${status === 'defective'
+605-                  ? 'bg-red-500 text-white hover:bg-red-600'
+606-                  : 'bg-amber-500 text-white hover:bg-amber-600'}`}
+607-            >
+608-              {saving ? (
+609-                <Loader2 className="w-4 h-4 animate-spin" />
+610-              ) : (
+611-                <ChevronLeft className="w-4 h-4" />
+612-              )}
+613-              שמור ועבור לפריט הבא
+614-            </button>
+615-          )}
+616-        </div>
+617-      </DrawerContent>
+618-    </Drawer>
+619-  );
+620-};
+621-
+622-export default HandoverItemModal;
 
-=== SECTION 5: Source badge on UnitDetailPage ===
+=== SECTION 5: Photo thumbnails with failed state ===
+46-  const [saving, setSaving] = useState(false);
+47-  const [errors, setErrors] = useState({});
+48:  const [failedPhotoIndexes, setFailedPhotoIndexes] = useState(new Set());
+49-  const [savedDefectId, setSavedDefectId] = useState(null);
+50-
+51-  const cameraInputRef = useRef(null);
+52-  const galleryInputRef = useRef(null);
+53-
+54-  const resetForm = useCallback((itemData) => {
+55-    setStatus(itemData?.status || 'not_checked');
+56-    setNotes(itemData?.notes || '');
+57-    setDescription(itemData?.description || '');
+58-    setSeverity(itemData?.severity || null);
+59-    setPhotos([]);
+60-    setSkipPhotoReason('');
+61-    setShowSkipInput(false);
+62-    setErrors({});
+63-    setFailedPhotoIndexes(new Set());
+--
+191-  };
+192-
+193:  const handleRetryFailedPhotos = async () => {
+194:    if (!savedDefectId || failedPhotoIndexes.size === 0) return;
+195-    try {
+196-      setSaving(true);
+197:      const failedPhotos = photos.filter((_, i) => failedPhotoIndexes.has(i));
+198-      const newFailed = await uploadPhotosToDefect(savedDefectId, failedPhotos);
+199-
+200-      if (newFailed.size > 0) {
+201-        const failedOriginalIndexes = new Set();
+202:        const failedArr = [...failedPhotoIndexes];
+203-        newFailed.forEach(i => failedOriginalIndexes.add(failedArr[i]));
+204-        setFailedPhotoIndexes(failedOriginalIndexes);
+205-        toast.error(`${newFailed.size} תמונות עדיין נכשלו`);
+206-      } else {
+207-        setFailedPhotoIndexes(new Set());
+208-        toast.success('כל התמונות הועלו בהצלחה');
+209-        onItemUpdated?.();
+210-        advanceToNext();
+211-      }
+212-    } catch (err) {
+213-      console.error(err);
+214-      toast.error('ניסיון חוזר נכשל');
+215-    } finally {
+216-      setSaving(false);
+217-    }
+--
+421-                    {photos.map((img, i) => (
+422-                      <div key={i} className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2
+423:                        ${failedPhotoIndexes.has(i) ? 'border-red-500 ring-2 ring-red-200' : 'border-slate-200'}`}>
+424-                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
+425:                        {failedPhotoIndexes.has(i) && (
+426-                          <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center">
+427-                            <AlertTriangle className="w-5 h-5 text-red-600" />
+428-                          </div>
+429-                        )}
+430-                        {!savedDefectId && (
+431-                          <button
+432-                            onClick={() => removePhoto(i)}
+433-                            className="absolute top-0.5 left-0.5 p-0.5 bg-red-500 text-white rounded-full"
+434-                          >
+435-                            <X className="w-3 h-3" />
+436-                          </button>
+437-                        )}
+438-                      </div>
+439-                    ))}
+440-                  </div>
+441-                )}
+442-
+443:                {failedPhotoIndexes.size > 0 && (
+444-                  <button
+445-                    type="button"
+446:                    onClick={handleRetryFailedPhotos}
+447-                    disabled={saving}
+448-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-100 text-red-700 text-xs font-medium hover:bg-red-200 active:bg-red-300 disabled:opacity-50"
+449-                  >
+450-                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+451:                    נסה שוב להעלות {failedPhotoIndexes.size} תמונות
+452-                  </button>
+453-                )}
+454-
+455-                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
+456-                <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
+457-
+458-                <div className="flex gap-2">
+459-                  <button
+460-                    type="button"
+461-                    onClick={() => cameraInputRef.current?.click()}
+462-                    disabled={isSigned}
+463-                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-purple-300 text-purple-600 text-xs font-medium hover:bg-purple-50 active:bg-purple-100 disabled:opacity-50"
+464-                  >
+465-                    <Camera className="w-4 h-4" />
+466-                    צלם
+
+=== SECTION 6: Source badge on UnitDetailPage ===
 286-                        <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
 287-                          {priorityInfo.label}
 288-                        </span>

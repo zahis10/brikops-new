@@ -45,6 +45,8 @@ const HandoverItemModal = ({
   const [showSkipInput, setShowSkipInput] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  const [failedPhotoIndexes, setFailedPhotoIndexes] = useState(new Set());
+  const [savedDefectId, setSavedDefectId] = useState(null);
 
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -58,6 +60,8 @@ const HandoverItemModal = ({
     setSkipPhotoReason('');
     setShowSkipInput(false);
     setErrors({});
+    setFailedPhotoIndexes(new Set());
+    setSavedDefectId(null);
   }, []);
 
   const handleImageAdd = useCallback(async (e) => {
@@ -147,6 +151,72 @@ const HandoverItemModal = ({
     return errs;
   };
 
+  const uploadPhotosToDefect = async (defectId, photosToUpload) => {
+    const uploadWithRetry = async (file, maxAttempts = 2) => {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await taskService.uploadAttachment(defectId, file);
+        } catch (err) {
+          if (attempt >= maxAttempts) throw err;
+          await new Promise(r => setTimeout(r, attempt * 2000));
+        }
+      }
+    };
+
+    const uploadResults = await Promise.allSettled(
+      photosToUpload.map(img => uploadWithRetry(img.file))
+    );
+
+    const newFailed = new Set();
+    uploadResults.forEach((r, i) => {
+      if (r.status === 'rejected') newFailed.add(i);
+    });
+
+    return newFailed;
+  };
+
+  const advanceToNext = () => {
+    photos.forEach(img => URL.revokeObjectURL(img.preview));
+    onItemUpdated?.();
+    if (allItems && onSelectItem) {
+      const currentIdx = allItems.findIndex(i => i.item_id === item.item_id);
+      if (currentIdx >= 0 && currentIdx < allItems.length - 1) {
+        onSelectItem(allItems[currentIdx + 1].item_id);
+      } else {
+        onClose();
+      }
+    } else {
+      onClose();
+    }
+  };
+
+  const handleRetryFailedPhotos = async () => {
+    if (!savedDefectId || failedPhotoIndexes.size === 0) return;
+    try {
+      setSaving(true);
+      const failedPhotos = photos.filter((_, i) => failedPhotoIndexes.has(i));
+      const newFailed = await uploadPhotosToDefect(savedDefectId, failedPhotos);
+
+      if (newFailed.size > 0) {
+        const failedOriginalIndexes = new Set();
+        const failedArr = [...failedPhotoIndexes];
+        newFailed.forEach(i => failedOriginalIndexes.add(failedArr[i]));
+        setFailedPhotoIndexes(failedOriginalIndexes);
+        toast.error(`${newFailed.size} תמונות עדיין נכשלו`);
+      } else {
+        setFailedPhotoIndexes(new Set());
+        toast.success('כל התמונות הועלו בהצלחה');
+        onItemUpdated?.();
+        advanceToNext();
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('ניסיון חוזר נכשל');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSaveAndAdvance = async () => {
     if (isSigned || saving) return;
 
@@ -160,6 +230,7 @@ const HandoverItemModal = ({
 
     try {
       setSaving(true);
+      setFailedPhotoIndexes(new Set());
 
       const payload = { status };
 
@@ -180,27 +251,20 @@ const HandoverItemModal = ({
       const defectId = result?.defect_id;
 
       if (defectId && photos.length > 0) {
-        const uploadResults = await Promise.allSettled(
-          photos.map(img => {
-            const uploadWithRetry = async (file, maxAttempts = 2) => {
-              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                try {
-                  return await taskService.uploadAttachment(defectId, file);
-                } catch (err) {
-                  if (attempt >= maxAttempts) throw err;
-                  await new Promise(r => setTimeout(r, attempt * 2000));
-                }
-              }
-            };
-            return uploadWithRetry(img.file);
-          })
-        );
-        const succeeded = uploadResults.filter(r => r.status === 'fulfilled').length;
-        const failed = uploadResults.filter(r => r.status === 'rejected').length;
-        if (failed > 0 && succeeded > 0) {
-          toast.warning(`${failed} תמונות לא הועלו`);
-        } else if (failed > 0 && succeeded === 0) {
-          toast.error('העלאת תמונות נכשלה');
+        setSavedDefectId(defectId);
+        const failedIndexes = await uploadPhotosToDefect(defectId, photos);
+
+        if (failedIndexes.size > 0) {
+          setFailedPhotoIndexes(failedIndexes);
+          const succeeded = photos.length - failedIndexes.size;
+          if (succeeded > 0) {
+            toast.warning(`שמירה הצליחה, ${failedIndexes.size} תמונות לא הועלו`);
+          } else {
+            toast.error('שמירה הצליחה, העלאת תמונות נכשלה');
+          }
+          onItemUpdated?.();
+          setSaving(false);
+          return;
         }
       }
 
@@ -212,19 +276,7 @@ const HandoverItemModal = ({
         toast.success(t('handover', 'itemUpdated'));
       }
 
-      photos.forEach(img => URL.revokeObjectURL(img.preview));
-      onItemUpdated?.();
-
-      if (allItems && onSelectItem) {
-        const currentIdx = allItems.findIndex(i => i.item_id === item.item_id);
-        if (currentIdx >= 0 && currentIdx < allItems.length - 1) {
-          onSelectItem(allItems[currentIdx + 1].item_id);
-        } else {
-          onClose();
-        }
-      } else {
-        onClose();
-      }
+      advanceToNext();
     } catch (err) {
       console.error(err);
       const detail = err.response?.data?.detail;
@@ -367,17 +419,37 @@ const HandoverItemModal = ({
                 {photos.length > 0 && (
                   <div className="flex gap-2 overflow-x-auto pb-1">
                     {photos.map((img, i) => (
-                      <div key={i} className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-slate-200">
+                      <div key={i} className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2
+                        ${failedPhotoIndexes.has(i) ? 'border-red-500 ring-2 ring-red-200' : 'border-slate-200'}`}>
                         <img src={img.preview} alt="" className="w-full h-full object-cover" />
-                        <button
-                          onClick={() => removePhoto(i)}
-                          className="absolute top-0.5 left-0.5 p-0.5 bg-red-500 text-white rounded-full"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
+                        {failedPhotoIndexes.has(i) && (
+                          <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center">
+                            <AlertTriangle className="w-5 h-5 text-red-600" />
+                          </div>
+                        )}
+                        {!savedDefectId && (
+                          <button
+                            onClick={() => removePhoto(i)}
+                            className="absolute top-0.5 left-0.5 p-0.5 bg-red-500 text-white rounded-full"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
+                )}
+
+                {failedPhotoIndexes.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleRetryFailedPhotos}
+                    disabled={saving}
+                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-100 text-red-700 text-xs font-medium hover:bg-red-200 active:bg-red-300 disabled:opacity-50"
+                  >
+                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                    נסה שוב להעלות {failedPhotoIndexes.size} תמונות
+                  </button>
                 )}
 
                 <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
