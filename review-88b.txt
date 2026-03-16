@@ -1,0 +1,331 @@
+=== SECTION 1: HandoverLegalSections (first 150 lines) ===
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { handoverService } from '../../services/api';
+import { toast } from 'sonner';
+import { useAuth } from '../../contexts/AuthContext';
+import { CheckCircle2, PenLine, AlertTriangle, Loader2 } from 'lucide-react';
+import SignaturePadModal from './SignaturePadModal';
+
+const ROLE_LABELS = {
+  manager: 'מנהל פרויקט / מפקח',
+  tenant: 'דייר / רוכש',
+  contractor_rep: 'נציג קבלן',
+};
+
+const ALLOWED_ROLES = {
+  manager: ['project_manager', 'owner', 'super_admin'],
+  tenant: ['project_manager', 'owner', 'contractor', 'super_admin'],
+  contractor_rep: ['contractor', 'super_admin'],
+};
+
+const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpdated }) => {
+  const { user } = useAuth();
+  const [signingSection, setSigningSection] = useState(null);
+  const [signatureImages, setSignatureImages] = useState({});
+  const [editingBodies, setEditingBodies] = useState({});
+  const [savingBody, setSavingBody] = useState(null);
+  const blurSaveRef = useRef({});
+
+  const sections = useMemo(() => protocol?.legal_sections || [], [protocol?.legal_sections]);
+  const isLocked = protocol?.locked === true;
+  const isPM = ['project_manager', 'owner', 'super_admin'].includes(userRole);
+
+  useEffect(() => {
+    const loadImages = async () => {
+      const imgs = {};
+      for (const s of sections) {
+        if (s.signature && s.signature.type === 'canvas' && s.signature.image_key) {
+          try {
+            const data = await handoverService.getLegalSectionSignatureImage(projectId, protocol.id, s.id);
+            if (data.url) imgs[s.id] = data.url;
+          } catch {}
+        }
+      }
+      setSignatureImages(imgs);
+    };
+    if (protocol?.id && sections.length > 0) loadImages();
+  }, [protocol?.id, sections, projectId]);
+
+  useEffect(() => {
+    const bodies = {};
+    for (const s of sections) {
+      bodies[s.id] = s.body || '';
+    }
+    setEditingBodies(bodies);
+  }, [protocol?.id, sections]);
+
+  const handleBodyChange = useCallback((sectionId, value) => {
+    setEditingBodies(prev => ({ ...prev, [sectionId]: value }));
+  }, []);
+
+  const handleBodyBlur = useCallback(async (section) => {
+    if (section.signed_at || isLocked) return;
+    const newBody = (editingBodies[section.id] || '').trim();
+    if (!newBody || newBody === (section.body || '').trim()) return;
+
+    if (blurSaveRef.current[section.id]) return;
+    blurSaveRef.current[section.id] = true;
+    setSavingBody(section.id);
+    try {
+      await handoverService.updateLegalSectionBody(projectId, protocol.id, section.id, newBody);
+      toast.success('נשמר');
+      onUpdated?.();
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.response?.data?.detail || 'שגיאה בשמירת הנסח');
+    } finally {
+      setSavingBody(null);
+      blurSaveRef.current[section.id] = false;
+    }
+  }, [editingBodies, isLocked, projectId, protocol?.id, onUpdated]);
+
+  const canSignSection = (section) => {
+    if (isLocked) return false;
+    if (!section.requires_signature) return false;
+    if (section.signed_at) return false;
+    const role = section.signature_role;
+    if (!role) return false;
+    const allowed = ALLOWED_ROLES[role] || [];
+    return allowed.includes(userRole);
+  };
+
+  const handleSignLegalSection = useCallback(async (sectionId, formData) => {
+    await handoverService.signLegalSection(projectId, protocol.id, sectionId, formData);
+  }, [projectId, protocol?.id]);
+
+  const currentUserName = user?.name || user?.full_name || '';
+
+  if (sections.length === 0) return null;
+
+  return (
+    <div className="space-y-3 p-1">
+      {sections.map((section) => {
+        const isSectionSigned = !!section.signed_at;
+        const needsSignature = section.requires_signature;
+        const canEdit = isPM && !isSectionSigned && !isLocked;
+
+        return (
+          <div
+            key={section.id}
+            className={`border rounded-xl bg-white overflow-hidden ${
+              isSectionSigned ? 'border-r-[3px] border-r-green-400 border-green-200' :
+              needsSignature ? 'border-r-[3px] border-r-amber-400 border-slate-200' :
+              'border-slate-200'
+            }`}
+          >
+            <div className="p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-800">{section.title}</h4>
+                {section.edited && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium flex items-center gap-1">
+                    <PenLine className="w-2.5 h-2.5" />
+                    נערך מהמקור
+                  </span>
+                )}
+              </div>
+
+              {canEdit ? (
+                <div className="relative">
+                  <textarea
+                    value={editingBodies[section.id] ?? section.body}
+                    onChange={(e) => handleBodyChange(section.id, e.target.value)}
+                    onBlur={() => handleBodyBlur(section)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none
+                      focus:outline-none focus:ring-2 focus:ring-purple-300 leading-relaxed min-h-[100px]"
+                    dir="rtl"
+                  />
+                  {savingBody === section.id && (
+                    <div className="absolute top-2 left-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap" dir="rtl">
+                  {section.body}
+                </p>
+              )}
+
+              {!needsSignature && (
+                <div className="flex items-center gap-1.5 text-green-600 text-xs">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+
+=== SECTION 2: SignaturePadModal usage + signFn ===
+6:import SignaturePadModal from './SignaturePadModal';
+7-
+8-const ROLE_LABELS = {
+9-  manager: 'מנהל פרויקט / מפקח',
+10-  tenant: 'דייר / רוכש',
+11-  contractor_rep: 'נציג קבלן',
+12-};
+13-
+14-const ALLOWED_ROLES = {
+15-  manager: ['project_manager', 'owner', 'super_admin'],
+16-  tenant: ['project_manager', 'owner', 'contractor', 'super_admin'],
+17-  contractor_rep: ['contractor', 'super_admin'],
+18-};
+19-
+20-const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpdated }) => {
+21-  const { user } = useAuth();
+--
+38:            const data = await handoverService.getLegalSectionSignatureImage(projectId, protocol.id, s.id);
+39-            if (data.url) imgs[s.id] = data.url;
+40-          } catch {}
+41-        }
+42-      }
+43-      setSignatureImages(imgs);
+44-    };
+45-    if (protocol?.id && sections.length > 0) loadImages();
+46-  }, [protocol?.id, sections, projectId]);
+47-
+48-  useEffect(() => {
+49-    const bodies = {};
+50-    for (const s of sections) {
+51-      bodies[s.id] = s.body || '';
+52-    }
+53-    setEditingBodies(bodies);
+--
+102:        const isSectionSigned = !!section.signed_at;
+103-        const needsSignature = section.requires_signature;
+104:        const canEdit = isPM && !isSectionSigned && !isLocked;
+105-
+106-        return (
+107-          <div
+
+=== SECTION 3: Signing gate ===
+34:  const unsignedLegalSections = (protocol?.legal_sections || []).filter(
+35-    s => s.requires_signature && !s.signed_at
+36-  );
+37:  const hasLegalGate = unsignedLegalSections.length > 0;
+38-
+39-  useEffect(() => {
+40-    const sigs = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
+41-      ? protocol.signatures
+42-      : {};
+43-    const loadImages = async () => {
+44-      const imgs = {};
+45-      for (const role of ROLES) {
+46-        const sig = sigs[role.key];
+47-        if (sig && sig.type === 'canvas' && sig.image_key) {
+48-          try {
+49-            const data = await handoverService.getSignatureImage(projectId, protocol.id, role.key);
+50-            if (data.url) imgs[role.key] = data.url;
+51-          } catch {
+52-          }
+53-        }
+54-      }
+55-      setSignatureImages(imgs);
+56-    };
+57-    if (protocol?.id) loadImages();
+58-  }, [protocol?.id, protocol?.signatures, projectId]);
+59-
+60-  const canSign = (roleKey) => {
+61-    if (isLocked) return false;
+62-    if (hasLegalGate) return false;
+--
+100:            <span className="text-sm text-amber-800 font-medium">יש נסחים משפטיים שטרם נחתמו:</span>
+101-          </div>
+102-          <ul className="mr-6 space-y-0.5">
+103:            {unsignedLegalSections.map(s => (
+104-              <li key={s.id} className="text-xs text-amber-700">• {s.title}</li>
+105-            ))}
+106-          </ul>
+107-          <p className="text-[11px] text-amber-600">יש לחתום על כל הנסחים המשפטיים קודם</p>
+108-        </div>
+109-      )}
+
+=== SECTION 4: Protocol page wiring ===
+20:import HandoverLegalSections from '../components/handover/HandoverLegalSections';
+21-import SignatureSection from '../components/handover/SignatureSection';
+22-
+23-const API = process.env.REACT_APP_BACKEND_URL || '';
+24-
+25-const ENGINE_SECTIONS = [
+26-  { key: 'property', label: t('handover', 'propertyDetails'), icon: Home, visibleTypes: ['initial', 'final'] },
+27-  { key: 'tenants', label: t('handover', 'tenants'), icon: Users, visibleTypes: ['initial', 'final'] },
+28-  { key: 'meters', label: t('handover', 'meters'), icon: Gauge, visibleTypes: ['final'] },
+29-  { key: 'delivered', label: t('handover', 'deliveredItems'), icon: Package, visibleTypes: ['final'] },
+30-  { key: 'notes', label: t('handover', 'generalNotes'), icon: FileText, visibleTypes: ['initial', 'final'] },
+31:  { key: 'legal', label: t('handover', 'legalText'), icon: Scale, visibleTypes: ['initial', 'final'] },
+32:  { key: 'legal_sections', label: 'נסחים משפטיים', icon: Scale, visibleTypes: ['initial', 'final'], conditional: true },
+33-  { key: 'signatures', label: t('handover', 'signatures'), icon: PenLine, visibleTypes: ['initial', 'final'] },
+34-];
+35-
+36-const STATUS_BADGE = {
+37-  draft: { label: t('handover', 'draft'), color: 'bg-white/20 text-white' },
+38-  in_progress: { label: t('handover', 'inProgress'), color: 'bg-white/20 text-white' },
+39-  partially_signed: { label: t('handover', 'partiallySigned'), color: 'bg-amber-400/30 text-amber-100' },
+40-  signed: { label: t('handover', 'signed'), color: 'bg-green-400/30 text-green-100' },
+41-};
+42-
+--
+206:  const hasLegalSections = (protocol?.legal_sections || []).length > 0;
+207-  const visibleEngineSections = ENGINE_SECTIONS.filter(es => {
+208-    if (!es.visibleTypes.includes(protocol.type || 'initial')) return false;
+209:    if (es.conditional && es.key === 'legal_sections' && !hasLegalSections) return false;
+210-    return true;
+211-  });
+
+=== SECTION 5: API methods ===
+1229:    const response = await axios.get(`${API}/organizations/${orgId}/handover-legal-sections`, { headers: getAuthHeader() });
+1230-    return response.data;
+1231-  },
+1232-  async putOrgLegalSections(orgId, sections) {
+1233:    const response = await axios.put(`${API}/organizations/${orgId}/handover-legal-sections`, { sections }, { headers: getAuthHeader() });
+1234-    return response.data;
+1235-  },
+1236-  async updateLegalSectionBody(projectId, protocolId, sectionId, body) {
+1237-    const response = await axios.put(
+1238-      `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}`,
+1239-      { body }, { headers: getAuthHeader() }
+1240-    );
+1241-    return response.data;
+--
+1245:      `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}/sign`,
+1246-      formData, { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } }
+1247-    );
+1248-    return response.data;
+1249-  },
+1250-  async getLegalSectionSignatureImage(projectId, protocolId, sectionId) {
+1251-    const response = await axios.get(
+1252:      `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}/signature-image`,
+1253-      { headers: getAuthHeader() }
+1254-    );
+1255-    return response.data;
+1256-  },
+1257-};
+1258-
+1259-export const exportService = {
+1260-  async exportDefects({ scope, unit_id, building_id, filters, format = 'excel' }) {
+
+=== SECTION 6: OrgLegalSectionsEditor (save function) ===
+120:  const handleSave = async () => {
+121-    if (!validate()) return;
+122-    try {
+123-      setSaving(true);
+124-      const payload = sections.map((s, i) => ({
+125-        ...(s.id ? { id: s.id } : {}),
+126-        title: s.title.trim(),
+127-        body: s.body.trim(),
+128-        requires_signature: s.requires_signature,
+129-        signature_role: s.requires_signature ? s.signature_role : null,
+130-        applies_to: s.applies_to,
+131-        order: i + 1,
+132-      }));
+133-      const data = await handoverService.putOrgLegalSections(orgId, payload);
+134-      setSections(data.sections || []);
+135-      toast.success('נסחים משפטיים נשמרו');
+136-    } catch (err) {
+137-      console.error(err);
+138-      toast.error(err?.response?.data?.detail || 'שגיאה בשמירה');
+139-    } finally {
+140-      setSaving(false);
+--
+308:                onClick={handleSave}
+309-                disabled={saving}
+310-                className="flex items-center gap-2 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium
+311-                  hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50"
+312-              >
+313-                {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+314-                {saving ? 'שומר...' : 'שמור'}
+315-              </button>
