@@ -1524,9 +1524,9 @@ async def download_protocol_pdf(
 
     protocol_type = protocol.get("type", "initial")
     if protocol_type == "initial":
-        filename = f"protocol_mesira_rishonit_{apt_safe}_{floor_safe}.pdf"
+        filename = f"protocol_mesira_{apt_safe}_{floor_safe}.pdf"
     else:
-        filename = f"protocol_mesirat_hazaka_{apt_safe}_{floor_safe}.pdf"
+        filename = f"protocol_hazaka_{apt_safe}_{floor_safe}.pdf"
 
     return Response(
         content=pdf_bytes,

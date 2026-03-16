@@ -303,6 +303,15 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     item_photo_map[item_key].append(key_name)
                     photo_counter += 1
 
+    legal_sections_raw = protocol.get("legal_sections", [])
+    legal_section_image_keys = {}
+    for ls_idx, ls in enumerate(legal_sections_raw):
+        sig = ls.get("signature")
+        if sig and isinstance(sig, dict) and sig.get("type") == "canvas" and sig.get("image_key"):
+            key_name = f"legal_sig_{ls_idx}"
+            image_keys.append((key_name, sig["image_key"]))
+            legal_section_image_keys[ls_idx] = key_name
+
     images = {}
     if image_keys:
         async with aiohttp.ClientSession() as session:
@@ -390,7 +399,26 @@ async def _build_template_context(protocol: dict, db) -> dict:
         for i, d in enumerate(delivered_items) if d.get("name")
     ]
 
-    legal_sections = protocol.get("legal_sections", [])
+    legal_sections = []
+    for ls_idx, ls in enumerate(legal_sections_raw):
+        sig = ls.get("signature")
+        ls_data = {
+            "title": ls.get("title", ""),
+            "body": ls.get("body", ""),
+            "edited": ls.get("edited", False),
+            "requires_signature": ls.get("requires_signature", False),
+            "signer_name": ls.get("signer_name", ""),
+            "signed_at": _format_hebrew_date(ls.get("signed_at")),
+            "is_signed": bool(sig),
+        }
+        if sig and isinstance(sig, dict):
+            ls_data["sig_type"] = sig.get("type", "")
+            ls_data["typed_name"] = sig.get("typed_name", "")
+            if ls_idx in legal_section_image_keys:
+                ls_data["sig_image_b64"] = images.get(legal_section_image_keys[ls_idx])
+            else:
+                ls_data["sig_image_b64"] = None
+        legal_sections.append(ls_data)
 
     sig_labels = protocol.get("signature_labels", {}) or {}
     signature_data = {}

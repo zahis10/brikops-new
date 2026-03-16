@@ -438,12 +438,19 @@ tr:nth-child(even) {
 <div class="legal-card">
     <div class="legal-title">{{ ls.title or '' }}</div>
     <div class="legal-body">{{ ls.body or '' }}</div>
-    {% if ls.edited is defined and ls.edited %}
+    {% if ls.edited %}
     <div class="legal-note">(נערך מהמקור)</div>
     {% endif %}
-    {% if ls.signed_by is defined and ls.signed_by %}
-    <div class="legal-note">נחתם ע"י: {{ ls.signed_by }} — {{ ls.signed_at|default('') }}</div>
-    {% elif ls.requires_signature is defined and ls.requires_signature %}
+    {% if ls.is_signed %}
+    <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0;">
+        {% if ls.sig_type is defined and ls.sig_type == 'canvas' and ls.sig_image_b64 is defined and ls.sig_image_b64 %}
+        <img src="{{ ls.sig_image_b64 }}" class="signature-image" alt="חתימה">
+        {% elif ls.sig_type is defined and ls.sig_type == 'typed' and ls.typed_name is defined and ls.typed_name %}
+        <div class="typed-signature">{{ ls.typed_name }}</div>
+        {% endif %}
+        <div class="legal-note">נחתם ע"י: {{ ls.signer_name }}{% if ls.signed_at %} — {{ ls.signed_at }}{% endif %}</div>
+    </div>
+    {% elif ls.requires_signature %}
     <div class="legal-note">(טרם נחתם)</div>
     {% endif %}
 </div>
