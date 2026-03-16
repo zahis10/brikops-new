@@ -1,200 +1,544 @@
-import React, { useState, useEffect } from 'react';
-import { handoverService } from '../../services/api';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { handoverService, taskService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
 import { useNavigate } from 'react-router-dom';
+import { compressImage } from '../../utils/imageCompress';
 import {
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
 } from '../ui/drawer';
 import {
-  CheckCircle2, AlertTriangle, CircleDot, MinusCircle, RotateCcw,
-  Bug, ExternalLink, Loader2, X
+  CheckCircle2, AlertTriangle, CircleDot, MinusCircle,
+  Bug, ExternalLink, Loader2, X, Camera, ImagePlus, Info,
+  ChevronLeft, Trash2,
 } from 'lucide-react';
 
 const STATUS_OPTIONS = [
-  { value: 'ok', label: t('handover', 'statusOk'), icon: CheckCircle2, color: 'bg-green-100 text-green-700 border-green-300', activeColor: 'bg-green-500 text-white border-green-500' },
-  { value: 'partial', label: t('handover', 'statusPartial'), icon: CircleDot, color: 'bg-amber-100 text-amber-700 border-amber-300', activeColor: 'bg-amber-500 text-white border-amber-500' },
-  { value: 'defective', label: t('handover', 'statusDefective'), icon: AlertTriangle, color: 'bg-red-100 text-red-700 border-red-300', activeColor: 'bg-red-500 text-white border-red-500' },
-  { value: 'not_relevant', label: t('handover', 'statusNotRelevant'), icon: MinusCircle, color: 'bg-slate-100 text-slate-600 border-slate-300', activeColor: 'bg-slate-500 text-white border-slate-500' },
-  { value: 'not_checked', label: t('handover', 'statusReset'), icon: RotateCcw, color: 'bg-slate-50 text-slate-500 border-slate-200', activeColor: 'bg-slate-400 text-white border-slate-400' },
+  { value: 'ok', label: 'תקין', icon: CheckCircle2, color: 'bg-green-100 text-green-700 border-green-300', activeColor: 'bg-green-500 text-white border-green-500' },
+  { value: 'partial', label: 'חלקי', icon: CircleDot, color: 'bg-amber-100 text-amber-700 border-amber-300', activeColor: 'bg-amber-500 text-white border-amber-500' },
+  { value: 'defective', label: 'לא תקין', icon: AlertTriangle, color: 'bg-red-100 text-red-700 border-red-300', activeColor: 'bg-red-500 text-white border-red-500' },
+  { value: 'not_relevant', label: 'לא רלוונטי', icon: MinusCircle, color: 'bg-slate-100 text-slate-600 border-slate-300', activeColor: 'bg-slate-500 text-white border-slate-500' },
+];
+
+const SEVERITY_OPTIONS = [
+  { value: 'critical', label: 'קריטי', color: 'bg-red-100 text-red-700 border-red-300', activeColor: 'bg-red-500 text-white border-red-500' },
+  { value: 'normal', label: 'רגיל', color: 'bg-amber-100 text-amber-700 border-amber-300', activeColor: 'bg-amber-500 text-white border-amber-500' },
+  { value: 'cosmetic', label: 'קוסמטי', color: 'bg-green-100 text-green-700 border-green-300', activeColor: 'bg-green-500 text-white border-green-500' },
+];
+
+const SKIP_REASONS = [
+  'לא ניתן לצלם — חושך',
+  'לא ניתן לצלם — אזור לא נגיש',
 ];
 
 const HandoverItemModal = ({
-  open, onClose, item, sectionId, projectId, protocolId, isSigned, onItemUpdated,
+  open, onClose, item, sectionId, sectionName, projectId, protocolId,
+  isSigned, onItemUpdated, allItems, onSelectItem,
 }) => {
   const navigate = useNavigate();
-  const [status, setStatus] = useState(item?.status || 'not_checked');
-  const [notes, setNotes] = useState(item?.notes || '');
+  const [status, setStatus] = useState('not_checked');
+  const [notes, setNotes] = useState('');
+  const [description, setDescription] = useState('');
+  const [severity, setSeverity] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [skipPhotoReason, setSkipPhotoReason] = useState('');
+  const [showSkipInput, setShowSkipInput] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [creatingDefect, setCreatingDefect] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+
+  const resetForm = useCallback((itemData) => {
+    setStatus(itemData?.status || 'not_checked');
+    setNotes(itemData?.notes || '');
+    setDescription(itemData?.description || '');
+    setSeverity(itemData?.severity || null);
+    setPhotos([]);
+    setSkipPhotoReason('');
+    setShowSkipInput(false);
+    setErrors({});
+  }, []);
+
+  const handleImageAdd = useCallback(async (e) => {
+    try {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+      const compressed = await Promise.all(files.map(f => compressImage(f)));
+      const newImages = compressed.map(file => ({
+        file,
+        preview: URL.createObjectURL(file),
+        name: file.name,
+      }));
+      setPhotos(prev => [...prev, ...newImages]);
+      setErrors(prev => { const n = {...prev}; delete n.photos; return n; });
+    } catch (err) {
+      console.error('[handover:image] failed to process image:', err);
+      toast.error('שגיאה בעיבוד התמונה');
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  }, []);
+
+  const removePhoto = useCallback((index) => {
+    setPhotos(prev => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
 
   useEffect(() => {
-    if (item) {
-      setStatus(item.status || 'not_checked');
-      setNotes(item.notes || '');
+    if (item && open) {
+      resetForm(item);
     }
-  }, [item]);
+  }, [item, open, resetForm]);
 
   if (!item) return null;
 
+  const isDefectStatus = status === 'defective' || status === 'partial';
   const hasDefect = !!item.defect_id;
-  const showCreateDefect = !hasDefect && (status === 'defective' || status === 'partial');
 
-  const handleStatusChange = async (newStatus) => {
+  const handleStatusChange = (newStatus) => {
     if (isSigned || saving) return;
     setStatus(newStatus);
+    setErrors({});
+    if (newStatus !== 'defective' && newStatus !== 'partial') {
+      setDescription('');
+      setSeverity(null);
+      setPhotos([]);
+      setSkipPhotoReason('');
+      setShowSkipInput(false);
+    }
+  };
+
+  const handlePassNotesBlur = async () => {
+    if (isSigned || saving) return;
+    if (status !== 'ok' && status !== 'not_relevant') return;
+    try {
+      setSaving(true);
+      await handoverService.updateItem(projectId, protocolId, sectionId, item.item_id, {
+        status,
+        notes,
+      });
+      onItemUpdated?.();
+    } catch (err) {
+      console.error(err);
+      toast.error(t('handover', 'updateError'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const validate = () => {
+    const errs = {};
+    if (!isDefectStatus) return errs;
+
+    if (!severity) {
+      errs.severity = 'חובה לבחור חומרה';
+    }
+    if (status === 'defective') {
+      if (!description.trim()) {
+        errs.description = 'תיאור חובה עבור "לא תקין"';
+      }
+      if (photos.length === 0 && !skipPhotoReason.trim()) {
+        errs.photos = 'נדרשת תמונה או סיבת דילוג';
+      }
+    }
+    return errs;
+  };
+
+  const handleSaveAndAdvance = async () => {
+    if (isSigned || saving) return;
+
+    if (isDefectStatus) {
+      const errs = validate();
+      if (Object.keys(errs).length > 0) {
+        setErrors(errs);
+        return;
+      }
+    }
+
+    try {
+      setSaving(true);
+
+      const payload = { status };
+
+      if (isDefectStatus) {
+        payload.description = description.trim();
+        payload.severity = severity;
+        payload.photos = [];
+        payload.photos_pending_count = photos.length;
+        payload.skip_photo_reason = skipPhotoReason.trim() || null;
+      } else {
+        payload.notes = notes;
+      }
+
+      const result = await handoverService.updateItem(
+        projectId, protocolId, sectionId, item.item_id, payload
+      );
+
+      const defectId = result?.defect_id;
+
+      if (defectId && photos.length > 0) {
+        const uploadResults = await Promise.allSettled(
+          photos.map(img => {
+            const uploadWithRetry = async (file, maxAttempts = 2) => {
+              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                  return await taskService.uploadAttachment(defectId, file);
+                } catch (err) {
+                  if (attempt >= maxAttempts) throw err;
+                  await new Promise(r => setTimeout(r, attempt * 2000));
+                }
+              }
+            };
+            return uploadWithRetry(img.file);
+          })
+        );
+        const succeeded = uploadResults.filter(r => r.status === 'fulfilled').length;
+        const failed = uploadResults.filter(r => r.status === 'rejected').length;
+        if (failed > 0 && succeeded > 0) {
+          toast.warning(`${failed} תמונות לא הועלו`);
+        } else if (failed > 0 && succeeded === 0) {
+          toast.error('העלאת תמונות נכשלה');
+        }
+      }
+
+      if (result?.defect_created) {
+        toast.success('הפריט נשמר וליקוי נוצר');
+      } else if (defectId && !result?.defect_created) {
+        toast.success('הפריט נשמר והליקוי עודכן');
+      } else {
+        toast.success(t('handover', 'itemUpdated'));
+      }
+
+      photos.forEach(img => URL.revokeObjectURL(img.preview));
+      onItemUpdated?.();
+
+      if (allItems && onSelectItem) {
+        const currentIdx = allItems.findIndex(i => i.item_id === item.item_id);
+        if (currentIdx >= 0 && currentIdx < allItems.length - 1) {
+          onSelectItem(allItems[currentIdx + 1].item_id);
+        } else {
+          onClose();
+        }
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      console.error(err);
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : t('handover', 'updateError'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSimpleStatusSave = async (newStatus) => {
+    if (isSigned || saving) return;
     try {
       setSaving(true);
       await handoverService.updateItem(projectId, protocolId, sectionId, item.item_id, {
         status: newStatus,
-      });
-      onItemUpdated?.();
-    } catch (err) {
-      console.error(err);
-      toast.error(t('handover', 'updateError'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleNotesSave = async () => {
-    if (isSigned || saving) return;
-    try {
-      setSaving(true);
-      await handoverService.updateItem(projectId, protocolId, sectionId, item.item_id, {
         notes,
       });
-      toast.success(t('handover', 'itemUpdated'));
       onItemUpdated?.();
+      if (allItems && onSelectItem) {
+        const currentIdx = allItems.findIndex(i => i.item_id === item.item_id);
+        if (currentIdx >= 0 && currentIdx < allItems.length - 1) {
+          onSelectItem(allItems[currentIdx + 1].item_id);
+        } else {
+          onClose();
+        }
+      }
     } catch (err) {
       console.error(err);
       toast.error(t('handover', 'updateError'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleCreateDefect = async () => {
-    if (isSigned || creatingDefect || hasDefect) return;
-    try {
-      setCreatingDefect(true);
-      const result = await handoverService.createDefectFromItem(projectId, protocolId, item.item_id, {});
-      toast.success(t('handover', 'defectCreated'));
-      onItemUpdated?.();
-      onClose();
-      if (result?.task_id) {
-        navigate(`/tasks/${result.task_id}`);
-      }
-    } catch (err) {
-      if (err?.response?.status === 409) {
-        toast.error(t('handover', 'defectExists'));
-        onItemUpdated?.();
-      } else {
-        toast.error(t('handover', 'updateError'));
-        console.error(err);
-      }
-    } finally {
-      setCreatingDefect(false);
     }
   };
 
   return (
-    <Drawer open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DrawerContent className="max-h-[85vh]" dir="rtl">
-        <DrawerHeader className="text-right">
+    <Drawer open={open} onOpenChange={(o) => { if (!o) { photos.forEach(img => URL.revokeObjectURL(img.preview)); onClose(); } }}>
+      <DrawerContent className="max-h-[90vh]" dir="rtl">
+        <DrawerHeader className="text-right pb-2">
           <div className="flex items-center justify-between">
             <div className="flex-1 min-w-0">
               <DrawerTitle className="text-base font-bold text-slate-800 truncate">
                 {item.name}
               </DrawerTitle>
               <DrawerDescription className="text-xs text-slate-500 mt-0.5">
-                {item.trade}
+                מקצוע: {item.trade}
               </DrawerDescription>
             </div>
-            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg">
+            <button onClick={() => { photos.forEach(img => URL.revokeObjectURL(img.preview)); onClose(); }} className="p-1.5 hover:bg-slate-100 rounded-lg">
               <X className="w-4 h-4 text-slate-400" />
             </button>
           </div>
         </DrawerHeader>
 
-        <div className="px-4 pb-6 space-y-4 overflow-y-auto">
+        <div className="px-4 pb-6 space-y-3 overflow-y-auto max-h-[75vh]">
           {isSigned && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-center text-sm text-green-700 font-medium">
               {t('handover', 'readOnly')}
             </div>
           )}
 
-          <div className="space-y-2">
-            <div className="grid grid-cols-5 gap-1.5">
-              {STATUS_OPTIONS.map(opt => {
-                const isActive = status === opt.value;
-                const Icon = opt.icon;
-                return (
-                  <button
-                    key={opt.value}
-                    disabled={isSigned || saving}
-                    onClick={() => handleStatusChange(opt.value)}
-                    className={`flex flex-col items-center gap-1 p-2 rounded-lg border transition-all text-center
-                      ${isActive ? opt.activeColor : opt.color}
-                      ${isSigned ? 'opacity-60 cursor-not-allowed' : 'active:scale-95'}`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="text-[10px] font-medium leading-tight">{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {STATUS_OPTIONS.map(opt => {
+              const isActive = status === opt.value;
+              const Icon = opt.icon;
+              return (
+                <button
+                  key={opt.value}
+                  disabled={isSigned || saving}
+                  onClick={() => {
+                    handleStatusChange(opt.value);
+                    if (opt.value === 'ok' || opt.value === 'not_relevant') {
+                      handleSimpleStatusSave(opt.value);
+                    }
+                  }}
+                  className={`flex flex-col items-center gap-1 p-2.5 rounded-lg border transition-all text-center
+                    ${isActive ? opt.activeColor : opt.color}
+                    ${isSigned ? 'opacity-60 cursor-not-allowed' : 'active:scale-95'}`}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span className="text-[11px] font-medium leading-tight">{opt.label}</span>
+                </button>
+              );
+            })}
           </div>
 
           {hasDefect && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
               <div className="flex items-center gap-2">
                 <Bug className="w-4 h-4 text-red-500 flex-shrink-0" />
-                <span className="text-sm font-medium text-red-700 flex-1">
-                  {t('handover', 'defectExists')}
-                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-red-700 block">
+                    ליקוי קיים
+                  </span>
+                  {item.defect_status && (
+                    <span className="text-[10px] text-red-500">
+                      סטטוס: {item.defect_status}
+                      {item.defect_severity && ` · חומרה: ${item.defect_severity}`}
+                    </span>
+                  )}
+                </div>
                 <button
-                  onClick={() => { onClose(); navigate(`/tasks/${item.defect_id}`); }}
-                  className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium"
+                  onClick={() => { photos.forEach(img => URL.revokeObjectURL(img.preview)); onClose(); navigate(`/tasks/${item.defect_id}`); }}
+                  className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium whitespace-nowrap"
                 >
-                  {t('handover', 'viewDefect')}
+                  צפה בליקוי
                   <ExternalLink className="w-3 h-3" />
                 </button>
               </div>
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">{t('handover', 'notes')}</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              onBlur={handleNotesSave}
-              disabled={isSigned}
-              placeholder={t('handover', 'notesPlaceholder')}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none h-20
-                focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400
-                disabled:bg-slate-50 disabled:text-slate-500"
-              dir="rtl"
-            />
-          </div>
+          {isDefectStatus && (
+            <>
+              {status === 'defective' && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-700 font-medium">
+                    ליקוי ייווצר אוטומטית ויקושר לפרוטוקול
+                  </p>
+                </div>
+              )}
+              {status === 'partial' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700 font-medium">
+                    סטטוס חלקי — ליקוי ייווצר אוטומטית. הגדירו תיאור וחומרה.
+                  </p>
+                </div>
+              )}
 
-          {showCreateDefect && !isSigned && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-slate-700">תמונות</label>
+                  <span className="text-[10px] text-slate-400">
+                    {photos.length > 0 ? `${photos.length} תמונות` : ''}
+                    {status === 'defective' ? ' (חובה)' : ' (אופציונלי)'}
+                  </span>
+                </div>
+
+                {photos.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {photos.map((img, i) => (
+                      <div key={i} className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-slate-200">
+                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
+                        <button
+                          onClick={() => removePhoto(i)}
+                          className="absolute top-0.5 left-0.5 p-0.5 bg-red-500 text-white rounded-full"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageAdd} className="hidden" />
+                <input ref={galleryInputRef} type="file" accept="image/*" multiple onChange={handleImageAdd} className="hidden" />
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    disabled={isSigned}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-purple-300 text-purple-600 text-xs font-medium hover:bg-purple-50 active:bg-purple-100 disabled:opacity-50"
+                  >
+                    <Camera className="w-4 h-4" />
+                    צלם
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    disabled={isSigned}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50"
+                  >
+                    <ImagePlus className="w-4 h-4" />
+                    גלריה
+                  </button>
+                </div>
+
+                {status === 'defective' && photos.length === 0 && (
+                  <div className="mt-1">
+                    {!showSkipInput ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowSkipInput(true)}
+                        className="text-[11px] text-slate-500 hover:text-slate-700 underline"
+                      >
+                        אפשר לדלג עם סיבה
+                      </button>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap gap-1.5">
+                          {SKIP_REASONS.map(reason => (
+                            <button
+                              key={reason}
+                              type="button"
+                              onClick={() => {
+                                setSkipPhotoReason(reason);
+                                setErrors(prev => { const n = {...prev}; delete n.photos; return n; });
+                              }}
+                              className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${
+                                skipPhotoReason === reason
+                                  ? 'bg-slate-600 text-white border-slate-600'
+                                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              {reason}
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          type="text"
+                          value={skipPhotoReason}
+                          onChange={(e) => {
+                            setSkipPhotoReason(e.target.value);
+                            setErrors(prev => { const n = {...prev}; delete n.photos; return n; });
+                          }}
+                          placeholder="אחר: סיבה..."
+                          className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                          dir="rtl"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {errors.photos && <p className="text-[11px] text-red-500 mt-0.5">{errors.photos}</p>}
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">
+                  תיאור הליקוי
+                  {status === 'defective' && <span className="text-red-500 mr-1">*</span>}
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    setErrors(prev => { const n = {...prev}; delete n.description; return n; });
+                  }}
+                  disabled={isSigned}
+                  placeholder="תארו את הליקוי..."
+                  className={`w-full px-3 py-2 border rounded-lg text-sm resize-none h-16
+                    focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400
+                    disabled:bg-slate-50 disabled:text-slate-500
+                    ${errors.description ? 'border-red-400' : 'border-slate-200'}`}
+                  dir="rtl"
+                />
+                {errors.description && <p className="text-[11px] text-red-500">{errors.description}</p>}
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">
+                  חומרה <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {SEVERITY_OPTIONS.map(opt => {
+                    const isActive = severity === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        disabled={isSigned}
+                        onClick={() => {
+                          setSeverity(opt.value);
+                          setErrors(prev => { const n = {...prev}; delete n.severity; return n; });
+                        }}
+                        className={`py-2 px-2 rounded-lg border text-sm font-medium transition-all text-center
+                          ${isActive ? opt.activeColor : opt.color}
+                          ${isSigned ? 'opacity-60 cursor-not-allowed' : 'active:scale-95'}`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {errors.severity && <p className="text-[11px] text-red-500 mt-0.5">{errors.severity}</p>}
+              </div>
+            </>
+          )}
+
+          {!isDefectStatus && (
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-700">הערות (אופציונלי)</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                onBlur={handlePassNotesBlur}
+                disabled={isSigned}
+                placeholder="הערות..."
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none h-16
+                  focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400
+                  disabled:bg-slate-50 disabled:text-slate-500"
+                dir="rtl"
+              />
+            </div>
+          )}
+
+          {isDefectStatus && !isSigned && (
             <button
-              onClick={handleCreateDefect}
-              disabled={creatingDefect}
+              onClick={handleSaveAndAdvance}
+              disabled={saving}
               className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-medium transition-all
                 active:scale-[0.98] disabled:opacity-50
                 ${status === 'defective'
                   ? 'bg-red-500 text-white hover:bg-red-600'
-                  : 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300'}`}
+                  : 'bg-amber-500 text-white hover:bg-amber-600'}`}
             >
-              {creatingDefect ? (
+              {saving ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <Bug className="w-4 h-4" />
+                <ChevronLeft className="w-4 h-4" />
               )}
-              {t('handover', 'createDefect')}
+              שמור ועבור לפריט הבא
             </button>
           )}
         </div>

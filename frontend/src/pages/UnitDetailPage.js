@@ -286,6 +286,11 @@ const UnitDetailPage = () => {
                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
                           {priorityInfo.label}
                         </span>
+                        {task.source && task.source.startsWith('handover_') && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                            מסירה
+                          </span>
+                        )}
                       </div>
                     </div>
                     <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 flex-shrink-0 mt-1" />

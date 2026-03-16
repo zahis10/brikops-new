@@ -218,10 +218,13 @@ const HandoverSectionPage = () => {
         onClose={() => setSelectedItem(null)}
         item={currentItem}
         sectionId={sectionId}
+        sectionName={section.name}
         projectId={projectId}
         protocolId={protocolId}
         isSigned={isSigned}
         onItemUpdated={handleItemUpdated}
+        allItems={items}
+        onSelectItem={setSelectedItem}
       />
     </div>
   );

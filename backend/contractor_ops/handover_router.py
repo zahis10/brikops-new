@@ -751,6 +751,16 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
     return updated
 
 
+VALID_SEVERITIES = {"critical", "normal", "cosmetic"}
+
+STATUS_LABELS = {
+    "defective": "לא תקין",
+    "partial": "חלקי",
+    "ok": "תקין",
+    "not_relevant": "לא רלוונטי",
+    "not_checked": "לא נבדק",
+}
+
 @router.put("/projects/{project_id}/handover/protocols/{protocol_id}/sections/{section_id}/items/{item_id}")
 async def update_item(
     project_id: str, protocol_id: str, section_id: str, item_id: str,
@@ -764,40 +774,76 @@ async def update_item(
     db = get_db()
     ts = _now()
 
-    section_found = False
-    item_found = False
+    target_section = None
+    target_item = None
     for section in protocol.get("sections", []):
         if section["section_id"] != section_id:
             continue
-        section_found = True
+        target_section = section
         for item in section.get("items", []):
             if item["item_id"] != item_id:
                 continue
-            item_found = True
+            target_item = item
             break
         break
 
-    if not section_found:
+    if not target_section:
         raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
-    if not item_found:
+    if not target_item:
         raise HTTPException(status_code=404, detail="פריט לא נמצא בחלק")
+
+    new_status = body.get("status")
+    notes = body.get("notes")
+    description = body.get("description")
+    severity = body.get("severity")
+    photos = body.get("photos")
+    skip_photo_reason = body.get("skip_photo_reason")
+    photos_pending_count = body.get("photos_pending_count", 0)
+
+    if photos is not None and not isinstance(photos, list):
+        raise HTTPException(status_code=400, detail="photos חייב להיות רשימה")
+
+    is_defect_status = new_status in ("defective", "partial")
+
+    if is_defect_status:
+        if severity and severity not in VALID_SEVERITIES:
+            raise HTTPException(status_code=400, detail=f"חומרה לא חוקית: {severity}")
+        if not severity:
+            raise HTTPException(status_code=400, detail="חובה לבחור חומרה עבור סטטוס זה")
+        if new_status == "defective":
+            if not description or not description.strip():
+                raise HTTPException(status_code=400, detail="תיאור חובה עבור סטטוס 'לא תקין'")
+            has_photos = (photos and len(photos) > 0) or photos_pending_count > 0
+            if not has_photos and not skip_photo_reason:
+                raise HTTPException(status_code=400, detail="נדרשת תמונה או סיבת דילוג עבור סטטוס 'לא תקין'")
 
     update_ops = {"$set": {"updated_at": ts}}
     has_item_change = False
 
-    if "status" in body:
-        new_status = body["status"]
+    if new_status is not None:
         if new_status not in VALID_ITEM_STATUSES:
             raise HTTPException(status_code=400, detail=f"סטטוס לא חוקי: {new_status}")
         update_ops["$set"]["sections.$[sec].items.$[itm].status"] = new_status
         has_item_change = True
 
-    if "notes" in body:
-        update_ops["$set"]["sections.$[sec].items.$[itm].notes"] = body["notes"]
+    if notes is not None:
+        update_ops["$set"]["sections.$[sec].items.$[itm].notes"] = notes
         has_item_change = True
 
-    if "photos" in body:
-        update_ops["$set"]["sections.$[sec].items.$[itm].photos"] = body["photos"]
+    if description is not None:
+        update_ops["$set"]["sections.$[sec].items.$[itm].description"] = description
+        has_item_change = True
+
+    if severity is not None:
+        update_ops["$set"]["sections.$[sec].items.$[itm].severity"] = severity
+        has_item_change = True
+
+    if photos is not None:
+        update_ops["$set"]["sections.$[sec].items.$[itm].photos"] = photos
+        has_item_change = True
+
+    if skip_photo_reason is not None:
+        update_ops["$set"]["sections.$[sec].items.$[itm].skip_photo_reason"] = skip_photo_reason
         has_item_change = True
 
     if not has_item_change:
@@ -811,6 +857,58 @@ async def update_item(
         {"itm.item_id": item_id},
     ]
 
+    defect_created = False
+    defect_id = None
+
+    if is_defect_status:
+        existing_defect_id = target_item.get("defect_id")
+        source = f"handover_{protocol['type']}"
+        section_name = target_section.get("name", "")
+        item_name = target_item.get("name", "")
+        status_label = STATUS_LABELS.get(new_status, new_status)
+        defect_title = f"{section_name} > {item_name} — {status_label}"
+        defect_description = (description or "").strip()
+        defect_trade = target_item.get("trade", "כללי")
+        defect_photos = list(photos or [])
+        defect_severity = severity or "normal"
+
+        if existing_defect_id:
+            existing_defect = await db.tasks.find_one({"id": existing_defect_id}, {"_id": 0, "status": 1})
+            if existing_defect and existing_defect.get("status") not in ("closed",):
+                await db.tasks.update_one(
+                    {"id": existing_defect_id},
+                    {"$set": {
+                        "title": defect_title,
+                        "description": defect_description,
+                        "severity": defect_severity,
+                        "priority": _severity_to_priority(defect_severity),
+                        "proof_urls": defect_photos,
+                        "attachments_count": len(defect_photos),
+                        "skip_photo_reason": skip_photo_reason,
+                        "updated_at": ts,
+                    }}
+                )
+                defect_id = existing_defect_id
+                logger.info(f"[HANDOVER] Updated existing defect={defect_id} for item={item_id}")
+            else:
+                defect_id = await _create_handover_defect(
+                    db, ts, user, project_id, protocol, section_id, item_id,
+                    defect_title, defect_description, defect_trade, defect_severity,
+                    defect_photos, skip_photo_reason, source,
+                )
+                update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
+                defect_created = True
+                logger.info(f"[HANDOVER] Created new defect={defect_id} (old closed) for item={item_id}")
+        else:
+            defect_id = await _create_handover_defect(
+                db, ts, user, project_id, protocol, section_id, item_id,
+                defect_title, defect_description, defect_trade, defect_severity,
+                defect_photos, skip_photo_reason, source,
+            )
+            update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
+            defect_created = True
+            logger.info(f"[HANDOVER] Created defect={defect_id} for item={item_id}")
+
     await db.handover_protocols.update_one(
         {"id": protocol_id, "project_id": project_id},
         update_ops,
@@ -818,7 +916,79 @@ async def update_item(
     )
 
     updated = await db.handover_protocols.find_one({"id": protocol_id, "project_id": project_id}, {"_id": 0})
-    return updated
+    return {
+        "protocol": updated,
+        "defect_created": defect_created,
+        "defect_id": defect_id,
+    }
+
+
+def _severity_to_priority(severity):
+    return {"critical": "critical", "normal": "medium", "cosmetic": "low"}.get(severity, "medium")
+
+
+async def _create_handover_defect(
+    db, ts, user, project_id, protocol, section_id, item_id,
+    title, description, trade, severity, photos, skip_photo_reason, source,
+):
+    from pymongo import ReturnDocument
+    task_id = str(uuid.uuid4())
+
+    counter_doc = await db.counters.find_one_and_update(
+        {"_id": f"task_seq:{project_id}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    display_number = counter_doc["seq"]
+
+    task_doc = {
+        "id": task_id,
+        "project_id": project_id,
+        "building_id": protocol.get("building_id"),
+        "floor_id": protocol.get("floor_id"),
+        "unit_id": protocol.get("unit_id"),
+        "title": title,
+        "description": description,
+        "category": trade,
+        "severity": severity,
+        "priority": _severity_to_priority(severity),
+        "status": "open",
+        "company_id": None,
+        "assignee_id": None,
+        "due_date": None,
+        "created_by": user["id"],
+        "created_at": ts,
+        "updated_at": ts,
+        "short_ref": task_id[:8],
+        "display_number": display_number,
+        "attachments_count": len(photos),
+        "comments_count": 0,
+        "source": source,
+        "handover_protocol_id": protocol["id"],
+        "handover_section_id": section_id,
+        "handover_item_id": item_id,
+        "proof_urls": photos,
+        "skip_photo_reason": skip_photo_reason,
+    }
+
+    await db.tasks.insert_one(task_doc)
+
+    await db.task_status_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "task_id": task_id,
+        "old_status": None,
+        "new_status": "open",
+        "changed_by": user["id"],
+        "note": f"ליקוי ממסירה: {title}",
+        "created_at": ts,
+    })
+
+    await _audit("handover_defect", task_id, "created_from_handover", user["id"], {
+        "protocol_id": protocol["id"], "section_id": section_id, "item_id": item_id, "source": source,
+    })
+
+    return task_id
 
 
 @router.post("/projects/{project_id}/handover/protocols/{protocol_id}/items/{item_id}/create-defect")
