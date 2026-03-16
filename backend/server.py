@@ -732,9 +732,15 @@ async def fix_empty_handover_template():
         updates["default_property_fields"] = [dict(f) for f in HARDCODED_PROPERTY_FIELDS]
         logger.info(f"[HANDOVER-FIX] Adding default_property_fields to id={default_tpl['id']}")
 
-    if "signature_labels" not in default_tpl:
-        updates["signature_labels"] = dict(HARDCODED_SIGNATURE_LABELS)
-        logger.info(f"[HANDOVER-FIX] Adding signature_labels to id={default_tpl['id']}")
+    existing_sl = default_tpl.get("signature_labels")
+    if not existing_sl or not isinstance(existing_sl, dict) or "tenant_2" not in existing_sl:
+        merged_sl = dict(HARDCODED_SIGNATURE_LABELS)
+        if isinstance(existing_sl, dict):
+            for k in ("manager", "tenant", "contractor_rep"):
+                if k in existing_sl and existing_sl[k]:
+                    merged_sl[k] = existing_sl[k]
+        updates["signature_labels"] = merged_sl
+        logger.info(f"[HANDOVER-FIX] Normalizing signature_labels (adding tenant_2) for id={default_tpl['id']}")
 
     if updates:
         await db.qc_templates.update_one(
@@ -744,6 +750,22 @@ async def fix_empty_handover_template():
         logger.info(f"[HANDOVER-FIX] Updated default template id={default_tpl['id']} with {list(updates.keys())}")
     else:
         logger.info(f"[HANDOVER-FIX] Default template id={default_tpl['id']} already up to date")
+
+    migrated = 0
+    async for tpl in db.qc_templates.find(
+        {"type": "handover", "signature_labels": {"$exists": True}, "signature_labels.tenant_2": {"$exists": False}},
+        {"_id": 0, "id": 1, "signature_labels": 1}
+    ):
+        old_sl = tpl.get("signature_labels", {})
+        new_sl = dict(HARDCODED_SIGNATURE_LABELS)
+        if isinstance(old_sl, dict):
+            for k in ("manager", "tenant", "contractor_rep"):
+                if k in old_sl and old_sl[k]:
+                    new_sl[k] = old_sl[k]
+        await db.qc_templates.update_one({"id": tpl["id"]}, {"$set": {"signature_labels": new_sl}})
+        migrated += 1
+    if migrated:
+        logger.info(f"[HANDOVER-FIX] Backfilled tenant_2 in signature_labels for {migrated} handover templates")
 
 
 async def dedup_default_templates():
