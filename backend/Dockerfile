@@ -10,6 +10,7 @@ RUN apt-get update && \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     libcairo2 \
+    shared-mime-info \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
