@@ -356,7 +356,7 @@ const HandoverProtocolPage = () => {
           >
             <span className="text-base">📋</span>
             <span className="flex-1 text-right text-sm font-medium text-slate-700 truncate">
-              פרטי פרוטוקול — נכס · דיירים · נוסח משפטי · חתימות
+              פרטי פרוטוקול — נכס · דיירים · נסחים · חתימות
             </span>
             {metadataOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
