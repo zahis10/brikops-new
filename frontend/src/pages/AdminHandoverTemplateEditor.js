@@ -4,18 +4,12 @@ import { templateService } from '../services/api';
 import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, Save, Plus, Trash2, ChevronDown, ChevronUp,
-  AlertTriangle, X, Eye, EyeOff, GripVertical
+  AlertTriangle, X, GripVertical
 } from 'lucide-react';
 
 const TRADES = [
   'אלומיניום', 'דלתות', 'חשמל', 'טיח', 'ריצוף', 'צביעה',
   'אינסטלציה', 'מטבחים', 'שיש', 'ברזל', 'כללי',
-];
-
-const INPUT_TYPES = [
-  { value: 'status', label: 'תקין/לא תקין' },
-  { value: 'text', label: 'טקסט חופשי' },
-  { value: 'photo', label: 'צילום' },
 ];
 
 const genId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -65,9 +59,7 @@ const AdminHandoverTemplateEditor = () => {
 
       const expanded = {};
       const secs = tpl.sections || tpl.stages || [];
-      if (secs.length <= 5) {
-        secs.forEach(s => { expanded[s.id] = true; });
-      }
+      secs.forEach(s => { expanded[s.id] = true; });
       setExpandedSections(expanded);
     } catch (err) {
       console.error(err);
@@ -127,6 +119,18 @@ const AdminHandoverTemplateEditor = () => {
 
   const toggleSection = (sectionId) => {
     setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
+  };
+
+  const collapseAll = () => {
+    const collapsed = {};
+    sections.forEach(s => { collapsed[s.id] = false; });
+    setExpandedSections(collapsed);
+  };
+
+  const expandAll = () => {
+    const expanded = {};
+    sections.forEach(s => { expanded[s.id] = true; });
+    setExpandedSections(expanded);
   };
 
   const updateSectionField = (sectionIdx, field, value) => {
@@ -238,25 +242,26 @@ const AdminHandoverTemplateEditor = () => {
   }
 
   const totalItems = sections.reduce((sum, s) => sum + s.items.length, 0);
+  const allExpanded = sections.length > 0 && sections.every(s => expandedSections[s.id]);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
-      <header className="bg-gradient-to-br from-purple-900 to-purple-800 text-white sticky top-0 z-40 shadow-md">
+      <header className="bg-gradient-to-bl from-[#1e1b4b] to-[#312e81] text-white sticky top-0 z-40 shadow-md">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button
             onClick={() => navigate('/admin/qc-templates')}
-            className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
+            className="p-2 bg-white/[0.07] border border-white/10 rounded-xl hover:bg-white/[0.14] transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
-            <ArrowRight className="w-4 h-4" />
+            <ArrowRight className="w-5 h-5" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-bold truncate">עריכת תבנית מסירה</h1>
-            <p className="text-[11px] text-purple-200">{sections.length} סקשנים · {totalItems} פריטים</p>
+            <h1 className="text-base font-extrabold">עריכת תבנית מסירה</h1>
+            <p className="text-[11px] text-indigo-300">{sections.length} סקשנים · {totalItems} פריטים</p>
           </div>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-2 bg-white text-purple-800 rounded-lg text-sm font-bold hover:bg-purple-50 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2.5 bg-white text-indigo-900 rounded-xl text-sm font-bold hover:bg-indigo-50 transition-colors disabled:opacity-50 min-h-[44px]"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             שמור
@@ -280,177 +285,181 @@ const AdminHandoverTemplateEditor = () => {
 
         <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
           <div>
-            <label className="text-xs font-medium text-slate-500 mb-1 block">שם תבנית</label>
+            <label className="text-xs font-semibold text-slate-500 mb-1.5 block">שם תבנית</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="תבנית מסירה — סטנדרטית"
-              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full text-base border border-slate-200 rounded-xl px-3.5 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             />
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium">תבנית מסירה</span>
+            <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-lg font-medium">תבנית מסירה</span>
             {templateData?.family_id && <span>משפחה: {templateData.family_id.slice(0, 8)}</span>}
             {templateData?.version && <span>גרסה: {templateData.version}</span>}
           </div>
         </div>
 
+        <div className="flex items-center justify-between px-1">
+          <h2 className="text-sm font-bold text-slate-600">סקשנים ({sections.length})</h2>
+          <button
+            onClick={allExpanded ? collapseAll : expandAll}
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+          >
+            {allExpanded ? 'כווץ הכל' : 'הרחב הכל'}
+          </button>
+        </div>
+
         {sections.map((section, sIdx) => {
           const isExpanded = expandedSections[section.id];
           return (
-            <div key={section.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <div key={section.id} className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
               <div
-                className="flex items-center gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100 cursor-pointer"
+                className="flex items-center gap-2.5 px-4 py-3.5 bg-purple-50 border-b border-purple-100 cursor-pointer"
                 onClick={() => toggleSection(section.id)}
               >
-                <GripVertical className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                <GripVertical className="w-5 h-5 text-purple-300 flex-shrink-0" />
+                <span className="text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded-lg font-bold flex-shrink-0">{sIdx + 1}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">{sIdx + 1}</span>
-                    <span className="text-sm font-bold text-slate-700 truncate">{section.name || 'סקשן חדש'}</span>
-                    <span className="text-[10px] text-slate-400">{section.items.length} פריטים</span>
+                    <span className="text-sm font-bold text-purple-900 truncate">{section.name || 'סקשן חדש'}</span>
                   </div>
-                  <div className="flex items-center gap-3 mt-0.5">
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[11px] text-purple-500 font-medium">{section.items.length} פריטים</span>
                     {section.visible_in_initial && (
-                      <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">ראשונית</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md font-medium">ראשונית</span>
                     )}
                     {section.visible_in_final && (
-                      <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">חזקה</span>
+                      <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md font-medium">חזקה</span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5">
                   <button
                     onClick={(e) => { e.stopPropagation(); moveSectionUp(sIdx); }}
                     disabled={sIdx === 0}
-                    className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-30"
+                    className="p-1.5 text-purple-400 hover:text-purple-700 disabled:opacity-30 min-h-[36px] min-w-[36px] flex items-center justify-center"
                   >
                     <ChevronUp className="w-4 h-4" />
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); moveSectionDown(sIdx); }}
                     disabled={sIdx === sections.length - 1}
-                    className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-30"
+                    className="p-1.5 text-purple-400 hover:text-purple-700 disabled:opacity-30 min-h-[36px] min-w-[36px] flex items-center justify-center"
                   >
                     <ChevronDown className="w-4 h-4" />
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); setDeleteConfirm(sIdx); }}
-                    className="p-1 text-red-400 hover:text-red-600"
+                    className="p-1.5 text-red-400 hover:text-red-600 min-h-[36px] min-w-[36px] flex items-center justify-center"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
-                {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                {isExpanded ? <ChevronUp className="w-5 h-5 text-purple-400" /> : <ChevronDown className="w-5 h-5 text-purple-400" />}
               </div>
 
               {deleteConfirm === sIdx && (
-                <div className="px-4 py-2 bg-red-50 border-b border-red-100 flex items-center gap-2">
-                  <span className="text-xs text-red-700">למחוק את הסקשן "{section.name || 'סקשן חדש'}"?</span>
-                  <button onClick={() => removeSection(sIdx)} className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">מחק</button>
-                  <button onClick={() => setDeleteConfirm(null)} className="text-xs text-slate-500 hover:text-slate-700">ביטול</button>
+                <div className="px-4 py-2.5 bg-red-50 border-b border-red-100 flex items-center gap-2">
+                  <span className="text-sm text-red-700">למחוק את הסקשן "{section.name || 'סקשן חדש'}"?</span>
+                  <button onClick={() => removeSection(sIdx)} className="text-xs bg-red-500 text-white px-3 py-1.5 rounded-lg hover:bg-red-600 font-medium">מחק</button>
+                  <button onClick={() => setDeleteConfirm(null)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">ביטול</button>
                 </div>
               )}
 
               {isExpanded && (
-                <div className="p-4 space-y-3">
+                <div className="bg-white p-4 space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="text-[11px] font-medium text-slate-500 mb-1 block">שם סקשן</label>
+                      <label className="text-xs font-semibold text-slate-500 mb-1.5 block">שם סקשן</label>
                       <input
                         type="text"
                         value={section.name}
                         onChange={(e) => updateSectionField(sIdx, 'name', e.target.value)}
                         placeholder="כניסה לדירה"
-                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        className="w-full text-sm font-medium border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-purple-500"
                       />
                     </div>
-                    <div className="flex items-end gap-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
+                    <div className="flex items-end gap-4 pb-0.5">
+                      <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
                         <input
                           type="checkbox"
                           checked={section.visible_in_initial}
                           onChange={(e) => updateSectionField(sIdx, 'visible_in_initial', e.target.checked)}
-                          className="rounded border-slate-300 text-blue-500 focus:ring-blue-500"
+                          className="w-4 h-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500"
                         />
-                        <span className="text-xs text-slate-600">ראשונית</span>
+                        <span className="text-sm text-slate-600">ראשונית</span>
                       </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
+                      <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
                         <input
                           type="checkbox"
                           checked={section.visible_in_final}
                           onChange={(e) => updateSectionField(sIdx, 'visible_in_final', e.target.checked)}
-                          className="rounded border-slate-300 text-green-500 focus:ring-green-500"
+                          className="w-4 h-4 rounded border-slate-300 text-green-500 focus:ring-green-500"
                         />
-                        <span className="text-xs text-slate-600">חזקה</span>
+                        <span className="text-sm text-slate-600">חזקה</span>
                       </label>
                     </div>
                   </div>
 
-                  <div className="border border-slate-100 rounded-lg overflow-hidden">
-                    <div className="bg-slate-50 px-3 py-1.5 border-b border-slate-100">
-                      <span className="text-[11px] font-medium text-slate-500">פריטים</span>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-slate-500">פריטים ({section.items.length})</span>
                     </div>
-                    <div className="divide-y divide-slate-50">
+                    <div className="space-y-1.5">
                       {section.items.map((item, iIdx) => (
-                        <div key={item.id} className="px-3 py-2 flex items-center gap-2 hover:bg-slate-50/50">
-                          <span className="text-[10px] text-slate-400 w-4 text-center flex-shrink-0">{iIdx + 1}</span>
-                          <input
-                            type="text"
-                            value={item.name}
-                            onChange={(e) => updateItemField(sIdx, iIdx, 'name', e.target.value)}
-                            placeholder="שם פריט"
-                            className="flex-1 min-w-0 text-sm border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-500"
-                          />
-                          <select
-                            value={item.trade}
-                            onChange={(e) => updateItemField(sIdx, iIdx, 'trade', e.target.value)}
-                            className="text-xs border border-slate-200 rounded px-1.5 py-1.5 bg-white text-slate-600 w-[90px]"
-                          >
-                            {TRADES.map(t => (
-                              <option key={t} value={t}>{t}</option>
-                            ))}
-                          </select>
-                          <select
-                            value={item.input_type}
-                            onChange={(e) => updateItemField(sIdx, iIdx, 'input_type', e.target.value)}
-                            className="text-xs border border-slate-200 rounded px-1.5 py-1.5 bg-white text-slate-600 w-[100px]"
-                          >
-                            {INPUT_TYPES.map(t => (
-                              <option key={t.value} value={t.value}>{t.label}</option>
-                            ))}
-                          </select>
-                          <div className="flex items-center gap-0.5">
+                        <div key={item.id} className="flex items-start gap-2 p-3 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors min-h-[56px]">
+                          <span className="text-xs text-slate-400 font-bold mt-2.5 w-5 text-center flex-shrink-0">{iIdx + 1}</span>
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <input
+                              type="text"
+                              value={item.name}
+                              onChange={(e) => updateItemField(sIdx, iIdx, 'name', e.target.value)}
+                              placeholder="שם פריט"
+                              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                              style={{ minHeight: '40px' }}
+                            />
+                            <select
+                              value={item.trade}
+                              onChange={(e) => updateItemField(sIdx, iIdx, 'trade', e.target.value)}
+                              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 w-full sm:w-auto sm:min-w-[140px] min-h-[40px]"
+                            >
+                              {TRADES.map(tr => (
+                                <option key={tr} value={tr}>{tr}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col items-center gap-0.5 pt-1">
                             <button
                               onClick={() => moveItemUp(sIdx, iIdx)}
                               disabled={iIdx === 0}
-                              className="p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-30"
+                              className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-30 min-h-[32px] min-w-[32px] flex items-center justify-center"
                             >
                               <ChevronUp className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => moveItemDown(sIdx, iIdx)}
                               disabled={iIdx === section.items.length - 1}
-                              className="p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-30"
+                              className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-30 min-h-[32px] min-w-[32px] flex items-center justify-center"
                             >
                               <ChevronDown className="w-3.5 h-3.5" />
                             </button>
                           </div>
                           <button
                             onClick={() => removeItem(sIdx, iIdx)}
-                            className="p-0.5 text-red-400 hover:text-red-600"
+                            className="p-1.5 text-red-400 hover:text-red-600 mt-1 min-h-[36px] min-w-[36px] flex items-center justify-center"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className="w-4 h-4" />
                           </button>
                         </div>
                       ))}
                     </div>
                     <button
                       onClick={() => addItem(sIdx)}
-                      className="w-full px-3 py-2 text-xs text-purple-600 hover:bg-purple-50 flex items-center gap-1 justify-center border-t border-slate-100"
+                      className="w-full mt-2 py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-dashed border-purple-200 transition-colors font-medium"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-4 h-4" />
                       הוסף פריט
                     </button>
                   </div>
@@ -462,9 +471,9 @@ const AdminHandoverTemplateEditor = () => {
 
         <button
           onClick={addSection}
-          className="w-full py-3 border-2 border-dashed border-purple-200 rounded-xl text-sm text-purple-600 font-medium hover:bg-purple-50 hover:border-purple-300 transition-colors flex items-center gap-1 justify-center"
+          className="w-full py-3.5 border-2 border-dashed border-purple-300 rounded-xl text-sm text-purple-600 font-bold hover:bg-purple-50 hover:border-purple-400 transition-colors flex items-center gap-1.5 justify-center"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-5 h-5" />
           הוסף סקשן
         </button>
 
@@ -472,7 +481,7 @@ const AdminHandoverTemplateEditor = () => {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="w-full py-3 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-2 justify-center"
+            className="w-full py-3.5 bg-gradient-to-l from-purple-600 to-indigo-600 text-white rounded-xl text-sm font-bold hover:from-purple-700 hover:to-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2 justify-center shadow-lg shadow-purple-500/20 min-h-[48px]"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             שמור תבנית

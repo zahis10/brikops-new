@@ -356,6 +356,10 @@ const AdminQCTemplatesPage = () => {
         name: `${editingName} — עותק`,
       });
       await loadFamilies();
+      if (result.type === 'handover') {
+        navigate(`/admin/templates/handover/${result.id}/edit`);
+        return;
+      }
       setEditingTemplate(result);
       setEditingName(result.name);
       setEditingStages(JSON.parse(JSON.stringify(result.stages)));
