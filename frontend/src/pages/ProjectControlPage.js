@@ -2733,7 +2733,6 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
   const [loadingFamilies, setLoadingFamilies] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState('');
-  const [selectedVersion, setSelectedVersion] = useState('');
   const [confirmUpgrade, setConfirmUpgrade] = useState(false);
 
   const loadAssignment = useCallback(async () => {
@@ -2742,7 +2741,6 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
       const data = await projectQcService.getAssignment(projectId);
       setAssignment(data);
       if (data?.template_family_id) setSelectedFamily(data.template_family_id);
-      if (data?.template_version_id) setSelectedVersion(data.template_version_id);
     } catch {
       setAssignment(null);
     } finally {
@@ -2754,7 +2752,7 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
     if (!isSuperAdmin) return;
     try {
       setLoadingFamilies(true);
-      const data = await templateService.list();
+      const data = await templateService.list({ type: 'qc' });
       setFamilies(data);
     } catch {} finally {
       setLoadingFamilies(false);
@@ -2764,22 +2762,16 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
   useEffect(() => { loadAssignment(); }, [loadAssignment]);
   useEffect(() => { loadFamilies(); }, [loadFamilies]);
 
-  const handleFamilyChange = (familyId) => {
-    setSelectedFamily(familyId);
-    const fam = families.find(f => f.family_id === familyId);
-    if (fam) setSelectedVersion(fam.latest_id);
-  };
-
   const handleSave = async () => {
-    if (!selectedVersion) return;
+    const fam = families.find(f => f.family_id === selectedFamily);
+    if (!fam) return;
     try {
       setSaving(true);
-      const fam = families.find(f => f.family_id === selectedFamily);
       await templateService.assignToProject(projectId, {
-        template_version_id: selectedVersion,
-        template_family_id: selectedFamily,
+        template_version_id: fam.latest_id,
+        template_family_id: fam.family_id,
       });
-      toast.success(`תבנית "${fam?.name || ''}" שויכה לפרויקט`);
+      toast.success(`תבנית "${fam.name}" שויכה לפרויקט`);
       await loadAssignment();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה בשיוך תבנית');
@@ -2800,7 +2792,6 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
       });
       toast.success('התבנית שודרגה לגרסה האחרונה');
       await loadAssignment();
-      setSelectedVersion(fam.latest_id);
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה בשדרוג');
     } finally {
@@ -2816,9 +2807,7 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
     );
   }
 
-  const currentFamily = families.find(f => f.family_id === selectedFamily);
-  const familyOptions = families.map(f => ({ value: f.family_id, label: `${f.name} (v${f.latest_version})` }));
-  const versionOptions = currentFamily?.versions?.map(v => ({ value: v.id, label: `גרסה ${v.version}${v.is_active ? ' (פעילה)' : ''}` })) || [];
+  const familyOptions = families.map(f => ({ value: f.family_id, label: `${f.name} (גרסה אחרונה: v${f.latest_version})` }));
 
   return (
     <div className="space-y-4">
@@ -2872,23 +2861,15 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
             ) : (
               <>
                 <SelectField
-                  label="משפחת תבנית"
+                  label="שייך תבנית בקרת ביצוע"
                   value={selectedFamily}
                   options={familyOptions}
-                  onChange={handleFamilyChange}
+                  onChange={setSelectedFamily}
                   emptyMessage="אין תבניות זמינות"
                 />
-                {versionOptions.length > 1 && (
-                  <SelectField
-                    label="גרסה"
-                    value={selectedVersion}
-                    options={versionOptions}
-                    onChange={setSelectedVersion}
-                  />
-                )}
-                <Button onClick={handleSave} disabled={saving || !selectedVersion}
+                <Button onClick={handleSave} disabled={saving || !selectedFamily}
                   className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg disabled:opacity-50">
-                  {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שמור תבנית'}
+                  {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שייך גרסה אחרונה'}
                 </Button>
               </>
             )}
@@ -2906,7 +2887,6 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
   const [loadingFamilies, setLoadingFamilies] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState('');
-  const [selectedVersion, setSelectedVersion] = useState('');
 
   const loadAssignment = useCallback(async () => {
     try {
@@ -2914,7 +2894,6 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
       const data = await handoverService.getTemplate(projectId);
       setAssignment(data);
       if (data?.template_family_id) setSelectedFamily(data.template_family_id);
-      if (data?.template_version_id) setSelectedVersion(data.template_version_id);
     } catch {
       setAssignment(null);
     } finally {
@@ -2936,22 +2915,16 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
   useEffect(() => { loadAssignment(); }, [loadAssignment]);
   useEffect(() => { loadFamilies(); }, [loadFamilies]);
 
-  const handleFamilyChange = (familyId) => {
-    setSelectedFamily(familyId);
-    const fam = families.find(f => f.family_id === familyId);
-    if (fam) setSelectedVersion(fam.latest_id);
-  };
-
   const handleSave = async () => {
-    if (!selectedVersion) return;
+    const fam = families.find(f => f.family_id === selectedFamily);
+    if (!fam) return;
     try {
       setSaving(true);
-      const fam = families.find(f => f.family_id === selectedFamily);
       await handoverService.assignTemplate(projectId, {
-        template_version_id: selectedVersion,
-        template_family_id: selectedFamily,
+        template_version_id: fam.latest_id,
+        template_family_id: fam.family_id,
       });
-      toast.success(`תבנית מסירה "${fam?.name || ''}" שויכה לפרויקט`);
+      toast.success(`תבנית מסירה "${fam.name}" שויכה לפרויקט`);
       await loadAssignment();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה בשיוך תבנית');
@@ -2968,9 +2941,7 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
     );
   }
 
-  const currentFamily = families.find(f => f.family_id === selectedFamily);
-  const familyOptions = families.map(f => ({ value: f.family_id, label: `${f.name} (v${f.latest_version})` }));
-  const versionOptions = currentFamily?.versions?.map(v => ({ value: v.id, label: `גרסה ${v.version}${v.is_active ? ' (פעילה)' : ''}` })) || [];
+  const familyOptions = families.map(f => ({ value: f.family_id, label: `${f.name} (גרסה אחרונה: v${f.latest_version})` }));
 
   return (
     <div className="space-y-4">
@@ -3009,7 +2980,6 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
                     });
                     toast.success('תבנית המסירה שודרגה לגרסה האחרונה');
                     await loadAssignment();
-                    setSelectedVersion(fam.latest_id);
                   } catch (err) {
                     toast.error(err.response?.data?.detail || 'שגיאה בשדרוג');
                   } finally {
@@ -3030,23 +3000,15 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
             ) : (
               <>
                 <SelectField
-                  label="משפחת תבנית מסירה"
+                  label="שייך תבנית מסירה"
                   value={selectedFamily}
                   options={familyOptions}
-                  onChange={handleFamilyChange}
+                  onChange={setSelectedFamily}
                   emptyMessage="אין תבניות מסירה זמינות"
                 />
-                {versionOptions.length > 1 && (
-                  <SelectField
-                    label="גרסה"
-                    value={selectedVersion}
-                    options={versionOptions}
-                    onChange={setSelectedVersion}
-                  />
-                )}
-                <Button onClick={handleSave} disabled={saving || !selectedVersion}
+                <Button onClick={handleSave} disabled={saving || !selectedFamily}
                   className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg disabled:opacity-50">
-                  {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שמור תבנית מסירה'}
+                  {saving ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />שומר...</span> : 'שייך גרסה אחרונה'}
                 </Button>
               </>
             )}
