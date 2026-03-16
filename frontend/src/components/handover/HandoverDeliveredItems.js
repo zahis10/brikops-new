@@ -105,7 +105,7 @@ const HandoverDeliveredItems = ({ protocol, projectId, isSigned, onUpdated }) =>
           </button>
         </div>
       )}
-      {!isSigned && items.length > 0 && (
+      {!isSigned && (
         <button
           onClick={handleSave}
           disabled={saving}
