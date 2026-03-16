@@ -320,9 +320,10 @@ HARDCODED_PROPERTY_FIELDS = [
 ]
 
 HARDCODED_SIGNATURE_LABELS = {
-    "manager": "אני מאשר/ת שבדיקת המסירה בוצעה בנוכחותי",
-    "tenant": "אני מאשר/ת קבלת הדירה בכפוף לליקויים שצוינו בפרוטוקול",
-    "contractor_rep": "אני מאשר/ת נוכחות במסירה ומתחייב/ת לטפל בליקויים",
+    "manager": "אני מאשר/ת את חתימתי על פרוטוקול המסירה כמנהל/ת הפרויקט",
+    "tenant": "אני מאשר/ת את חתימתי על פרוטוקול המסירה כרוכש/ת ראשי/ת",
+    "tenant_2": "אני מאשר/ת את חתימתי על פרוטוקול המסירה כרוכש/ת נוסף/ת",
+    "contractor_rep": "אני מאשר/ת את חתימתי על פרוטוקול המסירה כנציג/ת הקבלן",
 }
 
 DEFAULT_DELIVERED_ITEMS = [
@@ -408,11 +409,14 @@ async def _get_protocol_or_404(protocol_id: str, project_id: str):
     return protocol
 
 
-VALID_SIGNATURE_ROLES = ("manager", "tenant", "contractor_rep")
+VALID_SIGNATURE_ROLES = ("manager", "tenant", "tenant_2", "contractor_rep")
+REQUIRED_SIGNATURE_ROLES = ("manager", "tenant")
+OPTIONAL_SIGNATURE_ROLES = ("tenant_2", "contractor_rep")
 
 SIGNATURE_ROLE_LABELS = {
     "manager": "מנהל פרויקט / מפקח",
-    "tenant": "דייר / רוכש",
+    "tenant": "רוכש/ת ראשי/ת",
+    "tenant_2": "רוכש/ת נוסף/ת",
     "contractor_rep": "נציג קבלן",
 }
 
@@ -438,7 +442,7 @@ def _count_signatures(protocol):
 
 def _is_protocol_fully_signed(protocol):
     sigs = _normalize_signatures(protocol)
-    for role in VALID_SIGNATURE_ROLES:
+    for role in REQUIRED_SIGNATURE_ROLES:
         if role not in sigs or not sigs[role]:
             return False
     for section in protocol.get("legal_sections", []):
@@ -596,7 +600,7 @@ def _validate_legal_sections(sections):
         signature_role = s.get("signature_role")
         if requires_signature:
             if signature_role not in VALID_SIGNATURE_ROLES:
-                raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: signature_role חייב להיות manager/tenant/contractor_rep")
+                raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: signature_role חייב להיות manager/tenant/tenant_2/contractor_rep")
         else:
             if signature_role is not None:
                 raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: signature_role חייב להיות null כאשר requires_signature=false")
@@ -1300,7 +1304,7 @@ def _check_signature_role_auth(user_role: str, signature_role: str):
     elif signature_role == "contractor_rep":
         if user_role != "contractor":
             raise HTTPException(status_code=403, detail="רק נציג קבלן יכול לחתום בתפקיד זה")
-    elif signature_role == "tenant":
+    elif signature_role in ("tenant", "tenant_2"):
         if user_role not in ("project_manager", "owner", "contractor"):
             raise HTTPException(status_code=403, detail="רק מנהל פרויקט או נציג קבלן יכול להחתים דייר")
 
@@ -1725,7 +1729,7 @@ async def handover_overview(
                 "status": p["status"],
                 "locked": p.get("locked", False),
                 "signature_count": p_sig_count,
-                "signatures_total": 3,
+                "signatures_total": len(VALID_SIGNATURE_ROLES),
             })
 
         if bid not in building_data:

@@ -460,30 +460,41 @@ tr:nth-child(even) {
 {% if signatures %}
 <div class="page-break"></div>
 <div class="section-title">חתימות</div>
-{% for role in ['manager', 'tenant', 'contractor_rep'] %}
+<table class="signatures-grid" style="width:100%; border-collapse:separate; border-spacing:8px;">
+{% for row in [['manager', 'tenant'], ['tenant_2', 'contractor_rep']] %}
+<tr>
+{% for role in row %}
 {% if role in signatures %}
 {% set sig = signatures[role] %}
-<div class="signature-block">
+<td style="width:50%; vertical-align:top; border:1px solid #e2e8f0; border-radius:8px; padding:12px; background-color:#fafafa;">
     <div class="signature-role-label">
-        {% if role == 'manager' %}מנהל פרויקט{% elif role == 'tenant' %}דייר / רוכש{% else %}נציג קבלן{% endif %}
+        {% if role == 'manager' %}מנהל פרויקט{% elif role == 'tenant' %}רוכש/ת ראשי/ת{% elif role == 'tenant_2' %}רוכש/ת נוסף/ת{% else %}נציג קבלן{% endif %}
     </div>
     {% if sig.label %}
     <div class="signature-description">{{ sig.label }}</div>
     {% endif %}
-    {% if sig.type == 'canvas' and sig.image_b64 %}
-    <img src="{{ sig.image_b64 }}" class="signature-image" alt="חתימה">
-    {% elif sig.type == 'canvas' and not sig.image_b64 %}
-    <div class="photo-placeholder">חתימה לא זמינה</div>
-    {% elif sig.type == 'typed' and sig.typed_name %}
-    <div class="typed-signature">{{ sig.typed_name }}</div>
+    {% if sig.signed %}
+        {% if sig.type == 'canvas' and sig.image_b64 %}
+        <img src="{{ sig.image_b64 }}" class="signature-image" alt="חתימה">
+        {% elif sig.type == 'canvas' and not sig.image_b64 %}
+        <div class="photo-placeholder">חתימה לא זמינה</div>
+        {% elif sig.type == 'typed' and sig.typed_name %}
+        <div class="typed-signature">{{ sig.typed_name }}</div>
+        {% endif %}
+        <div class="signature-meta">
+            {{ sig.signer_name }}
+            {% if sig.signed_at %} — {{ sig.signed_at }}{% endif %}
+        </div>
+    {% else %}
+        <div style="border-bottom:1px solid #94a3b8; margin-top:40px; margin-bottom:8px;"></div>
+        <div class="signature-meta" style="color:#94a3b8;">טרם נחתם</div>
     {% endif %}
-    <div class="signature-meta">
-        {{ sig.signer_name }}
-        {% if sig.signed_at %} — {{ sig.signed_at }}{% endif %}
-    </div>
-</div>
+</td>
 {% endif %}
 {% endfor %}
+</tr>
+{% endfor %}
+</table>
 {% endif %}
 
 {% if all_defects %}

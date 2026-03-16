@@ -5,7 +5,8 @@ import { Plus, Trash2, ChevronUp, ChevronDown, Loader2, Scale, AlertTriangle } f
 
 const ROLE_OPTIONS = [
   { value: 'manager', label: 'מנהל פרויקט / מפקח' },
-  { value: 'tenant', label: 'דייר / רוכש' },
+  { value: 'tenant', label: 'רוכש/ת ראשי/ת' },
+  { value: 'tenant_2', label: 'רוכש/ת נוסף/ת' },
   { value: 'contractor_rep', label: 'נציג קבלן' },
 ];
 

@@ -7,13 +7,15 @@ import SignaturePadModal from './SignaturePadModal';
 
 const ROLE_LABELS = {
   manager: 'מנהל פרויקט / מפקח',
-  tenant: 'דייר / רוכש',
+  tenant: 'רוכש/ת ראשי/ת',
+  tenant_2: 'רוכש/ת נוסף/ת',
   contractor_rep: 'נציג קבלן',
 };
 
 const ALLOWED_ROLES = {
   manager: ['project_manager', 'owner', 'super_admin'],
   tenant: ['project_manager', 'owner', 'contractor', 'super_admin'],
+  tenant_2: ['project_manager', 'owner', 'contractor', 'super_admin'],
   contractor_rep: ['contractor', 'super_admin'],
 };
 

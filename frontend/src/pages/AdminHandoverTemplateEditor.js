@@ -89,7 +89,7 @@ const AdminHandoverTemplateEditor = () => {
   const [activeTab, setActiveTab] = useState('sections');
   const [defaultDeliveredItems, setDefaultDeliveredItems] = useState([]);
   const [defaultPropertyFields, setDefaultPropertyFields] = useState([]);
-  const [signatureLabels, setSignatureLabels] = useState({ manager: '', tenant: '', contractor_rep: '' });
+  const [signatureLabels, setSignatureLabels] = useState({ manager: '', tenant: '', tenant_2: '', contractor_rep: '' });
 
   const allTrades = useMemo(() => {
     const dynamic = new Set(TRADES);
@@ -129,7 +129,7 @@ const AdminHandoverTemplateEditor = () => {
 
       setDefaultDeliveredItems(tpl.default_delivered_items || []);
       setDefaultPropertyFields(tpl.default_property_fields || []);
-      setSignatureLabels(tpl.signature_labels || { manager: '', tenant: '', contractor_rep: '' });
+      setSignatureLabels({ manager: '', tenant: '', tenant_2: '', contractor_rep: '', ...(tpl.signature_labels || {}) });
 
       const expanded = {};
       const secs = tpl.sections || tpl.stages || [];
@@ -190,6 +190,7 @@ const AdminHandoverTemplateEditor = () => {
       payload.signature_labels = {
         manager: signatureLabels.manager || '',
         tenant: signatureLabels.tenant || '',
+        tenant_2: signatureLabels.tenant_2 || '',
         contractor_rep: signatureLabels.contractor_rep || '',
       };
       await templateService.update(templateId, payload);
@@ -495,11 +496,15 @@ const AdminHandoverTemplateEditor = () => {
             </div>
             {[
               { key: 'manager', label: 'מנהל פרויקט' },
-              { key: 'tenant', label: 'דייר / רוכש' },
-              { key: 'contractor_rep', label: 'נציג קבלן' },
+              { key: 'tenant', label: 'רוכש/ת ראשי/ת' },
+              { key: 'tenant_2', label: 'רוכש/ת נוסף/ת', optional: true },
+              { key: 'contractor_rep', label: 'נציג קבלן', optional: true },
             ].map(role => (
               <div key={role.key} className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-500">{role.label}</label>
+                <label className="text-xs font-semibold text-slate-500">
+                  {role.label}
+                  {role.optional && <span className="text-slate-400 font-normal mr-1">(אופציונלי)</span>}
+                </label>
                 <textarea
                   value={signatureLabels[role.key] || ''}
                   onChange={(e) => setSignatureLabels(prev => ({ ...prev, [role.key]: e.target.value }))}

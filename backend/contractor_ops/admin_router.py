@@ -890,13 +890,16 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
             sl = body["signature_labels"]
             if not isinstance(sl, dict):
                 raise HTTPException(status_code=400, detail="signature_labels must be an object")
-            required_keys = {"manager", "tenant", "contractor_rep"}
-            if set(sl.keys()) != required_keys:
-                raise HTTPException(status_code=400, detail=f"signature_labels must have exactly keys: {', '.join(sorted(required_keys))}")
-            for k in required_keys:
+            allowed_keys = {"manager", "tenant", "tenant_2", "contractor_rep"}
+            if not set(sl.keys()).issubset(allowed_keys):
+                raise HTTPException(status_code=400, detail=f"signature_labels keys must be from: {', '.join(sorted(allowed_keys))}")
+            required_min = {"manager", "tenant", "contractor_rep"}
+            if not required_min.issubset(set(sl.keys())):
+                raise HTTPException(status_code=400, detail=f"signature_labels must include at least: {', '.join(sorted(required_min))}")
+            for k in sl:
                 if not isinstance(sl[k], str):
                     raise HTTPException(status_code=400, detail=f"signature_labels[{k}] must be a string")
-            signature_labels = {k: sl[k] for k in required_keys}
+            signature_labels = {k: sl.get(k, "") for k in allowed_keys}
 
     family_id = old["family_id"]
     max_doc = await db.qc_templates.find_one(

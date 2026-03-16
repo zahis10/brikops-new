@@ -8,14 +8,16 @@ import { Card } from '../ui/card';
 import SignaturePadModal from './SignaturePadModal';
 
 const ROLES = [
-  { key: 'manager', label: t('handover', 'signatureManager') },
-  { key: 'tenant', label: t('handover', 'signatureTenant') },
-  { key: 'contractor_rep', label: t('handover', 'signatureContractorRep') },
+  { key: 'manager', label: t('handover', 'signatureManager'), optional: false },
+  { key: 'tenant', label: t('handover', 'signatureTenant'), optional: false },
+  { key: 'tenant_2', label: 'רוכש/ת נוסף/ת', optional: true },
+  { key: 'contractor_rep', label: t('handover', 'signatureContractorRep'), optional: true },
 ];
 
 const ALLOWED_ROLES = {
   manager: ['project_manager', 'owner', 'super_admin'],
   tenant: ['project_manager', 'owner', 'contractor', 'super_admin'],
+  tenant_2: ['project_manager', 'owner', 'contractor', 'super_admin'],
   contractor_rep: ['contractor', 'super_admin'],
 };
 
@@ -142,7 +144,7 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
         </div>
       )}
 
-      {ROLES.map(({ key, label }) => {
+      {ROLES.map(({ key, label, optional }) => {
         const sig = signatures[key];
         const isSigned = !!sig;
         const labelText = (key in editingLabels) ? editingLabels[key] : (sigLabels[key] || '');
@@ -151,7 +153,10 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
         return (
           <Card key={key} className={`p-3 border ${isSigned ? 'border-green-200 bg-green-50/30' : 'border-slate-200'}`}>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-slate-700">{label}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-semibold text-slate-700">{label}</span>
+                {optional && <span className="text-[10px] text-slate-400 font-normal">(אופציונלי)</span>}
+              </div>
               {isSigned && <CheckCircle2 className="w-4 h-4 text-green-500" />}
             </div>
 
@@ -246,6 +251,10 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
                   <PenLine className="w-4 h-4" />
                   {t('handover', 'sign')}
                 </button>
+              ) : isLocked && optional ? (
+                <div className="text-xs text-slate-400 text-center py-2">
+                  לא נחתם (אופציונלי)
+                </div>
               ) : (
                 <div className="text-xs text-slate-400 text-center py-2">
                   {t('handover', 'sectionPlaceholder')}

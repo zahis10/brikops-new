@@ -39,7 +39,8 @@ HARDCODED_PROPERTY_LABELS = {
 
 DEFAULT_SIGNATURE_LABELS = {
     "manager": "מנהל פרויקט",
-    "tenant": "דייר / רוכש",
+    "tenant": "רוכש/ת ראשי/ת",
+    "tenant_2": "רוכש/ת נוסף/ת",
     "contractor_rep": "נציג קבלן",
 }
 
@@ -277,7 +278,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
     if logo_url:
         image_keys.append(("logo", logo_url))
 
-    for role in ("manager", "tenant", "contractor_rep"):
+    for role in ("manager", "tenant", "tenant_2", "contractor_rep"):
         sig = signatures.get(role, {})
         if sig and sig.get("type") == "canvas" and sig.get("image_key"):
             image_keys.append((f"sig_{role}", sig["image_key"]))
@@ -423,11 +424,20 @@ async def _build_template_context(protocol: dict, db) -> dict:
 
     sig_labels = protocol.get("signature_labels", {}) or {}
     signature_data = {}
-    for role in ("manager", "tenant", "contractor_rep"):
+    for role in ("manager", "tenant", "tenant_2", "contractor_rep"):
         sig = signatures.get(role, {})
-        if not sig:
-            continue
         label = sig_labels.get(role, DEFAULT_SIGNATURE_LABELS.get(role, role))
+        if not sig:
+            signature_data[role] = {
+                "label": label,
+                "type": None,
+                "image_b64": None,
+                "typed_name": "",
+                "signer_name": "",
+                "signed_at": "",
+                "signed": False,
+            }
+            continue
         sig_type = sig.get("type", "")
         image_b64 = images.get(f"sig_{role}")
         typed_name = sig.get("typed_name", "")
@@ -441,6 +451,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
             "typed_name": typed_name,
             "signer_name": signer_name,
             "signed_at": signed_at,
+            "signed": True,
         }
 
     defect_severity_counts = {"critical": 0, "normal": 0, "cosmetic": 0}
