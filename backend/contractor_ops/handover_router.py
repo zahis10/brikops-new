@@ -1519,7 +1519,7 @@ async def download_protocol_pdf(
     except Exception as e:
         import traceback
         logger.error(f"[HANDOVER] PDF generation failed for protocol={protocol_id}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"שגיאה ביצירת PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail="שגיאה ביצירת PDF, נסו שוב מאוחר יותר")
 
     snapshot = protocol.get("snapshot", {})
     apt = snapshot.get("unit_name", "") or snapshot.get("unit_number", "") or "unit"
