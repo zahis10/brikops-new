@@ -405,6 +405,15 @@ async def create_indexes():
         await db.handover_protocols.create_index([("project_id", 1), ("building_id", 1), ("status", 1)])
         await db.handover_protocols.create_index([("project_id", 1), ("status", 1)])
         await db.tasks.create_index([("handover_protocol_id", 1), ("source", 1), ("status", 1)])
+        await db.tasks.create_index(
+            [("handover_protocol_id", 1), ("handover_section_id", 1), ("handover_item_id", 1)],
+            unique=True,
+            partialFilterExpression={
+                "handover_protocol_id": {"$exists": True},
+                "status": {"$in": ["open", "in_progress", "assigned", "waiting_for_contractor", "rejected"]},
+            },
+            name="handover_item_active_defect_unique",
+        )
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

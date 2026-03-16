@@ -904,14 +904,41 @@ async def update_item(
                 update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
             logger.info(f"[HANDOVER] Updated existing defect={defect_id} for item={item_id}")
         else:
-            defect_id = await _create_handover_defect(
-                db, ts, user, project_id, protocol, section_id, item_id,
-                defect_title, defect_description, defect_trade, defect_severity,
-                defect_photos, skip_photo_reason, source,
-            )
+            from pymongo.errors import DuplicateKeyError
+            try:
+                defect_id = await _create_handover_defect(
+                    db, ts, user, project_id, protocol, section_id, item_id,
+                    defect_title, defect_description, defect_trade, defect_severity,
+                    defect_photos, skip_photo_reason, source,
+                )
+                defect_created = True
+                logger.info(f"[HANDOVER] Created defect={defect_id} for item={item_id}")
+            except DuplicateKeyError:
+                race_defect = await db.tasks.find_one({
+                    "handover_protocol_id": protocol["id"],
+                    "handover_section_id": section_id,
+                    "handover_item_id": item_id,
+                    "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
+                }, {"_id": 0, "id": 1})
+                if race_defect:
+                    defect_id = race_defect["id"]
+                    await db.tasks.update_one(
+                        {"id": defect_id},
+                        {"$set": {
+                            "title": defect_title,
+                            "description": defect_description,
+                            "severity": defect_severity,
+                            "priority": _severity_to_priority(defect_severity),
+                            "proof_urls": defect_photos,
+                            "attachments_count": len(defect_photos),
+                            "skip_photo_reason": skip_photo_reason,
+                            "updated_at": ts,
+                        }}
+                    )
+                    logger.info(f"[HANDOVER] DuplicateKeyError race — updated existing defect={defect_id} for item={item_id}")
+                else:
+                    raise
             update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
-            defect_created = True
-            logger.info(f"[HANDOVER] Created defect={defect_id} for item={item_id}")
 
     await db.handover_protocols.update_one(
         {"id": protocol_id, "project_id": project_id},
