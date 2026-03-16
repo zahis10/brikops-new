@@ -9,7 +9,7 @@ import {
   ArrowRight, Loader2, ChevronDown, ChevronUp, ShieldCheck,
   Home, Users, Gauge, Package, FileText, Scale, PenLine,
   AlertTriangle, Lock, ArrowLeft, CheckCircle2, Bug, Clock,
-  Circle, ChevronLeft
+  Circle, ChevronLeft, FileDown
 } from 'lucide-react';
 import HandoverPropertyForm from '../components/handover/HandoverPropertyForm';
 import HandoverTenantForm from '../components/handover/HandoverTenantForm';
@@ -90,6 +90,7 @@ const HandoverProtocolPage = () => {
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [expandedEngine, setExpandedEngine] = useState(null);
   const [userRole, setUserRole] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const signatureRef = useRef(null);
 
   const loadProtocol = useCallback(async () => {
@@ -224,6 +225,25 @@ const HandoverProtocolPage = () => {
     }
   };
 
+  const handleDownloadPdf = async () => {
+    setPdfLoading(true);
+    try {
+      await handoverService.downloadPdf(projectId, protocolId);
+      toast.success('PDF הורד בהצלחה');
+    } catch (err) {
+      console.error('PDF download error:', err);
+      if (err?.response?.status === 400) {
+        toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
+      } else if (err?.response?.status >= 500) {
+        toast.error('שגיאה ביצירת PDF, נסו שוב');
+      } else {
+        toast.error('שגיאת רשת');
+      }
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
   const handleSignFAB = () => {
     setMetadataOpen(true);
     setExpandedEngine('signatures');
@@ -325,10 +345,18 @@ const HandoverProtocolPage = () => {
             <ShieldCheck className="w-4 h-4 text-green-600 flex-shrink-0" />
             <span className="text-sm text-green-700 font-medium">{t('handover', 'readOnly')}</span>
             {protocol.signed_at && (
-              <span className="text-xs text-green-600 mr-auto">
+              <span className="text-xs text-green-600">
                 {t('handover', 'signedOn')} {new Date(protocol.signed_at).toLocaleDateString('he-IL')}
               </span>
             )}
+            <button
+              onClick={handleDownloadPdf}
+              disabled={pdfLoading}
+              className="mr-auto flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
+            >
+              {pdfLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+              הורד PDF
+            </button>
           </div>
         </div>
       )}

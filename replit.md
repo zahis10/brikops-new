@@ -44,6 +44,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
     -   **Defects V2**: Parallel building-level and apartment-level defect views.
     -   **Defects Export**: Supports Excel and PDF exports with Hebrew RTL formatting.
+    -   **Handover PDF Export (Task #92)**: `GET /projects/{pid}/handover/protocols/{protId}/pdf` generates a PDF of signed handover protocols using WeasyPrint (production Docker). Backend: `backend/services/handover_pdf_service.py` (async image fetching, Jinja2 template rendering) + `backend/templates/handover_protocol_pdf.html` (RTL, Rubik/Caveat fonts, 8 sections). Frontend: "הורד PDF" button in locked protocol banner (`HandoverProtocolPage.js`), blob download via `handoverService.downloadPdf`. Only available for locked/signed protocols (400 otherwise). 60s timeout → 504. Security: only S3 refs and safe local paths processed for images (no arbitrary URL fetching).
     -   **Observability**: Structured per-request logging, Hebrew error boundary for frontend crashes, and health/readiness endpoints.
 
 ### Deployment and Security
@@ -62,4 +63,5 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Radix UI, TailwindCSS, shadcn/ui**: Frontend component and styling libraries.
 -   **openpyxl**: For Excel export functionality.
 -   **reportlab, arabic_reshaper, python-bidi, Pillow**: For PDF export functionality.
+-   **WeasyPrint**: For handover protocol PDF generation (requires libpango in Docker).
 -   **PyJWT**: For JWT token handling.

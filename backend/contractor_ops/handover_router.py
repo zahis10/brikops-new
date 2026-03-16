@@ -1480,6 +1480,63 @@ async def get_signature_image(
     raise HTTPException(status_code=404, detail="תמונת חתימה לא נמצאה")
 
 
+@router.get("/projects/{project_id}/handover/protocols/{protocol_id}/pdf")
+async def download_protocol_pdf(
+    project_id: str, protocol_id: str,
+    user: dict = Depends(get_current_user),
+):
+    import asyncio as _asyncio
+    import re as _re
+    from fastapi.responses import Response
+
+    await _check_handover_access(user, project_id)
+
+    db = get_db()
+    protocol = await db.handover_protocols.find_one(
+        {"id": protocol_id, "project_id": project_id}, {"_id": 0}
+    )
+    if not protocol:
+        raise HTTPException(status_code=404, detail="פרוטוקול לא נמצא")
+
+    if not protocol.get("locked"):
+        raise HTTPException(status_code=400, detail="ניתן להוריד PDF רק לפרוטוקול חתום")
+
+    from services.handover_pdf_service import generate_handover_pdf
+
+    try:
+        pdf_bytes = await _asyncio.wait_for(
+            generate_handover_pdf(protocol, db),
+            timeout=60
+        )
+    except _asyncio.TimeoutError:
+        logger.error(f"[HANDOVER] PDF generation timeout for protocol={protocol_id}")
+        raise HTTPException(status_code=504, detail="PDF generation timeout")
+    except Exception as e:
+        import traceback
+        logger.error(f"[HANDOVER] PDF generation failed for protocol={protocol_id}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"שגיאה ביצירת PDF: {str(e)}")
+
+    snapshot = protocol.get("snapshot", {})
+    apt = snapshot.get("unit_name", "") or snapshot.get("unit_number", "") or "unit"
+    floor = snapshot.get("floor_name", "") or "floor"
+    apt_safe = _re.sub(r'[^\w\-.]', '_', apt).strip('_') or "unit"
+    floor_safe = _re.sub(r'[^\w\-.]', '_', floor).strip('_') or "floor"
+
+    protocol_type = protocol.get("type", "initial")
+    if protocol_type == "initial":
+        filename = f"protocol_mesira_rishonit_{apt_safe}_{floor_safe}.pdf"
+    else:
+        filename = f"protocol_mesirat_hazaka_{apt_safe}_{floor_safe}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 @router.post("/projects/{project_id}/handover/protocols/{protocol_id}/reopen")
 async def reopen_protocol(project_id: str, protocol_id: str, request: Request, user: dict = Depends(get_current_user)):
     if not _is_super_admin(user):
