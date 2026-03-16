@@ -1,0 +1,223 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { handoverService } from '../../services/api';
+import { toast } from 'sonner';
+import { useAuth } from '../../contexts/AuthContext';
+import { CheckCircle2, PenLine, AlertTriangle, Loader2 } from 'lucide-react';
+import SignaturePadModal from './SignaturePadModal';
+
+const ROLE_LABELS = {
+  manager: 'מנהל פרויקט / מפקח',
+  tenant: 'דייר / רוכש',
+  contractor_rep: 'נציג קבלן',
+};
+
+const ALLOWED_ROLES = {
+  manager: ['project_manager', 'owner', 'super_admin'],
+  tenant: ['project_manager', 'owner', 'contractor', 'super_admin'],
+  contractor_rep: ['contractor', 'super_admin'],
+};
+
+const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpdated }) => {
+  const { user } = useAuth();
+  const [signingSection, setSigningSection] = useState(null);
+  const [signatureImages, setSignatureImages] = useState({});
+  const [editingBodies, setEditingBodies] = useState({});
+  const [savingBody, setSavingBody] = useState(null);
+  const blurSaveRef = useRef({});
+
+  const sections = useMemo(() => protocol?.legal_sections || [], [protocol?.legal_sections]);
+  const isLocked = protocol?.locked === true;
+  const isPM = ['project_manager', 'owner', 'super_admin'].includes(userRole);
+
+  useEffect(() => {
+    const loadImages = async () => {
+      const imgs = {};
+      for (const s of sections) {
+        if (s.signature && s.signature.type === 'canvas' && s.signature.image_key) {
+          try {
+            const data = await handoverService.getLegalSectionSignatureImage(projectId, protocol.id, s.id);
+            if (data.url) imgs[s.id] = data.url;
+          } catch {}
+        }
+      }
+      setSignatureImages(imgs);
+    };
+    if (protocol?.id && sections.length > 0) loadImages();
+  }, [protocol?.id, sections, projectId]);
+
+  useEffect(() => {
+    const bodies = {};
+    for (const s of sections) {
+      bodies[s.id] = s.body || '';
+    }
+    setEditingBodies(bodies);
+  }, [protocol?.id, sections]);
+
+  const handleBodyChange = useCallback((sectionId, value) => {
+    setEditingBodies(prev => ({ ...prev, [sectionId]: value }));
+  }, []);
+
+  const handleBodyBlur = useCallback(async (section) => {
+    if (section.signed_at || isLocked) return;
+    const newBody = (editingBodies[section.id] || '').trim();
+    if (!newBody || newBody === (section.body || '').trim()) return;
+
+    if (blurSaveRef.current[section.id]) return;
+    blurSaveRef.current[section.id] = true;
+    setSavingBody(section.id);
+    try {
+      await handoverService.updateLegalSectionBody(projectId, protocol.id, section.id, newBody);
+      toast.success('נשמר');
+      onUpdated?.();
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.response?.data?.detail || 'שגיאה בשמירת הנסח');
+    } finally {
+      setSavingBody(null);
+      blurSaveRef.current[section.id] = false;
+    }
+  }, [editingBodies, isLocked, projectId, protocol?.id, onUpdated]);
+
+  const canSignSection = (section) => {
+    if (isLocked) return false;
+    if (!section.requires_signature) return false;
+    if (section.signed_at) return false;
+    const role = section.signature_role;
+    if (!role) return false;
+    const allowed = ALLOWED_ROLES[role] || [];
+    return allowed.includes(userRole);
+  };
+
+  const handleSignLegalSection = useCallback(async (sectionId, formData) => {
+    await handoverService.signLegalSection(projectId, protocol.id, sectionId, formData);
+  }, [projectId, protocol?.id]);
+
+  const currentUserName = user?.name || user?.full_name || '';
+
+  if (sections.length === 0) return null;
+
+  return (
+    <div className="space-y-3 p-1">
+      {sections.map((section) => {
+        const isSectionSigned = !!section.signed_at;
+        const needsSignature = section.requires_signature;
+        const canEdit = isPM && !isSectionSigned && !isLocked;
+
+        return (
+          <div
+            key={section.id}
+            className={`border rounded-xl bg-white overflow-hidden ${
+              isSectionSigned ? 'border-r-[3px] border-r-green-400 border-green-200' :
+              needsSignature ? 'border-r-[3px] border-r-amber-400 border-slate-200' :
+              'border-slate-200'
+            }`}
+          >
+            <div className="p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-800">{section.title}</h4>
+                {section.edited && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium flex items-center gap-1">
+                    <PenLine className="w-2.5 h-2.5" />
+                    נערך מהמקור
+                  </span>
+                )}
+              </div>
+
+              {canEdit ? (
+                <div className="relative">
+                  <textarea
+                    value={editingBodies[section.id] ?? section.body}
+                    onChange={(e) => handleBodyChange(section.id, e.target.value)}
+                    onBlur={() => handleBodyBlur(section)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none
+                      focus:outline-none focus:ring-2 focus:ring-purple-300 leading-relaxed min-h-[100px]"
+                    dir="rtl"
+                  />
+                  {savingBody === section.id && (
+                    <div className="absolute top-2 left-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap" dir="rtl">
+                  {section.body}
+                </p>
+              )}
+
+              {!needsSignature && (
+                <div className="flex items-center gap-1.5 text-green-600 text-xs">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>אין צורך בחתימה</span>
+                </div>
+              )}
+
+              {needsSignature && (
+                <div className={`border rounded-lg p-2.5 mt-1 ${isSectionSigned ? 'border-green-200 bg-green-50/30' : 'border-slate-200'}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-slate-600">
+                      חתימת {ROLE_LABELS[section.signature_role] || section.signature_role}
+                    </span>
+                    {isSectionSigned && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                  </div>
+
+                  {isSectionSigned ? (
+                    <div className="space-y-2">
+                      {section.signature?.type === 'canvas' && signatureImages[section.id] ? (
+                        <div className="bg-white border border-slate-100 rounded-lg p-2">
+                          <img src={signatureImages[section.id]} alt="signature" className="h-12 object-contain mx-auto" />
+                        </div>
+                      ) : section.signature?.type === 'typed' && section.signature?.typed_name ? (
+                        <div className="bg-white border border-slate-100 rounded-lg p-3 text-center">
+                          <div style={{ fontFamily: "'Caveat', cursive", fontSize: '24px' }} className="text-slate-800">
+                            {section.signature.typed_name}
+                          </div>
+                          <div className="border-t border-slate-300 mt-1 w-24 mx-auto" />
+                        </div>
+                      ) : null}
+                      <div className="text-xs text-slate-500">
+                        <span className="font-medium">{section.signer_name}</span>
+                        {section.signed_at && (
+                          <span className="mr-2">
+                            {new Date(section.signed_at).toLocaleDateString('he-IL')}{' '}
+                            {new Date(section.signed_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : canSignSection(section) ? (
+                    <button
+                      onClick={() => setSigningSection(section)}
+                      className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 text-white rounded-lg
+                        text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
+                    >
+                      <PenLine className="w-3.5 h-3.5" />
+                      חתום
+                    </button>
+                  ) : (
+                    <div className="text-xs text-slate-400 text-center py-1.5">
+                      ממתין לחתימה
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      <SignaturePadModal
+        open={!!signingSection}
+        onClose={() => setSigningSection(null)}
+        role={signingSection?.signature_role}
+        projectId={projectId}
+        protocolId={protocol?.id}
+        currentUserName={currentUserName}
+        onSigned={onUpdated}
+        signFn={signingSection ? (formData) => handleSignLegalSection(signingSection.id, formData) : undefined}
+      />
+    </div>
+  );
+};
+
+export default HandoverLegalSections;

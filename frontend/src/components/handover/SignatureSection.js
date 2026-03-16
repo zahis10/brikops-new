@@ -3,7 +3,7 @@ import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
 import { useAuth } from '../../contexts/AuthContext';
-import { CheckCircle2, PenLine, Lock, Trash2, Loader2 } from 'lucide-react';
+import { CheckCircle2, PenLine, Lock, Trash2, Loader2, AlertTriangle } from 'lucide-react';
 import { Card } from '../ui/card';
 import SignaturePadModal from './SignaturePadModal';
 
@@ -31,6 +31,11 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     ? protocol.signatures
     : {};
 
+  const unsignedLegalSections = (protocol?.legal_sections || []).filter(
+    s => s.requires_signature && !s.signed_at
+  );
+  const hasLegalGate = unsignedLegalSections.length > 0;
+
   useEffect(() => {
     const sigs = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
       ? protocol.signatures
@@ -54,6 +59,7 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
 
   const canSign = (roleKey) => {
     if (isLocked) return false;
+    if (hasLegalGate) return false;
     if (signatures[roleKey]) return false;
     const allowed = ALLOWED_ROLES[roleKey] || [];
     return allowed.includes(userRole);
@@ -87,6 +93,21 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
 
   return (
     <div className="space-y-3 p-1">
+      {hasLegalGate && !isLocked && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span className="text-sm text-amber-800 font-medium">יש נסחים משפטיים שטרם נחתמו:</span>
+          </div>
+          <ul className="mr-6 space-y-0.5">
+            {unsignedLegalSections.map(s => (
+              <li key={s.id} className="text-xs text-amber-700">• {s.title}</li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-amber-600">יש לחתום על כל הנסחים המשפטיים קודם</p>
+        </div>
+      )}
+
       {isLocked && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-2.5 flex items-center gap-2">
           <Lock className="w-4 h-4 text-green-600 flex-shrink-0" />
@@ -164,6 +185,17 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
                   onClick={() => setSigningRole(key)}
                   className="w-full flex items-center justify-center gap-2 py-2.5 bg-amber-500 text-white rounded-lg
                     text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
+                >
+                  <PenLine className="w-4 h-4" />
+                  {t('handover', 'sign')}
+                </button>
+              ) : hasLegalGate && !isLocked && !signatures[key] && (ALLOWED_ROLES[key] || []).includes(userRole) ? (
+                <button
+                  disabled
+                  onClick={() => toast.error('יש לחתום על כל הנסחים המשפטיים קודם')}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-300 text-white rounded-lg
+                    text-sm font-bold cursor-not-allowed opacity-60"
+                  title="יש לחתום על כל הנסחים המשפטיים קודם"
                 >
                   <PenLine className="w-4 h-4" />
                   {t('handover', 'sign')}

@@ -14,7 +14,7 @@ const ROLE_LABELS = {
 };
 
 const SignaturePadModal = ({
-  open, onClose, role, projectId, protocolId, currentUserName, onSigned,
+  open, onClose, role, projectId, protocolId, currentUserName, onSigned, signFn,
 }) => {
   const [tab, setTab] = useState('canvas');
   const [typedName, setTypedName] = useState('');
@@ -139,7 +139,11 @@ const SignaturePadModal = ({
         formData.append('typed_name', typedName.trim());
       }
 
-      await handoverService.signRole(projectId, protocolId, role, formData);
+      if (signFn) {
+        await signFn(formData);
+      } else {
+        await handoverService.signRole(projectId, protocolId, role, formData);
+      }
       toast.success(t('handover', 'signatureSaved'));
       onSigned?.();
       onClose();

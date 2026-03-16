@@ -17,6 +17,7 @@ import HandoverMeterForm from '../components/handover/HandoverMeterForm';
 import HandoverDeliveredItems from '../components/handover/HandoverDeliveredItems';
 import HandoverGeneralNotes from '../components/handover/HandoverGeneralNotes';
 import HandoverLegalText from '../components/handover/HandoverLegalText';
+import HandoverLegalSections from '../components/handover/HandoverLegalSections';
 import SignatureSection from '../components/handover/SignatureSection';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -28,6 +29,7 @@ const ENGINE_SECTIONS = [
   { key: 'delivered', label: t('handover', 'deliveredItems'), icon: Package, visibleTypes: ['final'] },
   { key: 'notes', label: t('handover', 'generalNotes'), icon: FileText, visibleTypes: ['initial', 'final'] },
   { key: 'legal', label: t('handover', 'legalText'), icon: Scale, visibleTypes: ['initial', 'final'] },
+  { key: 'legal_sections', label: 'נסחים משפטיים', icon: Scale, visibleTypes: ['initial', 'final'], conditional: true },
   { key: 'signatures', label: t('handover', 'signatures'), icon: PenLine, visibleTypes: ['initial', 'final'] },
 ];
 
@@ -201,7 +203,12 @@ const HandoverProtocolPage = () => {
   const allSameGroup = [groupedSections.issues, groupedSections.inProgress, groupedSections.notStarted, groupedSections.completed]
     .filter(g => g.length > 0).length <= 1;
 
-  const visibleEngineSections = ENGINE_SECTIONS.filter(es => es.visibleTypes.includes(protocol.type || 'initial'));
+  const hasLegalSections = (protocol?.legal_sections || []).length > 0;
+  const visibleEngineSections = ENGINE_SECTIONS.filter(es => {
+    if (!es.visibleTypes.includes(protocol.type || 'initial')) return false;
+    if (es.conditional && es.key === 'legal_sections' && !hasLegalSections) return false;
+    return true;
+  });
 
   const renderEngineContent = (key) => {
     const formProps = { protocol, projectId, isSigned: isLocked, onUpdated: handleFormUpdated };
@@ -212,6 +219,8 @@ const HandoverProtocolPage = () => {
       case 'delivered': return <HandoverDeliveredItems {...formProps} />;
       case 'notes': return <HandoverGeneralNotes {...formProps} />;
       case 'legal': return <HandoverLegalText {...formProps} />;
+      case 'legal_sections':
+        return <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />;
       case 'signatures':
         return <div ref={signatureRef}><SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} /></div>;
       default: return null;

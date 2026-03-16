@@ -1225,6 +1225,35 @@ export const handoverService = {
     const response = await axios.put(`${API}/projects/${projectId}/handover-template`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async getOrgLegalSections(orgId) {
+    const response = await axios.get(`${API}/organizations/${orgId}/handover-legal-sections`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async putOrgLegalSections(orgId, sections) {
+    const response = await axios.put(`${API}/organizations/${orgId}/handover-legal-sections`, { sections }, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async updateLegalSectionBody(projectId, protocolId, sectionId, body) {
+    const response = await axios.put(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}`,
+      { body }, { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async signLegalSection(projectId, protocolId, sectionId, formData) {
+    const response = await axios.put(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}/sign`,
+      formData, { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+  async getLegalSectionSignatureImage(projectId, protocolId, sectionId) {
+    const response = await axios.get(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}/signature-image`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
 };
 
 export const exportService = {
