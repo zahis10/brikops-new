@@ -1,0 +1,381 @@
+=== SECTION 1: Backend update_item (auto-defect logic) ===
+765:async def update_item(
+766-    project_id: str, protocol_id: str, section_id: str, item_id: str,
+767-    request: Request, user: dict = Depends(get_current_user),
+768-):
+769-    await _check_handover_management(user, project_id)
+770-    protocol = await _get_protocol_or_404(protocol_id, project_id)
+771-    _check_not_locked(protocol)
+772-
+773-    body = await request.json()
+774-    db = get_db()
+775-    ts = _now()
+776-
+777-    target_section = None
+778-    target_item = None
+779-    for section in protocol.get("sections", []):
+780-        if section["section_id"] != section_id:
+781-            continue
+782-        target_section = section
+783-        for item in section.get("items", []):
+784-            if item["item_id"] != item_id:
+785-                continue
+786-            target_item = item
+787-            break
+788-        break
+789-
+790-    if not target_section:
+791-        raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
+792-    if not target_item:
+793-        raise HTTPException(status_code=404, detail="פריט לא נמצא בחלק")
+794-
+795-    new_status = body.get("status")
+796-    notes = body.get("notes")
+797-    description = body.get("description")
+798-    severity = body.get("severity")
+799-    photos = body.get("photos")
+800-    skip_photo_reason = body.get("skip_photo_reason")
+801-    photos_pending_count = body.get("photos_pending_count", 0)
+802-
+803-    if photos is not None and not isinstance(photos, list):
+804-        raise HTTPException(status_code=400, detail="photos חייב להיות רשימה")
+805-
+806-    is_defect_status = new_status in ("defective", "partial")
+807-
+808-    if is_defect_status:
+809-        if severity and severity not in VALID_SEVERITIES:
+810-            raise HTTPException(status_code=400, detail=f"חומרה לא חוקית: {severity}")
+811-        if not severity:
+812-            raise HTTPException(status_code=400, detail="חובה לבחור חומרה עבור סטטוס זה")
+813-        if new_status == "defective":
+814-            if not description or not description.strip():
+815-                raise HTTPException(status_code=400, detail="תיאור חובה עבור סטטוס 'לא תקין'")
+816-            has_photos = (photos and len(photos) > 0) or photos_pending_count > 0
+817-            if not has_photos and not skip_photo_reason:
+818-                raise HTTPException(status_code=400, detail="נדרשת תמונה או סיבת דילוג עבור סטטוס 'לא תקין'")
+819-
+820-    update_ops = {"$set": {"updated_at": ts}}
+821-    has_item_change = False
+822-
+823-    if new_status is not None:
+824-        if new_status not in VALID_ITEM_STATUSES:
+825-            raise HTTPException(status_code=400, detail=f"סטטוס לא חוקי: {new_status}")
+826-        update_ops["$set"]["sections.$[sec].items.$[itm].status"] = new_status
+827-        has_item_change = True
+828-
+829-    if notes is not None:
+830-        update_ops["$set"]["sections.$[sec].items.$[itm].notes"] = notes
+831-        has_item_change = True
+832-
+833-    if description is not None:
+834-        update_ops["$set"]["sections.$[sec].items.$[itm].description"] = description
+835-        has_item_change = True
+836-
+837-    if severity is not None:
+838-        update_ops["$set"]["sections.$[sec].items.$[itm].severity"] = severity
+839-        has_item_change = True
+840-
+841-    if photos is not None:
+842-        update_ops["$set"]["sections.$[sec].items.$[itm].photos"] = photos
+843-        has_item_change = True
+844-
+845-    if skip_photo_reason is not None:
+
+=== SECTION 2: Defect creation logic ===
+865:        source = f"handover_{protocol['type']}"
+866-        section_name = target_section.get("name", "")
+867-        item_name = target_item.get("name", "")
+868-        status_label = STATUS_LABELS.get(new_status, new_status)
+869-        defect_title = f"{section_name} > {item_name} — {status_label}"
+870-        defect_description = (description or "").strip()
+871-        defect_trade = target_item.get("trade", "כללי")
+872-        defect_photos = list(photos or [])
+873-        defect_severity = severity or "normal"
+874-
+875-        if existing_defect_id:
+876-            existing_defect = await db.tasks.find_one({"id": existing_defect_id}, {"_id": 0, "status": 1})
+877-            if existing_defect and existing_defect.get("status") not in ("closed",):
+878-                await db.tasks.update_one(
+879-                    {"id": existing_defect_id},
+880-                    {"$set": {
+881-                        "title": defect_title,
+882-                        "description": defect_description,
+883-                        "severity": defect_severity,
+884-                        "priority": _severity_to_priority(defect_severity),
+885-                        "proof_urls": defect_photos,
+886-                        "attachments_count": len(defect_photos),
+887-                        "skip_photo_reason": skip_photo_reason,
+888-                        "updated_at": ts,
+889-                    }}
+890-                )
+891-                defect_id = existing_defect_id
+892-                logger.info(f"[HANDOVER] Updated existing defect={defect_id} for item={item_id}")
+893-            else:
+894:                defect_id = await _create_handover_defect(
+895-                    db, ts, user, project_id, protocol, section_id, item_id,
+896-                    defect_title, defect_description, defect_trade, defect_severity,
+897-                    defect_photos, skip_photo_reason, source,
+898-                )
+899-                update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
+900-                defect_created = True
+901-                logger.info(f"[HANDOVER] Created new defect={defect_id} (old closed) for item={item_id}")
+902-        else:
+903:            defect_id = await _create_handover_defect(
+904-                db, ts, user, project_id, protocol, section_id, item_id,
+905-                defect_title, defect_description, defect_trade, defect_severity,
+906-                defect_photos, skip_photo_reason, source,
+907-            )
+908-            update_ops["$set"]["sections.$[sec].items.$[itm].defect_id"] = defect_id
+909-            defect_created = True
+910-            logger.info(f"[HANDOVER] Created defect={defect_id} for item={item_id}")
+911-
+912-    await db.handover_protocols.update_one(
+913-        {"id": protocol_id, "project_id": project_id},
+914-        update_ops,
+915-        array_filters=array_filters,
+916-    )
+917-
+918-    updated = await db.handover_protocols.find_one({"id": protocol_id, "project_id": project_id}, {"_id": 0})
+919-    return {
+920-        "protocol": updated,
+921:        "defect_created": defect_created,
+922-        "defect_id": defect_id,
+923-    }
+924-
+
+=== SECTION 3: HandoverItemModal (first 150 lines) ===
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { handoverService, taskService } from '../../services/api';
+import { toast } from 'sonner';
+import { t } from '../../i18n';
+import { useNavigate } from 'react-router-dom';
+import { compressImage } from '../../utils/imageCompress';
+import {
+  Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
+} from '../ui/drawer';
+import {
+  CheckCircle2, AlertTriangle, CircleDot, MinusCircle,
+  Bug, ExternalLink, Loader2, X, Camera, ImagePlus, Info,
+  ChevronLeft, Trash2,
+} from 'lucide-react';
+
+const STATUS_OPTIONS = [
+  { value: 'ok', label: 'תקין', icon: CheckCircle2, color: 'bg-green-100 text-green-700 border-green-300', activeColor: 'bg-green-500 text-white border-green-500' },
+  { value: 'partial', label: 'חלקי', icon: CircleDot, color: 'bg-amber-100 text-amber-700 border-amber-300', activeColor: 'bg-amber-500 text-white border-amber-500' },
+  { value: 'defective', label: 'לא תקין', icon: AlertTriangle, color: 'bg-red-100 text-red-700 border-red-300', activeColor: 'bg-red-500 text-white border-red-500' },
+  { value: 'not_relevant', label: 'לא רלוונטי', icon: MinusCircle, color: 'bg-slate-100 text-slate-600 border-slate-300', activeColor: 'bg-slate-500 text-white border-slate-500' },
+];
+
+const SEVERITY_OPTIONS = [
+  { value: 'critical', label: 'קריטי', color: 'bg-red-100 text-red-700 border-red-300', activeColor: 'bg-red-500 text-white border-red-500' },
+  { value: 'normal', label: 'רגיל', color: 'bg-amber-100 text-amber-700 border-amber-300', activeColor: 'bg-amber-500 text-white border-amber-500' },
+  { value: 'cosmetic', label: 'קוסמטי', color: 'bg-green-100 text-green-700 border-green-300', activeColor: 'bg-green-500 text-white border-green-500' },
+];
+
+const SKIP_REASONS = [
+  'לא ניתן לצלם — חושך',
+  'לא ניתן לצלם — אזור לא נגיש',
+];
+
+const HandoverItemModal = ({
+  open, onClose, item, sectionId, sectionName, projectId, protocolId,
+  isSigned, onItemUpdated, allItems, onSelectItem,
+}) => {
+  const navigate = useNavigate();
+  const [status, setStatus] = useState('not_checked');
+  const [notes, setNotes] = useState('');
+  const [description, setDescription] = useState('');
+  const [severity, setSeverity] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [skipPhotoReason, setSkipPhotoReason] = useState('');
+  const [showSkipInput, setShowSkipInput] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+
+  const resetForm = useCallback((itemData) => {
+    setStatus(itemData?.status || 'not_checked');
+    setNotes(itemData?.notes || '');
+    setDescription(itemData?.description || '');
+    setSeverity(itemData?.severity || null);
+    setPhotos([]);
+    setSkipPhotoReason('');
+    setShowSkipInput(false);
+    setErrors({});
+  }, []);
+
+  const handleImageAdd = useCallback(async (e) => {
+    try {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+      const compressed = await Promise.all(files.map(f => compressImage(f)));
+      const newImages = compressed.map(file => ({
+        file,
+        preview: URL.createObjectURL(file),
+        name: file.name,
+      }));
+      setPhotos(prev => [...prev, ...newImages]);
+      setErrors(prev => { const n = {...prev}; delete n.photos; return n; });
+    } catch (err) {
+      console.error('[handover:image] failed to process image:', err);
+      toast.error('שגיאה בעיבוד התמונה');
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  }, []);
+
+  const removePhoto = useCallback((index) => {
+    setPhotos(prev => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (item && open) {
+      resetForm(item);
+    }
+  }, [item, open, resetForm]);
+
+  if (!item) return null;
+
+  const isDefectStatus = status === 'defective' || status === 'partial';
+  const hasDefect = !!item.defect_id;
+
+  const handleStatusChange = (newStatus) => {
+    if (isSigned || saving) return;
+    setStatus(newStatus);
+    setErrors({});
+    if (newStatus !== 'defective' && newStatus !== 'partial') {
+      setDescription('');
+      setSeverity(null);
+      setPhotos([]);
+      setSkipPhotoReason('');
+      setShowSkipInput(false);
+    }
+  };
+
+  const handlePassNotesBlur = async () => {
+    if (isSigned || saving) return;
+    if (status !== 'ok' && status !== 'not_relevant') return;
+    try {
+      setSaving(true);
+      await handoverService.updateItem(projectId, protocolId, sectionId, item.item_id, {
+        status,
+        notes,
+      });
+      onItemUpdated?.();
+    } catch (err) {
+      console.error(err);
+      toast.error(t('handover', 'updateError'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const validate = () => {
+    const errs = {};
+    if (!isDefectStatus) return errs;
+
+    if (!severity) {
+      errs.severity = 'חובה לבחור חומרה';
+    }
+    if (status === 'defective') {
+      if (!description.trim()) {
+        errs.description = 'תיאור חובה עבור "לא תקין"';
+      }
+      if (photos.length === 0 && !skipPhotoReason.trim()) {
+        errs.photos = 'נדרשת תמונה או סיבת דילוג';
+      }
+    }
+    return errs;
+  };
+
+  const handleSaveAndAdvance = async () => {
+
+=== SECTION 4: HandoverItemModal (save function) ===
+150:  const handleSaveAndAdvance = async () => {
+151-    if (isSigned || saving) return;
+152-
+153-    if (isDefectStatus) {
+154-      const errs = validate();
+155-      if (Object.keys(errs).length > 0) {
+156-        setErrors(errs);
+157-        return;
+158-      }
+159-    }
+160-
+161-    try {
+162-      setSaving(true);
+163-
+164-      const payload = { status };
+165-
+166-      if (isDefectStatus) {
+167-        payload.description = description.trim();
+168-        payload.severity = severity;
+169-        payload.photos = [];
+170-        payload.photos_pending_count = photos.length;
+171-        payload.skip_photo_reason = skipPhotoReason.trim() || null;
+172-      } else {
+173-        payload.notes = notes;
+174-      }
+175-
+176-      const result = await handoverService.updateItem(
+177-        projectId, protocolId, sectionId, item.item_id, payload
+178-      );
+179-
+180-      const defectId = result?.defect_id;
+181-
+182-      if (defectId && photos.length > 0) {
+183-        const uploadResults = await Promise.allSettled(
+184-          photos.map(img => {
+185-            const uploadWithRetry = async (file, maxAttempts = 2) => {
+186-              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+187-                try {
+188-                  return await taskService.uploadAttachment(defectId, file);
+189-                } catch (err) {
+190-                  if (attempt >= maxAttempts) throw err;
+--
+528:              onClick={handleSaveAndAdvance}
+529-              disabled={saving}
+530-              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-medium transition-all
+531-                active:scale-[0.98] disabled:opacity-50
+532-                ${status === 'defective'
+533-                  ? 'bg-red-500 text-white hover:bg-red-600'
+534-                  : 'bg-amber-500 text-white hover:bg-amber-600'}`}
+535-            >
+536-              {saving ? (
+537-                <Loader2 className="w-4 h-4 animate-spin" />
+538-              ) : (
+539-                <ChevronLeft className="w-4 h-4" />
+540-              )}
+541-              שמור ועבור לפריט הבא
+542-            </button>
+543-          )}
+544-        </div>
+545-      </DrawerContent>
+546-    </Drawer>
+547-  );
+548-};
+549-
+550-export default HandoverItemModal;
+
+=== SECTION 5: Source badge on UnitDetailPage ===
+286-                        <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+287-                          {priorityInfo.label}
+288-                        </span>
+289:                        {task.source && task.source.startsWith('handover_') && (
+290-                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200">
+291:                            מסירה
+292-                          </span>
+293-                        )}
+294-                      </div>
+295-                    </div>
+296-                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 flex-shrink-0 mt-1" />
+297-                  </div>
+298-                </button>
+299-              );
+300-            })}
+301-          </div>
