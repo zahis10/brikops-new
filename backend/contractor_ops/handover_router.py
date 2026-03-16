@@ -1528,6 +1528,7 @@ async def download_protocol_pdf(
     floor_safe = _re.sub(r'[^\w\-.]', '_', floor).strip('_') or "floor"
 
     filename = f"protocol_mesira_{apt_safe}_{floor_safe}.pdf"
+    filename = _re.sub(r'[^\w\-.]', '_', filename)
 
     return Response(
         content=pdf_bytes,

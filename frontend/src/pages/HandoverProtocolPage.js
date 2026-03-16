@@ -229,11 +229,12 @@ const HandoverProtocolPage = () => {
     setPdfLoading(true);
     try {
       await handoverService.downloadPdf(projectId, protocolId);
-      toast.success('PDF הורד בהצלחה');
     } catch (err) {
       console.error('PDF download error:', err);
       if (err?.response?.status === 400) {
         toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
+      } else if (err?.response?.status === 504) {
+        toast.error('יצירת ה-PDF לקחה יותר מדי זמן, נסו שוב');
       } else if (err?.response?.status >= 500) {
         toast.error('שגיאה ביצירת PDF, נסו שוב');
       } else {

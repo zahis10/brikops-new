@@ -209,6 +209,7 @@ async def generate_handover_pdf(protocol: dict, db) -> bytes:
     else:
         try:
             from xhtml2pdf import pisa
+            logger.warning("[PDF] Using xhtml2pdf fallback — fonts, RTL, and page counters may not render correctly")
             result_buf = io.BytesIO()
             pisa_status = pisa.CreatePDF(io.StringIO(html_content), dest=result_buf)
             if pisa_status.err:
