@@ -1,0 +1,297 @@
+=== SECTION 1: AdminHandoverTemplateEditor (first 150 lines) ===
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { templateService } from '../services/api';
+import { toast } from 'sonner';
+import {
+  ArrowRight, Loader2, Save, Plus, Trash2, ChevronDown, ChevronUp,
+  AlertTriangle, X, GripVertical
+} from 'lucide-react';
+
+const TRADES = [
+  'אלומיניום', 'דלתות', 'חשמל', 'טיח', 'ריצוף', 'צביעה',
+  'אינסטלציה', 'מטבחים', 'שיש', 'ברזל', 'כללי',
+];
+
+const genId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+const AdminHandoverTemplateEditor = () => {
+  const { templateId } = useParams();
+  const navigate = useNavigate();
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [templateData, setTemplateData] = useState(null);
+  const [name, setName] = useState('');
+  const [sections, setSections] = useState([]);
+  const [expandedSections, setExpandedSections] = useState({});
+  const [malformedWarning, setMalformedWarning] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+  const loadTemplate = useCallback(async () => {
+    try {
+      setLoading(true);
+      const tpl = await templateService.get(templateId);
+      setTemplateData(tpl);
+      setName(tpl.name || '');
+
+      if (tpl.sections && tpl.sections.length > 0) {
+        setSections(JSON.parse(JSON.stringify(tpl.sections)));
+      } else if (tpl.stages && tpl.stages.length > 0) {
+        setMalformedWarning(true);
+        const mapped = tpl.stages.map((stage, idx) => ({
+          id: stage.id || genId('section'),
+          name: stage.title || stage.name || `סקשן ${idx + 1}`,
+          visible_in_initial: true,
+          visible_in_final: true,
+          order: stage.order || idx + 1,
+          items: (stage.items || []).map((item, iIdx) => ({
+            id: item.id || genId('item'),
+            name: item.title || item.name || `פריט ${iIdx + 1}`,
+            trade: item.trade || 'כללי',
+            input_type: item.input_type || 'status',
+            order: item.order || iIdx + 1,
+          })),
+        }));
+        setSections(mapped);
+      } else {
+        setSections([]);
+      }
+
+      const expanded = {};
+      const secs = tpl.sections || tpl.stages || [];
+      secs.forEach(s => { expanded[s.id] = true; });
+      setExpandedSections(expanded);
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה בטעינת תבנית');
+    } finally {
+      setLoading(false);
+    }
+  }, [templateId]);
+
+  useEffect(() => { loadTemplate(); }, [loadTemplate]);
+
+  const handleSave = async () => {
+    if (!name.trim()) {
+      toast.error('שם התבנית לא יכול להיות ריק');
+      return;
+    }
+    for (let i = 0; i < sections.length; i++) {
+      if (!sections[i].name.trim()) {
+        toast.error(`שם סקשן ${i + 1} לא יכול להיות ריק`);
+        return;
+      }
+      for (let j = 0; j < sections[i].items.length; j++) {
+        if (!sections[i].items[j].name.trim()) {
+          toast.error(`שם פריט ${j + 1} בסקשן "${sections[i].name}" לא יכול להיות ריק`);
+          return;
+        }
+      }
+    }
+
+    try {
+      setSaving(true);
+      const orderedSections = sections.map((s, idx) => ({
+        ...s,
+        order: idx + 1,
+        items: s.items.map((item, iIdx) => ({
+          ...item,
+          trade: item.trade || 'כללי',
+          input_type: item.input_type || 'status',
+          order: iIdx + 1,
+        })),
+      }));
+
+      await templateService.update(templateId, {
+        name: name.trim(),
+        type: 'handover',
+        sections: orderedSections,
+      });
+      setMalformedWarning(false);
+      toast.success('התבנית נשמרה בהצלחה');
+    } catch (err) {
+      console.error(err);
+      toast.error(err.response?.data?.detail || 'שגיאה בשמירת תבנית');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleSection = (sectionId) => {
+    setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
+  };
+
+  const collapseAll = () => {
+    const collapsed = {};
+    sections.forEach(s => { collapsed[s.id] = false; });
+    setExpandedSections(collapsed);
+  };
+
+  const expandAll = () => {
+    const expanded = {};
+    sections.forEach(s => { expanded[s.id] = true; });
+    setExpandedSections(expanded);
+  };
+
+  const updateSectionField = (sectionIdx, field, value) => {
+    setSections(prev => {
+      const next = [...prev];
+      next[sectionIdx] = { ...next[sectionIdx], [field]: value };
+      return next;
+    });
+  };
+
+  const addSection = () => {
+    const newSection = {
+      id: genId('section'),
+      name: '',
+      visible_in_initial: true,
+      visible_in_final: true,
+      order: sections.length + 1,
+
+=== SECTION 2: Item row rendering ===
+49:            name: item.title || item.name || `פריט ${iIdx + 1}`,
+50-            trade: item.trade || 'כללי',
+51-            input_type: item.input_type || 'status',
+52-            order: item.order || iIdx + 1,
+53-          })),
+54-        }));
+55-        setSections(mapped);
+56-      } else {
+57-        setSections([]);
+58-      }
+59-
+60-      const expanded = {};
+61-      const secs = tpl.sections || tpl.stages || [];
+62-      secs.forEach(s => { expanded[s.id] = true; });
+63-      setExpandedSections(expanded);
+64-    } catch (err) {
+65-      console.error(err);
+66-      toast.error('שגיאה בטעינת תבנית');
+67-    } finally {
+68-      setLoading(false);
+69-    }
+70-  }, [templateId]);
+71-
+72-  useEffect(() => { loadTemplate(); }, [loadTemplate]);
+73-
+74-  const handleSave = async () => {
+--
+86:          toast.error(`שם פריט ${j + 1} בסקשן "${sections[i].name}" לא יכול להיות ריק`);
+87-          return;
+88-        }
+89-      }
+90-    }
+91-
+92-    try {
+93-      setSaving(true);
+94-      const orderedSections = sections.map((s, idx) => ({
+95-        ...s,
+96-        order: idx + 1,
+97-        items: s.items.map((item, iIdx) => ({
+98-          ...item,
+99-          trade: item.trade || 'כללי',
+100-          input_type: item.input_type || 'status',
+101-          order: iIdx + 1,
+102-        })),
+103-      }));
+104-
+105-      await templateService.update(templateId, {
+106-        name: name.trim(),
+107-        type: 'handover',
+108-        sections: orderedSections,
+
+=== SECTION 3: Save function ===
+74:  const handleSave = async () => {
+75-    if (!name.trim()) {
+76-      toast.error('שם התבנית לא יכול להיות ריק');
+77-      return;
+78-    }
+79-    for (let i = 0; i < sections.length; i++) {
+80-      if (!sections[i].name.trim()) {
+81-        toast.error(`שם סקשן ${i + 1} לא יכול להיות ריק`);
+82-        return;
+83-      }
+84-      for (let j = 0; j < sections[i].items.length; j++) {
+85-        if (!sections[i].items[j].name.trim()) {
+86-          toast.error(`שם פריט ${j + 1} בסקשן "${sections[i].name}" לא יכול להיות ריק`);
+87-          return;
+88-        }
+89-      }
+90-    }
+91-
+92-    try {
+93-      setSaving(true);
+94-      const orderedSections = sections.map((s, idx) => ({
+95-        ...s,
+96-        order: idx + 1,
+97-        items: s.items.map((item, iIdx) => ({
+98-          ...item,
+99-          trade: item.trade || 'כללי',
+100-          input_type: item.input_type || 'status',
+101-          order: iIdx + 1,
+102-        })),
+103-      }));
+104-
+--
+262:            onClick={handleSave}
+263-            disabled={saving}
+264-            className="flex items-center gap-1.5 px-4 py-2.5 bg-white text-indigo-900 rounded-xl text-sm font-bold hover:bg-indigo-50 transition-colors disabled:opacity-50 min-h-[44px]"
+265-          >
+266-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+267-            שמור
+268-          </button>
+269-        </div>
+270-      </header>
+271-
+272-      <div className="max-w-3xl mx-auto px-4 pt-4 space-y-4">
+273-        {malformedWarning && (
+274-          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-start gap-2">
+275-            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+276-            <div className="flex-1">
+277-              <p className="text-sm font-bold text-amber-800">תבנית זו נשמרה בפורמט ישן.</p>
+278-              <p className="text-xs text-amber-700 mt-0.5">שמרו מחדש כדי לתקן את הפורמט.</p>
+279-            </div>
+
+=== SECTION 4: Clone routing fix ===
+351:  const handleClone = async () => {
+352-    if (!editingTemplate) return;
+353-    try {
+354-      setSaving(true);
+355:      const result = await templateService.clone(editingTemplate.id, {
+356-        name: `${editingName} — עותק`,
+357-      });
+358-      await loadFamilies();
+359-      if (result.type === 'handover') {
+360-        navigate(`/admin/templates/handover/${result.id}/edit`);
+361-        return;
+362-      }
+363-      setEditingTemplate(result);
+364-      setEditingName(result.name);
+365-      setEditingStages(JSON.parse(JSON.stringify(result.stages)));
+366-      setSaveSuccess(true);
+367-      setTimeout(() => setSaveSuccess(false), 3000);
+368-    } catch (e) {
+369-      setSaveError(e.response?.data?.detail || 'שגיאה בשכפול');
+370-    } finally {
+--
+539:                onClick={handleClone}
+540-                disabled={saving}
+541-                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+542-              >
+543-                <Copy className="w-3.5 h-3.5" />
+544:                שכפל
+545-              </button>
+546-              <button
+547-                onClick={handleSave}
+548-                disabled={saving}
+549-                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+550-              >
+551-                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+552-                שמור כגרסה חדשה
+553-              </button>
+554-            </div>
+555-          </div>
+556-        </div>
+557-
