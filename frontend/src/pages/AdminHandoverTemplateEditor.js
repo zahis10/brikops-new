@@ -463,14 +463,6 @@ const AdminHandoverTemplateEditor = () => {
                   <span className="text-xs text-slate-400 font-bold w-5 text-center">{idx + 1}</span>
                   <input
                     type="text"
-                    value={field.key}
-                    onChange={(e) => setDefaultPropertyFields(prev => prev.map((f, i) => i === idx ? { ...f, key: e.target.value.replace(/[^a-z0-9_]/g, '').replace(/^[^a-z]/, '') } : f))}
-                    placeholder="key"
-                    dir="ltr"
-                    className="w-28 text-sm font-mono border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white min-h-[40px]"
-                  />
-                  <input
-                    type="text"
                     value={field.label}
                     onChange={(e) => setDefaultPropertyFields(prev => prev.map((f, i) => i === idx ? { ...f, label: e.target.value } : f))}
                     placeholder="תווית"
@@ -486,7 +478,7 @@ const AdminHandoverTemplateEditor = () => {
               ))}
             </div>
             <button
-              onClick={() => setDefaultPropertyFields(prev => [...prev, { key: '', label: '' }])}
+              onClick={() => setDefaultPropertyFields(prev => [...prev, { key: `field_${Date.now()}`, label: '' }])}
               className="w-full py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-dashed border-purple-200 transition-colors font-medium"
             >
               <Plus className="w-4 h-4" />
