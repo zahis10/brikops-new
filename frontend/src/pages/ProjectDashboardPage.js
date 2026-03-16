@@ -468,7 +468,7 @@ export default function ProjectDashboardPage() {
               <div className="flex items-center justify-between mb-3">
                 <SectionHeader icon={FileSignature} title="מסירות" count={initialTotal + finalTotal} color="text-amber-500" />
                 <button
-                  onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)}
+                  onClick={() => navigate(`/projects/${projectId}/handover`)}
                   className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"
                 >
                   צפה <ChevronLeft className="w-3 h-3" />

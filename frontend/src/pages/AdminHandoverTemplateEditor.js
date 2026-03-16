@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { templateService } from '../services/api';
 import { toast } from 'sonner';
@@ -11,6 +11,59 @@ const TRADES = [
   'אלומיניום', 'דלתות', 'חשמל', 'טיח', 'ריצוף', 'צביעה',
   'אינסטלציה', 'מטבחים', 'שיש', 'ברזל', 'כללי',
 ];
+
+function TradeCombobox({ value, onChange, suggestions }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState(value || '');
+  const wrapRef = useRef(null);
+
+  useEffect(() => { setSearch(value || ''); }, [value]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = suggestions.filter(s =>
+    !search || s.includes(search) || search.includes(s)
+  );
+
+  const commit = (val) => {
+    setSearch(val);
+    onChange(val);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative w-full sm:w-auto sm:min-w-[160px]">
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => { setTimeout(() => { if (search && search !== value) onChange(search); }, 150); }}
+        placeholder="בחר מקצוע..."
+        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 min-h-[40px] focus:outline-none focus:ring-2 focus:ring-purple-500"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+          {filtered.map(s => (
+            <li
+              key={s}
+              onMouseDown={(e) => { e.preventDefault(); commit(s); }}
+              className={`px-3 py-2 text-sm cursor-pointer hover:bg-purple-50 ${s === value ? 'bg-purple-50 font-medium text-purple-700' : 'text-slate-700'}`}
+            >
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 const genId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
@@ -26,6 +79,12 @@ const AdminHandoverTemplateEditor = () => {
   const [expandedSections, setExpandedSections] = useState({});
   const [malformedWarning, setMalformedWarning] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+  const allTrades = useMemo(() => {
+    const dynamic = new Set(TRADES);
+    sections.forEach(s => s.items?.forEach(it => { if (it.trade) dynamic.add(it.trade); }));
+    return [...dynamic];
+  }, [sections]);
 
   const loadTemplate = useCallback(async () => {
     try {
@@ -420,15 +479,11 @@ const AdminHandoverTemplateEditor = () => {
                               className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
                               style={{ minHeight: '40px' }}
                             />
-                            <select
+                            <TradeCombobox
                               value={item.trade}
-                              onChange={(e) => updateItemField(sIdx, iIdx, 'trade', e.target.value)}
-                              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 w-full sm:w-auto sm:min-w-[140px] min-h-[40px]"
-                            >
-                              {TRADES.map(tr => (
-                                <option key={tr} value={tr}>{tr}</option>
-                              ))}
-                            </select>
+                              onChange={(val) => updateItemField(sIdx, iIdx, 'trade', val)}
+                              suggestions={allTrades}
+                            />
                           </div>
                           <div className="flex flex-col items-center gap-0.5 pt-1">
                             <button
