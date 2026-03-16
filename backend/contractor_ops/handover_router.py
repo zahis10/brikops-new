@@ -337,6 +337,10 @@ async def _resolve_handover_template(project_id: str):
         )
         if tpl:
             return tpl
+        logger.warning(
+            f"Project {project_id} references missing template version "
+            f"{project['handover_template_version_id']}, falling back to default"
+        )
 
     tpl = await db.qc_templates.find_one(
         {"type": "handover", "is_default": True, "is_active": True},

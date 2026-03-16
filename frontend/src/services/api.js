@@ -1125,8 +1125,16 @@ export const templateService = {
     const response = await axios.put(`${API}/projects/${projectId}/qc-template`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async assignHandoverToProject(projectId, data) {
+    const response = await axios.put(`${API}/projects/${projectId}/handover-template`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
   async getProjectAssignment(projectId) {
     const response = await axios.get(`${API}/projects/${projectId}/qc-template`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getHandoverProjectAssignment(projectId) {
+    const response = await axios.get(`${API}/projects/${projectId}/handover-template`, { headers: getAuthHeader() });
     return response.data;
   },
   async archiveFamily(familyId, archive = true) {

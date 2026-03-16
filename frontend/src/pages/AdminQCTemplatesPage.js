@@ -235,10 +235,13 @@ const AdminQCTemplatesPage = () => {
     setAssignLoading(true);
     try {
       const projects = await projectService.list();
+      const isHandover = family.type === 'handover';
       const projectsWithAssignment = await Promise.all(
         projects.map(async (p) => {
           try {
-            const assignment = await templateService.getProjectAssignment(p.id);
+            const assignment = isHandover
+              ? await templateService.getHandoverProjectAssignment(p.id)
+              : await templateService.getProjectAssignment(p.id);
             return { ...p, currentTemplate: assignment };
           } catch {
             return { ...p, currentTemplate: null };
@@ -265,9 +268,16 @@ const AdminQCTemplatesPage = () => {
     }
     setAssigningTo(project.id);
     try {
-      await templateService.assignToProject(project.id, {
-        template_version_id: assignFamily.latest_id,
-      });
+      const isHandover = assignFamily.type === 'handover';
+      if (isHandover) {
+        await templateService.assignHandoverToProject(project.id, {
+          template_version_id: assignFamily.latest_id,
+        });
+      } else {
+        await templateService.assignToProject(project.id, {
+          template_version_id: assignFamily.latest_id,
+        });
+      }
       toast.success(`התבנית "${assignFamily.name}" שויכה לפרויקט "${project.name}"`);
       setAssignProjects(prev => prev.map(p =>
         p.id === project.id
@@ -872,7 +882,6 @@ const AdminQCTemplatesPage = () => {
                       </button>
                     ) : (
                       <>
-                        {f.type !== 'handover' && (
                         <button
                           onClick={(e) => openAssignModal(e, f)}
                           className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
@@ -881,7 +890,6 @@ const AdminQCTemplatesPage = () => {
                           <Link2 className="w-3 h-3" />
                           שייך
                         </button>
-                        )}
                         <button
                           onClick={(e) => handleArchiveFamily(e, f.family_id, true)}
                           disabled={archiving === f.family_id}
