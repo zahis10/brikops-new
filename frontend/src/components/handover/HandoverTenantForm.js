@@ -32,6 +32,13 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
+    for (let i = 0; i < tenants.length; i++) {
+      const phone = (tenants[i].phone || '').trim();
+      if (phone && (!/^\d+$/.test(phone) || phone.length < 10)) {
+        toast.error(`דייר ${i + 1}: מספר טלפון חייב להכיל ספרות בלבד (לפחות 10)`);
+        return;
+      }
+    }
     try {
       setSaving(true);
       await handoverService.updateProtocol(projectId, protocol.id, {

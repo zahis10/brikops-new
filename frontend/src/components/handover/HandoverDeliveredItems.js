@@ -28,6 +28,11 @@ const HandoverDeliveredItems = ({ protocol, projectId, isSigned, onUpdated }) =>
 
   const handleSave = useCallback(async () => {
     if (isSigned || saving) return;
+    const hasEmpty = items.some(i => !i.name?.trim());
+    if (hasEmpty) {
+      toast.error('שם פריט לא יכול להיות ריק');
+      return;
+    }
     try {
       setSaving(true);
       await handoverService.updateProtocol(projectId, protocol.id, {
