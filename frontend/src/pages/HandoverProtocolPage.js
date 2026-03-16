@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { handoverService } from '../services/api';
 import { toast } from 'sonner';
@@ -8,9 +8,9 @@ import axios from 'axios';
 import {
   ArrowRight, Loader2, ChevronDown, ChevronUp, ShieldCheck,
   Home, Users, Gauge, Package, FileText, Scale, PenLine,
-  AlertTriangle, Lock
+  AlertTriangle, Lock, ArrowLeft, CheckCircle2, Bug, Clock,
+  Circle, ChevronLeft
 } from 'lucide-react';
-import { Card } from '../components/ui/card';
 import HandoverPropertyForm from '../components/handover/HandoverPropertyForm';
 import HandoverTenantForm from '../components/handover/HandoverTenantForm';
 import HandoverMeterForm from '../components/handover/HandoverMeterForm';
@@ -32,27 +32,48 @@ const ENGINE_SECTIONS = [
 ];
 
 const STATUS_BADGE = {
-  draft: { label: t('handover', 'draft'), color: 'bg-slate-100 text-slate-600' },
-  in_progress: { label: t('handover', 'inProgress'), color: 'bg-blue-100 text-blue-700' },
-  partially_signed: { label: t('handover', 'partiallySigned'), color: 'bg-amber-100 text-amber-700' },
-  signed: { label: t('handover', 'signed'), color: 'bg-green-100 text-green-700' },
+  draft: { label: t('handover', 'draft'), color: 'bg-white/20 text-white' },
+  in_progress: { label: t('handover', 'inProgress'), color: 'bg-white/20 text-white' },
+  partially_signed: { label: t('handover', 'partiallySigned'), color: 'bg-amber-400/30 text-amber-100' },
+  signed: { label: t('handover', 'signed'), color: 'bg-green-400/30 text-green-100' },
 };
 
-const ProgressRing = ({ checked, total, size = 36, strokeWidth = 3 }) => {
+const ProgressRing = ({ checked, total, size = 36, strokeWidth = 3, textClass = '' }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const pct = total > 0 ? checked / total : 0;
   const offset = circumference * (1 - pct);
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="rotate-[-90deg]">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth={strokeWidth} />
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+          stroke={pct >= 1 ? '#22c55e' : '#a78bfa'} strokeWidth={strokeWidth}
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
+      </svg>
+      <span className={`absolute font-extrabold ${textClass || 'text-[9px] text-slate-600'}`}>
+        {total > 0 ? Math.round(pct * 100) : 0}%
+      </span>
+    </div>
+  );
+};
 
+const ProgressRingLight = ({ checked, total, size = 44, strokeWidth = 3.5 }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = total > 0 ? checked / total : 0;
+  const offset = circumference * (1 - pct);
   return (
     <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="rotate-[-90deg]">
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e2e8f0" strokeWidth={strokeWidth} />
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
-          stroke={pct >= 1 ? '#22c55e' : '#3b82f6'} strokeWidth={strokeWidth}
-          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
+          stroke={pct >= 1 ? '#22c55e' : '#a78bfa'} strokeWidth={strokeWidth}
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
       </svg>
-      <span className="absolute text-[9px] font-bold text-slate-600">
+      <span className="absolute text-[10px] font-bold text-slate-600">
         {total > 0 ? Math.round(pct * 100) : 0}%
       </span>
     </div>
@@ -66,8 +87,10 @@ const HandoverProtocolPage = () => {
 
   const [protocol, setProtocol] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const [expandedEngine, setExpandedEngine] = useState(null);
   const [userRole, setUserRole] = useState(null);
+  const signatureRef = useRef(null);
 
   const loadProtocol = useCallback(async () => {
     try {
@@ -92,24 +115,18 @@ const HandoverProtocolPage = () => {
           headers: { Authorization: `Bearer ${token}` }
         });
         setUserRole(res.data?.my_role || null);
-        if (user?.platform_role === 'super_admin') {
-          setUserRole('super_admin');
-        }
-      } catch {
-        setUserRole(null);
-      }
+        if (user?.platform_role === 'super_admin') setUserRole('super_admin');
+      } catch { setUserRole(null); }
     };
     fetchRole();
   }, [projectId, user]);
 
-  const handleFormUpdated = useCallback(() => {
-    loadProtocol();
-  }, [loadProtocol]);
+  const handleFormUpdated = useCallback(() => { loadProtocol(); }, [loadProtocol]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+        <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
@@ -118,10 +135,8 @@ const HandoverProtocolPage = () => {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
         <p className="text-slate-500">{t('handover', 'loadError')}</p>
-        <button
-          onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover`)}
-          className="text-purple-600 hover:text-purple-700 font-medium"
-        >
+        <button onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover`)}
+          className="text-purple-600 hover:text-purple-700 font-medium">
           {t('handover', 'backToHandover')}
         </button>
       </div>
@@ -139,9 +154,14 @@ const HandoverProtocolPage = () => {
   const checkedItems = templateSections.reduce(
     (sum, s) => sum + (s.items?.filter(i => i.status && i.status !== 'not_checked').length || 0), 0
   );
+  const okItems = templateSections.reduce(
+    (sum, s) => sum + (s.items?.filter(i => i.status === 'ok').length || 0), 0
+  );
   const defectCount = templateSections.reduce(
     (sum, s) => sum + (s.items?.filter(i => i.defect_id).length || 0), 0
   );
+  const remainingItems = totalItems - checkedItems;
+  const pct = totalItems > 0 ? Math.round((checkedItems / totalItems) * 100) : 0;
 
   const sectionStats = (section) => {
     const items = section.items || [];
@@ -151,7 +171,37 @@ const HandoverProtocolPage = () => {
     return { total, checked, defects };
   };
 
-  const visibleEngineSections = ENGINE_SECTIONS.filter(es => es.visibleTypes.includes(protocol.type));
+  const continueSection = (() => {
+    if (pct >= 100) return null;
+    let partial = null;
+    let empty = null;
+    for (const s of templateSections) {
+      const stats = sectionStats(s);
+      if (stats.checked > 0 && stats.checked < stats.total && !partial) partial = s;
+      if (stats.checked === 0 && !empty) empty = s;
+    }
+    return partial || empty || null;
+  })();
+
+  const groupedSections = (() => {
+    const issues = [];
+    const inProgress = [];
+    const notStarted = [];
+    const completed = [];
+    for (const s of templateSections) {
+      const stats = sectionStats(s);
+      if (stats.defects > 0) { issues.push({ section: s, stats }); }
+      else if (stats.checked > 0 && stats.checked < stats.total) { inProgress.push({ section: s, stats }); }
+      else if (stats.checked === 0) { notStarted.push({ section: s, stats }); }
+      else { completed.push({ section: s, stats }); }
+    }
+    return { issues, inProgress, notStarted, completed };
+  })();
+
+  const allSameGroup = [groupedSections.issues, groupedSections.inProgress, groupedSections.notStarted, groupedSections.completed]
+    .filter(g => g.length > 0).length <= 1;
+
+  const visibleEngineSections = ENGINE_SECTIONS.filter(es => es.visibleTypes.includes(protocol.type || 'initial'));
 
   const renderEngineContent = (key) => {
     const formProps = { protocol, projectId, isSigned: isLocked, onUpdated: handleFormUpdated };
@@ -163,35 +213,102 @@ const HandoverProtocolPage = () => {
       case 'notes': return <HandoverGeneralNotes {...formProps} />;
       case 'legal': return <HandoverLegalText {...formProps} />;
       case 'signatures':
-        return <SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} />;
+        return <div ref={signatureRef}><SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} /></div>;
       default: return null;
     }
   };
 
+  const handleSignFAB = () => {
+    setMetadataOpen(true);
+    setExpandedEngine('signatures');
+    setTimeout(() => {
+      signatureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 300);
+  };
+
+  const renderSectionCard = ({ section, stats }, accent) => (
+    <button
+      key={section.section_id}
+      onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${section.section_id}`)}
+      className={`w-full flex items-center gap-3 p-3 rounded-xl border bg-white transition-all active:scale-[0.98] hover:shadow-sm
+        ${accent === 'red' ? 'border-r-[3px] border-r-red-400 border-slate-200' : ''}
+        ${accent === 'blue' ? 'border-r-[3px] border-r-blue-400 border-slate-200' : ''}
+        ${accent === 'green' ? 'border-r-[3px] border-r-green-400 border-slate-200 opacity-70' : ''}
+        ${accent === 'none' ? 'border-slate-200' : ''}
+        ${!accent ? 'border-slate-200' : ''}`}
+    >
+      <ProgressRingLight checked={stats.checked} total={stats.total} />
+      <div className="flex-1 min-w-0 text-right">
+        <h3 className="text-sm font-bold text-slate-800 truncate">{section.name}</h3>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-[11px] text-slate-500">{stats.checked}/{stats.total} פריטים</span>
+          {stats.defects > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-medium flex items-center gap-0.5">
+              <Bug className="w-2.5 h-2.5" />{stats.defects} ליקויים
+            </span>
+          )}
+          {stats.checked === stats.total && stats.total > 0 && stats.defects === 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-600 font-medium">הושלם ✓</span>
+          )}
+        </div>
+      </div>
+      <ChevronLeft className="w-4 h-4 text-slate-300 flex-shrink-0" />
+    </button>
+  );
+
+  const renderGroup = (label, items, accent) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="space-y-1.5">
+        {!allSameGroup && (
+          <h3 className="text-[11px] font-semibold text-slate-500 px-1 mt-3">{label} ({items.length})</h3>
+        )}
+        {items.map(item => renderSectionCard(item, accent))}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
-      <div className={`bg-gradient-to-l ${isLocked ? 'from-green-600 to-green-700' : 'from-purple-600 to-purple-700'} text-white`}>
-        <div className="max-w-lg mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover`)}
-              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            >
+      <div className="bg-gradient-to-bl from-[#1e1b4b] to-[#312e81] text-white">
+        <div className="max-w-lg mx-auto px-4 pt-3 pb-5">
+          <div className="flex items-center gap-3 mb-4">
+            <button onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover`)}
+              className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
               <ArrowRight className="w-5 h-5" />
             </button>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold">{typeLabel}</h1>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
-                  {statusInfo.label}
-                </span>
+                <h1 className="text-xl font-extrabold">{typeLabel}</h1>
+                {isLocked && <Lock className="w-4 h-4 text-indigo-300" />}
               </div>
-              <div className="flex items-center gap-1.5 text-purple-200 text-xs">
-                {protocol.snapshot?.unit_name && <span>{protocol.snapshot.unit_name}</span>}
-                {protocol.snapshot?.building_name && <><span>›</span><span>{protocol.snapshot.building_name}</span></>}
+              <div className="flex items-center gap-1.5 text-indigo-300 text-xs mt-0.5">
+                {protocol.snapshot?.building_name && <span>{protocol.snapshot.building_name}</span>}
+                {protocol.snapshot?.unit_name && <><span>·</span><span>{protocol.snapshot.unit_name}</span></>}
               </div>
             </div>
-            {isLocked && <Lock className="w-5 h-5 text-green-200" />}
+            <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium ${statusInfo.color}`}>
+              {statusInfo.label} — {pct}%
+            </span>
+          </div>
+
+          <div className="flex items-center justify-center mb-4">
+            <ProgressRing checked={checkedItems} total={totalItems} size={64} strokeWidth={5}
+              textClass="text-sm text-white font-extrabold" />
+          </div>
+
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'נבדקו', value: `${checkedItems}/${totalItems}`, color: 'bg-purple-400/20', textColor: 'text-purple-200' },
+              { label: 'תקין', value: okItems, color: 'bg-green-400/20', textColor: 'text-green-300' },
+              { label: 'ליקויים', value: defectCount, color: 'bg-red-400/20', textColor: 'text-red-300' },
+              { label: 'נותרו', value: remainingItems, color: 'bg-slate-400/20', textColor: 'text-slate-300' },
+            ].map(stat => (
+              <div key={stat.label} className={`${stat.color} rounded-xl p-2.5 text-center`}>
+                <div className={`text-lg font-extrabold ${stat.textColor}`}>{stat.value}</div>
+                <div className="text-[10px] text-indigo-300 font-medium">{stat.label}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -210,103 +327,105 @@ const HandoverProtocolPage = () => {
         </div>
       )}
 
-      <div className="max-w-lg mx-auto px-4 mt-4">
-        <Card className="p-4 border border-slate-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium text-slate-500">{t('handover', 'progress')}</div>
-              <div className="text-2xl font-bold text-slate-800">{checkedItems} / {totalItems}</div>
-              <div className="text-xs text-slate-500">{t('handover', 'checkedItems')}</div>
-            </div>
-            <ProgressRing checked={checkedItems} total={totalItems} size={56} strokeWidth={4} />
-          </div>
-          {defectCount > 0 && (
-            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2 text-red-600 text-sm">
-              <AlertTriangle className="w-4 h-4" />
-              <span>{defectCount} {t('handover', 'defects')}</span>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <div className="max-w-lg mx-auto px-4 mt-6 space-y-2">
-        <h2 className="text-sm font-semibold text-slate-500 px-1">{t('handover', 'protocolView')}</h2>
-
-        {visibleEngineSections.map(es => (
-          <Card key={es.key} className="border border-slate-200 overflow-hidden">
-            <button
-              onClick={() => setExpandedEngine(expandedEngine === es.key ? null : es.key)}
-              className="w-full p-3 flex items-center gap-3 text-right hover:bg-slate-50 transition-colors"
-            >
-              <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center flex-shrink-0">
-                <es.icon className="w-4 h-4 text-purple-500" />
+      <div className="max-w-lg mx-auto px-4">
+        {continueSection && (
+          <button
+            onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${continueSection.section_id}`)}
+            className="w-full mt-4 flex items-center gap-3 p-3.5 rounded-xl bg-gradient-to-l from-purple-500 to-purple-600 text-white shadow-lg active:scale-[0.98] transition-all"
+          >
+            <div className="flex-1 text-right min-w-0">
+              <div className="text-[11px] text-purple-200 font-medium">המשך מאיפה שעצרת</div>
+              <div className="text-sm font-bold truncate">
+                {continueSection.name} ({sectionStats(continueSection).checked}/{sectionStats(continueSection).total} נבדקו)
               </div>
-              <span className="flex-1 text-sm font-medium text-slate-700">{es.label}</span>
-              {es.key === 'legal' && protocol?.legal_text_edited === true && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
-                  {t('handover', 'legalTextEdited')}
-                </span>
-              )}
-              {expandedEngine === es.key ? (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
-            {expandedEngine === es.key && (
-              <div className="px-3 pb-3 pt-1 border-t border-slate-100">
-                {renderEngineContent(es.key)}
-              </div>
-            )}
-          </Card>
-        ))}
-      </div>
-
-      <div className="max-w-lg mx-auto px-4 mt-6 space-y-2 pb-8">
-        <h2 className="text-sm font-semibold text-slate-500 px-1">
-          {t('handover', 'items')} ({templateSections.length})
-        </h2>
-
-        {templateSections.length === 0 && (
-          <p className="text-sm text-slate-400 text-center py-6">{t('handover', 'noSections')}</p>
+            </div>
+            <ChevronLeft className="w-5 h-5 text-purple-200" />
+          </button>
         )}
 
-        {templateSections.map(section => {
-          const stats = sectionStats(section);
-          return (
-            <Card
-              key={section.section_id}
-              className={`p-3 border transition-all cursor-pointer active:scale-[0.98] ${
-                isLocked ? 'border-green-200 bg-green-50/30' : 'border-slate-200 hover:border-blue-300'
-              }`}
-              onClick={() => {
-                navigate(
-                  `/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${section.section_id}`
-                );
-              }}
-            >
-              <div className="flex items-center gap-3">
-                <ProgressRing checked={stats.checked} total={stats.total} />
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-slate-800 truncate">{section.name}</h3>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs text-slate-500">
-                      {stats.checked}/{stats.total} {t('handover', 'checkedItems')}
-                    </span>
-                    {stats.defects > 0 && (
-                      <span className="text-xs text-red-600 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />
-                        {stats.defects}
+        <div className="mt-4">
+          <button
+            onClick={() => setMetadataOpen(!metadataOpen)}
+            className="w-full flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+          >
+            <span className="text-base">📋</span>
+            <span className="flex-1 text-right text-sm font-medium text-slate-700 truncate">
+              פרטי פרוטוקול — נכס · דיירים · נוסח משפטי · חתימות
+            </span>
+            {metadataOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+
+          {metadataOpen && (
+            <div className="mt-1.5 space-y-1.5">
+              {visibleEngineSections.map(es => (
+                <div key={es.key} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+                  <button
+                    onClick={() => setExpandedEngine(expandedEngine === es.key ? null : es.key)}
+                    className="w-full p-3 flex items-center gap-3 text-right hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                      <es.icon className="w-4 h-4 text-indigo-500" />
+                    </div>
+                    <span className="flex-1 text-sm font-medium text-slate-700">{es.label}</span>
+                    {es.key === 'legal' && protocol?.legal_text_edited === true && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                        {t('handover', 'legalTextEdited')}
                       </span>
                     )}
-                  </div>
+                    {expandedEngine === es.key
+                      ? <ChevronUp className="w-4 h-4 text-slate-400" />
+                      : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                  </button>
+                  {expandedEngine === es.key && (
+                    <div className="px-3 pb-3 pt-1 border-t border-slate-100">
+                      {renderEngineContent(es.key)}
+                    </div>
+                  )}
                 </div>
-                <ArrowRight className="w-4 h-4 text-slate-300 rotate-180 flex-shrink-0" />
-              </div>
-            </Card>
-          );
-        })}
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5 space-y-1.5 pb-24">
+          <h2 className="text-sm font-semibold text-slate-500 px-1">
+            סקציות ({templateSections.length})
+          </h2>
+
+          {templateSections.length === 0 && (
+            <p className="text-sm text-slate-400 text-center py-6">{t('handover', 'noSections')}</p>
+          )}
+
+          {allSameGroup ? (
+            templateSections.map(section => {
+              const stats = sectionStats(section);
+              return renderSectionCard({ section, stats }, 'none');
+            })
+          ) : (
+            <>
+              {renderGroup('⚠️ דורש תשומת לב', groupedSections.issues, 'red')}
+              {renderGroup('▶ בתהליך', groupedSections.inProgress, 'blue')}
+              {renderGroup('○ טרם התחיל', groupedSections.notStarted, 'none')}
+              {renderGroup('✅ הושלם', groupedSections.completed, 'green')}
+            </>
+          )}
+        </div>
       </div>
+
+      {!isLocked && checkedItems > 0 && (
+        <div className="fixed bottom-0 inset-x-0 bg-white/0 pb-safe z-40 pointer-events-none">
+          <div className="max-w-lg mx-auto px-4 pb-4 pointer-events-auto">
+            <button
+              onClick={handleSignFAB}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-l from-purple-600 to-indigo-600 text-white font-bold text-sm
+                shadow-xl shadow-purple-500/30 flex items-center justify-center gap-2 active:scale-[0.97] transition-all"
+            >
+              <PenLine className="w-4 h-4" />
+              חתום על הפרוטוקול
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
