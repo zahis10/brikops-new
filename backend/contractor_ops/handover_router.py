@@ -1489,9 +1489,14 @@ async def download_protocol_pdf(
     import re as _re
     from fastapi.responses import Response
 
-    await _check_handover_access(user, project_id)
-
     db = get_db()
+    if not _is_super_admin(user):
+        membership = await db.project_memberships.find_one(
+            {"user_id": user["id"], "project_id": project_id}
+        )
+        if not membership or membership.get("role") not in {"owner", "project_manager"}:
+            raise HTTPException(status_code=403, detail="אין הרשאה להורדת PDF")
+
     protocol = await db.handover_protocols.find_one(
         {"id": protocol_id, "project_id": project_id}, {"_id": 0}
     )
@@ -1522,11 +1527,7 @@ async def download_protocol_pdf(
     apt_safe = _re.sub(r'[^\w\-.]', '_', apt).strip('_') or "unit"
     floor_safe = _re.sub(r'[^\w\-.]', '_', floor).strip('_') or "floor"
 
-    protocol_type = protocol.get("type", "initial")
-    if protocol_type == "initial":
-        filename = f"protocol_mesira_{apt_safe}_{floor_safe}.pdf"
-    else:
-        filename = f"protocol_hazaka_{apt_safe}_{floor_safe}.pdf"
+    filename = f"protocol_mesira_{apt_safe}_{floor_safe}.pdf"
 
     return Response(
         content=pdf_bytes,
