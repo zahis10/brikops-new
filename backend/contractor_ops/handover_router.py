@@ -1525,6 +1525,8 @@ async def download_protocol_pdf(
         logger.error(f"[HANDOVER] PDF generation failed for protocol={protocol_id}: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="שגיאה ביצירת PDF, נסו שוב מאוחר יותר")
 
+    from urllib.parse import quote as _quote
+
     snapshot = protocol.get("snapshot", {})
     apt = snapshot.get("unit_name", "") or snapshot.get("unit_number", "") or "unit"
     floor = snapshot.get("floor_name", "") or "floor"
@@ -1532,13 +1534,14 @@ async def download_protocol_pdf(
     floor_safe = _re.sub(r'[^\w\-.]', '_', floor).strip('_') or "floor"
 
     filename = f"protocol_mesira_{apt_safe}_{floor_safe}.pdf"
-    filename = _re.sub(r'[^\w\-.]', '_', filename)
+    safe_filename = _re.sub(r'[^a-zA-Z0-9_\-.]', '_', filename)
+    content_disposition = f"attachment; filename=\"{safe_filename}\"; filename*=UTF-8''{_quote(filename)}"
 
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": content_disposition,
         },
     )
 
