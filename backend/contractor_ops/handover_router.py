@@ -1740,6 +1740,24 @@ async def handover_overview(
     if not available_types:
         available_types = ["initial", "final"]
 
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "org_id": 1})
+    org_id = project.get("org_id") if project else None
+
+    can_manage_legal = False
+    if org_id:
+        if _is_super_admin(user):
+            can_manage_legal = True
+        else:
+            org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "owner_user_id": 1})
+            if org and org.get("owner_user_id") == user["id"]:
+                can_manage_legal = True
+            else:
+                mem = await db.org_memberships.find_one(
+                    {"org_id": org_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
+                )
+                if mem and mem.get("role") in ("org_admin", "owner"):
+                    can_manage_legal = True
+
     return {
         "summary": {
             "total_units": total_units,
@@ -1753,6 +1771,8 @@ async def handover_overview(
             "buildings": all_building_names,
             "types": available_types,
         },
+        "org_id": org_id,
+        "can_manage_legal": can_manage_legal,
     }
 
 

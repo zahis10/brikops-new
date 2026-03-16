@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
 import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
 import UpgradeWizard from '../components/UpgradeWizard';
-import OrgLegalSectionsEditor from '../components/org/OrgLegalSectionsEditor';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
@@ -1756,10 +1755,6 @@ export default function OrgBillingPage() {
           </div>
         )}
       </div>
-
-      {(isSA || isOwner || data?.members?.find(m => m.user_id === user?.id && m.role === 'org_admin')) && (
-        <OrgLegalSectionsEditor orgId={orgId} />
-      )}
 
       {invoiceConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

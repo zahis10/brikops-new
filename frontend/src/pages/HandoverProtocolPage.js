@@ -16,7 +16,6 @@ import HandoverTenantForm from '../components/handover/HandoverTenantForm';
 import HandoverMeterForm from '../components/handover/HandoverMeterForm';
 import HandoverDeliveredItems from '../components/handover/HandoverDeliveredItems';
 import HandoverGeneralNotes from '../components/handover/HandoverGeneralNotes';
-import HandoverLegalText from '../components/handover/HandoverLegalText';
 import HandoverLegalSections from '../components/handover/HandoverLegalSections';
 import SignatureSection from '../components/handover/SignatureSection';
 
@@ -28,7 +27,6 @@ const ENGINE_SECTIONS = [
   { key: 'meters', label: t('handover', 'meters'), icon: Gauge, visibleTypes: ['final'] },
   { key: 'delivered', label: t('handover', 'deliveredItems'), icon: Package, visibleTypes: ['final'] },
   { key: 'notes', label: t('handover', 'generalNotes'), icon: FileText, visibleTypes: ['initial', 'final'] },
-  { key: 'legal', label: t('handover', 'legalText'), icon: Scale, visibleTypes: ['initial', 'final'] },
   { key: 'legal_sections', label: 'נסחים משפטיים', icon: Scale, visibleTypes: ['initial', 'final'], conditional: true },
   { key: 'signatures', label: t('handover', 'signatures'), icon: PenLine, visibleTypes: ['initial', 'final'] },
 ];
@@ -218,7 +216,6 @@ const HandoverProtocolPage = () => {
       case 'meters': return <HandoverMeterForm {...formProps} />;
       case 'delivered': return <HandoverDeliveredItems {...formProps} />;
       case 'notes': return <HandoverGeneralNotes {...formProps} />;
-      case 'legal': return <HandoverLegalText {...formProps} />;
       case 'legal_sections':
         return <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />;
       case 'signatures':
@@ -376,11 +373,6 @@ const HandoverProtocolPage = () => {
                       <es.icon className="w-4 h-4 text-indigo-500" />
                     </div>
                     <span className="flex-1 text-sm font-medium text-slate-700">{es.label}</span>
-                    {es.key === 'legal' && protocol?.legal_text_edited === true && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
-                        {t('handover', 'legalTextEdited')}
-                      </span>
-                    )}
                     {expandedEngine === es.key
                       ? <ChevronUp className="w-4 h-4 text-slate-400" />
                       : <ChevronDown className="w-4 h-4 text-slate-400" />}

@@ -4,11 +4,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { handoverService } from '../services/api';
 import {
   ChevronRight, Loader2, Building2, FileSignature, ChevronDown, ChevronUp,
-  AlertTriangle, X, Filter, Plus
+  AlertTriangle, X, Filter, Plus, Settings
 } from 'lucide-react';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
+import OrgLegalSectionsEditor from '../components/org/OrgLegalSectionsEditor';
 
 const STATUS_COLORS = {
   signed:            { bg: '#dcfce7', border: '#86efac', text: '#166534', icon: '✓',  label: 'נמסר' },
@@ -50,6 +51,7 @@ export default function HandoverOverviewPage() {
   const [popover, setPopover] = useState(null);
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
   const popoverRef = useRef(null);
   const statusDropdownRef = useRef(null);
 
@@ -239,6 +241,16 @@ export default function HandoverOverviewPage() {
         <div className="flex items-center gap-2 mb-4">
           <FileSignature className="w-5 h-5 text-amber-500" />
           <h1 className="text-lg font-bold text-slate-800">מסירות</h1>
+          <div className="flex-1" />
+          {data?.can_manage_legal && data?.org_id && (
+            <button
+              onClick={() => setLegalModalOpen(true)}
+              className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium px-3 py-1.5 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              הגדרות נסחים
+            </button>
+          )}
         </div>
 
         {loading && !data ? (
@@ -490,6 +502,23 @@ export default function HandoverOverviewPage() {
           </div>
         )}
       </div>
+
+      {legalModalOpen && data?.org_id && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setLegalModalOpen(false)} />
+          <div className="absolute inset-x-4 top-[10%] bottom-[10%] sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-2xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" dir="rtl">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+              <h2 className="text-sm font-bold text-slate-800">הגדרות נסחים משפטיים</h2>
+              <button onClick={() => setLegalModalOpen(false)} className="p-1 hover:bg-slate-100 rounded-lg">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1">
+              <OrgLegalSectionsEditor orgId={data.org_id} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Unit popover */}
       {popover && (
