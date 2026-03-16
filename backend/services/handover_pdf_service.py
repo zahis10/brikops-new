@@ -328,7 +328,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
             status = item.get("status", "not_checked")
             item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
             photo_keys = item_photo_map.get(item_key, [])
-            photo_b64s = [images.get(pk) for pk in photo_keys if images.get(pk)]
+            photo_b64s = [images.get(pk) for pk in photo_keys]
 
             defect_id = item.get("defect_id")
             description = item.get("notes", "")

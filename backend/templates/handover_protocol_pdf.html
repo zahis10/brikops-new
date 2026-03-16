@@ -387,7 +387,11 @@ tr:nth-child(even) {
                 <td colspan="5">
                     <div class="photo-container">
                         {% for photo in item.photos %}
+                        {% if photo %}
                         <img src="{{ photo }}" alt="תמונת ליקוי">
+                        {% else %}
+                        <div class="photo-placeholder">תמונה לא זמינה</div>
+                        {% endif %}
                         {% endfor %}
                     </div>
                 </td>
@@ -461,6 +465,8 @@ tr:nth-child(even) {
     {% endif %}
     {% if sig.type == 'canvas' and sig.image_b64 %}
     <img src="{{ sig.image_b64 }}" class="signature-image" alt="חתימה">
+    {% elif sig.type == 'canvas' and not sig.image_b64 %}
+    <div class="photo-placeholder">חתימה לא זמינה</div>
     {% elif sig.type == 'typed' and sig.typed_name %}
     <div class="typed-signature">{{ sig.typed_name }}</div>
     {% endif %}
