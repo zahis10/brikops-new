@@ -74,6 +74,13 @@ function TradeCombobox({ value, onChange, suggestions }) {
 
 const genId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
+const DEFAULT_SIG_LABELS = {
+  manager: 'אני מאשר/ת את חתימתי על פרוטוקול המסירה כמנהל/ת הפרויקט',
+  tenant: 'אני מאשר/ת את חתימתי על פרוטוקול המסירה כרוכש/ת ראשי/ת',
+  tenant_2: 'אני מאשר/ת את חתימתי על פרוטוקול המסירה כרוכש/ת נוסף/ת',
+  contractor_rep: 'אני מאשר/ת את חתימתי על פרוטוקול המסירה כנציג/ת הקבלן',
+};
+
 const AdminHandoverTemplateEditor = () => {
   const { templateId } = useParams();
   const navigate = useNavigate();
@@ -89,7 +96,7 @@ const AdminHandoverTemplateEditor = () => {
   const [activeTab, setActiveTab] = useState('sections');
   const [defaultDeliveredItems, setDefaultDeliveredItems] = useState([]);
   const [defaultPropertyFields, setDefaultPropertyFields] = useState([]);
-  const [signatureLabels, setSignatureLabels] = useState({ manager: '', tenant: '', tenant_2: '', contractor_rep: '' });
+  const [signatureLabels, setSignatureLabels] = useState({ ...DEFAULT_SIG_LABELS });
 
   const allTrades = useMemo(() => {
     const dynamic = new Set(TRADES);
@@ -129,7 +136,7 @@ const AdminHandoverTemplateEditor = () => {
 
       setDefaultDeliveredItems(tpl.default_delivered_items || []);
       setDefaultPropertyFields(tpl.default_property_fields || []);
-      setSignatureLabels({ manager: '', tenant: '', tenant_2: '', contractor_rep: '', ...(tpl.signature_labels || {}) });
+      setSignatureLabels({ ...DEFAULT_SIG_LABELS, ...(tpl.signature_labels || {}) });
 
       const expanded = {};
       const secs = tpl.sections || tpl.stages || [];
