@@ -1,0 +1,221 @@
+=== SECTION 1: Backend template save — new fields ===
+849:    default_delivered_items = None
+850:    default_property_fields = None
+851:    signature_labels = None
+852-
+853-    if tpl_type == "handover":
+854-        import re as _re
+855-
+856:        if "default_delivered_items" in body:
+857:            ddi = body["default_delivered_items"]
+858-            if not isinstance(ddi, list):
+859:                raise HTTPException(status_code=400, detail="default_delivered_items must be a list")
+860-            for i, item in enumerate(ddi):
+861-                if not isinstance(item, dict) or not item.get("name", "").strip():
+862:                    raise HTTPException(status_code=400, detail=f"default_delivered_items[{i}]: name is required")
+863:            default_delivered_items = [
+864-                {"name": it["name"].strip(), "quantity": it.get("quantity"), "notes": it.get("notes", "")}
+865-                for it in ddi
+866-            ]
+867-
+868:        if "default_property_fields" in body:
+869:            dpf = body["default_property_fields"]
+870-            if not isinstance(dpf, list):
+871:                raise HTTPException(status_code=400, detail="default_property_fields must be a list")
+872-            seen_keys = set()
+873-            for i, field in enumerate(dpf):
+874-                if not isinstance(field, dict):
+875:                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: must be an object")
+876-                key = (field.get("key") or "").strip()
+877-                label = (field.get("label") or "").strip()
+878-                if not key:
+879:                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: key is required")
+880-                if not _re.match(r"^[a-z][a-z0-9_]*$", key):
+881:                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: key must be lowercase alphanumeric+underscore (got '{key}')")
+882-                if key in seen_keys:
+883:                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: duplicate key '{key}'")
+884-                seen_keys.add(key)
+885-                if not label:
+886:                    raise HTTPException(status_code=400, detail=f"default_property_fields[{i}]: label is required")
+887:            default_property_fields = [{"key": f["key"].strip(), "label": f["label"].strip()} for f in dpf]
+888-
+889:        if "signature_labels" in body:
+890:            sl = body["signature_labels"]
+891-            if not isinstance(sl, dict):
+892:                raise HTTPException(status_code=400, detail="signature_labels must be an object")
+893-            required_keys = {"manager", "tenant", "contractor_rep"}
+894-            if set(sl.keys()) != required_keys:
+895:                raise HTTPException(status_code=400, detail=f"signature_labels must have exactly keys: {', '.join(sorted(required_keys))}")
+896-            for k in required_keys:
+897-                if not isinstance(sl[k], str):
+898:                    raise HTTPException(status_code=400, detail=f"signature_labels[{k}] must be a string")
+
+=== SECTION 2: create_protocol snapshot ===
+311:HARDCODED_PROPERTY_FIELDS = [
+312-    {"key": "rooms", "label": "חדרים"},
+313-    {"key": "storage_num", "label": "מספר מחסנים"},
+314-    {"key": "parking_num", "label": "מספר חניות"},
+315-    {"key": "model", "label": "דגם"},
+316-    {"key": "area", "label": "שטח דירה"},
+317-    {"key": "balcony_area", "label": "שטח מרפסת"},
+318-    {"key": "parking_area", "label": "שטח חניה"},
+319-    {"key": "laundry_area", "label": "שטח מרפסת שירות"},
+320-]
+321-
+322:HARDCODED_SIGNATURE_LABELS = {
+323-    "manager": "אני מאשר/ת שבדיקת המסירה בוצעה בנוכחותי",
+324-    "tenant": "אני מאשר/ת קבלת הדירה בכפוף לליקויים שצוינו בפרוטוקול",
+325-    "contractor_rep": "אני מאשר/ת נוכחות במסירה ומתחייב/ת לטפל בליקויים",
+326-}
+327-
+328-DEFAULT_DELIVERED_ITEMS = [
+329-    {"name": "מפתח דלת כניסה", "quantity": None, "notes": ""},
+330-    {"name": "מפתחות דלתות פנים", "quantity": None, "notes": ""},
+331-    {"name": "מפתח חדר חשמל", "quantity": None, "notes": ""},
+332-    {"name": "מפתח תיבת דואר", "quantity": None, "notes": ""},
+333-    {"name": "מטף כיבוי אש", "quantity": None, "notes": ""},
+334-    {"name": "חבלי כביסה", "quantity": None, "notes": ""},
+335-    {"name": "מושבי אסלה", "quantity": None, "notes": ""},
+336-    {"name": "מנואלה", "quantity": None, "notes": ""},
+337-    {"name": "מוט + צינור + מזלף", "quantity": None, "notes": ""},
+338-    {"name": "סוללה + מזלף + מתלה", "quantity": None, "notes": ""},
+339-    {"name": "סטופרים לדלתות", "quantity": None, "notes": ""},
+340-    {"name": "תעודות אחריות", "quantity": None, "notes": ""},
+341-    {"name": "מפתח אינטרקום", "quantity": None, "notes": ""},
+342-]
+343-
+344-VALID_ITEM_STATUSES = {"ok", "partial", "defective", "not_relevant", "not_checked"}
+345-
+346-
+347-async def _resolve_handover_template(project_id: str):
+348-    db = get_db()
+349-    project = await db.projects.find_one({"id": project_id}, {"_id": 0, "handover_template_version_id": 1})
+350-    if project and project.get("handover_template_version_id"):
+351-        tpl = await db.qc_templates.find_one(
+352-            {"id": project["handover_template_version_id"], "type": "handover"},
+--
+777:        "property_fields_schema": tpl.get("default_property_fields") or [dict(f) for f in HARDCODED_PROPERTY_FIELDS],
+778-        "property_details": {
+779:            f["key"]: None for f in (tpl.get("default_property_fields") or HARDCODED_PROPERTY_FIELDS)
+780-        },
+781-        "tenants": [
+782-            {"name": "", "id_number": "", "phone": "", "email": "", "id_photo_url": None}
+783-        ],
+
+=== SECTION 3: Template editor tabs ===
+12:  { key: 'delivered', label: 'פריטים שנמסרו', icon: Package },
+13:  { key: 'fields', label: 'שדות פרטי נכס', icon: LayoutList },
+14:  { key: 'signatures', label: 'טקסט חתימות', icon: FileSignature },
+15-];
+16-
+17-const TRADES = [
+18-  'אלומיניום', 'דלתות', 'חשמל', 'טיח', 'ריצוף', 'צביעה',
+19-  'אינסטלציה', 'מטבחים', 'שיש', 'ברזל', 'כללי',
+--
+89:  const [activeTab, setActiveTab] = useState('sections');
+90-  const [defaultDeliveredItems, setDefaultDeliveredItems] = useState([]);
+91-  const [defaultPropertyFields, setDefaultPropertyFields] = useState([]);
+92-  const [signatureLabels, setSignatureLabels] = useState({ manager: '', tenant: '', contractor_rep: '' });
+93-
+94-  const allTrades = useMemo(() => {
+--
+391:          {TABS.map(tab => {
+392:            const Icon = tab.icon;
+393-            return (
+394-              <button
+395:                key={tab.key}
+396:                onClick={() => setActiveTab(tab.key)}
+397-                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors min-h-[40px] ${
+398:                  activeTab === tab.key
+399-                    ? 'bg-purple-600 text-white shadow-sm'
+400-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+401-                }`}
+402-              >
+403-                <Icon className="w-3.5 h-3.5" />
+404:                {tab.label}
+
+=== SECTION 4: Property form dynamic fields ===
+7:const HARDCODED_FIELDS = [
+8-  { key: 'rooms', label: t('handover', 'rooms'), type: 'number' },
+9-  { key: 'storage_num', label: t('handover', 'storageNum'), type: 'number' },
+10-  { key: 'parking_num', label: t('handover', 'parkingNum'), type: 'number' },
+11-  { key: 'model', label: t('handover', 'model'), type: 'text' },
+12-  { key: 'area', label: t('handover', 'area'), type: 'number' },
+13-  { key: 'balcony_area', label: t('handover', 'balconyArea'), type: 'number' },
+14-  { key: 'parking_area', label: t('handover', 'parkingArea'), type: 'number' },
+15-  { key: 'laundry_area', label: t('handover', 'laundryArea'), type: 'number' },
+16-];
+17-
+18-const HandoverPropertyForm = ({ protocol, projectId, isSigned, onUpdated }) => {
+19-  const [values, setValues] = useState({});
+20-  const [saving, setSaving] = useState(false);
+21-
+22-  const fields = useMemo(() => {
+23:    const schema = protocol?.property_fields_schema;
+24-    if (schema && Array.isArray(schema) && schema.length > 0) {
+25-      return schema.map(f => ({ key: f.key, label: f.label, type: 'text' }));
+26-    }
+27:    return HARDCODED_FIELDS;
+28:  }, [protocol?.property_fields_schema]);
+29-
+30-  useEffect(() => {
+31-    setValues(protocol?.property_details || {});
+32-  }, [protocol]);
+33-
+34-  const handleSave = useCallback(async () => {
+35-    if (isSigned || saving) return;
+36-    try {
+
+=== SECTION 5: Signature labels ===
+32:  const sigLabels = protocol?.signature_labels || {};
+33-  const signatures = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
+34-    ? protocol.signatures
+35-    : {};
+36-
+37-  const unsignedLegalSections = (protocol?.legal_sections || []).filter(
+38-    s => s.requires_signature && !s.signed_at
+39-  );
+40-  const hasLegalGate = unsignedLegalSections.length > 0;
+41-
+42-  useEffect(() => {
+43-    const sigs = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
+44-      ? protocol.signatures
+45-      : {};
+46-    const loadImages = async () => {
+47-      const imgs = {};
+--
+76:      await handoverService.updateProtocol(projectId, protocol.id, { signature_labels: updated });
+77-      onUpdated?.();
+78-    } catch {
+79-      toast.error(t('handover', 'updateError'));
+80-    } finally {
+81-      setSavingLabel(null);
+82-    }
+83-  };
+84-
+85-  const canSign = (roleKey) => {
+86-    if (isLocked) return false;
+87-    if (hasLegalGate) return false;
+88-    if (signatures[roleKey]) return false;
+
+=== SECTION 6: Key validation ===
+346:        phone_conditions = [{'phone_e164': {'$regex': q_escaped}}]
+347-        if digits.startswith('0') and 5 <= len(digits) <= 10:
+348:            phone_conditions.append({'phone_e164': {'$regex': re.escape('+972' + digits[1:])}})
+349-        query['$or'] = [
+350:            {'name': {'$regex': q_escaped, '$options': 'i'}},
+351-            *phone_conditions,
+352:            {'email': {'$regex': q_escaped, '$options': 'i'}},
+353-            {'id': q_stripped},
+354-        ]
+355-
+356-    t0 = _t.perf_counter()
+357-    total = await db.users.count_documents(query)
+358-    users = await db.users.find(query, {'_id': 0, 'password_hash': 0}).sort('created_at', -1).skip(skip).limit(limit).to_list(limit)
+359-    db_list_ms = round((_t.perf_counter() - t0) * 1000, 1)
+360-
+361-    user_ids = [u['id'] for u in users]
+362-
+--
+686:        query_filter["name"] = {"$regex": search.strip(), "$options": "i"}
+687-

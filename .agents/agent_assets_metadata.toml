@@ -48,3 +48,9 @@ id = "q-CamLfzP94ALKtrO84rm"
 uri = "file://review-90.txt"
 type = "text"
 title = "review-90.txt — Task #90 Code Review"
+
+[[outputs]]
+id = "Iz3DefZA_5y3voOF4qkeY"
+uri = "file://review-89.txt"
+type = "text"
+title = "review-89.txt — Task #89 Code Review"
