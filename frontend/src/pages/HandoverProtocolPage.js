@@ -228,6 +228,17 @@ const HandoverProtocolPage = () => {
     return `protocol_mesira_${type}_${apt}${floor ? '_' + floor : ''}.pdf`;
   };
 
+  const downloadBlobAsFile = (blob, filename) => {
+    const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(url);
+    a.remove();
+  };
+
   const handlePdfError = (err) => {
     console.error('PDF error:', err);
     if (err?.response?.status === 400) {
@@ -245,15 +256,7 @@ const HandoverProtocolPage = () => {
     setPdfLoading(true);
     try {
       const blob = await handoverService.getPdfBlob(projectId, protocolId);
-      const filename = buildPdfFilename();
-      const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(url);
-      a.remove();
+      downloadBlobAsFile(blob, buildPdfFilename());
     } catch (err) {
       handlePdfError(err);
     } finally {
@@ -276,14 +279,7 @@ const HandoverProtocolPage = () => {
           files: [file],
         });
       } else {
-        const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        a.remove();
+        downloadBlobAsFile(blob, filename);
       }
     } catch (err) {
       if (err?.name !== 'AbortError') {
@@ -410,7 +406,7 @@ const HandoverProtocolPage = () => {
                 className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
               >
                 {pdfLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-                PDF
+                הורד PDF
               </button>
             </div>
           </div>
