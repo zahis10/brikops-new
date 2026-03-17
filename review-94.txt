@@ -1,0 +1,104 @@
+=== SECTION 1: _calculate_completion ===
+416:SIGNING_COMPLETION_THRESHOLD = 0.90
+417-
+418-
+419:def _calculate_completion(protocol):
+420-    total = 0
+421-    checked = 0
+422-    for section in protocol.get("sections", []):
+423-        for item in section.get("items", []):
+424-            total += 1
+425-            status = item.get("status") or ""
+426-            if status and status != "not_checked":
+427-                checked += 1
+428-    pct = checked / total if total > 0 else 1.0
+429-    return (checked, total, pct)
+430-
+431-SIGNATURE_ROLE_LABELS = {
+432-    "manager": "מנהל פרויקט / מפקח",
+433-    "tenant": "רוכש/ת ראשי/ת",
+434-    "tenant_2": "רוכש/ת נוסף/ת",
+435-    "contractor_rep": "נציג קבלן",
+436-}
+437-
+438-
+439-def _check_not_locked(protocol):
+--
+1347:    checked, total, pct = _calculate_completion(protocol)
+1348:    if pct < SIGNING_COMPLETION_THRESHOLD:
+1349-        raise HTTPException(
+1350-            status_code=400,
+1351-            detail=f"יש להשלים לפחות 90% מסעיפי הבדיקה לפני חתימה (הושלמו {checked} מתוך {total})"
+
+=== SECTION 2: sign_role gate ===
+1350-            status_code=400,
+1351:            detail=f"יש להשלים לפחות 90% מסעיפי הבדיקה לפני חתימה (הושלמו {checked} מתוך {total})"
+1352-        )
+1353-
+1354-    existing_sigs = _normalize_signatures(protocol)
+1355-    if role in existing_sigs and existing_sigs[role]:
+1356-        raise HTTPException(status_code=409, detail="חתימה כבר קיימת לתפקיד זה")
+1357-
+1358-    if signature_type not in ("canvas", "typed"):
+1359-        raise HTTPException(status_code=400, detail="סוג חתימה לא חוקי — canvas או typed")
+1360-
+1361-    signer_name = signer_name.strip()
+
+=== SECTION 3: Frontend completion calc ===
+24:const SIGNING_COMPLETION_THRESHOLD = 0.90;
+25-
+26:function calculateCompletion(protocol) {
+27-  let total = 0;
+28-  let checked = 0;
+29-  for (const section of (protocol?.sections || [])) {
+30-    for (const item of (section.items || [])) {
+31-      total += 1;
+32-      const status = item.status || '';
+33-      if (status && status !== 'not_checked') {
+34-        checked += 1;
+35-      }
+36-    }
+37-  }
+38-  const pct = total > 0 ? checked / total : 1.0;
+39-  return { checked, total, pct };
+40-}
+41-
+--
+62:  const { checked: completionChecked, total: completionTotal, pct: completionPct } = calculateCompletion(protocol);
+63:  const hasCompletionGate = completionPct < SIGNING_COMPLETION_THRESHOLD;
+64:  const itemsNeeded = hasCompletionGate ? Math.ceil(completionTotal * SIGNING_COMPLETION_THRESHOLD) - completionChecked : 0;
+65-
+66-  useEffect(() => {
+67-    const sigs = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
+
+=== SECTION 4: Signatures out of accordion ===
+20:import SignatureSection from '../components/handover/SignatureSection';
+21-
+22-const API = process.env.REACT_APP_BACKEND_URL || '';
+23-
+24:const ENGINE_SECTIONS = [
+25-  { key: 'property', label: t('handover', 'propertyDetails'), icon: Home, visibleTypes: ['initial', 'final'] },
+26-  { key: 'tenants', label: t('handover', 'tenants'), icon: Users, visibleTypes: ['initial', 'final'] },
+27-  { key: 'meters', label: t('handover', 'meters'), icon: Gauge, visibleTypes: ['final'] },
+28-  { key: 'delivered', label: t('handover', 'deliveredItems'), icon: Package, visibleTypes: ['final'] },
+29-  { key: 'notes', label: t('handover', 'generalNotes'), icon: FileText, visibleTypes: ['initial', 'final'] },
+--
+93:  const signatureRef = useRef(null);
+94-
+95-  const loadProtocol = useCallback(async () => {
+96-    try {
+97-      setLoading(true);
+98-      const data = await handoverService.getProtocol(projectId, protocolId);
+--
+205:  const visibleEngineSections = ENGINE_SECTIONS.filter(es => {
+206-    if (!es.visibleTypes.includes(protocol.type || 'initial')) return false;
+207-    if (es.conditional && es.key === 'legal_sections' && !hasLegalSections) return false;
+208-    return true;
+209-  });
+210-
+--
+245:  const handleSignFAB = () => {
+246:    signatureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+247-  };
+248-
+249-  const renderSectionCard = ({ section, stats }, accent) => (
