@@ -27,7 +27,6 @@ const ENGINE_SECTIONS = [
   { key: 'meters', label: t('handover', 'meters'), icon: Gauge, visibleTypes: ['final'] },
   { key: 'delivered', label: t('handover', 'deliveredItems'), icon: Package, visibleTypes: ['final'] },
   { key: 'notes', label: t('handover', 'generalNotes'), icon: FileText, visibleTypes: ['initial', 'final'] },
-  { key: 'legal_sections', label: 'נסחים משפטיים', icon: Scale, visibleTypes: ['initial', 'final'], conditional: true },
 ];
 
 const STATUS_BADGE = {
@@ -204,7 +203,6 @@ const HandoverProtocolPage = () => {
   const hasLegalSections = (protocol?.legal_sections || []).length > 0;
   const visibleEngineSections = ENGINE_SECTIONS.filter(es => {
     if (!es.visibleTypes.includes(protocol.type || 'initial')) return false;
-    if (es.conditional && es.key === 'legal_sections' && !hasLegalSections) return false;
     return true;
   });
 
@@ -216,8 +214,6 @@ const HandoverProtocolPage = () => {
       case 'meters': return <HandoverMeterForm {...formProps} />;
       case 'delivered': return <HandoverDeliveredItems {...formProps} />;
       case 'notes': return <HandoverGeneralNotes {...formProps} />;
-      case 'legal_sections':
-        return <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />;
       default: return null;
     }
   };
@@ -378,7 +374,7 @@ const HandoverProtocolPage = () => {
           >
             <span className="text-base">📋</span>
             <span className="flex-1 text-right text-sm font-medium text-slate-700 truncate">
-              פרטי פרוטוקול — נכס · דיירים · נסחים
+              פרטי פרוטוקול — נכס · דיירים
             </span>
             {metadataOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
@@ -434,7 +430,19 @@ const HandoverProtocolPage = () => {
           )}
         </div>
 
-        <div ref={signatureRef} className="mt-6 pb-24">
+        <div ref={signatureRef} className="mt-6 pb-24 space-y-4">
+          {hasLegalSections && (
+            <div className="border border-slate-200 rounded-xl bg-white p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                  <Scale className="w-4 h-4 text-indigo-500" />
+                </div>
+                <h2 className="text-sm font-bold text-slate-700">נסחים משפטיים</h2>
+              </div>
+              <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />
+            </div>
+          )}
+
           <div className="border border-slate-200 rounded-xl bg-white p-4">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
