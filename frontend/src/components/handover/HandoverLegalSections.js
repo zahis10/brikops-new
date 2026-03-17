@@ -13,9 +13,9 @@ const ROLE_LABELS = {
 };
 
 const ALLOWED_ROLES = {
-  manager: ['project_manager', 'owner', 'super_admin'],
-  tenant: ['project_manager', 'owner', 'contractor', 'super_admin'],
-  tenant_2: ['project_manager', 'owner', 'contractor', 'super_admin'],
+  manager: ['project_manager', 'owner', 'super_admin', 'management_team'],
+  tenant: ['project_manager', 'owner', 'contractor', 'super_admin', 'management_team'],
+  tenant_2: ['project_manager', 'owner', 'contractor', 'super_admin', 'management_team'],
   contractor_rep: ['contractor', 'super_admin'],
 };
 
