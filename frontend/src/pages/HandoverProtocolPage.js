@@ -89,6 +89,8 @@ const HandoverProtocolPage = () => {
   const [expandedEngine, setExpandedEngine] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [legalOpen, setLegalOpen] = useState(true);
+  const [signaturesOpen, setSignaturesOpen] = useState(true);
   const signatureRef = useRef(null);
 
   const loadProtocol = useCallback(async () => {
@@ -432,25 +434,41 @@ const HandoverProtocolPage = () => {
 
         <div ref={signatureRef} className="mt-6 pb-24 space-y-4">
           {hasLegalSections && (
-            <div className="border border-slate-200 rounded-xl bg-white p-4">
-              <div className="flex items-center gap-2 mb-3">
+            <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+              <button
+                onClick={() => setLegalOpen(!legalOpen)}
+                className="w-full p-3 flex items-center gap-3 text-right hover:bg-slate-50 transition-colors"
+              >
                 <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
                   <Scale className="w-4 h-4 text-indigo-500" />
                 </div>
-                <h2 className="text-sm font-bold text-slate-700">נסחים משפטיים</h2>
-              </div>
-              <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />
+                <span className="flex-1 text-sm font-bold text-slate-700">נסחים משפטיים ({(protocol?.legal_sections || []).length})</span>
+                {legalOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+              </button>
+              {legalOpen && (
+                <div className="px-4 pb-4 pt-1 border-t border-slate-100">
+                  <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />
+                </div>
+              )}
             </div>
           )}
 
-          <div className="border border-slate-200 rounded-xl bg-white p-4">
-            <div className="flex items-center gap-2 mb-3">
+          <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+            <button
+              onClick={() => setSignaturesOpen(!signaturesOpen)}
+              className="w-full p-3 flex items-center gap-3 text-right hover:bg-slate-50 transition-colors"
+            >
               <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
                 <PenLine className="w-4 h-4 text-indigo-500" />
               </div>
-              <h2 className="text-sm font-bold text-slate-700">{t('handover', 'signatures')}</h2>
-            </div>
-            <SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} />
+              <span className="flex-1 text-sm font-bold text-slate-700">חתימות פרוטוקול</span>
+              {signaturesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </button>
+            {signaturesOpen && (
+              <div className="px-4 pb-4 pt-1 border-t border-slate-100">
+                <SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} />
+              </div>
+            )}
           </div>
         </div>
       </div>
