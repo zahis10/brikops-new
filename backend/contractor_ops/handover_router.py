@@ -1436,7 +1436,7 @@ async def delete_signature(
     user_role = await _get_user_project_role(user, project_id)
     if not user_role:
         raise HTTPException(status_code=403, detail="אין לך גישה לפרויקט זה")
-    if user_role not in ("project_manager", "owner", "super_admin"):
+    if user_role not in ("project_manager", "owner", "super_admin", "management_team"):
         raise HTTPException(status_code=403, detail="רק מנהל פרויקט יכול למחוק חתימות")
 
     protocol = await _get_protocol_or_404(protocol_id, project_id)
@@ -1520,7 +1520,7 @@ async def download_protocol_pdf(
         membership = await db.project_memberships.find_one(
             {"user_id": user["id"], "project_id": project_id}
         )
-        if not membership or membership.get("role") not in {"owner", "project_manager"}:
+        if not membership or membership.get("role") not in {"owner", "project_manager", "management_team"}:
             raise HTTPException(status_code=403, detail="אין הרשאה להורדת PDF")
 
     protocol = await db.handover_protocols.find_one(
