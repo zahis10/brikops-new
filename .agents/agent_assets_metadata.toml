@@ -66,3 +66,9 @@ id = "UorJ02-eRdhHQp2jPMMiJ"
 uri = "file:///tmp/review-94.txt"
 type = "text"
 title = "review-94.txt"
+
+[[outputs]]
+id = "LrcoviA7LHuZmOjnTSw3w"
+uri = "file://review-94.txt"
+type = "text"
+title = "review-94.txt"
