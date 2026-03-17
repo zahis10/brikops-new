@@ -1314,13 +1314,13 @@ def _check_signature_role_auth(user_role: str, signature_role: str):
     if user_role == "super_admin":
         return
     if signature_role == "manager":
-        if user_role not in ("project_manager", "owner"):
+        if user_role not in ("project_manager", "owner", "management_team"):
             raise HTTPException(status_code=403, detail="רק מנהל פרויקט או מפקח יכול לחתום בתפקיד זה")
     elif signature_role == "contractor_rep":
         if user_role != "contractor":
             raise HTTPException(status_code=403, detail="רק נציג קבלן יכול לחתום בתפקיד זה")
     elif signature_role in ("tenant", "tenant_2"):
-        if user_role not in ("project_manager", "owner", "contractor"):
+        if user_role not in ("project_manager", "owner", "contractor", "management_team"):
             raise HTTPException(status_code=403, detail="רק מנהל פרויקט או נציג קבלן יכול להחתים דייר")
 
 

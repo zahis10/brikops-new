@@ -9,7 +9,7 @@ import {
   ArrowRight, Loader2, ChevronDown, ChevronUp, ShieldCheck,
   Home, Users, Gauge, Package, FileText, Scale, PenLine,
   AlertTriangle, Lock, ArrowLeft, CheckCircle2, Bug, Clock,
-  Circle, ChevronLeft, FileDown
+  Circle, ChevronLeft, FileDown, Share2
 } from 'lucide-react';
 import HandoverPropertyForm from '../components/handover/HandoverPropertyForm';
 import HandoverTenantForm from '../components/handover/HandoverTenantForm';
@@ -89,6 +89,7 @@ const HandoverProtocolPage = () => {
   const [expandedEngine, setExpandedEngine] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
   const [legalOpen, setLegalOpen] = useState(true);
   const [signaturesOpen, setSignaturesOpen] = useState(true);
   const signatureRef = useRef(null);
@@ -220,23 +221,76 @@ const HandoverProtocolPage = () => {
     }
   };
 
+  const buildPdfFilename = () => {
+    const type = protocol.type || 'initial';
+    const apt = (protocol.snapshot?.unit_name || '').replace(/[^\w\u0590-\u05FF]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || protocolId.slice(0, 8);
+    const floor = (protocol.snapshot?.floor_name || '').replace(/[^\w\u0590-\u05FF]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    return `protocol_mesira_${type}_${apt}${floor ? '_' + floor : ''}.pdf`;
+  };
+
+  const handlePdfError = (err) => {
+    console.error('PDF error:', err);
+    if (err?.response?.status === 400) {
+      toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
+    } else if (err?.response?.status === 504) {
+      toast.error('יצירת ה-PDF לקחה יותר מדי זמן, נסו שוב');
+    } else if (err?.response?.status >= 500) {
+      toast.error('שגיאה ביצירת PDF, נסו שוב');
+    } else {
+      toast.error('שגיאת רשת');
+    }
+  };
+
   const handleDownloadPdf = async () => {
     setPdfLoading(true);
     try {
-      await handoverService.downloadPdf(projectId, protocolId);
+      const blob = await handoverService.getPdfBlob(projectId, protocolId);
+      const filename = buildPdfFilename();
+      const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
     } catch (err) {
-      console.error('PDF download error:', err);
-      if (err?.response?.status === 400) {
-        toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
-      } else if (err?.response?.status === 504) {
-        toast.error('יצירת ה-PDF לקחה יותר מדי זמן, נסו שוב');
-      } else if (err?.response?.status >= 500) {
-        toast.error('שגיאה ביצירת PDF, נסו שוב');
-      } else {
-        toast.error('שגיאת רשת');
-      }
+      handlePdfError(err);
     } finally {
       setPdfLoading(false);
+    }
+  };
+
+  const handleSharePdf = async () => {
+    setShareLoading(true);
+    try {
+      const blob = await handoverService.getPdfBlob(projectId, protocolId);
+      const filename = buildPdfFilename();
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      if (navigator.canShare?.({ files: [file] })) {
+        const projectName = protocol.snapshot?.project_name || '';
+        const apartment = protocol.snapshot?.unit_name || '';
+        await navigator.share({
+          title: 'פרוטוקול מסירה',
+          text: `פרוטוקול מסירה — ${projectName}${apartment ? ', דירה ' + apartment : ''}`,
+          files: [file],
+        });
+      } else {
+        const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        a.remove();
+      }
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        handlePdfError(err);
+      }
+    } finally {
+      setShareLoading(false);
     }
   };
 
@@ -341,14 +395,24 @@ const HandoverProtocolPage = () => {
                 {t('handover', 'signedOn')} {new Date(protocol.signed_at).toLocaleDateString('he-IL')}
               </span>
             )}
-            <button
-              onClick={handleDownloadPdf}
-              disabled={pdfLoading}
-              className="mr-auto flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
-            >
-              {pdfLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-              הורד PDF
-            </button>
+            <div className="mr-auto flex items-center gap-1.5">
+              <button
+                onClick={handleSharePdf}
+                disabled={shareLoading}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
+              >
+                {shareLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
+                שתף
+              </button>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={pdfLoading}
+                className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
+              >
+                {pdfLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+                PDF
+              </button>
+            </div>
           </div>
         </div>
       )}

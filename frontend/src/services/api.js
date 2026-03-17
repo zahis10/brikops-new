@@ -1254,23 +1254,24 @@ export const handoverService = {
     );
     return response.data;
   },
-  async downloadPdf(projectId, protocolId) {
+  async getPdfBlob(projectId, protocolId) {
     const response = await axios.get(
       `${API}/projects/${projectId}/handover/protocols/${protocolId}/pdf`,
       { headers: getAuthHeader(), responseType: 'blob' }
     );
-    const disposition = response.headers['content-disposition'] || '';
-    const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? match[1] : `protocol_${protocolId.slice(0, 8)}.pdf`;
-    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    return response.data;
+  },
+  async downloadPdf(projectId, protocolId) {
+    const blob = await this.getPdfBlob(projectId, protocolId);
+    const url = window.URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = `protocol_${protocolId.slice(0, 8)}.pdf`;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
     a.remove();
-    return { success: true, filename };
+    return { success: true };
   },
 };
 
