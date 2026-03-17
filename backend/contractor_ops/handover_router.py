@@ -821,6 +821,37 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
     }
 
     try:
+        _match_building = building.get("name", "")
+        _match_floor = str(floor.get("name", ""))
+        _match_apt = str(unit.get("name", unit.get("unit_no", "")))
+        _tenant_prefill = await db.unit_tenant_data.find_one({
+            "project_id": project_id,
+            "building_name": _match_building,
+            "floor": _match_floor,
+            "apartment_number": _match_apt,
+        })
+        if _tenant_prefill and _tenant_prefill.get("tenant", {}).get("name"):
+            _prefill_tenants = [{
+                "name": _tenant_prefill["tenant"]["name"],
+                "id_number": _tenant_prefill["tenant"].get("id_number", ""),
+                "phone": _tenant_prefill["tenant"].get("phone", ""),
+                "email": _tenant_prefill["tenant"].get("email", ""),
+                "id_photo_url": None,
+            }]
+            _t2 = _tenant_prefill.get("tenant_2")
+            if _t2 and _t2.get("name"):
+                _prefill_tenants.append({
+                    "name": _t2["name"],
+                    "id_number": _t2.get("id_number", ""),
+                    "phone": _t2.get("phone", ""),
+                    "email": _t2.get("email", ""),
+                    "id_photo_url": None,
+                })
+            protocol_doc["tenants"] = _prefill_tenants
+    except Exception:
+        pass
+
+    try:
         await db.handover_protocols.insert_one(protocol_doc)
     except Exception as e:
         if "duplicate key" in str(e).lower() or "E11000" in str(e):

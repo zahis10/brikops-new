@@ -1275,6 +1275,41 @@ export const handoverService = {
   },
 };
 
+export const g4ImportService = {
+  async downloadTemplate(projectId) {
+    const response = await axios.get(
+      `${API}/projects/${projectId}/import/g4/template`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'g4_template.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  },
+  async preview(projectId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.post(
+      `${API}/projects/${projectId}/import/g4/preview`,
+      formData,
+      { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+  async execute(projectId, rows) {
+    const response = await axios.post(
+      `${API}/projects/${projectId}/import/g4/execute`,
+      { rows },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+};
+
 export const exportService = {
   async exportDefects({ scope, unit_id, building_id, filters, format = 'excel' }) {
     const response = await axios.post(

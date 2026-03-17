@@ -4,12 +4,13 @@ import { useAuth } from '../contexts/AuthContext';
 import { handoverService } from '../services/api';
 import {
   ChevronRight, Loader2, Building2, FileSignature, ChevronDown, ChevronUp,
-  AlertTriangle, X, Filter, Plus, Settings
+  AlertTriangle, X, Filter, Plus, Settings, FileSpreadsheet
 } from 'lucide-react';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
 import OrgLegalSectionsEditor from '../components/org/OrgLegalSectionsEditor';
+import G4ImportModal from '../components/handover/G4ImportModal';
 
 const STATUS_COLORS = {
   signed:            { bg: '#dcfce7', border: '#86efac', text: '#166534', icon: '✓',  label: 'נמסר' },
@@ -52,6 +53,7 @@ export default function HandoverOverviewPage() {
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const popoverRef = useRef(null);
   const statusDropdownRef = useRef(null);
 
@@ -242,6 +244,15 @@ export default function HandoverOverviewPage() {
           <FileSignature className="w-5 h-5 text-amber-500" />
           <h1 className="text-lg font-bold text-slate-800">מסירות</h1>
           <div className="flex-1" />
+          {data?.can_manage_legal && (
+            <button
+              onClick={() => setImportModalOpen(true)}
+              className="flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-800 font-medium px-3 py-1.5 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              ייבוא רוכשים
+            </button>
+          )}
           {data?.can_manage_legal && data?.org_id && (
             <button
               onClick={() => setLegalModalOpen(true)}
@@ -502,6 +513,13 @@ export default function HandoverOverviewPage() {
           </div>
         )}
       </div>
+
+      {importModalOpen && (
+        <G4ImportModal
+          projectId={projectId}
+          onClose={() => setImportModalOpen(false)}
+        />
+      )}
 
       {legalModalOpen && data?.org_id && (
         <div className="fixed inset-0 z-50">

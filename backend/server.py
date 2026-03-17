@@ -308,6 +308,9 @@ from contractor_ops.router import require_super_admin as _rsa
 set_handover_deps(_rsa)
 app.include_router(handover_router)
 
+from contractor_ops.import_router import router as import_router
+app.include_router(import_router)
+
 from contractor_ops.invites_router import router as invites_router
 app.include_router(invites_router)
 
@@ -413,6 +416,10 @@ async def create_indexes():
                 "status": {"$in": ["open", "in_progress", "assigned", "waiting_for_contractor", "rejected"]},
             },
             name="handover_item_active_defect_unique",
+        )
+        await db.unit_tenant_data.create_index(
+            [("project_id", 1), ("building_name", 1), ("floor", 1), ("apartment_number", 1)],
+            unique=True,
         )
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
