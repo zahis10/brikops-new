@@ -60,3 +60,9 @@ id = "BXSLrEQenp0pS-npwJXgT"
 uri = "file://review-92.txt"
 type = "text"
 title = "Review Task #92 — PDF Generation Code Review"
+
+[[outputs]]
+id = "UorJ02-eRdhHQp2jPMMiJ"
+uri = "file:///tmp/review-94.txt"
+type = "text"
+title = "review-94.txt"
