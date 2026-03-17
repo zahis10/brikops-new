@@ -174,6 +174,17 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
     if item_docs:
         await db.invoice_line_items.insert_many(item_docs)
 
+    period_end = _end_of_month_utc(year, month).isoformat()
+    await db.subscriptions.update_one(
+        {'org_id': org_id},
+        {'$set': {
+            'status': 'active',
+            'paid_until': period_end,
+            'updated_at': ts,
+        }},
+        upsert=True,
+    )
+
     await db.audit_events.insert_one({
         'id': str(uuid.uuid4()),
         'entity_type': 'invoice',
@@ -185,6 +196,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
             'period_ym': period_ym,
             'total_amount': preview['total_amount'],
             'line_item_count': len(item_docs),
+            'subscription_paid_until': period_end,
         },
         'created_at': ts,
     })
@@ -194,7 +206,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
         doc.pop('_id', None)
     invoice_doc['line_items'] = item_docs
 
-    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={preview['total_amount']}")
+    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={preview['total_amount']}, paid_until={period_end}")
     return invoice_doc
 
 
