@@ -174,7 +174,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
     if item_docs:
         await db.invoice_line_items.insert_many(item_docs)
 
-    period_end = _end_of_month_utc(year, month).isoformat()
+    period_end = (_end_of_month_utc(year, month) + timedelta(days=7)).isoformat()
     await db.subscriptions.update_one(
         {'org_id': org_id},
         {'$set': {

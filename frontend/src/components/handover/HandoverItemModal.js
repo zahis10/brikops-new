@@ -47,6 +47,8 @@ const HandoverItemModal = ({
   const [errors, setErrors] = useState({});
   const [failedPhotoIndexes, setFailedPhotoIndexes] = useState(new Set());
   const [savedDefectId, setSavedDefectId] = useState(null);
+  const [existingPhotos, setExistingPhotos] = useState([]);
+  const [loadingExisting, setLoadingExisting] = useState(false);
 
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -62,6 +64,8 @@ const HandoverItemModal = ({
     setErrors({});
     setFailedPhotoIndexes(new Set());
     setSavedDefectId(null);
+    setExistingPhotos([]);
+    setLoadingExisting(false);
   }, []);
 
   const handleImageAdd = useCallback(async (e) => {
@@ -94,6 +98,23 @@ const HandoverItemModal = ({
   useEffect(() => {
     if (item && open) {
       resetForm(item);
+      if (item.defect_id) {
+        setLoadingExisting(true);
+        taskService.getUpdates(item.defect_id)
+          .then(updates => {
+            const imgs = (updates || []).filter(u => {
+              if (u.update_type !== 'attachment') return false;
+              const ct = (u.content_type || '').toLowerCase();
+              const fn = (u.file_name || u.content || '').toLowerCase();
+              if (fn.endsWith('.bin') || fn.endsWith('.txt')) return false;
+              if (ct && !ct.startsWith('image/')) return false;
+              return !!u.attachment_url;
+            });
+            setExistingPhotos(imgs);
+          })
+          .catch(() => setExistingPhotos([]))
+          .finally(() => setLoadingExisting(false));
+      }
     }
   }, [item, open, resetForm]);
 
@@ -407,9 +428,29 @@ const HandoverItemModal = ({
                 </div>
               )}
 
+              {(existingPhotos.length > 0 || loadingExisting) && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-500">תמונות קיימות</label>
+                  {loadingExisting ? (
+                    <div className="flex items-center gap-2 py-2">
+                      <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />
+                      <span className="text-xs text-slate-400">טוען תמונות...</span>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {existingPhotos.map((att, i) => (
+                        <div key={att.id || i} className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-slate-200">
+                          <img src={att.attachment_url} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-slate-700">תמונות</label>
+                  <label className="text-sm font-medium text-slate-700">{existingPhotos.length > 0 ? 'תמונות חדשות' : 'תמונות'}</label>
                   <span className="text-[10px] text-slate-400">
                     {photos.length > 0 ? `${photos.length} תמונות` : ''}
                     {status === 'defective' ? ' (חובה)' : ' (אופציונלי)'}
