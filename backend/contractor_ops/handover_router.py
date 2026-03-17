@@ -413,6 +413,21 @@ VALID_SIGNATURE_ROLES = ("manager", "tenant", "tenant_2", "contractor_rep")
 REQUIRED_SIGNATURE_ROLES = ("manager", "tenant")
 OPTIONAL_SIGNATURE_ROLES = ("tenant_2", "contractor_rep")
 
+SIGNING_COMPLETION_THRESHOLD = 0.90
+
+
+def _calculate_completion(protocol):
+    total = 0
+    checked = 0
+    for section in protocol.get("sections", []):
+        for item in section.get("items", []):
+            total += 1
+            status = item.get("status") or ""
+            if status and status != "not_checked":
+                checked += 1
+    pct = checked / total if total > 0 else 1.0
+    return (checked, total, pct)
+
 SIGNATURE_ROLE_LABELS = {
     "manager": "מנהל פרויקט / מפקח",
     "tenant": "רוכש/ת ראשי/ת",
@@ -1328,6 +1343,13 @@ async def sign_role(
 
     protocol = await _get_protocol_or_404(protocol_id, project_id)
     _check_not_locked(protocol)
+
+    checked, total, pct = _calculate_completion(protocol)
+    if pct < SIGNING_COMPLETION_THRESHOLD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"יש להשלים לפחות 90% מסעיפי הבדיקה לפני חתימה (הושלמו {checked} מתוך {total})"
+        )
 
     existing_sigs = _normalize_signatures(protocol)
     if role in existing_sigs and existing_sigs[role]:

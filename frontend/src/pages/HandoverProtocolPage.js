@@ -28,7 +28,6 @@ const ENGINE_SECTIONS = [
   { key: 'delivered', label: t('handover', 'deliveredItems'), icon: Package, visibleTypes: ['final'] },
   { key: 'notes', label: t('handover', 'generalNotes'), icon: FileText, visibleTypes: ['initial', 'final'] },
   { key: 'legal_sections', label: 'נסחים משפטיים', icon: Scale, visibleTypes: ['initial', 'final'], conditional: true },
-  { key: 'signatures', label: t('handover', 'signatures'), icon: PenLine, visibleTypes: ['initial', 'final'] },
 ];
 
 const STATUS_BADGE = {
@@ -219,8 +218,6 @@ const HandoverProtocolPage = () => {
       case 'notes': return <HandoverGeneralNotes {...formProps} />;
       case 'legal_sections':
         return <HandoverLegalSections protocol={protocol} projectId={projectId} isSigned={isLocked} userRole={userRole} onUpdated={handleFormUpdated} />;
-      case 'signatures':
-        return <div ref={signatureRef}><SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} /></div>;
       default: return null;
     }
   };
@@ -246,11 +243,7 @@ const HandoverProtocolPage = () => {
   };
 
   const handleSignFAB = () => {
-    setMetadataOpen(true);
-    setExpandedEngine('signatures');
-    setTimeout(() => {
-      signatureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 300);
+    signatureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const renderSectionCard = ({ section, stats }, accent) => (
@@ -385,7 +378,7 @@ const HandoverProtocolPage = () => {
           >
             <span className="text-base">📋</span>
             <span className="flex-1 text-right text-sm font-medium text-slate-700 truncate">
-              פרטי פרוטוקול — נכס · דיירים · נסחים · חתימות
+              פרטי פרוטוקול — נכס · דיירים · נסחים
             </span>
             {metadataOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
@@ -417,7 +410,7 @@ const HandoverProtocolPage = () => {
           )}
         </div>
 
-        <div className="mt-5 space-y-1.5 pb-24">
+        <div className="mt-5 space-y-1.5">
           <h2 className="text-sm font-semibold text-slate-500 px-1">
             סקציות ({templateSections.length})
           </h2>
@@ -439,6 +432,18 @@ const HandoverProtocolPage = () => {
               {renderGroup('✅ הושלם', groupedSections.completed, 'green')}
             </>
           )}
+        </div>
+
+        <div ref={signatureRef} className="mt-6 pb-24">
+          <div className="border border-slate-200 rounded-xl bg-white p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                <PenLine className="w-4 h-4 text-indigo-500" />
+              </div>
+              <h2 className="text-sm font-bold text-slate-700">{t('handover', 'signatures')}</h2>
+            </div>
+            <SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} />
+          </div>
         </div>
       </div>
 

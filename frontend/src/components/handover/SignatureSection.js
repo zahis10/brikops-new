@@ -21,6 +21,24 @@ const ALLOWED_ROLES = {
   contractor_rep: ['contractor', 'super_admin'],
 };
 
+const SIGNING_COMPLETION_THRESHOLD = 0.90;
+
+function calculateCompletion(protocol) {
+  let total = 0;
+  let checked = 0;
+  for (const section of (protocol?.sections || [])) {
+    for (const item of (section.items || [])) {
+      total += 1;
+      const status = item.status || '';
+      if (status && status !== 'not_checked') {
+        checked += 1;
+      }
+    }
+  }
+  const pct = total > 0 ? checked / total : 1.0;
+  return { checked, total, pct };
+}
+
 const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
   const { user } = useAuth();
   const [signingRole, setSigningRole] = useState(null);
@@ -40,6 +58,10 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     s => s.requires_signature && !s.signed_at
   );
   const hasLegalGate = unsignedLegalSections.length > 0;
+
+  const { checked: completionChecked, total: completionTotal, pct: completionPct } = calculateCompletion(protocol);
+  const hasCompletionGate = completionPct < SIGNING_COMPLETION_THRESHOLD;
+  const itemsNeeded = hasCompletionGate ? Math.ceil(completionTotal * SIGNING_COMPLETION_THRESHOLD) - completionChecked : 0;
 
   useEffect(() => {
     const sigs = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
@@ -86,6 +108,7 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
 
   const canSign = (roleKey) => {
     if (isLocked) return false;
+    if (hasCompletionGate) return false;
     if (hasLegalGate) return false;
     if (signatures[roleKey]) return false;
     const allowed = ALLOWED_ROLES[roleKey] || [];
@@ -120,7 +143,22 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
 
   return (
     <div className="space-y-3 p-1">
-      {hasLegalGate && !isLocked && (
+      {hasCompletionGate && !isLocked && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-orange-600 flex-shrink-0" />
+            <span className="text-sm text-orange-800 font-medium">יש להשלים לפחות 90% מסעיפי הבדיקה לפני חתימה</span>
+          </div>
+          <p className="text-xs text-orange-700">
+            הושלמו {completionChecked} מתוך {completionTotal} ({Math.round(completionPct * 100)}%)
+          </p>
+          {itemsNeeded > 0 && (
+            <p className="text-[11px] text-orange-600">חסרים עוד {itemsNeeded} פריטים להשלמת 90%</p>
+          )}
+        </div>
+      )}
+
+      {!hasCompletionGate && hasLegalGate && !isLocked && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1.5">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
@@ -240,13 +278,12 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
                   <PenLine className="w-4 h-4" />
                   {t('handover', 'sign')}
                 </button>
-              ) : hasLegalGate && !isLocked && !signatures[key] && (ALLOWED_ROLES[key] || []).includes(userRole) ? (
+              ) : (hasCompletionGate || hasLegalGate) && !isLocked && !signatures[key] && (ALLOWED_ROLES[key] || []).includes(userRole) ? (
                 <button
                   disabled
-                  onClick={() => toast.error('יש לחתום על כל הנסחים המשפטיים קודם')}
                   className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-300 text-white rounded-lg
                     text-sm font-bold cursor-not-allowed opacity-60"
-                  title="יש לחתום על כל הנסחים המשפטיים קודם"
+                  title={hasCompletionGate ? 'יש להשלים לפחות 90% מסעיפי הבדיקה' : 'יש לחתום על כל הנסחים המשפטיים קודם'}
                 >
                   <PenLine className="w-4 h-4" />
                   {t('handover', 'sign')}
