@@ -5,7 +5,7 @@ import { BACKEND_URL } from '../services/api';
 import {
   HardHat, ArrowRight, Users, Loader2, RefreshCw,
   Shield, BarChart3, Building2, CreditCard, ClipboardList,
-  TrendingUp, ChevronLeft
+  TrendingUp, ChevronLeft, LayoutDashboard
 } from 'lucide-react';
 
 const ACTION_LABELS = {
@@ -61,6 +61,7 @@ const formatTimeAgo = (dateStr) => {
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: BarChart3 },
+  { id: 'dashboard', label: 'דשבורד CS', icon: LayoutDashboard },
   { id: 'users', label: 'משתמשים', icon: Users },
   { id: 'orgs', label: 'ארגונים', icon: Building2 },
   { id: 'billing', label: 'חיובים', icon: CreditCard },
@@ -134,6 +135,7 @@ const AdminPage = () => {
   }, [loadSystemInfo, loadPaymentRequests, loadAuditEvents]);
 
   const handleTabClick = (tabId) => {
+    if (tabId === 'dashboard') { navigate('/admin/dashboard'); return; }
     if (tabId === 'users') { navigate('/admin/users'); return; }
     if (tabId === 'orgs') { navigate('/admin/orgs'); return; }
     if (tabId === 'billing') { navigate('/admin/billing?view=billing'); return; }

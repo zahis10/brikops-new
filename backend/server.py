@@ -311,6 +311,9 @@ app.include_router(handover_router)
 from contractor_ops.import_router import router as import_router
 app.include_router(import_router)
 
+from contractor_ops.admin_dashboard import router as admin_dashboard_router
+app.include_router(admin_dashboard_router)
+
 from contractor_ops.invites_router import router as invites_router
 app.include_router(invites_router)
 

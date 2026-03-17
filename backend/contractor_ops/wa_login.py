@@ -347,6 +347,11 @@ async def verify_magic_link(token: str = Query(...)):
         extra={"token_prefix": doc.get("token_prefix", "")},
     )
 
+    await db["users"].update_one(
+        {"id": user["id"]},
+        {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
     logger.info(f"[WA-LOGIN] Verified login for user={user['id']}, prefix={doc.get('token_prefix', '')}")
 
     return RedirectResponse(url=redirect_url, status_code=302)
