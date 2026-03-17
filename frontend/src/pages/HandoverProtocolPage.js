@@ -402,7 +402,7 @@ const HandoverProtocolPage = () => {
                 className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
               >
                 {shareLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
-                שתף
+                שתף פרוטוקול
               </button>
               <button
                 onClick={handleDownloadPdf}

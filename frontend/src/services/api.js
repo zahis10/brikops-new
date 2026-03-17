@@ -1261,12 +1261,12 @@ export const handoverService = {
     );
     return response.data;
   },
-  async downloadPdf(projectId, protocolId) {
+  async downloadPdf(projectId, protocolId, filename) {
     const blob = await this.getPdfBlob(projectId, protocolId);
     const url = window.URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `protocol_${protocolId.slice(0, 8)}.pdf`;
+    a.download = filename || `protocol_${protocolId.slice(0, 8)}.pdf`;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
