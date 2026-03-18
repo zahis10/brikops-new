@@ -1069,14 +1069,19 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
         unit_results = []
         for u in floor_units:
             status_map = defects_by_unit.get(u['id'], {})
-            unit_results.append({
+            unit_entry = {
                 'id': u['id'],
                 'unit_no': u.get('unit_no', ''),
                 'display_label': u.get('display_label') or u.get('unit_no', ''),
                 'unit_type': u.get('unit_type', 'apartment'),
                 'defect_counts': compute_counts(status_map),
                 'categories': sorted(categories_by_unit.get(u['id'], set())),
-            })
+            }
+            if u.get('unit_type_tag'):
+                unit_entry['unit_type_tag'] = u['unit_type_tag']
+            if u.get('unit_note'):
+                unit_entry['unit_note'] = u['unit_note']
+            unit_results.append(unit_entry)
         floor_results.append({
             'id': f['id'],
             'name': f.get('name', ''),

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { buildingService, configService } from '../services/api';
+import { buildingService, configService, unitService } from '../services/api';
 import ExportModal from '../components/ExportModal';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import FilterDrawer from '../components/FilterDrawer';
 import {
   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
-  Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download
+  Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download, Pencil
 } from 'lucide-react';
 
 const BUILDING_DEFAULT_FILTERS = {
@@ -30,6 +30,12 @@ const STATUS_LABEL_MAP = {
   blocking: 'חוסמי מסירה',
 };
 
+const UNIT_TYPE_TAGS = [
+  { value: 'mekhir_lemishtaken', label: 'מחיר למשתכן', color: 'bg-blue-100 text-blue-700' },
+  { value: 'shuk_hofshi', label: 'שוק חופשי', color: 'bg-green-100 text-green-700' },
+];
+const TAG_MAP = Object.fromEntries(UNIT_TYPE_TAGS.map(t => [t.value, t]));
+
 const BuildingDefectsPage = () => {
   const { projectId, buildingId } = useParams();
   const navigate = useNavigate();
@@ -43,6 +49,11 @@ const BuildingDefectsPage = () => {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [expandedFloors, setExpandedFloors] = useState({});
+  const [unitTypeFilter, setUnitTypeFilter] = useState(null);
+  const [editingUnit, setEditingUnit] = useState(null);
+  const [editUnitTypeTag, setEditUnitTypeTag] = useState('');
+  const [editUnitNote, setEditUnitNote] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +132,31 @@ const BuildingDefectsPage = () => {
     setExpandedFloors(prev => ({ ...prev, [idx]: !prev[idx] }));
   };
 
+  const openEditUnit = (e, unit) => {
+    e.stopPropagation();
+    setEditingUnit(unit);
+    setEditUnitTypeTag(unit.unit_type_tag || '');
+    setEditUnitNote(unit.unit_note || '');
+  };
+
+  const handleSaveUnitEdit = async () => {
+    if (!editingUnit) return;
+    setEditSaving(true);
+    try {
+      await unitService.patch(editingUnit.id, {
+        unit_type_tag: editUnitTypeTag || null,
+        unit_note: editUnitNote || null,
+      });
+      toast.success('דירה עודכנה');
+      setEditingUnit(null);
+      await loadData();
+    } catch {
+      toast.error('שגיאה בעדכון דירה');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const getUnitBadgeColor = (unit) => {
     const open = (unit.defect_counts?.open || 0) + (unit.defect_counts?.in_progress || 0);
     if (open >= 3) return 'bg-red-500 text-white';
@@ -138,6 +174,7 @@ const BuildingDefectsPage = () => {
   };
 
   const unitPassesFilter = (unit) => {
+    if (unitTypeFilter && unit.unit_type_tag !== unitTypeFilter) return false;
     if (filters.unit !== 'all' && unit.id !== filters.unit) return false;
     if (filters.category !== 'all' && !(unit.categories || []).includes(filters.category)) return false;
     if (filters.status !== 'all') {
@@ -367,6 +404,20 @@ const BuildingDefectsPage = () => {
           )}
         </div>
 
+        <div className="flex gap-1.5 mb-3 flex-wrap">
+          <button
+            onClick={() => setUnitTypeFilter(null)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${!unitTypeFilter ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+          >הכל</button>
+          {UNIT_TYPE_TAGS.map(t => (
+            <button
+              key={t.value}
+              onClick={() => setUnitTypeFilter(unitTypeFilter === t.value ? null : t.value)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${unitTypeFilter === t.value ? 'bg-slate-700 text-white' : t.color + ' hover:opacity-80'}`}
+            >{t.label}</button>
+          ))}
+        </div>
+
         <div className="space-y-2 pb-6">
           {filteredFloors.length === 0 ? (
             <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
@@ -415,25 +466,41 @@ const BuildingDefectsPage = () => {
                         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pt-3">
                           {floor.filteredUnits.map(unit => {
                             const badgeCount = getStatusCount(unit.defect_counts);
+                            const tagInfo = TAG_MAP[unit.unit_type_tag];
 
                             return (
-                              <button
-                                key={unit.id}
-                                onClick={() => navigate(`/projects/${projectId}/units/${unit.id}/defects`)}
-                                className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 transition-colors active:scale-95"
-                              >
-                                <div className="relative">
-                                  <Home className={`w-8 h-8 ${getUnitIconColor(unit)}`} />
-                                  {badgeCount > 0 && (
-                                    <span className={`absolute -top-1.5 -left-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
-                                      {badgeCount}
+                              <div key={unit.id} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 transition-colors group relative">
+                                <button
+                                  onClick={() => navigate(`/projects/${projectId}/units/${unit.id}/defects`)}
+                                  className="flex flex-col items-center gap-1 active:scale-95"
+                                >
+                                  <div className="relative">
+                                    <Home className={`w-8 h-8 ${getUnitIconColor(unit)}`} />
+                                    {badgeCount > 0 && (
+                                      <span className={`absolute -top-1.5 -left-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
+                                        {badgeCount}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[11px] text-slate-600 font-medium truncate max-w-full">
+                                    {formatUnitLabel(unit.display_label || unit.unit_no || '')}
+                                  </span>
+                                  {tagInfo && (
+                                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${tagInfo.color}`}>
+                                      {tagInfo.label}
                                     </span>
                                   )}
-                                </div>
-                                <span className="text-[11px] text-slate-600 font-medium truncate max-w-full">
-                                  {formatUnitLabel(unit.display_label || unit.unit_no || '')}
+                                  {unit.unit_note && (
+                                    <span className="text-[9px] text-slate-400 truncate max-w-[80px]">{unit.unit_note}</span>
+                                  )}
+                                </button>
+                                <span
+                                  onClick={(e) => openEditUnit(e, unit)}
+                                  className="unit-edit-icon absolute top-1 left-1 text-slate-400 hover:text-blue-500 cursor-pointer transition-opacity"
+                                >
+                                  <Pencil className="w-3 h-3" />
                                 </span>
-                              </button>
+                              </div>
                             );
                           })}
                         </div>
@@ -467,6 +534,54 @@ const BuildingDefectsPage = () => {
           buildingName: data?.building?.name,
         }}
       />
+
+      {editingUnit && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setEditingUnit(null)} />
+          <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl shadow-xl p-5 max-w-sm mx-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-slate-800">עריכת דירה {formatUnitLabel(editingUnit.display_label || editingUnit.unit_no)}</h3>
+              <button onClick={() => setEditingUnit(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">סוג דירה</label>
+                <select
+                  value={editUnitTypeTag}
+                  onChange={e => setEditUnitTypeTag(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  <option value="">(ריק)</option>
+                  {UNIT_TYPE_TAGS.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">הערה</label>
+                <input
+                  type="text"
+                  value={editUnitNote}
+                  onChange={e => setEditUnitNote(e.target.value.slice(0, 200))}
+                  placeholder="הערה (עד 200 תווים)"
+                  maxLength={200}
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5 text-left">{editUnitNote.length}/200</p>
+              </div>
+              <button
+                onClick={handleSaveUnitEdit}
+                disabled={editSaving}
+                className="w-full bg-amber-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
+              >
+                {editSaving ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'שמור'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

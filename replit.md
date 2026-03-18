@@ -42,7 +42,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **WhatsApp Auto-Reminders**: Automated and manual WhatsApp reminders for contractors with open defects and PM daily digests, with cooldowns, Shabbat protection, and per-user reminder preferences (enable/disable per type + weekday selection, stored on user document as `reminder_preferences`). Preferences only apply to cron/automated triggers; manual sends always bypass. Company contacts (is_company=True) always receive regardless of preferences.
     -   **Identity System**: Manages user accounts, status, and audit logging.
     -   **Structure Permissions**: Role-based restrictions for building/floor/unit mutations.
-    -   **Unit Type Tags & Notes**: Optional `unit_type_tag` (mekhir_lemishtaken / shuk_hofshi) and `unit_note` (max 200 chars) fields on units. Supported in create and PATCH endpoints. Displayed as colored badges and gray text in InnerBuildingPage with client-side filter chips.
+    -   **Unit Type Tags & Notes**: Optional `unit_type_tag` (mekhir_lemishtaken / shuk_hofshi) and `unit_note` (max 200 chars) fields on units. Supported in create and PATCH endpoints. Displayed as colored badges and gray text in InnerBuildingPage and BuildingDefectsPage with client-side filter chips and inline edit modal.
     -   **Login Redirect Cookie**: `brikops_logged_in` cookie set on `.brikops.com` domain on all login paths, cleared on logout/auth failure, refreshed on token renewal. Used as hint for landing page redirect (not authentication).
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
     -   **Defects V2**: Parallel building-level and apartment-level defect views.

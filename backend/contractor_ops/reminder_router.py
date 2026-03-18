@@ -54,6 +54,11 @@ def create_reminder_router(require_roles, get_current_user):
             elif reason == "no_valid_phone":
                 raise HTTPException(status_code=400, detail="לא נמצא מספר טלפון תקין לקבלן")
             raise HTTPException(status_code=400, detail=f"לא ניתן לשלוח תזכורת: {reason}")
+        results = result.get("results", [])
+        sent = sum(1 for r in results if r.get("status") == "sent")
+        failed = sum(1 for r in results if r.get("status") == "failed")
+        if sent == 0 and failed > 0:
+            raise HTTPException(status_code=502, detail="שליחת התזכורת נכשלה לכל הנמענים")
         return result
 
     @router.post("/projects/{project_id}/reminders/digest")
@@ -72,6 +77,11 @@ def create_reminder_router(require_roles, get_current_user):
             if reason == "no_meaningful_data":
                 raise HTTPException(status_code=400, detail="אין נתונים משמעותיים לסיכום")
             raise HTTPException(status_code=400, detail=f"לא ניתן לשלוח סיכום: {reason}")
+        results = result.get("results", [])
+        sent = sum(1 for r in results if r.get("status") == "sent")
+        failed = sum(1 for r in results if r.get("status") == "failed")
+        if sent == 0 and failed > 0:
+            raise HTTPException(status_code=502, detail="שליחת הסיכום נכשלה לכל הנמענים")
         return result
 
     @router.get("/users/me/reminder-preferences")
