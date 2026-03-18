@@ -8,10 +8,11 @@ import { tCategory } from '../i18n';
 import NewDefectModal from '../components/NewDefectModal';
 import FilterDrawer from '../components/FilterDrawer';
 import ExportModal from '../components/ExportModal';
+import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-  SlidersHorizontal, Search, X, Download
+  SlidersHorizontal, Search, X, Download, Pencil
 } from 'lucide-react';
 
 const APARTMENT_DEFAULT_FILTERS = {
@@ -68,6 +69,7 @@ const ApartmentDashboardPage = () => {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [blockingOpen, setBlockingOpen] = useState(false);
+  const [editingUnit, setEditingUnit] = useState(null);
   const [flagChecked, setFlagChecked] = useState(false);
   const [showDefectModal, setShowDefectModal] = useState(false);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
@@ -285,12 +287,26 @@ const ApartmentDashboardPage = () => {
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${severity.color}`}>
                   {severity.label}
                 </span>
+                {TAG_MAP[unit.unit_type_tag] && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
+                    {TAG_MAP[unit.unit_type_tag].label}
+                  </span>
+                )}
+                <button
+                  onClick={() => setEditingUnit(unit)}
+                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5 text-white/70" />
+                </button>
               </div>
               <div className="flex items-center gap-1.5 text-amber-100 text-xs">
                 {project && <span>{project.name}</span>}
                 {building && <><span>›</span><span>{building.name}</span></>}
                 {floor && <><span>›</span><span>{floor.name}</span></>}
               </div>
+              {unit.unit_note && (
+                <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
+              )}
             </div>
           </div>
         </div>
@@ -547,6 +563,19 @@ const ApartmentDashboardPage = () => {
           unitLabel: unitData ? formatUnitLabel(unitData) : '',
         }}
       />
+
+      {editingUnit && (
+        <UnitTypeEditModal
+          unit={editingUnit}
+          onClose={() => setEditingUnit(null)}
+          onSaved={({ unit_type_tag, unit_note }) => {
+            setUnitData(prev => ({
+              ...prev,
+              unit: { ...prev.unit, unit_type_tag, unit_note },
+            }));
+          }}
+        />
+      )}
     </div>
   );
 };

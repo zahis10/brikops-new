@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { buildingService, configService, unitService } from '../services/api';
+import { buildingService, configService } from '../services/api';
 import ExportModal from '../components/ExportModal';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
@@ -30,11 +30,7 @@ const STATUS_LABEL_MAP = {
   blocking: 'חוסמי מסירה',
 };
 
-const UNIT_TYPE_TAGS = [
-  { value: 'mekhir_lemishtaken', label: 'מחיר למשתכן', color: 'bg-blue-100 text-blue-700' },
-  { value: 'shuk_hofshi', label: 'שוק חופשי', color: 'bg-green-100 text-green-700' },
-];
-const TAG_MAP = Object.fromEntries(UNIT_TYPE_TAGS.map(t => [t.value, t]));
+import UnitTypeEditModal, { UNIT_TYPE_TAGS, TAG_MAP } from '../components/UnitTypeEditModal';
 
 const BuildingDefectsPage = () => {
   const { projectId, buildingId } = useParams();
@@ -51,9 +47,6 @@ const BuildingDefectsPage = () => {
   const [expandedFloors, setExpandedFloors] = useState({});
   const [unitTypeFilter, setUnitTypeFilter] = useState(null);
   const [editingUnit, setEditingUnit] = useState(null);
-  const [editUnitTypeTag, setEditUnitTypeTag] = useState('');
-  const [editUnitNote, setEditUnitNote] = useState('');
-  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,26 +128,21 @@ const BuildingDefectsPage = () => {
   const openEditUnit = (e, unit) => {
     e.stopPropagation();
     setEditingUnit(unit);
-    setEditUnitTypeTag(unit.unit_type_tag || '');
-    setEditUnitNote(unit.unit_note || '');
   };
 
-  const handleSaveUnitEdit = async () => {
-    if (!editingUnit) return;
-    setEditSaving(true);
-    try {
-      await unitService.patch(editingUnit.id, {
-        unit_type_tag: editUnitTypeTag || null,
-        unit_note: editUnitNote || null,
-      });
-      toast.success('דירה עודכנה');
-      setEditingUnit(null);
-      await loadData();
-    } catch {
-      toast.error('שגיאה בעדכון דירה');
-    } finally {
-      setEditSaving(false);
-    }
+  const handleUnitSaved = ({ unitId, unit_type_tag, unit_note }) => {
+    setData(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        floors: (prev.floors || []).map(f => ({
+          ...f,
+          units: (f.units || []).map(u =>
+            u.id === unitId ? { ...u, unit_type_tag, unit_note } : u
+          ),
+        })),
+      };
+    });
   };
 
   const getUnitBadgeColor = (unit) => {
@@ -461,7 +449,7 @@ const BuildingDefectsPage = () => {
                   {isExpanded && (
                     <div className="px-3 pb-3 border-t border-slate-100">
                       {floor.filteredUnits.length === 0 ? (
-                        <p className="text-xs text-slate-400 text-center py-3">אין דירות בקומה זו</p>
+                        <p className="text-xs text-slate-400 text-center py-3">{unitTypeFilter ? 'אין דירות מסוג זה בקומה' : 'אין דירות בקומה זו'}</p>
                       ) : (
                         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pt-3">
                           {floor.filteredUnits.map(unit => {
@@ -536,51 +524,11 @@ const BuildingDefectsPage = () => {
       />
 
       {editingUnit && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setEditingUnit(null)} />
-          <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl shadow-xl p-5 max-w-sm mx-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-slate-800">עריכת דירה {formatUnitLabel(editingUnit.display_label || editingUnit.unit_no)}</h3>
-              <button onClick={() => setEditingUnit(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">סוג דירה</label>
-                <select
-                  value={editUnitTypeTag}
-                  onChange={e => setEditUnitTypeTag(e.target.value)}
-                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                >
-                  <option value="">(ריק)</option>
-                  {UNIT_TYPE_TAGS.map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">הערה</label>
-                <input
-                  type="text"
-                  value={editUnitNote}
-                  onChange={e => setEditUnitNote(e.target.value.slice(0, 200))}
-                  placeholder="הערה (עד 200 תווים)"
-                  maxLength={200}
-                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
-                <p className="text-[10px] text-slate-400 mt-0.5 text-left">{editUnitNote.length}/200</p>
-              </div>
-              <button
-                onClick={handleSaveUnitEdit}
-                disabled={editSaving}
-                className="w-full bg-amber-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
-              >
-                {editSaving ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'שמור'}
-              </button>
-            </div>
-          </div>
-        </>
+        <UnitTypeEditModal
+          unit={editingUnit}
+          onClose={() => setEditingUnit(null)}
+          onSaved={handleUnitSaved}
+        />
       )}
     </div>
   );
