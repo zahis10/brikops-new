@@ -11,13 +11,6 @@ export const UNIT_TYPE_TAGS = [
 
 export const TAG_MAP = Object.fromEntries(UNIT_TYPE_TAGS.map(t => [t.value, t]));
 
-export const UNIT_TYPE_TAG_HEADER_COLORS = Object.fromEntries(
-  UNIT_TYPE_TAGS.map(t => [t.value, t.value === 'mekhir_lemishtaken'
-    ? 'bg-white/20 text-white'
-    : 'bg-white/20 text-white'
-  ])
-);
-
 export default function UnitTypeEditModal({ unit, onClose, onSaved }) {
   const [unitTypeTag, setUnitTypeTag] = useState(unit?.unit_type_tag || '');
   const [unitNote, setUnitNote] = useState(unit?.unit_note || '');
