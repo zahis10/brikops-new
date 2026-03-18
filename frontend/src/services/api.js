@@ -10,7 +10,13 @@ let _paywallCallback = null;
 export const setPaywallCallback = (cb) => { _paywallCallback = cb; };
 
 axios.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const newToken = response.headers['x-new-token'];
+    if (newToken) {
+      localStorage.setItem('token', newToken);
+    }
+    return response;
+  },
   (error) => {
     if (error.response?.status === 402) {
       const data = error.response.data;

@@ -58,21 +58,23 @@ import time as _time
 _server_start_time = _time.time()
 _SKIP_LOG_PATHS = {'/health', '/ready'}
 
-def _extract_user_id(request: Request) -> str:
+def _extract_jwt_payload(request: Request) -> dict:
     try:
         auth = request.headers.get('authorization', '')
         if not auth.startswith('Bearer '):
-            return ''
+            return {}
         import base64, json as _json
         token = auth[7:]
         parts = token.split('.')
         if len(parts) != 3:
-            return ''
+            return {}
         padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
-        payload = _json.loads(base64.urlsafe_b64decode(padded))
-        return payload.get('user_id', '')
+        return _json.loads(base64.urlsafe_b64decode(padded))
     except Exception:
-        return ''
+        return {}
+
+def _extract_user_id(request: Request) -> str:
+    return _extract_jwt_payload(request).get('user_id', '')
 
 def _is_attach_upload(request: Request) -> bool:
     if request.method != 'POST':
@@ -80,6 +82,41 @@ def _is_attach_upload(request: Request) -> bool:
     parts = request.url.path.strip('/').split('/')
     return (len(parts) == 4 and parts[0] == 'api' and parts[1] == 'tasks'
             and parts[3] == 'attachments')
+
+_RENEWAL_SKIP_PREFIXES = ('/api/auth/', '/api/otp/', '/api/onboarding/', '/health', '/ready')
+
+def _maybe_renew_token(request: Request, response):
+    from config import JWT_RENEWAL_THRESHOLD_DAYS, JWT_EXPIRATION_HOURS
+
+    if response.status_code >= 400:
+        return
+    path = request.url.path
+    for prefix in _RENEWAL_SKIP_PREFIXES:
+        if path.startswith(prefix):
+            return
+    payload = _extract_jwt_payload(request)
+    if not payload:
+        return
+    if payload.get('platform_role') == 'super_admin':
+        return
+    exp = payload.get('exp')
+    if not exp:
+        return
+    remaining_days = (exp - _time.time()) / 86400
+    if remaining_days >= JWT_RENEWAL_THRESHOLD_DAYS:
+        return
+    from contractor_ops.router import _create_token
+    from datetime import timedelta
+    new_token = _create_token(
+        user_id=payload.get('user_id', ''),
+        email=payload.get('email', ''),
+        role=payload.get('role', ''),
+        platform_role=payload.get('platform_role', 'none'),
+        session_version=payload.get('sv', 0),
+        phone_e164=payload.get('phone_e164', ''),
+    )
+    response.headers["X-New-Token"] = new_token
+    logger.info(f"[TOKEN-RENEW] user={payload.get('user_id', '?')} remaining={remaining_days:.1f}d")
 
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
@@ -117,6 +154,11 @@ async def timing_middleware(request: Request, call_next):
     elapsed_ms = round((_time.perf_counter() - start) * 1000, 1)
     response.headers["x-response-time-ms"] = str(elapsed_ms)
     response.headers["x-request-id"] = request_id
+
+    try:
+        _maybe_renew_token(request, response)
+    except Exception:
+        pass
 
     path = request.url.path
     if path not in _SKIP_LOG_PATHS:
@@ -1081,5 +1123,5 @@ app.add_middleware(
     allow_origins=os.environ.get('CORS_ORIGINS', _cors_default).split(','),
     allow_methods=['*'],
     allow_headers=['*'],
-    expose_headers=['x-request-id', 'x-response-time-ms'],
+    expose_headers=['x-request-id', 'x-response-time-ms', 'X-New-Token'],
 )
