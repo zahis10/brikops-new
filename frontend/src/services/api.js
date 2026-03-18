@@ -313,6 +313,14 @@ export const userService = {
     const response = await axios.get(`${API}/users`, { headers: getAuthHeader(), params });
     return response.data;
   },
+  async getReminderPreferences() {
+    const response = await axios.get(`${API}/users/me/reminder-preferences`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async updateReminderPreferences(prefs) {
+    const response = await axios.put(`${API}/users/me/reminder-preferences`, prefs, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const taskService = {

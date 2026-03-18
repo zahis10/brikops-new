@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useIdentity } from '../contexts/IdentityContext';
-import { authService } from '../services/api';
+import { authService, userService } from '../services/api';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
@@ -54,6 +54,46 @@ const AccountSettingsPage = () => {
   const [waNotifEnabled, setWaNotifEnabled] = useState(user?.whatsapp_notifications_enabled !== false);
   const [waNotifSaving, setWaNotifSaving] = useState(false);
   const [showWaConfirm, setShowWaConfirm] = useState(false);
+
+  const [reminderPrefs, setReminderPrefs] = useState(null);
+  const [reminderPrefsSaving, setReminderPrefsSaving] = useState(false);
+
+  const DAY_LABELS = ['א', 'ב', 'ג', 'ד', 'ה'];
+
+  const memberships = user?.project_memberships_summary || [];
+  const userRoles = new Set(memberships.map(m => m.role));
+  const isContractor = userRoles.has('contractor');
+  const isPmOrOwner = userRoles.has('project_manager') || userRoles.has('owner') || user?.platform_role === 'super_admin';
+  const showReminderPrefs = isContractor || isPmOrOwner;
+
+  useEffect(() => {
+    if (showReminderPrefs) {
+      userService.getReminderPreferences().then(setReminderPrefs).catch(() => {});
+    }
+  }, [showReminderPrefs]);
+
+  const updateReminderPref = async (type, field, value) => {
+    const prev = reminderPrefs;
+    const updated = { ...reminderPrefs, [type]: { ...reminderPrefs[type], [field]: value } };
+    setReminderPrefs(updated);
+    setReminderPrefsSaving(true);
+    try {
+      const result = await userService.updateReminderPreferences({ [type]: { [field]: value } });
+      setReminderPrefs(result);
+      toast.success('הגדרות התראות עודכנו');
+    } catch (err) {
+      setReminderPrefs(prev);
+      toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+    } finally {
+      setReminderPrefsSaving(false);
+    }
+  };
+
+  const toggleDay = (type, day) => {
+    const currentDays = reminderPrefs?.[type]?.days || [0, 1, 2, 3, 4];
+    const newDays = currentDays.includes(day) ? currentDays.filter(d => d !== day) : [...currentDays, day].sort();
+    updateReminderPref(type, 'days', newDays);
+  };
 
   useEffect(() => {
     if (location.hash === '#phone') {
@@ -399,6 +439,100 @@ const AccountSettingsPage = () => {
             </AlertDialogPrimitive.Content>
           </AlertDialogPrimitive.Portal>
         </AlertDialogPrimitive.Root>
+
+        {showReminderPrefs && reminderPrefs && (
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Bell className="w-5 h-5 text-amber-500" />
+              <h2 className="text-lg font-semibold text-slate-900">הגדרות תזכורות</h2>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">שליטה בתזכורות אוטומטיות בלבד. שליחה ידנית אינה מושפעת מהגדרות אלה.</p>
+
+            {isContractor && (
+              <div className="space-y-3 mb-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-700 font-medium">תזכורות ליקויים</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={reminderPrefs.contractor_reminder?.enabled !== false}
+                    disabled={reminderPrefsSaving}
+                    onClick={() => updateReminderPref('contractor_reminder', 'enabled', !(reminderPrefs.contractor_reminder?.enabled !== false))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 ${reminderPrefs.contractor_reminder?.enabled !== false ? 'bg-amber-500' : 'bg-slate-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${reminderPrefs.contractor_reminder?.enabled !== false ? '-translate-x-1' : '-translate-x-6'}`} />
+                  </button>
+                </div>
+                {reminderPrefs.contractor_reminder?.enabled !== false && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-500 ml-1">ימים:</span>
+                    {DAY_LABELS.map((label, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={reminderPrefsSaving}
+                        onClick={() => toggleDay('contractor_reminder', idx)}
+                        className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
+                          (reminderPrefs.contractor_reminder?.days || [0,1,2,3,4]).includes(idx)
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isPmOrOwner && (
+              <div className="space-y-3">
+                {isContractor && <div className="border-t border-slate-100 pt-3" />}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-700 font-medium">סיכום יומי</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={reminderPrefs.pm_digest?.enabled !== false}
+                    disabled={reminderPrefsSaving}
+                    onClick={() => updateReminderPref('pm_digest', 'enabled', !(reminderPrefs.pm_digest?.enabled !== false))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 ${reminderPrefs.pm_digest?.enabled !== false ? 'bg-amber-500' : 'bg-slate-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${reminderPrefs.pm_digest?.enabled !== false ? '-translate-x-1' : '-translate-x-6'}`} />
+                  </button>
+                </div>
+                {reminderPrefs.pm_digest?.enabled !== false && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-500 ml-1">ימים:</span>
+                    {DAY_LABELS.map((label, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={reminderPrefsSaving}
+                        onClick={() => toggleDay('pm_digest', idx)}
+                        className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
+                          (reminderPrefs.pm_digest?.days || [0,1,2,3,4]).includes(idx)
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reminderPrefsSaving && (
+              <div className="flex items-center gap-2 mt-3 text-sm text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>שומר...</span>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">

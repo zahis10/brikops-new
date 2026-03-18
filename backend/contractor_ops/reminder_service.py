@@ -20,6 +20,8 @@ TERMINAL_STATUSES = ("closed", "done", "cancelled")
 SEND_PACING_SECONDS = 0.1
 DEFECT_LIST_MAX_CHARS = 1024
 IL_TZ = ZoneInfo("Asia/Jerusalem")
+DEFAULT_WORKDAYS = [0, 1, 2, 3, 4]
+PYTHON_TO_ISRAEL_WEEKDAY = {6: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
 
 _db = None
 _wa_access_token = ""
@@ -51,6 +53,28 @@ def is_shabbat() -> Optional[str]:
         return "shabbat"
     if now_il.weekday() == 4 and now_il.hour >= 14:
         return "erev_shabbat"
+    return None
+
+
+def _get_israel_weekday() -> int:
+    """Return current Israel weekday: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
+    Python datetime.weekday() uses Mon=0, Sun=6 — convert via PYTHON_TO_ISRAEL_WEEKDAY."""
+    py_wd = datetime.now(IL_TZ).weekday()
+    return PYTHON_TO_ISRAEL_WEEKDAY[py_wd]
+
+
+def _check_user_reminder_prefs(user: dict, reminder_type: str) -> Optional[str]:
+    """Check if user's reminder_preferences allow sending this type today.
+    Returns None if allowed, or a skip reason string.
+    Only applies to auto (cron) reminders — manual triggers bypass this."""
+    prefs = user.get("reminder_preferences", {})
+    type_prefs = prefs.get(reminder_type, {})
+    if type_prefs.get("enabled") is False:
+        return f"user_disabled_{reminder_type}"
+    allowed_days = type_prefs.get("days", DEFAULT_WORKDAYS)
+    israel_wd = _get_israel_weekday()
+    if israel_wd not in allowed_days:
+        return f"day_{israel_wd}_not_in_user_days"
     return None
 
 
@@ -157,6 +181,7 @@ async def send_contractor_reminder(
     company_id: str,
     triggered_by: str = "cron",
     skip_cooldown: bool = False,
+    skip_preferences: bool = False,
 ) -> dict:
     open_filter = {"status": {"$nin": list(TERMINAL_STATUSES)}}
     tasks = await _db.tasks.find({
@@ -214,6 +239,13 @@ async def send_contractor_reminder(
         user_id = user.get("id", "")
         user_name = user.get("name", "קבלן")
 
+        if not skip_preferences and not r.get("is_company"):
+            pref_skip = _check_user_reminder_prefs(user, "contractor_reminder")
+            if pref_skip:
+                logger.info(f"[REMINDER] Skipping contractor reminder for user {user_id}: {pref_skip}")
+                results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
+                continue
+
         log_entry = {
             "type": "contractor_reminder",
             "company_id": company_id,
@@ -252,6 +284,7 @@ async def send_contractor_reminder(
 async def send_pm_digest(
     project_id: str,
     triggered_by: str = "cron",
+    skip_preferences: bool = False,
 ) -> dict:
     project = await _db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
     if not project:
@@ -309,6 +342,13 @@ async def send_pm_digest(
         user = r["user"]
         phone = r["phone"]
         user_id = user.get("id", "")
+
+        if not skip_preferences:
+            pref_skip = _check_user_reminder_prefs(user, "pm_digest")
+            if pref_skip:
+                logger.info(f"[DIGEST] Skipping PM digest for user {user_id}: {pref_skip}")
+                results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
+                continue
 
         log_entry = {
             "type": "pm_digest",

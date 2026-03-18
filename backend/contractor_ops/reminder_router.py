@@ -45,6 +45,7 @@ def create_reminder_router(require_roles, get_current_user):
             company_id=company_id,
             triggered_by=f"manual:{user['id']}",
             skip_cooldown=True,
+            skip_preferences=True,
         )
         if result.get("status") == "skipped":
             reason = result.get("reason", "")
@@ -64,6 +65,7 @@ def create_reminder_router(require_roles, get_current_user):
         result = await reminder_service.send_pm_digest(
             project_id=project_id,
             triggered_by=f"manual:{user['id']}",
+            skip_preferences=True,
         )
         if result.get("status") == "skipped":
             reason = result.get("reason", "")
@@ -71,6 +73,64 @@ def create_reminder_router(require_roles, get_current_user):
                 raise HTTPException(status_code=400, detail="אין נתונים משמעותיים לסיכום")
             raise HTTPException(status_code=400, detail=f"לא ניתן לשלוח סיכום: {reason}")
         return result
+
+    @router.get("/users/me/reminder-preferences")
+    async def get_reminder_preferences(
+        user: dict = Depends(get_current_user),
+    ):
+        db = get_db()
+        user_doc = await db.users.find_one({"id": user["id"]}, {"_id": 0, "reminder_preferences": 1})
+        prefs = (user_doc or {}).get("reminder_preferences", {})
+        defaults = {"enabled": True, "days": [0, 1, 2, 3, 4]}
+        return {
+            "contractor_reminder": {**defaults, **prefs.get("contractor_reminder", {})},
+            "pm_digest": {**defaults, **prefs.get("pm_digest", {})},
+        }
+
+    @router.put("/users/me/reminder-preferences")
+    async def update_reminder_preferences(
+        request: Request,
+        user: dict = Depends(get_current_user),
+    ):
+        body = await request.json()
+        validated = {}
+        valid_days = {0, 1, 2, 3, 4}
+        for key in ("contractor_reminder", "pm_digest"):
+            if key not in body:
+                continue
+            section = body[key]
+            if not isinstance(section, dict):
+                raise HTTPException(status_code=400, detail=f"{key} חייב להיות אובייקט")
+            entry = {}
+            if "enabled" in section:
+                if not isinstance(section["enabled"], bool):
+                    raise HTTPException(status_code=400, detail=f"{key}.enabled חייב להיות true או false")
+                entry["enabled"] = section["enabled"]
+            if "days" in section:
+                days = section["days"]
+                if not isinstance(days, list):
+                    raise HTTPException(status_code=400, detail=f"{key}.days חייב להיות מערך")
+                for d in days:
+                    if not isinstance(d, int) or d not in valid_days:
+                        raise HTTPException(status_code=400, detail=f"{key}.days: ערך לא חוקי {d}. ערכים אפשריים: 0-4 (ראשון עד חמישי)")
+                if len(days) != len(set(days)):
+                    raise HTTPException(status_code=400, detail=f"{key}.days: ערכים כפולים")
+                entry["days"] = sorted(set(days))
+            if entry:
+                validated[key] = entry
+        if not validated:
+            raise HTTPException(status_code=400, detail="לא נשלחו הגדרות לעדכון")
+        db = get_db()
+        current = (await db.users.find_one({"id": user["id"]}, {"_id": 0, "reminder_preferences": 1}) or {}).get("reminder_preferences", {})
+        for k, v in validated.items():
+            current[k] = {**current.get(k, {}), **v}
+        await db.users.update_one({"id": user["id"]}, {"$set": {"reminder_preferences": current}})
+        logger.info(f"[REMINDER-PREFS] User {user['id']} updated preferences: {validated}")
+        defaults = {"enabled": True, "days": [0, 1, 2, 3, 4]}
+        return {
+            "contractor_reminder": {**defaults, **current.get("contractor_reminder", {})},
+            "pm_digest": {**defaults, **current.get("pm_digest", {})},
+        }
 
     @cron_router.post("/internal/cron/daily-reminders")
     async def cron_daily_reminders(request: Request):

@@ -39,7 +39,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Handover Protocol System**: Unit-level handover protocol management for initial and final inspections, including engine-managed forms, status flows, and digital signatures for multiple roles. Includes defect creation from handover items and legal section management.
     -   **G4 Tenant Data Import**: Excel/CSV import of tenant (buyer) data for handover protocols with preview and upsert functionality.
     -   **Admin CS Dashboard**: Read-only analytics dashboard for super_admin providing KPIs, alerts, activity charts, and organization data.
-    -   **WhatsApp Auto-Reminders**: Automated and manual WhatsApp reminders for contractors with open defects and PM daily digests, with cooldowns and Shabbat protection.
+    -   **WhatsApp Auto-Reminders**: Automated and manual WhatsApp reminders for contractors with open defects and PM daily digests, with cooldowns, Shabbat protection, and per-user reminder preferences (enable/disable per type + weekday selection, stored on user document as `reminder_preferences`). Preferences only apply to cron/automated triggers; manual sends always bypass. Company contacts (is_company=True) always receive regardless of preferences.
     -   **Identity System**: Manages user accounts, status, and audit logging.
     -   **Structure Permissions**: Role-based restrictions for building/floor/unit mutations.
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
