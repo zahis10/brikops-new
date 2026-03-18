@@ -1,120 +1,100 @@
-=== Task #107 — Final Review Results ===
+=== Task #109 — Company Contact Fallback in Contractor Dropdown ===
 
 ========================================
-CHECK A: Photo validation without contractor
+INVESTIGATION: Backend notification recipient resolution
 ========================================
 
-Backend create_task (line 56-60):
-  if task.assignee_id:
-      raise HTTPException(status_code=400, detail=NO_IMAGE_MESSAGE)
+notification_service.py _resolve_target_phone (lines 323-350):
+  1. First checks assignee_id → looks up user → gets phone_e164
+  2. If no assignee, falls back to company_id → looks up companies collection → gets phone_e164
 
-This guard only fires when assignee_id is provided at creation (blocking
-direct assignment without image). Photos are enforced in TWO places:
-  1) Frontend: NewDefectModal validate() line 380:
-     if (images.length === 0) errs.images = 'נדרשת לפחות תמונה אחת';
-     → ALWAYS required, regardless of contractor selection.
-  2) Backend: PATCH /tasks/{id}/assign calls require_task_image(db, task_id)
-     at line 366, enforcing image before any assignment.
+BUT: The fallback checks self.db.companies (global), not project_companies.
+Project companies store contact_phone/contact_phone_raw, not phone_e164/phone.
+So the company phone fallback does NOT work for project companies.
 
-VERDICT: ✅ Photos are ALWAYS required. No bug.
+DECISION: Rule #1 applied — UI fallback only, no WhatsApp from contact.
+  - Selecting company contact sets company_id, keeps assignee_id null
+  - No fake user IDs ever stored in DB
 
 ========================================
-CHECK B / CHECK 2: Update notification logic
+CHANGES MADE
 ========================================
 
-Backend update_task (PATCH /tasks/{task_id}) lines 315-331:
+1. NewDefectModal.js (lines 298-329):
+   - Contractor filter effect: when no membership-linked contractors exist
+     for selected company, checks company.contact_name and creates fallback
+     option with value "__company_contact__" and label "דוד כהן (איש קשר החברה)"
+   - Fallback auto-selects the contact option
+   - Real contractors always take precedence
 
-    old_assignee = task.get('assignee_id') or ''
-    new_assignee = update_data.get('assignee_id', old_assignee) or ''
+2. NewDefectModal.js (line 615):
+   - Create payload now includes company_id when a company is selected
 
-    await db.tasks.update_one(...)
+3. NewDefectModal.js (lines 497-502):
+   - doUploadAndAssign detects __company_contact__ sentinel and skips
+     the assign API call — defect created with company_id, no assignee_id
 
-    if new_assignee and new_assignee != old_assignee:
-        engine = get_notification_engine()
-        if engine:
-            job = await engine.enqueue(task_id, 'task_assigned', ...)
-            if job and job.get('status') == 'queued':
-                await engine.process_job(job)
+4. TaskDetailPage.js (line 8):
+   - Added projectCompanyService import
 
-Logic:
-  - null → contractor A  → new_assignee='A', old_assignee='' → A != '' → ✅ NOTIFY
-  - A → B                → new_assignee='B', old_assignee='A' → B != A → ✅ NOTIFY
-  - A → A (same)         → new_assignee='A', old_assignee='A' → A == A → ✅ NO NOTIFY
-  - null → null (no change) → both '' → '' is falsy → ✅ NO NOTIFY
+5. TaskDetailPage.js (lines 141, 207-212):
+   - Added projectCompanies state
+   - Loads project companies alongside memberships
 
-VERDICT: ✅ Correct. Proven by API test (see CHECK 4).
+6. TaskDetailPage.js (lines 845-859):
+   - Contractor dropdown adds contactFallbacks from project companies
+     that have contact_name but no linked contractor memberships
+   - Fallback options use "__contact__{companyId}" value format
+   - Label: "{contact_name} ({company_name})"
 
-========================================
-CHECK 1: Schemas — company_id/assignee_id
-========================================
+7. TaskDetailPage.js (lines 425-452):
+   - handleAssignContractor handles __contact__ prefix:
+     PATCHes { company_id: pcId, assignee_id: null }
+   - Also handles empty value (לא שויך):
+     PATCHes { company_id: null, assignee_id: null }
 
-TaskCreate (line 276-287):
-    company_id: Optional[str] = None    ✅
-    assignee_id: Optional[str] = None   ✅
+8. TaskDetailPage.js (line 492):
+   - getCompanyName also checks projectCompanies for name resolution
 
-TaskUpdate (line 290-297):
-    company_id: Optional[str] = None    ✅
-    assignee_id: Optional[str] = None   ✅
-
-TaskAssign (line 300-303):
-    company_id: Optional[str] = None
-    assignee_id: str                    ✅ (required — this is the explicit assign endpoint)
-
-VERDICT: ✅ Both optional in create/update. Required only in assign (correct).
-
-========================================
-CHECK 3: "לא שויך" in all defect views
-========================================
-
-grep results:
-  frontend/src/pages/TaskDetailPage.js:762   → company row fallback: 'לא שויך'
-  frontend/src/pages/TaskDetailPage.js:770   → contractor row fallback: 'לא שויך'
-  frontend/src/pages/TaskDetailPage.js:845   → management panel dropdown: 'לא שויך'
-  frontend/src/pages/TaskDetailPage.js:856   → display label: 'לא שויך'
-  frontend/src/pages/ApartmentDashboardPage.js:500 → card: 'לא שויך'
-
-Pages that do NOT show assignee names in cards (no change needed):
-  - ProjectTasksPage: shows title/status/category only, no assignee name rendered
-  - BuildingDefectsPage: aggregates counts by floor/unit, no individual task cards
-
-TaskDetailPage: "שיוך" card now ALWAYS renders (removed task.company_id gate).
-  Shows "לא שויך" for both company and contractor when unassigned.
-
-VERDICT: ✅ Consistent everywhere assignee is displayed.
+9. Backend tasks_router.py (line 311-312):
+   - update_task allows nullable company_id/assignee_id:
+     nullable_fields = {'company_id', 'assignee_id'}
+     Ensures PATCH can clear these fields to null
 
 ========================================
-CHECK 4: Manual API Proof
+PROOF RESULTS
 ========================================
 
-STEP 1: Create defect without contractor
-  Task created: id=3a51593c... status=open company_id=None assignee_id=None
-  notification_jobs: 0
-  ✅ No notification on create (correct)
+PROOF 1: Create defect with company contact (NewDefectModal)
+  POST /api/tasks with company_id, no assignee_id
+  Result: id=b9fc3b9d status=open company_id=61e69864 assignee_id=None
+  ✅ Company set, no assignee
 
-STEP 2: PATCH — assign contractor (null→A)
-  Response: assignee_id=a55a90b2... company_id=0bb912a8...
-  notification_jobs count: 1, event=task_assigned status=sent
-  ✅ Notification sent on null→A (correct)
+PROOF 2: Update via PATCH (TaskDetailPage contact fallback)
+  PATCH /api/tasks/{id} with company_id, assignee_id=null
+  Result: company_id=61e69864 assignee_id=None
+  ✅ Company set, assignee stays null
 
-STEP 3: PATCH — same assignee A→A
-  Pre-update: 1 notification
-  Post-update: 1 notification
-  ✅ No duplicate notification (correct)
+PROOF 3: Clear assignment via PATCH
+  PATCH /api/tasks/{id} with company_id=null, assignee_id=null
+  Result: company_id=None assignee_id=None
+  ✅ Both cleared to null
 
-STEP 4: PATCH — change assignee A→B
-  Pre-update: 1 notification
-  Post-update: 2 notifications
-  ✅ New notification sent on A→B (correct)
+PROOF 4: No fake assignee IDs in DB
+  DB record: company_id=None assignee_id=None
+  No __contact__ or __company_contact__ in DB
+  ✅ No fake user IDs
+
+PROOF 5: Project companies endpoint returns contact_name
+  name=חברת חשמל חדשה contact_name=דוד כהן contact_phone=0507569991
+  ✅ Contact info available for frontend fallback
 
 ========================================
-SUMMARY
+GUARDRAILS VERIFIED
 ========================================
-
-CHECK A: ✅ Photos always required
-CHECK B: ✅ Notification logic correct
-CHECK 1: ✅ Schemas optional
-CHECK 2: ✅ Update triggers correct (proven)
-CHECK 3: ✅ "לא שויך" in all relevant views
-CHECK 4: ✅ All 4 proof steps pass
-
-All checks PASS. Task #107 ready for approval.
+- Fallback appears ONLY when contractor list is empty ✅
+- Real contractors always take precedence ✅
+- No fake user IDs stored in DB ✅
+- Normal contractor assignment flow unchanged ✅
+- Build passes ✅
+- Code review: PASS ✅

@@ -298,15 +298,32 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         m.role === 'contractor' &&
         (m.company_id === companyId || m.user_company_id === companyId)
       );
-      setContractors(matched);
-      if (matched.length === 1) {
-        setAssigneeId(matched[0].user_id || matched[0].id);
-        setAutoSelectedAssignee(true);
+      if (matched.length > 0) {
+        setContractors(matched);
+        if (matched.length === 1) {
+          setAssigneeId(matched[0].user_id || matched[0].id);
+          setAutoSelectedAssignee(true);
+        }
+      } else {
+        const company = companies.find(c => c.id === companyId);
+        if (company?.contact_name) {
+          setContractors([{
+            user_id: '__company_contact__',
+            user_name: `${company.contact_name} (איש קשר החברה)`,
+            role: 'contractor',
+            company_id: companyId,
+            _isContactFallback: true,
+          }]);
+          setAssigneeId('__company_contact__');
+          setAutoSelectedAssignee(true);
+        } else {
+          setContractors([]);
+        }
       }
     } else if (!companyId) {
       setContractors([]);
     }
-  }, [companyId, projectMembers]);
+  }, [companyId, projectMembers, companies]);
 
   const categoryMatchedCompanies = useMemo(() => {
     if (!category) return [];
@@ -474,7 +491,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
     }
 
-    if (!companyId || !assigneeId) {
+    const isContactFallback = assigneeId === '__company_contact__';
+    if (!companyId || !assigneeId || isContactFallback) {
       toast.success('הליקוי נוצר בהצלחה!');
       onSuccess?.(taskId);
       return;
@@ -591,6 +609,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         title: title,
         description: description,
         priority: priority,
+        ...(companyId ? { company_id: companyId } : {}),
       };
 
       const { taskService } = await import('../services/api');

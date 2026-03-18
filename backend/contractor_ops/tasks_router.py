@@ -305,7 +305,8 @@ async def update_task(task_id: str, update: TaskUpdate, user: dict = Depends(get
     project_role = await _get_project_role(user, task['project_id'])
     if project_role not in MANAGEMENT_ROLES:
         raise HTTPException(status_code=403, detail='Only management can update tasks')
-    update_data = {k: v for k, v in update.dict(exclude_unset=True).items() if v is not None}
+    nullable_fields = {'company_id', 'assignee_id'}
+    update_data = {k: v for k, v in update.dict(exclude_unset=True).items() if v is not None or k in nullable_fields}
     if 'priority' in update_data and hasattr(update_data['priority'], 'value'):
         update_data['priority'] = update_data['priority'].value
     if 'category' in update_data and hasattr(update_data['category'], 'value'):

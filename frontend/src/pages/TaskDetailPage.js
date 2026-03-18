@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { tCategory, tStatus, tPriority } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
-import { taskService, companyService, notificationService, projectService, tradeService } from '../services/api';
+import { taskService, companyService, notificationService, projectService, tradeService, projectCompanyService } from '../services/api';
 import { toast } from 'sonner';
 import { compressImage } from '../utils/imageCompress';
 import {
@@ -135,6 +135,7 @@ const TaskDetailPage = () => {
   const [task, setTask] = useState(null);
   const [updates, setUpdates] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [projectCompanies, setProjectCompanies] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [comment, setComment] = useState('');
@@ -197,13 +198,15 @@ const TaskDetailPage = () => {
 
       if (MGMT_ROLES.includes(taskData.user_project_role)) {
         try {
-          const [notifData, members] = await Promise.all([
+          const [notifData, members, projCompanies] = await Promise.all([
             notificationService.getTimeline(id),
             projectService.getMemberships(taskData.project_id),
+            projectCompanyService.list(taskData.project_id).catch(() => []),
           ]);
           setNotifications(notifData);
           const contractors = members.filter(m => m.role === 'contractor');
           setProjectContractors(contractors);
+          setProjectCompanies(Array.isArray(projCompanies) ? projCompanies : []);
         } catch {}
       }
     } catch (err) {
@@ -417,6 +420,33 @@ const TaskDetailPage = () => {
   };
 
   const handleAssignContractor = async (contractorUserId, forceCategory = false) => {
+    if (contractorUserId?.startsWith?.('__contact__')) {
+      const pcId = contractorUserId.replace('__contact__', '');
+      setSavingField('assignee');
+      try {
+        await taskService.update(id, { company_id: pcId, assignee_id: null });
+        toast.success('חברה שויכה בהצלחה');
+        await loadTask();
+      } catch (err) {
+        toast.error('שיוך נכשל');
+      } finally {
+        setSavingField(null);
+      }
+      return;
+    }
+    if (!contractorUserId) {
+      setSavingField('assignee');
+      try {
+        await taskService.update(id, { company_id: null, assignee_id: null });
+        toast.success('שיוך הוסר');
+        await loadTask();
+      } catch (err) {
+        toast.error('הסרת שיוך נכשלה');
+      } finally {
+        setSavingField(null);
+      }
+      return;
+    }
     const contractor = projectContractors.find(c => c.user_id === contractorUserId);
     if (!contractor) return;
     const companyId = contractor.user_company_id || contractor.company_id;
@@ -456,7 +486,7 @@ const TaskDetailPage = () => {
   };
 
   const getCompanyName = (companyId) => {
-    const c = companies.find(c => c.id === companyId);
+    const c = companies.find(c => c.id === companyId) || projectCompanies.find(c => c.id === companyId);
     return c ? c.name : '';
   };
 
@@ -836,7 +866,10 @@ const TaskDetailPage = () => {
                     );
                   }
                   const assignableContractors = projectContractors.filter(c => c.company_id && c.contractor_trade_key);
-                  return assignableContractors.length === 0 && !task.assignee_id ? (
+                  const contactFallbacks = projectCompanies
+                    .filter(pc => pc.contact_name && !projectContractors.some(c => c.company_id === pc.id || c.user_company_id === pc.id))
+                    .map(pc => ({ value: `__contact__${pc.id}`, label: `${pc.contact_name} (${pc.name})` }));
+                  return assignableContractors.length === 0 && contactFallbacks.length === 0 && !task.assignee_id ? (
                     <p className="text-xs text-red-500 mt-1">אין קבלנים משויכים. יש לשייך קבלן לחברה/תחום.</p>
                   ) : (
                     <InlineSelect
@@ -846,7 +879,8 @@ const TaskDetailPage = () => {
                         ...assignableContractors.map(c => ({
                           value: c.user_id,
                           label: c.user_name || c.user_id
-                        }))
+                        })),
+                        ...contactFallbacks
                       ]}
                       onChange={handleAssignContractor}
                       disabled={taskIsClosed || savingField === 'assignee'}
