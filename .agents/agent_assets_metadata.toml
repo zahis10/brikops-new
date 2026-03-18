@@ -78,3 +78,9 @@ id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
 title = "Task #107 — Final Review (All Checks)"
+
+[[outputs]]
+id = "WdwtqNCiZpAAlX9e9Sq9Z"
+uri = "file://review-107-final.txt"
+type = "text"
+title = "Task #107 — All Checks (Final)"

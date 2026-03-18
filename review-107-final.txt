@@ -1,0 +1,120 @@
+=== Task #107 — Final Review Results ===
+
+========================================
+CHECK A: Photo validation without contractor
+========================================
+
+Backend create_task (line 56-60):
+  if task.assignee_id:
+      raise HTTPException(status_code=400, detail=NO_IMAGE_MESSAGE)
+
+This guard only fires when assignee_id is provided at creation (blocking
+direct assignment without image). Photos are enforced in TWO places:
+  1) Frontend: NewDefectModal validate() line 380:
+     if (images.length === 0) errs.images = 'נדרשת לפחות תמונה אחת';
+     → ALWAYS required, regardless of contractor selection.
+  2) Backend: PATCH /tasks/{id}/assign calls require_task_image(db, task_id)
+     at line 366, enforcing image before any assignment.
+
+VERDICT: ✅ Photos are ALWAYS required. No bug.
+
+========================================
+CHECK B / CHECK 2: Update notification logic
+========================================
+
+Backend update_task (PATCH /tasks/{task_id}) lines 315-331:
+
+    old_assignee = task.get('assignee_id') or ''
+    new_assignee = update_data.get('assignee_id', old_assignee) or ''
+
+    await db.tasks.update_one(...)
+
+    if new_assignee and new_assignee != old_assignee:
+        engine = get_notification_engine()
+        if engine:
+            job = await engine.enqueue(task_id, 'task_assigned', ...)
+            if job and job.get('status') == 'queued':
+                await engine.process_job(job)
+
+Logic:
+  - null → contractor A  → new_assignee='A', old_assignee='' → A != '' → ✅ NOTIFY
+  - A → B                → new_assignee='B', old_assignee='A' → B != A → ✅ NOTIFY
+  - A → A (same)         → new_assignee='A', old_assignee='A' → A == A → ✅ NO NOTIFY
+  - null → null (no change) → both '' → '' is falsy → ✅ NO NOTIFY
+
+VERDICT: ✅ Correct. Proven by API test (see CHECK 4).
+
+========================================
+CHECK 1: Schemas — company_id/assignee_id
+========================================
+
+TaskCreate (line 276-287):
+    company_id: Optional[str] = None    ✅
+    assignee_id: Optional[str] = None   ✅
+
+TaskUpdate (line 290-297):
+    company_id: Optional[str] = None    ✅
+    assignee_id: Optional[str] = None   ✅
+
+TaskAssign (line 300-303):
+    company_id: Optional[str] = None
+    assignee_id: str                    ✅ (required — this is the explicit assign endpoint)
+
+VERDICT: ✅ Both optional in create/update. Required only in assign (correct).
+
+========================================
+CHECK 3: "לא שויך" in all defect views
+========================================
+
+grep results:
+  frontend/src/pages/TaskDetailPage.js:762   → company row fallback: 'לא שויך'
+  frontend/src/pages/TaskDetailPage.js:770   → contractor row fallback: 'לא שויך'
+  frontend/src/pages/TaskDetailPage.js:845   → management panel dropdown: 'לא שויך'
+  frontend/src/pages/TaskDetailPage.js:856   → display label: 'לא שויך'
+  frontend/src/pages/ApartmentDashboardPage.js:500 → card: 'לא שויך'
+
+Pages that do NOT show assignee names in cards (no change needed):
+  - ProjectTasksPage: shows title/status/category only, no assignee name rendered
+  - BuildingDefectsPage: aggregates counts by floor/unit, no individual task cards
+
+TaskDetailPage: "שיוך" card now ALWAYS renders (removed task.company_id gate).
+  Shows "לא שויך" for both company and contractor when unassigned.
+
+VERDICT: ✅ Consistent everywhere assignee is displayed.
+
+========================================
+CHECK 4: Manual API Proof
+========================================
+
+STEP 1: Create defect without contractor
+  Task created: id=3a51593c... status=open company_id=None assignee_id=None
+  notification_jobs: 0
+  ✅ No notification on create (correct)
+
+STEP 2: PATCH — assign contractor (null→A)
+  Response: assignee_id=a55a90b2... company_id=0bb912a8...
+  notification_jobs count: 1, event=task_assigned status=sent
+  ✅ Notification sent on null→A (correct)
+
+STEP 3: PATCH — same assignee A→A
+  Pre-update: 1 notification
+  Post-update: 1 notification
+  ✅ No duplicate notification (correct)
+
+STEP 4: PATCH — change assignee A→B
+  Pre-update: 1 notification
+  Post-update: 2 notifications
+  ✅ New notification sent on A→B (correct)
+
+========================================
+SUMMARY
+========================================
+
+CHECK A: ✅ Photos always required
+CHECK B: ✅ Notification logic correct
+CHECK 1: ✅ Schemas optional
+CHECK 2: ✅ Update triggers correct (proven)
+CHECK 3: ✅ "לא שויך" in all relevant views
+CHECK 4: ✅ All 4 proof steps pass
+
+All checks PASS. Task #107 ready for approval.
