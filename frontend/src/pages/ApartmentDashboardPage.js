@@ -296,7 +296,7 @@ const ApartmentDashboardPage = () => {
                   onClick={() => setEditingUnit(unit)}
                   className="p-1 hover:bg-white/20 rounded-lg transition-colors"
                 >
-                  <Pencil className="w-3.5 h-3.5 text-white/70" />
+                  <Pencil className="w-3.5 h-3.5 text-white" />
                 </button>
               </div>
               <div className="flex items-center gap-1.5 text-amber-100 text-xs">
