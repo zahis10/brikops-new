@@ -146,3 +146,11 @@ code {
 .billing-highlight-flash {
   animation: billingFlash 2s ease-out forwards;
 }
+
+@media (hover: hover) {
+  .unit-edit-icon { opacity: 0; }
+  .group:hover .unit-edit-icon { opacity: 1; }
+}
+@media (hover: none) {
+  .unit-edit-icon { opacity: 0.6; }
+}

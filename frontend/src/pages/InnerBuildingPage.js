@@ -556,7 +556,7 @@ const InnerBuildingPage = () => {
                                       <span className="text-xs font-medium text-green-700">{label}</span>
                                       <span
                                         onClick={(e) => openEditUnit(e, unit)}
-                                        className="opacity-0 group-hover:opacity-100 mr-auto text-slate-400 hover:text-blue-500 transition-opacity"
+                                        className="unit-edit-icon mr-auto text-slate-400 hover:text-blue-500 transition-opacity"
                                       >
                                         <Pencil className="w-3 h-3" />
                                       </span>
