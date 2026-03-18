@@ -5,9 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
+import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import {
   ArrowRight, Loader2, Building2, Layers, DoorOpen,
-  AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home
+  AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home, Pencil
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
 
@@ -18,6 +19,7 @@ const UnitHomePage = () => {
 
   const [unitData, setUnitData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [editingUnit, setEditingUnit] = useState(null);
 
   const loadUnit = useCallback(async () => {
     try {
@@ -109,12 +111,28 @@ const UnitHomePage = () => {
               <ArrowRight className="w-5 h-5" />
             </button>
             <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
+                {TAG_MAP[unit.unit_type_tag] && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/20 text-white">
+                    {TAG_MAP[unit.unit_type_tag].label}
+                  </span>
+                )}
+                <button
+                  onClick={() => setEditingUnit(unit)}
+                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5 text-white/70" />
+                </button>
+              </div>
               <div className="flex items-center gap-1.5 text-amber-100 text-xs">
                 {project && <span>{project.name}</span>}
                 {building && <><span>›</span><span>{building.name}</span></>}
                 {floor && <><span>›</span><span>{floor.name}</span></>}
               </div>
+              {unit.unit_note && (
+                <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
+              )}
             </div>
           </div>
         </div>
@@ -176,6 +194,19 @@ const UnitHomePage = () => {
           </Card>
         ))}
       </div>
+
+      {editingUnit && (
+        <UnitTypeEditModal
+          unit={editingUnit}
+          onClose={() => setEditingUnit(null)}
+          onSaved={({ unit_type_tag, unit_note }) => {
+            setUnitData(prev => ({
+              ...prev,
+              unit: { ...prev.unit, unit_type_tag, unit_note },
+            }));
+          }}
+        />
+      )}
     </div>
   );
 };
