@@ -1,0 +1,445 @@
+import os
+import uuid
+import logging
+import asyncio
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+from zoneinfo import ZoneInfo
+
+import httpx
+
+from .notification_service import (
+    NotificationEngine, validate_e164, mask_phone, _resolve_fallback_image,
+)
+
+logger = logging.getLogger(__name__)
+
+OVERDUE_THRESHOLD_DAYS = 7
+COOLDOWN_HOURS = 48
+TERMINAL_STATUSES = ("closed", "done", "cancelled")
+SEND_PACING_SECONDS = 0.1
+DEFECT_LIST_MAX_CHARS = 1024
+IL_TZ = ZoneInfo("Asia/Jerusalem")
+
+_db = None
+_wa_access_token = ""
+_wa_phone_number_id = ""
+_wa_api_url = ""
+_wa_enabled = False
+
+
+def set_reminder_deps(db, wa_access_token: str, wa_phone_number_id: str, wa_enabled: bool):
+    global _db, _wa_access_token, _wa_phone_number_id, _wa_api_url, _wa_enabled
+    _db = db
+    _wa_access_token = wa_access_token
+    _wa_phone_number_id = wa_phone_number_id
+    _wa_api_url = f"https://graph.facebook.com/v21.0/{wa_phone_number_id}/messages"
+    _wa_enabled = wa_enabled
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _now_dt():
+    return datetime.now(timezone.utc)
+
+
+def is_shabbat() -> Optional[str]:
+    now_il = datetime.now(IL_TZ)
+    if now_il.weekday() == 5:
+        return "shabbat"
+    if now_il.weekday() == 4 and now_il.hour >= 14:
+        return "erev_shabbat"
+    return None
+
+
+def _resolve_phone_for_user(user: dict) -> Optional[str]:
+    phone = user.get('phone_e164') or user.get('phone', '')
+    phone = NotificationEngine._normalize_israeli_phone(phone)
+    if phone and validate_e164(phone):
+        return phone
+    return None
+
+
+async def _resolve_phone_for_company(company_id: str) -> Optional[str]:
+    company = await _db.companies.find_one({'id': company_id}, {'_id': 0})
+    if not company:
+        return None
+    phone = company.get('phone_e164') or company.get('phone', '')
+    phone = NotificationEngine._normalize_israeli_phone(phone)
+    if phone and validate_e164(phone):
+        return phone
+    return None
+
+
+async def _send_wa_template(to_phone: str, template_name: str, body_params: list) -> dict:
+    if not _wa_enabled:
+        logger.info(f"[REMINDER:DRY-RUN] template={template_name} to={mask_phone(to_phone)}")
+        return {"success": True, "dry_run": True, "provider_message_id": f"dry_{uuid.uuid4().hex[:12]}"}
+
+    to_digits = to_phone.lstrip('+')
+    from config import WA_TEMPLATE_PARAM_MODE
+    params = []
+    for p in body_params:
+        param = {"type": "text", "text": str(p.get("text", ""))}
+        if WA_TEMPLATE_PARAM_MODE == 'named' and p.get("parameter_name"):
+            param["parameter_name"] = p["parameter_name"]
+        params.append(param)
+
+    body = {
+        "messaging_product": "whatsapp",
+        "to": to_digits,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": "he"},
+            "components": [
+                {"type": "body", "parameters": params}
+            ]
+        }
+    }
+
+    headers = {
+        "Authorization": f"Bearer {_wa_access_token}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(_wa_api_url, json=body, headers=headers)
+
+    if resp.status_code in (200, 201):
+        data = resp.json()
+        mid = data.get("messages", [{}])[0].get("id", "")
+        logger.info(f"[REMINDER:SEND] SUCCESS template={template_name} to={mask_phone(to_phone)} mid={mid}")
+        return {"success": True, "provider_message_id": mid}
+    else:
+        error_msg = resp.text[:500]
+        logger.error(f"[REMINDER:SEND] FAILED template={template_name} to={mask_phone(to_phone)} status={resp.status_code} error={error_msg}")
+        raise RuntimeError(f"WhatsApp API error ({resp.status_code}): {error_msg}")
+
+
+async def _log_reminder(entry: dict):
+    entry.setdefault("id", f"rem_{uuid.uuid4().hex[:16]}")
+    entry.setdefault("sent_at", _now())
+    await _db.reminder_log.insert_one(entry)
+    return entry
+
+
+async def _check_cooldown(project_id: str, reminder_type: str = "contractor_reminder", company_id: str = None, user_id: str = None) -> bool:
+    cutoff = (_now_dt() - timedelta(hours=COOLDOWN_HOURS)).isoformat()
+    query = {
+        "type": reminder_type,
+        "project_id": project_id,
+        "sent_at": {"$gte": cutoff},
+        "status": {"$ne": "failed"},
+    }
+    if reminder_type == "contractor_reminder" and company_id:
+        query["company_id"] = company_id
+    elif user_id:
+        query["recipient_user_id"] = user_id
+    last = await _db.reminder_log.find_one(query)
+    return last is not None
+
+
+def _build_defect_list(tasks: list) -> str:
+    lines = []
+    for i, t in enumerate(tasks[:3], 1):
+        lines.append(f"{i}. {t.get('title', 'ליקוי')}")
+    text = "\n".join(lines)
+    if len(text) > DEFECT_LIST_MAX_CHARS:
+        text = text[:DEFECT_LIST_MAX_CHARS - 3] + "..."
+    return text
+
+
+async def send_contractor_reminder(
+    project_id: str,
+    company_id: str,
+    triggered_by: str = "cron",
+    skip_cooldown: bool = False,
+) -> dict:
+    open_filter = {"status": {"$nin": list(TERMINAL_STATUSES)}}
+    tasks = await _db.tasks.find({
+        "project_id": project_id,
+        "company_id": company_id,
+        **open_filter,
+    }, {"_id": 0}).to_list(100)
+
+    if not tasks:
+        return {"status": "skipped", "reason": "no_open_defects"}
+
+    project = await _db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
+    if not project:
+        return {"status": "skipped", "reason": "project_not_found"}
+
+    org_id = project.get("org_id", "")
+
+    assignee_ids = list(set(t.get("assignee_id") for t in tasks if t.get("assignee_id")))
+    recipients = []
+    for aid in assignee_ids:
+        user = await _db.users.find_one({"id": aid}, {"_id": 0})
+        if user:
+            phone = _resolve_phone_for_user(user)
+            if phone:
+                recipients.append({"user": user, "phone": phone})
+            else:
+                logger.warning(f"[REMINDER] Assignee {aid} has no valid phone, skipping")
+        else:
+            logger.warning(f"[REMINDER] Assignee {aid} not found, skipping")
+
+    if not recipients:
+        company_phone = await _resolve_phone_for_company(company_id)
+        if company_phone:
+            company = await _db.companies.find_one({"id": company_id}, {"_id": 0})
+            recipients.append({
+                "user": {"id": company_id, "name": company.get("name", "קבלן") if company else "קבלן"},
+                "phone": company_phone,
+                "is_company": True,
+            })
+        else:
+            return {"status": "skipped", "reason": "no_valid_phone"}
+
+    from config import WA_REMINDER_TEMPLATE_HE
+    defect_list = _build_defect_list(tasks)
+    results = []
+
+    for r in recipients:
+        user = r["user"]
+        phone = r["phone"]
+        user_id = user.get("id", "")
+        user_name = user.get("name", "קבלן")
+
+        if not skip_cooldown:
+            if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
+                results.append({"user_id": user_id, "status": "skipped", "reason": "cooldown"})
+                break
+
+        log_entry = {
+            "type": "contractor_reminder",
+            "company_id": company_id,
+            "recipient_user_id": user_id,
+            "recipient_phone": phone,
+            "project_id": project_id,
+            "org_id": org_id,
+            "message_template": WA_REMINDER_TEMPLATE_HE,
+            "defect_count": len(tasks),
+            "triggered_by": triggered_by,
+        }
+
+        try:
+            body_params = [
+                {"parameter_name": "contractor_name", "text": user_name},
+                {"parameter_name": "project_name", "text": project.get("name", "")},
+                {"parameter_name": "defect_count", "text": str(len(tasks))},
+                {"parameter_name": "defect_list", "text": defect_list},
+            ]
+            wa_result = await _send_wa_template(phone, WA_REMINDER_TEMPLATE_HE, body_params)
+            log_entry["status"] = "sent"
+            log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+            results.append({"user_id": user_id, "status": "sent", "wa_message_id": log_entry["wa_message_id"]})
+        except Exception as e:
+            log_entry["status"] = "failed"
+            log_entry["error_detail"] = str(e)[:500]
+            results.append({"user_id": user_id, "status": "failed", "error": str(e)[:200]})
+            logger.error(f"[REMINDER] Failed to send contractor reminder to {mask_phone(phone)}: {e}")
+
+        await _log_reminder(log_entry)
+        await asyncio.sleep(SEND_PACING_SECONDS)
+
+    return {"status": "completed", "results": results, "defect_count": len(tasks)}
+
+
+async def send_pm_digest(
+    project_id: str,
+    triggered_by: str = "cron",
+) -> dict:
+    project = await _db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
+    if not project:
+        return {"status": "skipped", "reason": "project_not_found"}
+
+    org_id = project.get("org_id", "")
+    now = _now_dt()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    open_filter = {"project_id": project_id, "status": {"$nin": list(TERMINAL_STATUSES)}}
+    open_count = await _db.tasks.count_documents(open_filter)
+
+    overdue_cutoff = (now - timedelta(days=OVERDUE_THRESHOLD_DAYS)).isoformat()
+    overdue_count = await _db.tasks.count_documents({
+        **open_filter,
+        "created_at": {"$lte": overdue_cutoff},
+    })
+
+    new_today = await _db.tasks.count_documents({
+        "project_id": project_id,
+        "created_at": {"$gte": today_start},
+    })
+
+    closed_today = await _db.tasks.count_documents({
+        "project_id": project_id,
+        "status": {"$in": list(TERMINAL_STATUSES)},
+        "updated_at": {"$gte": today_start},
+    })
+
+    if open_count == 0 and new_today == 0 and closed_today == 0:
+        return {"status": "skipped", "reason": "no_meaningful_data"}
+
+    pm_memberships = await _db.project_memberships.find({
+        "project_id": project_id,
+        "role": {"$in": ["project_manager", "owner"]},
+    }, {"_id": 0}).to_list(100)
+
+    recipients = []
+    for mem in pm_memberships:
+        user = await _db.users.find_one({"id": mem["user_id"]}, {"_id": 0})
+        if user:
+            phone = _resolve_phone_for_user(user)
+            if phone:
+                recipients.append({"user": user, "phone": phone})
+            else:
+                logger.warning(f"[DIGEST] PM {mem['user_id']} has no valid phone, skipping")
+
+    if not recipients:
+        return {"status": "skipped", "reason": "no_pm_with_phone"}
+
+    from config import WA_DIGEST_TEMPLATE_HE
+    results = []
+
+    for r in recipients:
+        user = r["user"]
+        phone = r["phone"]
+        user_id = user.get("id", "")
+
+        log_entry = {
+            "type": "pm_digest",
+            "recipient_user_id": user_id,
+            "recipient_phone": phone,
+            "project_id": project_id,
+            "org_id": org_id,
+            "message_template": WA_DIGEST_TEMPLATE_HE,
+            "defect_count": open_count,
+            "triggered_by": triggered_by,
+        }
+
+        try:
+            body_params = [
+                {"parameter_name": "project_name", "text": project.get("name", "")},
+                {"parameter_name": "open_count", "text": str(open_count)},
+                {"parameter_name": "overdue_count", "text": str(overdue_count)},
+                {"parameter_name": "new_today", "text": str(new_today)},
+                {"parameter_name": "closed_today", "text": str(closed_today)},
+            ]
+            wa_result = await _send_wa_template(phone, WA_DIGEST_TEMPLATE_HE, body_params)
+            log_entry["status"] = "sent"
+            log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+            results.append({"user_id": user_id, "status": "sent"})
+        except Exception as e:
+            log_entry["status"] = "failed"
+            log_entry["error_detail"] = str(e)[:500]
+            results.append({"user_id": user_id, "status": "failed", "error": str(e)[:200]})
+            logger.error(f"[DIGEST] Failed to send PM digest to {mask_phone(phone)}: {e}")
+
+        await _log_reminder(log_entry)
+        await asyncio.sleep(SEND_PACING_SECONDS)
+
+    return {
+        "status": "completed",
+        "results": results,
+        "stats": {
+            "open": open_count,
+            "overdue": overdue_count,
+            "new_today": new_today,
+            "closed_today": closed_today,
+        },
+    }
+
+
+async def send_all_contractor_reminders() -> dict:
+    summary = {"sent": 0, "skipped": 0, "failed": 0, "projects": []}
+    try:
+        projects = await _db.projects.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        for project in projects:
+            pid = project["id"]
+            open_tasks = await _db.tasks.find({
+                "project_id": pid,
+                "status": {"$nin": list(TERMINAL_STATUSES)},
+                "company_id": {"$exists": True, "$nin": [None, ""]},
+            }, {"_id": 0, "company_id": 1}).to_list(1000)
+
+            company_ids = list(set(t["company_id"] for t in open_tasks if t.get("company_id")))
+            if not company_ids:
+                continue
+
+            for cid in company_ids:
+                try:
+                    result = await send_contractor_reminder(pid, cid, triggered_by="cron", skip_cooldown=False)
+                    status = result.get("status", "")
+                    if status == "completed":
+                        for r in result.get("results", []):
+                            if r.get("status") == "sent":
+                                summary["sent"] += 1
+                            elif r.get("status") == "skipped":
+                                summary["skipped"] += 1
+                            elif r.get("status") == "failed":
+                                summary["failed"] += 1
+                    elif status == "skipped":
+                        summary["skipped"] += 1
+                except Exception as e:
+                    summary["failed"] += 1
+                    logger.error(f"[REMINDER-BATCH] Error for project={pid} company={cid}: {e}")
+
+            summary["projects"].append(pid)
+    except Exception as e:
+        logger.critical(f"[REMINDER-BATCH] Catastrophic failure: {e}")
+        summary["critical_error"] = str(e)[:500]
+
+    return summary
+
+
+async def send_all_pm_digests() -> dict:
+    summary = {"sent": 0, "skipped": 0, "failed": 0, "projects": []}
+    try:
+        projects = await _db.projects.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        for project in projects:
+            pid = project["id"]
+            try:
+                result = await send_pm_digest(pid, triggered_by="cron")
+                status = result.get("status", "")
+                if status == "completed":
+                    for r in result.get("results", []):
+                        if r.get("status") == "sent":
+                            summary["sent"] += 1
+                        elif r.get("status") == "failed":
+                            summary["failed"] += 1
+                elif status == "skipped":
+                    summary["skipped"] += 1
+            except Exception as e:
+                summary["failed"] += 1
+                logger.error(f"[DIGEST-BATCH] Error for project={pid}: {e}")
+
+            summary["projects"].append(pid)
+    except Exception as e:
+        logger.critical(f"[DIGEST-BATCH] Catastrophic failure: {e}")
+        summary["critical_error"] = str(e)[:500]
+
+    return summary
+
+
+async def ensure_indexes():
+    try:
+        await _db.reminder_log.create_index([
+            ("company_id", 1),
+            ("type", 1),
+            ("project_id", 1),
+            ("sent_at", -1),
+        ])
+        await _db.reminder_log.create_index([
+            ("recipient_user_id", 1),
+            ("type", 1),
+            ("project_id", 1),
+            ("sent_at", -1),
+        ])
+        await _db.reminder_log.create_index([("wa_message_id", 1)])
+        logger.info("[REMINDER] Indexes created on reminder_log")
+    except Exception as e:
+        logger.warning(f"[REMINDER] Index creation issue: {e}")

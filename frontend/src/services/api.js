@@ -98,6 +98,14 @@ export const projectService = {
     const response = await axios.put(`${API}/projects/${projectId}/onboarding-complete`, {}, { headers: getAuthHeader() });
     return response.data;
   },
+  async sendContractorReminder(projectId, companyId) {
+    const response = await axios.post(`${API}/projects/${projectId}/reminders/contractor/${companyId}`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async sendDigest(projectId) {
+    const response = await axios.post(`${API}/projects/${projectId}/reminders/digest`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const buildingService = {

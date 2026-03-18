@@ -233,6 +233,13 @@ set_notification_engine(notification_engine)
 notify_router = create_notification_router(require_roles, get_current_user)
 app.include_router(notify_router)
 
+from contractor_ops.reminder_service import set_reminder_deps, ensure_indexes as ensure_reminder_indexes
+from contractor_ops.reminder_router import create_reminder_router
+set_reminder_deps(db, WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WHATSAPP_ENABLED)
+reminder_api_router, reminder_cron_router = create_reminder_router(require_roles, get_current_user)
+app.include_router(reminder_api_router)
+app.include_router(reminder_cron_router)
+
 from contractor_ops.sms_service import SMSClient
 from config import SMS_ENABLED, TWILIO_MESSAGING_SERVICE_SID
 sms_client = SMSClient(
@@ -817,6 +824,7 @@ async def _deferred_db_init():
         await ensure_transfer_indexes(db)
         from contractor_ops.invoicing import ensure_indexes as invoicing_ensure_indexes
         await invoicing_ensure_indexes()
+        await ensure_reminder_indexes()
     except Exception as e:
         logger.warning(f"[STARTUP] Index creation failed (non-fatal): {e}")
 

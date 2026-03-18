@@ -11,7 +11,7 @@ import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
   ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings,
-  Construction, FileSignature
+  Construction, FileSignature, Send, MessageSquare
 } from 'lucide-react';
 
 const formatHours = (h) => {
@@ -118,6 +118,8 @@ export default function ProjectDashboardPage() {
   const [alertsExpanded, setAlertsExpanded] = useState(false);
   const [highlightEntity, setHighlightEntity] = useState(null);
   const [handoverSummary, setHandoverSummary] = useState(null);
+  const [sendingDigest, setSendingDigest] = useState(false);
+  const [sendingReminder, setSendingReminder] = useState({});
   const stageRefs = useRef({});
 
   const load = useCallback(async (isRefresh = false) => {
@@ -171,6 +173,32 @@ export default function ProjectDashboardPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const handleSendDigest = async () => {
+    setSendingDigest(true);
+    try {
+      await projectService.sendDigest(projectId);
+      toast.success('סיכום יומי נשלח בהצלחה');
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'שגיאה בשליחת סיכום';
+      toast.error(msg);
+    } finally {
+      setSendingDigest(false);
+    }
+  };
+
+  const handleSendReminder = async (companyId, contractorName) => {
+    setSendingReminder(prev => ({ ...prev, [companyId]: true }));
+    try {
+      await projectService.sendContractorReminder(projectId, companyId);
+      toast.success(`תזכורת נשלחה ל${contractorName}`);
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'שגיאה בשליחת תזכורת';
+      toast.error(msg);
+    } finally {
+      setSendingReminder(prev => ({ ...prev, [companyId]: false }));
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -201,7 +229,7 @@ export default function ProjectDashboardPage() {
   const load_by_building = data.load_by_building || [];
   const contractor_quality = data.contractor_quality || [];
   const role = data.role || '';
-  const isPmOrOwner = role === 'project_manager';
+  const isPmOrOwner = role === 'project_manager' || role === 'owner';
   const showPendingApprovals = isPmOrOwner && pending_approvals.length > 0;
   const qcProgress = qcSummary && qcSummary.total > 0 ? Math.round((qcSummary.submitted / qcSummary.total) * 100) : 0;
 
@@ -230,6 +258,16 @@ export default function ProjectDashboardPage() {
           <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
             <Settings className="w-4 h-4" />
           </button>
+          {isPmOrOwner && (
+            <button
+              onClick={handleSendDigest}
+              disabled={sendingDigest}
+              className="p-1.5 bg-emerald-500/20 border border-emerald-400/30 rounded-[10px] hover:bg-emerald-500/30 transition-colors"
+              title="סיכום עכשיו"
+            >
+              {sendingDigest ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4 text-emerald-300" />}
+            </button>
+          )}
           <button onClick={() => load(true)} disabled={refreshing} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="רענן">
             <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
@@ -648,11 +686,22 @@ export default function ProjectDashboardPage() {
                         <HardHat className="w-4 h-4 text-orange-500" />
                         <span className="text-sm font-bold text-slate-700">{contractor.contractor_name || 'קבלן'}</span>
                       </div>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                        contractor.stuck_count > 5 ? 'text-red-600 bg-red-100' : 'text-orange-600 bg-orange-100'
-                      }`}>
-                        {contractor.stuck_count} תקועות
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleSendReminder(contractor.contractor_id, contractor.contractor_name || 'קבלן'); }}
+                          disabled={sendingReminder[contractor.contractor_id]}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors flex items-center gap-0.5"
+                          title="שלח תזכורת"
+                        >
+                          {sendingReminder[contractor.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                          תזכורת
+                        </button>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                          contractor.stuck_count > 5 ? 'text-red-600 bg-red-100' : 'text-orange-600 bg-orange-100'
+                        }`}>
+                          {contractor.stuck_count} תקועות
+                        </span>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       {contractor.tasks.slice(0, 3).map(task => (
@@ -713,6 +762,7 @@ export default function ProjectDashboardPage() {
                       <th className="text-center py-2.5 px-2 font-medium">פתוח</th>
                       <th className="text-center py-2.5 px-2 font-medium">סגור</th>
                       <th className="text-center py-2.5 px-2 font-medium">דחיות</th>
+                      {isPmOrOwner && <th className="text-center py-2.5 px-2 font-medium w-16"></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -730,6 +780,19 @@ export default function ProjectDashboardPage() {
                         <td className="text-center py-2.5 px-2">
                           <span className={`text-sm ${c.rework > 2 ? 'font-bold text-orange-600' : c.rework > 0 ? 'font-bold text-orange-500' : 'text-slate-400'}`}>{c.rework}</span>
                         </td>
+                        {isPmOrOwner && c.open > 0 && (
+                          <td className="text-center py-2.5 px-1">
+                            <button
+                              onClick={() => handleSendReminder(c.contractor_id, c.contractor_name || 'קבלן')}
+                              disabled={sendingReminder[c.contractor_id]}
+                              className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors inline-flex items-center gap-0.5"
+                              title="שלח תזכורת"
+                            >
+                              {sendingReminder[c.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                            </button>
+                          </td>
+                        )}
+                        {isPmOrOwner && c.open === 0 && <td></td>}
                       </tr>
                     ))}
                   </tbody>
