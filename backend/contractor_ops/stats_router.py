@@ -82,7 +82,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
     await _check_project_read_access(user, project_id)
     role = await _get_project_role(user, project_id)
     _t_auth = _t.perf_counter()
-    is_pm_or_owner = role in ('project_manager',)
+    is_pm_or_owner = role in ('project_manager', 'owner')
     now = datetime.utcnow()
     seven_days_ago = (now - timedelta(days=7)).isoformat()
     thirty_days_ago = (now - timedelta(days=30)).isoformat()
@@ -96,7 +96,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
 
     tasks = await db.tasks.find(
         base_filter,
-        {'_id': 0, 'id': 1, 'title': 1, 'status': 1, 'assignee_id': 1,
+        {'_id': 0, 'id': 1, 'title': 1, 'status': 1, 'assignee_id': 1, 'company_id': 1,
          'building_id': 1, 'floor_id': 1, 'unit_id': 1,
          'created_at': 1, 'updated_at': 1, 'due_date': 1, 'category': 1, 'priority': 1}
     ).to_list(50000)
@@ -114,6 +114,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
     stuck_map = {}
     building_load = {}
     contractor_map = {}
+    assignee_company_map = {}
 
     by_status = {}
     by_category = {}
@@ -144,29 +145,33 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
         if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed',):
             overdue_count += 1
 
+        cid = t.get('company_id') or ''
         aid = t.get('assignee_id')
-        if aid and s in active_statuses:
+        group_key = cid or aid
+        if group_key and s in active_statuses:
             updated = t.get('updated_at', '')
-            if aid not in stuck_map:
-                stuck_map[aid] = []
-            stuck_map[aid].append({
+            if group_key not in stuck_map:
+                stuck_map[group_key] = []
+            stuck_map[group_key].append({
                 'id': tid, 'title': t.get('title', ''),
                 'status': s, 'updated_at': updated,
             })
+        if group_key and cid:
+            assignee_company_map[group_key] = cid
 
         bid = t.get('building_id')
         if bid and s in active_statuses:
             building_load[bid] = building_load.get(bid, 0) + 1
 
-        if aid:
-            if aid not in contractor_map:
-                contractor_map[aid] = {'open': 0, 'closed': 0, 'rework': 0, 'response_times': []}
+        if group_key:
+            if group_key not in contractor_map:
+                contractor_map[group_key] = {'open': 0, 'closed': 0, 'rework': 0, 'response_times': []}
             if s in active_statuses:
-                contractor_map[aid]['open'] += 1
+                contractor_map[group_key]['open'] += 1
             if s == 'closed':
-                contractor_map[aid]['closed'] += 1
+                contractor_map[group_key]['closed'] += 1
             if s == 'returned_to_contractor':
-                contractor_map[aid]['rework'] += 1
+                contractor_map[group_key]['rework'] += 1
 
     _t_loop = _t.perf_counter()
 
@@ -273,21 +278,30 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
     stuck_threshold = (now - timedelta(hours=48)).isoformat()
     stuck_contractors = []
     contractor_ids = list(set(list(stuck_map.keys()) + list(contractor_map.keys())))
-    user_docs = {}
+    name_docs = {}
     if contractor_ids:
         users_list = await db.users.find(
             {'id': {'$in': contractor_ids}},
             {'_id': 0, 'id': 1, 'name': 1}
         ).to_list(1000)
-        user_docs = {u['id']: u.get('name', '') for u in users_list}
+        name_docs = {u['id']: u.get('name', '') for u in users_list}
+        missing_ids = [cid for cid in contractor_ids if cid not in name_docs]
+        if missing_ids:
+            companies_list = await db.companies.find(
+                {'id': {'$in': missing_ids}},
+                {'_id': 0, 'id': 1, 'name': 1}
+            ).to_list(500)
+            for c in companies_list:
+                name_docs[c['id']] = c.get('name', '')
 
-    for aid, task_list in stuck_map.items():
+    for gk, task_list in stuck_map.items():
         stuck_tasks = [t for t in task_list if t.get('updated_at', '') < stuck_threshold]
         if stuck_tasks:
             stuck_tasks.sort(key=lambda x: x.get('updated_at', ''))
             stuck_contractors.append({
-                'contractor_id': aid,
-                'contractor_name': user_docs.get(aid, ''),
+                'contractor_id': gk,
+                'company_id': assignee_company_map.get(gk, gk),
+                'contractor_name': name_docs.get(gk, ''),
                 'stuck_count': len(stuck_tasks),
                 'tasks': stuck_tasks[:5],
             })
@@ -311,13 +325,14 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
         })
 
     contractor_quality = []
-    for aid, stats in contractor_map.items():
+    for gk, stats in contractor_map.items():
         total = stats['open'] + stats['closed']
         if total == 0:
             continue
         contractor_quality.append({
-            'contractor_id': aid,
-            'contractor_name': user_docs.get(aid, ''),
+            'contractor_id': gk,
+            'company_id': assignee_company_map.get(gk, gk),
+            'contractor_name': name_docs.get(gk, ''),
             'open': stats['open'],
             'closed': stats['closed'],
             'rework': stats['rework'],

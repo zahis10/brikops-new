@@ -688,7 +688,7 @@ export default function ProjectDashboardPage() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleSendReminder(contractor.contractor_id, contractor.contractor_name || 'קבלן'); }}
+                          onClick={(e) => { e.stopPropagation(); handleSendReminder(contractor.company_id || contractor.contractor_id, contractor.contractor_name || 'קבלן'); }}
                           disabled={sendingReminder[contractor.contractor_id]}
                           className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors flex items-center gap-0.5"
                           title="שלח תזכורת"
@@ -783,7 +783,7 @@ export default function ProjectDashboardPage() {
                         {isPmOrOwner && c.open > 0 && (
                           <td className="text-center py-2.5 px-1">
                             <button
-                              onClick={() => handleSendReminder(c.contractor_id, c.contractor_name || 'קבלן')}
+                              onClick={() => handleSendReminder(c.company_id || c.contractor_id, c.contractor_name || 'קבלן')}
                               disabled={sendingReminder[c.contractor_id]}
                               className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors inline-flex items-center gap-0.5"
                               title="שלח תזכורת"
