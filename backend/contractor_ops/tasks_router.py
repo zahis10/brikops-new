@@ -211,7 +211,21 @@ async def list_tasks(
         if proj_role == 'contractor':
             is_contractor = True
     if is_contractor:
-        query['assignee_id'] = user['id']
+        contractor_conditions = [{'assignee_id': user['id']}]
+        if project_id:
+            user_mem = await db.project_memberships.find_one(
+                {'project_id': project_id, 'user_id': user['id']},
+                {'_id': 0, 'company_id': 1}
+            )
+            if user_mem and user_mem.get('company_id'):
+                contractor_conditions.append({'company_id': user_mem['company_id']})
+        if '$or' in query:
+            existing_or = query.pop('$or')
+            query.setdefault('$and', []).extend([{'$or': existing_or}, {'$or': contractor_conditions}])
+        elif '$and' in query:
+            query['$and'].append({'$or': contractor_conditions})
+        else:
+            query['$or'] = contractor_conditions
 
     tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(10000)
 
@@ -246,9 +260,17 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     membership = await _get_project_membership(user, task['project_id'])
     is_assignee = task.get('assignee_id') == user['id']
     is_contractor = membership['role'] == 'contractor' or user['role'] == 'contractor'
-    logger.info(f"[GET_TASK] task_id={task_id} user_id={user['id']} membership_role={membership['role']} user_role={user.get('role')} is_contractor={is_contractor} is_assignee={is_assignee} assignee_id={task.get('assignee_id')}")
-    if is_contractor and not is_assignee:
-        logger.info(f"[GET_TASK] 404 contractor_not_assignee task_id={task_id} user_id={user['id']}")
+    is_company_member = False
+    if is_contractor and not is_assignee and task.get('company_id'):
+        user_membership = await db.project_memberships.find_one(
+            {'project_id': task['project_id'], 'user_id': user['id']},
+            {'_id': 0, 'company_id': 1}
+        )
+        if user_membership and user_membership.get('company_id') == task['company_id']:
+            is_company_member = True
+    logger.info(f"[GET_TASK] task_id={task_id} user_id={user['id']} membership_role={membership['role']} user_role={user.get('role')} is_contractor={is_contractor} is_assignee={is_assignee} is_company_member={is_company_member} assignee_id={task.get('assignee_id')} task_company_id={task.get('company_id')}")
+    if is_contractor and not is_assignee and not is_company_member:
+        logger.info(f"[GET_TASK] 404 contractor_not_assignee_or_company task_id={task_id} user_id={user['id']}")
         raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
     if membership['role'] == 'none' and not is_assignee:
         logger.info(f"[GET_TASK] 403 no_membership_not_assignee task_id={task_id} user_id={user['id']}")
@@ -256,7 +278,7 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task_data = Task(**task).dict()
     from services.object_storage import resolve_urls_in_doc
     resolve_urls_in_doc(task_data)
-    task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if is_assignee else 'none')
+    task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
     task_data['user_project_sub_role'] = membership.get('sub_role')
     
     # Add location names

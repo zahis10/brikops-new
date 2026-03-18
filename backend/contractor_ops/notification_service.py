@@ -135,7 +135,10 @@ def format_text_message(payload: dict) -> str:
             pm_info += f" ({payload['pm_phone']})" if pm_info else payload['pm_phone']
         lines.append(f"\n👷 מנהל: {pm_info}")
     if payload.get('task_link'):
-        lines.append(f"\n🔗 קישור: {payload['task_link']}")
+        link = payload['task_link']
+        if '?' not in link:
+            link = f"{link}/?src=wa"
+        lines.append(f"\n🔗 לצפייה בליקוי: {link}")
     return "\n".join(lines)
 
 
@@ -241,13 +244,22 @@ class WhatsAppClient:
             ref_param = {"type": "text", "text": ref_text}
             location_param = {"type": "text", "text": location}
             issue_param = {"type": "text", "text": payload.get('title', '')}
+            task_link = payload.get('task_link', '')
+            if task_link and '?' in task_link:
+                link_text = task_link
+            elif task_link:
+                link_text = f"{task_link}/?src=wa"
+            else:
+                link_text = ''
+            link_param = {"type": "text", "text": link_text or 'https://app.brikops.com'}
             if WA_TEMPLATE_PARAM_MODE == 'named':
                 ref_param["parameter_name"] = "ref"
                 location_param["parameter_name"] = "location"
                 issue_param["parameter_name"] = "issue"
+                link_param["parameter_name"] = "link"
             components.append({
                 "type": "body",
-                "parameters": [ref_param, location_param, issue_param]
+                "parameters": [ref_param, location_param, issue_param, link_param]
             })
 
             if task_id:
