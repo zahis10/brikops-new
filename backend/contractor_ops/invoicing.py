@@ -324,6 +324,11 @@ async def check_and_enforce_dunning(org_id: str) -> dict:
             })
             logger.info(f"[INVOICING] Invoice {inv['id']} transitioned issued→past_due for org {org_id}")
 
+    latest_invoice = await db.invoices.find_one(
+        {"org_id": org_id},
+        sort=[("period_ym", -1)]
+    )
+
     past_due_invoices = await db.invoices.find(
         {'org_id': org_id, 'status': 'past_due'},
         {'_id': 0}
@@ -335,6 +340,9 @@ async def check_and_enforce_dunning(org_id: str) -> dict:
             due_dt = due_dt.replace(tzinfo=timezone.utc)
         grace_end = due_dt + timedelta(days=GRACE_DAYS)
         if now > grace_end:
+            if latest_invoice and latest_invoice["status"] not in ("past_due",) and inv["period_ym"] != latest_invoice["period_ym"]:
+                logger.info(f"[INVOICING] Skipping paid_until clear for old invoice {inv['id']} (period {inv['period_ym']}); latest period {latest_invoice['period_ym']} is {latest_invoice['status']}")
+                continue
             sub = await db.subscriptions.find_one(
                 {'org_id': org_id}, {'_id': 0, 'paid_until': 1}
             )
