@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api")
 
 
 @router.post("/tasks", response_model=Task)
-async def create_task(task: TaskCreate, user: dict = Depends(require_roles('project_manager'))):
+async def create_task(task: TaskCreate, user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     pid = (task.project_id or '').strip()
     if not pid:
@@ -527,7 +527,7 @@ async def change_task_status(task_id: str, change: TaskStatusChange, user: dict 
 
 
 @router.post("/tasks/{task_id}/reopen", response_model=Task)
-async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:

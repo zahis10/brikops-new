@@ -229,7 +229,7 @@ export default function ProjectDashboardPage() {
   const load_by_building = data.load_by_building || [];
   const contractor_quality = data.contractor_quality || [];
   const role = data.role || '';
-  const isPmOrOwner = role === 'project_manager' || role === 'owner';
+  const isPmOrOwner = role === 'project_manager' || role === 'owner' || role === 'management_team';
   const showPendingApprovals = isPmOrOwner && pending_approvals.length > 0;
   const qcProgress = qcSummary && qcSummary.total > 0 ? Math.round((qcSummary.submitted / qcSummary.total) * 100) : 0;
 

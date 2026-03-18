@@ -63,7 +63,7 @@ const AccountSettingsPage = () => {
   const memberships = user?.project_memberships_summary || [];
   const userRoles = new Set(memberships.map(m => m.role));
   const isContractor = userRoles.has('contractor');
-  const isPmOrOwner = userRoles.has('project_manager') || userRoles.has('owner') || user?.platform_role === 'super_admin';
+  const isPmOrOwner = userRoles.has('project_manager') || userRoles.has('owner') || userRoles.has('management_team') || user?.platform_role === 'super_admin';
   const showReminderPrefs = isContractor || isPmOrOwner;
 
   useEffect(() => {

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api")
 
 
 @router.post("/companies", response_model=Company)
-async def create_company(company: Company, user: dict = Depends(require_roles('project_manager'))):
+async def create_company(company: Company, user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     company_id = str(uuid.uuid4())
     doc = {
@@ -37,7 +37,7 @@ async def list_companies(user: dict = Depends(get_current_user)):
 
 # ── Project-scoped companies ──
 @router.post("/projects/{project_id}/companies")
-async def create_project_company(project_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager'))):
+async def create_project_company(project_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     await _check_project_access(user, project_id)
     name = (body.get('name') or '').strip()
@@ -79,7 +79,7 @@ async def list_project_companies(project_id: str, user: dict = Depends(get_curre
 
 
 @router.put("/projects/{project_id}/companies/{company_id}")
-async def update_project_company(project_id: str, company_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager'))):
+async def update_project_company(project_id: str, company_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     await _check_project_access(user, project_id)
     existing = await db.project_companies.find_one({'id': company_id, 'project_id': project_id, 'deletedAt': {'$exists': False}})
@@ -97,7 +97,7 @@ async def update_project_company(project_id: str, company_id: str, body: dict = 
 
 
 @router.delete("/projects/{project_id}/companies/{company_id}")
-async def delete_project_company(project_id: str, company_id: str, user: dict = Depends(require_roles('project_manager'))):
+async def delete_project_company(project_id: str, company_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     await _check_project_access(user, project_id)
     existing = await db.project_companies.find_one({'id': company_id, 'project_id': project_id, 'deletedAt': {'$exists': False}})
@@ -132,7 +132,7 @@ async def list_project_trades(project_id: str, user: dict = Depends(get_current_
 
 
 @router.post("/projects/{project_id}/trades")
-async def create_project_trade(project_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager'))):
+async def create_project_trade(project_id: str, body: dict = Body(...), user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
     await _check_project_access(user, project_id)
     label_he = (body.get('label_he') or '').strip()

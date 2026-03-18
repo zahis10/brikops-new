@@ -13,7 +13,7 @@ cron_router = APIRouter(tags=["cron"])
 _get_current_user = None
 _require_roles = None
 
-ALLOWED_ROLES = {"project_manager", "owner", "super_admin"}
+ALLOWED_ROLES = {"project_manager", "owner", "super_admin", "management_team"}
 
 
 async def _check_reminder_access(user: dict, project_id: str):
@@ -24,7 +24,7 @@ async def _check_reminder_access(user: dict, project_id: str):
         "user_id": user["id"],
         "project_id": project_id,
     })
-    if not membership or membership.get("role") not in ("project_manager", "owner"):
+    if not membership or membership.get("role") not in ("project_manager", "owner", "management_team"):
         raise HTTPException(status_code=403, detail="אין לך הרשאה לשלוח תזכורות בפרויקט זה")
 
 

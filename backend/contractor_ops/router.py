@@ -422,7 +422,7 @@ async def _check_paywall(request_method: str, request_path: str, user: dict):
 
 
 
-PHONE_VISIBLE_ROLES = ('project_manager',)
+PHONE_VISIBLE_ROLES = ('project_manager', 'management_team')
 
 
 async def _enrich_memberships(project_id: str, can_see_phone: bool, limit: int = 1000):

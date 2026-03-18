@@ -1118,7 +1118,7 @@ async def get_project_qc_template(project_id: str, user: dict = Depends(get_curr
         })
         if not membership:
             raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
-        allowed_roles = ['owner', 'project_manager']
+        allowed_roles = ['owner', 'project_manager', 'management_team']
         if membership.get('role') not in allowed_roles:
             raise HTTPException(status_code=403, detail='אין הרשאה לצפות בתבנית QC')
     db = get_db()

@@ -70,7 +70,7 @@ const ApartmentDashboardPage = () => {
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [flagChecked, setFlagChecked] = useState(false);
   const [showDefectModal, setShowDefectModal] = useState(false);
-  const canCreateDefect = user && user.role === 'project_manager';
+  const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
 
   useEffect(() => {
     configService.getFeatures().then(data => {
