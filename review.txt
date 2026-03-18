@@ -1,184 +1,120 @@
-=== SECTION 1: NewDefectModal — optional contractor ===
-145:  const [companyId, setCompanyId] = useState('');
-146:  const [assigneeId, setAssigneeId] = useState('');
-147-
-148-  const [images, setImages] = useState([]);
-149-  const [createdTaskId, setCreatedTaskId] = useState(null);
-150-  const [uploadError, setUploadError] = useState(null);
-151-  const [projects, setProjects] = useState([]);
-152-  const [buildings, setBuildings] = useState([]);
-153-  const [floors, setFloors] = useState([]);
-154-  const [units, setUnits] = useState([]);
-155-  const [companies, setCompanies] = useState([]);
-156:  const [contractors, setContractors] = useState([]);
-157-  const [projectMembers, setProjectMembers] = useState([]);
-158-  const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
-159-  const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
-160-  const [submitting, setSubmitting] = useState(false);
-161-  const [submitStep, setSubmitStep] = useState(null);
-162-  const [errors, setErrors] = useState({});
-163-
-164-  const [loading, setLoading] = useState({});
-165-  const [loadError, setLoadError] = useState({});
-166-
-167-  const loadProjects = useCallback(() => {
-168-    setLoading(l => ({ ...l, projects: true }));
-169-    setLoadError(e => ({ ...e, projects: false }));
-170-    projectService.list()
-171-      .then(data => { setProjects(normalizeList(data)); })
-172-      .catch(err => { console.error('Failed to load projects:', err); toast.error('שגיאה בטעינת פרויקטים'); setLoadError(e => ({ ...e, projects: true })); })
-173-      .finally(() => setLoading(l => ({ ...l, projects: false })));
-174-  }, []);
-175-
-176-  const loadCompanies = useCallback((pid) => {
---
-296:    if (companyId && projectMembers.length > 0) {
-297-      const matched = projectMembers.filter(m =>
-298:        m.role === 'contractor' &&
-299:        (m.company_id === companyId || m.user_company_id === companyId)
-300-      );
-301-      setContractors(matched);
-302-      if (matched.length === 1) {
+=== Task #107 — Final Review Results ===
 
-=== SECTION 2: NewDefectModal — submit/save logic ===
-146:  const [assigneeId, setAssigneeId] = useState('');
-147-
-148-  const [images, setImages] = useState([]);
-149-  const [createdTaskId, setCreatedTaskId] = useState(null);
-150-  const [uploadError, setUploadError] = useState(null);
-151-  const [projects, setProjects] = useState([]);
-152-  const [buildings, setBuildings] = useState([]);
-153-  const [floors, setFloors] = useState([]);
-154-  const [units, setUnits] = useState([]);
-155-  const [companies, setCompanies] = useState([]);
-156-  const [contractors, setContractors] = useState([]);
-157-  const [projectMembers, setProjectMembers] = useState([]);
-158-  const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
-159-  const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
-160-  const [submitting, setSubmitting] = useState(false);
-161-  const [submitStep, setSubmitStep] = useState(null);
-162-  const [errors, setErrors] = useState({});
-163-
-164-  const [loading, setLoading] = useState({});
-165-  const [loadError, setLoadError] = useState({});
-166-
-167-  const loadProjects = useCallback(() => {
-168-    setLoading(l => ({ ...l, projects: true }));
-169-    setLoadError(e => ({ ...e, projects: false }));
-170-    projectService.list()
-171-      .then(data => { setProjects(normalizeList(data)); })
---
-470:        console.warn(`Upload: ${failedResults.length}/${imagesToUpload.length} failed, ${succeeded} succeeded — proceeding to assign`);
-471-        toast.warning(`${failedResults.length} תמונות לא הועלו, אך ממשיך בשיוך הקבלן.`);
-472-      } else {
-473-        console.log(`Upload: all ${imagesToUpload.length} images uploaded successfully`);
-474-      }
-475-    }
-476-
-477:    if (!companyId || !assigneeId) {
-478-      toast.success('הליקוי נוצר בהצלחה!');
-479-      onSuccess?.(taskId);
-480-      return;
-481-    }
-482-
+========================================
+CHECK A: Photo validation without contractor
+========================================
 
-=== SECTION 3: Backend — update triggers notification ===
-63-    counter_doc = await db.counters.find_one_and_update(
-64-        {'_id': f'task_seq:{task.project_id}'},
-65-        {'$inc': {'seq': 1}},
-66-        upsert=True,
-67-        return_document=ReturnDocument.AFTER,
-68-    )
-69-    display_number = counter_doc['seq']
-70-    doc = {
-71-        'id': task_id, 'project_id': task.project_id, 'building_id': task.building_id,
-72-        'floor_id': task.floor_id, 'unit_id': task.unit_id,
-73-        'title': task.title, 'description': task.description,
-74-        'category': task.category.value if task.category else 'general',
-75-        'priority': task.priority.value if task.priority else 'medium',
-76:        'status': initial_status, 'company_id': task.company_id,
-77:        'assignee_id': task.assignee_id, 'due_date': task.due_date,
-78-        'created_by': user['id'], 'created_at': ts, 'updated_at': ts,
-79-        'short_ref': task_id[:8],
-80-        'display_number': display_number,
-81-        'attachments_count': 0, 'comments_count': 0,
-82-    }
-83-    await db.tasks.insert_one(doc)
-84-    await db.task_status_history.insert_one({
-85-        'id': str(uuid.uuid4()), 'task_id': task_id,
-86-        'old_status': None, 'new_status': initial_status,
-87-        'changed_by': user['id'], 'note': 'Task created', 'created_at': ts,
-88-    })
-89-    await _audit('task', task_id, 'create', user['id'], {'title': task.title, 'project_id': task.project_id})
-90-
-91:    notification_status = None
-92:    engine = get_notification_engine()
-93:    if engine and task.assignee_id:
-94-        try:
-95-            task_link = _get_task_link(task_id)
-96-            job = await engine.enqueue(task_id, 'task_created', user['id'], task_link=task_link)
-97-            if job and job.get('status') == 'queued':
-98-                result = await engine.process_job(job)
---
-300-async def update_task(task_id: str, update: TaskUpdate, user: dict = Depends(get_current_user)):
-301-    db = get_db()
-302-    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+Backend create_task (line 56-60):
+  if task.assignee_id:
+      raise HTTPException(status_code=400, detail=NO_IMAGE_MESSAGE)
 
-=== SECTION 4: Backend — create without contractor ===
-41-        raise HTTPException(status_code=403, detail=f'Project is {project_status}. Cannot create tasks.')
-42-    if task.building_id:
-43-        building_doc = await db.buildings.find_one({'id': task.building_id, 'project_id': task.project_id, 'archived': {'$ne': True}}, {'_id': 0})
-44-        if not building_doc:
-45-            raise HTTPException(status_code=404, detail='Building not found in this project')
-46-    if task.floor_id:
-47-        floor_doc = await db.floors.find_one({'id': task.floor_id, 'building_id': task.building_id, 'archived': {'$ne': True}}, {'_id': 0})
-48-        if not floor_doc:
---
-56:    if task.assignee_id:
-57-        raise HTTPException(
-58-            status_code=400,
-59-            detail={'error_code': NO_IMAGE_ERROR_CODE, 'message': NO_IMAGE_MESSAGE},
-60-        )
-61-    initial_status = 'open'
-62-    from pymongo import ReturnDocument
---
-78-        'created_by': user['id'], 'created_at': ts, 'updated_at': ts,
-79-        'short_ref': task_id[:8],
-80-        'display_number': display_number,
-81-        'attachments_count': 0, 'comments_count': 0,
-82-    }
-83-    await db.tasks.insert_one(doc)
-84-    await db.task_status_history.insert_one({
-85-        'id': str(uuid.uuid4()), 'task_id': task_id,
-86-        'old_status': None, 'new_status': initial_status,
-87-        'changed_by': user['id'], 'note': 'Task created', 'created_at': ts,
-88-    })
-89-    await _audit('task', task_id, 'create', user['id'], {'title': task.title, 'project_id': task.project_id})
-90-
+This guard only fires when assignee_id is provided at creation (blocking
+direct assignment without image). Photos are enforced in TWO places:
+  1) Frontend: NewDefectModal validate() line 380:
+     if (images.length === 0) errs.images = 'נדרשת לפחות תמונה אחת';
+     → ALWAYS required, regardless of contractor selection.
+  2) Backend: PATCH /tasks/{id}/assign calls require_task_image(db, task_id)
+     at line 366, enforcing image before any assignment.
 
-=== SECTION 5: Unassigned display ===
-frontend/src/pages/ApartmentDashboardPage.js:500:                        <span>{task.assigned_to_name || task.assignee_name || 'לא שויך'}</span>
-frontend/src/pages/ApartmentDashboardPage.js-501-                      </div>
-frontend/src/pages/ApartmentDashboardPage.js-502-                    </div>
-frontend/src/pages/ApartmentDashboardPage.js-503-                  </div>
-frontend/src/pages/ApartmentDashboardPage.js-504-                </button>
-frontend/src/pages/ApartmentDashboardPage.js-505-              );
---
-frontend/src/pages/TaskDetailPage.js:762:              <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || 'לא שויך'}</span>
-frontend/src/pages/TaskDetailPage.js-763-            </div>
-frontend/src/pages/TaskDetailPage.js-764-            <div className="flex items-center gap-2">
-frontend/src/pages/TaskDetailPage.js-765-              <User className="w-4 h-4 text-slate-400" />
-frontend/src/pages/TaskDetailPage.js-766-              <span className="text-slate-600">קבלן:</span>
-frontend/src/pages/TaskDetailPage.js-767-              <span className="font-medium">
---
-frontend/src/pages/TaskDetailPage.js:770:                  : 'לא שויך'}
-frontend/src/pages/TaskDetailPage.js-771-              </span>
-frontend/src/pages/TaskDetailPage.js-772-            </div>
-frontend/src/pages/TaskDetailPage.js-773-          </div>
-frontend/src/pages/TaskDetailPage.js-774-        </Card>
-frontend/src/pages/TaskDetailPage.js-775-
---
-frontend/src/pages/TaskDetailPage.js:845:                        { value: '', label: 'לא שויך' },
-frontend/src/pages/TaskDetailPage.js-846-                        ...assignableContractors.map(c => ({
-frontend/src/pages/TaskDetailPage.js-847-                          value: c.user_id,
-frontend/src/pages/TaskDetailPage.js-848-                          label: c.user_name || c.user_id
+VERDICT: ✅ Photos are ALWAYS required. No bug.
+
+========================================
+CHECK B / CHECK 2: Update notification logic
+========================================
+
+Backend update_task (PATCH /tasks/{task_id}) lines 315-331:
+
+    old_assignee = task.get('assignee_id') or ''
+    new_assignee = update_data.get('assignee_id', old_assignee) or ''
+
+    await db.tasks.update_one(...)
+
+    if new_assignee and new_assignee != old_assignee:
+        engine = get_notification_engine()
+        if engine:
+            job = await engine.enqueue(task_id, 'task_assigned', ...)
+            if job and job.get('status') == 'queued':
+                await engine.process_job(job)
+
+Logic:
+  - null → contractor A  → new_assignee='A', old_assignee='' → A != '' → ✅ NOTIFY
+  - A → B                → new_assignee='B', old_assignee='A' → B != A → ✅ NOTIFY
+  - A → A (same)         → new_assignee='A', old_assignee='A' → A == A → ✅ NO NOTIFY
+  - null → null (no change) → both '' → '' is falsy → ✅ NO NOTIFY
+
+VERDICT: ✅ Correct. Proven by API test (see CHECK 4).
+
+========================================
+CHECK 1: Schemas — company_id/assignee_id
+========================================
+
+TaskCreate (line 276-287):
+    company_id: Optional[str] = None    ✅
+    assignee_id: Optional[str] = None   ✅
+
+TaskUpdate (line 290-297):
+    company_id: Optional[str] = None    ✅
+    assignee_id: Optional[str] = None   ✅
+
+TaskAssign (line 300-303):
+    company_id: Optional[str] = None
+    assignee_id: str                    ✅ (required — this is the explicit assign endpoint)
+
+VERDICT: ✅ Both optional in create/update. Required only in assign (correct).
+
+========================================
+CHECK 3: "לא שויך" in all defect views
+========================================
+
+grep results:
+  frontend/src/pages/TaskDetailPage.js:762   → company row fallback: 'לא שויך'
+  frontend/src/pages/TaskDetailPage.js:770   → contractor row fallback: 'לא שויך'
+  frontend/src/pages/TaskDetailPage.js:845   → management panel dropdown: 'לא שויך'
+  frontend/src/pages/TaskDetailPage.js:856   → display label: 'לא שויך'
+  frontend/src/pages/ApartmentDashboardPage.js:500 → card: 'לא שויך'
+
+Pages that do NOT show assignee names in cards (no change needed):
+  - ProjectTasksPage: shows title/status/category only, no assignee name rendered
+  - BuildingDefectsPage: aggregates counts by floor/unit, no individual task cards
+
+TaskDetailPage: "שיוך" card now ALWAYS renders (removed task.company_id gate).
+  Shows "לא שויך" for both company and contractor when unassigned.
+
+VERDICT: ✅ Consistent everywhere assignee is displayed.
+
+========================================
+CHECK 4: Manual API Proof
+========================================
+
+STEP 1: Create defect without contractor
+  Task created: id=3a51593c... status=open company_id=None assignee_id=None
+  notification_jobs: 0
+  ✅ No notification on create (correct)
+
+STEP 2: PATCH — assign contractor (null→A)
+  Response: assignee_id=a55a90b2... company_id=0bb912a8...
+  notification_jobs count: 1, event=task_assigned status=sent
+  ✅ Notification sent on null→A (correct)
+
+STEP 3: PATCH — same assignee A→A
+  Pre-update: 1 notification
+  Post-update: 1 notification
+  ✅ No duplicate notification (correct)
+
+STEP 4: PATCH — change assignee A→B
+  Pre-update: 1 notification
+  Post-update: 2 notifications
+  ✅ New notification sent on A→B (correct)
+
+========================================
+SUMMARY
+========================================
+
+CHECK A: ✅ Photos always required
+CHECK B: ✅ Notification logic correct
+CHECK 1: ✅ Schemas optional
+CHECK 2: ✅ Update triggers correct (proven)
+CHECK 3: ✅ "לא שויך" in all relevant views
+CHECK 4: ✅ All 4 proof steps pass
+
+All checks PASS. Task #107 ready for approval.
