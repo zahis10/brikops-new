@@ -200,6 +200,11 @@ async def send_contractor_reminder(
             return {"status": "skipped", "reason": "no_valid_phone"}
 
     from config import WA_REMINDER_TEMPLATE_HE
+
+    if not skip_cooldown:
+        if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
+            return {"status": "skipped", "reason": "cooldown", "company_id": company_id}
+
     defect_list = _build_defect_list(tasks)
     results = []
 
@@ -208,11 +213,6 @@ async def send_contractor_reminder(
         phone = r["phone"]
         user_id = user.get("id", "")
         user_name = user.get("name", "קבלן")
-
-        if not skip_cooldown:
-            if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
-                results.append({"user_id": user_id, "status": "skipped", "reason": "cooldown"})
-                break
 
         log_entry = {
             "type": "contractor_reminder",

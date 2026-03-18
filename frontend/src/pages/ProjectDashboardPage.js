@@ -689,11 +689,11 @@ export default function ProjectDashboardPage() {
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={(e) => { e.stopPropagation(); handleSendReminder(contractor.company_id || contractor.contractor_id, contractor.contractor_name || 'קבלן'); }}
-                          disabled={sendingReminder[contractor.contractor_id]}
+                          disabled={sendingReminder[contractor.company_id || contractor.contractor_id]}
                           className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors flex items-center gap-0.5"
                           title="שלח תזכורת"
                         >
-                          {sendingReminder[contractor.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                          {sendingReminder[contractor.company_id || contractor.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                           תזכורת
                         </button>
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
@@ -784,11 +784,11 @@ export default function ProjectDashboardPage() {
                           <td className="text-center py-2.5 px-1">
                             <button
                               onClick={() => handleSendReminder(c.company_id || c.contractor_id, c.contractor_name || 'קבלן')}
-                              disabled={sendingReminder[c.contractor_id]}
+                              disabled={sendingReminder[c.company_id || c.contractor_id]}
                               className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors inline-flex items-center gap-0.5"
                               title="שלח תזכורת"
                             >
-                              {sendingReminder[c.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                              {sendingReminder[c.company_id || c.contractor_id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                             </button>
                           </td>
                         )}
