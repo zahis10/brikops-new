@@ -14,6 +14,7 @@ axios.interceptors.response.use(
     const newToken = response.headers['x-new-token'];
     if (newToken) {
       localStorage.setItem('token', newToken);
+      document.cookie = 'brikops_logged_in=1; domain=.brikops.com; path=/; max-age=2592000; SameSite=Lax; Secure';
     }
     return response;
   },
@@ -155,6 +156,10 @@ export const unitService = {
   },
   async getTasks(unitId, params = {}) {
     const response = await axios.get(`${API}/units/${unitId}/tasks`, { headers: getAuthHeader(), params });
+    return response.data;
+  },
+  async patch(unitId, data) {
+    const response = await axios.patch(`${API}/units/${unitId}`, data, { headers: getAuthHeader() });
     return response.data;
   },
 };

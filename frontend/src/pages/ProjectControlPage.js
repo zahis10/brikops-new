@@ -609,8 +609,8 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
           {step === 2 && (
             <div className="space-y-3">
               <p className="text-sm text-slate-600">הגדר את טווח הקומות</p>
-              <InputField label="מקומה *" value={fromFloor} onChange={v => setFromFloor(v)} placeholder="למשל: -1" type="number" error={errors.fromFloor} dir="ltr" />
-              <InputField label="עד קומה *" value={toFloor} onChange={v => setToFloor(v)} placeholder="למשל: 10" type="number" error={errors.toFloor} dir="ltr" />
+              <InputField label="מקומה *" value={fromFloor} onChange={v => setFromFloor(v)} placeholder="למשל: -1" type="text" error={errors.fromFloor} dir="ltr" />
+              <InputField label="עד קומה *" value={toFloor} onChange={v => setToFloor(v)} placeholder="למשל: 10" type="text" error={errors.toFloor} dir="ltr" />
               {floorCount > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-sm text-amber-800 text-center">
                   סה״כ {floorCount} קומות
@@ -628,7 +628,7 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
                   <p className="text-xs font-medium text-slate-600">חריגים (קומות עם מספר דירות שונה):</p>
                   {exceptions.map((exc, idx) => (
                     <div key={idx} className="flex gap-2 items-center">
-                      <input type="number" value={exc.floor} onChange={e => updateException(idx, 'floor', e.target.value)}
+                      <input type="text" value={exc.floor} onChange={e => updateException(idx, 'floor', e.target.value)}
                         className="w-20 text-sm border border-slate-200 rounded-lg px-2 py-1.5 text-center" placeholder="קומה" />
                       <span className="text-xs text-slate-400">→</span>
                       <input inputMode="numeric" value={exc.units} onChange={e => updateException(idx, 'units', e.target.value)}
@@ -799,8 +799,8 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
       <SelectField label="בניין *" value={buildingId} onChange={v => { setBuildingId(v); resetState(); }} options={buildingOptions} error={errors.buildingId} emptyMessage="אין בניינים - הוסף בניין קודם" />
       {mode === 'range' ? (
         <>
-          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="למשל: -1" type="number" error={errors.fromFloor} dir="ltr" />
-          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="למשל: 10" type="number" error={errors.toFloor} dir="ltr" />
+          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="למשל: -1" type="text" error={errors.fromFloor} dir="ltr" />
+          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="למשל: 10" type="text" error={errors.toFloor} dir="ltr" />
           {floorCount > 0 && !preview && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
               טווח: {floorCount} קומות
@@ -931,8 +931,8 @@ const BulkUnitsForm = ({ projectId, buildings, onClose, onSuccess }) => {
   return (
     <BottomSheetModal open onClose={onClose} title="הוסף דירות">
       <SelectField label="בניין *" value={buildingId} onChange={v => { setBuildingId(v); setPreview(null); }} options={buildingOptions} error={errors.buildingId} emptyMessage="אין בניינים" />
-      <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="1" type="number" error={errors.fromFloor} dir="ltr" />
-      <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="10" type="number" error={errors.toFloor} dir="ltr" />
+      <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="1" type="text" error={errors.fromFloor} dir="ltr" />
+      <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="10" type="text" error={errors.toFloor} dir="ltr" />
       <InputField label="דירות לקומה *" value={unitsPerFloor} onChange={handleUnitsChange} onFocus={e => e.target.select()} placeholder="4" inputMode="numeric" error={errors.unitsPerFloor} dir="ltr" />
       {totalUnits > 0 && !preview && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">

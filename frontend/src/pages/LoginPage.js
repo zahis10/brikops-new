@@ -248,6 +248,7 @@ const LoginPage = () => {
       const data = await res.json();
       const { token: newToken, user: userData, platform_role } = data;
       localStorage.setItem('token', newToken);
+      document.cookie = 'brikops_logged_in=1; domain=.brikops.com; path=/; max-age=2592000; SameSite=Lax; Secure';
       const intended = sessionStorage.getItem('intendedPath');
       if (intended) {
         sessionStorage.removeItem('intendedPath');

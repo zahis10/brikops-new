@@ -178,6 +178,8 @@ class Unit(BaseModel):
     sort_index: Optional[int] = None
     display_label: Optional[str] = None
     unit_count: Optional[int] = None
+    unit_type_tag: Optional[str] = None
+    unit_note: Optional[str] = None
     created_at: Optional[str] = None
 
 

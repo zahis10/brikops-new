@@ -420,6 +420,10 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
                 'sort_index': base_sort + (i * 10),
                 'display_label': unit_no, 'created_at': ts,
             }
+            if unit.unit_type_tag:
+                doc['unit_type_tag'] = unit.unit_type_tag
+            if unit.unit_note:
+                doc['unit_note'] = unit.unit_note[:200]
             await db.units.insert_one(doc)
             created.append(unit_no)
             await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit_no})
@@ -461,6 +465,10 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
         'sort_index': unit.sort_index,
         'display_label': unit.display_label or unit.unit_no, 'created_at': ts,
     }
+    if unit.unit_type_tag:
+        doc['unit_type_tag'] = unit.unit_type_tag
+    if unit.unit_note:
+        doc['unit_note'] = unit.unit_note[:200]
     await db.units.insert_one(doc)
     await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
     return Unit(**{k: v for k, v in doc.items() if k != '_id'})
@@ -471,6 +479,28 @@ async def list_units_by_floor(floor_id: str, user: dict = Depends(get_current_us
     db = get_db()
     units = await db.units.find({'floor_id': floor_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
     return [Unit(**u) for u in units]
+
+
+@router.patch("/units/{unit_id}")
+async def patch_unit(unit_id: str, body: dict, user: dict = Depends(get_current_user)):
+    db = get_db()
+    unit_doc = await db.units.find_one({'id': unit_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not unit_doc:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    await _check_structure_admin(user, unit_doc['project_id'])
+    updates = {}
+    if 'unit_type_tag' in body:
+        val = body['unit_type_tag']
+        updates['unit_type_tag'] = val if val else None
+    if 'unit_note' in body:
+        val = body['unit_note']
+        updates['unit_note'] = val[:200] if val else None
+    if not updates:
+        raise HTTPException(status_code=400, detail='No valid fields to update')
+    await db.units.update_one({'id': unit_id}, {'$set': updates})
+    await _audit('unit', unit_id, 'update', user['id'], updates)
+    updated = await db.units.find_one({'id': unit_id}, {'_id': 0})
+    return Unit(**updated)
 
 
 @router.post("/floors/bulk")
@@ -690,7 +720,7 @@ async def get_project_hierarchy(project_id: str, user: dict = Depends(get_curren
             eff = raw_unit_no
         else:
             eff = raw_display or raw_unit_no
-        units_by_floor[fid].append({
+        unit_entry = {
             'id': u['id'],
             'unit_no': raw_unit_no,
             'unit_type': u.get('unit_type', 'apartment'),
@@ -698,7 +728,12 @@ async def get_project_hierarchy(project_id: str, user: dict = Depends(get_curren
             'sort_index': u.get('sort_index', 0),
             'display_label': raw_display,
             'effective_label': eff,
-        })
+        }
+        if u.get('unit_type_tag'):
+            unit_entry['unit_type_tag'] = u['unit_type_tag']
+        if u.get('unit_note'):
+            unit_entry['unit_note'] = u['unit_note']
+        units_by_floor[fid].append(unit_entry)
 
     for fid in units_by_floor:
         units_by_floor[fid].sort(key=lambda x: x['sort_index'])

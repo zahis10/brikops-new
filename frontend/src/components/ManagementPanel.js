@@ -572,8 +572,8 @@ const BulkFloorsForm = ({ modalProject, onClose, onSuccess }) => {
         emptyMessage="אין בניינים לפרויקט זה"
       />
       <div className="grid grid-cols-2 gap-3">
-        <InputField label="מקומה *" value={fromFloor} onChange={setFromFloor} placeholder="למשל: 1" type="number" error={errors.fromFloor} />
-        <InputField label="עד קומה *" value={toFloor} onChange={setToFloor} placeholder="למשל: 10" type="number" error={errors.toFloor} />
+        <InputField label="מקומה *" value={fromFloor} onChange={setFromFloor} placeholder="למשל: 1" type="text" error={errors.fromFloor} />
+        <InputField label="עד קומה *" value={toFloor} onChange={setToFloor} placeholder="למשל: 10" type="text" error={errors.toFloor} />
       </div>
       {floorCount > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-700 text-center">
@@ -693,8 +693,8 @@ const BulkUnitsForm = ({ modalProject, onClose, onSuccess }) => {
         emptyMessage="אין בניינים לפרויקט זה"
       />
       <div className="grid grid-cols-2 gap-3">
-        <InputField label="מקומה *" value={fromFloor} onChange={setFromFloor} placeholder="1" type="number" error={errors.fromFloor} />
-        <InputField label="עד קומה *" value={toFloor} onChange={setToFloor} placeholder="10" type="number" error={errors.toFloor} />
+        <InputField label="מקומה *" value={fromFloor} onChange={setFromFloor} placeholder="1" type="text" error={errors.fromFloor} />
+        <InputField label="עד קומה *" value={toFloor} onChange={setToFloor} placeholder="10" type="text" error={errors.toFloor} />
       </div>
       <InputField label="דירות לקומה *" value={unitsPerFloor} onChange={setUnitsPerFloor} placeholder="4" type="number" error={errors.unitsPerFloor} />
       {totalUnits > 0 && (

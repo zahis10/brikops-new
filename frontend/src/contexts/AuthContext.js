@@ -6,6 +6,13 @@ const AuthContext = createContext(null);
 
 const API = `${BACKEND_URL}/api`;
 
+const _setBrikopsCookie = () => {
+  document.cookie = 'brikops_logged_in=1; domain=.brikops.com; path=/; max-age=2592000; SameSite=Lax; Secure';
+};
+const _clearBrikopsCookie = () => {
+  document.cookie = 'brikops_logged_in=; domain=.brikops.com; path=/; max-age=0';
+};
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
@@ -23,6 +30,7 @@ export const AuthProvider = ({ children }) => {
       const hashToken = hashParams.get('token');
       if (hashToken) {
         localStorage.setItem('token', hashToken);
+        _setBrikopsCookie();
         window.history.replaceState({}, '', window.location.pathname + window.location.search);
         return hashToken;
       }
@@ -31,6 +39,7 @@ export const AuthProvider = ({ children }) => {
     const urlToken = urlParams.get('_token');
     if (urlToken) {
       localStorage.setItem('token', urlToken);
+      _setBrikopsCookie();
       urlParams.delete('_token');
       const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
       window.history.replaceState({}, '', newUrl);
@@ -51,6 +60,7 @@ export const AuthProvider = ({ children }) => {
       setToken(null);
       setUser(null);
       localStorage.removeItem('token');
+      _clearBrikopsCookie();
     } finally {
       setLoading(false);
     }
@@ -71,6 +81,7 @@ export const AuthProvider = ({ children }) => {
       setToken(newToken);
       setUser({ ...userData, platform_role: platform_role || 'none' });
       localStorage.setItem('token', newToken);
+      _setBrikopsCookie();
       return { success: true };
     } catch (error) {
       return {
@@ -84,6 +95,7 @@ export const AuthProvider = ({ children }) => {
     setToken(newToken);
     setUser({ ...userData, platform_role: platformRole || userData?.platform_role || 'none' });
     localStorage.setItem('token', newToken);
+    _setBrikopsCookie();
   };
 
   const register = async (userData) => {
@@ -102,6 +114,7 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
     setUser(null);
     localStorage.removeItem('token');
+    _clearBrikopsCookie();
   };
 
   const value = {
