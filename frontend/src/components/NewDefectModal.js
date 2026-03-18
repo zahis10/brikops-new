@@ -374,12 +374,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (!category) errs.category = 'חובה';
     if (!title.trim()) errs.title = 'חובה';
     if (!description.trim()) errs.description = 'חובה';
-    if (!companyId) errs.company_id = 'חובה';
-    if (!assigneeId) errs.assignee_id = 'חובה';
     if (images.length === 0) errs.images = 'נדרשת לפחות תמונה אחת';
     setErrors(errs);
     return Object.keys(errs).length === 0;
-  }, [projectId, buildingId, floorId, unitId, category, title, description, companyId, assigneeId, images]);
+  }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
 
   const uploadWithRetry = async (taskService, taskId, file, fileName, maxAttempts = 2) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -474,6 +472,12 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       } else {
         console.log(`Upload: all ${imagesToUpload.length} images uploaded successfully`);
       }
+    }
+
+    if (!companyId || !assigneeId) {
+      toast.success('הליקוי נוצר בהצלחה!');
+      onSuccess?.(taskId);
+      return;
     }
 
     setSubmitStep('assigning');
@@ -786,6 +790,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
           <div className="bg-slate-50 rounded-lg p-4 space-y-3">
             <h3 className="text-sm font-semibold text-slate-600 text-right">שיוך קבלן</h3>
+            <p className="text-[11px] text-slate-400 text-right">ניתן לשייך קבלן מאוחר יותר</p>
             {companies.length === 0 && !loading.companies ? (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center space-y-2">
                 <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
@@ -816,7 +821,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               <>
                 <div className="space-y-1">
                   <SelectField
-                    label="חברה *"
+                    label="חברה"
                     value={companyId}
                     onChange={handleCompanyChange}
                     options={filteredCompanies.map(c => ({ value: c.id, label: c.name }))}
@@ -841,7 +846,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                 </div>
                 <div className="space-y-1">
                   <SelectField
-                    label="קבלן מבצע *"
+                    label="קבלן מבצע"
                     value={assigneeId}
                     onChange={v => { setAssigneeId(v); setAutoSelectedAssignee(false); }}
                     options={contractors.map(m => ({ value: m.user_id, label: m.user_name || m.name || 'קבלן' }))}

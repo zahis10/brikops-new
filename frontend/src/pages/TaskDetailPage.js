@@ -750,30 +750,28 @@ const TaskDetailPage = () => {
           </div>
         </Card>
 
-        {task.company_id && (
-          <Card className="p-5">
-            <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
-              <Briefcase className="w-4 h-4" />
-              שיוך
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <Briefcase className="w-4 h-4 text-slate-400" />
-                <span className="text-slate-600">חברה:</span>
-                <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || ''}</span>
-              </div>
-              {task.assignee_id && (
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-slate-400" />
-                  <span className="text-slate-600">קבלן:</span>
-                  <span className="font-medium">
-                    {task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך'}
-                  </span>
-                </div>
-              )}
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
+            <Briefcase className="w-4 h-4" />
+            שיוך
+          </h3>
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <Briefcase className="w-4 h-4 text-slate-400" />
+              <span className="text-slate-600">חברה:</span>
+              <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || 'לא שויך'}</span>
             </div>
-          </Card>
-        )}
+            <div className="flex items-center gap-2">
+              <User className="w-4 h-4 text-slate-400" />
+              <span className="text-slate-600">קבלן:</span>
+              <span className="font-medium">
+                {task.assignee_id
+                  ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך')
+                  : 'לא שויך'}
+              </span>
+            </div>
+          </div>
+        </Card>
 
         {canManage && (
           <Card className="p-5 border-2 border-amber-300 bg-amber-50/50">

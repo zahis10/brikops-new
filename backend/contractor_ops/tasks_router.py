@@ -311,8 +311,25 @@ async def update_task(task_id: str, update: TaskUpdate, user: dict = Depends(get
     if 'category' in update_data and hasattr(update_data['category'], 'value'):
         update_data['category'] = update_data['category'].value
     update_data['updated_at'] = _now()
+
+    old_assignee = task.get('assignee_id') or ''
+    new_assignee = update_data.get('assignee_id', old_assignee) or ''
+
     await db.tasks.update_one({'id': task_id}, {'$set': update_data})
     await _audit('task', task_id, 'update', user['id'], update_data)
+
+    if new_assignee and new_assignee != old_assignee:
+        engine = get_notification_engine()
+        if engine:
+            try:
+                task_link = _get_task_link(task_id)
+                job = await engine.enqueue(task_id, 'task_assigned', user['id'], task_link=task_link)
+                if job and job.get('status') == 'queued':
+                    await engine.process_job(job)
+                logger.info(f"[UPDATE] Notification sent for assignee change on task {task_id}: {old_assignee or 'none'} -> {new_assignee}")
+            except Exception as e:
+                logger.error(f"[UPDATE] Failed to send notification for assignee change on task {task_id}: {e}")
+
     updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     return Task(**updated)
 

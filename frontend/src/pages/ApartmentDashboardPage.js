@@ -497,7 +497,7 @@ const ApartmentDashboardPage = () => {
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 text-[10px] text-slate-400">
                         {dateStr && <span>{dateStr}</span>}
-                        {task.assigned_to_name && <span>{task.assigned_to_name}</span>}
+                        <span>{task.assigned_to_name || task.assignee_name || 'לא שויך'}</span>
                       </div>
                     </div>
                   </div>
