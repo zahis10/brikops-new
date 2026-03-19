@@ -284,8 +284,9 @@ class WhatsAppClient:
             }
             logger.info(f"[WA:SEND] text_message to={mask_phone(to_phone)} task_id={task_id}")
 
-        import json as _json2
-        logger.info(f"[WA:FULL_BODY] to={mask_phone(to_phone)} body={_json2.dumps(body, ensure_ascii=False)}")
+        import json as _json2, re as _re2
+        _safe_body = _re2.sub(r'"to"\s*:\s*"\d{10,15}"', f'"to":"{mask_phone(to_phone)}"', _json2.dumps(body, ensure_ascii=False))
+        logger.info(f"[WA:FULL_BODY] to={mask_phone(to_phone)} body={_safe_body}")
         logger.info(f"[WA:SEND] api_url={self.api_url} to={mask_phone(to_phone)}")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(self.api_url, json=body, headers=headers)
