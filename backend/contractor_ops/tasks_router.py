@@ -144,6 +144,23 @@ async def _build_bucket_maps(db, project_id=None):
     return contractor_map, company_map, membership_trade_map
 
 
+def _build_bucket_key_expr(contractor_map, company_map, membership_trade_map):
+    branches = []
+    for uid, trade in membership_trade_map.items():
+        bk = CATEGORY_TO_BUCKET.get(trade, trade)
+        branches.append({"case": {"$eq": ["$assignee_id", uid]}, "then": bk})
+    for cid, trade in company_map.items():
+        bk = CATEGORY_TO_BUCKET.get(trade, trade)
+        branches.append({"case": {"$eq": ["$company_id", cid]}, "then": bk})
+    for uid, trade in contractor_map.items():
+        if uid not in membership_trade_map:
+            bk = CATEGORY_TO_BUCKET.get(trade, trade)
+            branches.append({"case": {"$eq": ["$assignee_id", uid]}, "then": bk})
+    for cat, bk in CATEGORY_TO_BUCKET.items():
+        branches.append({"case": {"$eq": ["$category", cat]}, "then": bk})
+    return {"$switch": {"branches": branches, "default": "general"}}
+
+
 @router.get("/tasks")
 async def list_tasks(
     project_id: Optional[str] = Query(None),
@@ -230,8 +247,12 @@ async def list_tasks(
             query['$or'] = contractor_conditions
 
     if bucket_key:
+        contractor_map, company_map, membership_trade_map = await _build_bucket_maps(db, project_id)
+        bucket_expr = _build_bucket_key_expr(contractor_map, company_map, membership_trade_map)
         pipeline = [
             {"$match": query},
+            {"$addFields": {"_bucket_key": bucket_expr}},
+            {"$match": {"_bucket_key": bucket_key}},
             {"$addFields": {"_prio_order": {"$switch": {
                 "branches": [
                     {"case": {"$eq": ["$priority", "critical"]}, "then": 0},
@@ -241,14 +262,21 @@ async def list_tasks(
                 ],
                 "default": 2,
             }}}},
-            {"$sort": {"_prio_order": 1, "updated_at": -1, "created_at": -1}},
-            {"$project": {"_id": 0, "_prio_order": 0}},
+            {"$facet": {
+                "total": [{"$count": "count"}],
+                "items": [
+                    {"$sort": {"_prio_order": 1, "updated_at": -1, "created_at": -1}},
+                    {"$skip": offset},
+                    {"$limit": limit},
+                    {"$project": {"_id": 0, "_prio_order": 0, "_bucket_key": 0}},
+                ],
+            }},
         ]
-        tasks = await db.tasks.aggregate(pipeline).to_list(10000)
-        contractor_map, company_map, membership_trade_map = await _build_bucket_maps(db, project_id)
-        tasks = [t for t in tasks if compute_task_bucket(t, contractor_map, company_map, membership_trade_map)['bucket_key'] == bucket_key]
-        total = len(tasks)
-        tasks = tasks[offset:offset + limit]
+        agg_result = await db.tasks.aggregate(pipeline).to_list(1)
+        facets = agg_result[0] if agg_result else {}
+        total = facets.get("total", [{}])
+        total = total[0].get("count", 0) if total else 0
+        tasks = facets.get("items", [])
     else:
         total = await db.tasks.count_documents(query)
         pipeline = [
@@ -287,7 +315,7 @@ async def list_tasks(
 @router.get("/tasks/my-stats")
 async def my_task_stats(
     project_id: Optional[str] = Query(None),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_roles('contractor')),
 ):
     db = get_db()
     match_query = {'assignee_id': user['id']}
