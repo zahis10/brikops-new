@@ -158,7 +158,10 @@ def _build_bucket_key_expr(contractor_map, company_map, membership_trade_map):
             branches.append({"case": {"$eq": ["$assignee_id", uid]}, "then": bk})
     for cat, bk in CATEGORY_TO_BUCKET.items():
         branches.append({"case": {"$eq": ["$category", cat]}, "then": bk})
-    return {"$switch": {"branches": branches, "default": "general"}}
+    return {"$switch": {
+        "branches": branches,
+        "default": {"$ifNull": ["$category", "general"]},
+    }}
 
 
 @router.get("/tasks")
