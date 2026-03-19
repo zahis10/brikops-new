@@ -68,7 +68,7 @@ def project_id(admin):
 def contractor_tasks(contractor1, project_id):
     r = httpx.get(f'{BASE}/api/tasks', params={'project_id': project_id}, headers=_auth(contractor1['token']))
     assert r.status_code == 200
-    tasks = r.json()
+    tasks = r.json().get('items', r.json()) if isinstance(r.json(), dict) else r.json()
     if not tasks:
         pytest.skip('No tasks assigned to contractor')
     return tasks
@@ -78,7 +78,8 @@ def contractor_tasks(contractor1, project_id):
 def pm_tasks(pm, project_id):
     r = httpx.get(f'{BASE}/api/tasks', params={'project_id': project_id}, headers=_auth(pm['token']))
     assert r.status_code == 200
-    return r.json()
+    data = r.json()
+    return data.get('items', data) if isinstance(data, dict) else data
 
 
 class TestContractorListHardening:
@@ -93,7 +94,9 @@ class TestContractorListHardening:
             headers=_auth(contractor1['token']),
         )
         assert r.status_code == 200
-        for t in r.json():
+        data = r.json()
+        items = data.get('items', data) if isinstance(data, dict) else data
+        for t in items:
             assert t['assignee_id'] == contractor1['id']
 
     def test_contractor_list_no_params_still_filtered(self, contractor1, project_id):
@@ -103,7 +106,9 @@ class TestContractorListHardening:
             headers=_auth(contractor1['token']),
         )
         assert r.status_code == 200
-        for t in r.json():
+        data = r.json()
+        items = data.get('items', data) if isinstance(data, dict) else data
+        for t in items:
             assert t['assignee_id'] == contractor1['id']
 
 

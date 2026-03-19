@@ -336,7 +336,14 @@ export const userService = {
 
 export const taskService = {
   async list(params = {}) {
-    const response = await axios.get(`${API}/tasks`, { headers: getAuthHeader(), params });
+    const { signal, ...queryParams } = params;
+    const config = { headers: getAuthHeader(), params: queryParams };
+    if (signal) config.signal = signal;
+    const response = await axios.get(`${API}/tasks`, config);
+    return response.data;
+  },
+  async myStats(params = {}) {
+    const response = await axios.get(`${API}/tasks/my-stats`, { headers: getAuthHeader(), params });
     return response.data;
   },
   async contractorSummary(projectId, status = null) {

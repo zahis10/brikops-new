@@ -144,7 +144,7 @@ async def _build_bucket_maps(db, project_id=None):
     return contractor_map, company_map, membership_trade_map
 
 
-@router.get("/tasks", response_model=List[Task])
+@router.get("/tasks")
 async def list_tasks(
     project_id: Optional[str] = Query(None),
     building_id: Optional[str] = Query(None),
@@ -158,7 +158,7 @@ async def list_tasks(
     bucket_key: Optional[str] = Query(None),
     overdue: Optional[bool] = Query(None),
     q: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=10000),
+    limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
@@ -247,8 +247,10 @@ async def list_tasks(
         tasks = await db.tasks.aggregate(pipeline).to_list(10000)
         contractor_map, company_map, membership_trade_map = await _build_bucket_maps(db, project_id)
         tasks = [t for t in tasks if compute_task_bucket(t, contractor_map, company_map, membership_trade_map)['bucket_key'] == bucket_key]
+        total = len(tasks)
         tasks = tasks[offset:offset + limit]
     else:
+        total = await db.tasks.count_documents(query)
         pipeline = [
             {"$match": query},
             {"$addFields": {"_prio_order": {"$switch": {
@@ -279,7 +281,104 @@ async def list_tasks(
             td = Task(**raw).dict()
         resolve_urls_in_doc(td)
         result.append(td)
-    return result
+    return {"items": result, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/tasks/my-stats")
+async def my_task_stats(
+    project_id: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    match_query = {'assignee_id': user['id']}
+    if project_id:
+        match_query['project_id'] = project_id
+
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    three_months_ago = datetime(now.year, now.month, 1, tzinfo=timezone.utc) - timedelta(days=62)
+    three_months_ago = datetime(three_months_ago.year, three_months_ago.month, 1, tzinfo=timezone.utc)
+
+    urgent_threshold = (now - timedelta(hours=48)).isoformat()
+
+    open_statuses = ['open', 'assigned', 'in_progress', 'pending_contractor_proof', 'reopened', 'waiting_verify']
+    handled_statuses = ['closed', 'pending_manager_approval']
+
+    three_months_iso = three_months_ago.isoformat()
+
+    pipeline = [
+        {"$match": match_query},
+        {"$addFields": {"_month": {"$cond": {
+            "if": {"$and": [
+                {"$ne": [{"$type": "$created_at"}, "missing"]},
+                {"$gte": ["$created_at", three_months_iso]}
+            ]},
+            "then": {"$substr": ["$created_at", 0, 7]},
+            "else": None
+        }}}},
+        {"$facet": {
+            "status_counts": [
+                {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+            ],
+            "urgent": [
+                {"$match": {
+                    "status": {"$in": open_statuses},
+                    "$or": [
+                        {"priority": "critical"},
+                        {"assigned_at": {"$lt": urgent_threshold, "$exists": True}},
+                        {"updated_at": {"$lt": urgent_threshold}},
+                    ]
+                }},
+                {"$count": "count"}
+            ],
+            "monthly_opened": [
+                {"$match": {"_month": {"$ne": None}}},
+                {"$group": {"_id": "$_month", "count": {"$sum": 1}}}
+            ],
+            "monthly_resolved": [
+                {"$match": {"_month": {"$ne": None}, "status": {"$in": handled_statuses}}},
+                {"$group": {"_id": "$_month", "count": {"$sum": 1}}}
+            ],
+            "total": [
+                {"$count": "count"}
+            ]
+        }}
+    ]
+
+    result = await db.tasks.aggregate(pipeline).to_list(1)
+    facets = result[0] if result else {}
+
+    sc = {}
+    for s in facets.get("status_counts", []):
+        sc[s["_id"]] = s["count"]
+
+    open_count = sum(sc.get(s, 0) for s in open_statuses)
+    in_progress = sc.get("in_progress", 0)
+    closed_count = sc.get("closed", 0)
+    resolved = sum(sc.get(s, 0) for s in handled_statuses)
+    total_count = facets.get("total", [{}])
+    total_count = total_count[0].get("count", 0) if total_count else 0
+    urgent_count = facets.get("urgent", [{}])
+    urgent_count = urgent_count[0].get("count", 0) if urgent_count else 0
+    success_rate = round((closed_count / resolved) * 100, 1) if resolved > 0 else 0
+
+    opened_map = {r["_id"]: r["count"] for r in facets.get("monthly_opened", [])}
+    resolved_map = {r["_id"]: r["count"] for r in facets.get("monthly_resolved", [])}
+    all_months = sorted(set(list(opened_map.keys()) + list(resolved_map.keys())))
+    monthly = [
+        {"month": m, "opened": opened_map.get(m, 0), "resolved": resolved_map.get(m, 0)}
+        for m in all_months
+    ]
+
+    return {
+        "open": open_count,
+        "in_progress": in_progress,
+        "resolved": resolved,
+        "urgent": urgent_count,
+        "total": total_count,
+        "success_rate": success_rate,
+        "monthly": monthly,
+    }
 
 
 @router.get("/tasks/{task_id}")

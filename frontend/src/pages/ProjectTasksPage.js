@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { taskService, projectService } from '../services/api';
@@ -12,6 +12,8 @@ import { Card } from '../components/ui/card';
 import { tCategory } from '../i18n';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import { getProjectBackPath } from '../utils/navigation';
+
+const PAGE_SIZE = 50;
 
 const STATUS_CONFIG = {
   open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
@@ -50,6 +52,26 @@ const PRIORITY_CONFIG = {
   critical: { label: 'קריטי', color: 'text-red-600' },
 };
 
+function TaskCardSkeleton() {
+  return (
+    <Card className="p-3">
+      <div className="animate-pulse">
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex-1">
+            <div className="h-4 bg-slate-200 rounded w-3/4 mb-1"></div>
+            <div className="h-3 bg-slate-100 rounded w-1/2"></div>
+          </div>
+          <div className="h-5 bg-slate-200 rounded w-16 mr-2"></div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="h-4 bg-slate-100 rounded w-16"></div>
+          <div className="h-4 bg-slate-100 rounded w-12"></div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 const ProjectTasksPage = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -59,9 +81,16 @@ const ProjectTasksPage = () => {
   const [project, setProject] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [bucketData, setBucketData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
   const [showNewDefect, setShowNewDefect] = useState(false);
+
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const taskIdsRef = useRef(new Set());
+  const loaderRef = useRef(null);
+  const abortRef = useRef(null);
 
   const isManager = ['owner', 'admin', 'project_manager', 'management_team'].includes(project?.my_role);
 
@@ -69,6 +98,9 @@ const ProjectTasksPage = () => {
   const bucketFilter = searchParams.get('bucket') || 'all';
   const fromDashboard = searchParams.get('from') === 'dashboard';
   const overdueFilter = searchParams.get('overdue') === 'true';
+  const searchQuery = searchParams.get('q') || '';
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const searchTimerRef = useRef(null);
 
   const updateParams = useCallback((key, value) => {
     setSearchParams(prev => {
@@ -84,9 +116,21 @@ const ProjectTasksPage = () => {
     });
   }, [setSearchParams]);
 
+  const handleSearchChange = useCallback((value) => {
+    setSearchInput(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      updateParams('q', value);
+    }, 350);
+  }, [updateParams]);
+
+  useEffect(() => {
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, []);
+
   const clearAllFilters = useCallback(() => {
     setSearchParams({});
-    setSearchQuery('');
+    setSearchInput('');
   }, [setSearchParams]);
 
   const assigneeFilter = searchParams.get('assignee') || '';
@@ -125,36 +169,60 @@ const ProjectTasksPage = () => {
     return {};
   }, []);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const buildTaskParams = useCallback((projIsContractor) => {
+    const effectiveChip = statusChip || (projIsContractor ? 'active' : '');
+    const statusParams = getStatusParams(effectiveChip, projIsContractor);
+    const params = { project_id: projectId, ...statusParams };
+    if (bucketFilter && bucketFilter !== 'all') {
+      params.bucket_key = bucketFilter;
+    }
+    if (assigneeFilter === 'me' || projIsContractor) {
+      params.assignee_id = 'me';
+    }
+    if (overdueFilter) {
+      params.overdue = true;
+    }
+    if (searchQuery) {
+      params.q = searchQuery;
+    }
+    return params;
+  }, [projectId, statusChip, bucketFilter, assigneeFilter, overdueFilter, searchQuery, getStatusParams]);
+
+  const loadMore = useCallback(async (fromOffset = 0, projIsContractor = null) => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    const { signal } = abortRef.current;
+
+    setLoadingMore(true);
     try {
-      const proj = await projectService.get(projectId);
-      setProject(proj);
-      localStorage.setItem('lastProjectId', projectId);
+      const effectiveIsContractor = projIsContractor ?? isContractor;
+      const params = buildTaskParams(effectiveIsContractor);
 
-      const projIsContractor = proj.my_role === 'contractor';
-      const effectiveChip = statusChip || (projIsContractor ? 'active' : '');
-      const statusParams = getStatusParams(effectiveChip, projIsContractor);
+      const data = await taskService.list({
+        ...params,
+        limit: PAGE_SIZE,
+        offset: fromOffset,
+        signal,
+      });
+      if (signal.aborted) return;
 
-      const [bucketsResp] = await Promise.all([
-        taskService.taskBuckets(projectId, statusParams.status || null),
-      ]);
-      setBucketData(bucketsResp);
+      const newItems = data.items.filter(
+        item => !taskIdsRef.current.has(item.id)
+      );
+      newItems.forEach(item => taskIdsRef.current.add(item.id));
 
-      const params = { project_id: projectId, ...statusParams };
-      if (bucketFilter && bucketFilter !== 'all') {
-        params.bucket_key = bucketFilter;
+      if (fromOffset === 0) {
+        setTasks(newItems);
+      } else {
+        setTasks(prev => [...prev, ...newItems]);
       }
-      if (assigneeFilter === 'me' || projIsContractor) {
-        params.assignee_id = 'me';
-      }
-      if (overdueFilter) {
-        params.overdue = true;
-      }
+      setTotal(data.total);
 
-      const taskList = await taskService.list({ ...params, limit: 200 });
-      setTasks(Array.isArray(taskList) ? taskList : []);
+      const nextOffset = fromOffset + data.items.length;
+      setOffset(nextOffset);
+      setHasMore(nextOffset < data.total);
     } catch (err) {
+      if (err.name === 'AbortError' || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to load tasks:', err);
       if (err?.response?.status === 403) {
         toast.error('אין לך הרשאה לצפות בליקויים של פרויקט זה');
@@ -163,17 +231,64 @@ const ProjectTasksPage = () => {
       }
       toast.error('שגיאה בטעינת ליקויים');
     } finally {
-      setLoading(false);
+      if (!signal.aborted) {
+        setLoadingMore(false);
+        setInitialLoading(false);
+      }
     }
-  }, [projectId, statusChip, bucketFilter, assigneeFilter, overdueFilter, navigate, getStatusParams]);
+  }, [isContractor, buildTaskParams, navigate]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      try {
+        const proj = await projectService.get(projectId);
+        if (cancelled) return;
+        setProject(proj);
+        localStorage.setItem('lastProjectId', projectId);
 
-  const filteredTasks = tasks.filter(t => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
-  });
+        const projIsContractor = proj.my_role === 'contractor';
+        const effectiveChip = statusChip || (projIsContractor ? 'active' : '');
+        const statusParams = getStatusParams(effectiveChip, projIsContractor);
+
+        const bucketsResp = await taskService.taskBuckets(projectId, statusParams.status || null);
+        if (cancelled) return;
+        setBucketData(bucketsResp);
+
+        taskIdsRef.current.clear();
+        setTasks([]);
+        setOffset(0);
+        setTotal(null);
+        setHasMore(true);
+        setInitialLoading(true);
+
+        await loadMore(0, projIsContractor);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load project:', err);
+        if (err?.response?.status === 403) {
+          toast.error('אין לך הרשאה לצפות בליקויים של פרויקט זה');
+          navigate('/projects');
+          return;
+        }
+        toast.error('שגיאה בטעינת ליקויים');
+        setInitialLoading(false);
+      }
+    };
+    init();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, statusChip, bucketFilter, assigneeFilter, overdueFilter, searchQuery, getStatusParams, navigate]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && hasMore && !loadingMore && !initialLoading) {
+        loadMore(offset, isContractor);
+      }
+    }, { threshold: 0.1 });
+    if (loaderRef.current) observer.observe(loaderRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, offset, loadingMore, initialLoading, loadMore, isContractor]);
 
   const hasActiveFilter = statusChip || bucketFilter !== 'all' || searchQuery || overdueFilter;
 
@@ -197,12 +312,14 @@ const ProjectTasksPage = () => {
     return parts.length > 0 ? parts.join(' · ') : null;
   };
 
-  if (loading && !project) {
+  if (initialLoading && !project) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto"></div>
-          <p className="text-slate-500 mt-4">טוען ליקויים...</p>
+      <div className="min-h-screen bg-slate-50" dir="rtl">
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-3">
+          <TaskCardSkeleton />
+          <TaskCardSkeleton />
+          <TaskCardSkeleton />
+          <TaskCardSkeleton />
         </div>
       </div>
     );
@@ -222,7 +339,7 @@ const ProjectTasksPage = () => {
               <span className="text-base font-bold">{isContractor ? 'הליקויים שלי —' : 'ליקויים —'}</span>
               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project?.name || ''} />
             </div>
-            <p className="text-xs text-slate-300">{bucketData?.total || 0} ליקויים{statusChip ? ` (${(isContractor ? CONTRACTOR_STATUS_CHIPS : MANAGER_STATUS_CHIPS).find(c => c.key === statusChip)?.label || ''})` : ''}</p>
+            <p className="text-xs text-slate-300">{total != null ? total : (bucketData?.total || 0)} ליקויים{statusChip ? ` (${(isContractor ? CONTRACTOR_STATUS_CHIPS : MANAGER_STATUS_CHIPS).find(c => c.key === statusChip)?.label || ''})` : ''}</p>
           </div>
         </div>
       </header>
@@ -245,8 +362,8 @@ const ProjectTasksPage = () => {
           <input
             type="text"
             placeholder="חיפוש ליקויים..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={e => handleSearchChange(e.target.value)}
             className="w-full h-10 pr-9 pl-3 text-sm text-right bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50"
           />
         </div>
@@ -337,7 +454,13 @@ const ProjectTasksPage = () => {
           </div>
         )}
 
-        {filteredTasks.length === 0 ? (
+        {initialLoading ? (
+          <div className="space-y-2">
+            <TaskCardSkeleton />
+            <TaskCardSkeleton />
+            <TaskCardSkeleton />
+          </div>
+        ) : tasks.length === 0 ? (
           <Card className="p-8 text-center">
             <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <h3 className="text-base font-bold text-slate-700 mb-1">
@@ -368,7 +491,7 @@ const ProjectTasksPage = () => {
           </Card>
         ) : (
           <div className="space-y-2">
-            {filteredTasks.map(task => {
+            {tasks.map(task => {
               const statusCfg = STATUS_CONFIG[task.status] || {};
               const priorityCfg = PRIORITY_CONFIG[task.priority] || {};
               return (
@@ -405,6 +528,15 @@ const ProjectTasksPage = () => {
                 </Card>
               );
             })}
+
+            {hasMore && (
+              <div ref={loaderRef} className="py-4 text-center">
+                <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-500"></div>
+                  טוען עוד...
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -413,7 +545,16 @@ const ProjectTasksPage = () => {
         <NewDefectModal
           isOpen={showNewDefect}
           onClose={() => setShowNewDefect(false)}
-          onSuccess={() => { setShowNewDefect(false); loadData(); }}
+          onSuccess={() => {
+            setShowNewDefect(false);
+            taskIdsRef.current.clear();
+            setTasks([]);
+            setOffset(0);
+            setTotal(null);
+            setHasMore(true);
+            setInitialLoading(true);
+            loadMore(0, isContractor);
+          }}
           prefillData={{ project_id: projectId }}
         />
       )}

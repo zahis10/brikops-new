@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
 
+const PAGE_SIZE = 50;
+
 const STATUS_CONFIG = {
   open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
   assigned: { label: 'שויך', color: 'bg-purple-100 text-purple-700' },
@@ -75,35 +77,130 @@ function ProgressRing({ percentage, size = 90, strokeWidth = 8 }) {
   );
 }
 
+function TaskCardSkeleton() {
+  return (
+    <Card className="p-0 overflow-hidden border-r-4 border-r-slate-200">
+      <div className="p-3 animate-pulse">
+        <div className="flex items-start justify-between mb-1.5">
+          <div className="h-4 bg-slate-200 rounded w-3/4"></div>
+          <div className="h-5 bg-slate-200 rounded w-14 mr-2"></div>
+        </div>
+        <div className="h-3 bg-slate-100 rounded w-1/2 mb-1.5"></div>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="h-4 bg-slate-100 rounded w-12"></div>
+          <div className="h-4 bg-slate-100 rounded w-16"></div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-10 bg-slate-200 rounded-lg"></div>
+          <div className="h-10 bg-slate-100 rounded-lg w-20"></div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 const ContractorDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedProjectId, setSelectedProjectId] = useState(() => {
     return localStorage.getItem('lastProjectId') || 'all';
   });
   const urgentRef = useRef(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const [offset, setOffset] = useState(0);
+  const [totalTasks, setTotalTasks] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const taskIdsRef = useRef(new Set());
+  const loaderRef = useRef(null);
+  const abortRef = useRef(null);
+
+  const loadMore = useCallback(async (fromOffset = 0, projectFilter = null) => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    const { signal } = abortRef.current;
+
+    setLoadingMore(true);
     try {
-      const [projectList, taskList] = await Promise.all([
-        projectService.list(),
-        taskService.list({ limit: 200 }),
-      ]);
-      setProjects(Array.isArray(projectList) ? projectList : []);
-      setTasks(Array.isArray(taskList) ? taskList : []);
-    } catch (error) {
-      console.error('Failed to load data:', error);
+      const params = { limit: PAGE_SIZE, offset: fromOffset };
+      const effectiveProject = projectFilter !== null ? projectFilter : selectedProjectId;
+      if (effectiveProject && effectiveProject !== 'all') {
+        params.project_id = effectiveProject;
+      }
+
+      const data = await taskService.list({ ...params, signal });
+      if (signal.aborted) return;
+
+      const newItems = data.items.filter(
+        item => !taskIdsRef.current.has(item.id)
+      );
+      newItems.forEach(item => taskIdsRef.current.add(item.id));
+
+      if (fromOffset === 0) {
+        setTasks(newItems);
+      } else {
+        setTasks(prev => [...prev, ...newItems]);
+      }
+      setTotalTasks(data.total);
+
+      const nextOffset = fromOffset + data.items.length;
+      setOffset(nextOffset);
+      setHasMore(nextOffset < data.total);
+    } catch (err) {
+      if (err.name === 'AbortError' || err?.code === 'ERR_CANCELED') return;
+      console.error('Failed to load tasks:', err);
       toast.error('שגיאה בטעינת נתונים');
     } finally {
-      setLoading(false);
+      if (!signal.aborted) {
+        setLoadingMore(false);
+        setInitialLoading(false);
+      }
     }
-  }, []);
+  }, [selectedProjectId]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      setLoading(true);
+      try {
+        const [projectList, statsData] = await Promise.all([
+          projectService.list(),
+          taskService.myStats(
+            selectedProjectId && selectedProjectId !== 'all'
+              ? { project_id: selectedProjectId }
+              : {}
+          ),
+        ]);
+        if (cancelled) return;
+        setProjects(Array.isArray(projectList) ? projectList : []);
+        setStats(statsData);
+
+        taskIdsRef.current.clear();
+        setTasks([]);
+        setOffset(0);
+        setTotalTasks(null);
+        setHasMore(true);
+        setInitialLoading(true);
+
+        await loadMore(0, selectedProjectId);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load data:', error);
+        toast.error('שגיאה בטעינת נתונים');
+        setInitialLoading(false);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    init();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!loading && projects.length > 0 && selectedProjectId !== 'all') {
@@ -111,6 +208,16 @@ const ContractorDashboard = () => {
       if (!exists) setSelectedProjectId('all');
     }
   }, [loading, projects, selectedProjectId]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && hasMore && !loadingMore && !initialLoading) {
+        loadMore(offset, selectedProjectId);
+      }
+    }, { threshold: 0.1 });
+    if (loaderRef.current) observer.observe(loaderRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, offset, loadingMore, initialLoading, loadMore, selectedProjectId]);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -123,22 +230,17 @@ const ContractorDashboard = () => {
   const companyName = membership?.company_name || '';
   const tradeName = membership?.contractor_trade_key ? tCategory(membership.contractor_trade_key) : '';
 
-  const projectTasks = useMemo(() => {
-    if (selectedProjectId === 'all') return tasks;
-    return tasks.filter(t => t.project_id === selectedProjectId);
-  }, [tasks, selectedProjectId]);
-
   const openTasks = useMemo(() =>
-    projectTasks.filter(t => OPEN_STATUSES.includes(t.status)),
-    [projectTasks]
+    tasks.filter(t => OPEN_STATUSES.includes(t.status)),
+    [tasks]
   );
 
   const completedTasks = useMemo(() =>
-    projectTasks
+    tasks
       .filter(t => HANDLED_STATUSES.includes(t.status))
       .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
       .slice(0, 10),
-    [projectTasks]
+    [tasks]
   );
 
   const sortedOpenTasks = useMemo(() =>
@@ -156,28 +258,33 @@ const ContractorDashboard = () => {
     [openTasks]
   );
 
-  const stats = useMemo(() => {
-    const closed = projectTasks.filter(t => t.status === 'closed');
-    const handled = projectTasks.filter(t => HANDLED_STATUSES.includes(t.status));
-    const totalHandled = handled.length;
-    const successRate = totalHandled > 0 ? Math.max(0, Math.round((closed.length / totalHandled) * 100)) : 0;
-    const waiting = projectTasks.filter(t => WAITING_FOR_ME_STATUSES.includes(t.status)).length;
+  const headerStats = useMemo(() => {
+    if (!stats) return { totalHandled: 0, successRate: 0, waiting: 0 };
+    return {
+      totalHandled: stats.resolved || 0,
+      successRate: stats.success_rate || 0,
+      waiting: stats.open - (stats.open - stats.in_progress) + stats.in_progress,
+    };
+  }, [stats]);
 
+  const monthlyStats = useMemo(() => {
+    if (!stats) return { closedThisMonth: 0, inProgressThisMonth: 0, waitingThisMonth: 0, monthlyPct: 0 };
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const tasksThisMonth = projectTasks.filter(t => t.created_at && new Date(t.created_at) >= monthStart);
-    const closedThisMonth = tasksThisMonth.filter(t => HANDLED_STATUSES.includes(t.status)).length;
-    const inProgressThisMonth = tasksThisMonth.filter(t => t.status === 'in_progress').length;
-    const waitingThisMonth = tasksThisMonth.filter(t =>
-      OPEN_STATUSES.includes(t.status) && t.status !== 'in_progress'
-    ).length;
-    const totalThisMonth = closedThisMonth + inProgressThisMonth + waitingThisMonth;
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthData = (stats.monthly || []).find(m => m.month === currentMonth);
+    const closedThisMonth = monthData?.resolved || 0;
+    const openedThisMonth = monthData?.opened || 0;
+    const totalThisMonth = openedThisMonth;
     const monthlyPct = totalThisMonth > 0 ? Math.round((closedThisMonth / totalThisMonth) * 100) : 0;
+    return {
+      closedThisMonth,
+      inProgressThisMonth: stats.in_progress || 0,
+      waitingThisMonth: Math.max(0, openedThisMonth - closedThisMonth),
+      monthlyPct: Math.min(monthlyPct, 100),
+    };
+  }, [stats]);
 
-    return { totalHandled, successRate, waiting, closedThisMonth, waitingThisMonth, inProgressThisMonth, monthlyPct };
-  }, [projectTasks]);
-
-  if (loading) {
+  if (loading && !projects.length) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
@@ -216,11 +323,11 @@ const ContractorDashboard = () => {
 
           <div className="mt-3 grid grid-cols-4 gap-2 bg-white/10 rounded-xl p-2.5">
             <div className="text-center">
-              <p className="text-xl font-bold">{stats.totalHandled}</p>
+              <p className="text-xl font-bold">{headerStats.totalHandled}</p>
               <p className="text-[10px] text-blue-100">סה"כ טופלו</p>
             </div>
             <div className="text-center">
-              <p className="text-xl font-bold">{stats.successRate}%</p>
+              <p className="text-xl font-bold">{headerStats.successRate}%</p>
               <p className="text-[10px] text-blue-100">שיעור הצלחה</p>
             </div>
             <div className="text-center">
@@ -228,7 +335,7 @@ const ContractorDashboard = () => {
               <p className="text-[10px] text-blue-100">שע׳ ממוצע</p>
             </div>
             <div className="text-center">
-              <p className="text-xl font-bold">{stats.waiting}</p>
+              <p className="text-xl font-bold">{stats?.open || 0}</p>
               <p className="text-[10px] text-blue-100">ממתינים לי</p>
             </div>
           </div>
@@ -245,22 +352,19 @@ const ContractorDashboard = () => {
                 selectedProjectId === 'all' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
               }`}
             >
-              הכל ({tasks.length})
+              הכל ({totalTasks != null ? totalTasks : stats?.total || 0})
             </button>
-            {projects.map(p => {
-              const count = tasks.filter(t => t.project_id === p.id).length;
-              return (
-                <button key={p.id}
-                  onClick={() => setSelectedProjectId(p.id)}
-                  aria-pressed={selectedProjectId === p.id}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                    selectedProjectId === p.id ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
-                  }`}
-                >
-                  {p.name} ({count})
-                </button>
-              );
-            })}
+            {projects.map(p => (
+              <button key={p.id}
+                onClick={() => setSelectedProjectId(p.id)}
+                aria-pressed={selectedProjectId === p.id}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                  selectedProjectId === p.id ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
+                }`}
+              >
+                {p.name}
+              </button>
+            ))}
           </div>
         )}
 
@@ -281,24 +385,24 @@ const ContractorDashboard = () => {
         <Card className="p-4">
           <div className="flex items-center gap-4">
             <div className="relative flex-shrink-0">
-              <ProgressRing percentage={stats.monthlyPct} />
+              <ProgressRing percentage={monthlyStats.monthlyPct} />
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-lg font-bold text-blue-600">{stats.monthlyPct}%</span>
+                <span className="text-lg font-bold text-blue-600">{monthlyStats.monthlyPct}%</span>
               </div>
             </div>
             <div className="flex-1">
               <h3 className="text-sm font-semibold text-slate-700 mb-2">התקדמות החודש</h3>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
-                  <p className="text-lg font-bold text-green-600">{stats.closedThisMonth}</p>
+                  <p className="text-lg font-bold text-green-600">{monthlyStats.closedThisMonth}</p>
                   <p className="text-[10px] text-slate-500">טופלו</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-amber-600">{stats.inProgressThisMonth}</p>
+                  <p className="text-lg font-bold text-amber-600">{monthlyStats.inProgressThisMonth}</p>
                   <p className="text-[10px] text-slate-500">בטיפול</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-slate-600">{stats.waitingThisMonth}</p>
+                  <p className="text-lg font-bold text-slate-600">{monthlyStats.waitingThisMonth}</p>
                   <p className="text-[10px] text-slate-500">ממתינים</p>
                 </div>
               </div>
@@ -317,7 +421,13 @@ const ContractorDashboard = () => {
             </span>
           </div>
 
-          {sortedOpenTasks.length === 0 ? (
+          {initialLoading ? (
+            <div className="space-y-2.5">
+              <TaskCardSkeleton />
+              <TaskCardSkeleton />
+              <TaskCardSkeleton />
+            </div>
+          ) : sortedOpenTasks.length === 0 ? (
             <Card className="p-8 text-center">
               <CheckCircle2 className="w-12 h-12 text-green-300 mx-auto mb-3" />
               <p className="text-sm text-slate-500">אין ליקויים פתוחים — כל הכבוד!</p>
@@ -379,7 +489,7 @@ const ContractorDashboard = () => {
           )}
         </div>
 
-        {completedTasks.length > 0 && (
+        {!initialLoading && completedTasks.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
@@ -408,6 +518,15 @@ const ContractorDashboard = () => {
                 </button>
               ))}
             </Card>
+          </div>
+        )}
+
+        {hasMore && !initialLoading && (
+          <div ref={loaderRef} className="py-4 text-center">
+            <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+              טוען עוד...
+            </div>
           </div>
         )}
 

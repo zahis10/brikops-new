@@ -78,7 +78,8 @@ TOKEN = get_token()
 # Get project/task IDs
 projects, _, _ = api("GET", "/api/projects", TOKEN)
 proj_id = projects[0]["id"] if projects else None
-tasks_list, _, _ = api("GET", f"/api/tasks?project_id={proj_id}", TOKEN)
+tasks_resp, _, _ = api("GET", f"/api/tasks?project_id={proj_id}", TOKEN)
+tasks_list = tasks_resp.get("items", tasks_resp) if isinstance(tasks_resp, dict) else tasks_resp
 task_id = tasks_list[0]["id"] if tasks_list else None
 
 # 1A. Task attachment upload
