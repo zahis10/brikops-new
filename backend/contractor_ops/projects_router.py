@@ -118,14 +118,20 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
     }
     await db.projects.insert_one(doc)
     template_updates = {}
-    qc_tpl = await db.qc_templates.find_one({"type": "qc"}, sort=[("version", -1)])
+    qc_tpl = await db.qc_templates.find_one(
+        {"type": "qc", "is_default": True, "is_active": True},
+        sort=[("version", -1)],
+    )
     if qc_tpl:
-        template_updates["qc_template_id"] = qc_tpl["id"]
-        template_updates["qc_template_version"] = qc_tpl["version"]
-    ho_tpl = await db.qc_templates.find_one({"type": "handover"}, sort=[("version", -1)])
+        template_updates["qc_template_version_id"] = qc_tpl["id"]
+        template_updates["qc_template_family_id"] = qc_tpl["family_id"]
+    ho_tpl = await db.qc_templates.find_one(
+        {"type": "handover", "is_default": True, "is_active": True},
+        sort=[("version", -1)],
+    )
     if ho_tpl:
-        template_updates["handover_template_id"] = ho_tpl["id"]
-        template_updates["handover_template_version"] = ho_tpl["version"]
+        template_updates["handover_template_version_id"] = ho_tpl["id"]
+        template_updates["handover_template_family_id"] = ho_tpl["family_id"]
     if template_updates:
         await db.projects.update_one({"id": project_id}, {"$set": template_updates})
         doc.update(template_updates)
