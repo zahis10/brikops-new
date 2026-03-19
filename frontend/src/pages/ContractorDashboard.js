@@ -165,8 +165,7 @@ const ContractorDashboard = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const init = async () => {
-      setLoading(true);
+    const fetchStats = async () => {
       try {
         const [projectList, statsData] = await Promise.all([
           projectService.list(),
@@ -179,25 +178,37 @@ const ContractorDashboard = () => {
         if (cancelled) return;
         setProjects(Array.isArray(projectList) ? projectList : []);
         setStats(statsData);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load stats:', error);
+      }
+    };
+    fetchStats();
+    return () => { cancelled = true; };
+  }, [selectedProjectId]);
 
-        taskIdsRef.current.clear();
-        setTasks([]);
-        setOffset(0);
-        setTotalTasks(null);
-        setHasMore(true);
-        setInitialLoading(true);
-
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTasks = async () => {
+      setLoading(true);
+      taskIdsRef.current.clear();
+      setTasks([]);
+      setOffset(0);
+      setTotalTasks(null);
+      setHasMore(true);
+      setInitialLoading(true);
+      try {
         await loadMore(0, selectedProjectId);
       } catch (error) {
         if (cancelled) return;
-        console.error('Failed to load data:', error);
+        console.error('Failed to load tasks:', error);
         toast.error('שגיאה בטעינת נתונים');
         setInitialLoading(false);
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
-    init();
+    fetchTasks();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId]);
@@ -253,10 +264,7 @@ const ContractorDashboard = () => {
     [openTasks]
   );
 
-  const urgentTasks = useMemo(() =>
-    openTasks.filter(t => t.priority === 'critical' || getWaitingHours(t) > 48),
-    [openTasks]
-  );
+  const urgentCount = stats?.urgent || 0;
 
   const headerStats = useMemo(() => {
     if (!stats) return { totalHandled: 0, successRate: 0, waiting: 0 };
@@ -286,10 +294,12 @@ const ContractorDashboard = () => {
 
   if (loading && !projects.length) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="text-slate-500 mt-4">טוען נתונים...</p>
+      <div className="min-h-screen bg-slate-50" dir="rtl">
+        <div className="max-w-lg mx-auto px-4 py-6 space-y-3">
+          <div className="h-32 bg-slate-200 rounded-xl animate-pulse" />
+          <TaskCardSkeleton />
+          <TaskCardSkeleton />
+          <TaskCardSkeleton />
         </div>
       </div>
     );
@@ -368,7 +378,7 @@ const ContractorDashboard = () => {
           </div>
         )}
 
-        {urgentTasks.length > 0 && (
+        {urgentCount > 0 && (
           <button
             onClick={() => urgentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
             className="w-full rounded-xl p-3 text-white font-medium text-sm flex items-center justify-between touch-manipulation active:scale-[0.98] transition-transform"
@@ -376,7 +386,7 @@ const ContractorDashboard = () => {
           >
             <span className="flex items-center gap-2">
               <Flame className="w-5 h-5" />
-              <span>{urgentTasks.length} ליקויים דורשים טיפול מיידי</span>
+              <span>{urgentCount} ליקויים דורשים טיפול מיידי</span>
             </span>
             <ChevronLeft className="w-5 h-5" />
           </button>
@@ -523,10 +533,12 @@ const ContractorDashboard = () => {
 
         {hasMore && !initialLoading && (
           <div ref={loaderRef} className="py-4 text-center">
-            <div className="inline-flex items-center gap-2 text-sm text-slate-500">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-              טוען עוד...
-            </div>
+            {loadingMore && (
+              <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                טוען עוד...
+              </div>
+            )}
           </div>
         )}
 
