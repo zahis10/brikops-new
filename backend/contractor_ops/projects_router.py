@@ -117,6 +117,18 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
         'created_at': ts, 'updated_at': ts,
     }
     await db.projects.insert_one(doc)
+    template_updates = {}
+    qc_tpl = await db.qc_templates.find_one({"type": "qc"}, sort=[("version", -1)])
+    if qc_tpl:
+        template_updates["qc_template_id"] = qc_tpl["id"]
+        template_updates["qc_template_version"] = qc_tpl["version"]
+    ho_tpl = await db.qc_templates.find_one({"type": "handover"}, sort=[("version", -1)])
+    if ho_tpl:
+        template_updates["handover_template_id"] = ho_tpl["id"]
+        template_updates["handover_template_version"] = ho_tpl["version"]
+    if template_updates:
+        await db.projects.update_one({"id": project_id}, {"$set": template_updates})
+        doc.update(template_updates)
     await db.project_memberships.update_one(
         {'project_id': project_id, 'user_id': user['id']},
         {'$set': {'id': str(uuid.uuid4()), 'project_id': project_id, 'user_id': user['id'], 'role': 'project_manager', 'created_at': ts}},
