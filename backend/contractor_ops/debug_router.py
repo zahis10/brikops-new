@@ -416,6 +416,10 @@ async def debug_whatsapp_send_test(request: Request, user: dict = Depends(requir
         }
     }
 
+    import json as _json
+    logger.info(f"[WA:DEBUG-TEST] components={_json.dumps(components, ensure_ascii=False)}")
+    logger.info(f"[WA:DEBUG-TEST] full_body={_json.dumps(send_body, ensure_ascii=False)}")
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(api_url, json=send_body, headers=headers)

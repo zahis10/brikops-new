@@ -271,6 +271,8 @@ class WhatsAppClient:
                     "components": components,
                 }
             }
+            import json as _json
+            logger.info(f"[WA:COMPONENTS] task_id={task_id} components={_json.dumps(components, ensure_ascii=False)}")
             logger.info(f"[WA:SEND] template={tpl_name} lang={tpl_lang} to={mask_phone(to_phone)} task_id={task_id} has_image={'yes' if effective_image else 'no'} is_fallback={not image_url or not image_url.startswith('https://')}")
         else:
             text = format_text_message(payload)
@@ -282,6 +284,8 @@ class WhatsAppClient:
             }
             logger.info(f"[WA:SEND] text_message to={mask_phone(to_phone)} task_id={task_id}")
 
+        import json as _json2
+        logger.info(f"[WA:FULL_BODY] to={mask_phone(to_phone)} body={_json2.dumps(body, ensure_ascii=False)}")
         logger.info(f"[WA:SEND] api_url={self.api_url} to={mask_phone(to_phone)}")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(self.api_url, json=body, headers=headers)
