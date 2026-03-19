@@ -128,10 +128,34 @@ const InlineSelect = ({ value, options, onChange, disabled, label }) => {
 };
 
 const TaskDetailPage = () => {
-  const { id } = useParams();
+  const { id: rawId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+
+  const id = React.useMemo(() => {
+    const decoded = decodeURIComponent(rawId || '');
+    if (decoded === '{{1}}' || rawId === '%7B%7B1%7D%7D') {
+      const params = new URLSearchParams(location.search);
+      const src = params.get('src') || '';
+      const uuidMatch = src.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (uuidMatch) {
+        console.log('[WA_FIX] Extracted task ID from broken WA URL:', uuidMatch[1]);
+        return uuidMatch[1];
+      }
+      const waPrefix = src.startsWith('wa') ? src.slice(2) : src;
+      const uuidMatch2 = waPrefix.match(/^([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12})/i);
+      if (uuidMatch2) {
+        let extracted = uuidMatch2[1];
+        if (!extracted.includes('-') && extracted.length === 32) {
+          extracted = `${extracted.slice(0,8)}-${extracted.slice(8,12)}-${extracted.slice(12,16)}-${extracted.slice(16,20)}-${extracted.slice(20)}`;
+        }
+        console.log('[WA_FIX] Extracted task ID from broken WA URL (suffix):', extracted);
+        return extracted;
+      }
+    }
+    return rawId;
+  }, [rawId, location.search]);
   const [task, setTask] = useState(null);
   const [updates, setUpdates] = useState([]);
   const [companies, setCompanies] = useState([]);

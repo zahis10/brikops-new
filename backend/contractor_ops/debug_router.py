@@ -303,6 +303,64 @@ async def debug_whatsapp(request: Request, user: dict = Depends(_require_debug_a
     return result
 
 
+@router.get("/debug/whatsapp-template-inspect")
+async def debug_whatsapp_template_inspect(user: dict = Depends(require_super_admin)):
+    import httpx, os
+    from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_TEMPLATE_PARAM_MODE
+    if not WA_ACCESS_TOKEN:
+        return {"error": "WA_ACCESS_TOKEN not set"}
+    headers = {"Authorization": f"Bearer {WA_ACCESS_TOKEN}"}
+    waba_id = os.environ.get('WABA_ID', '')
+    if not waba_id:
+        async with httpx.AsyncClient(timeout=15) as client:
+            try:
+                me_resp = await client.get("https://graph.facebook.com/v21.0/me", headers=headers)
+                if me_resp.status_code == 200:
+                    me_id = me_resp.json().get('id', '')
+                    waba_resp = await client.get(
+                        f"https://graph.facebook.com/v21.0/{me_id}/whatsapp_business_accounts",
+                        headers=headers
+                    )
+                    if waba_resp.status_code == 200:
+                        waba_data = waba_resp.json().get('data', [])
+                        if waba_data:
+                            waba_id = waba_data[0].get('id', '')
+            except Exception:
+                pass
+    if not waba_id:
+        return {
+            "error": "Cannot determine WABA_ID. Set WABA_ID env var.",
+            "hint": "Find your WABA ID in Meta Business Manager > WhatsApp Accounts > Settings",
+            "param_mode": WA_TEMPLATE_PARAM_MODE,
+            "templates_configured": {k: v['name'] for k, v in WA_DEFECT_TEMPLATES.items()},
+            "button_url_fix": "The Meta template button URL must end with {{1}} as the dynamic suffix. "
+                              "Example: https://app.brikops.com/tasks/{{1}} — NOT https://app.brikops.com/tasks/{{1}}/?src=wa",
+        }
+    results = {"waba_id": waba_id, "param_mode": WA_TEMPLATE_PARAM_MODE}
+    async with httpx.AsyncClient(timeout=30) as client:
+        for lang_key, tpl_info in WA_DEFECT_TEMPLATES.items():
+            tpl_name = tpl_info['name']
+            url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates?name={tpl_name}"
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json().get('data', [])
+                if data:
+                    tpl = data[0]
+                    comps = tpl.get('components', [])
+                    buttons = [c for c in comps if c.get('type') == 'BUTTONS']
+                    results[lang_key] = {
+                        "name": tpl.get('name'),
+                        "status": tpl.get('status'),
+                        "components": comps,
+                        "buttons_detail": buttons,
+                    }
+                else:
+                    results[lang_key] = {"name": tpl_name, "error": "not found in WABA"}
+            else:
+                results[lang_key] = {"name": tpl_name, "error": f"HTTP {resp.status_code}", "body": resp.text[:300]}
+    return results
+
+
 @router.post("/debug/whatsapp-send-test")
 async def debug_whatsapp_send_test(request: Request, user: dict = Depends(require_super_admin)):
     from config import WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_DEFECT_TEMPLATES, WA_DEFECT_DEFAULT_LANG
