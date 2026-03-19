@@ -1,6 +1,9 @@
+import logging
 import subprocess as _subprocess
 import os as _os
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from contractor_ops.router import (
