@@ -175,8 +175,10 @@ async def timing_middleware(request: Request, call_next):
                 f"[ATTACH:RESPONSE] rid={request_id} path={path} "
                 f"status={response.status_code} elapsed={elapsed_ms}ms"
             )
-        elif elapsed_ms > 1000:
+        elif elapsed_ms > 800:
             logger.warning(log_line)
+        elif elapsed_ms > 500:
+            logger.debug(log_line + " [SLOW]")
         else:
             logger.info(log_line)
 
@@ -473,6 +475,10 @@ async def create_indexes():
             [("project_id", 1), ("building_name", 1), ("floor", 1), ("apartment_number", 1)],
             unique=True,
         )
+        await db.project_plans.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
+        await db.project_plans.create_index("id", unique=True)
+        await db.unit_plans.create_index([("project_id", 1), ("unit_id", 1), ("created_at", -1)])
+        await db.unit_plans.create_index("id", unique=True)
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

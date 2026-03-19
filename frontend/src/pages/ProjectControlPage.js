@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
-  sortIndexService, versionService, configService, archiveService, stepupService, isStepupError, billingService,
+  sortIndexService, versionService, archiveService, stepupService, isStepupError, billingService,
   qcService, companySearchService, templateService, projectQcService, handoverService
 } from '../services/api';
 import { toast } from 'sonner';
@@ -3021,7 +3021,7 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
 
 const ProjectControlPage = () => {
   const { projectId } = useParams();
-  const { user } = useAuth();
+  const { user, features } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -3041,8 +3041,6 @@ const ProjectControlPage = () => {
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [openInviteTriggered, setOpenInviteTriggered] = useState(false);
   const [gitSha, setGitSha] = useState('');
-  const [billingEnabled, setBillingEnabled] = useState(false);
-  const [defectsV2Enabled, setDefectsV2Enabled] = useState(false);
   const [isOrgOwner, setIsOrgOwner] = useState(false);
   const [canManageBilling, setCanManageBilling] = useState(false);
   const [isBillingViewer, setIsBillingViewer] = useState(false);
@@ -3229,11 +3227,10 @@ const ProjectControlPage = () => {
     });
   }, [hierarchy, projectId]);
 
+  const billingEnabled = !!features?.billing_v1_enabled;
+  const defectsV2Enabled = !!features?.defects_v2;
+
   useEffect(() => {
-    configService.getFeatures().then(data => {
-      setBillingEnabled(!!data.feature_flags?.billing_v1_enabled);
-      setDefectsV2Enabled(!!data.feature_flags?.defects_v2);
-    }).catch(() => {});
     versionService.get().then(data => {
       setGitSha(data.git_sha || data.sha || data.version || '');
     }).catch(() => {});

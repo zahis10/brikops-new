@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { BACKEND_URL } from '../services/api';
+import { BACKEND_URL, configService } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -23,6 +23,7 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [features, setFeatures] = useState(null);
   const [token, setToken] = useState(() => {
     const hash = window.location.hash;
     if (hash) {
@@ -66,13 +67,23 @@ export const AuthProvider = ({ children }) => {
     }
   }, [token]);
 
+  const fetchFeatures = useCallback(async () => {
+    try {
+      const data = await configService.getFeatures();
+      setFeatures(data?.feature_flags || {});
+    } catch {
+      setFeatures({});
+    }
+  }, []);
+
   useEffect(() => {
     if (token) {
       fetchCurrentUser();
+      fetchFeatures();
     } else {
       setLoading(false);
     }
-  }, [token, fetchCurrentUser]);
+  }, [token, fetchCurrentUser, fetchFeatures]);
 
   const login = async (email, password) => {
     try {
@@ -121,6 +132,7 @@ export const AuthProvider = ({ children }) => {
     user,
     token,
     loading,
+    features,
     login,
     loginWithOtp,
     register,

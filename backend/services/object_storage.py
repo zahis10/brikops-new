@@ -1,10 +1,17 @@
 import os
 import io
 import logging
+import time
+import threading
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_url_cache = {}
+_url_cache_lock = threading.Lock()
+_URL_CACHE_TTL = 600
+_URL_CACHE_MAX = 5000
 
 _BACKEND_MODE = os.environ.get("FILES_STORAGE_BACKEND", "local").lower()
 _S3_BUCKET = os.environ.get("AWS_S3_BUCKET", "")
@@ -82,6 +89,11 @@ def generate_url(stored_ref: str) -> str:
 
     if stored_ref.startswith("s3://"):
         key = stored_ref[5:]
+        now = time.monotonic()
+        with _url_cache_lock:
+            cached = _url_cache.get(key)
+            if cached and (now - cached[1]) < _URL_CACHE_TTL:
+                return cached[0]
         try:
             s3 = _get_s3()
             url = s3.generate_presigned_url(
@@ -89,6 +101,11 @@ def generate_url(stored_ref: str) -> str:
                 Params={"Bucket": _S3_BUCKET, "Key": key},
                 ExpiresIn=_PRESIGN_EXPIRES,
             )
+            with _url_cache_lock:
+                if len(_url_cache) >= _URL_CACHE_MAX:
+                    oldest_key = min(_url_cache, key=lambda k: _url_cache[k][1])
+                    del _url_cache[oldest_key]
+                _url_cache[key] = (url, now)
             return url
         except Exception as e:
             logger.error(f"[STORAGE:S3:PRESIGN_ERROR] key={key} error={e}")

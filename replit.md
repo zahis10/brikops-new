@@ -49,7 +49,8 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Defects V2**: Parallel building-level and apartment-level defect views.
     -   **Defects Export**: Supports Excel and PDF exports with Hebrew RTL formatting.
     -   **Handover PDF Export**: Generates PDF of signed handover protocols using WeasyPrint.
-    -   **Observability**: Structured per-request logging, Hebrew error boundary, and health/readiness endpoints.
+    -   **Observability**: Structured per-request logging (two-tier: WARNING ≥800ms, DEBUG ≥500ms), Hebrew error boundary, and health/readiness endpoints.
+    -   **Performance Optimization**: Task list endpoint pagination (limit/offset query params, default 50, max 200). MongoDB indexes on `project_plans` and `unit_plans` collections. S3 presigned URL TTL cache (10min, max 5000 entries, thread-safe). Feature flags fetched once at login via AuthContext (eliminates per-page waterfall requests).
 
 ### Deployment and Security
 -   **Workflow Configuration**: Single-process mode where backend serves pre-built static frontend.

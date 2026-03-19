@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { unitService, configService } from '../services/api';
+import { unitService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -57,7 +57,7 @@ const STATUS_LABEL_MAP = {
 const ApartmentDashboardPage = () => {
   const { projectId, unitId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, features } = useAuth();
 
   const [unitData, setUnitData] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -70,21 +70,15 @@ const ApartmentDashboardPage = () => {
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [editingUnit, setEditingUnit] = useState(null);
-  const [flagChecked, setFlagChecked] = useState(false);
   const [showDefectModal, setShowDefectModal] = useState(false);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
+  const flagChecked = !!features?.defects_v2;
 
   useEffect(() => {
-    configService.getFeatures().then(data => {
-      if (!data?.feature_flags?.defects_v2) {
-        navigate(`/projects/${projectId}/units/${unitId}/tasks`, { replace: true });
-      } else {
-        setFlagChecked(true);
-      }
-    }).catch(() => {
+    if (features && !features.defects_v2) {
       navigate(`/projects/${projectId}/units/${unitId}/tasks`, { replace: true });
-    });
-  }, [projectId, unitId, navigate]);
+    }
+  }, [features, projectId, unitId, navigate]);
 
   const loadUnit = useCallback(async () => {
     try {

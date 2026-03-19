@@ -158,6 +158,8 @@ async def list_tasks(
     bucket_key: Optional[str] = Query(None),
     overdue: Optional[bool] = Query(None),
     q: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
@@ -227,13 +229,17 @@ async def list_tasks(
         else:
             query['$or'] = contractor_conditions
 
-    tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(10000)
-
     if bucket_key:
+        tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(10000)
         contractor_map, company_map, membership_trade_map = await _build_bucket_maps(db, project_id)
         tasks = [t for t in tasks if compute_task_bucket(t, contractor_map, company_map, membership_trade_map)['bucket_key'] == bucket_key]
-
-    tasks = sorted(tasks, key=_priority_sort_key)
+        tasks = sorted(tasks, key=_priority_sort_key)
+        tasks = tasks[offset:offset + limit]
+    else:
+        cursor = db.tasks.find(query, {'_id': 0}).sort('created_at', -1)
+        all_tasks = await cursor.to_list(10000)
+        all_tasks = sorted(all_tasks, key=_priority_sort_key)
+        tasks = all_tasks[offset:offset + limit]
 
     from services.object_storage import resolve_urls_in_doc
     result = []

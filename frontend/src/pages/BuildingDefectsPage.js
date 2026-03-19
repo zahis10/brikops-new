@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { buildingService, configService } from '../services/api';
+import { buildingService } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import ExportModal from '../components/ExportModal';
 import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
@@ -35,10 +36,11 @@ import UnitTypeEditModal, { UNIT_TYPE_TAGS, TAG_MAP } from '../components/UnitTy
 const BuildingDefectsPage = () => {
   const { projectId, buildingId } = useParams();
   const navigate = useNavigate();
+  const { features } = useAuth();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [flagChecked, setFlagChecked] = useState(false);
+  const flagChecked = !!features?.defects_v2;
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [filters, setFilters] = useState({ ...BUILDING_DEFAULT_FILTERS });
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,25 +51,10 @@ const BuildingDefectsPage = () => {
   const [editingUnit, setEditingUnit] = useState(null);
 
   useEffect(() => {
-    let cancelled = false;
-    const checkFlag = async () => {
-      try {
-        const features = await configService.getFeatures();
-        if (cancelled) return;
-        if (!features?.feature_flags?.defects_v2) {
-          navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
-          return;
-        }
-        setFlagChecked(true);
-      } catch {
-        if (!cancelled) {
-          navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
-        }
-      }
-    };
-    checkFlag();
-    return () => { cancelled = true; };
-  }, [projectId, navigate]);
+    if (features && !features.defects_v2) {
+      navigate(`/projects/${projectId}/control?tab=defects`, { replace: true });
+    }
+  }, [features, projectId, navigate]);
 
   const loadData = useCallback(async () => {
     if (!flagChecked) return;
