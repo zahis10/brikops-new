@@ -230,16 +230,42 @@ async def list_tasks(
             query['$or'] = contractor_conditions
 
     if bucket_key:
-        tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(10000)
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {"_prio_order": {"$switch": {
+                "branches": [
+                    {"case": {"$eq": ["$priority", "critical"]}, "then": 0},
+                    {"case": {"$eq": ["$priority", "high"]}, "then": 1},
+                    {"case": {"$eq": ["$priority", "medium"]}, "then": 2},
+                    {"case": {"$eq": ["$priority", "low"]}, "then": 3},
+                ],
+                "default": 2,
+            }}}},
+            {"$sort": {"_prio_order": 1, "updated_at": -1, "created_at": -1}},
+            {"$project": {"_id": 0, "_prio_order": 0}},
+        ]
+        tasks = await db.tasks.aggregate(pipeline).to_list(10000)
         contractor_map, company_map, membership_trade_map = await _build_bucket_maps(db, project_id)
         tasks = [t for t in tasks if compute_task_bucket(t, contractor_map, company_map, membership_trade_map)['bucket_key'] == bucket_key]
-        tasks = sorted(tasks, key=_priority_sort_key)
         tasks = tasks[offset:offset + limit]
     else:
-        cursor = db.tasks.find(query, {'_id': 0}).sort('created_at', -1)
-        all_tasks = await cursor.to_list(10000)
-        all_tasks = sorted(all_tasks, key=_priority_sort_key)
-        tasks = all_tasks[offset:offset + limit]
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {"_prio_order": {"$switch": {
+                "branches": [
+                    {"case": {"$eq": ["$priority", "critical"]}, "then": 0},
+                    {"case": {"$eq": ["$priority", "high"]}, "then": 1},
+                    {"case": {"$eq": ["$priority", "medium"]}, "then": 2},
+                    {"case": {"$eq": ["$priority", "low"]}, "then": 3},
+                ],
+                "default": 2,
+            }}}},
+            {"$sort": {"_prio_order": 1, "updated_at": -1, "created_at": -1}},
+            {"$skip": offset},
+            {"$limit": limit},
+            {"$project": {"_id": 0, "_prio_order": 0}},
+        ]
+        tasks = await db.tasks.aggregate(pipeline).to_list(limit)
 
     from services.object_storage import resolve_urls_in_doc
     result = []

@@ -129,34 +129,34 @@ export default function ProjectDashboardPage() {
     setExecSummary(null);
     setHandoverSummary(null);
     try {
-      const [dashData, projData] = await Promise.all([
+      const [dashResult, projResult, hierarchyResult, execResult, handoverResult] = await Promise.allSettled([
         projectService.getDashboard(projectId),
         projectService.get(projectId),
+        (async () => {
+          const hierarchy = await buildingService.getHierarchy(projectId);
+          const floorIds = [];
+          (hierarchy || []).forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
+          if (floorIds.length > 0) {
+            const statuses = await qcService.getFloorsBatchStatus(floorIds);
+            const counts = { not_started: 0, in_progress: 0, pending_review: 0, submitted: 0, total: floorIds.length };
+            Object.values(statuses).forEach(raw => { const s = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; if (counts[s] !== undefined) counts[s]++; });
+            return counts;
+          }
+          return null;
+        })(),
+        qcService.getExecutionSummary(projectId),
+        handoverService.getSummary(projectId),
       ]);
-      setData(dashData);
-      setProject(projData);
 
-      try {
-        const [hierarchyResult, execResult, handoverResult] = await Promise.allSettled([
-          (async () => {
-            const hierarchy = await buildingService.getHierarchy(projectId);
-            const floorIds = [];
-            (hierarchy || []).forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
-            if (floorIds.length > 0) {
-              const statuses = await qcService.getFloorsBatchStatus(floorIds);
-              const counts = { not_started: 0, in_progress: 0, pending_review: 0, submitted: 0, total: floorIds.length };
-              Object.values(statuses).forEach(raw => { const s = typeof raw === 'string' ? raw : raw?.badge || 'not_started'; if (counts[s] !== undefined) counts[s]++; });
-              return counts;
-            }
-            return null;
-          })(),
-          qcService.getExecutionSummary(projectId),
-          handoverService.getSummary(projectId),
-        ]);
-        if (hierarchyResult.status === 'fulfilled') setQcSummary(hierarchyResult.value);
-        if (execResult.status === 'fulfilled') setExecSummary(execResult.value);
-        if (handoverResult.status === 'fulfilled') setHandoverSummary(handoverResult.value);
-      } catch {}
+      if (dashResult.status === 'rejected' || projResult.status === 'rejected') {
+        const err = dashResult.reason || projResult.reason;
+        throw err;
+      }
+      setData(dashResult.value);
+      setProject(projResult.value);
+      if (hierarchyResult.status === 'fulfilled') setQcSummary(hierarchyResult.value);
+      if (execResult.status === 'fulfilled') setExecSummary(execResult.value);
+      if (handoverResult.status === 'fulfilled') setHandoverSummary(handoverResult.value);
     } catch (err) {
       if (err.response?.status === 403) {
         toast.error('אין לך הרשאה למרכז ניהול זה');
