@@ -120,7 +120,10 @@ const ContractorDashboard = () => {
   const loaderRef = useRef(null);
   const abortRef = useRef(null);
 
+  const loadMoreRef = useRef(false);
   const loadMore = useCallback(async (fromOffset = 0, projectFilter = null) => {
+    if (loadMoreRef.current && fromOffset !== 0) return;
+    loadMoreRef.current = true;
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
@@ -156,6 +159,7 @@ const ContractorDashboard = () => {
       console.error('Failed to load tasks:', err);
       toast.error('שגיאה בטעינת נתונים');
     } finally {
+      loadMoreRef.current = false;
       if (!signal.aborted) {
         setLoadingMore(false);
         setInitialLoading(false);

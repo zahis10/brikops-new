@@ -188,7 +188,10 @@ const ProjectTasksPage = () => {
     return params;
   }, [projectId, statusChip, bucketFilter, assigneeFilter, overdueFilter, searchQuery, getStatusParams]);
 
+  const loadMoreRef = useRef(false);
   const loadMore = useCallback(async (fromOffset = 0, projIsContractor = null) => {
+    if (loadMoreRef.current && fromOffset !== 0) return;
+    loadMoreRef.current = true;
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
@@ -231,6 +234,7 @@ const ProjectTasksPage = () => {
       }
       toast.error('שגיאה בטעינת ליקויים');
     } finally {
+      loadMoreRef.current = false;
       if (!signal.aborted) {
         setLoadingMore(false);
         setInitialLoading(false);
