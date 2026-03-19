@@ -3070,6 +3070,9 @@ const ProjectControlPage = () => {
     } catch { setWorkMode('structure'); }
   }, [projectId]);
 
+  const billingEnabled = !!features?.billing_v1_enabled;
+  const defectsV2Enabled = !!features?.defects_v2;
+
   const showBillingTab = billingEnabled && (isBillingViewer || user?.platform_role === 'super_admin');
   const MGMT_TABS = showBillingTab ? [...SECONDARY_TABS, BILLING_TAB] : SECONDARY_TABS;
   const VALID_TABS = MGMT_TABS.map(t => t.id);
@@ -3226,9 +3229,6 @@ const ProjectControlPage = () => {
       setQcLoading(false);
     });
   }, [hierarchy, projectId]);
-
-  const billingEnabled = !!features?.billing_v1_enabled;
-  const defectsV2Enabled = !!features?.defects_v2;
 
   useEffect(() => {
     versionService.get().then(data => {
