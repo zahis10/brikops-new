@@ -401,7 +401,7 @@ async def debug_whatsapp_send_test(request: Request, user: dict = Depends(requir
     components.append({
         "type": "button",
         "sub_type": "url",
-        "index": 0,
+        "index": "0",
         "parameters": [{"type": "text", "text": button_id}]
     })
 

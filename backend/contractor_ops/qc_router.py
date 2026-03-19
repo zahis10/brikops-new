@@ -1254,7 +1254,7 @@ async def _send_qc_rejection_wa(
         components.append({
             "type": "button",
             "sub_type": "url",
-            "index": 0,
+            "index": "0",
             "parameters": [{"type": "text", "text": button_path}],
         })
 
