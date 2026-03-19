@@ -496,24 +496,13 @@ const ProjectPlansPage = () => {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
-                className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors"
-              >
-                <Archive className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">ארכיון</span>
-              </button>
-              {canManage && (
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold transition-colors backdrop-blur-sm"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">העלאה</span>
-                </button>
-              )}
-            </div>
+            <button
+              onClick={() => navigate(`/projects/${projectId}/plans/archive`)}
+              className="flex items-center gap-1 text-[11px] text-amber-100 hover:text-white transition-colors shrink-0"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">ארכיון</span>
+            </button>
           </div>
         </div>
       </div>
@@ -569,7 +558,7 @@ const ProjectPlansPage = () => {
             </button>
           )}
 
-          <div className="mr-auto flex items-center gap-2">
+          <div className="mr-auto flex items-center gap-1.5">
             {canManage && (
               showAddDiscipline ? (
                 <div className="flex items-center gap-1 shrink-0">
@@ -598,6 +587,16 @@ const ProjectPlansPage = () => {
             )}
           </div>
         </div>
+
+        {canManage && (
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            העלאת תוכנית
+          </button>
+        )}
 
         {plansLoading ? (
           <div className="flex justify-center py-8">
@@ -675,6 +674,15 @@ const ProjectPlansPage = () => {
           </div>
         )}
       </div>
+
+      {canManage && (
+        <button
+          onClick={() => setShowUploadModal(true)}
+          className="fixed bottom-6 left-6 z-40 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-xl flex items-center justify-center transition-colors"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
 
       {showUploadModal && canManage && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
