@@ -569,11 +569,13 @@ export const unitPlanService = {
     });
     return response.data;
   },
-  async upload(projectId, unitId, file, discipline, note = '') {
+  async upload(projectId, unitId, file, discipline, opts = {}) {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('discipline', discipline);
-    if (note) formData.append('note', note);
+    if (opts.note) formData.append('note', opts.note);
+    if (opts.name) formData.append('name', opts.name);
+    if (opts.plan_type) formData.append('plan_type', opts.plan_type);
     const response = await axios.post(`${API}/projects/${projectId}/units/${unitId}/plans`, formData, {
       headers: getAuthHeader(),
     });

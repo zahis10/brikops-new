@@ -785,9 +785,15 @@ const ProjectPlansPage = () => {
                   onClick={() => openDetail(plan)}
                   className="bg-white rounded-xl border border-slate-200 overflow-hidden cursor-pointer hover:shadow-md hover:border-amber-200 transition-all group"
                 >
-                  <div className={`h-24 ${fi.bg} flex items-center justify-center`}>
-                    <IconComp className={`w-10 h-10 ${fi.color} opacity-60 group-hover:opacity-80 transition-opacity`} />
-                  </div>
+                  {plan.thumbnail_url ? (
+                    <div className="h-24 bg-slate-50 flex items-center justify-center overflow-hidden">
+                      <img src={plan.thumbnail_url} alt={plan.name || ''} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                    </div>
+                  ) : (
+                    <div className={`h-24 ${fi.bg} flex items-center justify-center`}>
+                      <IconComp className={`w-10 h-10 ${fi.color} opacity-60 group-hover:opacity-80 transition-opacity`} />
+                    </div>
+                  )}
                   <div className="px-3 py-2.5">
                     <h3 className="text-[12px] font-bold text-slate-800 leading-snug break-words line-clamp-2">
                       {plan.name || plan.original_filename || ''}

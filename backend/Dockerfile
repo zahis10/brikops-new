@@ -12,6 +12,7 @@ RUN apt-get update && \
     libcairo2 \
     shared-mime-info \
     fonts-dejavu-core \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

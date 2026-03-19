@@ -1,4 +1,6 @@
 import uuid
+import asyncio
+import logging
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -10,6 +12,20 @@ from contractor_ops.router import (
 )
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
+
+
+async def _generate_and_save_thumbnail(plan_id: str, file_bytes: bytes, file_type: str, storage_key: str, collection: str = 'project_plans'):
+    try:
+        from services.thumbnail_service import generate_thumbnail
+        thumb_url = await generate_thumbnail(file_bytes, file_type, storage_key)
+        if thumb_url:
+            db = get_db()
+            coll = getattr(db, collection)
+            await coll.update_one({'id': plan_id}, {'$set': {'thumbnail_url': thumb_url}})
+            logger.info(f"[THUMB] Saved for plan {plan_id} in {collection}")
+    except Exception as e:
+        logger.warning(f"[THUMB] Failed for plan {plan_id}: {e}")
 
 
 MANAGEMENT_ROLES = ('super_admin', 'project_manager', 'management_team')
@@ -198,6 +214,8 @@ async def upload_project_plan(
         'project_id': project_id,
     })
 
+    asyncio.create_task(_generate_and_save_thumbnail(plan_id, file_bytes, file.content_type or '', result.stored_filename, 'project_plans'))
+
     from services.object_storage import resolve_urls_in_doc
     return resolve_urls_in_doc(dict(plan_doc))
 
@@ -378,6 +396,8 @@ async def upload_plan_version(
         'version': new_version_num,
         'filename': file.filename,
     })
+
+    asyncio.create_task(_generate_and_save_thumbnail(plan_id, file_bytes, file.content_type or '', result.stored_filename, 'project_plans'))
 
     updated = await db.project_plans.find_one({'id': plan_id}, {'_id': 0})
     from services.object_storage import resolve_urls_in_doc
@@ -698,6 +718,8 @@ async def list_unit_plans(
     project_id: str,
     unit_id: str,
     discipline: Optional[str] = Query(None),
+    plan_type: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
@@ -708,6 +730,16 @@ async def list_unit_plans(
     query = {'project_id': project_id, 'unit_id': unit_id}
     if discipline:
         query['discipline'] = discipline
+    if plan_type:
+        query['plan_type'] = plan_type
+    if search:
+        import re
+        search_re = re.compile(re.escape(search.strip()), re.IGNORECASE)
+        query['$or'] = [
+            {'name': {'$regex': search_re}},
+            {'original_filename': {'$regex': search_re}},
+            {'note': {'$regex': search_re}},
+        ]
     plans = await db.unit_plans.find(query, {'_id': 0}).sort('created_at', -1).to_list(500)
     from services.object_storage import resolve_urls_in_doc
     for p in plans:
@@ -724,6 +756,8 @@ async def upload_unit_plan(
     file: UploadFile = File(...),
     discipline: str = Form(...),
     note: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    plan_type: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
     if user['role'] == 'viewer':
@@ -744,9 +778,18 @@ async def upload_unit_plan(
     if discipline not in all_valid:
         raise HTTPException(status_code=422, detail=f'תחום לא תקין. אפשרויות: {", ".join(sorted(all_valid))}')
 
+    if plan_type and plan_type not in ('standard', 'tenant_changes'):
+        raise HTTPException(status_code=422, detail='סוג תוכנית לא תקין')
+
     unit = await db.units.find_one({'id': unit_id, 'project_id': project_id})
     if not unit:
         raise HTTPException(status_code=404, detail='דירה לא נמצאה בפרויקט זה')
+
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+    if file_size > 50 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    await file.seek(0)
 
     from services.storage_service import StorageService
     storage = StorageService()
@@ -758,11 +801,14 @@ async def upload_unit_plan(
         'project_id': project_id,
         'unit_id': unit_id,
         'discipline': discipline,
+        'name': (name or '').strip() or file.filename,
         'file_url': result.file_url,
         'original_filename': file.filename,
         'file_size': result.file_size,
+        'file_type': file.content_type or '',
         'uploaded_by': user['id'],
         'note': note or '',
+        'plan_type': plan_type or 'standard',
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
     await db.unit_plans.insert_one(plan_doc)
@@ -774,6 +820,8 @@ async def upload_unit_plan(
         'unit_id': unit_id,
         'project_id': project_id,
     })
+
+    asyncio.create_task(_generate_and_save_thumbnail(plan_id, file_bytes, file.content_type or '', result.stored_filename, 'unit_plans'))
 
     from services.object_storage import resolve_urls_in_doc
     return resolve_urls_in_doc(dict(plan_doc))
