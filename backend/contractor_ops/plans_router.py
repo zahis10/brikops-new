@@ -149,11 +149,28 @@ async def upload_project_plan(
     if not project:
         raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
 
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+    if file_size > 50 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    await file.seek(0)
+
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
 
     plan_id = str(uuid.uuid4())
+    ts = datetime.now(timezone.utc).isoformat()
+    v1_entry = {
+        'version': 1,
+        'file_url': result.file_url,
+        'file_size': result.file_size,
+        'file_type': file.content_type or '',
+        'original_filename': file.filename,
+        'uploaded_by': user['id'],
+        'uploaded_at': ts,
+        'note': note or '',
+    }
     plan_doc = {
         'id': plan_id,
         'project_id': project_id,
@@ -168,7 +185,9 @@ async def upload_project_plan(
         'plan_type': plan_type or 'standard',
         'floor_id': floor_id or None,
         'unit_id': unit_id or None,
-        'created_at': datetime.now(timezone.utc).isoformat(),
+        'created_at': ts,
+        'versions': [v1_entry],
+        'current_version': 1,
     }
     await db.project_plans.insert_one(plan_doc)
     plan_doc.pop('_id', None)
@@ -280,6 +299,134 @@ async def get_plan_seen_status(
         'total_members': len(member_user_ids),
         'seen': seen,
         'unseen': unseen,
+    }
+
+
+@router.post("/projects/{project_id}/plans/{plan_id}/versions")
+async def upload_plan_version(
+    project_id: str,
+    plan_id: str,
+    file: UploadFile = File(...),
+    note: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה להעלות גרסאות')
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+        'status': {'$ne': 'archived'},
+    })
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית פעילה לא נמצאה')
+
+    if note and len(note) > 200:
+        raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 200 תווים)')
+
+    file_bytes = await file.read()
+    file_size_check = len(file_bytes)
+    if file_size_check > 50 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail='קובץ גדול מדי (מקסימום 50MB)')
+    await file.seek(0)
+
+    from services.storage_service import StorageService
+    storage = StorageService()
+    result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{plan.get('discipline', 'general')}")
+
+    existing_versions = plan.get('versions', [])
+    if existing_versions:
+        max_ver = max(v.get('version', 1) for v in existing_versions)
+    else:
+        max_ver = 1
+
+    new_version_num = max_ver + 1
+    ts = datetime.now(timezone.utc).isoformat()
+
+    new_version_entry = {
+        'version': new_version_num,
+        'file_url': result.file_url,
+        'file_size': result.file_size,
+        'file_type': file.content_type or '',
+        'original_filename': file.filename,
+        'uploaded_by': user['id'],
+        'uploaded_at': ts,
+        'note': (note or '').strip(),
+    }
+
+    await db.project_plans.update_one({'id': plan_id}, {
+        '$push': {'versions': new_version_entry},
+        '$set': {
+            'file_url': result.file_url,
+            'file_size': result.file_size,
+            'file_type': file.content_type or '',
+            'original_filename': file.filename,
+            'current_version': new_version_num,
+            'updated_at': ts,
+        },
+    })
+
+    await _audit('project_plan', plan_id, 'version_upload', user['id'], {
+        'project_id': project_id,
+        'version': new_version_num,
+        'filename': file.filename,
+    })
+
+    updated = await db.project_plans.find_one({'id': plan_id}, {'_id': 0})
+    from services.object_storage import resolve_urls_in_doc
+    return resolve_urls_in_doc(dict(updated))
+
+
+@router.get("/projects/{project_id}/plans/{plan_id}/versions")
+async def get_plan_versions(
+    project_id: str,
+    plan_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+    }, {'_id': 0})
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה')
+
+    from services.object_storage import resolve_urls_in_doc
+
+    versions = plan.get('versions', [])
+    if not versions:
+        versions = [{
+            'version': 1,
+            'file_url': plan.get('file_url', ''),
+            'file_size': plan.get('file_size', 0),
+            'file_type': plan.get('file_type', ''),
+            'original_filename': plan.get('original_filename', ''),
+            'uploaded_by': plan.get('uploaded_by', ''),
+            'uploaded_at': plan.get('created_at', ''),
+            'note': plan.get('note', ''),
+        }]
+
+    versions_sorted = sorted(versions, key=lambda v: v.get('version', 1), reverse=True)
+
+    for v in versions_sorted:
+        uploader = await db.users.find_one({'id': v.get('uploaded_by')}, {'_id': 0, 'name': 1})
+        v['uploaded_by_name'] = uploader.get('name', '') if uploader else ''
+        resolve_urls_in_doc(v)
+
+    return {
+        'plan_id': plan_id,
+        'current_version': plan.get('current_version', 1),
+        'versions': versions_sorted,
     }
 
 

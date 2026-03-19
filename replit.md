@@ -19,7 +19,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **UI/UX**: Radix UI, TailwindCSS, and shadcn/ui provide a modern, responsive user experience with dynamic dashboards, hierarchical navigation, multi-step task management, and role-based dynamic routing. Mobile-first design, client-side search, and discipline filters are key.
 -   **Onboarding Flow**: Guided onboarding for organization and project creation, followed by a setup checklist.
 -   **Admin Panel**: Comprehensive management for organizations, users, billing, and audit activities.
--   **Plans Management**: Card grid layout with discipline/floor filters, search, upload with name/plan_type/floor/unit metadata, detail modal with inline editing, file type icons, tenant_changes display badge, seen/unseen tracking, archive, and version history.
+-   **Plans Management**: Card grid layout with discipline/floor filters, search, upload with name/plan_type/floor/unit metadata, detail modal with inline editing, file type icons, tenant_changes display badge, seen/unseen tracking, archive, version history, versioning (v1/v2/v3 badges, version history in detail modal, upload new version), and bulk upload (up to 20 files, 50MB each, default discipline, per-file overrides, batched concurrency=3, partial success with retry).
 -   **Accessibility**: Implements accessibility features per Israeli law, including ARIA attributes and Hebrew noscript fallback.
 
 ### Backend

@@ -116,6 +116,21 @@ const ProjectPlansPage = () => {
   const [editFields, setEditFields] = useState({});
   const [saving, setSaving] = useState(false);
 
+  const [versionFile, setVersionFile] = useState(null);
+  const [versionNote, setVersionNote] = useState('');
+  const [uploadingVersion, setUploadingVersion] = useState(false);
+  const [showVersionUpload, setShowVersionUpload] = useState(false);
+  const [versionHistory, setVersionHistory] = useState([]);
+  const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
+  const versionFileRef = useRef(null);
+
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkFiles, setBulkFiles] = useState([]);
+  const [bulkDefaultDiscipline, setBulkDefaultDiscipline] = useState('');
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResults, setBulkResults] = useState(null);
+  const bulkFileRef = useRef(null);
+
   const myRole = project?.my_role || user?.role;
   const canManage = user && UPLOAD_ROLES.includes(myRole);
   const isManager = user && (MANAGER_VIEW_ROLES.includes(myRole) || user?.role === 'super_admin');
@@ -371,7 +386,11 @@ const ProjectPlansPage = () => {
   const openDetail = (plan) => {
     setDetailPlan(plan);
     setEditingDetail(false);
+    setShowVersionUpload(false);
+    setVersionFile(null);
+    setVersionNote('');
     handleViewPlan(plan);
+    loadVersionHistory(plan.id);
   };
 
   const startEdit = () => {
@@ -399,6 +418,136 @@ const ProjectPlansPage = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const loadVersionHistory = async (planId) => {
+    setVersionHistoryLoading(true);
+    try {
+      const data = await projectPlanService.getVersions(projectId, planId);
+      setVersionHistory(data.versions || []);
+    } catch {
+      setVersionHistory([]);
+    } finally {
+      setVersionHistoryLoading(false);
+    }
+  };
+
+  const handleVersionUpload = async () => {
+    if (!versionFile || !detailPlan) return;
+    if (versionFile.size > 50 * 1024 * 1024) {
+      toast.error('קובץ גדול מדי (מקסימום 50MB)');
+      return;
+    }
+    setUploadingVersion(true);
+    try {
+      const updated = await projectPlanService.uploadVersion(projectId, detailPlan.id, versionFile, versionNote);
+      setDetailPlan(updated);
+      setVersionFile(null);
+      setVersionNote('');
+      setShowVersionUpload(false);
+      if (versionFileRef.current) versionFileRef.current.value = '';
+      toast.success(`גרסה ${updated.current_version} הועלתה בהצלחה`);
+      loadPlans();
+      loadVersionHistory(detailPlan.id);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'שגיאה בהעלאת גרסה');
+    } finally {
+      setUploadingVersion(false);
+    }
+  };
+
+  const handleBulkFileSelect = (files) => {
+    const fileList = Array.from(files);
+    if (fileList.length + bulkFiles.length > 20) {
+      toast.error('ניתן להעלות עד 20 קבצים');
+      return;
+    }
+    const newFiles = fileList.map(f => ({
+      file: f,
+      id: Math.random().toString(36).slice(2),
+      discipline: bulkDefaultDiscipline || '',
+      floor_id: '',
+      unit_id: '',
+      plan_type: 'standard',
+      status: f.size > 50 * 1024 * 1024 ? 'error' : 'pending',
+      error: f.size > 50 * 1024 * 1024 ? 'קובץ גדול מדי (מקסימום 50MB)' : '',
+      progress: 0,
+    }));
+    setBulkFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const removeBulkFile = (id) => {
+    setBulkFiles(prev => prev.filter(f => f.id !== id));
+  };
+
+  const updateBulkFile = (id, updates) => {
+    setBulkFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+  };
+
+  const handleBulkUpload = async () => {
+    const toUpload = bulkFiles.filter(f => f.status === 'pending' && f.discipline);
+    if (toUpload.length === 0) {
+      toast.error('אין קבצים תקינים להעלאה');
+      return;
+    }
+    setBulkUploading(true);
+    let succeeded = 0;
+    let failed = 0;
+    const CONCURRENCY = 3;
+    for (let i = 0; i < toUpload.length; i += CONCURRENCY) {
+      const batch = toUpload.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async (bf) => {
+        updateBulkFile(bf.id, { status: 'uploading', progress: 50 });
+        try {
+          await projectPlanService.upload(projectId, bf.file, bf.discipline, {
+            plan_type: bf.plan_type || 'standard',
+            floor_id: bf.floor_id || undefined,
+            unit_id: bf.unit_id || undefined,
+          });
+          updateBulkFile(bf.id, { status: 'done', progress: 100 });
+          succeeded++;
+        } catch (err) {
+          updateBulkFile(bf.id, {
+            status: 'error',
+            error: err?.response?.data?.detail || 'שגיאה בהעלאה',
+            progress: 0,
+          });
+          failed++;
+        }
+      }));
+    }
+    setBulkUploading(false);
+    setBulkResults({ succeeded, failed, total: toUpload.length });
+    if (succeeded > 0) loadPlans();
+  };
+
+  const retryBulkFile = async (bf) => {
+    updateBulkFile(bf.id, { status: 'uploading', progress: 50, error: '' });
+    try {
+      await projectPlanService.upload(projectId, bf.file, bf.discipline, {
+        plan_type: bf.plan_type || 'standard',
+        floor_id: bf.floor_id || undefined,
+        unit_id: bf.unit_id || undefined,
+      });
+      updateBulkFile(bf.id, { status: 'done', progress: 100 });
+      loadPlans();
+      toast.success(`${bf.file.name} הועלה בהצלחה`);
+    } catch (err) {
+      updateBulkFile(bf.id, {
+        status: 'error',
+        error: err?.response?.data?.detail || 'שגיאה בהעלאה',
+        progress: 0,
+      });
+    }
+  };
+
+  const closeBulkModal = () => {
+    setShowBulkModal(false);
+    setBulkFiles([]);
+    setBulkDefaultDiscipline('');
+    setBulkResults(null);
+    setBulkUploading(false);
+    if (bulkFileRef.current) bulkFileRef.current.value = '';
   };
 
   const [uploadFloorUnits, setUploadFloorUnits] = useState([]);
@@ -589,13 +738,22 @@ const ProjectPlansPage = () => {
         </div>
 
         {canManage && (
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            העלאת תוכנית
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              העלאת תוכנית
+            </button>
+            <button
+              onClick={() => setShowBulkModal(true)}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              העלאה מרובה
+            </button>
+          </div>
         )}
 
         {plansLoading ? (
@@ -646,6 +804,9 @@ const ProjectPlansPage = () => {
                     </div>
                     <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
                       <span>{formatDate(plan.created_at)}</span>
+                      {plan.current_version > 1 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[9px]">v{plan.current_version}</span>
+                      )}
                       {(plan.file_type || plan.file_size) && (
                         <>
                           <span>·</span>
@@ -954,7 +1115,7 @@ const ProjectPlansPage = () => {
                       </div>
                     )}
                   </div>
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex gap-2 pt-1 flex-wrap">
                     <a
                       href={detailPlan.file_url}
                       download
@@ -966,15 +1127,96 @@ const ProjectPlansPage = () => {
                     </a>
                     {canManage && (
                       <>
-                        <button onClick={startEdit} className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5">
+                        <button onClick={() => setShowVersionUpload(v => !v)} className="px-3 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5" />
+                          גרסה חדשה
+                        </button>
+                        <button onClick={startEdit} className="px-3 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5">
                           <Edit3 className="w-3.5 h-3.5" />
                           ערוך
                         </button>
-                        <button onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }} className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5">
+                        <button onClick={() => { setDetailPlan(null); openArchiveModal(detailPlan); }} className="px-3 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5">
                           <Archive className="w-3.5 h-3.5" />
                           ארכיון
                         </button>
                       </>
+                    )}
+                  </div>
+
+                  {showVersionUpload && canManage && (
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
+                      <p className="text-xs font-bold text-indigo-800">העלה גרסה חדשה</p>
+                      <input ref={versionFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" onChange={e => { if (e.target.files?.[0]) setVersionFile(e.target.files[0]); }} className="hidden" id="version-file-pick" />
+                      {versionFile ? (
+                        <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-indigo-100">
+                          <FileText className="w-4 h-4 text-indigo-500 shrink-0" />
+                          <span className="text-xs text-indigo-800 truncate flex-1">{versionFile.name}</span>
+                          <span className="text-[10px] text-slate-400">{formatFileSize(versionFile.size)}</span>
+                          <button onClick={() => { setVersionFile(null); if (versionFileRef.current) versionFileRef.current.value = ''; }} className="text-slate-400 hover:text-slate-600">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label htmlFor="version-file-pick" className="flex items-center justify-center gap-2 w-full py-3 border-2 border-dashed border-indigo-300 rounded-lg text-xs text-indigo-500 cursor-pointer hover:border-indigo-400 transition-colors">
+                          <Upload className="w-4 h-4" />
+                          בחר קובץ
+                        </label>
+                      )}
+                      <input
+                        type="text"
+                        value={versionNote}
+                        onChange={e => setVersionNote(e.target.value.slice(0, 200))}
+                        placeholder="מה השתנה? (אופציונלי)"
+                        maxLength={200}
+                        className="w-full h-8 px-3 text-xs bg-white border border-indigo-100 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                      />
+                      <button
+                        onClick={handleVersionUpload}
+                        disabled={uploadingVersion || !versionFile}
+                        className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {uploadingVersion ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        {uploadingVersion ? 'מעלה...' : 'העלה גרסה'}
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5" />
+                      היסטוריית גרסאות
+                    </p>
+                    {versionHistoryLoading ? (
+                      <div className="flex justify-center py-3">
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                      </div>
+                    ) : versionHistory.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 text-center py-2">אין היסטוריית גרסאות</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {versionHistory.map((v, idx) => {
+                          const isCurrent = idx === 0;
+                          return (
+                            <div key={v.version} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${isCurrent ? 'bg-indigo-50 border border-indigo-200' : 'bg-slate-50'}`}>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isCurrent ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-600'}`}>v{v.version}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                  <span>{formatDate(v.uploaded_at)}</span>
+                                  <span>—</span>
+                                  <span className="truncate">{v.uploaded_by_name || ''}</span>
+                                  {isCurrent && <span className="text-indigo-600 font-bold">(נוכחי)</span>}
+                                </div>
+                                {v.note && <p className="text-[10px] text-slate-400 mt-0.5 truncate">{v.note}</p>}
+                              </div>
+                              {!isCurrent && v.file_url && (
+                                <a href={v.file_url} download className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors shrink-0" title="הורד גרסה זו">
+                                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 </>
@@ -1054,6 +1296,159 @@ const ProjectPlansPage = () => {
               <button onClick={() => { setShowReplaceModal(false); setReplaceTarget(null); }} className="w-full py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors">
                 ביטול
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkModal && canManage && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!bulkUploading) closeBulkModal(); }} />
+          <div className="relative z-10 w-full sm:max-w-lg sm:mx-4 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] flex flex-col" dir="rtl">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-800">העלאה מרובה</h3>
+              <button onClick={() => { if (!bulkUploading) closeBulkModal(); }} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-4">
+              {bulkResults ? (
+                <div className="space-y-3">
+                  <div className={`rounded-xl p-4 text-center ${bulkResults.failed > 0 ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
+                    <p className="text-sm font-bold text-slate-800">הועלו {bulkResults.succeeded} מתוך {bulkResults.total}</p>
+                    {bulkResults.failed > 0 && <p className="text-xs text-amber-700 mt-1">{bulkResults.failed} קבצים נכשלו — ניתן לנסות שוב</p>}
+                  </div>
+                  {bulkFiles.filter(f => f.status === 'error').length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-red-600">קבצים שנכשלו:</p>
+                      {bulkFiles.filter(f => f.status === 'error').map(bf => (
+                        <div key={bf.id} className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                          <FileText className="w-4 h-4 text-red-400 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-red-800 truncate">{bf.file.name}</p>
+                            <p className="text-[10px] text-red-500">{bf.error}</p>
+                          </div>
+                          <button onClick={() => retryBulkFile(bf)} className="px-2 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] rounded-lg font-bold transition-colors">
+                            נסה שוב
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={closeBulkModal} className="w-full py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold transition-colors">
+                    סגור
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-xs font-medium text-slate-600 mb-1.5 block">תחום ברירת מחדל</label>
+                    <select
+                      value={bulkDefaultDiscipline}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setBulkDefaultDiscipline(val);
+                        setBulkFiles(prev => prev.map(f => f.discipline ? f : { ...f, discipline: val }));
+                      }}
+                      className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                    >
+                      <option value="">בחר תחום</option>
+                      {allDisciplinesList.map(d => (
+                        <option key={d.key} value={d.key}>{getDisciplineLabel(d.key)}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); handleBulkFileSelect(e.dataTransfer.files); }}
+                  >
+                    <input ref={bulkFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf" multiple onChange={e => { handleBulkFileSelect(e.target.files); e.target.value = ''; }} className="hidden" id="bulk-file-pick" />
+                    <label htmlFor="bulk-file-pick" className="flex flex-col items-center justify-center gap-2 w-full py-6 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-500 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors">
+                      <Upload className="w-6 h-6" />
+                      <span className="text-xs">גרור קבצים לכאן או לחץ לבחירה</span>
+                      <span className="text-[10px] text-slate-400">PDF, JPG, PNG, DWG, DXF · עד 20 קבצים · עד 50MB לקובץ</span>
+                    </label>
+                  </div>
+
+                  {bulkFiles.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-slate-600">{bulkFiles.length} קבצים נבחרו</p>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {bulkFiles.map(bf => (
+                          <div key={bf.id} className={`rounded-xl border p-3 space-y-2 ${bf.status === 'error' ? 'bg-red-50 border-red-200' : bf.status === 'done' ? 'bg-green-50 border-green-200' : bf.status === 'uploading' ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-slate-200'}`}>
+                            <div className="flex items-center gap-2">
+                              <FileText className={`w-4 h-4 shrink-0 ${bf.status === 'error' ? 'text-red-400' : bf.status === 'done' ? 'text-green-500' : 'text-slate-400'}`} />
+                              <span className="text-xs text-slate-700 truncate flex-1">{bf.file.name}</span>
+                              <span className="text-[10px] text-slate-400">{formatFileSize(bf.file.size)}</span>
+                              {bf.status === 'pending' && (
+                                <button onClick={() => removeBulkFile(bf.id)} className="text-slate-400 hover:text-red-500">
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {bf.status === 'done' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                              {bf.status === 'uploading' && <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />}
+                            </div>
+                            {bf.status === 'error' && bf.error && (
+                              <p className="text-[10px] text-red-500">{bf.error}</p>
+                            )}
+                            {bf.status === 'uploading' && (
+                              <div className="w-full bg-indigo-100 rounded-full h-1.5">
+                                <div className="bg-indigo-500 h-1.5 rounded-full transition-all" style={{ width: `${bf.progress}%` }} />
+                              </div>
+                            )}
+                            {bf.status === 'pending' && (
+                              <div className="flex gap-2">
+                                <select
+                                  value={bf.discipline}
+                                  onChange={e => updateBulkFile(bf.id, { discipline: e.target.value })}
+                                  className={`flex-1 h-8 px-2 text-[11px] bg-white border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300 ${!bf.discipline ? 'border-red-300' : 'border-slate-200'}`}
+                                >
+                                  <option value="">תחום *</option>
+                                  {allDisciplinesList.map(d => (
+                                    <option key={d.key} value={d.key}>{getDisciplineLabel(d.key)}</option>
+                                  ))}
+                                </select>
+                                {allFloors.length > 0 && (
+                                  <select
+                                    value={bf.floor_id}
+                                    onChange={e => updateBulkFile(bf.id, { floor_id: e.target.value })}
+                                    className="flex-1 h-8 px-2 text-[11px] bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                                  >
+                                    <option value="">קומה</option>
+                                    {allFloors.map(f => (
+                                      <option key={f.id} value={f.id}>{f.building_name ? `${f.building_name} - ` : ''}{f.name || `קומה ${f.number || ''}`}</option>
+                                    ))}
+                                  </select>
+                                )}
+                                <select
+                                  value={bf.plan_type}
+                                  onChange={e => updateBulkFile(bf.id, { plan_type: e.target.value })}
+                                  className="h-8 px-2 text-[11px] bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                                >
+                                  <option value="standard">כללית</option>
+                                  <option value="tenant_changes">שינויי דיירים</option>
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {bulkFiles.length > 0 && (
+                    <button
+                      onClick={handleBulkUpload}
+                      disabled={bulkUploading || bulkFiles.filter(f => f.status === 'pending' && f.discipline).length === 0}
+                      className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {bulkUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                      {bulkUploading ? 'מעלה...' : `העלה ${bulkFiles.filter(f => f.status === 'pending' && f.discipline).length} קבצים`}
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
