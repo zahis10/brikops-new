@@ -20,6 +20,9 @@ TRACKABLE_ROLES = ('project_manager', 'management_team', 'contractor', 'viewer')
 async def list_project_plans(
     project_id: str,
     discipline: Optional[str] = Query(None),
+    floor_id: Optional[str] = Query(None),
+    plan_type: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
@@ -34,6 +37,18 @@ async def list_project_plans(
     }
     if discipline:
         query['discipline'] = discipline
+    if floor_id:
+        query['floor_id'] = floor_id
+    if plan_type:
+        query['plan_type'] = plan_type
+    if search:
+        import re
+        search_re = re.compile(re.escape(search.strip()), re.IGNORECASE)
+        query['$or'] = [
+            {'name': {'$regex': search_re}},
+            {'original_filename': {'$regex': search_re}},
+            {'note': {'$regex': search_re}},
+        ]
     plans = await db.project_plans.find(query, {'_id': 0}).sort('created_at', -1).to_list(500)
     from services.object_storage import resolve_urls_in_doc
 
@@ -103,6 +118,10 @@ async def upload_project_plan(
     file: UploadFile = File(...),
     discipline: str = Form(...),
     note: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    plan_type: Optional[str] = Form('standard'),
+    floor_id: Optional[str] = Form(None),
+    unit_id: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
     if user['role'] == 'viewer':
@@ -123,6 +142,9 @@ async def upload_project_plan(
     if discipline not in all_valid:
         raise HTTPException(status_code=422, detail=f'תחום לא תקין. אפשרויות: {", ".join(sorted(all_valid))}')
 
+    if plan_type and plan_type not in ('standard', 'tenant_changes'):
+        raise HTTPException(status_code=422, detail='סוג תוכנית לא תקין')
+
     project = await db.projects.find_one({'id': project_id})
     if not project:
         raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
@@ -136,11 +158,16 @@ async def upload_project_plan(
         'id': plan_id,
         'project_id': project_id,
         'discipline': discipline,
+        'name': (name or '').strip() or file.filename,
         'file_url': result.file_url,
         'original_filename': file.filename,
         'file_size': result.file_size,
+        'file_type': file.content_type or '',
         'uploaded_by': user['id'],
         'note': note or '',
+        'plan_type': plan_type or 'standard',
+        'floor_id': floor_id or None,
+        'unit_id': unit_id or None,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
     await db.project_plans.insert_one(plan_doc)
@@ -417,6 +444,65 @@ async def archive_project_plan(
     })
 
     return {'success': True}
+
+
+@router.patch("/projects/{project_id}/plans/{plan_id}")
+async def update_project_plan(
+    project_id: str,
+    plan_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_current_user),
+):
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers have read-only access')
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    requester_membership = await _get_project_membership(user, project_id)
+    requester_role = requester_membership.get('role', 'none')
+    if requester_role not in PLAN_UPLOAD_ROLES:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לערוך תוכניות')
+
+    plan = await db.project_plans.find_one({
+        'id': plan_id,
+        'project_id': project_id,
+        'deletedAt': {'$exists': False},
+    })
+    if not plan:
+        raise HTTPException(status_code=404, detail='תוכנית לא נמצאה')
+
+    allowed_fields = {'name', 'discipline', 'floor_id', 'unit_id', 'plan_type', 'note'}
+    updates = {}
+    for field in allowed_fields:
+        if field in body:
+            val = body[field]
+            if field == 'plan_type' and val not in ('standard', 'tenant_changes'):
+                raise HTTPException(status_code=422, detail='סוג תוכנית לא תקין')
+            if field == 'discipline' and val:
+                custom_disciplines = await db.project_disciplines.find(
+                    {'project_id': project_id}, {'_id': 0, 'key': 1}
+                ).to_list(100)
+                custom_keys = {d['key'] for d in custom_disciplines}
+                all_valid = set(PLAN_DISCIPLINES) | custom_keys
+                if val not in all_valid:
+                    raise HTTPException(status_code=422, detail=f'תחום לא תקין')
+            if field == 'note' and val and len(val) > 200:
+                raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 200 תווים)')
+            updates[field] = val
+
+    if not updates:
+        raise HTTPException(status_code=422, detail='לא סופקו שדות לעדכון')
+
+    updates['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.project_plans.update_one({'id': plan_id}, {'$set': updates})
+
+    await _audit('project_plan', plan_id, 'project_plan_updated', user['id'], {
+        'project_id': project_id,
+        'updated_fields': list(updates.keys()),
+    })
+
+    updated = await db.project_plans.find_one({'id': plan_id}, {'_id': 0})
+    from services.object_storage import resolve_urls_in_doc
+    return resolve_urls_in_doc(dict(updated))
 
 
 @router.patch("/projects/{project_id}/plans/{plan_id}/restore")

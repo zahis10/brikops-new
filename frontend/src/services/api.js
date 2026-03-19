@@ -596,12 +596,22 @@ export const projectPlanService = {
     });
     return response.data;
   },
-  async upload(projectId, file, discipline, note = '') {
+  async upload(projectId, file, discipline, { note, name, plan_type, floor_id, unit_id } = {}) {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('discipline', discipline);
     if (note) formData.append('note', note);
+    if (name) formData.append('name', name);
+    if (plan_type) formData.append('plan_type', plan_type);
+    if (floor_id) formData.append('floor_id', floor_id);
+    if (unit_id) formData.append('unit_id', unit_id);
     const response = await axios.post(`${API}/projects/${projectId}/plans`, formData, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
+  async update(projectId, planId, data) {
+    const response = await axios.patch(`${API}/projects/${projectId}/plans/${planId}`, data, {
       headers: getAuthHeader(),
     });
     return response.data;
