@@ -390,17 +390,13 @@ async def debug_whatsapp_send_test(request: Request, user: dict = Depends(requir
     ref_param = {"type": "text", "text": "TEST-001"}
     location_param = {"type": "text", "text": "בדיקת מערכת - בניין טסט"}
     issue_param = {"type": "text", "text": "הודעת טסט מ-BrikOps"}
-    from config import PASSWORD_RESET_BASE_URL
-    test_link = f"{PASSWORD_RESET_BASE_URL}/tasks/{button_id}/?src=wa"
-    link_param = {"type": "text", "text": test_link}
     if WA_TEMPLATE_PARAM_MODE == 'named':
         ref_param["parameter_name"] = "ref"
         location_param["parameter_name"] = "location"
         issue_param["parameter_name"] = "issue"
-        link_param["parameter_name"] = "link"
     components.append({
         "type": "body",
-        "parameters": [ref_param, location_param, issue_param, link_param]
+        "parameters": [ref_param, location_param, issue_param]
     })
     components.append({
         "type": "button",
