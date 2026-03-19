@@ -50,7 +50,8 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Defects Export**: Supports Excel and PDF exports with Hebrew RTL formatting.
     -   **Handover PDF Export**: Generates PDF of signed handover protocols using WeasyPrint.
     -   **Observability**: Structured per-request logging (two-tier: WARNING ≥800ms, DEBUG ≥500ms), Hebrew error boundary, and health/readiness endpoints.
-    -   **Performance Optimization**: Task list endpoint pagination (limit/offset query params, default 50, max 200). MongoDB indexes on `project_plans` and `unit_plans` collections. S3 presigned URL TTL cache (10min, max 5000 entries, thread-safe). Feature flags fetched once at login via AuthContext (eliminates per-page waterfall requests).
+    -   **Performance Optimization**: Task list endpoint pagination (limit/offset query params, default 50, max 200, returns envelope `{items, total, limit, offset}`). MongoDB indexes on `project_plans` and `unit_plans` collections. S3 presigned URL TTL cache (10min, max 5000 entries, thread-safe). Feature flags fetched once at login via AuthContext (eliminates per-page waterfall requests).
+    -   **Deploy Checklist**: If backend response format changes (e.g. array → envelope), frontend MUST be rebuilt (`cd frontend && CI=true REACT_APP_BACKEND_URL="" npx craco build`) and deployed in the same release. `taskService.list()` has defensive guards for both formats.
 
 ### Deployment and Security
 -   **Workflow Configuration**: Single-process mode where backend serves pre-built static frontend.

@@ -209,7 +209,10 @@ const ProjectTasksPage = () => {
       });
       if (signal.aborted) return;
 
-      const newItems = data.items.filter(
+      const rawItems = Array.isArray(data?.items) ? data.items : [];
+      const rawTotal = typeof data?.total === 'number' ? data.total : rawItems.length;
+
+      const newItems = rawItems.filter(
         item => !taskIdsRef.current.has(item.id)
       );
       newItems.forEach(item => taskIdsRef.current.add(item.id));
@@ -219,11 +222,11 @@ const ProjectTasksPage = () => {
       } else {
         setTasks(prev => [...prev, ...newItems]);
       }
-      setTotal(data.total);
+      setTotal(rawTotal);
 
-      const nextOffset = fromOffset + data.items.length;
+      const nextOffset = fromOffset + rawItems.length;
       setOffset(nextOffset);
-      setHasMore(nextOffset < data.total);
+      setHasMore(nextOffset < rawTotal);
     } catch (err) {
       if (err.name === 'AbortError' || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to load tasks:', err);

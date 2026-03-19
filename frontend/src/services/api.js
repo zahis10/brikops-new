@@ -340,7 +340,10 @@ export const taskService = {
     const config = { headers: getAuthHeader(), params: queryParams };
     if (signal) config.signal = signal;
     const response = await axios.get(`${API}/tasks`, config);
-    return response.data;
+    const d = response.data;
+    if (d && typeof d === 'object' && !Array.isArray(d)) return d;
+    const items = Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
+    return { items, total: items.length, limit: 50, offset: 0 };
   },
   async myStats(params = {}) {
     const response = await axios.get(`${API}/tasks/my-stats`, { headers: getAuthHeader(), params });
