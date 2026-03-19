@@ -152,7 +152,7 @@ const ProjectTasksPage = () => {
         params.overdue = true;
       }
 
-      const taskList = await taskService.list(params);
+      const taskList = await taskService.list({ ...params, limit: 200 });
       setTasks(Array.isArray(taskList) ? taskList : []);
     } catch (err) {
       console.error('Failed to load tasks:', err);

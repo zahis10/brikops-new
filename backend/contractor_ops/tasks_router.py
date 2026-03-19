@@ -158,7 +158,7 @@ async def list_tasks(
     bucket_key: Optional[str] = Query(None),
     overdue: Optional[bool] = Query(None),
     q: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(200, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):

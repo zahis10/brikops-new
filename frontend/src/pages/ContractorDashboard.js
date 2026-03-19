@@ -91,7 +91,7 @@ const ContractorDashboard = () => {
     try {
       const [projectList, taskList] = await Promise.all([
         projectService.list(),
-        taskService.list(),
+        taskService.list({ limit: 200 }),
       ]);
       setProjects(Array.isArray(projectList) ? projectList : []);
       setTasks(Array.isArray(taskList) ? taskList : []);
