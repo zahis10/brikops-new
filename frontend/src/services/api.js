@@ -1245,6 +1245,13 @@ export const handoverService = {
     );
     return response.data;
   },
+  async batchUpdateItems(projectId, protocolId, sectionId, data) {
+    const response = await axios.patch(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/sections/${sectionId}/batch-items`,
+      data, { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
   async createDefectFromItem(projectId, protocolId, itemId, data) {
     const response = await axios.post(
       `${API}/projects/${projectId}/handover/protocols/${protocolId}/items/${itemId}/create-defect`,

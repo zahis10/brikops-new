@@ -963,6 +963,69 @@ STATUS_LABELS = {
     "not_checked": "לא נבדק",
 }
 
+@router.patch("/projects/{project_id}/handover/protocols/{protocol_id}/sections/{section_id}/batch-items")
+async def batch_update_items(
+    project_id: str, protocol_id: str, section_id: str,
+    request: Request, user: dict = Depends(get_current_user),
+):
+    await _check_handover_management(user, project_id)
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    body = await request.json()
+    item_ids = body.get("item_ids")
+    new_status = body.get("status")
+
+    if not item_ids or not isinstance(item_ids, list):
+        raise HTTPException(status_code=400, detail="item_ids חייב להיות רשימה")
+    if new_status not in ("ok", "not_checked"):
+        raise HTTPException(status_code=400, detail="סטטוס חייב להיות ok או not_checked")
+
+    db = get_db()
+    ts = _now()
+
+    target_section = None
+    for section in protocol.get("sections", []):
+        if section["section_id"] == section_id:
+            target_section = section
+            break
+
+    if not target_section:
+        raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
+
+    item_id_set = set(item_ids)
+    valid_item_ids = []
+    for item in target_section.get("items", []):
+        if item["item_id"] in item_id_set:
+            valid_item_ids.append(item["item_id"])
+
+    if not valid_item_ids:
+        return {"updated": 0}
+
+    update_ops = {"$set": {"updated_at": ts}}
+    if protocol.get("status") == "draft":
+        update_ops["$set"]["status"] = "in_progress"
+
+    for item in target_section.get("items", []):
+        if item["item_id"] in item_id_set:
+            idx = next(
+                (i for i, it in enumerate(target_section["items"]) if it["item_id"] == item["item_id"]),
+                None,
+            )
+            if idx is not None:
+                update_ops["$set"][f"sections.$[sec].items.{idx}.status"] = new_status
+
+    array_filters = [{"sec.section_id": section_id}]
+
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        update_ops,
+        array_filters=array_filters,
+    )
+
+    return {"updated": len(valid_item_ids)}
+
+
 @router.put("/projects/{project_id}/handover/protocols/{protocol_id}/sections/{section_id}/items/{item_id}")
 async def update_item(
     project_id: str, protocol_id: str, section_id: str, item_id: str,
@@ -1148,8 +1211,20 @@ async def update_item(
     )
 
     updated = await db.handover_protocols.find_one({"id": protocol_id, "project_id": project_id}, {"_id": 0})
+
+    updated_item = None
+    for sec in updated.get("sections", []):
+        if sec["section_id"] != section_id:
+            continue
+        for itm in sec.get("items", []):
+            if itm["item_id"] == item_id:
+                updated_item = itm
+                break
+        break
+
     return {
         "protocol": updated,
+        "item": updated_item,
         "defect_created": defect_created,
         "defect_id": defect_id,
     }
