@@ -59,8 +59,9 @@ body {
 
 .cover-block {
     background-color: #312e81;
+    background-image: linear-gradient(135deg, #1e1b4b 0%, #312e81 40%, #4338ca 100%);
     color: white;
-    padding: 28px 24px 20px 24px;
+    padding: 36px 28px 28px 28px;
     margin: -2mm -2mm 0 -2mm;
     text-align: center;
     page-break-inside: avoid;
@@ -84,7 +85,8 @@ body {
     font-size: 28pt;
     font-weight: bold;
     color: white;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
 }
 
 .cover-project {
@@ -128,7 +130,8 @@ body {
     text-align: center;
     background-color: #ffffff;
     border: 1px solid #e2e8f0;
-    padding: 10px 6px;
+    border-top: 3px solid #312e81;
+    padding: 12px 6px 10px 6px;
     vertical-align: top;
 }
 
@@ -158,9 +161,9 @@ body {
     color: #312e81;
     margin-top: 18px;
     margin-bottom: 8px;
-    padding: 8px 12px;
-    background-color: #f8fafc;
-    border-right: 4px solid #312e81;
+    padding: 10px 14px;
+    background-color: #eef2ff;
+    border-right: 5px solid #312e81;
     page-break-after: avoid;
     page-break-inside: avoid;
 }
@@ -210,11 +213,11 @@ table {
 }
 
 th {
-    background-color: #1e293b;
-    color: #ffffff;
+    background-color: #1e293b !important;
+    color: #ffffff !important;
     font-weight: bold;
     text-align: right;
-    padding: 8px 8px;
+    padding: 8px 10px;
     border: 1px solid #1e293b;
     font-size: 9pt;
 }
@@ -227,7 +230,7 @@ td {
 }
 
 tbody tr:nth-child(even) {
-    background-color: #f8fafc;
+    background-color: #f1f5f9;
 }
 
 tbody tr:nth-child(odd) {
@@ -236,10 +239,11 @@ tbody tr:nth-child(odd) {
 
 .status-badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: 3px 10px;
     font-size: 8pt;
     font-weight: bold;
     text-align: center;
+    border: 1px solid transparent;
 }
 
 .severity-badge {
@@ -307,10 +311,10 @@ tbody tr:nth-child(odd) {
 
 .property-card {
     display: table-cell;
-    padding: 8px 10px;
+    padding: 10px 12px;
     background-color: #f8fafc;
     border: 1px solid #e2e8f0;
-    border-right: 3px solid #312e81;
+    border-right: 4px solid #312e81;
     vertical-align: top;
     width: 50%;
 }
@@ -339,6 +343,7 @@ tbody tr:nth-child(odd) {
     padding: 10px 12px;
     background-color: #f8fafc;
     border: 1px solid #e2e8f0;
+    border-top: 3px solid #312e81;
     vertical-align: top;
 }
 
@@ -509,20 +514,20 @@ tbody tr:nth-child(odd) {
 
 <!-- Stats bar -->
 <div class="stats-bar">
-    <div class="stat-card">
+    <div class="stat-card" style="border-top:3px solid #312e81;">
         <div class="stat-value">{{ stats_total }}</div>
         <div class="stat-label">סה"כ נבדקו</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-value" style="color: #16a34a;">{{ stats_ok }}</div>
+    <div class="stat-card" style="border-top:3px solid #16a34a;">
+        <div class="stat-value" style="color:#16a34a;">{{ stats_ok }}</div>
         <div class="stat-label">תקין</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-value" style="color: #dc2626;">{{ stats_fail }}</div>
+    <div class="stat-card" style="border-top:3px solid #dc2626;">
+        <div class="stat-value" style="color:#dc2626;">{{ stats_fail }}</div>
         <div class="stat-label">ליקויים</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-value" style="color: #d97706;">{{ stats_partial }}</div>
+    <div class="stat-card" style="border-top:3px solid #d97706;">
+        <div class="stat-value" style="color:#d97706;">{{ stats_partial }}</div>
         <div class="stat-label">חלקי</div>
     </div>
 </div>
@@ -585,11 +590,11 @@ tbody tr:nth-child(odd) {
     <table>
         <thead>
             <tr>
-                <th style="width: 5%;">#</th>
-                <th style="width: 25%;">פריט</th>
-                <th style="width: 14%;">מקצוע</th>
-                <th style="width: 12%;">סטטוס</th>
-                <th>הערות</th>
+                <th style="width:5%;background-color:#1e293b;color:#fff;">#</th>
+                <th style="width:25%;background-color:#1e293b;color:#fff;">פריט</th>
+                <th style="width:14%;background-color:#1e293b;color:#fff;">מקצוע</th>
+                <th style="width:12%;background-color:#1e293b;color:#fff;">סטטוס</th>
+                <th style="background-color:#1e293b;color:#fff;">הערות</th>
             </tr>
         </thead>
         <tbody>
@@ -648,10 +653,10 @@ tbody tr:nth-child(odd) {
 <table>
     <thead>
         <tr>
-            <th style="width: 5%;">#</th>
-            <th style="width: {% if has_any_quantity %}45{% else %}60{% endif %}%;">פריט</th>
-            {% if has_any_quantity %}<th style="width: 15%;">כמות</th>{% endif %}
-            <th>הערות</th>
+            <th style="width:5%;background-color:#1e293b;color:#fff;">#</th>
+            <th style="width:{% if has_any_quantity %}45{% else %}60{% endif %}%;background-color:#1e293b;color:#fff;">פריט</th>
+            {% if has_any_quantity %}<th style="width:15%;background-color:#1e293b;color:#fff;">כמות</th>{% endif %}
+            <th style="background-color:#1e293b;color:#fff;">הערות</th>
         </tr>
     </thead>
     <tbody>
@@ -701,12 +706,12 @@ tbody tr:nth-child(odd) {
 <table class="defect-summary-table">
     <thead>
         <tr>
-            <th style="width: 5%;">#</th>
-            <th style="width: 18%;">סעיף</th>
-            <th style="width: 18%;">פריט</th>
-            <th style="width: 12%;">מקצוע</th>
-            <th style="width: 10%;">חומרה</th>
-            <th>תיאור</th>
+            <th style="width:5%;background-color:#991b1b;color:#fff;">#</th>
+            <th style="width:18%;background-color:#991b1b;color:#fff;">סעיף</th>
+            <th style="width:18%;background-color:#991b1b;color:#fff;">פריט</th>
+            <th style="width:12%;background-color:#991b1b;color:#fff;">מקצוע</th>
+            <th style="width:10%;background-color:#991b1b;color:#fff;">חומרה</th>
+            <th style="background-color:#991b1b;color:#fff;">תיאור</th>
         </tr>
     </thead>
     <tbody>
