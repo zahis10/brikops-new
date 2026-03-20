@@ -313,9 +313,15 @@ const HandoverSectionPage = () => {
   }, [protocol, sectionId]);
 
   const tryShowCompletionToast = useCallback(() => {
-    if (sectionCompletionShown.current.has(sectionId)) return;
-    if (prevWasComplete.current) return;
-    if (!isComplete) return;
+    console.log('[TOAST-DEBUG] tryShowCompletionToast called', {
+      sectionId,
+      inShownSet: sectionCompletionShown.current.has(sectionId),
+      prevWasComplete: prevWasComplete.current,
+      isComplete,
+    });
+    if (sectionCompletionShown.current.has(sectionId)) { console.log('[TOAST-DEBUG] BLOCKED: sectionCompletionShown'); return; }
+    if (prevWasComplete.current) { console.log('[TOAST-DEBUG] BLOCKED: prevWasComplete'); return; }
+    if (!isComplete) { console.log('[TOAST-DEBUG] BLOCKED: !isComplete'); return; }
 
     if (completionToastId.current) {
       toast.dismiss(completionToastId.current);
@@ -360,8 +366,10 @@ const HandoverSectionPage = () => {
   }, [sectionId, isComplete, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
 
   useEffect(() => {
-    if (!initialLoadDone.current) return;
+    console.log('[TOAST-DEBUG] transition effect', { initialLoadDone: initialLoadDone.current, isComplete, prevWasComplete: prevWasComplete.current });
+    if (!initialLoadDone.current) { console.log('[TOAST-DEBUG] transition: skipped, initialLoadDone=false'); return; }
     if (isComplete && !prevWasComplete.current) {
+      console.log('[TOAST-DEBUG] transition: FIRING tryShowCompletionToast');
       tryShowCompletionToast();
     }
     prevWasComplete.current = isComplete;
