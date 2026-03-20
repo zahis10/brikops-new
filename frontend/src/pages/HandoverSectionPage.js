@@ -733,44 +733,44 @@ const HandoverSectionPage = () => {
             </div>
           </div>
         </div>
-      </div>
 
-      {showCompletionBanner && (() => {
-        const next = findNextIncompleteSection();
-        return (
-          <div className="max-w-lg mx-auto px-4 mt-3">
-            <div className="rounded-xl border border-green-300 bg-[#dcfce7] p-3 flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-green-800 font-bold text-sm">
-                <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
-                <span>{next ? '✓ הסקשן הושלם!' : 'כל הסעיפים הושלמו!'}</span>
-              </div>
-              <div className="flex gap-2">
-                {next ? (
+        {showCompletionBanner && (() => {
+          const next = findNextIncompleteSection();
+          return (
+            <div className="bg-[#dcfce7] border-b border-green-300">
+              <div className="max-w-lg mx-auto px-4 py-3 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-green-800 font-bold text-sm">
+                  <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
+                  <span>{next ? '✓ הסקשן הושלם!' : 'כל הסעיפים הושלמו!'}</span>
+                </div>
+                <div className="flex gap-2">
+                  {next ? (
+                    <button
+                      onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${next.section_id}`)}
+                      className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
+                    >
+                      עבור ל: {next.name} ←
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`)}
+                      className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
+                    >
+                      חזרה לפרוטוקול ←
+                    </button>
+                  )}
                   <button
-                    onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${next.section_id}`)}
-                    className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
+                    onClick={() => setShowCompletionBanner(false)}
+                    className="py-2 px-3 rounded-lg bg-white border border-green-300 text-green-700 font-medium text-sm hover:bg-green-50 active:scale-[0.98] transition-all"
                   >
-                    עבור ל: {next.name} ←
+                    השאר כאן
                   </button>
-                ) : (
-                  <button
-                    onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`)}
-                    className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
-                  >
-                    חזרה לפרוטוקול ←
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowCompletionBanner(false)}
-                  className="py-2 px-3 rounded-lg bg-white border border-green-300 text-green-700 font-medium text-sm hover:bg-green-50 active:scale-[0.98] transition-all"
-                >
-                  השאר כאן
-                </button>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
+      </div>
 
       {!isSigned && showAnyBatch && (
         <div className="max-w-lg mx-auto px-4 mt-3">
