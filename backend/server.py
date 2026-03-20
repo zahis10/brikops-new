@@ -855,6 +855,30 @@ async def dedup_default_templates():
         logger.info(f"[DEDUP-DEFAULTS] Dedup complete for type={tpl_type}: kept 1, demoted {len(demote_ids)}")
 
 
+async def backfill_project_templates():
+    for tpl_type, ver_field, fam_field in [
+        ("handover", "handover_template_version_id", "handover_template_family_id"),
+        ("qc", "qc_template_version_id", "qc_template_family_id"),
+    ]:
+        default_tpl = await db.qc_templates.find_one(
+            {"type": tpl_type, "is_default": True, "is_active": True},
+            {"_id": 0, "id": 1, "family_id": 1},
+            sort=[("version", -1)],
+        )
+        if not default_tpl:
+            logger.warning(f"[BACKFILL-TPL] No default active {tpl_type} template found, skipping backfill")
+            continue
+        query = {"$or": [{ver_field: None}, {ver_field: {"$exists": False}}]}
+        count = await db.projects.count_documents(query)
+        if count == 0:
+            continue
+        result = await db.projects.update_many(query, {"$set": {
+            ver_field: default_tpl["id"],
+            fam_field: default_tpl["family_id"],
+        }})
+        logger.info(f"[BACKFILL-TPL] Assigned default {tpl_type} template to {result.modified_count} project(s)")
+
+
 async def _deferred_db_init():
     mongo_info = _mongo_sanity(MONGO_URL)
     try:
@@ -907,6 +931,7 @@ async def _deferred_db_init():
         await seed_handover_template()
         await fix_empty_handover_template()
         await dedup_default_templates()
+        await backfill_project_templates()
     except Exception as e:
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")
 
