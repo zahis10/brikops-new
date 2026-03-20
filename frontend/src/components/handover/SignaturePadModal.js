@@ -10,6 +10,7 @@ import { Loader2, X, Eraser } from 'lucide-react';
 const ROLE_LABELS = {
   manager: t('handover', 'signatureManager'),
   tenant: t('handover', 'signatureTenant'),
+  tenant_2: 'רוכש/ת נוסף/ת',
   contractor_rep: t('handover', 'signatureContractorRep'),
 };
 
