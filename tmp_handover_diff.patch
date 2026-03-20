@@ -1,0 +1,591 @@
+diff --git a/frontend/src/pages/HandoverSectionPage.js b/frontend/src/pages/HandoverSectionPage.js
+index 254b711..3379b82 100644
+--- a/frontend/src/pages/HandoverSectionPage.js
++++ b/frontend/src/pages/HandoverSectionPage.js
+@@ -66,11 +66,21 @@ const HandoverSectionPage = () => {
+   const [markingAll, setMarkingAll] = useState(false);
+   const [showBatchConfirm, setShowBatchConfirm] = useState(null);
+   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
++  const [isNarrow, setIsNarrow] = useState(window.innerWidth < 400);
+ 
+   const cameraInputRef = useRef(null);
+   const galleryInputRef = useRef(null);
+   const sheetContentRef = useRef(null);
+   const originalItemRef = useRef(null);
++  const sectionCompletionShown = useRef(new Set());
++  const [showCompletionBanner, setShowCompletionBanner] = useState(false);
++
++
++  useEffect(() => {
++    const onResize = () => setIsNarrow(window.innerWidth < 400);
++    window.addEventListener('resize', onResize);
++    return () => window.removeEventListener('resize', onResize);
++  }, []);
+ 
+   const loadProtocol = useCallback(async () => {
+     try {
+@@ -91,12 +101,38 @@ const HandoverSectionPage = () => {
+   const isSigned = protocol?.locked === true;
+   const items = useMemo(() => section?.items || [], [section]);
+   const checkedCount = items.filter(i => i.status && i.status !== 'not_checked').length;
+-  const okCount = items.filter(i => i.status === 'ok').length;
+   const totalCount = items.length;
+   const uncheckedCount = totalCount - checkedCount;
+-  const nonOkCount = totalCount - okCount;
+   const progressPct = totalCount > 0 ? (checkedCount / totalCount) * 100 : 0;
+ 
++  const isComplete = totalCount > 0 && checkedCount === totalCount;
++
++  const initialLoadDone = useRef(false);
++  const currentSectionRef = useRef(sectionId);
++
++  useEffect(() => {
++    if (currentSectionRef.current !== sectionId) {
++      currentSectionRef.current = sectionId;
++      initialLoadDone.current = false;
++      setShowCompletionBanner(false);
++    }
++  }, [sectionId]);
++
++  useEffect(() => {
++    if (!loading && totalCount > 0 && !initialLoadDone.current) {
++      initialLoadDone.current = true;
++      if (isComplete) {
++        sectionCompletionShown.current.add(sectionId);
++      }
++    }
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [loading, sectionId, totalCount]);
++
++  const uncheckedItems = useMemo(() => items.filter(i => !i.status || i.status === 'not_checked'), [items]);
++  const resettableItems = useMemo(() => items.filter(i => i.status && i.status !== 'not_checked' && !i.defect_id), [items]);
++  const defectProtectedCount = useMemo(() => items.filter(i => i.status && i.status !== 'not_checked' && !!i.defect_id).length, [items]);
++  const hasDefectsInSection = useMemo(() => items.some(i => !!i.defect_id), [items]);
++
+   const trades = useMemo(() => {
+     const tradeSet = new Set();
+     items.forEach(i => { if (i.trade) tradeSet.add(i.trade); });
+@@ -229,6 +265,25 @@ const HandoverSectionPage = () => {
+     });
+   }, [sectionId]);
+ 
++  const mergeItemsFromBatch = useCallback((changedItems) => {
++    if (!changedItems || changedItems.length === 0) return;
++    const updated = new Map(changedItems.map(i => [i.item_id, i]));
++    setProtocol(prev => {
++      if (!prev) return prev;
++      const newProtocol = { ...prev };
++      newProtocol.sections = newProtocol.sections.map(sec => {
++        if (sec.section_id !== sectionId) return sec;
++        return {
++          ...sec,
++          items: sec.items.map(itm =>
++            updated.has(itm.item_id) ? { ...itm, ...updated.get(itm.item_id) } : itm
++          ),
++        };
++      });
++      return newProtocol;
++    });
++  }, [sectionId]);
++
+   const findNextUnchecked = useCallback((afterIndex) => {
+     for (let i = afterIndex + 1; i < items.length; i++) {
+       if (!items[i].status || items[i].status === 'not_checked') return items[i].item_id;
+@@ -239,6 +294,30 @@ const HandoverSectionPage = () => {
+     return null;
+   }, [items]);
+ 
++  const findNextIncompleteSection = useCallback(() => {
++    if (!protocol?.sections) return null;
++    const currentIdx = protocol.sections.findIndex(s => s.section_id === sectionId);
++    const sections = protocol.sections;
++    for (let offset = 1; offset < sections.length; offset++) {
++      const idx = (currentIdx + offset) % sections.length;
++      const sec = sections[idx];
++      if (sec.section_id === sectionId) continue;
++      const secItems = sec.items || [];
++      if (secItems.length === 0) continue;
++      const secChecked = secItems.filter(i => i.status && i.status !== 'not_checked').length;
++      if (secChecked < secItems.length) {
++        return sec;
++      }
++    }
++    return null;
++  }, [protocol, sectionId]);
++
++  const triggerCompletionBanner = useCallback(() => {
++    if (sectionCompletionShown.current.has(sectionId)) return;
++    sectionCompletionShown.current.add(sectionId);
++    setShowCompletionBanner(true);
++  }, [sectionId]);
++
+   const handleImageAdd = useCallback(async (e) => {
+     try {
+       const files = Array.from(e.target.files || []);
+@@ -325,10 +404,10 @@ const HandoverSectionPage = () => {
+     } else {
+       setTimeout(() => {
+         forceCloseSheet();
+-        toast.success('הסקשן הושלם! ✓', { duration: 2000 });
++        triggerCompletionBanner();
+       }, 200);
+     }
+-  }, [items, findNextUnchecked, openSheet, forceCloseSheet]);
++  }, [items, findNextUnchecked, openSheet, forceCloseSheet, triggerCompletionBanner]);
+ 
+   const handleSimpleStatusSave = useCallback(async (newStatus) => {
+     if (isSigned || saving || !activeItem) return;
+@@ -347,7 +426,10 @@ const HandoverSectionPage = () => {
+         updateItemLocally(activeItem.item_id, { status: newStatus });
+       }
+       originalItemRef.current = { ...originalItemRef.current, status: newStatus, notes };
+-
++      if (newStatus === 'not_checked') {
++        sectionCompletionShown.current.delete(sectionId);
++        setShowCompletionBanner(false);
++      }
+       setTimeout(() => {
+         setFlashStatus(null);
+         advanceAfterSave(activeItem.item_id);
+@@ -473,16 +555,47 @@ const HandoverSectionPage = () => {
+ 
+   const handleMarkAllOk = useCallback(async () => {
+     setShowBatchConfirm(null);
+-    const nonOk = items.filter(i => i.status !== 'ok');
+-    if (nonOk.length === 0 || isSigned) return;
++    if (uncheckedItems.length === 0 || isSigned) return;
+     try {
+       setMarkingAll(true);
+-      await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
+-        item_ids: nonOk.map(i => i.item_id),
++      const data = await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
++        item_ids: uncheckedItems.map(i => i.item_id),
+         status: 'ok',
+       });
+-      nonOk.forEach(i => updateItemLocally(i.item_id, { status: 'ok' }));
+-      toast.success(t('handover', 'markAllOkDone'));
++      mergeItemsFromBatch(data.items);
++      const msg = data.skipped > 0
++        ? `${data.updated} פריטים סומנו תקין (${data.skipped} דולגו)`
++        : t('handover', 'markAllOkDone');
++      toast.success(msg);
++      if (data.updated > 0 && data.updated >= uncheckedItems.length) {
++        triggerCompletionBanner();
++      }
++    } catch (err) {
++      console.error(err);
++      toast.error(t('handover', 'updateError'));
++      await loadProtocol();
++    } finally {
++      setMarkingAll(false);
++    }
++  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner]);
++
++  const handleMarkAllNotRelevant = useCallback(async () => {
++    setShowBatchConfirm(null);
++    if (uncheckedItems.length === 0 || isSigned) return;
++    try {
++      setMarkingAll(true);
++      const data = await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
++        item_ids: uncheckedItems.map(i => i.item_id),
++        status: 'not_relevant',
++      });
++      mergeItemsFromBatch(data.items);
++      const msg = data.skipped > 0
++        ? `${data.updated} פריטים סומנו לא רלוונטי (${data.skipped} דולגו)`
++        : `${data.updated} פריטים סומנו לא רלוונטי`;
++      toast.success(msg);
++      if (data.updated > 0 && data.updated >= uncheckedItems.length) {
++        triggerCompletionBanner();
++      }
+     } catch (err) {
+       console.error(err);
+       toast.error(t('handover', 'updateError'));
+@@ -490,20 +603,24 @@ const HandoverSectionPage = () => {
+     } finally {
+       setMarkingAll(false);
+     }
+-  }, [items, isSigned, projectId, protocolId, sectionId, updateItemLocally, loadProtocol]);
++  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner]);
+ 
+   const handleResetSection = useCallback(async () => {
+     setShowBatchConfirm(null);
+-    const checked = items.filter(i => i.status && i.status !== 'not_checked');
+-    if (checked.length === 0 || isSigned) return;
++    if (resettableItems.length === 0 || isSigned) return;
+     try {
+       setMarkingAll(true);
+-      await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
+-        item_ids: checked.map(i => i.item_id),
++      const data = await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
++        item_ids: resettableItems.map(i => i.item_id),
+         status: 'not_checked',
+       });
+-      checked.forEach(i => updateItemLocally(i.item_id, { status: 'not_checked' }));
+-      toast.success('הסקשן אופס בהצלחה');
++      mergeItemsFromBatch(data.items);
++      sectionCompletionShown.current.delete(sectionId);
++      setShowCompletionBanner(false);
++      const msg = data.skipped > 0
++        ? `${data.updated} פריטים אופסו (${data.skipped} עם ליקויים לא אופסו)`
++        : 'הסקשן אופס בהצלחה';
++      toast.success(msg);
+     } catch (err) {
+       console.error(err);
+       toast.error(t('handover', 'updateError'));
+@@ -511,7 +628,7 @@ const HandoverSectionPage = () => {
+     } finally {
+       setMarkingAll(false);
+     }
+-  }, [items, isSigned, projectId, protocolId, sectionId, updateItemLocally, loadProtocol]);
++  }, [resettableItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol]);
+ 
+   const navigateItem = useCallback((direction) => {
+     if (!activeItem) return;
+@@ -525,6 +642,38 @@ const HandoverSectionPage = () => {
+     }
+   }, [activeItem, activeIndex, items, hasUnsavedChanges, openSheet]);
+ 
++  const getBatchConfirmText = () => {
++    if (showBatchConfirm === 'markAll') {
++      return `לסמן ${uncheckedItems.length} פריטים כתקינים?`;
++    }
++    if (showBatchConfirm === 'markNR') {
++      if (hasDefectsInSection) {
++        return `יש בסעיף ${items.filter(i => !!i.defect_id).length} ליקויים קיימים. הפעולה תחול רק על ${uncheckedItems.length} פריטים שעדיין לא מסומנים.`;
++      }
++      return `לסמן ${uncheckedItems.length} פריטים כלא רלוונטי?`;
++    }
++    if (showBatchConfirm === 'reset') {
++      if (defectProtectedCount > 0) {
++        return `לאפס ${resettableItems.length} פריטים? (${defectProtectedCount} פריטים עם ליקויים לא יאופסו)`;
++      }
++      return `לאפס ${resettableItems.length} פריטים?`;
++    }
++    return '';
++  };
++
++  const getBatchConfirmAction = () => {
++    if (showBatchConfirm === 'markAll') return handleMarkAllOk;
++    if (showBatchConfirm === 'markNR') return handleMarkAllNotRelevant;
++    if (showBatchConfirm === 'reset') return handleResetSection;
++    return () => {};
++  };
++
++  const getBatchConfirmColor = () => {
++    if (showBatchConfirm === 'markAll') return { bg: 'bg-green-50 border-green-200', text: 'text-green-800', btn: 'bg-green-500 hover:bg-green-600' };
++    if (showBatchConfirm === 'markNR') return { bg: 'bg-slate-50 border-slate-300', text: 'text-slate-800', btn: 'bg-slate-500 hover:bg-slate-600' };
++    return { bg: 'bg-slate-50 border-slate-200', text: 'text-slate-700', btn: 'bg-slate-500 hover:bg-slate-600' };
++  };
++
+   if (loading) {
+     return (
+       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+@@ -546,6 +695,9 @@ const HandoverSectionPage = () => {
+   }
+ 
+   const isDefectStatus = status === 'defective' || status === 'partial';
++  const showMarkAll = uncheckedItems.length > 0;
++  const showReset = resettableItems.length > 0;
++  const showAnyBatch = showMarkAll || showReset;
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+@@ -579,29 +731,84 @@ const HandoverSectionPage = () => {
+             </div>
+           </div>
+         </div>
++
++        {showCompletionBanner && (() => {
++          const next = findNextIncompleteSection();
++          return (
++            <div className="bg-white border-b border-slate-200">
++              <div className="max-w-lg mx-auto px-4 py-2">
++                <div className="rounded-xl border border-green-300 bg-[#dcfce7] p-3 flex flex-col gap-2">
++                  <div className="flex items-center gap-2 text-green-800 font-bold text-sm">
++                    <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
++                    <span>{next ? '✓ הסקשן הושלם!' : 'כל הסעיפים הושלמו!'}</span>
++                  </div>
++                  <div className="flex gap-2">
++                    {next ? (
++                      <button
++                        onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${next.section_id}`)}
++                        className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
++                      >
++                        עבור ל: {next.name} ←
++                      </button>
++                    ) : (
++                      <button
++                        onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`)}
++                        className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
++                      >
++                        חזרה לפרוטוקול ←
++                      </button>
++                    )}
++                    <button
++                      onClick={() => setShowCompletionBanner(false)}
++                      className="py-2 px-3 rounded-lg bg-white border border-green-300 text-green-700 font-medium text-sm hover:bg-green-50 active:scale-[0.98] transition-all"
++                    >
++                      השאר כאן
++                    </button>
++                  </div>
++                </div>
++              </div>
++            </div>
++          );
++        })()}
+       </div>
+ 
+-      {!isSigned && (
++      {!isSigned && showAnyBatch && (
+         <div className="max-w-lg mx-auto px-4 mt-3">
+-          <div className="flex gap-2">
+-            {nonOkCount > 0 && (
++          <div className={`flex gap-1.5 ${isNarrow ? '' : 'gap-2'}`}>
++            {showMarkAll && (
+               <button
+                 onClick={() => setShowBatchConfirm('markAll')}
+                 disabled={markingAll}
+-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-green-50 border border-green-200 text-green-700 text-sm font-medium hover:bg-green-100 active:scale-[0.98] transition-all disabled:opacity-50"
++                className={`flex-1 flex items-center justify-center rounded-xl bg-green-50 border border-green-200 text-green-700 font-medium hover:bg-green-100 active:scale-[0.98] transition-all disabled:opacity-50 ${
++                  isNarrow ? 'flex-col gap-0.5 py-2 px-1 text-[10px]' : 'gap-1.5 py-2.5 text-sm'
++                }`}
+               >
+                 {markingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCheck className="w-4 h-4" />}
+-                סמן הכל תקין
++                {isNarrow ? 'תקין' : 'סמן הכל תקין'}
+               </button>
+             )}
+-            {checkedCount > 0 && (
++            {showMarkAll && (
++              <button
++                onClick={() => setShowBatchConfirm('markNR')}
++                disabled={markingAll}
++                className={`flex-1 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-300 text-slate-600 font-medium hover:bg-slate-100 active:scale-[0.98] transition-all disabled:opacity-50 ${
++                  isNarrow ? 'flex-col gap-0.5 py-2 px-1 text-[10px]' : 'gap-1.5 py-2.5 text-sm'
++                }`}
++              >
++                {markingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <MinusCircle className="w-4 h-4" />}
++                {isNarrow ? 'N/A' : 'לא רלוונטי'}
++              </button>
++            )}
++            {showReset && (
+               <button
+                 onClick={() => setShowBatchConfirm('reset')}
+                 disabled={markingAll}
+-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-100 active:scale-[0.98] transition-all disabled:opacity-50"
++                className={`flex-1 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-200 text-slate-600 font-medium hover:bg-slate-100 active:scale-[0.98] transition-all disabled:opacity-50 ${
++                  isNarrow ? 'flex-col gap-0.5 py-2 px-1 text-[10px]' : 'gap-1.5 py-2.5 text-sm'
++                }`}
+               >
+                 {markingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+-                אפס סקשן
++                {isNarrow ? 'אפס' : 'אפס סקשן'}
+               </button>
+             )}
+           </div>
+@@ -610,21 +817,15 @@ const HandoverSectionPage = () => {
+ 
+       {showBatchConfirm && (
+         <div className="max-w-lg mx-auto px-4 mt-2">
+-          <div className={`rounded-xl p-3 flex items-center justify-between border ${
+-            showBatchConfirm === 'markAll' ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'
+-          }`}>
+-            <span className={`text-sm font-medium ${showBatchConfirm === 'markAll' ? 'text-green-800' : 'text-slate-700'}`}>
+-              {showBatchConfirm === 'markAll'
+-                ? `לסמן ${nonOkCount} פריטים כתקינים?`
+-                : `לאפס ${checkedCount} פריטים? ליקויים קיימים יישמרו.`}
++          <div className={`rounded-xl p-3 flex flex-col gap-2 border ${getBatchConfirmColor().bg}`}>
++            <span className={`text-sm font-medium ${getBatchConfirmColor().text}`}>
++              {getBatchConfirmText()}
+             </span>
+-            <div className="flex gap-2">
++            <div className="flex gap-2 justify-end">
+               <button
+-                onClick={showBatchConfirm === 'markAll' ? handleMarkAllOk : handleResetSection}
++                onClick={getBatchConfirmAction()}
+                 disabled={markingAll}
+-                className={`px-3 py-1.5 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${
+-                  showBatchConfirm === 'markAll' ? 'bg-green-500 hover:bg-green-600' : 'bg-slate-500 hover:bg-slate-600'
+-                }`}
++                className={`px-3 py-1.5 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${getBatchConfirmColor().btn}`}
+               >
+                 אישור
+               </button>
+@@ -965,72 +1166,93 @@ const HandoverSectionPage = () => {
+                           ${errors.description ? 'border-red-400 ring-1 ring-red-200' : 'border-slate-200'}`}
+                         dir="rtl"
+                       />
+-                      {errors.description && <p className="text-[11px] text-red-500">{errors.description}</p>}
++                      {errors.description && (
++                        <p className="text-[11px] text-red-500 mt-0.5 font-medium">{errors.description}</p>
++                      )}
+                     </div>
+ 
+                     <div className="space-y-1" data-error={errors.severity ? 'true' : undefined}>
+                       <label className="text-sm font-medium text-slate-700">
+-                        חומרה <span className="text-red-500">*</span>
++                        חומרה <span className="text-red-500 mr-1">*</span>
+                       </label>
+                       <div className="grid grid-cols-3 gap-1.5">
+-                        {SEVERITY_OPTIONS.map(opt => {
+-                          const isActive = severity === opt.value;
+-                          return (
+-                            <button
+-                              key={opt.value}
+-                              type="button"
+-                              disabled={isSigned || saving}
+-                              onClick={() => {
+-                                setSeverity(opt.value);
+-                                setErrors(prev => { const n = { ...prev }; delete n.severity; return n; });
+-                              }}
+-                              className={`py-2 px-2 rounded-lg border text-sm font-medium transition-all text-center
+-                                ${isActive ? opt.activeColor : opt.color}
+-                                ${errors.severity ? 'ring-1 ring-red-200' : ''}
+-                                ${isSigned ? 'opacity-60 cursor-not-allowed' : 'active:scale-95'}`}
+-                            >
+-                              {opt.label}
+-                            </button>
+-                          );
+-                        })}
++                        {SEVERITY_OPTIONS.map(opt => (
++                          <button
++                            key={opt.value}
++                            type="button"
++                            disabled={isSigned || saving}
++                            onClick={() => {
++                              setSeverity(opt.value);
++                              setErrors(prev => { const n = { ...prev }; delete n.severity; return n; });
++                            }}
++                            className={`py-2 rounded-lg border text-xs font-medium transition-all
++                              ${severity === opt.value ? opt.activeColor : opt.color}
++                              ${errors.severity ? 'ring-1 ring-red-200' : ''}
++                              ${isSigned ? 'opacity-60 cursor-not-allowed' : 'active:scale-95'}`}
++                          >
++                            {opt.label}
++                          </button>
++                        ))}
+                       </div>
+-                      {errors.severity && <p className="text-[11px] text-red-500 mt-0.5">{errors.severity}</p>}
++                      {errors.severity && (
++                        <p className="text-[11px] text-red-500 mt-0.5 font-medium">{errors.severity}</p>
++                      )}
+                     </div>
++                  </>
++                )}
++
++                <div className="space-y-1">
++                  <label className="text-xs font-medium text-slate-500">הערות (אופציונלי)</label>
++                  <textarea
++                    value={notes}
++                    onChange={(e) => setNotes(e.target.value)}
++                    disabled={isSigned || saving}
++                    placeholder="הערות נוספות..."
++                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none h-16
++                      focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400
++                      disabled:bg-slate-50 disabled:text-slate-500"
++                    dir="rtl"
++                  />
++                </div>
++
++                {!isSigned && isDefectStatus && (
++                  <div className="flex gap-2 pt-1 pb-2">
++                    <button
++                      onClick={() => closeSheet()}
++                      disabled={saving}
++                      className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200"
++                    >
++                      ביטול
++                    </button>
++                    <button
++                      onClick={handleSaveDefectAndAdvance}
++                      disabled={saving || isSigned}
++                      className="flex-[2] py-2.5 rounded-xl bg-purple-600 text-white text-sm font-bold
++                        hover:bg-purple-700 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
++                    >
++                      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
++                      {saving ? 'שומר...' : 'שמור והמשך'}
++                    </button>
++                  </div>
++                )}
+ 
+-                    {!isSigned && (
++                {showUnsavedConfirm && (
++                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
++                    <p className="text-sm font-medium text-amber-800">יש שינויים שלא נשמרו. לצאת בלי לשמור?</p>
++                    <div className="flex gap-2">
+                       <button
+-                        onClick={handleSaveDefectAndAdvance}
+-                        disabled={saving}
+-                        className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-medium transition-all
+-                          active:scale-[0.98] disabled:opacity-50
+-                          ${status === 'defective'
+-                            ? 'bg-red-500 text-white hover:bg-red-600'
+-                            : 'bg-amber-500 text-white hover:bg-amber-600'}`}
++                        onClick={() => { setShowUnsavedConfirm(false); forceCloseSheet(); }}
++                        className="flex-1 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600"
+                       >
+-                        {saving ? (
+-                          <Loader2 className="w-4 h-4 animate-spin" />
+-                        ) : (
+-                          <ArrowLeft className="w-4 h-4" />
+-                        )}
+-                        שמור ועבור לפריט הבא ←
++                        צא בלי לשמור
+                       </button>
+-                    )}
+-                  </>
+-                )}
+-
+-                {!isDefectStatus && !isSigned && (status === 'ok' || status === 'not_relevant') && (
+-                  <div className="space-y-1 mt-2">
+-                    <label className="text-sm font-medium text-slate-700">הערות (אופציונלי)</label>
+-                    <textarea
+-                      value={notes}
+-                      onChange={(e) => setNotes(e.target.value)}
+-                      disabled={isSigned || saving}
+-                      placeholder="הערות..."
+-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none h-16
+-                        focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400
+-                        disabled:bg-slate-50 disabled:text-slate-500"
+-                      dir="rtl"
+-                    />
++                      <button
++                        onClick={() => setShowUnsavedConfirm(false)}
++                        className="flex-1 py-2 rounded-lg bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50"
++                      >
++                        חזור
++                      </button>
++                    </div>
+                   </div>
+                 )}
+               </div>
+@@ -1038,28 +1260,6 @@ const HandoverSectionPage = () => {
+           </div>
+         </>
+       )}
+-
+-      {showUnsavedConfirm && (
+-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+-          <div className="bg-white rounded-2xl p-5 max-w-sm w-full shadow-xl" dir="rtl">
+-            <p className="text-sm font-medium text-slate-800 mb-4">יש שינויים שלא נשמרו. לבטל?</p>
+-            <div className="flex gap-2">
+-              <button
+-                onClick={() => setShowUnsavedConfirm(false)}
+-                className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200"
+-              >
+-                ביטול
+-              </button>
+-              <button
+-                onClick={forceCloseSheet}
+-                className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600"
+-              >
+-                כן, סגור
+-              </button>
+-            </div>
+-          </div>
+-        </div>
+-      )}
+     </div>
+   );
+ };
