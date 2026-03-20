@@ -381,6 +381,7 @@ const HandoverSectionPage = () => {
     );
     completionToastId.current = tId;
     prevWasComplete.current = true;
+    sectionCompletionShown.current.add(sectionId);
   }, [sectionId, isComplete, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
 
   useEffect(() => {
