@@ -775,6 +775,15 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
     ts = _now()
     protocol_id = str(uuid.uuid4())
 
+    from pymongo import ReturnDocument
+    counter_doc = await db.counters.find_one_and_update(
+        {"_id": f"handover_seq:{project_id}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    display_number = counter_doc["seq"]
+
     protocol_doc = {
         "id": protocol_id,
         "project_id": project_id,
@@ -784,6 +793,7 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
         "type": protocol_type,
         "template_version_id": tpl.get("id"),
         "status": "draft",
+        "display_number": display_number,
         "snapshot": {
             "project_name": project.get("name", ""),
             "building_name": building.get("name", ""),

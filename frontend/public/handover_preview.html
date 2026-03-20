@@ -1,0 +1,2021 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<style>
+@font-face {
+    font-family: 'Rubik';
+    src: url('file:///home/runner/workspace/backend/fonts/Rubik-Regular.ttf') format('truetype');
+    font-weight: normal;
+}
+@font-face {
+    font-family: 'Rubik';
+    src: url('file:///home/runner/workspace/backend/fonts/Rubik-Bold.ttf') format('truetype');
+    font-weight: bold;
+}
+@font-face {
+    font-family: 'Caveat';
+    src: url('file:///home/runner/workspace/backend/fonts/Caveat-Regular.ttf') format('truetype');
+    font-weight: normal;
+}
+
+@page {
+    size: A4;
+    margin: 18mm 14mm 22mm 14mm;
+
+    @bottom-right {
+        content: "נוצר באמצעות BrikOps | brikops.com";
+        font-family: 'Rubik', sans-serif;
+        font-size: 7pt;
+        color: #f97316;
+    }
+    @bottom-center {
+        content: counter(page) " / " counter(pages);
+        font-family: 'Rubik', sans-serif;
+        font-size: 8pt;
+        color: #94a3b8;
+    }
+    @bottom-left {
+        content: "הופק: 20.03.2026";
+        font-family: 'Rubik', sans-serif;
+        font-size: 7pt;
+        color: #94a3b8;
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Rubik', sans-serif;
+    font-size: 10pt;
+    line-height: 1.5;
+    color: #1e293b;
+    direction: rtl;
+}
+
+.cover-block {
+    background-color: #312e81;
+    color: white;
+    padding: 28px 24px 20px 24px;
+    margin: -2mm -2mm 0 -2mm;
+    text-align: center;
+    page-break-inside: avoid;
+}
+
+.cover-logo {
+    max-height: 60px;
+    max-width: 200px;
+    margin-bottom: 12px;
+}
+
+.cover-company-name {
+    font-size: 14pt;
+    font-weight: bold;
+    color: rgba(255,255,255,0.9);
+    margin-bottom: 12px;
+}
+
+.cover-title {
+    font-size: 28pt;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 4px;
+}
+
+.cover-project {
+    font-size: 14pt;
+    color: rgba(255,255,255,0.85);
+    margin-bottom: 6px;
+}
+
+.cover-number {
+    font-size: 16pt;
+    font-weight: bold;
+    color: #fbbf24;
+    margin-bottom: 10px;
+}
+
+.cover-meta {
+    font-size: 9pt;
+    color: rgba(255,255,255,0.8);
+    margin-top: 8px;
+}
+
+.cover-meta span {
+    display: inline-block;
+    margin: 0 8px;
+    padding: 2px 10px;
+    border: 1px solid rgba(255,255,255,0.3);
+}
+
+.stats-bar {
+    display: table;
+    width: 100%;
+    margin: 16px 0 12px 0;
+    table-layout: fixed;
+}
+
+.stat-card {
+    display: table-cell;
+    text-align: center;
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    padding: 10px 6px;
+    vertical-align: top;
+}
+
+.stat-value {
+    font-size: 22pt;
+    font-weight: bold;
+    color: #1e293b;
+    line-height: 1.2;
+}
+
+.stat-label {
+    font-size: 8pt;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+.uuid-ref {
+    font-size: 7pt;
+    color: #94a3b8;
+    text-align: center;
+    margin-bottom: 14px;
+}
+
+.section-title {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #312e81;
+    margin-top: 18px;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    background-color: #f8fafc;
+    border-right: 4px solid #312e81;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+}
+
+.section-title-count {
+    font-size: 9pt;
+    font-weight: normal;
+    color: #64748b;
+    display: block;
+}
+
+.collapsed-section {
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    border-right: 4px solid #cbd5e1;
+    background-color: #f8fafc;
+    color: #64748b;
+    font-size: 10pt;
+    page-break-inside: avoid;
+}
+
+.collapsed-section .cs-name {
+    font-weight: bold;
+    color: #475569;
+}
+
+.collapsed-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    background-color: #e2e8f0;
+    color: #64748b;
+    font-size: 7pt;
+    font-weight: bold;
+    margin-right: 8px;
+}
+
+.inspection-section {
+    page-break-inside: avoid;
+    margin-bottom: 12px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+    font-size: 9pt;
+}
+
+th {
+    background-color: #1e293b;
+    color: #ffffff;
+    font-weight: bold;
+    text-align: right;
+    padding: 8px 8px;
+    border: 1px solid #1e293b;
+    font-size: 9pt;
+}
+
+td {
+    padding: 6px 8px;
+    border: 1px solid #e2e8f0;
+    text-align: right;
+    vertical-align: top;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+tbody tr:nth-child(odd) {
+    background-color: #ffffff;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 8pt;
+    font-weight: bold;
+    text-align: center;
+}
+
+.severity-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 7pt;
+    font-weight: bold;
+    color: white;
+    margin-right: 4px;
+}
+
+.photo-container {
+    margin-top: 4px;
+    page-break-inside: avoid;
+}
+
+.photo-container img {
+    max-width: 150px;
+    max-height: 120px;
+    border: 1px solid #e2e8f0;
+    margin: 2px;
+}
+
+.photo-placeholder {
+    display: inline-block;
+    width: 100px;
+    height: 70px;
+    background-color: #f1f5f9;
+    border: 1px dashed #cbd5e1;
+    text-align: center;
+    line-height: 70px;
+    color: #94a3b8;
+    font-size: 7pt;
+    margin: 2px;
+}
+
+.section-summary {
+    font-size: 8pt;
+    color: #475569;
+    margin-top: 4px;
+    margin-bottom: 10px;
+    padding: 6px 10px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+}
+
+.summary-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-left: 3px;
+    vertical-align: middle;
+}
+
+.property-grid {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    margin-bottom: 12px;
+}
+
+.property-row {
+    display: table-row;
+}
+
+.property-card {
+    display: table-cell;
+    padding: 8px 10px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-right: 3px solid #312e81;
+    vertical-align: top;
+    width: 50%;
+}
+
+.property-label {
+    font-size: 7pt;
+    color: #64748b;
+    margin-bottom: 1px;
+}
+
+.property-value {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #1e293b;
+}
+
+.tenant-grid {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    margin-bottom: 12px;
+}
+
+.tenant-card {
+    display: table-cell;
+    padding: 10px 12px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    vertical-align: top;
+}
+
+.tenant-name {
+    font-weight: bold;
+    font-size: 11pt;
+    color: #1e293b;
+    margin-bottom: 2px;
+}
+
+.tenant-detail {
+    font-size: 8pt;
+    color: #64748b;
+}
+
+.signature-grid {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    margin-bottom: 10px;
+}
+
+.signature-grid-row {
+    display: table-row;
+}
+
+.signature-cell {
+    display: table-cell;
+    width: 50%;
+    vertical-align: top;
+    padding: 4px;
+}
+
+.signature-card {
+    border: 1px solid #e2e8f0;
+    padding: 12px;
+    background-color: #fafafa;
+    page-break-inside: avoid;
+    min-height: 100px;
+}
+
+.signature-role-label {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #312e81;
+    margin-bottom: 4px;
+}
+
+.signature-description {
+    font-size: 8pt;
+    color: #64748b;
+    margin-bottom: 8px;
+    font-style: italic;
+}
+
+.signature-image {
+    max-width: 200px;
+    max-height: 80px;
+    margin-bottom: 4px;
+}
+
+.typed-signature {
+    font-family: 'Caveat', 'Rubik', cursive;
+    font-size: 28px;
+    color: #1e293b;
+    margin-bottom: 4px;
+}
+
+.typed-signature-fallback {
+    font-family: 'Rubik', sans-serif;
+    font-weight: bold;
+    font-style: italic;
+    font-size: 24px;
+    color: #1e293b;
+    margin-bottom: 4px;
+}
+
+.signature-meta {
+    font-size: 8pt;
+    color: #64748b;
+}
+
+.signature-unsigned {
+    font-size: 8pt;
+    color: #94a3b8;
+    font-style: italic;
+    margin-top: 30px;
+}
+
+.legal-card {
+    page-break-inside: avoid;
+    border: 1px solid #e2e8f0;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background-color: #fffbeb;
+}
+
+.legal-title {
+    font-weight: bold;
+    font-size: 10pt;
+    color: #92400e;
+    margin-bottom: 4px;
+}
+
+.legal-body {
+    font-size: 9pt;
+    color: #44403c;
+    white-space: pre-wrap;
+    line-height: 1.6;
+}
+
+.legal-note {
+    font-size: 8pt;
+    color: #94a3b8;
+    font-style: italic;
+    margin-top: 4px;
+}
+
+.defect-summary-table th {
+    background-color: #991b1b;
+    color: #ffffff;
+    border-color: #991b1b;
+}
+
+.totals-box {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background-color: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    font-size: 10pt;
+    font-weight: bold;
+    color: #334155;
+}
+
+.page-break {
+    page-break-before: always;
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== COVER ==================== -->
+<div class="cover-block">
+    
+    <div class="cover-company-name">הארגון של מנהל פרויקט</div>
+    
+
+    <div class="cover-title">פרוטוקול מסירת חזקה</div>
+    <div class="cover-project">פרויקט מגדלי הים</div>
+
+    
+    <div class="cover-number">פרוטוקול מס׳ 92aba4b4</div>
+    
+
+    <div class="cover-meta">
+        <span>בניין: D</span>
+        <span>קומה: קומה 7</span>
+        <span>דירה: 37</span>
+        <span>תאריך: 16 במרץ 2026</span>
+    </div>
+</div>
+
+<!-- Stats bar -->
+<div class="stats-bar">
+    <div class="stat-card">
+        <div class="stat-value">55</div>
+        <div class="stat-label">סה"כ נבדקו</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: #16a34a;">54</div>
+        <div class="stat-label">תקין</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: #dc2626;">1</div>
+        <div class="stat-label">ליקויים</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: #d97706;">0</div>
+        <div class="stat-label">חלקי</div>
+    </div>
+</div>
+
+
+<div class="uuid-ref">מזהה: 92aba4b4-831f-4d59-bcb3-683db315c20e</div>
+
+
+<!-- ==================== PROPERTY DETAILS ==================== -->
+
+<div class="section-title">פרטי נכס</div>
+<div class="property-grid">
+    
+    <div class="property-row">
+        <div class="property-card">
+            <div class="property-label">חדרים</div>
+            <div class="property-value">5</div>
+        </div>
+        
+        <div class="property-card">
+            <div class="property-label">מספר מחסנים</div>
+            <div class="property-value">3</div>
+        </div>
+        
+    </div>
+    
+    <div class="property-row">
+        <div class="property-card">
+            <div class="property-label">מספר חניות</div>
+            <div class="property-value">2</div>
+        </div>
+        
+        <div class="property-card">
+            <div class="property-label">דגם</div>
+            <div class="property-value">חחמח</div>
+        </div>
+        
+    </div>
+    
+    <div class="property-row">
+        <div class="property-card">
+            <div class="property-label">שטח דירה</div>
+            <div class="property-value">5665</div>
+        </div>
+        
+        <div class="property-card">
+            <div class="property-label">שטח מרפסת</div>
+            <div class="property-value">112</div>
+        </div>
+        
+    </div>
+    
+    <div class="property-row">
+        <div class="property-card">
+            <div class="property-label">שטח חניה</div>
+            <div class="property-value">456</div>
+        </div>
+        
+        <div class="property-card">
+            <div class="property-label">שטח מרפסת שירות</div>
+            <div class="property-value">2234</div>
+        </div>
+        
+    </div>
+    
+</div>
+
+
+<!-- ==================== TENANTS ==================== -->
+
+<div class="section-title">דיירים</div>
+<div class="tenant-grid">
+    
+    <div class="tenant-card">
+        <div class="tenant-name">יםיען</div>
+        <div class="tenant-detail">ת"ז: עלםל</div>
+        <div class="tenant-detail">טלפון: 522</div>
+        
+    </div>
+    
+</div>
+
+
+<!-- ==================== INSPECTION SECTIONS ==================== -->
+
+
+<div class="inspection-section">
+    <div class="section-title">
+        כניסה לדירה
+        <span class="section-title-count">13 פריטים</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">פריט</th>
+                <th style="width: 14%;">מקצוע</th>
+                <th style="width: 12%;">סטטוס</th>
+                <th>הערות</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+            <tr>
+                <td>1</td>
+                <td>משקוף דלת כניסה</td>
+                <td>דלתות</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>2</td>
+                <td>דלת כניסה</td>
+                <td>דלתות</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>3</td>
+                <td>סגר עליון</td>
+                <td>דלתות</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>4</td>
+                <td>עינית</td>
+                <td>דלתות</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>5</td>
+                <td>אינטרקום</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>6</td>
+                <td>טיח</td>
+                <td>טיח</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>7</td>
+                <td>ריצוף+רובה</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>8</td>
+                <td>צבע</td>
+                <td>צביעה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>9</td>
+                <td>פעמון</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>10</td>
+                <td>ארון חשמל</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>11</td>
+                <td>ארון תקשורת</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>12</td>
+                <td>חשמל + תאורה</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>13</td>
+                <td>אחר</td>
+                <td>כללי</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+        </tbody>
+    </table>
+    <div class="section-summary">
+        <span class="summary-dot" style="background-color: #16a34a;"></span> 13 תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #dc2626;"></span> 0 לא תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #d97706;"></span> 0 חלקי
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #9ca3af;"></span> 0 לא רלוונטי
+    </div>
+</div>
+
+
+
+<div class="inspection-section">
+    <div class="section-title">
+        מבואה
+        <span class="section-title-count">6 פריטים</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">פריט</th>
+                <th style="width: 14%;">מקצוע</th>
+                <th style="width: 12%;">סטטוס</th>
+                <th>הערות</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+            <tr>
+                <td>1</td>
+                <td>ריצוף+רובה</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>2</td>
+                <td>טיח</td>
+                <td>טיח</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>3</td>
+                <td>צבע</td>
+                <td>צביעה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>4</td>
+                <td>חשמל</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>5</td>
+                <td>ניקוז+צמה מיני מרכזי</td>
+                <td>אינסטלציה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>6</td>
+                <td>אחר</td>
+                <td>כללי</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+        </tbody>
+    </table>
+    <div class="section-summary">
+        <span class="summary-dot" style="background-color: #16a34a;"></span> 6 תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #dc2626;"></span> 0 לא תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #d97706;"></span> 0 חלקי
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #9ca3af;"></span> 0 לא רלוונטי
+    </div>
+</div>
+
+
+
+<div class="inspection-section">
+    <div class="section-title">
+        מטבח
+        <span class="section-title-count">9 פריטים</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">פריט</th>
+                <th style="width: 14%;">מקצוע</th>
+                <th style="width: 12%;">סטטוס</th>
+                <th>הערות</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+            <tr>
+                <td>1</td>
+                <td>ארונות עץ</td>
+                <td>מטבחים</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>2</td>
+                <td>שיש</td>
+                <td>שיש</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>3</td>
+                <td>חיפוי</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>4</td>
+                <td>ברז</td>
+                <td>אינסטלציה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>5</td>
+                <td>חשמל ותקשורת</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>6</td>
+                <td>אינסטלציה</td>
+                <td>אינסטלציה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>7</td>
+                <td>ריצוף+רובה</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>8</td>
+                <td>אלומיניום</td>
+                <td>אלומיניום</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>9</td>
+                <td>אחר</td>
+                <td>כללי</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+        </tbody>
+    </table>
+    <div class="section-summary">
+        <span class="summary-dot" style="background-color: #16a34a;"></span> 9 תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #dc2626;"></span> 0 לא תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #d97706;"></span> 0 חלקי
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #9ca3af;"></span> 0 לא רלוונטי
+    </div>
+</div>
+
+
+
+<div class="inspection-section">
+    <div class="section-title">
+        שירותי אורחים
+        <span class="section-title-count">10 פריטים</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">פריט</th>
+                <th style="width: 14%;">מקצוע</th>
+                <th style="width: 12%;">סטטוס</th>
+                <th>הערות</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+            <tr>
+                <td>1</td>
+                <td>דלת פנים</td>
+                <td>דלתות</td>
+                <td>
+                    <span class="status-badge" style="background-color: #FEE2E2; color: #991b1b;">
+                        לא תקין
+                    </span>
+                </td>
+                <td>
+                    מכה
+                    
+                    <br><span class="severity-badge" style="background-color: #d97706;">רגיל</span>
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>2</td>
+                <td>חיפוי</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>3</td>
+                <td>אסלה+מושב</td>
+                <td>אינסטלציה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>4</td>
+                <td>ברז כיור</td>
+                <td>אינסטלציה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>5</td>
+                <td>טיח</td>
+                <td>טיח</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>6</td>
+                <td>צבע</td>
+                <td>צביעה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>7</td>
+                <td>חשמל</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>8</td>
+                <td>אלומיניום/וונטה</td>
+                <td>אלומיניום</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>9</td>
+                <td>ריצוף+רובה</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>10</td>
+                <td>אחר</td>
+                <td>כללי</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+        </tbody>
+    </table>
+    <div class="section-summary">
+        <span class="summary-dot" style="background-color: #16a34a;"></span> 9 תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #dc2626;"></span> 1 לא תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #d97706;"></span> 0 חלקי
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #9ca3af;"></span> 0 לא רלוונטי
+    </div>
+</div>
+
+
+
+<div class="inspection-section">
+    <div class="section-title">
+        סלון
+        <span class="section-title-count">6 פריטים</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">פריט</th>
+                <th style="width: 14%;">מקצוע</th>
+                <th style="width: 12%;">סטטוס</th>
+                <th>הערות</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+            <tr>
+                <td>1</td>
+                <td>טיח</td>
+                <td>טיח</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>2</td>
+                <td>צבע</td>
+                <td>צביעה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>3</td>
+                <td>אלומיניום</td>
+                <td>אלומיניום</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>4</td>
+                <td>חשמל ותקשורת</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>5</td>
+                <td>ריצוף+רובה</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>6</td>
+                <td>אחר</td>
+                <td>כללי</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+        </tbody>
+    </table>
+    <div class="section-summary">
+        <span class="summary-dot" style="background-color: #16a34a;"></span> 6 תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #dc2626;"></span> 0 לא תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #d97706;"></span> 0 חלקי
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #9ca3af;"></span> 0 לא רלוונטי
+    </div>
+</div>
+
+
+
+<div class="inspection-section">
+    <div class="section-title">
+        מרפסת סלון
+        <span class="section-title-count">11 פריטים</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 25%;">פריט</th>
+                <th style="width: 14%;">מקצוע</th>
+                <th style="width: 12%;">סטטוס</th>
+                <th>הערות</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+            <tr>
+                <td>1</td>
+                <td>חיפוי אבן חוץ</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>2</td>
+                <td>זגוגית מעקה</td>
+                <td>אלומיניום</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>3</td>
+                <td>מעקה אלומיניום</td>
+                <td>אלומיניום</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>4</td>
+                <td>טיח</td>
+                <td>טיח</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>5</td>
+                <td>צבע</td>
+                <td>צביעה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>6</td>
+                <td>אינסטלציה</td>
+                <td>אינסטלציה</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>7</td>
+                <td>חשמל</td>
+                <td>חשמל</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>8</td>
+                <td>שליכט צבעוני</td>
+                <td>טיח</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>9</td>
+                <td>ריצוף+רובה</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>10</td>
+                <td>שיפועים</td>
+                <td>ריצוף</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+            <tr>
+                <td>11</td>
+                <td>אחר</td>
+                <td>כללי</td>
+                <td>
+                    <span class="status-badge" style="background-color: #DCFCE7; color: #166534;">
+                        תקין
+                    </span>
+                </td>
+                <td>
+                    
+                    
+                </td>
+            </tr>
+            
+            
+        </tbody>
+    </table>
+    <div class="section-summary">
+        <span class="summary-dot" style="background-color: #16a34a;"></span> 11 תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #dc2626;"></span> 0 לא תקין
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #d97706;"></span> 0 חלקי
+        &nbsp;&nbsp;
+        <span class="summary-dot" style="background-color: #9ca3af;"></span> 0 לא רלוונטי
+    </div>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">ממ&#34;ד</span> — 11 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">אמבטיה כללית</span> — 14 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">חדר כביסה</span> — 10 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">חדר שינה 1</span> — 8 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">חדר שינה 2</span> — 8 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">חדר הורים</span> — 8 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">שירותי הורים</span> — 13 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">מחסן</span> — 7 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<div class="collapsed-section">
+    <span class="cs-name">מסתור כביסה</span> — 11 פריטים
+    <span class="collapsed-tag">לא נבדק</span>
+</div>
+
+
+
+<!-- ==================== DELIVERED ITEMS ==================== -->
+
+<div class="page-break"></div>
+<div class="section-title">פריטים שנמסרו</div>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 5%;">#</th>
+            <th style="width: 45%;">פריט</th>
+            <th style="width: 15%;">כמות</th>
+            <th>הערות</th>
+        </tr>
+    </thead>
+    <tbody>
+        
+        <tr>
+            <td>1</td>
+            <td>מפתח דלת כניסה</td>
+            <td>345</td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>2</td>
+            <td>מפתחות דלתות פנים</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>3</td>
+            <td>מפתח חדר חשמל</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>4</td>
+            <td>מפתח תיבת דואר</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>5</td>
+            <td>מטף כיבוי אש</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>6</td>
+            <td>חבלי כביסה</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>7</td>
+            <td>מושבי אסלה</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>8</td>
+            <td>מנואלה</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>9</td>
+            <td>מוט + צינור + מזלף</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>10</td>
+            <td>סוללה + מזלף + מתלה</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>11</td>
+            <td>סטופרים לדלתות</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>12</td>
+            <td>תעודות אחריות</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>13</td>
+            <td>מפתח אינטרקום</td>
+            <td></td>
+            <td></td>
+        </tr>
+        
+    </tbody>
+</table>
+
+
+<!-- ==================== LEGAL SECTIONS ==================== -->
+
+<div class="page-break"></div>
+<div class="section-title">נסחים משפטיים</div>
+
+<div class="legal-card">
+    <div class="legal-title">בדעקב</div>
+    <div class="legal-body">עםעםםיםםיםחעע</div>
+    
+    
+    <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0;">
+        
+        <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8PESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCACJASwDASIAAhEBAxEB/8QAGgABAQADAQEAAAAAAAAAAAAAAAYDBAUHAv/EADgQAQACAgECAgYIAgsAAAAAAAABAgMEBQYREiEHFjFBYYETIlFVcZGU0RShFSQlMlJTcqLB4fH/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8A9cAAAAAAAAAAAAAAAAAAAAAAAAAAAASPP8LpaWTe6l5jNk3508c5NXXzdvosExHlFax5TMz285+CuRvXkzyexw3TlJ7/ANJbUXzxH+Tj+tb/AI/IG/0HxuTjek9ONjvOzsxO1mmfbN7z4vP5TEfJRkRERERHaI9wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPjNnxa+OcmbJTHjr7bXtERHzlM73pE6f1Mv0Gvs35DZ92HRxzlmfnHl/MFSjOE/tr0g8zyk/WwcbSvH4J93i/vZJ/Hv5fN87HX27h1Mmx6pcxXHjrN7Wy0ikVrHnMz9ji9Fc1zPGcDXw9Lb23O3kvtW2KZKxGWbz37xE/DsD08R1uv50LxPPcDyXGYLezYtSMlI/wBU19iq0d7W5LTxbelmrm18sd6ZKT5TAM4AAAAAAAAAAAAAAAAAAAAAAAAAAADQ5HnOM4i1K8jyGtq2yRM0jNlis2iPs7t9q7nGaHITWd3S1tmaeVZzYq38P4d4BzMnW3TWPHa9uc0Zisd5iuaLT8ojzlPZ+b5nqXFfb1NmOnenscd539msfS5479omsT5Vr8f/ABWR03wkT3jh+PiY9/8ADU/ZvZtbDs4LYM+HHlw2jtbHesWrMfGJB5xi4roW+WM3LdR05fNHn4t3kPFHf8ImIU2j1D0dxuL6LR5LiNbH/hw5KVj+TperfCfc3H/pafserfCfc3H/AKWn7AkuveruI2ulNrT47ltPNsbc0wRGPNE+GtrR4pnt7u3d3tTqrpjT08Gti5vj4x4cdcdY/iK+yI7R7/g4XU3C8Xk6t6Y4zW43Tx1yZsmxmjHgpXxUx17xE9o84mfcrPVvhPubj/0tP2Bq26x6atWa25vjpifKYnPXtMfm5foxtX1TmmK3iw0289cXae8eHx947fm73q3wn3Nx/wClp+zfwa+HVw1w6+KmHFTyrTHWK1j8IgGQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEdT+t+lrJM+ddLioiI+y17/ALLFH8DHj9JHVd7ec48epSvwiaTKwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABG8Baa+kvquvutj1bf7P+1kj+ImK+k7qGs+U31da0eXtiI7LAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGCujrU3cm7XBSNnJSMd8sR9a1Y9kd2cAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//Z" class="signature-image" alt="חתימה">
+        
+        <div class="legal-note">נחתם ע"י: חםיח — 16 במרץ 2026</div>
+    </div>
+    
+</div>
+
+<div class="legal-card">
+    <div class="legal-title">צבע</div>
+    <div class="legal-body">חםיםםחח</div>
+    
+    
+</div>
+
+
+
+<!-- ==================== DEFECT SUMMARY (before signatures) ==================== -->
+
+<div class="page-break"></div>
+<div class="section-title">סיכום ליקויים</div>
+<table class="defect-summary-table">
+    <thead>
+        <tr>
+            <th style="width: 5%;">#</th>
+            <th style="width: 18%;">סעיף</th>
+            <th style="width: 18%;">פריט</th>
+            <th style="width: 12%;">מקצוע</th>
+            <th style="width: 10%;">חומרה</th>
+            <th>תיאור</th>
+        </tr>
+    </thead>
+    <tbody>
+        
+        <tr>
+            <td>1</td>
+            <td>שירותי אורחים</td>
+            <td>דלת פנים</td>
+            <td>דלתות</td>
+            <td>
+                
+                <span class="severity-badge" style="background-color: #d97706;">רגיל</span>
+                
+            </td>
+            <td>מכה</td>
+        </tr>
+        
+    </tbody>
+</table>
+<div class="totals-box">
+    סה"כ ליקויים: 1
+    (0 קריטי,
+     1 רגיל,
+     0 קוסמטי)
+</div>
+
+
+<!-- ==================== SIGNATURES (always last) ==================== -->
+
+<div class="page-break"></div>
+<div class="section-title">חתימות</div>
+<div class="signature-grid">
+    
+    <div class="signature-grid-row">
+        
+        
+        
+        <div class="signature-cell">
+            <div class="signature-card">
+                <div class="signature-role-label">
+                    מנהל פרויקט
+                </div>
+                
+                <div class="signature-description">אני מאשר/ת את חתימתי על פרוטוקול המסירה כמנהל/ת הפרויקט</div>
+                
+                
+                    
+                    <img src="data:image/jpeg;base64,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" class="signature-image" alt="חתימה">
+                    
+                    <div class="signature-meta">
+                        Super Admin
+                         — 16 במרץ 2026
+                    </div>
+                
+            </div>
+        </div>
+        
+        
+        
+        
+        <div class="signature-cell">
+            <div class="signature-card">
+                <div class="signature-role-label">
+                    רוכש/ת ראשי/ת
+                </div>
+                
+                <div class="signature-description">אני מאשר/ת את חתימתי על פרוטוקול המסירה כרוכש/ת ראשי/ת</div>
+                
+                
+                    
+                    <img src="data:image/jpeg;base64,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" class="signature-image" alt="חתימה">
+                    
+                    <div class="signature-meta">
+                        משה
+                         — 16 במרץ 2026
+                    </div>
+                
+            </div>
+        </div>
+        
+        
+    </div>
+    
+    <div class="signature-grid-row">
+        
+        
+        
+        <div class="signature-cell">
+            <div class="signature-card">
+                <div class="signature-role-label">
+                    רוכש/ת נוסף/ת
+                </div>
+                
+                <div class="signature-description">אני מאשר/ת את חתימתי על פרוטוקול המסירה כרוכש/ת נוסף/ת</div>
+                
+                
+                    <div class="signature-unsigned">לא נחתם (אופציונלי)</div>
+                
+            </div>
+        </div>
+        
+        
+        
+        
+        <div class="signature-cell">
+            <div class="signature-card">
+                <div class="signature-role-label">
+                    נציג קבלן
+                </div>
+                
+                <div class="signature-description">אני מאשר/ת את חתימתי על פרוטוקול המסירה כנציג/ת הקבלן</div>
+                
+                
+                    
+                    <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8PESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCACJASwDASIAAhEBAxEB/8QAGgABAAMBAQEAAAAAAAAAAAAAAAQFBgcDAv/EADgQAQABBAECAwUEBwkAAAAAAAABAgMEBREGIRJBUQcTMWGBFBVxoSIzNFJiwfAWMkJDcpGx4fH/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8A64AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACg3/WGv0VynF/TzNlc7WsLGjxXKp8uY8o/EF7cuUWrdVy5XTRRTHNVVU8REesy5t1V7UptcYnS9icu9cr93TlTRM0TV6UR/jn8vh8UTqO7s8ynHq6nmqq7lVR9j6cwa+92fKbtcd+I8/y4ajpLoyNXXTsttFq9taqeKKbdPFrEo/ctx8I+c/8AcyHv0Rq9zg627k9Q517Iz8yqK6rVdfNNmIjtTEfCJ79+O3w9GnfNy5Rat1XLlVNFFMc1VVTxER6zKg1HVlO+2tdnV4N6/rbfNNexmYptzXHlTE96vxgGhAAAAAAAAAAAAAAAAAAAAAAAAAAAAFXvt9Y6fxbeRkYuXkU11+CKcWz7yYnjnv6Qz9XtN18UzMafdzPHaPsfx/MG0U296r1HTtEfeGVTF6r+5j248d2v8KY7/wC/ZznYdfb3c5NVmMXYabX+deNiVXb9UenM8RT9PzTdHu+mNDcm/j6He3syrvXl5OJ7y7VP+qZ7fTgF39o6s6q/Z7f9nNZV/m3Y8WVcj5R8KP8AlXYeXrtJkXdZ0TgTt9zV+0Z1yrxUUTz3m5c8/wAI7fVV9QdZZHUWbTg14O4wdHHe9NjGmb+R/D6U0/Wf5L3Wdb6HT4dOJr9Bt8XHo+FNOD+czzzM/OQXfTXSn3TevbLaX4zt1k972VVHamP3KPSn+vklbzqzVdP8W8zI8eVX+rxbMeO7XPlxTH8+HPtn7Sr+4zZxLWRe6f13nlV49Vy/cj0piI4p/ruteneoPZ9pI95h7CmrLr/WZWTbuVXq585mqae304BOjVbfrW/Td39u5rNLTPNGtpr4uX/ndmPhH8P/AK2mPjWcTHt2Ma1Ras248NFFEcRTHpEM1f8AaN03apo9xn/a7tdXhos4tuq5XVPyjhqYnmIn19QAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAODgAODgAOHjcw8a7HFzHtVxzz+lREvYBGsa3Cxr03rGJYtXZ7TXRappqn6xCSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//Z" class="signature-image" alt="חתימה">
+                    
+                    <div class="signature-meta">
+                        Super Admin
+                         — 16 במרץ 2026
+                    </div>
+                
+            </div>
+        </div>
+        
+        
+    </div>
+    
+</div>
+
+
+</body>
+</html>

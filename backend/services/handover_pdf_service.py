@@ -4,6 +4,7 @@ import re
 import asyncio
 import base64
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
@@ -18,7 +19,11 @@ _FONTS_DIR = _BACKEND_DIR / "fonts"
 
 _IMAGE_FETCH_TIMEOUT = 5
 _MAX_IMAGE_WIDTH = 300
+_PHOTO_THUMB_WIDTH = 150
 _JPEG_QUALITY = 65
+
+_b64_cache = {}
+_B64_CACHE_TTL = 900
 
 HARDCODED_PROPERTY_LABELS = {
     "address": "כתובת",
@@ -60,6 +65,22 @@ STATUS_COLORS = {
     "not_checked": "#e5e7eb",
 }
 
+STATUS_BG_COLORS = {
+    "ok": "#DCFCE7",
+    "partial": "#FEF3C7",
+    "defective": "#FEE2E2",
+    "not_relevant": "#F1F5F9",
+    "not_checked": "#F1F5F9",
+}
+
+STATUS_TEXT_COLORS = {
+    "ok": "#166534",
+    "partial": "#92400e",
+    "defective": "#991b1b",
+    "not_relevant": "#64748b",
+    "not_checked": "#94a3b8",
+}
+
 SEVERITY_LABELS = {
     "critical": "קריטי",
     "normal": "רגיל",
@@ -93,6 +114,12 @@ def _format_hebrew_date(dt_str: Optional[str]) -> str:
         return str(dt_str)[:10]
 
 
+def _format_short_date(dt_obj: Optional[datetime] = None) -> str:
+    if dt_obj is None:
+        dt_obj = datetime.now()
+    return f"{dt_obj.day:02d}.{dt_obj.month:02d}.{dt_obj.year}"
+
+
 def _sanitize_filename(text: str) -> str:
     if not text:
         return "unknown"
@@ -101,7 +128,7 @@ def _sanitize_filename(text: str) -> str:
     return ascii_safe or "unknown"
 
 
-async def _fetch_image_as_base64(url: str, session=None) -> Optional[str]:
+async def _fetch_image_as_base64(url: str, session=None, max_width=None) -> Optional[str]:
     if not url:
         return None
     try:
@@ -119,7 +146,7 @@ async def _fetch_image_as_base64(url: str, session=None) -> Optional[str]:
                         return None
                     data = await resp.read()
 
-        data = _resize_image(data)
+        data = _resize_image(data, max_width=max_width)
         content_type = "image/jpeg"
         if data[:4] == b'\x89PNG':
             content_type = "image/png"
@@ -130,14 +157,16 @@ async def _fetch_image_as_base64(url: str, session=None) -> Optional[str]:
         return None
 
 
-def _resize_image(data: bytes) -> bytes:
+def _resize_image(data: bytes, max_width=None) -> bytes:
+    if max_width is None:
+        max_width = _MAX_IMAGE_WIDTH
     try:
         from PIL import Image
         img = Image.open(io.BytesIO(data))
-        if img.width > _MAX_IMAGE_WIDTH:
-            ratio = _MAX_IMAGE_WIDTH / img.width
+        if img.width > max_width:
+            ratio = max_width / img.width
             new_h = int(img.height * ratio)
-            img = img.resize((_MAX_IMAGE_WIDTH, new_h), Image.LANCZOS)
+            img = img.resize((max_width, new_h), Image.LANCZOS)
         if img.mode == 'RGBA':
             bg = Image.new('RGB', img.size, (255, 255, 255))
             bg.paste(img, mask=img.split()[3])
@@ -166,15 +195,22 @@ def _local_image_to_base64(file_path: str) -> Optional[str]:
         return None
 
 
-async def _fetch_local_or_remote_image(stored_ref: str, session=None) -> Optional[str]:
+async def _fetch_local_or_remote_image(stored_ref: str, session=None, max_width=None) -> Optional[str]:
     if not stored_ref:
         return None
 
-    from services.object_storage import generate_url, is_s3_mode
+    now = time.time()
+    cache_key = f"{stored_ref}:{max_width or 'default'}"
+    cached = _b64_cache.get(cache_key)
+    if cached and (now - cached[1]) < _B64_CACHE_TTL:
+        return cached[0]
 
+    from services.object_storage import generate_url
+
+    result = None
     if stored_ref.startswith("s3://"):
         url = generate_url(stored_ref)
-        return await _fetch_image_as_base64(url, session)
+        result = await _fetch_image_as_base64(url, session, max_width=max_width)
     elif stored_ref.startswith("/api/uploads/"):
         rel_path = stored_ref[len("/api/uploads/"):]
         uploads_root = (_BACKEND_DIR / "uploads").resolve()
@@ -182,10 +218,20 @@ async def _fetch_local_or_remote_image(stored_ref: str, session=None) -> Optiona
         if not str(local_path).startswith(str(uploads_root)):
             logger.warning(f"[PDF] Path traversal blocked: {stored_ref}")
             return None
-        return _local_image_to_base64(str(local_path))
+        result = _local_image_to_base64(str(local_path))
     else:
         logger.debug(f"[PDF] Ignoring unrecognized image ref: {stored_ref[:60]}")
         return None
+
+    if result:
+        if len(_b64_cache) > 500:
+            cutoff = now - _B64_CACHE_TTL
+            expired = [k for k, v in _b64_cache.items() if v[1] < cutoff]
+            for k in expired:
+                del _b64_cache[k]
+        _b64_cache[cache_key] = (result, now)
+
+    return result
 
 
 async def generate_handover_pdf(protocol: dict, db) -> bytes:
@@ -234,8 +280,16 @@ async def _build_template_context(protocol: dict, db) -> dict:
     protocol_type = protocol.get("type", "initial")
     type_label = "פרוטוקול מסירה ראשונית" if protocol_type == "initial" else "פרוטוקול מסירת חזקה"
 
+    display_number = protocol.get("display_number")
+    protocol_id = protocol.get("id", "")
+    if display_number:
+        display_number_str = str(display_number)
+    else:
+        display_number_str = protocol_id[:8] if protocol_id else ""
+
     signed_at_str = protocol.get("signed_at", protocol.get("updated_at", ""))
     signed_date = _format_hebrew_date(signed_at_str)
+    generation_date = _format_short_date()
 
     property_schema = protocol.get("property_fields_schema")
     property_details = protocol.get("property_details", {}) or {}
@@ -271,7 +325,6 @@ async def _build_template_context(protocol: dict, db) -> dict:
         async for task_doc in cursor:
             defect_map[task_doc["id"]] = task_doc
 
-    image_tasks = []
     image_keys = []
 
     logo_url = snapshot.get("company_logo_url")
@@ -296,7 +349,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     item_photos = defect_photos
 
             if item_photos and item.get("status") in ("defective", "partial"):
-                for photo_ref in item_photos[:2]:
+                for photo_ref in item_photos[:3]:
                     key_name = f"photo_{photo_counter}"
                     image_keys.append((key_name, photo_ref))
                     item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
@@ -319,7 +372,9 @@ async def _build_template_context(protocol: dict, db) -> dict:
         async with aiohttp.ClientSession() as session:
             fetch_tasks = []
             for key_name, stored_ref in image_keys:
-                fetch_tasks.append(_fetch_local_or_remote_image(stored_ref, session))
+                is_photo = key_name.startswith("photo_")
+                mw = _PHOTO_THUMB_WIDTH if is_photo else None
+                fetch_tasks.append(_fetch_local_or_remote_image(stored_ref, session, max_width=mw))
 
             results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
             for i, (key_name, _) in enumerate(image_keys):
@@ -332,11 +387,18 @@ async def _build_template_context(protocol: dict, db) -> dict:
 
     inspection_sections = []
     all_defects = []
+    global_ok = global_fail = global_partial = 0
+
     for sec in sections:
         sec_items = []
         sec_ok = sec_fail = sec_partial = sec_na = 0
+        all_not_checked = True
+
         for idx, item in enumerate(sec.get("items", []), 1):
             status = item.get("status", "not_checked")
+            if status not in (None, "", "not_checked"):
+                all_not_checked = False
+
             item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
             photo_keys = item_photo_map.get(item_key, [])
             photo_b64s = [images.get(pk) for pk in photo_keys]
@@ -361,6 +423,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
                 "status": status,
                 "status_label": STATUS_LABELS.get(status, status),
                 "status_color": STATUS_COLORS.get(status, "#e5e7eb"),
+                "status_bg": STATUS_BG_COLORS.get(status, "#F1F5F9"),
+                "status_text_color": STATUS_TEXT_COLORS.get(status, "#64748b"),
                 "description": description,
                 "severity": severity,
                 "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
@@ -385,6 +449,10 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     "description": description,
                 })
 
+        global_ok += sec_ok
+        global_fail += sec_fail
+        global_partial += sec_partial
+
         inspection_sections.append({
             "name": sec.get("name", ""),
             "items": sec_items,
@@ -393,13 +461,17 @@ async def _build_template_context(protocol: dict, db) -> dict:
             "fail": sec_fail,
             "partial": sec_partial,
             "na": sec_na,
+            "collapsed": all_not_checked,
         })
+
+    stats_total = global_ok + global_fail + global_partial
 
     delivered_items = protocol.get("delivered_items", [])
     delivered_data = [
         {"num": i + 1, "name": d.get("name", ""), "quantity": d.get("quantity", ""), "notes": d.get("notes", "")}
         for i, d in enumerate(delivered_items) if d.get("name")
     ]
+    has_any_quantity = any(d.get("quantity") for d in delivered_data)
 
     legal_sections = []
     for ls_idx, ls in enumerate(legal_sections_raw):
@@ -467,7 +539,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
     return {
         "type_label": type_label,
         "protocol_type": protocol_type,
-        "protocol_id": protocol.get("id", ""),
+        "protocol_id": protocol_id,
+        "display_number": display_number_str,
         "project_name": snapshot.get("project_name", ""),
         "building_name": snapshot.get("building_name", ""),
         "floor_name": snapshot.get("floor_name", ""),
@@ -476,14 +549,20 @@ async def _build_template_context(protocol: dict, db) -> dict:
         "company_name": snapshot.get("company_name", ""),
         "logo_b64": images.get("logo"),
         "signed_date": signed_date,
+        "generation_date": generation_date,
         "property_rows": property_rows,
         "tenants": tenants_data,
         "inspection_sections": inspection_sections,
         "delivered_items": delivered_data,
+        "has_any_quantity": has_any_quantity,
         "legal_sections": legal_sections,
         "signatures": signature_data,
         "all_defects": all_defects,
         "total_defects": len(all_defects),
         "defect_severity_counts": defect_severity_counts,
+        "stats_total": stats_total,
+        "stats_ok": global_ok,
+        "stats_fail": global_fail,
+        "stats_partial": global_partial,
         "fonts_dir": fonts_dir_str,
     }
