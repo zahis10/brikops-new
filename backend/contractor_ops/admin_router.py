@@ -1018,7 +1018,7 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
     }
     if tpl_type == "handover":
         doc["sections"] = copy.deepcopy(source.get("sections", []))
-        for extra_key in ("default_delivered_items", "default_property_fields", "signature_labels"):
+        for extra_key in ("default_delivered_items", "default_property_fields", "signature_labels", "legal_sections"):
             if extra_key in source:
                 doc[extra_key] = copy.deepcopy(source[extra_key])
     else:
