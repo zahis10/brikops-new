@@ -74,6 +74,7 @@ const HandoverSectionPage = () => {
   const originalItemRef = useRef(null);
   const sectionCompletionShown = useRef(new Set());
   const completionToastId = useRef(null);
+  const prevWasComplete = useRef(false);
 
   useEffect(() => {
     const onResize = () => setIsNarrow(window.innerWidth < 400);
@@ -103,6 +104,18 @@ const HandoverSectionPage = () => {
   const totalCount = items.length;
   const uncheckedCount = totalCount - checkedCount;
   const progressPct = totalCount > 0 ? (checkedCount / totalCount) * 100 : 0;
+
+  const isComplete = totalCount > 0 && checkedCount === totalCount;
+
+  useEffect(() => {
+    if (!loading && totalCount > 0) {
+      prevWasComplete.current = isComplete;
+      if (isComplete) {
+        sectionCompletionShown.current.add(sectionId);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   const uncheckedItems = useMemo(() => items.filter(i => !i.status || i.status === 'not_checked'), [items]);
   const resettableItems = useMemo(() => items.filter(i => i.status && i.status !== 'not_checked' && !i.defect_id), [items]);
@@ -290,7 +303,6 @@ const HandoverSectionPage = () => {
 
   const showCompletionToast = useCallback(() => {
     if (sectionCompletionShown.current.has(sectionId)) return;
-    sectionCompletionShown.current.add(sectionId);
 
     if (completionToastId.current) {
       toast.dismiss(completionToastId.current);
@@ -306,6 +318,7 @@ const HandoverSectionPage = () => {
             <button
               onClick={() => {
                 toast.dismiss(tId);
+                sectionCompletionShown.current.add(sectionId);
                 navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${nextSection.section_id}`);
               }}
               className="flex-1 py-1.5 px-3 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700"
@@ -316,6 +329,7 @@ const HandoverSectionPage = () => {
             <button
               onClick={() => {
                 toast.dismiss(tId);
+                sectionCompletionShown.current.add(sectionId);
                 navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`);
               }}
               className="flex-1 py-1.5 px-3 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700"
@@ -326,6 +340,7 @@ const HandoverSectionPage = () => {
           <button
             onClick={() => {
               toast.dismiss(tId);
+              sectionCompletionShown.current.add(sectionId);
             }}
             className="py-1.5 px-3 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50"
           >

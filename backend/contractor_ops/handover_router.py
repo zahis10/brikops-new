@@ -1005,14 +1005,19 @@ async def batch_update_items(
 
         if new_status in ("ok", "not_relevant"):
             if cur_status in (None, "not_checked", ""):
-                eligible_items.append(item)
+                if cur_status != new_status:
+                    eligible_items.append(item)
+                else:
+                    skipped += 1
             else:
                 skipped += 1
         elif new_status == "not_checked":
             if has_defect:
                 skipped += 1
-            else:
+            elif cur_status != "not_checked":
                 eligible_items.append(item)
+            else:
+                skipped += 1
 
     if not eligible_items:
         return {"updated": 0, "skipped": skipped, "items": []}
