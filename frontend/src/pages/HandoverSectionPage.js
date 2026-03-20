@@ -323,62 +323,37 @@ const HandoverSectionPage = () => {
 
     const nextSection = findNextIncompleteSection();
 
-    const toastContent = (tId) => (
-      <div className="flex flex-col gap-2" dir="rtl">
-        <p className="text-sm font-bold text-green-800">הסקשן הושלם! ✓</p>
-        <div className="flex gap-2">
-          {nextSection ? (
-            <button
-              onClick={() => {
-                toast.dismiss(tId);
-                sectionCompletionShown.current.add(sectionId);
-                navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${nextSection.section_id}`);
-              }}
-              className="flex-1 py-1.5 px-3 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700"
-            >
-              עבור ל: {nextSection.name} ←
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                toast.dismiss(tId);
-                sectionCompletionShown.current.add(sectionId);
-                navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`);
-              }}
-              className="flex-1 py-1.5 px-3 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700"
-            >
-              חזרה לפרוטוקול
-            </button>
-          )}
-          <button
-            onClick={() => {
-              toast.dismiss(tId);
-              sectionCompletionShown.current.add(sectionId);
-            }}
-            className="py-1.5 px-3 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50"
-          >
-            השאר כאן
-          </button>
-        </div>
-      </div>
-    );
-
-    const tId = toast.custom(
-      (id) => toastContent(id),
-      {
-        duration: Infinity,
-        position: 'bottom-center',
-        style: {
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
-          background: '#f0fdf4',
-          border: '1px solid #bbf7d0',
-          borderRadius: '12px',
-          padding: '12px',
-          maxWidth: '400px',
-          width: '90vw',
+    const tId = toast.success('✓ הסקשן הושלם!', {
+      duration: Infinity,
+      description: nextSection
+        ? `עבור לסקשן הבא: ${nextSection.name}`
+        : 'כל הסקשנים הושלמו',
+      action: nextSection ? {
+        label: `עבור ל: ${nextSection.name} ←`,
+        onClick: () => {
+          sectionCompletionShown.current.add(sectionId);
+          navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${nextSection.section_id}`);
         },
-      }
-    );
+      } : {
+        label: 'חזרה לפרוטוקול',
+        onClick: () => {
+          sectionCompletionShown.current.add(sectionId);
+          navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`);
+        },
+      },
+      cancel: {
+        label: 'השאר כאן',
+        onClick: () => {
+          sectionCompletionShown.current.add(sectionId);
+        },
+      },
+      style: {
+        background: '#f0fdf4',
+        border: '1px solid #bbf7d0',
+        direction: 'rtl',
+        textAlign: 'right',
+      },
+    });
     completionToastId.current = tId;
     prevWasComplete.current = true;
     sectionCompletionShown.current.add(sectionId);
