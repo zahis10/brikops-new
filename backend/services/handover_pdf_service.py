@@ -278,7 +278,6 @@ async def _build_template_context(protocol: dict, db) -> dict:
         signatures = {}
 
     protocol_type = protocol.get("type", "initial")
-    type_label = "פרוטוקול מסירה ראשונית" if protocol_type == "initial" else "פרוטוקול מסירת חזקה"
 
     display_number = protocol.get("display_number")
     protocol_id = protocol.get("id", "")
@@ -537,7 +536,6 @@ async def _build_template_context(protocol: dict, db) -> dict:
         fonts_dir_str = fonts_dir_str.replace('\\', '/')
 
     return {
-        "type_label": type_label,
         "protocol_type": protocol_type,
         "protocol_id": protocol_id,
         "display_number": display_number_str,

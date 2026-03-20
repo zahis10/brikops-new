@@ -24,7 +24,7 @@
     margin: 18mm 14mm 22mm 14mm;
 
     @bottom-right {
-        content: "נוצר באמצעות BrikOps | brikops.com";
+        content: "\25A0  נוצר באמצעות BrikOps | brikops.com";
         font-family: 'Rubik', sans-serif;
         font-size: 7pt;
         color: #f97316;
@@ -488,7 +488,11 @@ tbody tr:nth-child(odd) {
     <div class="cover-company-name">{{ company_name }}</div>
     {% endif %}
 
-    <div class="cover-title">{{ type_label }}</div>
+    {% if protocol_type == 'initial' %}
+    <div class="cover-title">פרוטוקול מסירה ראשונית</div>
+    {% else %}
+    <div class="cover-title">פרוטוקול מסירת חזקה</div>
+    {% endif %}
     <div class="cover-project">{{ project_name }}</div>
 
     {% if display_number %}
