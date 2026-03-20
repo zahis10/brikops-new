@@ -353,6 +353,15 @@ const HandoverProtocolPage = () => {
               <div className="flex items-center gap-1.5 text-indigo-300 text-xs mt-0.5">
                 {protocol.snapshot?.building_name && <span>{protocol.snapshot.building_name}</span>}
                 {protocol.snapshot?.unit_name && <><span>·</span><span>{protocol.snapshot.unit_name}</span></>}
+                {protocol.template_snapshot_version && (
+                  <>
+                    <span>·</span>
+                    <span className="text-indigo-400/70">
+                      תבנית v{protocol.template_snapshot_version}
+                      {protocol.newer_version_available && ` (קיימת v${protocol.newer_version})`}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium ${statusInfo.color}`}>

@@ -916,6 +916,26 @@ async def list_protocols(
 async def get_protocol(project_id: str, protocol_id: str, user: dict = Depends(get_current_user)):
     await _check_handover_access(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
+
+    version_id = protocol.get("template_version_id")
+    if version_id:
+        db = get_db()
+        tpl = await db.qc_templates.find_one(
+            {"id": version_id},
+            {"_id": 0, "version": 1, "family_id": 1}
+        )
+        if tpl:
+            protocol["template_snapshot_version"] = tpl.get("version")
+            family_id = tpl.get("family_id")
+            if family_id:
+                newer = await db.qc_templates.find_one(
+                    {"family_id": family_id, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
+                    {"_id": 0, "version": 1}
+                )
+                if newer:
+                    protocol["newer_version_available"] = True
+                    protocol["newer_version"] = newer["version"]
+
     return protocol
 
 
