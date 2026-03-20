@@ -833,7 +833,7 @@ const HandoverSectionPage = () => {
                       </div>
                     )}
 
-                    <div className="space-y-1" data-error={errors.photos ? 'true' : undefined}>
+                    <div className={`space-y-1 rounded-lg p-2 -mx-2 ${errors.photos ? 'border border-red-400 ring-1 ring-red-200 bg-red-50/30' : ''}`} data-error={errors.photos ? 'true' : undefined}>
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-slate-700">
                           {existingPhotos.length > 0 ? 'תמונות חדשות' : 'תמונות'}
@@ -942,7 +942,7 @@ const HandoverSectionPage = () => {
                       )}
 
                       {errors.photos && (
-                        <p className="text-[11px] text-red-500 mt-0.5 border-red-400">{errors.photos}</p>
+                        <p className="text-[11px] text-red-500 mt-0.5 font-medium">{errors.photos}</p>
                       )}
                     </div>
 
