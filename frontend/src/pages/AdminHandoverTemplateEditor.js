@@ -4,7 +4,7 @@ import { templateService } from '../services/api';
 import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, Save, Plus, Trash2, ChevronDown, ChevronUp,
-  AlertTriangle, X, GripVertical, Package, LayoutList, FileSignature
+  AlertTriangle, X, GripVertical, Package, LayoutList, FileSignature, Scale
 } from 'lucide-react';
 
 const TABS = [
@@ -12,6 +12,7 @@ const TABS = [
   { key: 'delivered', label: 'פריטים שנמסרו', icon: Package },
   { key: 'fields', label: 'שדות פרטי נכס', icon: LayoutList },
   { key: 'signatures', label: 'טקסט חתימות', icon: FileSignature },
+  { key: 'legal', label: 'נסחים משפטיים', icon: Scale },
 ];
 
 const TRADES = [
@@ -97,6 +98,8 @@ const AdminHandoverTemplateEditor = () => {
   const [defaultDeliveredItems, setDefaultDeliveredItems] = useState([]);
   const [defaultPropertyFields, setDefaultPropertyFields] = useState([]);
   const [signatureLabels, setSignatureLabels] = useState({ ...DEFAULT_SIG_LABELS });
+  const [legalSections, setLegalSections] = useState([]);
+  const [legalDeleteConfirm, setLegalDeleteConfirm] = useState(null);
 
   const allTrades = useMemo(() => {
     const dynamic = new Set(TRADES);
@@ -137,6 +140,7 @@ const AdminHandoverTemplateEditor = () => {
       setDefaultDeliveredItems(tpl.default_delivered_items || []);
       setDefaultPropertyFields(tpl.default_property_fields || []);
       setSignatureLabels({ ...DEFAULT_SIG_LABELS, ...(tpl.signature_labels || {}) });
+      setLegalSections(tpl.legal_sections || []);
 
       const expanded = {};
       const secs = tpl.sections || tpl.stages || [];
@@ -167,6 +171,25 @@ const AdminHandoverTemplateEditor = () => {
           toast.error(`שם פריט ${j + 1} בסקשן "${sections[i].name}" לא יכול להיות ריק`);
           return;
         }
+      }
+    }
+    for (let i = 0; i < legalSections.length; i++) {
+      const ls = legalSections[i];
+      if (!(ls.title || '').trim()) {
+        toast.error(`נסח משפטי ${i + 1}: כותרת נדרשת`);
+        return;
+      }
+      if (!(ls.body || '').trim()) {
+        toast.error(`נסח משפטי ${i + 1}: תוכן נדרש`);
+        return;
+      }
+      if (ls.requires_signature && !ls.signature_role) {
+        toast.error(`נסח משפטי ${i + 1}: יש לבחור חותם`);
+        return;
+      }
+      if (!ls.applies_to || ls.applies_to.length === 0) {
+        toast.error(`נסח משפטי ${i + 1}: יש לבחור לפחות סוג אחד`);
+        return;
       }
     }
 
@@ -200,6 +223,15 @@ const AdminHandoverTemplateEditor = () => {
         tenant_2: signatureLabels.tenant_2 || '',
         contractor_rep: signatureLabels.contractor_rep || '',
       };
+      payload.legal_sections = legalSections.map((ls, i) => ({
+        ...(ls.id ? { id: ls.id } : {}),
+        title: (ls.title || '').trim(),
+        body: (ls.body || '').trim(),
+        requires_signature: !!ls.requires_signature,
+        signature_role: ls.requires_signature ? ls.signature_role : null,
+        applies_to: ls.applies_to || ['initial', 'final'],
+        order: i + 1,
+      }));
       await templateService.update(templateId, payload);
       setMalformedWarning(false);
       toast.success('התבנית נשמרה בהצלחה');
@@ -513,6 +545,182 @@ const AdminHandoverTemplateEditor = () => {
                 />
               </div>
             ))}
+          </div>
+        )}
+
+        {activeTab === 'legal' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-700">נסחים משפטיים ({legalSections.length})</h3>
+            </div>
+            <p className="text-xs text-slate-400">נסחים משפטיים שייכללו בפרוטוקולי מסירה שנוצרים מתבנית זו. ניתן לסנן לפי סוג מסירה.</p>
+            {legalSections.length === 0 ? (
+              <div className="text-center py-6 space-y-2">
+                <p className="text-sm text-slate-400">לא הוגדרו נסחים משפטיים.</p>
+                <p className="text-xs text-slate-400">הוסיפו נסחים כדי שיופיעו בפרוטוקולי מסירה.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {legalSections.map((ls, idx) => (
+                  <div key={ls.id || idx} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/50">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-500">נסח {idx + 1}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            if (idx === 0) return;
+                            setLegalSections(prev => {
+                              const next = [...prev];
+                              [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                              return next;
+                            });
+                          }}
+                          disabled={idx === 0}
+                          className="p-1 hover:bg-slate-200 rounded disabled:opacity-30"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (idx >= legalSections.length - 1) return;
+                            setLegalSections(prev => {
+                              const next = [...prev];
+                              [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                              return next;
+                            });
+                          }}
+                          disabled={idx >= legalSections.length - 1}
+                          className="p-1 hover:bg-slate-200 rounded disabled:opacity-30"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                        </button>
+                        {legalDeleteConfirm === idx ? (
+                          <div className="flex items-center gap-1 mr-1">
+                            <button
+                              onClick={() => {
+                                setLegalSections(prev => prev.filter((_, i) => i !== idx));
+                                setLegalDeleteConfirm(null);
+                              }}
+                              className="text-[10px] text-red-600 hover:text-red-800 font-medium px-2 py-0.5 bg-red-50 rounded"
+                            >
+                              מחק
+                            </button>
+                            <button
+                              onClick={() => setLegalDeleteConfirm(null)}
+                              className="text-[10px] text-slate-500 px-2 py-0.5"
+                            >
+                              ביטול
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setLegalDeleteConfirm(idx)}
+                            className="p-1 hover:bg-red-100 rounded text-slate-400 hover:text-red-500"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-600">כותרת</label>
+                      <input
+                        type="text"
+                        value={ls.title}
+                        onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, title: e.target.value } : s))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                        dir="rtl"
+                        placeholder="שם הנסח"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-600">תוכן</label>
+                      <textarea
+                        value={ls.body}
+                        onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, body: e.target.value } : s))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-300 leading-relaxed min-h-[80px]"
+                        dir="rtl"
+                        placeholder="תוכן הנסח המשפטי..."
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={ls.requires_signature}
+                          onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, requires_signature: e.target.checked, ...(e.target.checked ? {} : { signature_role: null }) } : s))}
+                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                        />
+                        <span className="text-sm text-slate-700">דורש חתימה</span>
+                      </label>
+
+                      {ls.requires_signature && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">חותם:</span>
+                          <select
+                            value={ls.signature_role || ''}
+                            onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, signature_role: e.target.value || null } : s))}
+                            className="text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-300"
+                          >
+                            <option value="">— בחר —</option>
+                            <option value="manager">מנהל פרויקט / מפקח</option>
+                            <option value="tenant">רוכש/ת ראשי/ת</option>
+                            <option value="tenant_2">רוכש/ת נוסף/ת</option>
+                            <option value="contractor_rep">נציג קבלן</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <span className="text-xs text-slate-500">חל על:</span>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={(ls.applies_to || []).includes('initial')}
+                          onChange={(e) => {
+                            setLegalSections(prev => prev.map((s, i) => {
+                              if (i !== idx) return s;
+                              const cur = s.applies_to || [];
+                              const next = e.target.checked ? [...new Set([...cur, 'initial'])] : cur.filter(t => t !== 'initial');
+                              return next.length > 0 ? { ...s, applies_to: next } : s;
+                            }));
+                          }}
+                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                        />
+                        <span className="text-sm text-slate-700">ראשונית</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={(ls.applies_to || []).includes('final')}
+                          onChange={(e) => {
+                            setLegalSections(prev => prev.map((s, i) => {
+                              if (i !== idx) return s;
+                              const cur = s.applies_to || [];
+                              const next = e.target.checked ? [...new Set([...cur, 'final'])] : cur.filter(t => t !== 'final');
+                              return next.length > 0 ? { ...s, applies_to: next } : s;
+                            }));
+                          }}
+                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                        />
+                        <span className="text-sm text-slate-700">חזקה</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setLegalSections(prev => [...prev, { id: genId('legal'), title: '', body: '', requires_signature: false, signature_role: null, applies_to: ['initial', 'final'], order: prev.length + 1 }])}
+              className="w-full py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-dashed border-purple-200 transition-colors font-medium"
+            >
+              <Plus className="w-4 h-4" />
+              הוסף נסח משפטי
+            </button>
           </div>
         )}
 

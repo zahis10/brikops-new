@@ -742,6 +742,24 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
 
     org_legal_text = "הנוסח המשפטי ייקבע על ידי הארגון."
     legal_sections_snapshot = []
+
+    tpl_legal = tpl.get("legal_sections", [])
+    if tpl_legal:
+        for ls in sorted(tpl_legal, key=lambda x: x.get("order", 0)):
+            if protocol_type in ls.get("applies_to", []):
+                legal_sections_snapshot.append({
+                    "id": ls["id"],
+                    "title": ls["title"],
+                    "body": ls["body"],
+                    "requires_signature": ls.get("requires_signature", False),
+                    "signature_role": ls.get("signature_role"),
+                    "order": ls.get("order", 0),
+                    "edited": False,
+                    "signature": None,
+                    "signer_name": None,
+                    "signed_at": None,
+                })
+
     if project.get("org_id"):
         org = await db.organizations.find_one({"id": project["org_id"]}, {"_id": 0})
         if org:
@@ -749,20 +767,22 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
             org_legal = org.get(legal_field, "").strip()
             if org_legal:
                 org_legal_text = org_legal
-            for ls in sorted(org.get("handover_legal_sections", []), key=lambda x: x.get("order", 0)):
-                if protocol_type in ls.get("applies_to", []):
-                    legal_sections_snapshot.append({
-                        "id": ls["id"],
-                        "title": ls["title"],
-                        "body": ls["body"],
-                        "requires_signature": ls.get("requires_signature", False),
-                        "signature_role": ls.get("signature_role"),
-                        "order": ls.get("order", 0),
-                        "edited": False,
-                        "signature": None,
-                        "signer_name": None,
-                        "signed_at": None,
-                    })
+            # TODO: Remove org fallback after migration verified
+            if not tpl_legal:
+                for ls in sorted(org.get("handover_legal_sections", []), key=lambda x: x.get("order", 0)):
+                    if protocol_type in ls.get("applies_to", []):
+                        legal_sections_snapshot.append({
+                            "id": ls["id"],
+                            "title": ls["title"],
+                            "body": ls["body"],
+                            "requires_signature": ls.get("requires_signature", False),
+                            "signature_role": ls.get("signature_role"),
+                            "order": ls.get("order", 0),
+                            "edited": False,
+                            "signature": None,
+                            "signer_name": None,
+                            "signed_at": None,
+                        })
 
     company_name = ""
     company_logo_url = None

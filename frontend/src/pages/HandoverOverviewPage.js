@@ -9,7 +9,6 @@ import {
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
-import OrgLegalSectionsEditor from '../components/org/OrgLegalSectionsEditor';
 import G4ImportModal from '../components/handover/G4ImportModal';
 
 const STATUS_COLORS = {
@@ -521,18 +520,25 @@ export default function HandoverOverviewPage() {
         />
       )}
 
-      {legalModalOpen && data?.org_id && (
+      {legalModalOpen && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/40" onClick={() => setLegalModalOpen(false)} />
-          <div className="absolute inset-x-4 top-[10%] bottom-[10%] sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-2xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" dir="rtl">
+          <div className="absolute inset-x-4 top-[30%] sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-md bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" dir="rtl">
             <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
-              <h2 className="text-sm font-bold text-slate-800">הגדרות נסחים משפטיים</h2>
+              <h2 className="text-sm font-bold text-slate-800">נסחים משפטיים</h2>
               <button onClick={() => setLegalModalOpen(false)} className="p-1 hover:bg-slate-100 rounded-lg">
                 <X className="w-5 h-5 text-slate-400" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-1">
-              <OrgLegalSectionsEditor orgId={data.org_id} />
+            <div className="p-5 space-y-3">
+              <p className="text-sm text-slate-600">נסחים משפטיים מנוהלים כעת דרך עורך תבניות המסירה.</p>
+              <p className="text-xs text-slate-400">פתחו את תבנית המסירה מדף ניהול תבניות ועברו לטאב "נסחים משפטיים".</p>
+              <button
+                onClick={() => { setLegalModalOpen(false); window.location.href = '/admin/qc-templates'; }}
+                className="w-full py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-purple-200 transition-colors font-medium"
+              >
+                עבור לניהול תבניות
+              </button>
             </div>
           </div>
         </div>

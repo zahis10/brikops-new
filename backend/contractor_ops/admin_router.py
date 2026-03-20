@@ -926,6 +926,15 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
         "created_at": now,
         "created_by": user["id"],
     }
+    legal_sections = None
+    if tpl_type == "handover":
+        raw_legal = body.get("legal_sections")
+        if raw_legal is not None:
+            if not isinstance(raw_legal, list):
+                raise HTTPException(status_code=400, detail="legal_sections חייב להיות מערך")
+            from contractor_ops.handover_router import _validate_legal_sections
+            legal_sections = _validate_legal_sections(raw_legal)
+
     if tpl_type == "handover":
         new_doc["sections"] = sections
         if default_delivered_items is not None:
@@ -940,6 +949,10 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
             new_doc["signature_labels"] = signature_labels
         elif "signature_labels" in old:
             new_doc["signature_labels"] = old["signature_labels"]
+        if legal_sections is not None:
+            new_doc["legal_sections"] = legal_sections
+        elif "legal_sections" in old:
+            new_doc["legal_sections"] = old["legal_sections"]
     else:
         new_doc["stages"] = stages
 
