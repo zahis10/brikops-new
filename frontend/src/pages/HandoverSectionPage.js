@@ -301,8 +301,9 @@ const HandoverSectionPage = () => {
     return null;
   }, [protocol, sectionId]);
 
-  const showCompletionToast = useCallback(() => {
+  const tryShowCompletionToast = useCallback(() => {
     if (sectionCompletionShown.current.has(sectionId)) return;
+    if (prevWasComplete.current) return;
 
     if (completionToastId.current) {
       toast.dismiss(completionToastId.current);
@@ -367,6 +368,7 @@ const HandoverSectionPage = () => {
       }
     );
     completionToastId.current = tId;
+    prevWasComplete.current = true;
   }, [sectionId, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
 
   const handleImageAdd = useCallback(async (e) => {
@@ -455,10 +457,10 @@ const HandoverSectionPage = () => {
     } else {
       setTimeout(() => {
         forceCloseSheet();
-        showCompletionToast();
+        tryShowCompletionToast();
       }, 200);
     }
-  }, [items, findNextUnchecked, openSheet, forceCloseSheet, showCompletionToast]);
+  }, [items, findNextUnchecked, openSheet, forceCloseSheet, tryShowCompletionToast]);
 
   const handleSimpleStatusSave = useCallback(async (newStatus) => {
     if (isSigned || saving || !activeItem) return;
@@ -477,6 +479,9 @@ const HandoverSectionPage = () => {
         updateItemLocally(activeItem.item_id, { status: newStatus });
       }
       originalItemRef.current = { ...originalItemRef.current, status: newStatus, notes };
+      if (newStatus === 'not_checked') {
+        prevWasComplete.current = false;
+      }
 
       setTimeout(() => {
         setFlashStatus(null);
@@ -616,7 +621,7 @@ const HandoverSectionPage = () => {
         : t('handover', 'markAllOkDone');
       toast.success(msg);
       if (uncheckedItems.length === uncheckedCount) {
-        showCompletionToast();
+        tryShowCompletionToast();
       }
     } catch (err) {
       console.error(err);
@@ -625,7 +630,7 @@ const HandoverSectionPage = () => {
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, uncheckedCount, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, showCompletionToast]);
+  }, [uncheckedItems, uncheckedCount, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, tryShowCompletionToast]);
 
   const handleMarkAllNotRelevant = useCallback(async () => {
     setShowBatchConfirm(null);
@@ -642,7 +647,7 @@ const HandoverSectionPage = () => {
         : `${data.updated} פריטים סומנו לא רלוונטי`;
       toast.success(msg);
       if (uncheckedItems.length === uncheckedCount) {
-        showCompletionToast();
+        tryShowCompletionToast();
       }
     } catch (err) {
       console.error(err);
@@ -651,7 +656,7 @@ const HandoverSectionPage = () => {
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, uncheckedCount, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, showCompletionToast]);
+  }, [uncheckedItems, uncheckedCount, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, tryShowCompletionToast]);
 
   const handleResetSection = useCallback(async () => {
     setShowBatchConfirm(null);
@@ -663,6 +668,9 @@ const HandoverSectionPage = () => {
         status: 'not_checked',
       });
       mergeItemsFromBatch(data.items);
+      if (data.updated > 0) {
+        prevWasComplete.current = false;
+      }
       const msg = data.skipped > 0
         ? `${data.updated} פריטים אופסו (${data.skipped} עם ליקויים לא אופסו)`
         : 'הסקשן אופס בהצלחה';
