@@ -978,8 +978,8 @@ async def batch_update_items(
 
     if not item_ids or not isinstance(item_ids, list):
         raise HTTPException(status_code=400, detail="item_ids חייב להיות רשימה")
-    if new_status not in ("ok", "not_checked"):
-        raise HTTPException(status_code=400, detail="סטטוס חייב להיות ok או not_checked")
+    if new_status not in ("ok", "not_checked", "not_relevant"):
+        raise HTTPException(status_code=400, detail="סטטוס חייב להיות ok, not_relevant או not_checked")
 
     db = get_db()
     ts = _now()
@@ -994,26 +994,42 @@ async def batch_update_items(
         raise HTTPException(status_code=404, detail="חלק לא נמצא בפרוטוקול")
 
     item_id_set = set(item_ids)
-    valid_item_ids = []
-    for item in target_section.get("items", []):
-        if item["item_id"] in item_id_set:
-            valid_item_ids.append(item["item_id"])
+    eligible_items = []
+    skipped = 0
 
-    if not valid_item_ids:
-        return {"updated": 0}
+    for item in target_section.get("items", []):
+        if item["item_id"] not in item_id_set:
+            continue
+        cur_status = item.get("status") or "not_checked"
+        has_defect = bool(item.get("defect_id"))
+
+        if new_status in ("ok", "not_relevant"):
+            if cur_status in (None, "not_checked", ""):
+                eligible_items.append(item)
+            else:
+                skipped += 1
+        elif new_status == "not_checked":
+            if has_defect:
+                skipped += 1
+            else:
+                eligible_items.append(item)
+
+    if not eligible_items:
+        return {"updated": 0, "skipped": skipped, "items": []}
 
     update_ops = {"$set": {"updated_at": ts}}
     if protocol.get("status") == "draft":
         update_ops["$set"]["status"] = "in_progress"
 
-    for item in target_section.get("items", []):
-        if item["item_id"] in item_id_set:
-            idx = next(
-                (i for i, it in enumerate(target_section["items"]) if it["item_id"] == item["item_id"]),
-                None,
-            )
-            if idx is not None:
-                update_ops["$set"][f"sections.$[sec].items.{idx}.status"] = new_status
+    changed_items = []
+    for item in eligible_items:
+        idx = next(
+            (i for i, it in enumerate(target_section["items"]) if it["item_id"] == item["item_id"]),
+            None,
+        )
+        if idx is not None:
+            update_ops["$set"][f"sections.$[sec].items.{idx}.status"] = new_status
+            changed_items.append({"item_id": item["item_id"], "status": new_status})
 
     array_filters = [{"sec.section_id": section_id}]
 
@@ -1023,7 +1039,7 @@ async def batch_update_items(
         array_filters=array_filters,
     )
 
-    return {"updated": len(valid_item_ids)}
+    return {"updated": len(changed_items), "skipped": skipped, "items": changed_items}
 
 
 @router.put("/projects/{project_id}/handover/protocols/{protocol_id}/sections/{section_id}/items/{item_id}")
