@@ -1467,6 +1467,7 @@ async def sign_role(
     signer_name: str = Form(...),
     signature_type: str = Form(...),
     typed_name: str = Form(None),
+    id_number: str = Form(None),
     signature_image: UploadFile = File(None),
     user: dict = Depends(get_current_user),
 ):
@@ -1502,9 +1503,12 @@ async def sign_role(
     db = get_db()
     ts = _now()
 
+    id_number_val = (id_number or "").strip() or None
+
     sig_data = {
         "type": signature_type,
         "signer_name": signer_name,
+        "id_number": id_number_val,
         "signer_user_id": user["id"],
         "signed_at": ts,
         "ip_address": None,
@@ -2146,6 +2150,7 @@ async def sign_legal_section(
     signer_name: str = Form(...),
     signature_type: str = Form(...),
     typed_name: str = Form(None),
+    id_number: str = Form(None),
     signature_image: UploadFile = File(None),
     user: dict = Depends(get_current_user),
 ):
@@ -2177,11 +2182,13 @@ async def sign_legal_section(
 
     db = get_db()
     ts = _now()
+    id_number_val = (id_number or "").strip() or None
 
     sig_data = {
         "type": signature_type,
         "signer_user_id": user["id"],
         "signed_at": ts,
+        "id_number": id_number_val,
     }
 
     if signature_type == "canvas":

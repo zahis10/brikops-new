@@ -234,6 +234,9 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-slate-500">
                     <span className="font-medium">{sig.signer_name}</span>
+                    {sig.id_number && (
+                      <span className="mr-1 text-slate-400" dir="ltr">({sig.id_number})</span>
+                    )}
                     {sig.signed_at && (
                       <span className="mr-2">
                         {new Date(sig.signed_at).toLocaleDateString('he-IL')} {new Date(sig.signed_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
@@ -309,6 +312,11 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
         projectId={projectId}
         protocolId={protocol?.id}
         currentUserName={currentUserName}
+        tenantData={
+          signingRole === 'tenant' ? (protocol?.tenants || [])[0] :
+          signingRole === 'tenant_2' ? (protocol?.tenants || [])[1] :
+          null
+        }
         onSigned={onUpdated}
       />
     </div>

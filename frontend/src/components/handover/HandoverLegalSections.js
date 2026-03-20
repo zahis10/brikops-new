@@ -215,6 +215,11 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
         projectId={projectId}
         protocolId={protocol?.id}
         currentUserName={currentUserName}
+        tenantData={
+          signingSection?.signature_role === 'tenant' ? (protocol?.tenants || [])[0] :
+          signingSection?.signature_role === 'tenant_2' ? (protocol?.tenants || [])[1] :
+          null
+        }
         onSigned={onUpdated}
         signFn={signingSection ? (formData) => handleSignLegalSection(signingSection.id, formData) : undefined}
       />

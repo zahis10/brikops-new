@@ -14,11 +14,12 @@ const ROLE_LABELS = {
 };
 
 const SignaturePadModal = ({
-  open, onClose, role, projectId, protocolId, currentUserName, onSigned, signFn,
+  open, onClose, role, projectId, protocolId, currentUserName, tenantData, onSigned, signFn,
 }) => {
   const [tab, setTab] = useState('canvas');
   const [typedName, setTypedName] = useState('');
   const [signerName, setSignerName] = useState(currentUserName || '');
+  const [idNumber, setIdNumber] = useState('');
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -31,12 +32,14 @@ const SignaturePadModal = ({
     if (open) {
       setTab('canvas');
       setTypedName('');
-      setSignerName(role === 'tenant' ? '' : (currentUserName || ''));
+      const isTenantRole = role === 'tenant' || role === 'tenant_2';
+      setSignerName(isTenantRole ? (tenantData?.name || '') : (currentUserName || ''));
+      setIdNumber(isTenantRole ? (tenantData?.id_number || '') : '');
       setSaving(false);
       setShowConfirm(false);
       hasDrawnRef.current = false;
     }
-  }, [open, role, currentUserName]);
+  }, [open, role, currentUserName, tenantData]);
 
   const initCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -130,6 +133,9 @@ const SignaturePadModal = ({
       const formData = new FormData();
       formData.append('signer_name', signerName.trim());
       formData.append('signature_type', tab);
+      if (idNumber.trim()) {
+        formData.append('id_number', idNumber.trim());
+      }
 
       if (tab === 'canvas') {
         const canvas = canvasRef.current;
@@ -263,6 +269,22 @@ const SignaturePadModal = ({
               dir="rtl"
             />
           </div>
+
+          {(role === 'tenant' || role === 'tenant_2') && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">ת.ז.</label>
+              <input
+                type="text"
+                value={idNumber}
+                onChange={(e) => setIdNumber(e.target.value)}
+                placeholder="מספר תעודת זהות"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm
+                  focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400"
+                dir="ltr"
+                inputMode="numeric"
+              />
+            </div>
+          )}
 
           {showConfirm ? (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
