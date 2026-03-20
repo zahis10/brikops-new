@@ -304,6 +304,7 @@ const HandoverSectionPage = () => {
   const tryShowCompletionToast = useCallback(() => {
     if (sectionCompletionShown.current.has(sectionId)) return;
     if (prevWasComplete.current) return;
+    if (!isComplete) return;
 
     if (completionToastId.current) {
       toast.dismiss(completionToastId.current);
@@ -369,7 +370,7 @@ const HandoverSectionPage = () => {
     );
     completionToastId.current = tId;
     prevWasComplete.current = true;
-  }, [sectionId, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
+  }, [sectionId, isComplete, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
 
   const handleImageAdd = useCallback(async (e) => {
     try {
