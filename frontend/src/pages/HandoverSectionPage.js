@@ -108,6 +108,14 @@ const HandoverSectionPage = () => {
   const isComplete = totalCount > 0 && checkedCount === totalCount;
 
   const initialLoadDone = useRef(false);
+  const currentSectionRef = useRef(sectionId);
+
+  useEffect(() => {
+    if (currentSectionRef.current !== sectionId) {
+      currentSectionRef.current = sectionId;
+      initialLoadDone.current = false;
+    }
+  }, [sectionId]);
 
   useEffect(() => {
     if (!loading && totalCount > 0 && !initialLoadDone.current) {
@@ -118,7 +126,7 @@ const HandoverSectionPage = () => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  }, [loading, sectionId, totalCount]);
 
   const uncheckedItems = useMemo(() => items.filter(i => !i.status || i.status === 'not_checked'), [items]);
   const resettableItems = useMemo(() => items.filter(i => i.status && i.status !== 'not_checked' && !i.defect_id), [items]);
