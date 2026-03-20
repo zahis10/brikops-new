@@ -703,7 +703,7 @@ const HandoverSectionPage = () => {
         <>
           <div
             className="fixed inset-0 bg-black/30 z-40"
-            onClick={() => closeSheet()}
+            onClick={() => { if (!saving) closeSheet(); }}
           />
 
           <div
@@ -735,7 +735,7 @@ const HandoverSectionPage = () => {
                     <ChevronLeft className="w-4 h-4 text-slate-500" />
                   </button>
                 </div>
-                <button onClick={() => closeSheet()} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+                <button onClick={() => closeSheet()} disabled={saving} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-30">
                   <X className="w-4 h-4 text-slate-400" />
                 </button>
                 <div className="flex-1 min-w-0 text-right mr-1">
