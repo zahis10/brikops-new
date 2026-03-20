@@ -74,7 +74,7 @@ const HandoverSectionPage = () => {
   const originalItemRef = useRef(null);
   const sectionCompletionShown = useRef(new Set());
   const completionToastId = useRef(null);
-  const prevWasComplete = useRef(false);
+
 
   useEffect(() => {
     const onResize = () => setIsNarrow(window.innerWidth < 400);
@@ -120,7 +120,6 @@ const HandoverSectionPage = () => {
   useEffect(() => {
     if (!loading && totalCount > 0 && !initialLoadDone.current) {
       initialLoadDone.current = true;
-      prevWasComplete.current = isComplete;
       if (isComplete) {
         sectionCompletionShown.current.add(sectionId);
       }
@@ -312,16 +311,9 @@ const HandoverSectionPage = () => {
     return null;
   }, [protocol, sectionId]);
 
-  const tryShowCompletionToast = useCallback(() => {
-    console.log('[TOAST-DEBUG] tryShowCompletionToast called', {
-      sectionId,
-      inShownSet: sectionCompletionShown.current.has(sectionId),
-      prevWasComplete: prevWasComplete.current,
-      isComplete,
-    });
-    if (sectionCompletionShown.current.has(sectionId)) { console.log('[TOAST-DEBUG] BLOCKED: sectionCompletionShown'); return; }
-    if (prevWasComplete.current) { console.log('[TOAST-DEBUG] BLOCKED: prevWasComplete'); return; }
-    if (!isComplete) { console.log('[TOAST-DEBUG] BLOCKED: !isComplete'); return; }
+  const showCompletionToast = useCallback(() => {
+    if (sectionCompletionShown.current.has(sectionId)) return;
+    sectionCompletionShown.current.add(sectionId);
 
     if (completionToastId.current) {
       toast.dismiss(completionToastId.current);
@@ -337,21 +329,17 @@ const HandoverSectionPage = () => {
       action: nextSection ? {
         label: `עבור ל: ${nextSection.name} ←`,
         onClick: () => {
-          sectionCompletionShown.current.add(sectionId);
           navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${nextSection.section_id}`);
         },
       } : {
         label: 'חזרה לפרוטוקול',
         onClick: () => {
-          sectionCompletionShown.current.add(sectionId);
           navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`);
         },
       },
       cancel: {
         label: 'השאר כאן',
-        onClick: () => {
-          sectionCompletionShown.current.add(sectionId);
-        },
+        onClick: () => {},
       },
       style: {
         background: '#f0fdf4',
@@ -361,19 +349,7 @@ const HandoverSectionPage = () => {
       },
     });
     completionToastId.current = tId;
-    prevWasComplete.current = true;
-    sectionCompletionShown.current.add(sectionId);
-  }, [sectionId, isComplete, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
-
-  useEffect(() => {
-    console.log('[TOAST-DEBUG] transition effect', { initialLoadDone: initialLoadDone.current, isComplete, prevWasComplete: prevWasComplete.current });
-    if (!initialLoadDone.current) { console.log('[TOAST-DEBUG] transition: skipped, initialLoadDone=false'); return; }
-    if (isComplete && !prevWasComplete.current) {
-      console.log('[TOAST-DEBUG] transition: FIRING tryShowCompletionToast');
-      tryShowCompletionToast();
-    }
-    prevWasComplete.current = isComplete;
-  }, [isComplete, tryShowCompletionToast]);
+  }, [sectionId, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
 
   const handleImageAdd = useCallback(async (e) => {
     try {
@@ -461,9 +437,10 @@ const HandoverSectionPage = () => {
     } else {
       setTimeout(() => {
         forceCloseSheet();
+        showCompletionToast();
       }, 200);
     }
-  }, [items, findNextUnchecked, openSheet, forceCloseSheet]);
+  }, [items, findNextUnchecked, openSheet, forceCloseSheet, showCompletionToast]);
 
   const handleSimpleStatusSave = useCallback(async (newStatus) => {
     if (isSigned || saving || !activeItem) return;
@@ -483,9 +460,8 @@ const HandoverSectionPage = () => {
       }
       originalItemRef.current = { ...originalItemRef.current, status: newStatus, notes };
       if (newStatus === 'not_checked') {
-        prevWasComplete.current = false;
+        sectionCompletionShown.current.delete(sectionId);
       }
-
       setTimeout(() => {
         setFlashStatus(null);
         advanceAfterSave(activeItem.item_id);
@@ -623,6 +599,9 @@ const HandoverSectionPage = () => {
         ? `${data.updated} פריטים סומנו תקין (${data.skipped} דולגו)`
         : t('handover', 'markAllOkDone');
       toast.success(msg);
+      if (data.updated > 0 && data.updated >= uncheckedItems.length) {
+        showCompletionToast();
+      }
     } catch (err) {
       console.error(err);
       toast.error(t('handover', 'updateError'));
@@ -630,7 +609,7 @@ const HandoverSectionPage = () => {
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol]);
+  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, showCompletionToast]);
 
   const handleMarkAllNotRelevant = useCallback(async () => {
     setShowBatchConfirm(null);
@@ -646,6 +625,9 @@ const HandoverSectionPage = () => {
         ? `${data.updated} פריטים סומנו לא רלוונטי (${data.skipped} דולגו)`
         : `${data.updated} פריטים סומנו לא רלוונטי`;
       toast.success(msg);
+      if (data.updated > 0 && data.updated >= uncheckedItems.length) {
+        showCompletionToast();
+      }
     } catch (err) {
       console.error(err);
       toast.error(t('handover', 'updateError'));
@@ -653,7 +635,7 @@ const HandoverSectionPage = () => {
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol]);
+  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, showCompletionToast]);
 
   const handleResetSection = useCallback(async () => {
     setShowBatchConfirm(null);
@@ -666,7 +648,7 @@ const HandoverSectionPage = () => {
       });
       mergeItemsFromBatch(data.items);
       if (data.updated > 0) {
-        prevWasComplete.current = false;
+        sectionCompletionShown.current.delete(sectionId);
       }
       const msg = data.skipped > 0
         ? `${data.updated} פריטים אופסו (${data.skipped} עם ליקויים לא אופסו)`
