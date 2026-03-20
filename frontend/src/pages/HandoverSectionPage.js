@@ -91,8 +91,10 @@ const HandoverSectionPage = () => {
   const isSigned = protocol?.locked === true;
   const items = useMemo(() => section?.items || [], [section]);
   const checkedCount = items.filter(i => i.status && i.status !== 'not_checked').length;
+  const okCount = items.filter(i => i.status === 'ok').length;
   const totalCount = items.length;
   const uncheckedCount = totalCount - checkedCount;
+  const nonOkCount = totalCount - okCount;
   const progressPct = totalCount > 0 ? (checkedCount / totalCount) * 100 : 0;
 
   const trades = useMemo(() => {
@@ -471,15 +473,15 @@ const HandoverSectionPage = () => {
 
   const handleMarkAllOk = useCallback(async () => {
     setShowBatchConfirm(null);
-    const unchecked = items.filter(i => !i.status || i.status === 'not_checked');
-    if (unchecked.length === 0 || isSigned) return;
+    const nonOk = items.filter(i => i.status !== 'ok');
+    if (nonOk.length === 0 || isSigned) return;
     try {
       setMarkingAll(true);
       await handoverService.batchUpdateItems(projectId, protocolId, sectionId, {
-        item_ids: unchecked.map(i => i.item_id),
+        item_ids: nonOk.map(i => i.item_id),
         status: 'ok',
       });
-      unchecked.forEach(i => updateItemLocally(i.item_id, { status: 'ok' }));
+      nonOk.forEach(i => updateItemLocally(i.item_id, { status: 'ok' }));
       toast.success(t('handover', 'markAllOkDone'));
     } catch (err) {
       console.error(err);
@@ -582,7 +584,7 @@ const HandoverSectionPage = () => {
       {!isSigned && (
         <div className="max-w-lg mx-auto px-4 mt-3">
           <div className="flex gap-2">
-            {uncheckedCount > 0 && (
+            {nonOkCount > 0 && (
               <button
                 onClick={() => setShowBatchConfirm('markAll')}
                 disabled={markingAll}
@@ -613,7 +615,7 @@ const HandoverSectionPage = () => {
           }`}>
             <span className={`text-sm font-medium ${showBatchConfirm === 'markAll' ? 'text-green-800' : 'text-slate-700'}`}>
               {showBatchConfirm === 'markAll'
-                ? `לסמן ${uncheckedCount} פריטים כתקינים?`
+                ? `לסמן ${nonOkCount} פריטים כתקינים?`
                 : `לאפס ${checkedCount} פריטים? ליקויים קיימים יישמרו.`}
             </span>
             <div className="flex gap-2">
