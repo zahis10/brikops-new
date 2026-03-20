@@ -73,7 +73,7 @@ const HandoverSectionPage = () => {
   const sheetContentRef = useRef(null);
   const originalItemRef = useRef(null);
   const sectionCompletionShown = useRef(new Set());
-  const completionToastId = useRef(null);
+  const [showCompletionBanner, setShowCompletionBanner] = useState(false);
 
 
   useEffect(() => {
@@ -114,6 +114,7 @@ const HandoverSectionPage = () => {
     if (currentSectionRef.current !== sectionId) {
       currentSectionRef.current = sectionId;
       initialLoadDone.current = false;
+      setShowCompletionBanner(false);
     }
   }, [sectionId]);
 
@@ -311,45 +312,11 @@ const HandoverSectionPage = () => {
     return null;
   }, [protocol, sectionId]);
 
-  const showCompletionToast = useCallback(() => {
+  const triggerCompletionBanner = useCallback(() => {
     if (sectionCompletionShown.current.has(sectionId)) return;
     sectionCompletionShown.current.add(sectionId);
-
-    if (completionToastId.current) {
-      toast.dismiss(completionToastId.current);
-    }
-
-    const nextSection = findNextIncompleteSection();
-
-    const tId = toast.success('✓ הסקשן הושלם!', {
-      duration: Infinity,
-      description: nextSection
-        ? `עבור לסקשן הבא: ${nextSection.name}`
-        : 'כל הסקשנים הושלמו',
-      action: nextSection ? {
-        label: `עבור ל: ${nextSection.name} ←`,
-        onClick: () => {
-          navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${nextSection.section_id}`);
-        },
-      } : {
-        label: 'חזרה לפרוטוקול',
-        onClick: () => {
-          navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`);
-        },
-      },
-      cancel: {
-        label: 'השאר כאן',
-        onClick: () => {},
-      },
-      style: {
-        background: '#f0fdf4',
-        border: '1px solid #bbf7d0',
-        direction: 'rtl',
-        textAlign: 'right',
-      },
-    });
-    completionToastId.current = tId;
-  }, [sectionId, findNextIncompleteSection, navigate, projectId, unitId, protocolId]);
+    setShowCompletionBanner(true);
+  }, [sectionId]);
 
   const handleImageAdd = useCallback(async (e) => {
     try {
@@ -437,10 +404,10 @@ const HandoverSectionPage = () => {
     } else {
       setTimeout(() => {
         forceCloseSheet();
-        showCompletionToast();
+        triggerCompletionBanner();
       }, 200);
     }
-  }, [items, findNextUnchecked, openSheet, forceCloseSheet, showCompletionToast]);
+  }, [items, findNextUnchecked, openSheet, forceCloseSheet, triggerCompletionBanner]);
 
   const handleSimpleStatusSave = useCallback(async (newStatus) => {
     if (isSigned || saving || !activeItem) return;
@@ -461,6 +428,7 @@ const HandoverSectionPage = () => {
       originalItemRef.current = { ...originalItemRef.current, status: newStatus, notes };
       if (newStatus === 'not_checked') {
         sectionCompletionShown.current.delete(sectionId);
+        setShowCompletionBanner(false);
       }
       setTimeout(() => {
         setFlashStatus(null);
@@ -600,7 +568,7 @@ const HandoverSectionPage = () => {
         : t('handover', 'markAllOkDone');
       toast.success(msg);
       if (data.updated > 0 && data.updated >= uncheckedItems.length) {
-        showCompletionToast();
+        triggerCompletionBanner();
       }
     } catch (err) {
       console.error(err);
@@ -609,7 +577,7 @@ const HandoverSectionPage = () => {
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, showCompletionToast]);
+  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner]);
 
   const handleMarkAllNotRelevant = useCallback(async () => {
     setShowBatchConfirm(null);
@@ -626,7 +594,7 @@ const HandoverSectionPage = () => {
         : `${data.updated} פריטים סומנו לא רלוונטי`;
       toast.success(msg);
       if (data.updated > 0 && data.updated >= uncheckedItems.length) {
-        showCompletionToast();
+        triggerCompletionBanner();
       }
     } catch (err) {
       console.error(err);
@@ -635,7 +603,7 @@ const HandoverSectionPage = () => {
     } finally {
       setMarkingAll(false);
     }
-  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, showCompletionToast]);
+  }, [uncheckedItems, isSigned, projectId, protocolId, sectionId, mergeItemsFromBatch, loadProtocol, triggerCompletionBanner]);
 
   const handleResetSection = useCallback(async () => {
     setShowBatchConfirm(null);
@@ -649,6 +617,7 @@ const HandoverSectionPage = () => {
       mergeItemsFromBatch(data.items);
       if (data.updated > 0) {
         sectionCompletionShown.current.delete(sectionId);
+        setShowCompletionBanner(false);
       }
       const msg = data.skipped > 0
         ? `${data.updated} פריטים אופסו (${data.skipped} עם ליקויים לא אופסו)`
@@ -765,6 +734,43 @@ const HandoverSectionPage = () => {
           </div>
         </div>
       </div>
+
+      {showCompletionBanner && (() => {
+        const next = findNextIncompleteSection();
+        return (
+          <div className="max-w-lg mx-auto px-4 mt-3">
+            <div className="rounded-xl border border-green-300 bg-[#dcfce7] p-3 flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-green-800 font-bold text-sm">
+                <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
+                <span>{next ? '✓ הסקשן הושלם!' : 'כל הסעיפים הושלמו!'}</span>
+              </div>
+              <div className="flex gap-2">
+                {next ? (
+                  <button
+                    onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}/sections/${next.section_id}`)}
+                    className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
+                  >
+                    עבור ל: {next.name} ←
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => navigate(`/projects/${projectId}/units/${unitId}/handover/${protocolId}`)}
+                    className="flex-1 py-2 px-3 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 active:scale-[0.98] transition-all"
+                  >
+                    חזרה לפרוטוקול ←
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowCompletionBanner(false)}
+                  className="py-2 px-3 rounded-lg bg-white border border-green-300 text-green-700 font-medium text-sm hover:bg-green-50 active:scale-[0.98] transition-all"
+                >
+                  השאר כאן
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {!isSigned && showAnyBatch && (
         <div className="max-w-lg mx-auto px-4 mt-3">
