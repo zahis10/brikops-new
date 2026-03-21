@@ -258,7 +258,7 @@ class Task(BaseModel):
     unit_id: Optional[str] = None
     title: str
     description: Optional[str] = None
-    category: Category = Category.general
+    category: str = "general"
     priority: Priority = Priority.medium
     status: TaskStatus = TaskStatus.open
     company_id: Optional[str] = None
@@ -271,6 +271,7 @@ class Task(BaseModel):
     display_number: Optional[int] = None
     attachments_count: int = 0
     comments_count: int = 0
+    source: Optional[str] = None
 
 
 class TaskCreate(BaseModel):
