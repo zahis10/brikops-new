@@ -339,6 +339,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
     photo_counter = 0
     for sec in sections:
         for item in sec.get("items", []):
+            # Source of truth: task.proof_urls (primary, updated on upload).
+            # Fallback: item.photos (legacy/cached copy for pre-fix data).
             item_photos = item.get("photos", [])
             defect_id = item.get("defect_id")
             if defect_id and defect_id in defect_map:

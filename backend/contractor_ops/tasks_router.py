@@ -1064,7 +1064,21 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
     await db.tasks.update_one({'id': task_id}, {
         '$inc': {'attachments_count': 1},
         '$set': {'updated_at': ts},
+        '$addToSet': {'proof_urls': result.file_url},
     })
+
+    ho_protocol_id = task.get('handover_protocol_id')
+    ho_item_id = task.get('handover_item_id')
+    if ho_protocol_id and ho_item_id:
+        await db.handover_protocols.update_one(
+            {'id': ho_protocol_id, 'sections.items.item_id': ho_item_id},
+            {'$addToSet': {'sections.$[sec].items.$[itm].photos': result.file_url}},
+            array_filters=[
+                {'sec.items.item_id': ho_item_id},
+                {'itm.item_id': ho_item_id},
+            ],
+        )
+
     await _audit('task_attachment', update_id, 'upload', user['id'], {
         'task_id': task_id, 'filename': file.filename, 'file_url': result.file_url,
     })
