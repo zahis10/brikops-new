@@ -1197,7 +1197,6 @@ async def get_project_qc_template(project_id: str, user: dict = Depends(get_curr
             "template_family_id": None,
             "template_name": None,
             "template_version": None,
-            "newer_version_available": False,
         }
 
     tpl = await db.qc_templates.find_one(
@@ -1211,20 +1210,9 @@ async def get_project_qc_template(project_id: str, user: dict = Depends(get_curr
             "template_family_id": family_id,
             "template_name": "(נמחקה)",
             "template_version": None,
-            "newer_version_available": False,
         }
 
     resolved_family = family_id or tpl.get("family_id")
-    newer_version_available = False
-    newer_version_num = None
-    if resolved_family:
-        newer = await db.qc_templates.find_one(
-            {"family_id": resolved_family, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
-            {"_id": 0, "id": 1, "version": 1}
-        )
-        if newer:
-            newer_version_available = True
-            newer_version_num = newer["version"]
 
     return {
         "assigned": True,
@@ -1232,6 +1220,4 @@ async def get_project_qc_template(project_id: str, user: dict = Depends(get_curr
         "template_family_id": resolved_family,
         "template_name": tpl["name"],
         "template_version": tpl["version"],
-        "newer_version_available": newer_version_available,
-        "newer_version": newer_version_num,
     }

@@ -358,7 +358,7 @@ const HandoverProtocolPage = () => {
                     <span>·</span>
                     <span className="text-indigo-400/70">
                       תבנית v{protocol.template_snapshot_version}
-                      {protocol.newer_version_available && ` (קיימת v${protocol.newer_version})`}
+                      {protocol.project_current_version && protocol.project_current_version > protocol.template_snapshot_version && ` (נוכחית: v${protocol.project_current_version})`}
                     </span>
                   </>
                 )}

@@ -969,21 +969,20 @@ async def admin_update_qc_template(template_id: str, request: Request, user: dic
         {"$set": {"is_active": False}}
     )
 
-    old_version_id = template_id
     if tpl_type == "handover":
         repin = await db.projects.update_many(
-            {"handover_template_version_id": old_version_id},
+            {"handover_template_family_id": family_id},
             {"$set": {"handover_template_version_id": new_id}}
         )
         if repin.modified_count > 0:
-            logger.info(f"[QC-TPL] Auto-repinned {repin.modified_count} projects handover template {old_version_id} -> {new_id}")
+            logger.info(f"[QC-TPL] Auto-propagated {repin.modified_count} projects handover template family={family_id} -> {new_id}")
     else:
         repin = await db.projects.update_many(
-            {"qc_template_version_id": old_version_id},
+            {"qc_template_family_id": family_id},
             {"$set": {"qc_template_version_id": new_id}}
         )
         if repin.modified_count > 0:
-            logger.info(f"[QC-TPL] Auto-repinned {repin.modified_count} projects QC template {old_version_id} -> {new_id}")
+            logger.info(f"[QC-TPL] Auto-propagated {repin.modified_count} projects QC template family={family_id} -> {new_id}")
 
     new_doc.pop("_id", None)
     logger.info(f"[QC-TPL] Updated template family={family_id} v{old['version']}->v{new_version} new_id={new_id} by user={user['id']}")

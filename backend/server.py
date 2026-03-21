@@ -878,6 +878,20 @@ async def backfill_project_templates():
         }})
         logger.info(f"[BACKFILL-TPL] Assigned default {tpl_type} template to {result.modified_count} project(s)")
 
+        orphan_query = {ver_field: {"$exists": True, "$ne": None}, "$or": [{fam_field: None}, {fam_field: {"$exists": False}}]}
+        total_fixed = 0
+        while True:
+            orphans = await db.projects.find(orphan_query, {"_id": 0, "id": 1, ver_field: 1}).to_list(500)
+            if not orphans:
+                break
+            for proj in orphans:
+                tpl = await db.qc_templates.find_one({"id": proj[ver_field]}, {"_id": 0, "family_id": 1})
+                if tpl and tpl.get("family_id"):
+                    await db.projects.update_one({"id": proj["id"]}, {"$set": {fam_field: tpl["family_id"]}})
+            total_fixed += len(orphans)
+        if total_fixed:
+            logger.info(f"[BACKFILL-TPL] Backfilled {fam_field} for {total_fixed} project(s)")
+
 
 async def _deferred_db_init():
     mongo_info = _mongo_sanity(MONGO_URL)

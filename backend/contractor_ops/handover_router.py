@@ -579,8 +579,6 @@ async def get_handover_template(project_id: str, user: dict = Depends(get_curren
             "template_family_id": None,
             "template_name": None,
             "template_version": None,
-            "newer_version_available": False,
-            "newer_version": None,
         }
 
     tpl = await db.qc_templates.find_one(
@@ -594,21 +592,9 @@ async def get_handover_template(project_id: str, user: dict = Depends(get_curren
             "template_family_id": family_id,
             "template_name": "(נמחקה)",
             "template_version": None,
-            "newer_version_available": False,
-            "newer_version": None,
         }
 
     resolved_family = family_id or tpl.get("family_id")
-    newer_version_available = False
-    newer_version_num = None
-    if resolved_family:
-        newer = await db.qc_templates.find_one(
-            {"family_id": resolved_family, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
-            {"_id": 0, "id": 1, "version": 1}
-        )
-        if newer:
-            newer_version_available = True
-            newer_version_num = newer["version"]
 
     return {
         "assigned": True,
@@ -616,8 +602,6 @@ async def get_handover_template(project_id: str, user: dict = Depends(get_curren
         "template_family_id": resolved_family,
         "template_name": tpl["name"],
         "template_version": tpl["version"],
-        "newer_version_available": newer_version_available,
-        "newer_version": newer_version_num,
     }
 
 
@@ -978,15 +962,17 @@ async def get_protocol(project_id: str, protocol_id: str, user: dict = Depends(g
         )
         if tpl:
             protocol["template_snapshot_version"] = tpl.get("version")
-            family_id = tpl.get("family_id")
-            if family_id:
-                newer = await db.qc_templates.find_one(
-                    {"family_id": family_id, "is_active": True, "version": {"$gt": tpl.get("version", 0)}},
+            project = await db.projects.find_one(
+                {"id": project_id},
+                {"_id": 0, "handover_template_version_id": 1}
+            )
+            if project and project.get("handover_template_version_id"):
+                current_tpl = await db.qc_templates.find_one(
+                    {"id": project["handover_template_version_id"]},
                     {"_id": 0, "version": 1}
                 )
-                if newer:
-                    protocol["newer_version_available"] = True
-                    protocol["newer_version"] = newer["version"]
+                if current_tpl:
+                    protocol["project_current_version"] = current_tpl.get("version")
 
     return protocol
 

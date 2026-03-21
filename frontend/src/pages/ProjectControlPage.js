@@ -2733,7 +2733,7 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
   const [loadingFamilies, setLoadingFamilies] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState('');
-  const [confirmUpgrade, setConfirmUpgrade] = useState(false);
+  
 
   const loadAssignment = useCallback(async () => {
     try {
@@ -2780,24 +2780,7 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
     }
   };
 
-  const handleUpgrade = async () => {
-    if (!assignment?.template_family_id) return;
-    const fam = families.find(f => f.family_id === assignment.template_family_id);
-    if (!fam) return;
-    try {
-      setSaving(true);
-      await templateService.assignToProject(projectId, {
-        template_version_id: fam.latest_id,
-        template_family_id: fam.family_id,
-      });
-      toast.success('התבנית שודרגה לגרסה האחרונה');
-      await loadAssignment();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה בשדרוג');
-    } finally {
-      setSaving(false);
-    }
-  };
+  
 
   if (loadingAssignment) {
     return (
@@ -2827,32 +2810,7 @@ const QCTemplateTab = ({ projectId, isSuperAdmin }) => {
           </div>
         )}
 
-        {assignment?.newer_version_available && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              <span className="text-xs text-amber-800 flex-1">
-                גרסה {assignment.newer_version || ''} זמינה — עדכן?
-              </span>
-              {isSuperAdmin && (
-                !confirmUpgrade ? (
-                  <button onClick={() => setConfirmUpgrade(true)} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium">
-                    עדכן
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => { handleUpgrade(); setConfirmUpgrade(false); }} disabled={saving} className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
-                      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'אשר עדכון'}
-                    </button>
-                    <button onClick={() => setConfirmUpgrade(false)} className="text-xs text-slate-500 px-2 py-1 hover:text-slate-700">
-                      ביטול
-                    </button>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        )}
+        
 
         {isSuperAdmin && (
           <div className="space-y-3">
@@ -2961,37 +2919,7 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
           </div>
         )}
 
-        {assignment?.newer_version_available && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              <span className="text-xs text-amber-800 flex-1">
-                גרסה {assignment.newer_version || ''} זמינה — עדכן?
-              </span>
-              {isSuperAdmin && (
-                <button onClick={async () => {
-                  try {
-                    setSaving(true);
-                    const fam = families.find(f => f.family_id === assignment.template_family_id);
-                    if (!fam) return;
-                    await handoverService.assignTemplate(projectId, {
-                      template_version_id: fam.latest_id,
-                      template_family_id: fam.family_id,
-                    });
-                    toast.success('תבנית המסירה שודרגה לגרסה האחרונה');
-                    await loadAssignment();
-                  } catch (err) {
-                    toast.error(err.response?.data?.detail || 'שגיאה בשדרוג');
-                  } finally {
-                    setSaving(false);
-                  }
-                }} disabled={saving} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg font-medium disabled:opacity-50">
-                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'עדכן'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        
 
         {isSuperAdmin && (
           <div className="space-y-3">
