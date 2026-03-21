@@ -131,12 +131,16 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
         if (updatedSection) {
           const sigs = updatedSection.signatures || {};
           if (updatedSection.requires_both_tenants && numTenants >= 2) {
-            if (!sigs.tenant_2?.signed_at && sigs.tenant?.signed_at) {
-              const nextSec = updatedSections.find(s => s.id === currentSectionId);
-              if (nextSec) {
-                setSigningSection(nextSec);
-                setSigningSlot('tenant_2');
-              }
+            const t1Done = !!sigs.tenant?.signed_at;
+            const t2Done = !!sigs.tenant_2?.signed_at;
+            if (t1Done && !t2Done) {
+              setSigningSection(updatedSection);
+              setSigningSlot('tenant_2');
+              return;
+            }
+            if (!t1Done && t2Done) {
+              setSigningSection(updatedSection);
+              setSigningSlot('tenant');
               return;
             }
           }
