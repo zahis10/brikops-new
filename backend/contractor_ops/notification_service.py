@@ -258,7 +258,7 @@ class WhatsAppClient:
                     "type": "button",
                     "sub_type": "url",
                     "index": "0",
-                    "parameters": [{"type": "text", "text": task_id}]
+                    "parameters": [{"type": "text", "text": f"{task_id}?src=wa"}]
                 })
 
             body = {

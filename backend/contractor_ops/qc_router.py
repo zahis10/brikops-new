@@ -1255,7 +1255,7 @@ async def _send_qc_rejection_wa(
             "type": "button",
             "sub_type": "url",
             "index": "0",
-            "parameters": [{"type": "text", "text": button_path}],
+            "parameters": [{"type": "text", "text": f"{button_path}?src=wa"}],
         })
 
     body = {
@@ -1415,7 +1415,7 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
 
                     button_path = (
                         f"projects/{run['project_id']}/qc/floors/{run.get('floor_id')}"
-                        f"/run/{run_id}/stage/{stage_id}?src=wa"
+                        f"/run/{run_id}/stage/{stage_id}"
                     )
 
                     wa_sent = await _send_qc_rejection_wa(

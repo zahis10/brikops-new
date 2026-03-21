@@ -208,7 +208,7 @@ async def _send_wa_login_message(phone_e164: str, url: str) -> dict:
                     "type": "button",
                     "sub_type": "url",
                     "index": "0",
-                    "parameters": [{"type": "text", "text": token}]
+                    "parameters": [{"type": "text", "text": f"{token}?src=wa"}]
                 }
             ]
         }

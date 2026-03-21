@@ -463,7 +463,7 @@ async def debug_whatsapp_send_test(request: Request, user: dict = Depends(requir
         "type": "button",
         "sub_type": "url",
         "index": "0",
-        "parameters": [{"type": "text", "text": button_id}]
+        "parameters": [{"type": "text", "text": f"{button_id}?src=wa"}]
     })
 
     send_body = {
