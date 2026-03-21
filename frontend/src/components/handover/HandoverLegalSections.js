@@ -152,7 +152,6 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
       const currentSectionId = sectionId;
       setSigningSection(null);
       setSigningSlot(null);
-      onUpdated?.(responseData);
 
       const updatedSections = (responseData && responseData.legal_sections) || sections;
       const updatedSection = updatedSections.find(s => s.id === currentSectionId);
