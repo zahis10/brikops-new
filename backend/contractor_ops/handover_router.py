@@ -455,13 +455,33 @@ def _count_signatures(protocol):
     return sum(1 for role in VALID_SIGNATURE_ROLES if role in sigs and sigs[role])
 
 
+def _legal_section_sign_score(section, num_tenants):
+    if not section.get("requires_signature"):
+        return None
+    sigs = section.get("signatures") or {}
+    has_old_sig = bool(section.get("signed_at") and section.get("signature"))
+    if section.get("requires_both_tenants") and num_tenants >= 2:
+        t1 = bool(sigs.get("tenant", {}).get("signed_at")) or (has_old_sig and not sigs)
+        t2 = bool(sigs.get("tenant_2", {}).get("signed_at"))
+        if t1 and t2:
+            return 1.0
+        if t1 or t2:
+            return 0.5
+        return 0.0
+    if has_old_sig or bool(sigs.get("tenant", {}).get("signed_at")):
+        return 1.0
+    return 0.0
+
+
 def _is_protocol_fully_signed(protocol):
     sigs = _normalize_signatures(protocol)
     for role in REQUIRED_SIGNATURE_ROLES:
         if role not in sigs or not sigs[role]:
             return False
+    num_tenants = len(protocol.get("tenants") or [])
     for section in protocol.get("legal_sections", []):
-        if section.get("requires_signature") and not section.get("signed_at"):
+        score = _legal_section_sign_score(section, num_tenants)
+        if score is not None and score < 1.0:
             return False
     return True
 
@@ -470,8 +490,12 @@ def _recalculate_signature_status(protocol):
     if _is_protocol_fully_signed(protocol):
         return "signed", True
     count = _count_signatures(protocol)
-    legal_signed = sum(1 for s in protocol.get("legal_sections", []) if s.get("requires_signature") and s.get("signed_at"))
-    if count >= 1 or legal_signed >= 1:
+    num_tenants = len(protocol.get("tenants") or [])
+    legal_any_signed = any(
+        (_legal_section_sign_score(s, num_tenants) or 0) > 0
+        for s in protocol.get("legal_sections", [])
+    )
+    if count >= 1 or legal_any_signed:
         return "partially_signed", False
     else:
         has_item_changes = any(
@@ -629,12 +653,16 @@ def _validate_legal_sections(sections):
         if not isinstance(order, int) or order < 1:
             raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: order חייב להיות מספר שלם >= 1")
         section_id = s.get("id") or str(uuid.uuid4())
+        requires_both_tenants = bool(s.get("requires_both_tenants", False))
+        if requires_both_tenants and not (requires_signature and signature_role in ("tenant", "tenant_2")):
+            requires_both_tenants = False
         validated.append({
             "id": section_id,
             "title": title,
             "body": body,
             "requires_signature": requires_signature,
             "signature_role": signature_role,
+            "requires_both_tenants": requires_both_tenants,
             "applies_to": applies_to,
             "order": order,
         })
@@ -753,9 +781,11 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
                     "body": ls["body"],
                     "requires_signature": ls.get("requires_signature", False),
                     "signature_role": ls.get("signature_role"),
+                    "requires_both_tenants": ls.get("requires_both_tenants", False),
                     "order": ls.get("order", 0),
                     "edited": False,
                     "signature": None,
+                    "signatures": {},
                     "signer_name": None,
                     "signed_at": None,
                 })
@@ -777,9 +807,11 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
                             "body": ls["body"],
                             "requires_signature": ls.get("requires_signature", False),
                             "signature_role": ls.get("signature_role"),
+                            "requires_both_tenants": ls.get("requires_both_tenants", False),
                             "order": ls.get("order", 0),
                             "edited": False,
                             "signature": None,
+                            "signatures": {},
                             "signer_name": None,
                             "signed_at": None,
                         })
@@ -2144,6 +2176,9 @@ async def update_legal_section_body(
         raise HTTPException(status_code=404, detail="נסח משפטי לא נמצא")
     if section.get("signed_at"):
         raise HTTPException(status_code=403, detail="לא ניתן לערוך נסח חתום")
+    sigs_obj = section.get("signatures") or {}
+    if any(slot_sig.get("signed_at") for slot_sig in sigs_obj.values() if isinstance(slot_sig, dict)):
+        raise HTTPException(status_code=403, detail="לא ניתן לערוך נסח חתום")
 
     body = await request.json()
     new_body = (body.get("body") or "").strip()
@@ -2191,6 +2226,7 @@ async def sign_legal_section(
     signature_type: str = Form(...),
     typed_name: str = Form(None),
     id_number: str = Form(None),
+    signer_slot: str = Form(None),
     signature_image: UploadFile = File(None),
     user: dict = Depends(get_current_user),
 ):
@@ -2206,12 +2242,27 @@ async def sign_legal_section(
         raise HTTPException(status_code=404, detail="נסח משפטי לא נמצא")
     if not section.get("requires_signature"):
         raise HTTPException(status_code=400, detail="נסח זה לא דורש חתימה")
-    if section.get("signed_at"):
-        raise HTTPException(status_code=409, detail="נסח זה כבר חתום")
+
+    is_dual = section.get("requires_both_tenants", False)
+    num_tenants = len(protocol.get("tenants") or [])
+
+    if is_dual:
+        if not signer_slot or signer_slot not in ("tenant", "tenant_2"):
+            raise HTTPException(status_code=400, detail="נדרש signer_slot (tenant או tenant_2)")
+        existing_sigs = section.get("signatures") or {}
+        if existing_sigs.get(signer_slot, {}).get("signed_at"):
+            raise HTTPException(status_code=409, detail="סעיף זה כבר נחתם")
+    else:
+        signer_slot = None
+        if section.get("signed_at"):
+            raise HTTPException(status_code=409, detail="סעיף זה כבר נחתם")
 
     sig_role = section.get("signature_role")
     if sig_role:
-        _check_signature_role_auth(user_role, sig_role)
+        if is_dual:
+            _check_signature_role_auth(user_role, signer_slot or "tenant")
+        else:
+            _check_signature_role_auth(user_role, sig_role)
 
     if signature_type not in ("canvas", "typed"):
         raise HTTPException(status_code=400, detail="סוג חתימה לא חוקי — canvas או typed")
@@ -2228,6 +2279,7 @@ async def sign_legal_section(
         "type": signature_type,
         "signer_user_id": user["id"],
         "signed_at": ts,
+        "signer_name": signer_name,
         "id_number": id_number_val,
     }
 
@@ -2237,7 +2289,8 @@ async def sign_legal_section(
         image_data = await signature_image.read()
         if not image_data or len(image_data) < 100:
             raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")
-        s3_key = f"signatures/{protocol_id}/legal_{section_id}.png"
+        suffix = f"_{signer_slot}" if signer_slot else ""
+        s3_key = f"signatures/{protocol_id}/legal_{section_id}{suffix}.png"
         stored_ref = save_bytes(image_data, s3_key, "image/png")
         sig_data["image_key"] = stored_ref
     else:
@@ -2246,15 +2299,43 @@ async def sign_legal_section(
             raise HTTPException(status_code=400, detail="שם מלא נדרש לחתימה מוקלדת")
         sig_data["typed_name"] = typed_name_val
 
-    update_fields = {
-        f"legal_sections.{idx}.signature": sig_data,
-        f"legal_sections.{idx}.signer_name": signer_name,
-        f"legal_sections.{idx}.signed_at": ts,
-        "updated_at": ts,
-    }
+    if is_dual:
+        update_fields = {
+            f"legal_sections.{idx}.signatures.{signer_slot}": sig_data,
+            "updated_at": ts,
+        }
+        refreshed_section = {**section}
+        refreshed_sigs = dict(refreshed_section.get("signatures") or {})
+        refreshed_sigs[signer_slot] = sig_data
+        refreshed_section["signatures"] = refreshed_sigs
+        both_done = bool(refreshed_sigs.get("tenant", {}).get("signed_at")) and (
+            bool(refreshed_sigs.get("tenant_2", {}).get("signed_at")) or num_tenants < 2
+        )
+        if both_done:
+            update_fields[f"legal_sections.{idx}.signed_at"] = ts
+            refreshed_section["signed_at"] = ts
+
+        concurrency_filter = {
+            "id": protocol_id,
+            "project_id": project_id,
+            f"legal_sections.{idx}.signatures.{signer_slot}.signed_at": {"$exists": False},
+        }
+    else:
+        update_fields = {
+            f"legal_sections.{idx}.signature": sig_data,
+            f"legal_sections.{idx}.signer_name": signer_name,
+            f"legal_sections.{idx}.signed_at": ts,
+            "updated_at": ts,
+        }
+        refreshed_section = {**section, "signed_at": ts, "signature": sig_data, "signer_name": signer_name}
+        concurrency_filter = {
+            "id": protocol_id,
+            "project_id": project_id,
+            f"legal_sections.{idx}.signed_at": None,
+        }
 
     refreshed_legal = list(protocol.get("legal_sections", []))
-    refreshed_legal[idx] = {**refreshed_legal[idx], "signed_at": ts, "signature": sig_data, "signer_name": signer_name}
+    refreshed_legal[idx] = refreshed_section
     virtual_protocol = {**protocol, "legal_sections": refreshed_legal}
     new_status, new_locked = _recalculate_signature_status(virtual_protocol)
     update_fields["status"] = new_status
@@ -2262,23 +2343,21 @@ async def sign_legal_section(
     if new_locked:
         update_fields["signed_at"] = ts
 
-    result = await db.handover_protocols.update_one(
-        {"id": protocol_id, "project_id": project_id, f"legal_sections.{idx}.signed_at": None},
-        {"$set": update_fields}
-    )
+    result = await db.handover_protocols.update_one(concurrency_filter, {"$set": update_fields})
     if result.modified_count == 0:
-        raise HTTPException(status_code=409, detail="נסח זה כבר נחתם במקביל")
+        raise HTTPException(status_code=409, detail="סעיף זה כבר נחתם")
 
     await _audit("handover_protocol", protocol_id, "legal_section_signed", user["id"], {
         "project_id": project_id,
         "section_id": section_id,
         "section_title": section.get("title"),
         "signature_role": sig_role,
+        "signer_slot": signer_slot,
         "signature_type": signature_type,
         "signer_name": signer_name,
     })
 
-    logger.info(f"[HANDOVER] Protocol={protocol_id} legal section={section_id} signed by user={user['id']} type={signature_type}")
+    logger.info(f"[HANDOVER] Protocol={protocol_id} legal section={section_id} slot={signer_slot} signed by user={user['id']} type={signature_type}")
     updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
     return updated
 
@@ -2286,6 +2365,7 @@ async def sign_legal_section(
 @router.get("/projects/{project_id}/handover/protocols/{protocol_id}/legal-sections/{section_id}/signature-image")
 async def get_legal_section_signature_image(
     project_id: str, protocol_id: str, section_id: str,
+    signer_slot: str = None,
     user: dict = Depends(get_current_user),
 ):
     await _check_handover_access(user, project_id)
@@ -2294,19 +2374,26 @@ async def get_legal_section_signature_image(
     _, section = _find_legal_section(protocol, section_id)
     if section is None:
         raise HTTPException(status_code=404, detail="נסח משפטי לא נמצא")
-    if not section.get("signed_at"):
-        raise HTTPException(status_code=404, detail="נסח זה לא חתום")
 
-    sig = section.get("signature")
+    sig = None
+    sig_signer_name = ""
+    if signer_slot:
+        sigs = section.get("signatures") or {}
+        sig = sigs.get(signer_slot)
+        if sig:
+            sig_signer_name = sig.get("signer_name", "")
+    if not sig:
+        sig = section.get("signature")
+        sig_signer_name = section.get("signer_name", "")
     if not sig:
         raise HTTPException(status_code=404, detail="חתימה לא נמצאה")
 
     if sig.get("type") == "typed":
-        return {"type": "typed", "typed_name": sig.get("typed_name", ""), "signer_name": section.get("signer_name", "")}
+        return {"type": "typed", "typed_name": sig.get("typed_name", ""), "signer_name": sig_signer_name}
 
     image_key = sig.get("image_key", "")
     if image_key:
         url = generate_url(image_key)
-        return {"type": "canvas", "url": url, "signer_name": section.get("signer_name", "")}
+        return {"type": "canvas", "url": url, "signer_name": sig_signer_name}
 
     raise HTTPException(status_code=404, detail="תמונת חתימה לא נמצאה")

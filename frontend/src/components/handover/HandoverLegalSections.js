@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
-import { CheckCircle2, PenLine, AlertTriangle, Loader2 } from 'lucide-react';
+import { CheckCircle2, PenLine, AlertTriangle, Loader2, Clock } from 'lucide-react';
 import SignaturePadModal from './SignaturePadModal';
 
 const ROLE_LABELS = {
@@ -22,6 +22,7 @@ const ALLOWED_ROLES = {
 const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpdated }) => {
   const { user } = useAuth();
   const [signingSection, setSigningSection] = useState(null);
+  const [signingSlot, setSigningSlot] = useState(null);
   const [signatureImages, setSignatureImages] = useState({});
   const [editingBodies, setEditingBodies] = useState({});
   const [savingBody, setSavingBody] = useState(null);
@@ -30,11 +31,22 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
   const sections = useMemo(() => protocol?.legal_sections || [], [protocol?.legal_sections]);
   const isLocked = protocol?.locked === true;
   const isPM = ['project_manager', 'owner', 'super_admin'].includes(userRole);
+  const numTenants = (protocol?.tenants || []).length;
 
   useEffect(() => {
     const loadImages = async () => {
       const imgs = {};
       for (const s of sections) {
+        const sigs = s.signatures || {};
+        for (const slot of ['tenant', 'tenant_2']) {
+          const slotSig = sigs[slot];
+          if (slotSig && slotSig.type === 'canvas' && slotSig.image_key) {
+            try {
+              const data = await handoverService.getLegalSectionSignatureImage(projectId, protocol.id, s.id, slot);
+              if (data.url) imgs[`${s.id}_${slot}`] = data.url;
+            } catch {}
+          }
+        }
         if (s.signature && s.signature.type === 'canvas' && s.signature.image_key) {
           try {
             const data = await handoverService.getLegalSectionSignatureImage(projectId, protocol.id, s.id);
@@ -80,6 +92,16 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
     }
   }, [editingBodies, isLocked, projectId, protocol?.id, onUpdated]);
 
+  const canSignSlot = (section, slot) => {
+    if (isLocked) return false;
+    if (!section.requires_signature) return false;
+    const allowed = ALLOWED_ROLES[slot] || [];
+    if (!allowed.includes(userRole)) return false;
+    const sigs = section.signatures || {};
+    if (sigs[slot]?.signed_at) return false;
+    return true;
+  };
+
   const canSignSection = (section) => {
     if (isLocked) return false;
     if (!section.requires_signature) return false;
@@ -90,26 +112,194 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
     return allowed.includes(userRole);
   };
 
-  const handleSignLegalSection = useCallback(async (sectionId, formData) => {
-    await handoverService.signLegalSection(projectId, protocol.id, sectionId, formData);
-  }, [projectId, protocol?.id]);
+  const handleSignLegalSection = useCallback(async (sectionId, formData, slot) => {
+    try {
+      if (slot) {
+        formData.append('signer_slot', slot);
+      }
+      await handoverService.signLegalSection(projectId, protocol.id, sectionId, formData);
+      setSigningSection(null);
+      setSigningSlot(null);
+      onUpdated?.();
+    } catch (err) {
+      if (err?.response?.status === 409) {
+        toast.info('הסעיף כבר נחתם, מרענן...');
+        setSigningSection(null);
+        setSigningSlot(null);
+        onUpdated?.();
+        return;
+      }
+      throw err;
+    }
+  }, [projectId, protocol?.id, onUpdated]);
+
+  const openSignPad = (section, slot) => {
+    setSigningSection(section);
+    setSigningSlot(slot);
+  };
 
   const currentUserName = user?.name || user?.full_name || '';
 
   if (sections.length === 0) return null;
 
+  const renderSignatureBlock = (sig, imageKey, signerName, signedAt) => (
+    <div className="space-y-2">
+      {sig?.type === 'canvas' && signatureImages[imageKey] ? (
+        <div className="bg-white border border-slate-100 rounded-lg p-2">
+          <img src={signatureImages[imageKey]} alt="signature" className="h-12 object-contain mx-auto" />
+        </div>
+      ) : sig?.type === 'typed' && sig?.typed_name ? (
+        <div className="bg-white border border-slate-100 rounded-lg p-3 text-center">
+          <div style={{ fontFamily: "'Caveat', cursive", fontSize: '24px' }} className="text-slate-800">
+            {sig.typed_name}
+          </div>
+          <div className="border-t border-slate-300 mt-1 w-24 mx-auto" />
+        </div>
+      ) : null}
+      <div className="text-xs text-slate-500">
+        <span className="font-medium">{signerName}</span>
+        {signedAt && (
+          <span className="mr-2">
+            {new Date(signedAt).toLocaleDateString('he-IL')}{' '}
+            {new Date(signedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderDualSignatureArea = (section) => {
+    const sigs = section.signatures || {};
+    const showSecondPad = section.requires_both_tenants && numTenants >= 2;
+    const t1Sig = sigs.tenant;
+    const t2Sig = sigs.tenant_2;
+    const t1Signed = !!t1Sig?.signed_at;
+    const t2Signed = showSecondPad ? !!t2Sig?.signed_at : true;
+    const allDone = t1Signed && t2Signed;
+
+    return (
+      <div className={`border rounded-lg p-2.5 mt-1 ${allDone ? 'border-green-200 bg-green-50/30' : t1Signed || t2Sig?.signed_at ? 'border-amber-200 bg-amber-50/20' : 'border-slate-200'}`}>
+        <div className="space-y-3">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-slate-600">חתימת רוכש/ת ראשי/ת</span>
+              {t1Signed && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+            </div>
+            {t1Signed ? (
+              renderSignatureBlock(t1Sig, `${section.id}_tenant`, t1Sig.signer_name, t1Sig.signed_at)
+            ) : canSignSlot(section, 'tenant') ? (
+              <button
+                onClick={() => openSignPad(section, 'tenant')}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
+              >
+                <PenLine className="w-3.5 h-3.5" />
+                חתום
+              </button>
+            ) : (
+              <div className="text-xs text-slate-400 text-center py-1.5">ממתין לחתימה</div>
+            )}
+          </div>
+
+          {showSecondPad && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-slate-600">חתימת רוכש/ת נוסף/ת</span>
+                {t2Signed ? (
+                  <CheckCircle2 className="w-4 h-4 text-green-500" />
+                ) : t1Signed ? (
+                  <Clock className="w-4 h-4 text-amber-500" />
+                ) : null}
+              </div>
+              {t2Signed ? (
+                renderSignatureBlock(t2Sig, `${section.id}_tenant_2`, t2Sig.signer_name, t2Sig.signed_at)
+              ) : canSignSlot(section, 'tenant_2') ? (
+                <button
+                  onClick={() => openSignPad(section, 'tenant_2')}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
+                >
+                  <PenLine className="w-3.5 h-3.5" />
+                  חתום
+                </button>
+              ) : (
+                <div className="text-xs text-amber-500 text-center py-1.5">ממתין לחתימת רוכש/ת נוסף/ת</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSingleSignatureArea = (section) => {
+    const isSectionSigned = !!section.signed_at;
+
+    return (
+      <div className={`border rounded-lg p-2.5 mt-1 ${isSectionSigned ? 'border-green-200 bg-green-50/30' : 'border-slate-200'}`}>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-semibold text-slate-600">
+            חתימת {ROLE_LABELS[section.signature_role] || section.signature_role}
+          </span>
+          {isSectionSigned && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+        </div>
+
+        {isSectionSigned ? (
+          renderSignatureBlock(section.signature, section.id, section.signer_name, section.signed_at)
+        ) : canSignSection(section) ? (
+          <button
+            onClick={() => openSignPad(section, null)}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
+          >
+            <PenLine className="w-3.5 h-3.5" />
+            חתום
+          </button>
+        ) : (
+          <div className="text-xs text-slate-400 text-center py-1.5">
+            ממתין לחתימה
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const getSigningRole = () => {
+    if (!signingSection) return null;
+    if (signingSlot) return signingSlot;
+    return signingSection.signature_role;
+  };
+
+  const getSigningTenantData = () => {
+    const role = getSigningRole();
+    if (role === 'tenant') return (protocol?.tenants || [])[0];
+    if (role === 'tenant_2') return (protocol?.tenants || [])[1];
+    return null;
+  };
+
   return (
     <div className="space-y-3 p-1">
       {sections.map((section) => {
-        const isSectionSigned = !!section.signed_at;
+        const isDual = section.requires_both_tenants;
         const needsSignature = section.requires_signature;
-        const canEdit = isPM && !isSectionSigned && !isLocked;
+        const isSectionFullySigned = isDual
+          ? (() => {
+              const sigs = section.signatures || {};
+              const t1 = !!sigs.tenant?.signed_at;
+              const t2 = numTenants >= 2 ? !!sigs.tenant_2?.signed_at : true;
+              return t1 && t2;
+            })()
+          : !!section.signed_at;
+        const hasAnySig = isDual
+          ? (() => {
+              const sigs = section.signatures || {};
+              return !!sigs.tenant?.signed_at || !!sigs.tenant_2?.signed_at;
+            })()
+          : !!section.signed_at;
+        const canEdit = isPM && !hasAnySig && !isLocked;
 
         return (
           <div
             key={section.id}
             className={`border rounded-xl bg-white overflow-hidden ${
-              isSectionSigned ? 'border-r-[3px] border-r-green-400 border-green-200' :
+              isSectionFullySigned ? 'border-r-[3px] border-r-green-400 border-green-200' :
               needsSignature ? 'border-r-[3px] border-r-amber-400 border-slate-200' :
               'border-slate-200'
             }`}
@@ -154,55 +344,8 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
                 </div>
               )}
 
-              {needsSignature && (
-                <div className={`border rounded-lg p-2.5 mt-1 ${isSectionSigned ? 'border-green-200 bg-green-50/30' : 'border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-semibold text-slate-600">
-                      חתימת {ROLE_LABELS[section.signature_role] || section.signature_role}
-                    </span>
-                    {isSectionSigned && <CheckCircle2 className="w-4 h-4 text-green-500" />}
-                  </div>
-
-                  {isSectionSigned ? (
-                    <div className="space-y-2">
-                      {section.signature?.type === 'canvas' && signatureImages[section.id] ? (
-                        <div className="bg-white border border-slate-100 rounded-lg p-2">
-                          <img src={signatureImages[section.id]} alt="signature" className="h-12 object-contain mx-auto" />
-                        </div>
-                      ) : section.signature?.type === 'typed' && section.signature?.typed_name ? (
-                        <div className="bg-white border border-slate-100 rounded-lg p-3 text-center">
-                          <div style={{ fontFamily: "'Caveat', cursive", fontSize: '24px' }} className="text-slate-800">
-                            {section.signature.typed_name}
-                          </div>
-                          <div className="border-t border-slate-300 mt-1 w-24 mx-auto" />
-                        </div>
-                      ) : null}
-                      <div className="text-xs text-slate-500">
-                        <span className="font-medium">{section.signer_name}</span>
-                        {section.signed_at && (
-                          <span className="mr-2">
-                            {new Date(section.signed_at).toLocaleDateString('he-IL')}{' '}
-                            {new Date(section.signed_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ) : canSignSection(section) ? (
-                    <button
-                      onClick={() => setSigningSection(section)}
-                      className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 text-white rounded-lg
-                        text-sm font-bold hover:bg-amber-600 active:scale-[0.98]"
-                    >
-                      <PenLine className="w-3.5 h-3.5" />
-                      חתום
-                    </button>
-                  ) : (
-                    <div className="text-xs text-slate-400 text-center py-1.5">
-                      ממתין לחתימה
-                    </div>
-                  )}
-                </div>
-              )}
+              {needsSignature && isDual && renderDualSignatureArea(section)}
+              {needsSignature && !isDual && renderSingleSignatureArea(section)}
             </div>
           </div>
         );
@@ -210,18 +353,14 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
 
       <SignaturePadModal
         open={!!signingSection}
-        onClose={() => setSigningSection(null)}
-        role={signingSection?.signature_role}
+        onClose={() => { setSigningSection(null); setSigningSlot(null); }}
+        role={getSigningRole()}
         projectId={projectId}
         protocolId={protocol?.id}
         currentUserName={currentUserName}
-        tenantData={
-          signingSection?.signature_role === 'tenant' ? (protocol?.tenants || [])[0] :
-          signingSection?.signature_role === 'tenant_2' ? (protocol?.tenants || [])[1] :
-          null
-        }
+        tenantData={getSigningTenantData()}
         onSigned={onUpdated}
-        signFn={signingSection ? (formData) => handleSignLegalSection(signingSection.id, formData) : undefined}
+        signFn={signingSection ? (formData) => handleSignLegalSection(signingSection.id, formData, signingSlot) : undefined}
       />
     </div>
   );

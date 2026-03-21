@@ -1318,10 +1318,11 @@ export const handoverService = {
     );
     return response.data;
   },
-  async getLegalSectionSignatureImage(projectId, protocolId, sectionId) {
+  async getLegalSectionSignatureImage(projectId, protocolId, sectionId, signerSlot = null) {
+    const params = signerSlot ? { signer_slot: signerSlot } : {};
     const response = await axios.get(
       `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}/signature-image`,
-      { headers: getAuthHeader() }
+      { headers: getAuthHeader(), params }
     );
     return response.data;
   },

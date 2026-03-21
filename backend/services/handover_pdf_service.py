@@ -362,6 +362,13 @@ async def _build_template_context(protocol: dict, db) -> dict:
     legal_sections_raw = protocol.get("legal_sections", [])
     legal_section_image_keys = {}
     for ls_idx, ls in enumerate(legal_sections_raw):
+        sigs_obj = ls.get("signatures") or {}
+        for slot in ("tenant", "tenant_2"):
+            slot_sig = sigs_obj.get(slot)
+            if slot_sig and isinstance(slot_sig, dict) and slot_sig.get("type") == "canvas" and slot_sig.get("image_key"):
+                key_name = f"legal_sig_{ls_idx}_{slot}"
+                image_keys.append((key_name, slot_sig["image_key"]))
+                legal_section_image_keys[(ls_idx, slot)] = key_name
         sig = ls.get("signature")
         if sig and isinstance(sig, dict) and sig.get("type") == "canvas" and sig.get("image_key"):
             key_name = f"legal_sig_{ls_idx}"
@@ -476,23 +483,48 @@ async def _build_template_context(protocol: dict, db) -> dict:
 
     legal_sections = []
     for ls_idx, ls in enumerate(legal_sections_raw):
+        sigs_obj = ls.get("signatures") or {}
         sig = ls.get("signature")
+        is_dual = ls.get("requires_both_tenants", False)
+
         ls_data = {
             "title": ls.get("title", ""),
             "body": ls.get("body", ""),
             "edited": ls.get("edited", False),
             "requires_signature": ls.get("requires_signature", False),
-            "signer_name": ls.get("signer_name", ""),
-            "signed_at": _format_hebrew_date(ls.get("signed_at")),
-            "is_signed": bool(sig),
+            "is_dual": is_dual,
+            "signers": [],
         }
-        if sig and isinstance(sig, dict):
-            ls_data["sig_type"] = sig.get("type", "")
-            ls_data["typed_name"] = sig.get("typed_name", "")
-            if ls_idx in legal_section_image_keys:
-                ls_data["sig_image_b64"] = images.get(legal_section_image_keys[ls_idx])
-            else:
-                ls_data["sig_image_b64"] = None
+
+        if is_dual and sigs_obj:
+            for slot, label in [("tenant", "רוכש/ת ראשי/ת"), ("tenant_2", "רוכש/ת נוסף/ת")]:
+                slot_sig = sigs_obj.get(slot)
+                if slot_sig and isinstance(slot_sig, dict) and slot_sig.get("signed_at"):
+                    signer_entry = {
+                        "label": label,
+                        "signer_name": slot_sig.get("signer_name", ""),
+                        "signed_at": _format_hebrew_date(slot_sig.get("signed_at")),
+                        "sig_type": slot_sig.get("type", ""),
+                        "typed_name": slot_sig.get("typed_name", ""),
+                        "sig_image_b64": images.get(legal_section_image_keys.get((ls_idx, slot))),
+                    }
+                    ls_data["signers"].append(signer_entry)
+
+        if not ls_data["signers"] and sig and isinstance(sig, dict):
+            signer_entry = {
+                "label": "",
+                "signer_name": ls.get("signer_name", ""),
+                "signed_at": _format_hebrew_date(ls.get("signed_at")),
+                "sig_type": sig.get("type", ""),
+                "typed_name": sig.get("typed_name", ""),
+                "sig_image_b64": images.get(legal_section_image_keys.get(ls_idx)),
+            }
+            ls_data["signers"].append(signer_entry)
+
+        ls_data["is_signed"] = len(ls_data["signers"]) > 0
+        ls_data["signer_name"] = ls_data["signers"][0]["signer_name"] if ls_data["signers"] else ""
+        ls_data["signed_at"] = ls_data["signers"][0]["signed_at"] if ls_data["signers"] else ""
+
         legal_sections.append(ls_data)
 
     sig_labels = protocol.get("signature_labels", {}) or {}

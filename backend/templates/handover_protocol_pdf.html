@@ -673,15 +673,18 @@ tbody tr:nth-child(odd) {
     {% if ls.edited %}
     <div class="legal-note">(נערך מהמקור)</div>
     {% endif %}
-    {% if ls.is_signed %}
+    {% if ls.signers is defined and ls.signers|length > 0 %}
+    {% for signer in ls.signers %}
     <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0;">
-        {% if ls.sig_type is defined and ls.sig_type == 'canvas' and ls.sig_image_b64 is defined and ls.sig_image_b64 %}
-        <img src="{{ ls.sig_image_b64 }}" class="signature-image" alt="חתימה">
-        {% elif ls.sig_type is defined and ls.sig_type == 'typed' and ls.typed_name is defined and ls.typed_name %}
-        <div class="typed-signature">{{ ls.typed_name }}</div>
+        {% if signer.label %}<div style="font-size: 9px; color: #64748b; margin-bottom: 4px;">{{ signer.label }}</div>{% endif %}
+        {% if signer.sig_type == 'canvas' and signer.sig_image_b64 %}
+        <img src="{{ signer.sig_image_b64 }}" class="signature-image" alt="חתימה">
+        {% elif signer.sig_type == 'typed' and signer.typed_name %}
+        <div class="typed-signature">{{ signer.typed_name }}</div>
         {% endif %}
-        <div class="legal-note">נחתם ע"י: {{ ls.signer_name }}{% if ls.signed_at %} — {{ ls.signed_at }}{% endif %}</div>
+        <div class="legal-note">נחתם ע"י: {{ signer.signer_name }}{% if signer.signed_at %} — {{ signer.signed_at }}{% endif %}</div>
     </div>
+    {% endfor %}
     {% elif ls.requires_signature %}
     <div class="legal-note">(טרם נחתם)</div>
     {% endif %}

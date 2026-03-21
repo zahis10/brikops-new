@@ -229,6 +229,7 @@ const AdminHandoverTemplateEditor = () => {
         body: (ls.body || '').trim(),
         requires_signature: !!ls.requires_signature,
         signature_role: ls.requires_signature ? ls.signature_role : null,
+        requires_both_tenants: !!ls.requires_both_tenants,
         applies_to: ls.applies_to || ['initial', 'final'],
         order: i + 1,
       }));
@@ -662,7 +663,7 @@ const AdminHandoverTemplateEditor = () => {
                           <span className="text-xs text-slate-500">חותם:</span>
                           <select
                             value={ls.signature_role || ''}
-                            onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, signature_role: e.target.value || null } : s))}
+                            onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, signature_role: e.target.value || null, ...(!['tenant', 'tenant_2'].includes(e.target.value) ? { requires_both_tenants: false } : {}) } : s))}
                             className="text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-300"
                           >
                             <option value="">— בחר —</option>
@@ -672,6 +673,17 @@ const AdminHandoverTemplateEditor = () => {
                             <option value="contractor_rep">נציג קבלן</option>
                           </select>
                         </div>
+                      )}
+                      {ls.requires_signature && ['tenant', 'tenant_2'].includes(ls.signature_role) && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!ls.requires_both_tenants}
+                            onChange={(e) => setLegalSections(prev => prev.map((s, i) => i === idx ? { ...s, requires_both_tenants: e.target.checked } : s))}
+                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                          />
+                          <span className="text-sm text-slate-700">דורש חתימת שני הרוכשים</span>
+                        </label>
                       )}
                     </div>
 
@@ -715,7 +727,7 @@ const AdminHandoverTemplateEditor = () => {
               </div>
             )}
             <button
-              onClick={() => setLegalSections(prev => [...prev, { id: genId('legal'), title: '', body: '', requires_signature: false, signature_role: null, applies_to: ['initial', 'final'], order: prev.length + 1 }])}
+              onClick={() => setLegalSections(prev => [...prev, { id: genId('legal'), title: '', body: '', requires_signature: false, signature_role: null, requires_both_tenants: false, applies_to: ['initial', 'final'], order: prev.length + 1 }])}
               className="w-full py-2.5 text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-1.5 justify-center rounded-xl border border-dashed border-purple-200 transition-colors font-medium"
             >
               <Plus className="w-4 h-4" />
