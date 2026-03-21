@@ -295,10 +295,11 @@ const HandoverProtocolPage = () => {
       return;
     }
     setShareLoading(true);
+    let fetchedBlob = null;
     try {
-      const blob = await handoverService.getPdfBlob(projectId, protocolId);
+      fetchedBlob = await handoverService.getPdfBlob(projectId, protocolId);
       const filename = buildPdfFilename();
-      const file = new File([blob], filename, { type: 'application/pdf' });
+      const file = new File([fetchedBlob], filename, { type: 'application/pdf' });
       if (navigator.canShare?.({ files: [file] })) {
         const projectName = protocol.snapshot?.project_name || '';
         const apartment = protocol.snapshot?.unit_name || '';
@@ -308,14 +309,12 @@ const HandoverProtocolPage = () => {
           files: [file],
         });
       } else {
-        downloadBlobAsFile(blob, filename);
+        downloadBlobAsFile(fetchedBlob, filename);
       }
     } catch (err) {
-      if (err?.name === 'AbortError' || err?.name === 'NotAllowedError') {
-        if (err?.name === 'NotAllowedError') {
-          const blob = await handoverService.getPdfBlob(projectId, protocolId).catch(() => null);
-          if (blob) downloadBlobAsFile(blob, buildPdfFilename());
-        }
+      if (err?.name === 'AbortError') {
+      } else if (err?.name === 'NotAllowedError') {
+        if (fetchedBlob) downloadBlobAsFile(fetchedBlob, buildPdfFilename());
       } else {
         await handlePdfError(err);
       }
