@@ -401,11 +401,14 @@ async def _build_template_context(protocol: dict, db) -> dict:
         sec_items = []
         sec_ok = sec_fail = sec_partial = sec_na = 0
         all_not_checked = True
+        all_not_relevant = True
 
         for idx, item in enumerate(sec.get("items", []), 1):
             status = item.get("status", "not_checked")
             if status not in (None, "", "not_checked"):
                 all_not_checked = False
+            if status != "not_relevant":
+                all_not_relevant = False
 
             item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
             photo_keys = item_photo_map.get(item_key, [])
@@ -461,6 +464,9 @@ async def _build_template_context(protocol: dict, db) -> dict:
         global_fail += sec_fail
         global_partial += sec_partial
 
+        is_collapsed = all_not_checked or all_not_relevant
+        collapsed_reason = "not_checked" if all_not_checked else ("not_relevant" if all_not_relevant else None)
+
         inspection_sections.append({
             "name": sec.get("name", ""),
             "items": sec_items,
@@ -469,7 +475,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
             "fail": sec_fail,
             "partial": sec_partial,
             "na": sec_na,
-            "collapsed": all_not_checked,
+            "collapsed": is_collapsed,
+            "collapsed_reason": collapsed_reason,
         })
 
     stats_total = global_ok + global_fail + global_partial
