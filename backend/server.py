@@ -870,13 +870,12 @@ async def backfill_project_templates():
             continue
         query = {"$or": [{ver_field: None}, {ver_field: {"$exists": False}}]}
         count = await db.projects.count_documents(query)
-        if count == 0:
-            continue
-        result = await db.projects.update_many(query, {"$set": {
-            ver_field: default_tpl["id"],
-            fam_field: default_tpl["family_id"],
-        }})
-        logger.info(f"[BACKFILL-TPL] Assigned default {tpl_type} template to {result.modified_count} project(s)")
+        if count > 0:
+            result = await db.projects.update_many(query, {"$set": {
+                ver_field: default_tpl["id"],
+                fam_field: default_tpl["family_id"],
+            }})
+            logger.info(f"[BACKFILL-TPL] Assigned default {tpl_type} template to {result.modified_count} project(s)")
 
         orphan_query = {ver_field: {"$exists": True, "$ne": None}, "$or": [{fam_field: None}, {fam_field: {"$exists": False}}]}
         total_fixed = 0
