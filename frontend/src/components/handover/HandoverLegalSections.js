@@ -114,35 +114,6 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
     return allowed.includes(userRole);
   };
 
-  const isSectionFullySigned = useCallback((section) => {
-    if (section.requires_both_tenants) {
-      const sigs = section.signatures || {};
-      const t1 = !!sigs.tenant?.signed_at;
-      const t2 = numTenants >= 2 ? !!sigs.tenant_2?.signed_at : true;
-      return t1 && t2;
-    }
-    return !!section.signed_at;
-  }, [numTenants]);
-
-  const findNextUnsignedSection = useCallback((afterSectionId) => {
-    const startIdx = afterSectionId ? sections.findIndex(s => s.id === afterSectionId) : -1;
-    for (let i = startIdx + 1; i < sections.length; i++) {
-      const s = sections[i];
-      if (s.requires_signature && !isSectionFullySigned(s)) {
-        return s;
-      }
-    }
-    return null;
-  }, [sections, isSectionFullySigned]);
-
-  const findNextUnsignedSlot = useCallback((section) => {
-    if (!section.requires_both_tenants) return null;
-    const sigs = section.signatures || {};
-    if (!sigs.tenant?.signed_at) return 'tenant';
-    if (numTenants >= 2 && !sigs.tenant_2?.signed_at) return 'tenant_2';
-    return null;
-  }, [numTenants]);
-
   const handleSignLegalSection = useCallback(async (sectionId, formData, slot) => {
     try {
       if (slot) {

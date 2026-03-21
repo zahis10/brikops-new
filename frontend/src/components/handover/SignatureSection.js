@@ -99,10 +99,6 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     if (protocol?.id) loadImages();
   }, [protocol?.id, protocol?.signatures, projectId]);
 
-  const isRoleSigned = useCallback((roleKey) => {
-    return !!signatures[roleKey];
-  }, [signatures]);
-
   const canEditLabel = (roleKey) => {
     if (isLocked) return false;
     if (signatures[roleKey]) return false;
@@ -162,8 +158,11 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     onUpdated?.(updatedProtocol);
     setSigningRole(null);
 
-    const latestSigs = (updatedProtocol && updatedProtocol.signatures && typeof updatedProtocol.signatures === 'object')
-      ? updatedProtocol.signatures : signatures;
+    if (!updatedProtocol || !updatedProtocol.signatures || typeof updatedProtocol.signatures !== 'object') {
+      return;
+    }
+
+    const latestSigs = updatedProtocol.signatures;
 
     const allRequiredSigned = ['manager', 'tenant'].every(r => !!latestSigs[r])
       && (!isTenant2Required || !!latestSigs['tenant_2']);
@@ -187,7 +186,7 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     if (nextUnsigned) {
       setTimeout(() => setSigningRole(nextUnsigned), 300);
     }
-  }, [onUpdated, signatures, isTenant2Required]);
+  }, [onUpdated, isTenant2Required]);
 
   const currentUserName = user?.name || user?.full_name || '';
 
