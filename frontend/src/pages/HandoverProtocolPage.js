@@ -245,32 +245,55 @@ const HandoverProtocolPage = () => {
     a.remove();
   };
 
-  const handlePdfError = (err) => {
+  const handlePdfError = async (err) => {
     console.error('PDF error:', err);
-    if (err?.response?.status === 400) {
+    const status = err?.response?.status;
+    if (status === 400) {
       toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
-    } else if (err?.response?.status === 504) {
+    } else if (status === 504) {
       toast.error('יצירת ה-PDF לקחה יותר מדי זמן, נסו שוב');
-    } else if (err?.response?.status >= 500) {
+    } else if (status >= 500) {
       toast.error('שגיאה ביצירת PDF, נסו שוב');
-    } else {
+    } else if (err?.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        toast.error(json.detail || 'שגיאה בהורדת PDF');
+      } catch {
+        toast.error('שגיאה בהורדת PDF');
+      }
+    } else if (!err?.response) {
       toast.error('שגיאת רשת');
+    } else {
+      toast.error('שגיאה בהורדת PDF');
     }
   };
 
   const handleDownloadPdf = async () => {
+    if (!protocol.locked) {
+      toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
+      return;
+    }
     setPdfLoading(true);
     try {
       const blob = await handoverService.getPdfBlob(projectId, protocolId);
       downloadBlobAsFile(blob, buildPdfFilename());
     } catch (err) {
-      handlePdfError(err);
+      await handlePdfError(err);
     } finally {
       setPdfLoading(false);
     }
   };
 
   const handleSharePdf = async () => {
+    if (!protocol.locked) {
+      toast.error('ניתן להוריד PDF רק לפרוטוקול חתום');
+      return;
+    }
+    if (!navigator.share) {
+      await handleDownloadPdf();
+      return;
+    }
     setShareLoading(true);
     try {
       const blob = await handoverService.getPdfBlob(projectId, protocolId);
@@ -288,8 +311,13 @@ const HandoverProtocolPage = () => {
         downloadBlobAsFile(blob, filename);
       }
     } catch (err) {
-      if (err?.name !== 'AbortError') {
-        handlePdfError(err);
+      if (err?.name === 'AbortError' || err?.name === 'NotAllowedError') {
+        if (err?.name === 'NotAllowedError') {
+          const blob = await handoverService.getPdfBlob(projectId, protocolId).catch(() => null);
+          if (blob) downloadBlobAsFile(blob, buildPdfFilename());
+        }
+      } else {
+        await handlePdfError(err);
       }
     } finally {
       setShareLoading(false);
