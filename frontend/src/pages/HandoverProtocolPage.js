@@ -93,6 +93,7 @@ const HandoverProtocolPage = () => {
   const [legalOpen, setLegalOpen] = useState(true);
   const [signaturesOpen, setSignaturesOpen] = useState(true);
   const signatureRef = useRef(null);
+  const pdfBlobRef = useRef(null);
 
   const loadProtocol = useCallback(async () => {
     try {
@@ -123,13 +124,29 @@ const HandoverProtocolPage = () => {
     fetchRole();
   }, [projectId, user]);
 
+  useEffect(() => {
+    if (protocol?.locked) {
+      handoverService.getPdfBlob(projectId, protocolId)
+        .then(blob => { pdfBlobRef.current = blob; })
+        .catch(() => {});
+    } else {
+      pdfBlobRef.current = null;
+    }
+  }, [protocol?.locked, projectId, protocolId]);
+
   const handleFormUpdated = useCallback((updatedProtocol) => {
+    pdfBlobRef.current = null;
     if (updatedProtocol && updatedProtocol.sections && updatedProtocol.signatures) {
       setProtocol(updatedProtocol);
+      if (updatedProtocol.locked) {
+        handoverService.getPdfBlob(projectId, protocolId)
+          .then(blob => { pdfBlobRef.current = blob; })
+          .catch(() => {});
+      }
     } else {
       loadProtocol();
     }
-  }, [loadProtocol]);
+  }, [loadProtocol, projectId, protocolId]);
 
   if (loading) {
     return (
@@ -295,26 +312,28 @@ const HandoverProtocolPage = () => {
       return;
     }
     setShareLoading(true);
-    let fetchedBlob = null;
+    console.log('[SHARE] started, cached:', !!pdfBlobRef.current);
+    let blob = null;
     try {
-      fetchedBlob = await handoverService.getPdfBlob(projectId, protocolId);
+      blob = pdfBlobRef.current || await handoverService.getPdfBlob(projectId, protocolId);
+      if (!pdfBlobRef.current) pdfBlobRef.current = blob;
       const filename = buildPdfFilename();
-      const file = new File([fetchedBlob], filename, { type: 'application/pdf' });
-      if (navigator.canShare?.({ files: [file] })) {
-        const projectName = protocol.snapshot?.project_name || '';
-        const apartment = protocol.snapshot?.unit_name || '';
-        await navigator.share({
-          title: 'פרוטוקול מסירה',
-          text: `פרוטוקול מסירה — ${projectName}${apartment ? ', דירה ' + apartment : ''}`,
-          files: [file],
-        });
-      } else {
-        downloadBlobAsFile(fetchedBlob, filename);
-      }
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      const projectName = protocol.snapshot?.project_name || '';
+      const apartment = protocol.snapshot?.unit_name || '';
+      console.log('[SHARE] blob ready, sharing...');
+      await navigator.share({
+        title: 'פרוטוקול מסירה',
+        text: `פרוטוקול מסירה — ${projectName}${apartment ? ', דירה ' + apartment : ''}`,
+        files: [file],
+      });
+      console.log('[SHARE] success');
     } catch (err) {
+      console.log('[SHARE] error:', err?.name, err?.message);
       if (err?.name === 'AbortError') {
       } else if (err?.name === 'NotAllowedError') {
-        if (fetchedBlob) downloadBlobAsFile(fetchedBlob, buildPdfFilename());
+        toast.info('לא ניתן לשתף, מוריד PDF במקום...');
+        if (blob) downloadBlobAsFile(blob, buildPdfFilename());
       } else {
         await handlePdfError(err);
       }
