@@ -473,12 +473,21 @@ def _legal_section_sign_score(section, num_tenants):
     return 0.0
 
 
+def _valid_tenant_count(protocol):
+    return len([
+        t for t in (protocol.get("tenants") or [])
+        if t and (t.get("name") or "").strip()
+    ])
+
+
 def _is_protocol_fully_signed(protocol):
     sigs = _normalize_signatures(protocol)
     for role in REQUIRED_SIGNATURE_ROLES:
         if role not in sigs or not sigs[role]:
             return False
-    num_tenants = len(protocol.get("tenants") or [])
+    num_tenants = _valid_tenant_count(protocol)
+    if num_tenants >= 2 and ("tenant_2" not in sigs or not sigs["tenant_2"]):
+        return False
     for section in protocol.get("legal_sections", []):
         score = _legal_section_sign_score(section, num_tenants)
         if score is not None and score < 1.0:
@@ -490,7 +499,7 @@ def _recalculate_signature_status(protocol):
     if _is_protocol_fully_signed(protocol):
         return "signed", True
     count = _count_signatures(protocol)
-    num_tenants = len(protocol.get("tenants") or [])
+    num_tenants = _valid_tenant_count(protocol)
     legal_any_signed = any(
         (_legal_section_sign_score(s, num_tenants) or 0) > 0
         for s in protocol.get("legal_sections", [])
@@ -2230,7 +2239,7 @@ async def sign_legal_section(
         raise HTTPException(status_code=400, detail="נסח זה לא דורש חתימה")
 
     is_dual = section.get("requires_both_tenants", False)
-    num_tenants = len(protocol.get("tenants") or [])
+    num_tenants = _valid_tenant_count(protocol)
 
     if is_dual:
         if not signer_slot or signer_slot not in ("tenant", "tenant_2"):

@@ -768,7 +768,11 @@ tbody tr:nth-child(odd) {
                         {% if sig.signed_at %} — {{ sig.signed_at }}{% endif %}
                     </div>
                 {% else %}
+                    {% if role == 'tenant_2' and is_tenant2_required %}
+                    <div class="signature-unsigned">טרם נחתם</div>
+                    {% else %}
                     <div class="signature-unsigned">לא נחתם (אופציונלי)</div>
+                    {% endif %}
                 {% endif %}
             </div>
         </div>

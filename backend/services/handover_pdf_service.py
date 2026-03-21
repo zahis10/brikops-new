@@ -527,6 +527,9 @@ async def _build_template_context(protocol: dict, db) -> dict:
 
         legal_sections.append(ls_data)
 
+    valid_tenants = [t for t in (protocol.get("tenants") or []) if t and (t.get("name") or "").strip()]
+    is_tenant2_required = len(valid_tenants) >= 2
+
     sig_labels = protocol.get("signature_labels", {}) or {}
     signature_data = {}
     for role in ("manager", "tenant", "tenant_2", "contractor_rep"):
@@ -589,6 +592,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
         "has_any_quantity": has_any_quantity,
         "legal_sections": legal_sections,
         "signatures": signature_data,
+        "is_tenant2_required": is_tenant2_required,
         "all_defects": all_defects,
         "total_defects": len(all_defects),
         "defect_severity_counts": defect_severity_counts,

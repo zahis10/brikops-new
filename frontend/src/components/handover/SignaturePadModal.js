@@ -146,22 +146,23 @@ const SignaturePadModal = ({
         formData.append('typed_name', typedName.trim());
       }
 
+      let responseData;
       if (signFn) {
-        await signFn(formData);
+        responseData = await signFn(formData);
       } else {
-        await handoverService.signRole(projectId, protocolId, role, formData);
+        responseData = await handoverService.signRole(projectId, protocolId, role, formData);
       }
       toast.success(t('handover', 'signatureSaved'));
-      onSigned?.();
+      onSigned?.(responseData);
       onClose();
     } catch (err) {
       if (err?.response?.status === 409) {
         toast.error(t('handover', 'signatureExists'));
-        onSigned?.();
+        onSigned?.({});
         onClose();
       } else if (err?.response?.status === 403) {
         toast.error(t('handover', 'protocolLocked'));
-        onSigned?.();
+        onSigned?.({});
         onClose();
       } else {
         toast.error(t('handover', 'updateError'));

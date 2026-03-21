@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
@@ -7,12 +7,14 @@ import { CheckCircle2, PenLine, Lock, Trash2, Loader2, AlertTriangle } from 'luc
 import { Card } from '../ui/card';
 import SignaturePadModal from './SignaturePadModal';
 
-const ROLES = [
-  { key: 'manager', label: t('handover', 'signatureManager'), optional: false },
-  { key: 'tenant', label: t('handover', 'signatureTenant'), optional: false },
-  { key: 'tenant_2', label: 'רוכש/ת נוסף/ת', optional: true },
-  { key: 'contractor_rep', label: t('handover', 'signatureContractorRep'), optional: true },
-];
+const ROLE_LABELS = {
+  manager: t('handover', 'signatureManager'),
+  tenant: t('handover', 'signatureTenant'),
+  tenant_2: 'רוכש/ת נוסף/ת',
+  contractor_rep: t('handover', 'signatureContractorRep'),
+};
+
+const SIGN_ORDER = ['manager', 'tenant', 'tenant_2', 'contractor_rep'];
 
 const ALLOWED_ROLES = {
   manager: ['project_manager', 'owner', 'super_admin', 'management_team'],
@@ -50,9 +52,22 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
 
   const isLocked = protocol?.locked === true;
   const sigLabels = protocol?.signature_labels || {};
-  const signatures = (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
-    ? protocol.signatures
-    : {};
+  const signatures = useMemo(() =>
+    (protocol?.signatures && typeof protocol.signatures === 'object' && !Array.isArray(protocol.signatures))
+      ? protocol.signatures
+      : {},
+    [protocol?.signatures]
+  );
+
+  const validTenants = (protocol?.tenants || []).filter(tt => tt && tt.name && tt.name.trim() !== '');
+  const isTenant2Required = validTenants.length >= 2;
+
+  const ROLES = [
+    { key: 'manager', label: ROLE_LABELS.manager, optional: false },
+    { key: 'tenant', label: ROLE_LABELS.tenant, optional: false },
+    { key: 'tenant_2', label: ROLE_LABELS.tenant_2, optional: !isTenant2Required },
+    { key: 'contractor_rep', label: ROLE_LABELS.contractor_rep, optional: true },
+  ];
 
   const unsignedLegalSections = (protocol?.legal_sections || []).filter(
     s => s.requires_signature && !s.signed_at
@@ -69,12 +84,12 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
       : {};
     const loadImages = async () => {
       const imgs = {};
-      for (const role of ROLES) {
-        const sig = sigs[role.key];
+      for (const role of SIGN_ORDER) {
+        const sig = sigs[role];
         if (sig && sig.type === 'canvas' && sig.image_key) {
           try {
-            const data = await handoverService.getSignatureImage(projectId, protocol.id, role.key);
-            if (data.url) imgs[role.key] = data.url;
+            const data = await handoverService.getSignatureImage(projectId, protocol.id, role);
+            if (data.url) imgs[role] = data.url;
           } catch {
           }
         }
@@ -83,6 +98,10 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
     };
     if (protocol?.id) loadImages();
   }, [protocol?.id, protocol?.signatures, projectId]);
+
+  const isRoleSigned = useCallback((roleKey) => {
+    return !!signatures[roleKey];
+  }, [signatures]);
 
   const canEditLabel = (roleKey) => {
     if (isLocked) return false;
@@ -138,6 +157,37 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
       setDeletingRole(null);
     }
   };
+
+  const handleSigned = useCallback((updatedProtocol) => {
+    onUpdated?.(updatedProtocol);
+    setSigningRole(null);
+
+    const latestSigs = (updatedProtocol && updatedProtocol.signatures && typeof updatedProtocol.signatures === 'object')
+      ? updatedProtocol.signatures : signatures;
+
+    const allRequiredSigned = ['manager', 'tenant'].every(r => !!latestSigs[r])
+      && (!isTenant2Required || !!latestSigs['tenant_2']);
+
+    if (allRequiredSigned) {
+      const contractorSigned = !!latestSigs['contractor_rep'];
+      if (contractorSigned) {
+        setTimeout(() => toast.success('כל החתימות הושלמו!'), 350);
+      } else {
+        setTimeout(() => toast.success('כל החתימות הנדרשות הושלמו!'), 350);
+      }
+      return;
+    }
+
+    const nextUnsigned = SIGN_ORDER.find(role => {
+      if (role === 'tenant_2' && !isTenant2Required) return false;
+      if (role === 'contractor_rep') return false;
+      return !latestSigs[role];
+    });
+
+    if (nextUnsigned) {
+      setTimeout(() => setSigningRole(nextUnsigned), 300);
+    }
+  }, [onUpdated, signatures, isTenant2Required]);
 
   const currentUserName = user?.name || user?.full_name || '';
 
@@ -317,7 +367,7 @@ const SignatureSection = ({ protocol, projectId, userRole, onUpdated }) => {
           signingRole === 'tenant_2' ? (protocol?.tenants || [])[1] :
           null
         }
-        onSigned={onUpdated}
+        onSigned={handleSigned}
       />
     </div>
   );

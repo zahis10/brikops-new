@@ -27,11 +27,13 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
   const [editingBodies, setEditingBodies] = useState({});
   const [savingBody, setSavingBody] = useState(null);
   const blurSaveRef = useRef({});
+  const sectionRefsMap = useRef({});
 
   const sections = useMemo(() => protocol?.legal_sections || [], [protocol?.legal_sections]);
   const isLocked = protocol?.locked === true;
   const isPM = ['project_manager', 'owner', 'super_admin'].includes(userRole);
-  const numTenants = (protocol?.tenants || []).length;
+  const validTenants = (protocol?.tenants || []).filter(tt => tt && tt.name && tt.name.trim() !== '');
+  const numTenants = validTenants.length;
 
   useEffect(() => {
     const loadImages = async () => {
@@ -112,15 +114,114 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
     return allowed.includes(userRole);
   };
 
+  const isSectionFullySigned = useCallback((section) => {
+    if (section.requires_both_tenants) {
+      const sigs = section.signatures || {};
+      const t1 = !!sigs.tenant?.signed_at;
+      const t2 = numTenants >= 2 ? !!sigs.tenant_2?.signed_at : true;
+      return t1 && t2;
+    }
+    return !!section.signed_at;
+  }, [numTenants]);
+
+  const findNextUnsignedSection = useCallback((afterSectionId) => {
+    const startIdx = afterSectionId ? sections.findIndex(s => s.id === afterSectionId) : -1;
+    for (let i = startIdx + 1; i < sections.length; i++) {
+      const s = sections[i];
+      if (s.requires_signature && !isSectionFullySigned(s)) {
+        return s;
+      }
+    }
+    return null;
+  }, [sections, isSectionFullySigned]);
+
+  const findNextUnsignedSlot = useCallback((section) => {
+    if (!section.requires_both_tenants) return null;
+    const sigs = section.signatures || {};
+    if (!sigs.tenant?.signed_at) return 'tenant';
+    if (numTenants >= 2 && !sigs.tenant_2?.signed_at) return 'tenant_2';
+    return null;
+  }, [numTenants]);
+
   const handleSignLegalSection = useCallback(async (sectionId, formData, slot) => {
     try {
       if (slot) {
         formData.append('signer_slot', slot);
       }
-      await handoverService.signLegalSection(projectId, protocol.id, sectionId, formData);
+      const responseData = await handoverService.signLegalSection(projectId, protocol.id, sectionId, formData);
+      const currentSectionId = sectionId;
       setSigningSection(null);
       setSigningSlot(null);
-      onUpdated?.();
+      onUpdated?.(responseData);
+
+      const updatedSections = (responseData && responseData.legal_sections) || sections;
+      const updatedSection = updatedSections.find(s => s.id === currentSectionId);
+
+      setTimeout(() => {
+        if (updatedSection) {
+          const sigs = updatedSection.signatures || {};
+          if (updatedSection.requires_both_tenants && numTenants >= 2) {
+            if (!sigs.tenant_2?.signed_at && sigs.tenant?.signed_at) {
+              const nextSec = updatedSections.find(s => s.id === currentSectionId);
+              if (nextSec) {
+                setSigningSection(nextSec);
+                setSigningSlot('tenant_2');
+              }
+              return;
+            }
+          }
+        }
+
+        let foundNext = false;
+        const currentIdx = updatedSections.findIndex(s => s.id === currentSectionId);
+        for (let i = currentIdx + 1; i < updatedSections.length; i++) {
+          const s = updatedSections[i];
+          if (!s.requires_signature) continue;
+          const isDual = s.requires_both_tenants;
+          let sectionDone;
+          if (isDual) {
+            const ss = s.signatures || {};
+            const t1 = !!ss.tenant?.signed_at;
+            const t2 = numTenants >= 2 ? !!ss.tenant_2?.signed_at : true;
+            sectionDone = t1 && t2;
+          } else {
+            sectionDone = !!s.signed_at;
+          }
+          if (!sectionDone) {
+            const el = sectionRefsMap.current[s.id];
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            let nextSlot = null;
+            if (isDual) {
+              const ss = s.signatures || {};
+              if (!ss.tenant?.signed_at) nextSlot = 'tenant';
+              else if (numTenants >= 2 && !ss.tenant_2?.signed_at) nextSlot = 'tenant_2';
+            }
+            setSigningSection(s);
+            setSigningSlot(nextSlot);
+            foundNext = true;
+            break;
+          }
+        }
+
+        if (!foundNext) {
+          const allDone = updatedSections
+            .filter(s => s.requires_signature)
+            .every(s => {
+              if (s.requires_both_tenants) {
+                const ss = s.signatures || {};
+                const t1 = !!ss.tenant?.signed_at;
+                const t2 = numTenants >= 2 ? !!ss.tenant_2?.signed_at : true;
+                return t1 && t2;
+              }
+              return !!s.signed_at;
+            });
+          if (allDone) {
+            toast.success('כל הנסחים נחתמו!');
+          }
+        }
+      }, 300);
+
+      return responseData;
     } catch (err) {
       if (err?.response?.status === 409) {
         toast.info('הסעיף כבר נחתם, מרענן...');
@@ -131,7 +232,7 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
       }
       throw err;
     }
-  }, [projectId, protocol?.id, onUpdated]);
+  }, [projectId, protocol?.id, onUpdated, sections, numTenants]);
 
   const openSignPad = (section, slot) => {
     setSigningSection(section);
@@ -279,7 +380,7 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
       {sections.map((section) => {
         const isDual = section.requires_both_tenants;
         const needsSignature = section.requires_signature;
-        const isSectionFullySigned = isDual
+        const sectionFullySigned = isDual
           ? (() => {
               const sigs = section.signatures || {};
               const t1 = !!sigs.tenant?.signed_at;
@@ -298,8 +399,9 @@ const HandoverLegalSections = ({ protocol, projectId, isSigned, userRole, onUpda
         return (
           <div
             key={section.id}
+            ref={el => { sectionRefsMap.current[section.id] = el; }}
             className={`border rounded-xl bg-white overflow-hidden ${
-              isSectionFullySigned ? 'border-r-[3px] border-r-green-400 border-green-200' :
+              sectionFullySigned ? 'border-r-[3px] border-r-green-400 border-green-200' :
               needsSignature ? 'border-r-[3px] border-r-amber-400 border-slate-200' :
               'border-slate-200'
             }`}

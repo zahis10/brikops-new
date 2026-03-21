@@ -123,7 +123,13 @@ const HandoverProtocolPage = () => {
     fetchRole();
   }, [projectId, user]);
 
-  const handleFormUpdated = useCallback(() => { loadProtocol(); }, [loadProtocol]);
+  const handleFormUpdated = useCallback((updatedProtocol) => {
+    if (updatedProtocol && updatedProtocol.sections && updatedProtocol.signatures) {
+      setProtocol(updatedProtocol);
+    } else {
+      loadProtocol();
+    }
+  }, [loadProtocol]);
 
   if (loading) {
     return (
@@ -501,7 +507,7 @@ const HandoverProtocolPage = () => {
           )}
         </div>
 
-        <div ref={signatureRef} className="mt-6 pb-24 space-y-4">
+        <div ref={signatureRef} className="mt-6 space-y-4">
           {hasLegalSections && (
             <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
               <button
@@ -538,6 +544,25 @@ const HandoverProtocolPage = () => {
                 <SignatureSection protocol={protocol} projectId={projectId} userRole={userRole} onUpdated={handleFormUpdated} />
               </div>
             )}
+          </div>
+
+          <div className="flex items-center gap-2 pb-24">
+            <button
+              onClick={handleDownloadPdf}
+              disabled={pdfLoading}
+              className="flex-1 flex items-center justify-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-60"
+            >
+              {pdfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+              הורד PDF
+            </button>
+            <button
+              onClick={handleSharePdf}
+              disabled={shareLoading}
+              className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-60"
+            >
+              {shareLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+              שתף פרוטוקול
+            </button>
           </div>
         </div>
       </div>
