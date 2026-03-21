@@ -617,7 +617,7 @@ tbody tr:nth-child(odd) {
                 <td colspan="5" style="padding: 6px;">
                     {% if valid_photos|length == 1 %}
                     <div style="text-align: center;">
-                        <img src="{{ valid_photos[0] }}" alt="תמונת ליקוי" style="width: 60%; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <img src="{{ valid_photos[0] }}" alt="תמונת ליקוי" style="max-width: 200px; max-height: 160px; border-radius: 8px; border: 1px solid #e2e8f0;">
                     </div>
                     {% else %}
                     <table style="width: 100%; border: none; border-collapse: collapse; margin: 0;">
@@ -625,14 +625,14 @@ tbody tr:nth-child(odd) {
                         <tr>
                             {% if i + 1 < valid_photos|length %}
                             <td style="width: 50%; text-align: center; padding: 4px; border: none;">
-                                <img src="{{ valid_photos[i] }}" alt="תמונת ליקוי" style="width: 90%; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                <img src="{{ valid_photos[i] }}" alt="תמונת ליקוי" style="max-width: 180px; max-height: 140px; border-radius: 8px; border: 1px solid #e2e8f0;">
                             </td>
                             <td style="width: 50%; text-align: center; padding: 4px; border: none;">
-                                <img src="{{ valid_photos[i+1] }}" alt="תמונת ליקוי" style="width: 90%; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                <img src="{{ valid_photos[i+1] }}" alt="תמונת ליקוי" style="max-width: 180px; max-height: 140px; border-radius: 8px; border: 1px solid #e2e8f0;">
                             </td>
                             {% else %}
                             <td colspan="2" style="text-align: center; padding: 4px; border: none;">
-                                <img src="{{ valid_photos[i] }}" alt="תמונת ליקוי" style="width: 45%; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                <img src="{{ valid_photos[i] }}" alt="תמונת ליקוי" style="max-width: 180px; max-height: 140px; border-radius: 8px; border: 1px solid #e2e8f0;">
                             </td>
                             {% endif %}
                         </tr>
