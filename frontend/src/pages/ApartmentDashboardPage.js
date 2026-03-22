@@ -477,6 +477,7 @@ const ApartmentDashboardPage = () => {
                       maxLength={500}
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
                     />
+                    <p className="text-xs text-gray-400 text-start mt-0.5">{(spareTilesNotes || '').length}/500</p>
                   </div>
                   <div className="flex gap-2">
                     <button
