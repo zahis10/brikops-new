@@ -541,23 +541,25 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
 
     aid = (assignment.assignee_id or '').strip()
     if not aid or aid.startswith('__') or len(aid) < 8:
-        logger.warning(f"[ASSIGN] invalid assignee_id format: {aid!r}")
-        raise HTTPException(status_code=400, detail='קבלן לא נמצא — מזהה לא תקין')
+        logger.warning(f"[ASSIGN] invalid assignee_id format: {aid!r} user={user['id']} task={task_id} role={project_role}")
+        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
     try:
         uuid.UUID(aid)
     except ValueError:
-        logger.warning(f"[ASSIGN] non-UUID assignee_id: {aid!r}")
-        raise HTTPException(status_code=400, detail='קבלן לא נמצא — מזהה לא תקין')
+        logger.warning(f"[ASSIGN] non-UUID assignee_id: {aid!r} user={user['id']} task={task_id} role={project_role}")
+        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
 
     assignee = await db.users.find_one({'id': aid}, {'_id': 0})
     if not assignee:
+        logger.warning(f"[ASSIGN] assignee not found: {aid} user={user['id']} task={task_id}")
         raise HTTPException(status_code=400, detail='קבלן לא נמצא')
 
     assignee_membership = await db.project_memberships.find_one({
         'project_id': task['project_id'], 'user_id': aid
     })
     if not assignee_membership:
-        raise HTTPException(status_code=400, detail='הקבלן אינו חבר בפרויקט זה')
+        logger.warning(f"[ASSIGN] assignee not project member: {aid} project={task['project_id']} user={user['id']}")
+        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
 
     assignee_trade_key = assignee_membership.get('contractor_trade_key')
 
