@@ -54,6 +54,8 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
         unit_doc = await db.units.find_one(unit_query, {'_id': 0})
         if not unit_doc:
             raise HTTPException(status_code=404, detail='Unit not found on this floor')
+        if task.building_id and unit_doc.get('building_id') and task.building_id != unit_doc['building_id']:
+            raise HTTPException(status_code=400, detail='Building does not match unit')
         if not task.floor_id and unit_doc.get('floor_id'):
             task.floor_id = unit_doc['floor_id']
         if not task.building_id and unit_doc.get('building_id'):
