@@ -3271,7 +3271,7 @@ const ProjectControlPage = () => {
       </div>
 
       {pendingApprovalCount > 0 && !approvalBannerDismissed && (
-        <div className="max-w-[1100px] mx-auto px-4 pt-2">
+        <div className="sticky top-0 z-30 max-w-[1100px] mx-auto px-4 pt-2">
           <div className="flex items-center gap-2 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 shadow-sm">
             <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0" />
             <span className="flex-1 text-sm font-semibold text-orange-800">
