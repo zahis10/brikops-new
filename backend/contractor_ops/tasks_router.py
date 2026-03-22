@@ -927,7 +927,7 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
             if org_mem and org_mem.get('role') in ('owner', 'billing_admin', 'org_admin', 'project_manager'):
                 allowed = True
     if not allowed:
-        logger.warning(f"[FORCE-CLOSE] denied: user={user['id']} role={project_role} task={task_id}")
+        logger.warning(f"[FORCE-CLOSE] denied: user={user['id']} project_role={project_role} task={task_id} project={task.get('project_id','?')}")
         raise HTTPException(status_code=403, detail='Only management can force-close tasks')
     if task['status'] in ('approved', 'closed'):
         raise HTTPException(status_code=409, detail='הליקוי כבר סגור')
