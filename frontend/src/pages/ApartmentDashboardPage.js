@@ -12,7 +12,7 @@ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-  SlidersHorizontal, Search, X, Download, Pencil
+  SlidersHorizontal, Search, X, Download, Pencil, Save, Info
 } from 'lucide-react';
 
 const APARTMENT_DEFAULT_FILTERS = {
@@ -71,6 +71,11 @@ const ApartmentDashboardPage = () => {
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [editingUnit, setEditingUnit] = useState(null);
   const [showDefectModal, setShowDefectModal] = useState(false);
+  const [spareTilesOpen, setSpareTilesOpen] = useState(false);
+  const [spareTilesEditing, setSpareTilesEditing] = useState(false);
+  const [spareTilesCount, setSpareTilesCount] = useState('');
+  const [spareTilesNotes, setSpareTilesNotes] = useState('');
+  const [spareTilesSaving, setSpareTilesSaving] = useState(false);
   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
   const flagChecked = !!features?.defects_v2;
 
@@ -112,6 +117,38 @@ const ApartmentDashboardPage = () => {
       loadTasks();
     }
   }, [flagChecked, loadUnit, loadTasks]);
+
+  const startSpareTilesEdit = useCallback(() => {
+    const count = unitData?.spare_tiles_count;
+    setSpareTilesCount(count != null ? String(count) : '');
+    setSpareTilesNotes(unitData?.spare_tiles_notes || '');
+    setSpareTilesEditing(true);
+  }, [unitData]);
+
+  const saveSpareTiles = useCallback(async () => {
+    try {
+      setSpareTilesSaving(true);
+      const countVal = spareTilesCount.trim();
+      const payload = {
+        spare_tiles_count: countVal === '' ? null : parseInt(countVal, 10),
+        spare_tiles_notes: spareTilesNotes.trim() || null,
+      };
+      if (countVal !== '' && isNaN(payload.spare_tiles_count)) {
+        toast.error('כמות חייבת להיות מספר');
+        return;
+      }
+      await unitService.patch(unitId, payload);
+      const refreshed = await unitService.get(unitId);
+      setUnitData(refreshed);
+      setSpareTilesEditing(false);
+      toast.success('ריצוף ספייר עודכן');
+    } catch (err) {
+      toast.error('שגיאה בשמירת ריצוף ספייר');
+      console.error(err);
+    } finally {
+      setSpareTilesSaving(false);
+    }
+  }, [unitId, spareTilesCount, spareTilesNotes]);
 
   useEffect(() => {
     setFilters(prev => {
@@ -383,6 +420,107 @@ const ApartmentDashboardPage = () => {
           </div>
         </div>
       )}
+
+      <div className="max-w-lg mx-auto px-4 mt-3">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <button
+            onClick={() => setSpareTilesOpen(!spareTilesOpen)}
+            className="w-full flex items-center justify-between p-3 text-right"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-slate-700">ריצוף ספייר</span>
+              {unit && unit.spare_tiles_count === 0 && (
+                <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">0</span>
+              )}
+              {unit && unit.spare_tiles_count != null && unit.spare_tiles_count > 0 && (
+                <span className="text-[10px] bg-green-500 text-white px-2 py-0.5 rounded-full font-bold">{unit.spare_tiles_count}</span>
+              )}
+            </div>
+            {spareTilesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+          {spareTilesOpen && (
+            <div className="px-4 pb-4">
+              {unit?.spare_tiles_count === 0 && (
+                <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-amber-50 border border-amber-200">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span className="text-xs text-amber-700 font-medium">אין ריצוף ספייר</span>
+                </div>
+              )}
+              {unit?.spare_tiles_count == null && (
+                <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-blue-50 border border-blue-200">
+                  <Info className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                  <span className="text-xs text-blue-600 font-medium">לא עודכן מצב ריצוף ספייר</span>
+                </div>
+              )}
+
+              {spareTilesEditing ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">כמות</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={spareTilesCount}
+                      onChange={e => setSpareTilesCount(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">הערות</label>
+                    <textarea
+                      value={spareTilesNotes}
+                      onChange={e => setSpareTilesNotes(e.target.value)}
+                      placeholder="חסר 4 אריחים מסוג X..."
+                      rows={2}
+                      maxLength={500}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveSpareTiles}
+                      disabled={spareTilesSaving}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors"
+                    >
+                      {spareTilesSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      שמור
+                    </button>
+                    <button
+                      onClick={() => setSpareTilesEditing(false)}
+                      className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                    >
+                      ביטול
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {unit?.spare_tiles_count != null && unit.spare_tiles_count > 0 && (
+                    <div className="text-sm text-slate-700">
+                      <span className="font-medium">כמות:</span> {unit.spare_tiles_count}
+                    </div>
+                  )}
+                  {unit?.spare_tiles_notes && (
+                    <div className="text-sm text-slate-600">
+                      <span className="font-medium">הערות:</span> {unit.spare_tiles_notes}
+                    </div>
+                  )}
+                  {canCreateDefect && (
+                    <button
+                      onClick={startSpareTilesEdit}
+                      className="flex items-center gap-1.5 text-xs text-amber-600 font-medium hover:text-amber-700 transition-colors mt-1"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      עריכה
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-2">
         <div className="flex gap-2">

@@ -513,6 +513,21 @@ async def patch_unit(unit_id: str, body: dict, user: dict = Depends(get_current_
     if 'unit_note' in body:
         val = body['unit_note']
         updates['unit_note'] = val[:200] if val else None
+    if 'spare_tiles_count' in body:
+        val = body['spare_tiles_count']
+        if val is None:
+            updates['spare_tiles_count'] = None
+        else:
+            try:
+                parsed = int(val)
+                if parsed < 0:
+                    raise HTTPException(status_code=422, detail='spare_tiles_count must be >= 0')
+                updates['spare_tiles_count'] = parsed
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=422, detail='spare_tiles_count must be an integer')
+    if 'spare_tiles_notes' in body:
+        val = body['spare_tiles_notes']
+        updates['spare_tiles_notes'] = val[:500] if val else None
     if not updates:
         raise HTTPException(status_code=400, detail='No valid fields to update')
     await db.units.update_one({'id': unit_id}, {'$set': updates})

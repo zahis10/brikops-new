@@ -1981,7 +1981,7 @@ async def handover_overview(
             "let": {"fid": "$floors.id"},
             "pipeline": [
                 {"$match": {"$expr": {"$eq": ["$floor_id", "$$fid"]}, "archived": {"$ne": True}}},
-                {"$project": {"_id": 0, "id": 1, "floor_id": 1, "building_id": 1, "unit_no": 1, "display_label": 1, "sort_index": 1}},
+                {"$project": {"_id": 0, "id": 1, "floor_id": 1, "building_id": 1, "unit_no": 1, "display_label": 1, "sort_index": 1, "spare_tiles_count": 1}},
             ],
             "as": "units",
         }},
@@ -2013,6 +2013,7 @@ async def handover_overview(
             "unit_no": "$units.unit_no",
             "unit_display_label": "$units.display_label",
             "unit_sort_index": "$units.sort_index",
+            "spare_tiles_count": "$units.spare_tiles_count",
             "protocols": 1,
         }},
     ]
@@ -2130,11 +2131,15 @@ async def handover_overview(
                 "units": [],
             }
 
+        raw_spare = r.get("spare_tiles_count")
+        spare_tiles_count = raw_spare if isinstance(raw_spare, int) else None
+
         building_data[bid]["floors"][fid]["units"].append({
             "unit_id": r["unit_id"],
             "apartment_number": r.get("unit_display_label") or r.get("unit_no", ""),
             "status": effective_status,
             "open_defects": unit_open_defects,
+            "spare_tiles_count": spare_tiles_count,
             "protocols": proto_list,
         })
 
