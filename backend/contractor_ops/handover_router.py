@@ -807,18 +807,19 @@ async def delete_org_logo(org_id: str, user: dict = Depends(get_current_user)):
     await _check_org_logo_permission(user, org, org_id, db)
 
     old_logo = org.get("logo_url")
-    if old_logo:
-        import asyncio
-        try:
-            await asyncio.to_thread(_delete_stored, old_logo)
-        except Exception:
-            pass
 
     await db.organizations.update_one(
         {"id": org_id},
         {"$unset": {"logo_url": ""}, "$set": {"updated_at": _now()}}
     )
     await _audit("organization", org_id, "logo_deleted", user["id"], {})
+
+    if old_logo:
+        import asyncio
+        try:
+            await asyncio.to_thread(_delete_stored, old_logo)
+        except Exception:
+            pass
     logger.info(f"[ORG_LOGO] Org={org_id} logo deleted by user={user['id']}")
 
     return {"ok": True}
