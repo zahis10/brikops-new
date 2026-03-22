@@ -68,8 +68,17 @@ body {
 }
 
 .cover-logo {
-    max-height: 60px;
-    max-width: 200px;
+    width: 150px;
+    max-height: 80px;
+    object-fit: contain;
+    margin-bottom: 12px;
+}
+
+.cover-logo-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.9);
+    border-radius: 12px;
+    padding: 12px 20px;
     margin-bottom: 12px;
 }
 
@@ -481,7 +490,9 @@ tbody tr:nth-child(odd) {
 <!-- ==================== COVER ==================== -->
 <div class="cover-block">
     {% if logo_b64 %}
-    <img src="{{ logo_b64 }}" class="cover-logo" alt="logo">
+    <div class="cover-logo-badge">
+        <img src="{{ logo_b64 }}" class="cover-logo" alt="logo">
+    </div>
     {% elif company_name %}
     <div class="cover-company-name">{{ company_name }}</div>
     {% endif %}
