@@ -355,6 +355,8 @@ async def _get_project_role(user: dict, project_id: str) -> str:
             org_role = org_mem.get('role', 'none')
             if org_role in ('org_admin', 'project_manager'):
                 return 'project_manager'
+            if org_role == 'management_team':
+                return 'management_team'
     return 'none'
 
 

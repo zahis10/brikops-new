@@ -63,6 +63,7 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
     task_id = str(uuid.uuid4())
     ts = _now()
     if task.assignee_id:
+        logger.warning(f"[CREATE-TASK] rejected assignee_id on create: {task.assignee_id!r} user={user['id']} project={pid}")
         raise HTTPException(
             status_code=400,
             detail={'error_code': NO_IMAGE_ERROR_CODE, 'message': NO_IMAGE_MESSAGE},
@@ -924,7 +925,7 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
             org_mem = await db_fc.organization_memberships.find_one(
                 {'org_id': project_doc['org_id'], 'user_id': user['id']}, {'_id': 0, 'role': 1}
             )
-            if org_mem and org_mem.get('role') in ('owner', 'billing_admin', 'org_admin', 'project_manager'):
+            if org_mem and org_mem.get('role') in ('owner', 'billing_admin', 'org_admin', 'project_manager', 'management_team'):
                 allowed = True
     if not allowed:
         logger.warning(f"[FORCE-CLOSE] denied: user={user['id']} project_role={project_role} task={task_id} project={task.get('project_id','?')}")

@@ -308,21 +308,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           setAutoSelectedAssignee(true);
         }
       } else {
-        const company = companies.find(c => c.id === companyId);
-        if (company?.contact_name) {
-          setContractors([{
-            user_id: '__company_contact__',
-            user_name: `${company.contact_name} (איש קשר החברה)`,
-            role: 'contractor',
-            company_id: companyId,
-            _isContactFallback: true,
-          }]);
-          setAssigneeId('__company_contact__');
-          setAutoSelectedAssignee(true);
-        } else {
-          setContractors([]);
-          setAssigneeId('');
-        }
+        setContractors([]);
+        setAssigneeId('');
       }
     } else if (!companyId) {
       setContractors([]);
