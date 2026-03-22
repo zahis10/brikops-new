@@ -79,6 +79,7 @@ const RETURN_TO_KEY = 'taskDetailReturnTo';
 
 const TIMELINE_EVENT_CONFIG = {
   status_change: { icon: RefreshCw, color: 'text-blue-600 bg-blue-100' },
+  force_closed: { icon: XCircle, color: 'text-red-600 bg-red-100' },
   attachment: { icon: Camera, color: 'text-amber-600 bg-amber-100' },
   comment: { icon: MessageSquare, color: 'text-slate-600 bg-slate-100' },
   assignment: { icon: User, color: 'text-purple-600 bg-purple-100' },
@@ -182,6 +183,11 @@ const TaskDetailPage = () => {
   const [tradeMismatchModal, setTradeMismatchModal] = useState(null);
   const [errorState, setErrorState] = useState(null);
   const [externalEntry, setExternalEntry] = useState(false);
+
+  const [showForceCloseModal, setShowForceCloseModal] = useState(false);
+  const [forceCloseReason, setForceCloseReason] = useState('');
+  const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
+  const [forceClosing, setForceClosing] = useState(false);
 
   const proofCameraRef = useRef(null);
   const proofGalleryRef = useRef(null);
@@ -415,6 +421,36 @@ const TaskDetailPage = () => {
     }
   };
 
+  const FORCE_CLOSE_REASONS = [
+    { value: 'טופל — נבדק בשטח', closeType: 'field_verified' },
+    { value: 'לא רלוונטי', closeType: 'not_relevant' },
+    { value: '__other__', closeType: 'other', label: 'סיבה אחרת' },
+  ];
+
+  const handleForceClose = async () => {
+    const reason = forceCloseReason === '__other__' ? forceCloseCustomReason.trim() : forceCloseReason;
+    if (!reason) {
+      toast.error('סיבת סגירה היא שדה חובה');
+      return;
+    }
+    const closeType = FORCE_CLOSE_REASONS.find(r => r.value === forceCloseReason)?.closeType || 'other';
+    setForceClosing(true);
+    try {
+      const result = await taskService.forceClose(id, reason, closeType);
+      toast.success(result.message || 'הליקוי נסגר בהצלחה');
+      setShowForceCloseModal(false);
+      setForceCloseReason('');
+      setForceCloseCustomReason('');
+      await loadTask();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : 'שגיאה בסגירת הליקוי';
+      toast.error(msg);
+    } finally {
+      setForceClosing(false);
+    }
+  };
+
   const handleUpdateField = async (field, value) => {
     setSavingField(field);
     try {
@@ -600,7 +636,7 @@ const TaskDetailPage = () => {
   const showManagerDecision = isManagement && task.status === 'pending_manager_approval';
 
   const timelineEvents = updates
-    .filter(u => u.update_type === 'status_change' || isImageAttachment(u))
+    .filter(u => u.update_type === 'status_change' || u.update_type === 'force_closed' || isImageAttachment(u))
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
   const hasCreatedEvent = timelineEvents.length > 0;
@@ -917,6 +953,79 @@ const TaskDetailPage = () => {
                   );
                 })()}
               </div>
+            </div>
+
+            {!taskIsClosed && (
+              <div className="mt-4 pt-3 border-t border-amber-200">
+                <Button
+                  onClick={() => setShowForceCloseModal(true)}
+                  variant="outline"
+                  className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
+                >
+                  <XCircle className="w-4 h-4" />
+                  סגור ליקוי
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {showForceCloseModal && (
+          <Card className="p-5 border-2 border-red-300 bg-red-50">
+            <h3 className="text-sm font-semibold text-red-700 mb-3 flex items-center gap-2">
+              <XCircle className="w-4 h-4" />
+              סגירת ליקוי ע"י מנהל
+            </h3>
+            <p className="text-xs text-red-600 mb-4">
+              הליקוי ייסגר ללא הוכחת תיקון מקבלן. יש לבחור סיבה.
+            </p>
+
+            <div className="space-y-2 mb-4">
+              {FORCE_CLOSE_REASONS.map(r => (
+                <button
+                  key={r.value}
+                  onClick={() => setForceCloseReason(r.value)}
+                  className={`w-full text-right px-4 py-3 rounded-lg border text-sm transition-colors ${
+                    forceCloseReason === r.value
+                      ? 'border-red-400 bg-red-100 font-medium text-red-800'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {r.label || r.value}
+                </button>
+              ))}
+            </div>
+
+            {forceCloseReason === '__other__' && (
+              <textarea
+                value={forceCloseCustomReason}
+                onChange={e => setForceCloseCustomReason(e.target.value)}
+                placeholder="פרט את הסיבה..."
+                rows={2}
+                className="w-full px-3 py-2 border border-red-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 bg-white mb-4"
+              />
+            )}
+
+            <div className="flex gap-3">
+              <Button
+                onClick={handleForceClose}
+                disabled={forceClosing || !forceCloseReason || (forceCloseReason === '__other__' && !forceCloseCustomReason.trim())}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white gap-2"
+              >
+                <CheckCircle className="w-4 h-4" />
+                {forceClosing ? 'סוגר...' : 'אשר סגירה'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowForceCloseModal(false);
+                  setForceCloseReason('');
+                  setForceCloseCustomReason('');
+                }}
+                variant="outline"
+                className="flex-1 border-slate-300 text-slate-600"
+              >
+                ביטול
+              </Button>
             </div>
           </Card>
         )}
@@ -1257,14 +1366,17 @@ const TaskDetailPage = () => {
               {timelineEvents.map((evt, i) => {
                 const isLast = i === timelineEvents.length - 1;
                 const isStatusChange = evt.update_type === 'status_change';
+                const isForceClose = evt.update_type === 'force_closed';
                 const isAttachment = evt.update_type === 'attachment';
                 const config = isAttachment
                   ? { icon: Camera, color: 'text-amber-600 bg-amber-100' }
-                  : evt.new_status === 'closed'
-                    ? { icon: CheckCircle, color: 'text-green-600 bg-green-100' }
-                    : evt.new_status === 'returned_to_contractor'
-                      ? { icon: ArrowDownCircle, color: 'text-rose-600 bg-rose-100' }
-                      : { icon: RefreshCw, color: 'text-blue-600 bg-blue-100' };
+                  : isForceClose
+                    ? { icon: XCircle, color: 'text-red-600 bg-red-100' }
+                    : evt.new_status === 'closed'
+                      ? { icon: CheckCircle, color: 'text-green-600 bg-green-100' }
+                      : evt.new_status === 'returned_to_contractor'
+                        ? { icon: ArrowDownCircle, color: 'text-rose-600 bg-rose-100' }
+                        : { icon: RefreshCw, color: 'text-blue-600 bg-blue-100' };
                 const Icon = config.icon;
 
                 return (
@@ -1286,7 +1398,7 @@ const TaskDetailPage = () => {
                           <span className="text-xs text-slate-400">• {evt.user_name}</span>
                         )}
                       </div>
-                      {isStatusChange && evt.old_status && evt.new_status && (
+                      {(isStatusChange || isForceClose) && evt.old_status && evt.new_status && (
                         <div className="flex items-center gap-1.5 mt-1">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] ${STATUS_CONFIG[evt.old_status]?.color || 'bg-slate-100'}`}>
                             {STATUS_CONFIG[evt.old_status]?.label || evt.old_status}

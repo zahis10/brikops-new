@@ -114,6 +114,7 @@ class UpdateType(str, Enum):
     comment = "comment"
     status_change = "status_change"
     attachment = "attachment"
+    force_closed = "force_closed"
 
 
 class Project(BaseModel):
@@ -272,6 +273,10 @@ class Task(BaseModel):
     attachments_count: int = 0
     comments_count: int = 0
     source: Optional[str] = None
+    force_closed_by: Optional[str] = None
+    force_closed_reason: Optional[str] = None
+    force_closed_at: Optional[str] = None
+    force_closed_type: Optional[str] = None
 
 
 class TaskCreate(BaseModel):

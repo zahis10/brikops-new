@@ -746,7 +746,10 @@ async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_
     if task['status'] != 'closed':
         raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
     ts = _now()
-    await db.tasks.update_one({'id': task_id}, {'$set': {'status': 'reopened', 'updated_at': ts}})
+    await db.tasks.update_one({'id': task_id}, {
+        '$set': {'status': 'reopened', 'updated_at': ts},
+        '$unset': {'force_closed_by': '', 'force_closed_reason': '', 'force_closed_at': '', 'force_closed_type': ''},
+    })
     await db.task_status_history.insert_one({
         'id': str(uuid.uuid4()), 'task_id': task_id,
         'old_status': 'closed', 'new_status': 'reopened',
@@ -889,6 +892,56 @@ async def delete_proof(task_id: str, proof_id: str, request: Request, user: dict
     })
 
     return {'success': True, 'message': 'הוכחה נמחקה בהצלחה'}
+
+
+@router.post("/tasks/{task_id}/force-close")
+async def force_close_task(task_id: str, request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    project_role = await _get_project_role(user, task['project_id'])
+    if project_role not in MANAGEMENT_ROLES:
+        raise HTTPException(status_code=403, detail='Only management can force-close tasks')
+    if task['status'] == 'closed':
+        raise HTTPException(status_code=409, detail='הליקוי כבר סגור')
+    body = await request.json()
+    reason = (body.get('reason') or '').strip()
+    close_type = (body.get('close_type') or 'field_verified').strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail='סיבת סגירה היא שדה חובה')
+    ts = _now()
+    old_status = task['status']
+    await db.tasks.update_one({'id': task_id}, {'$set': {
+        'status': 'closed',
+        'updated_at': ts,
+        'force_closed_by': user['id'],
+        'force_closed_reason': reason,
+        'force_closed_at': ts,
+        'force_closed_type': close_type,
+    }})
+    update_content = f'נסגר ע"י {user.get("name", "")} — {reason}'
+    await db.task_status_history.insert_one({
+        'id': str(uuid.uuid4()), 'task_id': task_id,
+        'old_status': old_status, 'new_status': 'closed',
+        'changed_by': user['id'], 'note': update_content, 'created_at': ts,
+    })
+    await db.task_updates.insert_one({
+        'id': str(uuid.uuid4()), 'task_id': task_id, 'user_id': user['id'],
+        'user_name': user.get('name', ''), 'content': update_content,
+        'update_type': 'force_closed', 'old_status': old_status,
+        'new_status': 'closed', 'created_at': ts,
+        'force_closed_reason': reason, 'force_closed_type': close_type,
+    })
+    await _audit('task', task_id, 'force_close', user['id'], {
+        'old_status': old_status, 'reason': reason, 'close_type': close_type,
+    })
+    updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    return {
+        'success': True,
+        'task': Task(**updated).dict(),
+        'message': 'הליקוי נסגר בהצלחה',
+    }
 
 
 @router.post("/tasks/{task_id}/manager-decision")

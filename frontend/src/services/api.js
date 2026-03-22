@@ -418,6 +418,10 @@ export const taskService = {
     const response = await axios.post(`${API}/tasks/${id}/manager-decision`, { decision, reason }, { headers: getAuthHeader() });
     return response.data;
   },
+  async forceClose(id, reason, closeType = 'field_verified') {
+    const response = await axios.post(`${API}/tasks/${id}/force-close`, { reason, close_type: closeType }, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const notificationService = {
