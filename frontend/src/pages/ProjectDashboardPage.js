@@ -287,7 +287,7 @@ export default function ProjectDashboardPage() {
             bg="bg-red-50"
             borderColor="#f87171"
             numberColor={kpis.open_total > 0 ? 'text-red-600' : 'text-slate-800'}
-            onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=open&from=dashboard`)}
+            onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
           />
           <KpiCard
             icon={TrendingUp}
@@ -296,7 +296,7 @@ export default function ProjectDashboardPage() {
             bg="bg-blue-50"
             borderColor="#60a5fa"
             numberColor="text-blue-600"
-            onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=in_progress&from=dashboard`)}
+            onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=in_progress`)}
           />
           <KpiCard
             icon={CheckCircle2}
@@ -306,7 +306,7 @@ export default function ProjectDashboardPage() {
             bg="bg-green-50"
             borderColor="#4ade80"
             numberColor="text-green-600"
-            onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=closed&from=dashboard`)}
+            onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed`)}
           />
           {isPmOrOwner && (
             <KpiCard
@@ -317,7 +317,7 @@ export default function ProjectDashboardPage() {
               borderColor={kpis.pending_approval > 0 ? '#dc2626' : '#fbbf24'}
               numberColor={kpis.pending_approval > 0 ? 'text-white' : 'text-slate-800'}
               urgent={kpis.pending_approval > 0}
-              onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
+              onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
             />
           )}
           <KpiCard
@@ -327,7 +327,7 @@ export default function ProjectDashboardPage() {
             bg="bg-orange-50"
             borderColor="#fb923c"
             numberColor={kpis.overdue > 0 ? 'text-orange-600' : 'text-slate-800'}
-            onClick={() => navigate(`/projects/${projectId}/tasks?overdue=true&from=dashboard`)}
+            onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true`)}
           />
           <KpiCard
             icon={Users}
@@ -664,7 +664,7 @@ export default function ProjectDashboardPage() {
                 ))}
                 {pending_approvals.length > 10 && (
                   <button
-                    onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
+                    onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
                     className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
                   >
                     הצג את כל {pending_approvals.length} המשימות →

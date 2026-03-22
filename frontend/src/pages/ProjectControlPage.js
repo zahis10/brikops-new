@@ -3278,7 +3278,7 @@ const ProjectControlPage = () => {
               {pendingApprovalCount} ליקויים ממתינים לאישורך
             </span>
             <button
-              onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
+              onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
               className="text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
             >
               צפה
