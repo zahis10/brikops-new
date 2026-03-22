@@ -525,9 +525,9 @@ const ApartmentDashboardPage = () => {
             loadTasks();
           }}
           prefillData={{
-            project_id: project?.id || projectId,
-            building_id: building?.id || '',
-            floor_id: floor?.id || '',
+            project_id: project?.id || unit?.project_id || projectId,
+            building_id: building?.id || unit?.building_id || '',
+            floor_id: floor?.id || unit?.floor_id || '',
             unit_id: unitId,
             project_name: project?.name || '',
             building_name: building?.name || '',

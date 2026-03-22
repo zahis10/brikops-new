@@ -48,9 +48,16 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
         if not floor_doc:
             raise HTTPException(status_code=404, detail='Floor not found in this building')
     if task.unit_id:
-        unit_doc = await db.units.find_one({'id': task.unit_id, 'floor_id': task.floor_id, 'archived': {'$ne': True}}, {'_id': 0})
+        unit_query = {'id': task.unit_id, 'project_id': task.project_id, 'archived': {'$ne': True}}
+        if task.floor_id:
+            unit_query['floor_id'] = task.floor_id
+        unit_doc = await db.units.find_one(unit_query, {'_id': 0})
         if not unit_doc:
             raise HTTPException(status_code=404, detail='Unit not found on this floor')
+        if not task.floor_id and unit_doc.get('floor_id'):
+            task.floor_id = unit_doc['floor_id']
+        if not task.building_id and unit_doc.get('building_id'):
+            task.building_id = unit_doc['building_id']
     task_id = str(uuid.uuid4())
     ts = _now()
     if task.assignee_id:
