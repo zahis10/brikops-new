@@ -329,9 +329,9 @@ class TaskUpdateCreate(BaseModel):
 class TaskUpdateResponse(BaseModel):
     id: str
     task_id: str
-    user_id: str
+    user_id: Optional[str] = None
     user_name: Optional[str] = None
-    content: str
+    content: Optional[str] = None
     update_type: UpdateType
     attachment_url: Optional[str] = None
     old_status: Optional[TaskStatus] = None

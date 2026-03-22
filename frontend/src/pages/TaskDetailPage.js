@@ -220,8 +220,8 @@ const TaskDetailPage = () => {
     try {
       const [taskData, updatesData, companiesData] = await Promise.all([
         taskService.get(id),
-        taskService.getUpdates(id),
-        companyService.list(),
+        taskService.getUpdates(id).catch(() => []),
+        companyService.list().catch(() => []),
       ]);
       setTask(taskData);
       setUpdates(updatesData);
@@ -248,8 +248,10 @@ const TaskDetailPage = () => {
         toast.error('אין לך הרשאה לצפות בליקוי זה');
         setErrorState('forbidden');
       } else {
-        console.error('[TASK_LOAD_ERROR]', err?.response?.status, err?.message);
-        toast.error('שגיאה בטעינת הליקוי');
+        const serverMsg = err.response?.data?.detail;
+        const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
+        console.error('[TASK_LOAD]', err.response?.status, err.response?.data, err.message);
+        toast.error(isHebrew ? serverMsg : 'שגיאה בטעינת הליקוי');
         setErrorState('load_error');
       }
     } finally {
@@ -395,8 +397,10 @@ const TaskDetailPage = () => {
       toast.success(result.message || 'תיקון אושר וסגור');
       await loadTask();
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה באישור';
-      toast.error(msg);
+      const serverMsg = err.response?.data?.detail;
+      const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
+      console.error('[TASK_APPROVE]', err.response?.status, err.response?.data, err.message);
+      toast.error(isHebrew ? serverMsg : 'שגיאה באישור');
     } finally {
       setDecidingApprove(false);
     }
@@ -415,8 +419,10 @@ const TaskDetailPage = () => {
       setShowRejectForm(false);
       await loadTask();
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה בדחייה';
-      toast.error(msg);
+      const serverMsg = err.response?.data?.detail;
+      const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
+      console.error('[TASK_REJECT]', err.response?.status, err.response?.data, err.message);
+      toast.error(isHebrew ? serverMsg : 'שגיאה בדחיית הליקוי');
     } finally {
       setDecidingReject(false);
     }
@@ -444,9 +450,10 @@ const TaskDetailPage = () => {
       setForceCloseCustomReason('');
       await loadTask();
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail : 'שגיאה בסגירת הליקוי';
-      toast.error(msg);
+      const serverMsg = err.response?.data?.detail;
+      const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
+      console.error('[TASK_FORCE_CLOSE]', err.response?.status, err.response?.data, err.message);
+      toast.error(isHebrew ? serverMsg : 'שגיאה בסגירת הליקוי');
     } finally {
       setForceClosing(false);
     }
@@ -459,8 +466,10 @@ const TaskDetailPage = () => {
       toast.success('עודכן בהצלחה');
       await loadTask();
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה בעדכון';
-      toast.error(msg);
+      const serverMsg = err.response?.data?.detail;
+      const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
+      console.error('[TASK_UPDATE]', err.response?.status, err.response?.data, err.message);
+      toast.error(isHebrew ? serverMsg : 'שגיאה בעדכון');
     } finally {
       setSavingField(null);
     }
@@ -473,8 +482,10 @@ const TaskDetailPage = () => {
       toast.success('סטטוס עודכן');
       await loadTask();
     } catch (err) {
-      const msg = err.response?.data?.detail || 'שגיאה בשינוי סטטוס';
-      toast.error(msg);
+      const serverMsg = err.response?.data?.detail;
+      const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
+      console.error('[TASK_STATUS]', err.response?.status, err.response?.data, err.message);
+      toast.error(isHebrew ? serverMsg : 'שגיאה בעדכון סטטוס');
     } finally {
       setSavingField(null);
     }
