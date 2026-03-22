@@ -9,7 +9,7 @@ import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
   sortIndexService, versionService, archiveService, stepupService, isStepupError, billingService,
-  qcService, companySearchService, templateService, projectQcService, handoverService
+  qcService, companySearchService, templateService, projectQcService, handoverService, taskService
 } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -2976,6 +2976,8 @@ const ProjectControlPage = () => {
   const [qcLoading, setQcLoading] = useState(false);
   const [memberCount, setMemberCount] = useState(null);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [approvalBannerDismissed, setApprovalBannerDismissed] = useState(false);
 
   const [workMode, setWorkMode] = useState(() => {
     try {
@@ -3120,6 +3122,18 @@ const ProjectControlPage = () => {
     } catch { setMemberCount(0); }
   }, [projectId]);
 
+  const loadPendingApprovals = useCallback(async () => {
+    const mgmtRoles = ['owner', 'admin', 'project_manager', 'management_team'];
+    if (!mgmtRoles.includes(myRole)) return;
+    try {
+      const data = await taskService.list({ project_id: projectId, status: 'pending_manager_approval', limit: 1, offset: 0 });
+      const count = typeof data?.total === 'number' ? data.total : (data?.items?.length || 0);
+      setPendingApprovalCount(count);
+      const dismissKey = sessionStorage.getItem(`approval_banner_${projectId}`);
+      setApprovalBannerDismissed(dismissKey === String(count));
+    } catch { setPendingApprovalCount(0); }
+  }, [projectId, myRole]);
+
   useEffect(() => {
     if (accessChecked) {
       loadProject();
@@ -3128,8 +3142,9 @@ const ProjectControlPage = () => {
       loadCompanies();
       loadTrades();
       loadMemberCount();
+      loadPendingApprovals();
     }
-  }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount]);
+  }, [accessChecked, loadProject, loadHierarchy, loadStats, loadCompanies, loadTrades, loadMemberCount, loadPendingApprovals]);
 
   useEffect(() => {
     if (!hierarchy?.length) { setQcSummary(null); setQcLoading(false); return; }
@@ -3254,6 +3269,30 @@ const ProjectControlPage = () => {
           })}
         </div>
       </div>
+
+      {pendingApprovalCount > 0 && !approvalBannerDismissed && (
+        <div className="max-w-[1100px] mx-auto px-4 pt-2">
+          <div className="flex items-center gap-2 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 shadow-sm">
+            <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0" />
+            <span className="flex-1 text-sm font-semibold text-orange-800">
+              {pendingApprovalCount} ליקויים ממתינים לאישורך
+            </span>
+            <button
+              onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
+              className="text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+            >
+              צפה
+            </button>
+            <button
+              onClick={() => { sessionStorage.setItem(`approval_banner_${projectId}`, String(pendingApprovalCount)); setApprovalBannerDismissed(true); }}
+              className="p-1 hover:bg-orange-100 rounded-full transition-colors"
+              title="סגור"
+            >
+              <X className="w-4 h-4 text-orange-400" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {workMode === 'structure' && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">

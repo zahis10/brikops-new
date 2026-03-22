@@ -22,7 +22,7 @@ const formatHours = (h) => {
   return `${days} ימים`;
 };
 
-const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg, borderColor, numberColor }) => (
+const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg, borderColor, numberColor, urgent }) => (
   <div
     onClick={onClick}
     className={`rounded-xl p-3 transition-all border-r-4 ${bg} ${
@@ -32,10 +32,13 @@ const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg, borderColor, numb
   >
     <div className="flex items-center justify-between mb-1">
       <Icon className="w-4 h-4" style={{ color: borderColor }} />
-      {onClick && <ExternalLink className="w-3 h-3 text-slate-300" />}
+      <div className="flex items-center gap-1.5">
+        {urgent && <span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span></span>}
+        {onClick && <ExternalLink className="w-3 h-3 text-slate-300" />}
+      </div>
     </div>
-    <p className={`text-3xl font-black ${numberColor}`}>{value ?? 0}</p>
-    <p className="text-xs text-slate-500 mt-0.5">{label}</p>
+    <p className={`${urgent ? 'text-4xl' : 'text-3xl'} font-black ${numberColor}`}>{value ?? 0}</p>
+    <p className={`text-xs mt-0.5 ${urgent ? 'text-white/80 font-medium' : 'text-slate-500'}`}>{label}</p>
     {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
   </div>
 );
@@ -310,9 +313,10 @@ export default function ProjectDashboardPage() {
               icon={Clock}
               label="לאישורי"
               value={kpis.pending_approval}
-              bg="bg-amber-50"
-              borderColor="#fbbf24"
-              numberColor={kpis.pending_approval > 0 ? 'text-amber-600' : 'text-slate-800'}
+              bg={kpis.pending_approval > 0 ? 'bg-gradient-to-br from-orange-500 to-red-500 shadow-lg shadow-orange-500/25' : 'bg-amber-50'}
+              borderColor={kpis.pending_approval > 0 ? '#dc2626' : '#fbbf24'}
+              numberColor={kpis.pending_approval > 0 ? 'text-white' : 'text-slate-800'}
+              urgent={kpis.pending_approval > 0}
               onClick={() => navigate(`/projects/${projectId}/tasks?statusChip=pending_manager_approval&from=dashboard`)}
             />
           )}

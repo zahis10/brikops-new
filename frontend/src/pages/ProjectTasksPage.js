@@ -21,7 +21,7 @@ const STATUS_CONFIG = {
   in_progress: { label: 'בביצוע', color: 'bg-amber-100 text-amber-700' },
   waiting_verify: { label: 'ממתין לאימות', color: 'bg-orange-100 text-orange-700' },
   pending_contractor_proof: { label: 'ממתין להוכחת קבלן', color: 'bg-orange-100 text-orange-700' },
-  pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-indigo-100 text-indigo-700' },
+  pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-orange-100 text-orange-700 ring-1 ring-orange-300' },
   returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700' },
   closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
   reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
