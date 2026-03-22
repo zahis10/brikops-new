@@ -82,6 +82,35 @@ fi
 export GIT_SHA
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo none)
 
+PROXY_PORT="${PROXY_PORT:-}"
+if [ -n "$PROXY_PORT" ] && [ "$PROXY_PORT" != "$PORT" ]; then
+  echo "[BOOT] Starting TCP proxy $PROXY_PORT -> $PORT in background..."
+  python3 -c "
+import socket, threading, sys
+def proxy(src, dst):
+    try:
+        while True:
+            d = src.recv(65536)
+            if not d: break
+            dst.sendall(d)
+    except: pass
+    finally: src.close(); dst.close()
+def accept_loop(s, target_port):
+    while True:
+        c, _ = s.accept()
+        try:
+            t = socket.create_connection(('127.0.0.1', target_port))
+            threading.Thread(target=proxy, args=(c, t), daemon=True).start()
+            threading.Thread(target=proxy, args=(t, c), daemon=True).start()
+        except: c.close()
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', int(sys.argv[1]))); s.listen(128)
+accept_loop(s, int(sys.argv[2]))
+" "$PROXY_PORT" "$PORT" &
+  PROXY_PID=$!
+  echo "[BOOT] TCP proxy started (PID $PROXY_PID)"
+fi
+
 echo "[BOOT] Starting uvicorn on port $PORT..."
 cd "${WORKSPACE}/backend"
 exec python -m uvicorn server:app \
