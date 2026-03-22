@@ -751,6 +751,10 @@ async def upload_org_logo(org_id: str, file: UploadFile = File(...), user: dict 
         img = _PILImage.open(_io.BytesIO(raw))
         img.verify()
         img = _PILImage.open(_io.BytesIO(raw))
+        if img.format not in ("PNG", "JPEG"):
+            raise HTTPException(status_code=400, detail="סוג קובץ לא נתמך — PNG או JPEG בלבד")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=400, detail="הקובץ אינו תמונה תקינה")
 
