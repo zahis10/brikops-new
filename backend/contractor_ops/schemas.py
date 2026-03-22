@@ -12,6 +12,7 @@ class TaskStatus(str, Enum):
     pending_manager_approval = "pending_manager_approval"
     returned_to_contractor = "returned_to_contractor"
     closed = "closed"
+    approved = "approved"
     reopened = "reopened"
 
 

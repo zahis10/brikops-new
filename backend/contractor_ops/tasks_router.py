@@ -223,7 +223,7 @@ async def list_tasks(
         now_iso = datetime.now(timezone.utc).isoformat()
         query['due_date'] = {'$lt': now_iso, '$exists': True, '$ne': None}
         if 'status' not in query:
-            query['status'] = {'$nin': ['closed']}
+            query['status'] = {'$nin': ['closed', 'approved']}
     if q:
         import re as _re_mod
         q_escaped = _re_mod.escape(q)
@@ -342,7 +342,7 @@ async def my_task_stats(
     urgent_threshold = (now - timedelta(hours=48)).isoformat()
 
     open_statuses = ['open', 'assigned', 'in_progress', 'pending_contractor_proof', 'reopened', 'waiting_verify']
-    handled_statuses = ['closed', 'pending_manager_approval']
+    handled_statuses = ['closed', 'approved', 'pending_manager_approval']
 
     three_months_iso = three_months_ago.isoformat()
 
@@ -743,22 +743,23 @@ async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:
         raise HTTPException(status_code=404, detail='Task not found')
-    if task['status'] != 'closed':
+    if task['status'] not in ('closed', 'approved'):
         raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
     ts = _now()
+    prev_status = task['status']
     await db.tasks.update_one({'id': task_id}, {
         '$set': {'status': 'reopened', 'updated_at': ts},
         '$unset': {'force_closed_by': '', 'force_closed_reason': '', 'force_closed_at': '', 'force_closed_type': ''},
     })
     await db.task_status_history.insert_one({
         'id': str(uuid.uuid4()), 'task_id': task_id,
-        'old_status': 'closed', 'new_status': 'reopened',
+        'old_status': prev_status, 'new_status': 'reopened',
         'changed_by': user['id'], 'note': 'Task reopened', 'created_at': ts,
     })
     await db.task_updates.insert_one({
         'id': str(uuid.uuid4()), 'task_id': task_id, 'user_id': user['id'],
         'user_name': user.get('name', ''), 'content': 'Task reopened',
-        'update_type': 'status_change', 'old_status': 'closed',
+        'update_type': 'status_change', 'old_status': prev_status,
         'new_status': 'reopened', 'created_at': ts,
     })
     await _audit('task', task_id, 'reopen', user['id'], {})
@@ -901,9 +902,19 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
     if not task:
         raise HTTPException(status_code=404, detail='Task not found')
     project_role = await _get_project_role(user, task['project_id'])
-    if project_role not in MANAGEMENT_ROLES:
+    allowed = project_role in MANAGEMENT_ROLES
+    if not allowed:
+        db_fc = get_db()
+        project_doc = await db_fc.projects.find_one({'id': task['project_id']}, {'_id': 0, 'org_id': 1})
+        if project_doc and project_doc.get('org_id'):
+            org_mem = await db_fc.organization_memberships.find_one(
+                {'org_id': project_doc['org_id'], 'user_id': user['id']}, {'_id': 0, 'role': 1}
+            )
+            if org_mem and org_mem.get('role') in ('owner', 'billing_admin'):
+                allowed = True
+    if not allowed:
         raise HTTPException(status_code=403, detail='Only management can force-close tasks')
-    if task['status'] == 'closed':
+    if task['status'] in ('approved', 'closed'):
         raise HTTPException(status_code=409, detail='הליקוי כבר סגור')
     body = await request.json()
     reason = (body.get('reason') or '').strip()
@@ -913,7 +924,7 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
     ts = _now()
     old_status = task['status']
     await db.tasks.update_one({'id': task_id}, {'$set': {
-        'status': 'closed',
+        'status': 'approved',
         'updated_at': ts,
         'force_closed_by': user['id'],
         'force_closed_reason': reason,
@@ -923,14 +934,14 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
     update_content = f'נסגר ע"י {user.get("name", "")} — {reason}'
     await db.task_status_history.insert_one({
         'id': str(uuid.uuid4()), 'task_id': task_id,
-        'old_status': old_status, 'new_status': 'closed',
+        'old_status': old_status, 'new_status': 'approved',
         'changed_by': user['id'], 'note': update_content, 'created_at': ts,
     })
     await db.task_updates.insert_one({
         'id': str(uuid.uuid4()), 'task_id': task_id, 'user_id': user['id'],
         'user_name': user.get('name', ''), 'content': update_content,
         'update_type': 'force_closed', 'old_status': old_status,
-        'new_status': 'closed', 'created_at': ts,
+        'new_status': 'approved', 'created_at': ts,
         'force_closed_reason': reason, 'force_closed_type': close_type,
     })
     await _audit('task', task_id, 'force_close', user['id'], {

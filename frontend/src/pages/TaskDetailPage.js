@@ -26,6 +26,7 @@ const STATUS_CONFIG = {
   pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-indigo-100 text-indigo-700', icon: ShieldCheck },
   returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700', icon: ArrowDownCircle },
   closed: { label: 'סגור', color: 'bg-green-100 text-green-700', icon: CheckCircle },
+  approved: { label: 'אושר', color: 'bg-green-100 text-green-700', icon: CheckCircle },
   reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700', icon: RefreshCw },
 };
 
@@ -213,7 +214,7 @@ const TaskDetailPage = () => {
   const isContractor = projectRole === 'contractor' || user?.role === 'contractor';
   const isAssignee = task?.assignee_id === user?.id;
   const canManage = isManagement;
-  const taskIsClosed = task?.status === 'closed';
+  const taskIsClosed = task?.status === 'closed' || task?.status === 'approved';
 
   const loadTask = useCallback(async () => {
     try {
@@ -1372,7 +1373,7 @@ const TaskDetailPage = () => {
                   ? { icon: Camera, color: 'text-amber-600 bg-amber-100' }
                   : isForceClose
                     ? { icon: XCircle, color: 'text-red-600 bg-red-100' }
-                    : evt.new_status === 'closed'
+                    : (evt.new_status === 'closed' || evt.new_status === 'approved')
                       ? { icon: CheckCircle, color: 'text-green-600 bg-green-100' }
                       : evt.new_status === 'returned_to_contractor'
                         ? { icon: ArrowDownCircle, color: 'text-rose-600 bg-rose-100' }
