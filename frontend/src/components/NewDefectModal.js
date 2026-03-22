@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
-  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus
+  X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil
 } from 'lucide-react';
+
+const LazyPhotoAnnotation = React.lazy(() => import('./PhotoAnnotation'));
 import { Button } from './ui/button';
 import { tCategory } from '../i18n';
 import { compressImage } from '../utils/imageCompress';
@@ -146,6 +148,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [assigneeId, setAssigneeId] = useState('');
 
   const [images, setImages] = useState([]);
+  const [annotatingIndex, setAnnotatingIndex] = useState(null);
   const [createdTaskId, setCreatedTaskId] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -378,9 +381,33 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const removeImage = useCallback((index) => {
     setImages(prev => {
       URL.revokeObjectURL(prev[index].preview);
+      if (prev[index].originalPreview) URL.revokeObjectURL(prev[index].originalPreview);
       return prev.filter((_, i) => i !== index);
     });
   }, []);
+
+  const handleAnnotationSave = useCallback((annotatedFile) => {
+    const idx = annotatingIndex;
+    if (idx === null) return;
+    setImages(prev => {
+      const updated = [...prev];
+      const original = updated[idx];
+      if (original.isAnnotated && original.preview) {
+        URL.revokeObjectURL(original.preview);
+      }
+      const annotatedPreview = URL.createObjectURL(annotatedFile);
+      updated[idx] = {
+        file: annotatedFile,
+        preview: annotatedPreview,
+        name: 'annotated_' + (original.name || 'photo.jpg'),
+        originalFile: original.originalFile || original.file,
+        originalPreview: original.originalPreview || original.preview,
+        isAnnotated: true,
+      };
+      return updated;
+    });
+    setAnnotatingIndex(null);
+  }, [annotatingIndex]);
 
   const validate = useCallback(() => {
     const errs = {};
@@ -433,11 +460,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     const { taskService } = await import('../services/api');
     const imagesToUpload = [...images];
 
-    if (imagesToUpload.length > 0) {
+    const uploadList = [];
+    for (const img of imagesToUpload) {
+      uploadList.push({ file: img.file, name: img.name });
+      if (img.isAnnotated && img.originalFile) {
+        uploadList.push({ file: img.originalFile, name: 'original_' + (img.name || 'photo.jpg') });
+      }
+    }
+
+    if (uploadList.length > 0) {
       setSubmitStep('uploading');
-      console.log('UPLOAD sizes', imagesToUpload.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
+      console.log('UPLOAD sizes', uploadList.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
       const results = await Promise.allSettled(
-        imagesToUpload.map((img) => uploadWithRetry(taskService, taskId, img.file, img.name))
+        uploadList.map((img) => uploadWithRetry(taskService, taskId, img.file, img.name))
       );
       const succeeded = results.filter(r => r.status === 'fulfilled').length;
       const failedResults = results.filter(r => r.status === 'rejected');
@@ -655,7 +690,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
   if (!isOpen) return null;
 
-  return (
+  return (<>
     <DialogPrimitive.Root open={true} onOpenChange={(open) => { if (!open) handleClose(); }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
@@ -912,6 +947,18 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                     >
                       <X className="w-3 h-3" />
                     </button>
+                    <button
+                      onClick={() => setAnnotatingIndex(i)}
+                      className={`absolute bottom-0.5 right-0.5 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs transition-opacity ${img.isAnnotated ? 'bg-green-500' : 'bg-amber-500 hover:bg-amber-600'}`}
+                      title={img.isAnnotated ? 'ערוך סימון' : 'סמן על התמונה'}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    {img.isAnnotated && (
+                      <div className="absolute top-0.5 left-0.5 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5" />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -978,6 +1025,21 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+
+    {annotatingIndex !== null && images[annotatingIndex] && (
+      <Suspense fallback={
+        <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
+        </div>
+      }>
+        <LazyPhotoAnnotation
+          imageSrc={images[annotatingIndex].originalPreview || images[annotatingIndex].preview}
+          onSave={handleAnnotationSave}
+          onCancel={() => setAnnotatingIndex(null)}
+        />
+      </Suspense>
+    )}
+  </>
   );
 };
 
