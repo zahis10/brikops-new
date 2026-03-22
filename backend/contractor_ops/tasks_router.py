@@ -63,10 +63,10 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
     task_id = str(uuid.uuid4())
     ts = _now()
     if task.assignee_id:
-        logger.warning(f"[CREATE-TASK] rejected assignee_id on create: {task.assignee_id!r} user={user['id']} project={pid}")
+        logger.warning(f"[CREATE-TASK] rejected assignee_id on create: {task.assignee_id!r} user={user['id']} project={pid} role={user.get('role','?')}")
         raise HTTPException(
             status_code=400,
-            detail={'error_code': NO_IMAGE_ERROR_CODE, 'message': NO_IMAGE_MESSAGE},
+            detail={'error_code': 'ASSIGNEE_NOT_ALLOWED_ON_CREATE', 'message': 'שיוך קבלן מתבצע בשלב נפרד לאחר יצירת הליקוי'},
         )
     initial_status = 'open'
     from pymongo import ReturnDocument
@@ -590,8 +590,8 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
 
         mem_company = assignee_membership.get('company_id') or assignee_membership.get('user_company_id')
         if mem_company and mem_company != effective_company_id:
-            logger.warning(f"[ASSIGN] company mismatch: assignee company={mem_company}, selected company={effective_company_id}")
-            raise HTTPException(status_code=400, detail='הקבלן אינו שייך לחברה שנבחרה')
+            logger.warning(f"[ASSIGN] company mismatch: assignee company={mem_company}, selected company={effective_company_id} user={user['id']} role={project_role}")
+            raise HTTPException(status_code=400, detail='קבלן לא נמצא')
 
         if assignee_trade_key and not _trades_match(task_category, assignee_trade_key):
             if not assignment.force_category_change:
