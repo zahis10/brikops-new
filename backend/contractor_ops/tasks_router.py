@@ -538,15 +538,25 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
     if project_role not in MANAGEMENT_ROLES:
         raise HTTPException(status_code=403, detail='Only management can assign tasks')
 
-    assignee = await db.users.find_one({'id': assignment.assignee_id}, {'_id': 0})
+    aid = (assignment.assignee_id or '').strip()
+    if not aid or aid.startswith('__') or len(aid) < 8:
+        logger.warning(f"[ASSIGN] invalid assignee_id format: {aid!r}")
+        raise HTTPException(status_code=400, detail='קבלן לא נמצא — מזהה לא תקין')
+    try:
+        uuid.UUID(aid)
+    except ValueError:
+        logger.warning(f"[ASSIGN] non-UUID assignee_id: {aid!r}")
+        raise HTTPException(status_code=400, detail='קבלן לא נמצא — מזהה לא תקין')
+
+    assignee = await db.users.find_one({'id': aid}, {'_id': 0})
     if not assignee:
-        raise HTTPException(status_code=404, detail='Assignee not found')
+        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
 
     assignee_membership = await db.project_memberships.find_one({
-        'project_id': task['project_id'], 'user_id': assignment.assignee_id
+        'project_id': task['project_id'], 'user_id': aid
     })
     if not assignee_membership:
-        raise HTTPException(status_code=404, detail='Assignee is not a member of this project')
+        raise HTTPException(status_code=400, detail='הקבלן אינו חבר בפרויקט זה')
 
     assignee_trade_key = assignee_membership.get('contractor_trade_key')
 
@@ -566,6 +576,10 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
     company = await db.project_companies.find_one({'id': effective_company_id, 'project_id': task['project_id'], 'deletedAt': {'$exists': False}}, {'_id': 0})
     if not company:
         raise HTTPException(status_code=400, detail='company_id חייב להיות חברת פרויקט תקפה')
+    mem_company = assignee_membership.get('company_id') or assignee_membership.get('user_company_id')
+    if mem_company and mem_company != effective_company_id:
+        logger.warning(f"[ASSIGN] company mismatch: assignee company={mem_company}, selected company={effective_company_id}")
+        raise HTTPException(status_code=400, detail='הקבלן אינו שייך לחברה שנבחרה')
     category_synced = False
     task_category = task.get('category')
     if assignee_trade_key and not _trades_match(task_category, assignee_trade_key):
@@ -591,7 +605,7 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
 
     update_fields = {
         'company_id': effective_company_id,
-        'assignee_id': assignment.assignee_id,
+        'assignee_id': aid,
         'status': new_status,
         'updated_at': ts,
     }
@@ -616,7 +630,7 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
 
     audit_details = {
         'company_id': effective_company_id,
-        'assignee_id': assignment.assignee_id,
+        'assignee_id': aid,
         'assignee_name': assignee.get('name', ''),
     }
     if category_synced:
@@ -910,9 +924,10 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
             org_mem = await db_fc.organization_memberships.find_one(
                 {'org_id': project_doc['org_id'], 'user_id': user['id']}, {'_id': 0, 'role': 1}
             )
-            if org_mem and org_mem.get('role') in ('owner', 'billing_admin'):
+            if org_mem and org_mem.get('role') in ('owner', 'billing_admin', 'org_admin', 'project_manager'):
                 allowed = True
     if not allowed:
+        logger.warning(f"[FORCE-CLOSE] denied: user={user['id']} role={project_role} task={task_id}")
         raise HTTPException(status_code=403, detail='Only management can force-close tasks')
     if task['status'] in ('approved', 'closed'):
         raise HTTPException(status_code=409, detail='הליקוי כבר סגור')

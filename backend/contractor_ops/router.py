@@ -340,9 +340,22 @@ async def _get_project_role(user: dict, project_id: str) -> str:
         'user_id': user['id'],
         'project_id': project_id,
     }, {'_id': 0})
-    if not membership:
-        return 'none'
-    return membership.get('role', 'none')
+    if membership:
+        return membership.get('role', 'none')
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    if project and project.get('org_id'):
+        org_id = project['org_id']
+        org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'owner_user_id': 1})
+        if org and org.get('owner_user_id') == user['id']:
+            return 'project_manager'
+        org_mem = await db.organization_memberships.find_one(
+            {'org_id': org_id, 'user_id': user['id']}, {'_id': 0, 'role': 1}
+        )
+        if org_mem:
+            org_role = org_mem.get('role', 'none')
+            if org_role in ('org_admin', 'project_manager'):
+                return 'project_manager'
+    return 'none'
 
 
 async def _get_project_membership(user: dict, project_id: str) -> dict:
