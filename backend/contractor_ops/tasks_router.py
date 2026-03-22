@@ -540,37 +540,6 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
         raise HTTPException(status_code=403, detail='Only management can assign tasks')
 
     aid = (assignment.assignee_id or '').strip()
-    if not aid or aid.startswith('__') or len(aid) < 8:
-        logger.warning(f"[ASSIGN] invalid assignee_id format: {aid!r} user={user['id']} task={task_id} role={project_role}")
-        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
-    try:
-        uuid.UUID(aid)
-    except ValueError:
-        logger.warning(f"[ASSIGN] non-UUID assignee_id: {aid!r} user={user['id']} task={task_id} role={project_role}")
-        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
-
-    assignee = await db.users.find_one({'id': aid}, {'_id': 0})
-    if not assignee:
-        logger.warning(f"[ASSIGN] assignee not found: {aid} user={user['id']} task={task_id}")
-        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
-
-    assignee_membership = await db.project_memberships.find_one({
-        'project_id': task['project_id'], 'user_id': aid
-    })
-    if not assignee_membership:
-        logger.warning(f"[ASSIGN] assignee not project member: {aid} project={task['project_id']} user={user['id']}")
-        raise HTTPException(status_code=400, detail='קבלן לא נמצא')
-
-    assignee_trade_key = assignee_membership.get('contractor_trade_key')
-
-    if assignee_membership.get('role') == 'contractor':
-        if not assignee_trade_key:
-            raise HTTPException(status_code=409, detail={
-                'code': 'CONTRACTOR_NO_TRADE',
-                'message': 'חסר תחום מקצועי לקבלן. יש לשייך תחום תחילה.',
-            })
-
-    await require_task_image(db, task_id)
 
     if not assignment.company_id:
         raise HTTPException(status_code=400, detail='company_id is required')
@@ -579,44 +548,84 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
     company = await db.project_companies.find_one({'id': effective_company_id, 'project_id': task['project_id'], 'deletedAt': {'$exists': False}}, {'_id': 0})
     if not company:
         raise HTTPException(status_code=400, detail='company_id חייב להיות חברת פרויקט תקפה')
-    mem_company = assignee_membership.get('company_id') or assignee_membership.get('user_company_id')
-    if mem_company and mem_company != effective_company_id:
-        logger.warning(f"[ASSIGN] company mismatch: assignee company={mem_company}, selected company={effective_company_id}")
-        raise HTTPException(status_code=400, detail='הקבלן אינו שייך לחברה שנבחרה')
+
+    await require_task_image(db, task_id)
+
+    assignee = None
+    assignee_membership = None
+    assignee_trade_key = None
     category_synced = False
     task_category = task.get('category')
-    if assignee_trade_key and not _trades_match(task_category, assignee_trade_key):
-        if not assignment.force_category_change:
-            task_cat_label = TRADE_MAP.get(task_category, task_category)
-            trade_label = TRADE_MAP.get(assignee_trade_key, assignee_trade_key)
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    'error': 'trade_mismatch',
-                    'message': f'תחום הליקוי ({task_cat_label}) לא תואם לתחום הקבלן ({trade_label})',
-                    'task_category': task_category,
-                    'contractor_trade': assignee_trade_key,
-                    'task_category_label': task_cat_label,
-                    'contractor_trade_label': trade_label,
-                }
-            )
-        category_synced = True
+
+    if aid:
+        if aid.startswith('__') or len(aid) < 8:
+            logger.warning(f"[ASSIGN] invalid assignee_id format: {aid!r} user={user['id']} task={task_id} role={project_role}")
+            raise HTTPException(status_code=400, detail='קבלן לא נמצא')
+        try:
+            uuid.UUID(aid)
+        except ValueError:
+            logger.warning(f"[ASSIGN] non-UUID assignee_id: {aid!r} user={user['id']} task={task_id} role={project_role}")
+            raise HTTPException(status_code=400, detail='קבלן לא נמצא')
+
+        assignee = await db.users.find_one({'id': aid}, {'_id': 0})
+        if not assignee:
+            logger.warning(f"[ASSIGN] assignee not found: {aid} user={user['id']} task={task_id}")
+            raise HTTPException(status_code=400, detail='קבלן לא נמצא')
+
+        assignee_membership = await db.project_memberships.find_one({
+            'project_id': task['project_id'], 'user_id': aid
+        })
+        if not assignee_membership:
+            logger.warning(f"[ASSIGN] assignee not project member: {aid} project={task['project_id']} user={user['id']}")
+            raise HTTPException(status_code=400, detail='קבלן לא נמצא')
+
+        assignee_trade_key = assignee_membership.get('contractor_trade_key')
+
+        if assignee_membership.get('role') == 'contractor':
+            if not assignee_trade_key:
+                raise HTTPException(status_code=409, detail={
+                    'code': 'CONTRACTOR_NO_TRADE',
+                    'message': 'חסר תחום מקצועי לקבלן. יש לשייך תחום תחילה.',
+                })
+
+        mem_company = assignee_membership.get('company_id') or assignee_membership.get('user_company_id')
+        if mem_company and mem_company != effective_company_id:
+            logger.warning(f"[ASSIGN] company mismatch: assignee company={mem_company}, selected company={effective_company_id}")
+            raise HTTPException(status_code=400, detail='הקבלן אינו שייך לחברה שנבחרה')
+
+        if assignee_trade_key and not _trades_match(task_category, assignee_trade_key):
+            if not assignment.force_category_change:
+                task_cat_label = TRADE_MAP.get(task_category, task_category)
+                trade_label = TRADE_MAP.get(assignee_trade_key, assignee_trade_key)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        'error': 'trade_mismatch',
+                        'message': f'תחום הליקוי ({task_cat_label}) לא תואם לתחום הקבלן ({trade_label})',
+                        'task_category': task_category,
+                        'contractor_trade': assignee_trade_key,
+                        'task_category_label': task_cat_label,
+                        'contractor_trade_label': trade_label,
+                    }
+                )
+            category_synced = True
 
     ts = _now()
     old_status = task['status']
-    new_status = 'assigned' if old_status == 'open' else old_status
+    new_status = 'assigned' if (old_status == 'open' and aid) else old_status
 
     update_fields = {
         'company_id': effective_company_id,
-        'assignee_id': aid,
-        'status': new_status,
         'updated_at': ts,
     }
+    if aid:
+        update_fields['assignee_id'] = aid
+        update_fields['status'] = new_status
     if category_synced:
         update_fields['category'] = assignee_trade_key
     await db.tasks.update_one({'id': task_id}, {'$set': update_fields})
 
-    if old_status != new_status:
+    if aid and old_status != new_status:
         await db.task_status_history.insert_one({
             'id': str(uuid.uuid4()), 'task_id': task_id,
             'old_status': old_status, 'new_status': new_status,
@@ -633,9 +642,10 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
 
     audit_details = {
         'company_id': effective_company_id,
-        'assignee_id': aid,
-        'assignee_name': assignee.get('name', ''),
     }
+    if aid:
+        audit_details['assignee_id'] = aid
+        audit_details['assignee_name'] = assignee.get('name', '')
     if category_synced:
         audit_details['category_changed'] = True
         audit_details['old_category'] = task_category
@@ -645,7 +655,7 @@ async def assign_task(task_id: str, assignment: TaskAssign, user: dict = Depends
 
     notification_status = None
     engine = get_notification_engine()
-    if engine:
+    if engine and aid:
         try:
             task_link = _get_task_link(task_id)
             job = await engine.enqueue(task_id, 'task_assigned', user['id'], task_link=task_link)

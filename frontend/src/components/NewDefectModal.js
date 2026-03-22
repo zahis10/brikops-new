@@ -516,19 +516,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
     const isContactFallback = assigneeId === '__company_contact__';
     const effectiveAssigneeId = isContactFallback ? null : assigneeId;
-    if (!companyId || !effectiveAssigneeId) {
+    if (!companyId) {
       toast.success('הליקוי נוצר בהצלחה!');
       onSuccess?.(taskId);
       return;
     }
 
     setSubmitStep('assigning');
-    console.log('ASSIGN payload', { taskId, company_id: companyId, assignee_id: effectiveAssigneeId });
+    console.log('ASSIGN payload', { taskId, company_id: companyId, assignee_id: effectiveAssigneeId || null });
 
     let assignResult;
     try {
       assignResult = await Promise.race([
-        taskService.assign(taskId, { company_id: companyId, assignee_id: effectiveAssigneeId }),
+        taskService.assign(taskId, { company_id: companyId, assignee_id: effectiveAssigneeId || null }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: שיוך קבלן — נסה שוב')), 30000)),
       ]);
       console.log('ASSIGN OK', { notification_status: assignResult?.notification_status });
