@@ -918,7 +918,10 @@ async def force_close_task(task_id: str, request: Request, user: dict = Depends(
         raise HTTPException(status_code=409, detail='הליקוי כבר סגור')
     body = await request.json()
     reason = (body.get('reason') or '').strip()
+    ALLOWED_CLOSE_TYPES = {'field_verified', 'not_relevant', 'other'}
     close_type = (body.get('close_type') or 'field_verified').strip()
+    if close_type not in ALLOWED_CLOSE_TYPES:
+        close_type = 'other'
     if not reason:
         raise HTTPException(status_code=400, detail='סיבת סגירה היא שדה חובה')
     ts = _now()
