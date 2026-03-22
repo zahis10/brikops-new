@@ -968,10 +968,15 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         'has_payment_options': bool(pc.get('bank_details') or pc.get('bit_phone')),
     } if can_manage else None
 
+    from services.object_storage import generate_url as _gen_url
+    raw_logo = org.get('logo_url')
+    resolved_logo = _gen_url(raw_logo) if raw_logo else None
+
     return {
         'org_id': org_id,
         'org_name': org.get('name', ''),
         'owner_user_id': org.get('owner_user_id'),
+        'logo_url': resolved_logo,
         'can_manage_billing': can_manage,
         'is_org_pm': is_pm,
         'owner_name': owner_name,

@@ -1304,6 +1304,18 @@ export const handoverService = {
     const response = await axios.put(`${API}/organizations/${orgId}/handover-legal-sections`, { sections }, { headers: getAuthHeader() });
     return response.data;
   },
+  async uploadOrgLogo(orgId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.put(`${API}/organizations/${orgId}/logo`, formData, {
+      headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+  async deleteOrgLogo(orgId) {
+    const response = await axios.delete(`${API}/organizations/${orgId}/logo`, { headers: getAuthHeader() });
+    return response.data;
+  },
   async updateLegalSectionBody(projectId, protocolId, sectionId, body) {
     const response = await axios.put(
       `${API}/projects/${projectId}/handover/protocols/${protocolId}/legal-sections/${sectionId}`,

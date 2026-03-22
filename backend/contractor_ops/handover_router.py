@@ -710,6 +710,116 @@ async def get_org_legal_sections(org_id: str, user: dict = Depends(get_current_u
     return {"sections": sections.get("handover_legal_sections", [])}
 
 
+async def _check_org_logo_permission(user: dict, org: dict, org_id: str, db):
+    if _is_super_admin(user):
+        return
+    is_owner = org.get("owner_user_id") == user["id"]
+    if is_owner:
+        return
+    mem = await db.organization_memberships.find_one(
+        {"org_id": org_id, "user_id": user["id"]}, {"_id": 0, "role": 1}
+    )
+    if mem and mem.get("role") in ("project_manager",):
+        return
+    raise HTTPException(status_code=403, detail="אין לך הרשאה לעדכן לוגו ארגון")
+
+
+@router.put("/organizations/{org_id}/logo")
+async def upload_org_logo(org_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    import io as _io
+    from PIL import Image as _PILImage
+    from services.object_storage import save_bytes as _save_bytes, generate_url as _gen_url, delete as _delete_stored
+
+    db = get_db()
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "id": 1, "owner_user_id": 1, "logo_url": 1})
+    if not org:
+        raise HTTPException(status_code=404, detail="ארגון לא נמצא")
+    await _check_org_logo_permission(user, org, org_id, db)
+
+    MAX_SIZE = 2 * 1024 * 1024
+    raw = await file.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="קובץ ריק")
+    if len(raw) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="גודל הקובץ חורג מ-2MB")
+
+    ct = (file.content_type or "").lower()
+    if ct not in ("image/png", "image/jpeg", "image/jpg"):
+        raise HTTPException(status_code=400, detail="סוג קובץ לא נתמך — PNG או JPEG בלבד")
+
+    try:
+        img = _PILImage.open(_io.BytesIO(raw))
+        img.verify()
+        img = _PILImage.open(_io.BytesIO(raw))
+    except Exception:
+        raise HTTPException(status_code=400, detail="הקובץ אינו תמונה תקינה")
+
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGBA")
+        out_format = "PNG"
+        out_ext = "png"
+        out_ct = "image/png"
+    else:
+        img = img.convert("RGB")
+        out_format = "JPEG"
+        out_ext = "jpg"
+        out_ct = "image/jpeg"
+
+    img.thumbnail((400, 400))
+
+    buf = _io.BytesIO()
+    img.save(buf, format=out_format, quality=85 if out_format == "JPEG" else None)
+    resized_bytes = buf.getvalue()
+
+    import asyncio
+    key = f"org_logos/{org_id}.{out_ext}"
+    stored_ref = await asyncio.to_thread(_save_bytes, resized_bytes, key, out_ct)
+
+    old_logo = org.get("logo_url")
+    if old_logo and old_logo != stored_ref:
+        try:
+            await asyncio.to_thread(_delete_stored, old_logo)
+        except Exception:
+            pass
+
+    await db.organizations.update_one(
+        {"id": org_id},
+        {"$set": {"logo_url": stored_ref, "updated_at": _now()}}
+    )
+    await _audit("organization", org_id, "logo_uploaded", user["id"], {})
+    logger.info(f"[ORG_LOGO] Org={org_id} logo uploaded by user={user['id']} size={len(resized_bytes)}")
+
+    return {"logo_url": _gen_url(stored_ref)}
+
+
+@router.delete("/organizations/{org_id}/logo")
+async def delete_org_logo(org_id: str, user: dict = Depends(get_current_user)):
+    from services.object_storage import delete as _delete_stored
+
+    db = get_db()
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "id": 1, "owner_user_id": 1, "logo_url": 1})
+    if not org:
+        raise HTTPException(status_code=404, detail="ארגון לא נמצא")
+    await _check_org_logo_permission(user, org, org_id, db)
+
+    old_logo = org.get("logo_url")
+    if old_logo:
+        import asyncio
+        try:
+            await asyncio.to_thread(_delete_stored, old_logo)
+        except Exception:
+            pass
+
+    await db.organizations.update_one(
+        {"id": org_id},
+        {"$unset": {"logo_url": ""}, "$set": {"updated_at": _now()}}
+    )
+    await _audit("organization", org_id, "logo_deleted", user["id"], {})
+    logger.info(f"[ORG_LOGO] Org={org_id} logo deleted by user={user['id']}")
+
+    return {"ok": True}
+
+
 @router.post("/projects/{project_id}/handover/protocols")
 async def create_protocol(project_id: str, request: Request, user: dict = Depends(get_current_user)):
     await _check_handover_management(user, project_id)

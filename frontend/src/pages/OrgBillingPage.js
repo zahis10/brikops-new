@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { billingService, orgMemberService, invoiceService, projectService } from '../services/api';
+import { billingService, orgMemberService, invoiceService, projectService, handoverService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
@@ -131,12 +131,18 @@ export default function OrgBillingPage() {
   const [rejectLoading, setRejectLoading] = useState(false);
   const [adminApproveLoading, setAdminApproveLoading] = useState(null);
 
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoDeleting, setLogoDeleting] = useState(false);
+  const logoFileRef = useRef(null);
+
   const isSA = user?.platform_role === 'super_admin';
   const isOwner = data?.owner_user_id === user?.id;
   const canManageBilling = data?.can_manage_billing || false;
   const isPM = data?.is_org_pm || false;
   const canViewRequests = isSA || canManageBilling || isPM;
   const canEditRoles = isSA || isOwner;
+  const canEditLogo = isSA || isOwner || isPM;
   const canMutateInvoices = isSA || isOwner || (data && members.find(m => m.user_id === user?.id && m.role === 'billing_admin'));
 
   const renewRef = useRef(null);
@@ -242,7 +248,7 @@ export default function OrgBillingPage() {
     setLoading(true);
     setFatalError(null);
     billingService.orgBilling(orgId)
-      .then(setData)
+      .then(d => { setData(d); setLogoUrl(d?.logo_url || null); })
       .catch(err => {
         const status = err.response?.status;
         const detail = err.response?.data?.detail || 'שגיאה בטעינת נתוני חיוב';
@@ -256,6 +262,44 @@ export default function OrgBillingPage() {
       })
       .finally(() => setLoading(false));
   }, [orgId]);
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (logoFileRef.current) logoFileRef.current.value = '';
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowed.includes(file.type)) {
+      toast.error('יש להעלות תמונה בפורמט PNG או JPEG בלבד');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('גודל הקובץ חורג מ-2MB');
+      return;
+    }
+    setLogoUploading(true);
+    try {
+      const result = await handoverService.uploadOrgLogo(orgId, file);
+      setLogoUrl(result.logo_url);
+      toast.success('הלוגו עודכן בהצלחה');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בהעלאת לוגו');
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
+  const handleLogoDelete = async () => {
+    setLogoDeleting(true);
+    try {
+      await handoverService.deleteOrgLogo(orgId);
+      setLogoUrl(null);
+      toast.success('הלוגו הוסר');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה במחיקת לוגו');
+    } finally {
+      setLogoDeleting(false);
+    }
+  };
 
   const loadMembers = useCallback(async () => {
     if (!orgId) return;
@@ -801,13 +845,63 @@ export default function OrgBillingPage() {
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-slate-800">{data.org_name}</h1>
+          <div className="flex items-center gap-3">
+            {logoUrl && (
+              <img src={logoUrl} alt="לוגו ארגון" className="h-10 w-auto max-w-[80px] object-contain rounded" />
+            )}
+            <h1 className="text-xl font-bold text-slate-800">{data.org_name}</h1>
+          </div>
           <span className={`text-sm font-medium px-3 py-1 rounded-full ${
             SUBSCRIPTION_STATUS_COLORS[subStatus] || 'bg-slate-100 text-slate-500'
           }`}>
             {SUBSCRIPTION_STATUS_LABELS[subStatus] || '—'}
           </span>
         </div>
+
+        {canEditLogo && (
+          <div className="flex items-center gap-3 bg-slate-50 rounded-lg p-3">
+            <div className="flex-shrink-0">
+              {logoUrl ? (
+                <img src={logoUrl} alt="לוגו ארגון" className="h-14 w-14 object-contain rounded border border-slate-200 bg-white p-1" />
+              ) : (
+                <div className="h-14 w-14 flex items-center justify-center rounded border border-dashed border-slate-300 bg-white text-slate-400">
+                  <Upload className="w-5 h-5" />
+                </div>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-slate-700">לוגו ארגון</div>
+              <div className="text-xs text-slate-500">יוצג בכותרת פרוטוקולי מסירה · PNG/JPEG · עד 2MB</div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <input
+                ref={logoFileRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
+              <button
+                onClick={() => logoFileRef.current?.click()}
+                disabled={logoUploading}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+              >
+                {logoUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                {logoUrl ? 'החלף' : 'העלאה'}
+              </button>
+              {logoUrl && (
+                <button
+                  onClick={handleLogoDelete}
+                  disabled={logoDeleting}
+                  className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {logoDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                  הסרה
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {sub && (
           <div className="grid grid-cols-2 gap-4 text-sm">
