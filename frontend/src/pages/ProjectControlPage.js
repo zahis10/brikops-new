@@ -20,11 +20,11 @@ import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
-  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature
+  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature, Clock, ListTodo
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { tTrade, tRole, tSubRole, t } from '../i18n';
+import { tTrade, tRole, tSubRole, t, tCategory } from '../i18n';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
@@ -2991,14 +2991,107 @@ const ProjectControlPage = () => {
   const isSuperAdmin = user?.platform_role === 'super_admin';
   const canMutateStructure = isSuperAdmin || isOrgOwner || canManageBilling;
 
+  const FILTERED_PAGE_SIZE = 50;
+  const DEFECT_STATUS_CONFIG = {
+    open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
+    assigned: { label: 'שויך', color: 'bg-purple-100 text-purple-700' },
+    in_progress: { label: 'בביצוע', color: 'bg-amber-100 text-amber-700' },
+    waiting_verify: { label: 'ממתין לאימות', color: 'bg-orange-100 text-orange-700' },
+    pending_contractor_proof: { label: 'ממתין להוכחת קבלן', color: 'bg-orange-100 text-orange-700' },
+    pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-orange-100 text-orange-700 ring-1 ring-orange-300' },
+    returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700' },
+    closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+    reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
+  };
+  const DEFECT_PRIORITY_CONFIG = {
+    low: { label: 'נמוך', color: 'text-slate-500' },
+    medium: { label: 'בינוני', color: 'text-blue-600' },
+    high: { label: 'גבוה', color: 'text-amber-600' },
+    critical: { label: 'קריטי', color: 'text-red-600' },
+  };
+
+  const urlStatusChip = searchParams.get('statusChip') || '';
+  const urlOverdue = searchParams.get('overdue') === 'true';
+  const hasFilterParams = !!(urlStatusChip || urlOverdue);
+
+  const [filteredTasks, setFilteredTasks] = useState([]);
+  const [filteredTotal, setFilteredTotal] = useState(null);
+  const [filteredOffset, setFilteredOffset] = useState(0);
+  const [filteredHasMore, setFilteredHasMore] = useState(false);
+  const [filteredLoading, setFilteredLoading] = useState(false);
+  const [filteredInitial, setFilteredInitial] = useState(true);
+  const filteredIdsRef = useRef(new Set());
+  const filteredAbortRef = useRef(null);
+
+  const loadFilteredTasks = useCallback(async (fromOffset = 0) => {
+    if (!hasFilterParams || !projectId) return;
+    if (filteredAbortRef.current) filteredAbortRef.current.abort();
+    filteredAbortRef.current = new AbortController();
+    const { signal } = filteredAbortRef.current;
+
+    if (fromOffset === 0) {
+      setFilteredInitial(true);
+      filteredIdsRef.current = new Set();
+    }
+    setFilteredLoading(true);
+
+    try {
+      const params = { project_id: projectId, limit: FILTERED_PAGE_SIZE, offset: fromOffset, signal };
+      if (urlStatusChip) params.status = urlStatusChip;
+      if (urlOverdue) params.overdue = true;
+
+      const data = await taskService.list(params);
+      if (signal.aborted) return;
+
+      const rawItems = Array.isArray(data?.items) ? data.items : [];
+      const rawTotal = typeof data?.total === 'number' ? data.total : rawItems.length;
+
+      const newItems = rawItems.filter(item => !filteredIdsRef.current.has(item.id));
+      newItems.forEach(item => filteredIdsRef.current.add(item.id));
+
+      if (fromOffset === 0) {
+        setFilteredTasks(newItems);
+      } else {
+        setFilteredTasks(prev => [...prev, ...newItems]);
+      }
+      setFilteredTotal(rawTotal);
+      const nextOffset = fromOffset + rawItems.length;
+      setFilteredOffset(nextOffset);
+      setFilteredHasMore(nextOffset < rawTotal);
+    } catch (err) {
+      if (err.name === 'AbortError' || err?.code === 'ERR_CANCELED') return;
+      console.error('Failed to load filtered tasks:', err);
+      toast.error('שגיאה בטעינת ליקויים');
+    } finally {
+      if (!signal.aborted) {
+        setFilteredLoading(false);
+        setFilteredInitial(false);
+      }
+    }
+  }, [projectId, urlStatusChip, urlOverdue, hasFilterParams]);
+
   useEffect(() => {
     try {
-      const urlWorkMode = new URLSearchParams(window.location.search).get('workMode');
+      const urlWorkMode = searchParams.get('workMode');
       if (urlWorkMode === 'structure' || urlWorkMode === 'defects') { setWorkMode(urlWorkMode); return; }
       const saved = localStorage.getItem(`brikops_workMode_${projectId}`);
       setWorkMode((saved === 'structure' || saved === 'defects') ? saved : 'structure');
     } catch { setWorkMode('structure'); }
-  }, [projectId]);
+  }, [projectId, searchParams]);
+
+  useEffect(() => {
+    if (hasFilterParams) {
+      if (workMode !== 'defects') setWorkMode('defects');
+      loadFilteredTasks(0);
+    } else {
+      setFilteredTasks([]);
+      setFilteredTotal(null);
+      setFilteredOffset(0);
+      setFilteredHasMore(false);
+      setFilteredInitial(true);
+    }
+    return () => { if (filteredAbortRef.current) filteredAbortRef.current.abort(); };
+  }, [hasFilterParams, workMode, loadFilteredTasks]);
 
   const billingEnabled = !!features?.billing_v1_enabled;
   const defectsV2Enabled = !!features?.defects_v2;
@@ -3349,7 +3442,121 @@ const ProjectControlPage = () => {
         </div>
       )}
 
-      {workMode === 'defects' && (
+      {workMode === 'defects' && hasFilterParams && (
+        <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span className="text-xs text-amber-800 font-medium">
+              {urlOverdue ? 'ליקויים באיחור' : (DEFECT_STATUS_CONFIG[urlStatusChip]?.label || urlStatusChip)}
+              {filteredTotal != null ? ` (${filteredTotal})` : ''}
+            </span>
+            <button
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete('statusChip');
+                next.delete('overdue');
+                setSearchParams(next, { replace: true });
+              }}
+              className="mr-auto flex items-center gap-1 text-xs text-amber-600 hover:text-amber-800 font-medium transition-colors"
+            >
+              <X className="w-3 h-3" />
+              נקה סינון
+            </button>
+          </div>
+
+          {filteredInitial ? (
+            <div className="space-y-2">
+              {[1,2,3].map(i => (
+                <Card key={i} className="p-3">
+                  <div className="animate-pulse">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1"><div className="h-4 bg-slate-200 rounded w-3/4 mb-1"></div><div className="h-3 bg-slate-100 rounded w-1/2"></div></div>
+                      <div className="h-5 bg-slate-200 rounded w-16 mr-2"></div>
+                    </div>
+                    <div className="flex items-center gap-3"><div className="h-4 bg-slate-100 rounded w-16"></div><div className="h-4 bg-slate-100 rounded w-12"></div></div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          ) : filteredTasks.length === 0 ? (
+            <Card className="p-8 text-center">
+              <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-base font-bold text-slate-700 mb-1">
+                {urlOverdue ? 'אין ליקויים באיחור' : `אין ליקויים במצב "${DEFECT_STATUS_CONFIG[urlStatusChip]?.label || urlStatusChip}"`}
+              </h3>
+              <p className="text-sm text-slate-500 mb-4">נסה לשנות את הסינון או לחזור לתצוגת בניינים</p>
+              <button
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('statusChip');
+                  next.delete('overdue');
+                  setSearchParams(next, { replace: true });
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600 transition-colors shadow-sm"
+              >
+                <X className="w-4 h-4" />
+                חזרה לבניינים
+              </button>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {filteredTasks.map(task => {
+                const statusCfg = DEFECT_STATUS_CONFIG[task.status] || {};
+                const priorityCfg = DEFECT_PRIORITY_CONFIG[task.priority] || {};
+                return (
+                  <Card
+                    key={task.id}
+                    className="p-3 hover:shadow-md transition-shadow cursor-pointer"
+                    onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/control?${searchParams.toString()}` } })}
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-slate-800 truncate">{task.title}</h4>
+                        {task.description && (
+                          <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{task.description}</p>
+                        )}
+                      </div>
+                      <span className={`text-xs font-medium px-2 py-1 rounded-md whitespace-nowrap mr-2 ${statusCfg.color || 'bg-slate-100'}`}>
+                        {statusCfg.label || task.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+                      <span className="bg-slate-100 px-2 py-0.5 rounded">{tCategory(task.category)}</span>
+                      <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
+                      {task.due_date && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {task.due_date}
+                        </span>
+                      )}
+                      {task.comments_count > 0 && (
+                        <span className="flex items-center gap-1">
+                          <MessageSquare className="w-3 h-3" /> {task.comments_count}
+                        </span>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+
+              {filteredHasMore && (
+                <button
+                  onClick={() => loadFilteredTasks(filteredOffset)}
+                  disabled={filteredLoading}
+                  className="w-full py-3 text-center text-sm font-medium text-amber-600 hover:text-amber-700 bg-white border border-slate-200 rounded-lg hover:bg-amber-50 transition-colors disabled:opacity-50"
+                >
+                  {filteredLoading ? (
+                    <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />טוען עוד...</span>
+                  ) : (
+                    `טען עוד (${filteredTasks.length} מתוך ${filteredTotal})`
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {workMode === 'defects' && !hasFilterParams && (
         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
           {hasBuildings && totalDefects === 0 && (
             <Card className="p-4 border-green-200 bg-green-50/50">
