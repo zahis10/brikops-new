@@ -119,9 +119,10 @@ const ApartmentDashboardPage = () => {
   }, [flagChecked, loadUnit, loadTasks]);
 
   const startSpareTilesEdit = useCallback(() => {
-    const count = unitData?.spare_tiles_count;
+    const u = unitData?.unit;
+    const count = u?.spare_tiles_count;
     setSpareTilesCount(count != null ? String(count) : '');
-    setSpareTilesNotes(unitData?.spare_tiles_notes || '');
+    setSpareTilesNotes(u?.spare_tiles_notes || '');
     setSpareTilesEditing(true);
   }, [unitData]);
 
