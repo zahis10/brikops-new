@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFil
 from datetime import datetime, timezone
 import uuid
 import logging
+import re
 
 from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_project_read_access, _audit, _now, _is_super_admin
 from services.object_storage import save_bytes, generate_url
@@ -1115,6 +1116,17 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
     for field in ("property_details", "tenants", "meters", "delivered_items", "general_notes", "signature_labels"):
         if field in body:
             update_fields[field] = body[field]
+
+    if "property_details" in update_fields:
+        pd = update_fields["property_details"]
+        if isinstance(pd, dict):
+            import unicodedata
+            model_val = pd.get("model")
+            if model_val and isinstance(model_val, str) and re.match(r'^[A-Za-z0-9\-áàâãéèêëíìîïóòôõúùûü\s]+$', model_val):
+                cleaned = unicodedata.normalize('NFKD', model_val)
+                cleaned = cleaned.encode('ascii', 'ignore').decode('ascii').strip()
+                if cleaned:
+                    pd["model"] = cleaned
 
     if "legal_text" in body and body["legal_text"] != protocol.get("legal_text"):
         update_fields["legal_text"] = body["legal_text"]
