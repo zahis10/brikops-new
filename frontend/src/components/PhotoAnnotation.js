@@ -15,13 +15,14 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   const containerRef = useRef(null);
   const [color, setColor] = useState('#ef4444');
   const colorRef = useRef('#ef4444');
+  const onSkipRef = useRef(onSkip);
   const [strokes, setStrokes] = useState([]);
   const [currentStroke, setCurrentStroke] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const scaleRef = useRef(1);
 
   useEffect(() => { colorRef.current = color; }, [color]);
+  useEffect(() => { onSkipRef.current = onSkip; }, [onSkip]);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,8 +60,6 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       const displayScale = Math.min(containerW / w, containerH / h, 1);
       scaleRef.current = displayScale;
 
-      setCanvasSize({ width: w, height: h });
-
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.width = w;
@@ -74,11 +73,11 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     };
 
     loadImage().catch(() => {
-      if (!cancelled) onSkip();
+      if (!cancelled) onSkipRef.current();
     });
 
     return () => { cancelled = true; };
-  }, [imageFile, onSkip]);
+  }, [imageFile]);
 
   const redraw = useCallback((allStrokes) => {
     const canvas = canvasRef.current;
@@ -237,16 +236,14 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     );
   }, [onSave]);
 
-  if (!loaded) {
-    return (
-      <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
-        <div className="text-white text-sm">טוען תמונה...</div>
-      </div>
-    );
-  }
-
   return (
     <div className="fixed inset-0 z-[10000] bg-black flex flex-col" dir="rtl">
+      {!loaded && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black">
+          <div className="text-white text-sm">טוען תמונה...</div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0">
         <div className="flex items-center gap-2">
           {COLORS.map(c => (
@@ -285,7 +282,8 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-t border-slate-700 shrink-0">
         <button
           onClick={handleSave}
-          className="flex items-center gap-2 px-6 py-2.5 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors"
+          disabled={!loaded}
+          className="flex items-center gap-2 px-6 py-2.5 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Save className="w-4 h-4" />
           שמור
