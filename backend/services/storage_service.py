@@ -80,11 +80,11 @@ class StorageService:
                 try:
                     thumbnail_name = f"attachments/thumb_{unique_name}"
                     img = Image.open(io.BytesIO(content))
+                    if img.mode in ('RGBA', 'P', 'LA'):
+                        img = img.convert('RGB')
                     img.thumbnail((300, 300))
                     thumb_buf = io.BytesIO()
                     img_format = 'JPEG' if unique_name.lower().endswith(('.jpg', '.jpeg')) else 'PNG'
-                    if img_format == 'JPEG' and img.mode in ('RGBA', 'P', 'LA'):
-                        img = img.convert('RGB')
                     img.save(thumb_buf, format=img_format)
                     thumb_bytes = thumb_buf.getvalue()
                     t0_thumb = time.time()
