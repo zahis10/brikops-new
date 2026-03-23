@@ -57,7 +57,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     return () => {
       document.body.style.pointerEvents = '';
       document.body.style.overflow = '';
-      if (viewport && originalViewport) viewport.content = originalViewport;
+      if (viewport && originalViewport !== undefined) viewport.content = originalViewport;
     };
   }, []);
 
