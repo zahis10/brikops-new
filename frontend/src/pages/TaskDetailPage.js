@@ -201,6 +201,14 @@ const TaskDetailPage = () => {
   const [pendingFile, setPendingFile] = useState(null);
 
   useEffect(() => {
+    document.body.style.pointerEvents = '';
+    return () => {
+      document.body.style.pointerEvents = '';
+      document.body.style.overflow = '';
+    };
+  }, []);
+
+  useEffect(() => {
     if (location.state?.returnTo) {
       sessionStorage.setItem(RETURN_TO_KEY, location.state.returnTo);
     } else {

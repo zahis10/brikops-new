@@ -49,6 +49,19 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   useEffect(() => { savingRef.current = saving; }, [saving]);
 
   useEffect(() => {
+    const viewport = document.querySelector('meta[name="viewport"]');
+    const originalViewport = viewport?.content;
+    if (viewport) {
+      viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+    }
+    return () => {
+      document.body.style.pointerEvents = '';
+      document.body.style.overflow = '';
+      if (viewport && originalViewport) viewport.content = originalViewport;
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     const doLoad = async () => {
@@ -270,7 +283,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   }, [saving]);
 
   const content = (
-    <div className="fixed inset-0 bg-black flex flex-col" dir="rtl"
+    <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
          style={{ zIndex: 10001, pointerEvents: 'auto' }}>
       {!loaded && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black"

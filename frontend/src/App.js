@@ -22,7 +22,6 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessibilityPage from './pages/AccessibilityPage';
 import WaLoginPage from './pages/WaLoginPage';
-import UploadDiagPage from './pages/UploadDiagPage';
 
 const JoinRequestsPage = React.lazy(() => import('./pages/JoinRequestsPage'));
 const TaskDetailPage = React.lazy(() => import('./pages/TaskDetailPage'));
@@ -132,7 +131,6 @@ const AppRoutes = () => {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/accessibility" element={<AccessibilityPage />} />
-        <Route path="/upload-diag" element={<UploadDiagPage />} />
         <Route
           path="/settings/account"
           element={

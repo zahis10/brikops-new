@@ -194,6 +194,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   }, []);
 
   useEffect(() => {
+    return () => {
+      document.body.style.pointerEvents = '';
+      document.body.style.overflow = '';
+    };
+  }, []);
+
+  useEffect(() => {
     if (isOpen) {
       setCreatedTaskId(null);
       setUploadError(null);

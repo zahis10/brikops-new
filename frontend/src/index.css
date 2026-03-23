@@ -154,3 +154,8 @@ code {
 @media (hover: none) {
   .unit-edit-icon { opacity: 0.6; }
 }
+
+.h-dvh-fallback {
+  height: 100vh;
+  height: 100dvh;
+}
