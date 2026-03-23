@@ -6,9 +6,11 @@ const COMPRESS_TIMEOUT_MS = 15000;
 function drawToCanvas(source, srcWidth, srcHeight) {
   let width = srcWidth;
   let height = srcHeight;
-  if (width > MAX_WIDTH) {
-    height = Math.round((height * MAX_WIDTH) / width);
-    width = MAX_WIDTH;
+  const maxDim = Math.max(width, height);
+  if (maxDim > MAX_WIDTH) {
+    const scale = MAX_WIDTH / maxDim;
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
   }
   const canvas = document.createElement('canvas');
   canvas.width = width;

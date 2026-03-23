@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
-import { X, Undo2, Save } from 'lucide-react';
+import { X, Undo2, Save, Loader2 } from 'lucide-react';
 
 const MAX_CANVAS_SIZE = 1280;
 const VISUAL_LINE_WIDTH = 4;
@@ -36,6 +36,7 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   const onSaveRef = useRef(onSave);
   const [strokes, setStrokes] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
   const scaleRef = useRef(1);
   const drawingRef = useRef(false);
   const currentStrokeRef = useRef(null);
@@ -44,12 +45,18 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   useEffect(() => { onSkipRef.current = onSkip; }, [onSkip]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
 
+  const savingRef = useRef(false);
+  useEffect(() => { savingRef.current = saving; }, [saving]);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
         e.preventDefault();
-        onSkipRef.current();
+        if (!savingRef.current) {
+          setSaving(true);
+          onSkipRef.current();
+        }
       }
     };
     document.addEventListener('keydown', handleKeyDown, true);
@@ -250,23 +257,30 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   }, [redraw]);
 
   const handleSave = useCallback(() => {
+    if (saving) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+    setSaving(true);
 
     canvas.toBlob(
       (blob) => {
-        if (!blob) return;
+        if (!blob) {
+          setSaving(false);
+          return;
+        }
         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
         onSaveRef.current(file);
       },
       'image/jpeg',
       0.85
     );
-  }, []);
+  }, [saving]);
 
   const handleSkip = useCallback(() => {
+    if (saving) return;
+    setSaving(true);
     onSkipRef.current();
-  }, []);
+  }, [saving]);
 
   const content = (
     <div className="fixed inset-0 bg-black flex flex-col" dir="rtl"
@@ -296,7 +310,8 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
 
         <button
           onClick={handleSkip}
-          className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+          disabled={saving}
+          className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <X className="w-4 h-4" />
           דלג
@@ -318,11 +333,11 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
            style={{ position: 'relative', zIndex: 20 }}>
         <button
           onClick={handleSave}
-          disabled={!loaded}
+          disabled={!loaded || saving}
           className="flex items-center gap-2 px-6 py-2.5 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <Save className="w-4 h-4" />
-          שמור
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {saving ? 'שומר...' : 'שמור'}
         </button>
         <button
           onClick={handleUndo}
