@@ -386,9 +386,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     });
   }, []);
 
-  const handleAnnotationSave = useCallback((annotatedFile) => {
+  const handleAnnotationSave = useCallback((annotatedFile, hasAnnotations) => {
     const idx = annotatingIndex;
     if (idx === null) return;
+    if (!hasAnnotations || !annotatedFile) {
+      setAnnotatingIndex(null);
+      return;
+    }
     setImages(prev => {
       const updated = [...prev];
       const original = updated[idx];
@@ -409,28 +413,26 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setAnnotatingIndex(null);
   }, [annotatingIndex]);
 
-  const handlePendingAnnotationSave = useCallback((annotatedFile) => {
+  const handlePendingAnnotationSave = useCallback((annotatedFile, hasAnnotations) => {
     if (!pendingFile) return;
-    const annotatedPreview = URL.createObjectURL(annotatedFile);
-    const originalPreview = URL.createObjectURL(pendingFile);
-    setImages(prev => [...prev, {
-      file: annotatedFile,
-      preview: annotatedPreview,
-      name: 'annotated_' + (pendingFile.name || 'photo.jpg'),
-      originalFile: pendingFile,
-      originalPreview,
-      isAnnotated: true,
-    }]);
-    setPendingFile(null);
-  }, [pendingFile]);
-
-  const handlePendingAnnotationSkip = useCallback(() => {
-    if (!pendingFile) return;
-    setImages(prev => [...prev, {
-      file: pendingFile,
-      preview: URL.createObjectURL(pendingFile),
-      name: pendingFile.name,
-    }]);
+    if (hasAnnotations && annotatedFile) {
+      const annotatedPreview = URL.createObjectURL(annotatedFile);
+      const originalPreview = URL.createObjectURL(pendingFile);
+      setImages(prev => [...prev, {
+        file: annotatedFile,
+        preview: annotatedPreview,
+        name: 'annotated_' + (pendingFile.name || 'photo.jpg'),
+        originalFile: pendingFile,
+        originalPreview,
+        isAnnotated: true,
+      }]);
+    } else {
+      setImages(prev => [...prev, {
+        file: pendingFile,
+        preview: URL.createObjectURL(pendingFile),
+        name: pendingFile.name,
+      }]);
+    }
     setPendingFile(null);
   }, [pendingFile]);
 
@@ -496,9 +498,15 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (uploadList.length > 0) {
       setSubmitStep('uploading');
       console.log('UPLOAD sizes', uploadList.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
-      const results = await Promise.allSettled(
-        uploadList.map((img) => uploadWithRetry(taskService, taskId, img.file, img.name))
-      );
+      const results = [];
+      for (const img of uploadList) {
+        try {
+          const val = await uploadWithRetry(taskService, taskId, img.file, img.name);
+          results.push({ status: 'fulfilled', value: val });
+        } catch (reason) {
+          results.push({ status: 'rejected', reason });
+        }
+      }
       const succeeded = results.filter(r => r.status === 'fulfilled').length;
       const failedResults = results.filter(r => r.status === 'rejected');
 
@@ -1063,7 +1071,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <PhotoAnnotation
           imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
           onSave={handleAnnotationSave}
-          onSkip={() => setAnnotatingIndex(null)}
         />
       </Suspense>
     )}
@@ -1077,7 +1084,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <PhotoAnnotation
           imageFile={pendingFile}
           onSave={handlePendingAnnotationSave}
-          onSkip={handlePendingAnnotationSkip}
         />
       </Suspense>
     )}

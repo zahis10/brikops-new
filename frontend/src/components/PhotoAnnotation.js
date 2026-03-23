@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
-import { X, Undo2, Save, Loader2 } from 'lucide-react';
+import { Undo2, Save, Loader2 } from 'lucide-react';
 
 const MAX_CANVAS_SIZE = 1280;
 const VISUAL_LINE_WIDTH = 4;
@@ -25,16 +25,16 @@ function loadImageFromFile(file) {
   });
 }
 
-const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
+const PhotoAnnotation = ({ imageFile, onSave }) => {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
   const urlRef = useRef(null);
   const containerRef = useRef(null);
   const [color, setColor] = useState('#ef4444');
   const colorRef = useRef('#ef4444');
-  const onSkipRef = useRef(onSkip);
   const onSaveRef = useRef(onSave);
   const [strokes, setStrokes] = useState([]);
+  const strokesRef = useRef([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const scaleRef = useRef(1);
@@ -42,26 +42,11 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   const currentStrokeRef = useRef(null);
 
   useEffect(() => { colorRef.current = color; }, [color]);
-  useEffect(() => { onSkipRef.current = onSkip; }, [onSkip]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  useEffect(() => { strokesRef.current = strokes; }, [strokes]);
 
   const savingRef = useRef(false);
   useEffect(() => { savingRef.current = saving; }, [saving]);
-
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        e.preventDefault();
-        if (!savingRef.current) {
-          setSaving(true);
-          onSkipRef.current();
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +89,7 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     };
 
     doLoad().catch(() => {
-      if (!cancelled) onSkipRef.current();
+      if (!cancelled) onSaveRef.current(null, false);
     });
 
     return () => {
@@ -262,6 +247,12 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     if (!canvas) return;
     setSaving(true);
 
+    const hasAnnotations = strokesRef.current.length > 0;
+    if (!hasAnnotations) {
+      onSaveRef.current(null, false);
+      return;
+    }
+
     canvas.toBlob(
       (blob) => {
         if (!blob || blob.size === 0) {
@@ -270,17 +261,11 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
         }
 
         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
-        onSaveRef.current(file);
+        onSaveRef.current(file, true);
       },
       'image/jpeg',
       0.85
     );
-  }, [saving]);
-
-  const handleSkip = useCallback(() => {
-    if (saving) return;
-    setSaving(true);
-    onSkipRef.current();
   }, [saving]);
 
   const content = (
@@ -308,15 +293,6 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
             />
           ))}
         </div>
-
-        <button
-          onClick={handleSkip}
-          disabled={saving}
-          className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <X className="w-4 h-4" />
-          דלג
-        </button>
       </div>
 
       <div

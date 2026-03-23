@@ -384,40 +384,15 @@ const TaskDetailPage = () => {
     }
   };
 
-  const handleAnnotationSave = useCallback(async (annotatedFile) => {
+  const handleAnnotationSave = useCallback(async (annotatedFile, hasAnnotations) => {
     if (!pendingFile) return;
     setUploading(true);
     try {
       await taskService.uploadAttachment(task.id, pendingFile);
-      await taskService.uploadAttachment(task.id, annotatedFile);
-      toast.success('תמונה וסימון הועלו בהצלחה');
-      setPendingFile(null);
-      await loadTask();
-    } catch (err) {
-      let msg = 'שגיאה בהעלאת תמונה';
-      if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
-        msg = 'הזמן הקצוב להעלאה עבר. נסה שוב';
-      } else if (!err?.response) {
-        msg = 'בעיית תקשורת. בדוק חיבור לאינטרנט';
-      } else {
-        const detail = err.response.data?.detail;
-        if (typeof detail === 'string') msg = detail;
-        else if (detail?.message) msg = detail.message;
+      if (hasAnnotations && annotatedFile) {
+        await taskService.uploadAttachment(task.id, annotatedFile);
       }
-      toast.error(msg);
-      console.error('[UPLOAD]', err);
-      setPendingFile(null);
-    } finally {
-      setUploading(false);
-    }
-  }, [pendingFile, task?.id, loadTask]);
-
-  const handleAnnotationSkip = useCallback(async () => {
-    if (!pendingFile) return;
-    setUploading(true);
-    try {
-      await taskService.uploadAttachment(task.id, pendingFile);
-      toast.success('תמונה הועלתה בהצלחה');
+      toast.success(hasAnnotations ? 'תמונה וסימון הועלו בהצלחה' : 'תמונה הועלתה בהצלחה');
       setPendingFile(null);
       await loadTask();
     } catch (err) {
@@ -1764,7 +1739,6 @@ const TaskDetailPage = () => {
           <PhotoAnnotation
             imageFile={pendingFile}
             onSave={handleAnnotationSave}
-            onSkip={handleAnnotationSkip}
           />
         </Suspense>
       )}
