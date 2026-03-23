@@ -392,13 +392,23 @@ export const taskService = {
     return response.data;
   },
   async uploadAttachment(id, file) {
-    const formData = new FormData();
-    formData.append('file', file);
-    const response = await axios.post(`${API}/tasks/${id}/attachments`, formData, {
-      headers: getAuthHeader(),
-      timeout: 90000,
-    });
-    return response.data;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await axios.post(`${API}/tasks/${id}/attachments`, formData, {
+          headers: getAuthHeader(),
+          timeout: 90000,
+        });
+        return response.data;
+      } catch (err) {
+        const status = err.response?.status;
+        const isServerError = !status || status >= 500;
+        console.warn(`[uploadAttachment] attempt ${attempt}/3 failed: status=${status || 'network'} file=${file.name} size=${file.size}`);
+        if (attempt === 3 || !isServerError) throw err;
+        await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
   },
   async submitContractorProof(id, filesOrFile, note = '') {
     const formData = new FormData();

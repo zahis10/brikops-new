@@ -450,37 +450,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     return Object.keys(errs).length === 0;
   }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
 
-  const uploadWithRetry = async (taskService, taskId, file, fileName, maxAttempts = 2) => {
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        console.log(`[upload:attempt] #${attempt}/${maxAttempts} ${fileName} (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
-        const res = await taskService.uploadAttachment(taskId, file);
-        console.log(`[upload:ok] ${fileName} on attempt #${attempt}`);
-        return res;
-      } catch (err) {
-        const status = err.response?.status;
-        const errorCode = err.response?.data?.detail?.error_code;
-        const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
-        const isNetwork = !err.response && err.message?.includes('Network');
-        console.error(`[upload:fail] ${fileName} attempt #${attempt}/${maxAttempts}`,
-          { status, errorCode, isTimeout, isNetwork, message: err.message, responseData: err.response?.data });
-        if (errorCode === 'INVALID_TASK_IMAGE') {
-          const msg = err.response?.data?.detail?.message || 'ניתן לצרף תמונות בלבד';
-          console.error(`[upload:invalid] ${fileName} — server rejected as invalid image, no retry`);
-          toast.error(`${fileName}: ${msg}`);
-          throw err;
-        }
-        if (attempt < maxAttempts) {
-          const delay = attempt * 2000;
-          console.log(`[upload:retry] waiting ${delay}ms before retry...`);
-          await new Promise(r => setTimeout(r, delay));
-        } else {
-          throw err;
-        }
-      }
-    }
-  };
-
   const doUploadAndAssign = async (taskId) => {
     setUploadError(null);
 
@@ -502,7 +471,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       for (let i = 0; i < uploadList.length; i++) {
         if (i > 0) await new Promise(r => setTimeout(r, 500));
         try {
-          const val = await uploadWithRetry(taskService, taskId, uploadList[i].file, uploadList[i].name);
+          const val = await taskService.uploadAttachment(taskId, uploadList[i].file);
           results.push({ status: 'fulfilled', value: val });
         } catch (reason) {
           results.push({ status: 'rejected', reason });
