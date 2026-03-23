@@ -351,6 +351,8 @@ const TaskDetailPage = () => {
       toast.success('תמונה הועלתה בהצלחה');
       loadTask();
     } catch (err) {
+      // #160 root-cause investigation: upload endpoint verified working (curl → 200, S3 OK).
+      // Failures are transient (network timeout / S3 hiccup). Surface actual error for diagnosis.
       console.error('[handleAddPhoto] upload failed:', err?.response?.status, err?.response?.data, err?.message);
       let msg = 'שגיאה בהעלאת תמונה';
       if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
