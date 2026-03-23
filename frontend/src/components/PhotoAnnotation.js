@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Undo2, Save } from 'lucide-react';
 
 const MAX_CANVAS_SIZE = 1280;
-const LINE_WIDTH = 3;
+const VISUAL_LINE_WIDTH = 4;
 const COLORS = [
   { value: '#ef4444', label: 'אדום' },
   { value: '#3b82f6', label: 'כחול' },
@@ -16,13 +16,17 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   const [color, setColor] = useState('#ef4444');
   const colorRef = useRef('#ef4444');
   const onSkipRef = useRef(onSkip);
+  const onSaveRef = useRef(onSave);
   const [strokes, setStrokes] = useState([]);
   const [currentStroke, setCurrentStroke] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const scaleRef = useRef(1);
+  const drawingRef = useRef(false);
+  const currentStrokeRef = useRef(null);
 
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSkipRef.current = onSkip; }, [onSkip]);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +83,11 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     return () => { cancelled = true; };
   }, [imageFile]);
 
+  const getLineWidth = useCallback(() => {
+    const scale = scaleRef.current;
+    return scale > 0 ? VISUAL_LINE_WIDTH / scale : VISUAL_LINE_WIDTH;
+  }, []);
+
   const redraw = useCallback((allStrokes) => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
@@ -88,11 +97,12 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
+    const lw = getLineWidth();
     for (const stroke of allStrokes) {
       if (stroke.points.length < 2) continue;
       ctx.beginPath();
       ctx.strokeStyle = stroke.color;
-      ctx.lineWidth = LINE_WIDTH;
+      ctx.lineWidth = lw;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
@@ -101,16 +111,16 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       }
       ctx.stroke();
     }
-  }, []);
+  }, [getLineWidth]);
 
-  const getTouchPos = useCallback((touch) => {
+  const getPos = useCallback((clientX, clientY) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const scale = scaleRef.current;
     return {
-      x: (touch.clientX - rect.left) / scale,
-      y: (touch.clientY - rect.top) / scale,
+      x: (clientX - rect.left) / scale,
+      y: (clientY - rect.top) / scale,
     };
   }, []);
 
@@ -118,87 +128,78 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     const canvas = canvasRef.current;
     if (!canvas || !loaded) return;
 
+    const startStroke = (pos) => {
+      const newStroke = { color: colorRef.current, points: [pos] };
+      currentStrokeRef.current = newStroke;
+      drawingRef.current = true;
+    };
+
+    const moveStroke = (pos) => {
+      if (!drawingRef.current || !currentStrokeRef.current) return;
+      currentStrokeRef.current = {
+        ...currentStrokeRef.current,
+        points: [...currentStrokeRef.current.points, pos],
+      };
+      setStrokes(allStrokes => {
+        redraw([...allStrokes, currentStrokeRef.current]);
+        return allStrokes;
+      });
+    };
+
+    const endStroke = () => {
+      if (!drawingRef.current) return;
+      drawingRef.current = false;
+      const stroke = currentStrokeRef.current;
+      currentStrokeRef.current = null;
+      if (stroke && stroke.points.length >= 2) {
+        setStrokes(prev => {
+          const newAll = [...prev, stroke];
+          redraw(newAll);
+          return newAll;
+        });
+      }
+    };
+
     const handleTouchStart = (e) => {
       e.preventDefault();
       const touch = e.touches[0];
       if (!touch) return;
-      const pos = getTouchPos(touch);
-      if (!pos) return;
-      const newStroke = { color: colorRef.current, points: [pos] };
-      setCurrentStroke(newStroke);
+      const pos = getPos(touch.clientX, touch.clientY);
+      if (pos) startStroke(pos);
     };
 
     const handleTouchMove = (e) => {
       e.preventDefault();
       const touch = e.touches[0];
       if (!touch) return;
-      const pos = getTouchPos(touch);
-      if (!pos) return;
-
-      setCurrentStroke(prev => {
-        if (!prev) return null;
-        const updated = { ...prev, points: [...prev.points, pos] };
-        setStrokes(allStrokes => {
-          redraw([...allStrokes, updated]);
-          return allStrokes;
-        });
-        return updated;
-      });
+      const pos = getPos(touch.clientX, touch.clientY);
+      if (pos) moveStroke(pos);
     };
 
     const handleTouchEnd = (e) => {
       e.preventDefault();
-      setCurrentStroke(prev => {
-        if (!prev || prev.points.length < 2) return null;
-        setStrokes(allStrokes => {
-          const newAll = [...allStrokes, prev];
-          redraw(newAll);
-          return newAll;
-        });
-        return null;
-      });
+      endStroke();
     };
 
     const handleMouseDown = (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const scale = scaleRef.current;
-      const pos = { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
-      const newStroke = { color: colorRef.current, points: [pos] };
-      setCurrentStroke(newStroke);
+      const pos = getPos(e.clientX, e.clientY);
+      if (pos) startStroke(pos);
     };
 
     const handleMouseMove = (e) => {
       if (!(e.buttons & 1)) return;
-      const rect = canvas.getBoundingClientRect();
-      const scale = scaleRef.current;
-      const pos = { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
-
-      setCurrentStroke(prev => {
-        if (!prev) return null;
-        const updated = { ...prev, points: [...prev.points, pos] };
-        setStrokes(allStrokes => {
-          redraw([...allStrokes, updated]);
-          return allStrokes;
-        });
-        return updated;
-      });
+      const pos = getPos(e.clientX, e.clientY);
+      if (pos) moveStroke(pos);
     };
 
     const handleMouseUp = () => {
-      setCurrentStroke(prev => {
-        if (!prev || prev.points.length < 2) return null;
-        setStrokes(allStrokes => {
-          const newAll = [...allStrokes, prev];
-          redraw(newAll);
-          return newAll;
-        });
-        return null;
-      });
+      endStroke();
     };
 
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
@@ -207,11 +208,12 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       canvas.removeEventListener('touchstart', handleTouchStart);
       canvas.removeEventListener('touchmove', handleTouchMove);
       canvas.removeEventListener('touchend', handleTouchEnd);
+      canvas.removeEventListener('touchcancel', handleTouchEnd);
       canvas.removeEventListener('mousedown', handleMouseDown);
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [loaded, getTouchPos, redraw]);
+  }, [loaded, getPos, redraw]);
 
   const handleUndo = useCallback(() => {
     setStrokes(prev => {
@@ -229,12 +231,16 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       (blob) => {
         if (!blob) return;
         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
-        onSave(file);
+        onSaveRef.current(file);
       },
       'image/jpeg',
       0.85
     );
-  }, [onSave]);
+  }, []);
+
+  const handleSkip = useCallback(() => {
+    onSkipRef.current();
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[10000] bg-black flex flex-col" dir="rtl">
@@ -245,7 +251,8 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
         </div>
       )}
 
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0"
+           style={{ position: 'relative', zIndex: 20 }}>
         <div className="flex items-center gap-2">
           {COLORS.map(c => (
             <button
@@ -261,7 +268,7 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
         </div>
 
         <button
-          onClick={onSkip}
+          onClick={handleSkip}
           className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
         >
           <X className="w-4 h-4" />
@@ -272,15 +279,16 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       <div
         ref={containerRef}
         className="flex-1 flex items-center justify-center overflow-hidden"
-        style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+        style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
       >
         <canvas
           ref={canvasRef}
-          style={{ touchAction: 'none' }}
+          style={{ touchAction: 'none', display: 'block' }}
         />
       </div>
 
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-t border-slate-700 shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-t border-slate-700 shrink-0"
+           style={{ position: 'relative', zIndex: 20 }}>
         <button
           onClick={handleSave}
           disabled={!loaded}
