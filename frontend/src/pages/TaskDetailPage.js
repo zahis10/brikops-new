@@ -201,14 +201,6 @@ const TaskDetailPage = () => {
   const [pendingFile, setPendingFile] = useState(null);
 
   useEffect(() => {
-    document.body.style.pointerEvents = '';
-    return () => {
-      document.body.style.pointerEvents = '';
-      document.body.style.overflow = '';
-    };
-  }, []);
-
-  useEffect(() => {
     if (location.state?.returnTo) {
       sessionStorage.setItem(RETURN_TO_KEY, location.state.returnTo);
     } else {
@@ -1664,7 +1656,7 @@ const TaskDetailPage = () => {
         </div>
       </div>
 
-      <DialogPrimitive.Root open={!!tradeMismatchModal} onOpenChange={(v) => { if (!v) setTradeMismatchModal(null); }}>
+      <DialogPrimitive.Root modal={false} open={!!tradeMismatchModal} onOpenChange={(v) => { if (!v) setTradeMismatchModal(null); }}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
           <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
@@ -1710,7 +1702,7 @@ const TaskDetailPage = () => {
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
 
-      <DialogPrimitive.Root open={!!imageModal} onOpenChange={(v) => { if (!v) setImageModal(null); }}>
+      <DialogPrimitive.Root modal={false} open={!!imageModal} onOpenChange={(v) => { if (!v) setImageModal(null); }}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
           <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
