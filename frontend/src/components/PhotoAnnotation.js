@@ -260,11 +260,12 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
           return;
         }
 
+        console.log('[ANNOTATION] canvas blob size:', blob.size, 'bytes', (blob.size / 1024).toFixed(0), 'KB');
         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
         onSaveRef.current(file, true);
       },
       'image/jpeg',
-      0.85
+      0.70
     );
   }, [saving]);
 

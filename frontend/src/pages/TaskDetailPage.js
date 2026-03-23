@@ -388,8 +388,10 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
+      console.log('[UPLOAD] original:', pendingFile.name, pendingFile.size, 'bytes', pendingFile.type);
       await taskService.uploadAttachment(task.id, pendingFile);
       if (hasAnnotations && annotatedFile) {
+        console.log('[UPLOAD] annotated:', annotatedFile.name, annotatedFile.size, 'bytes', annotatedFile.type);
         await new Promise(r => setTimeout(r, 500));
         await taskService.uploadAttachment(task.id, annotatedFile);
       }
