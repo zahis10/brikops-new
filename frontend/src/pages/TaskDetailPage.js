@@ -727,21 +727,33 @@ const TaskDetailPage = () => {
           fontSize: '10px',
           pointerEvents: 'none',
           direction: 'ltr',
-          maxWidth: '50vw',
+          maxWidth: '80vw',
           wordBreak: 'break-all'
         }}
         ref={(el) => {
           if (!el) return;
+          let lastErr = '';
+          const origOnErr = window.onerror;
+          window.onerror = function(msg) {
+            lastErr = String(msg).slice(0, 60);
+            if (origOnErr) origOnErr.apply(window, arguments);
+          };
+          const origUnhandled = window.onunhandledrejection;
+          window.onunhandledrejection = function(e) {
+            lastErr = 'P:' + String(e.reason).slice(0, 55);
+            if (origUnhandled) origUnhandled.apply(window, arguments);
+          };
           const update = () => {
             const pe = getComputedStyle(document.body).pointerEvents;
             const ov = document.body.style.overflow;
+            const portals = document.querySelectorAll('[data-radix-portal]').length;
             const fixed = [...document.querySelectorAll('*')].filter(
               e => getComputedStyle(e).position === 'fixed' &&
               e.offsetWidth > window.innerWidth * 0.8 &&
               e.offsetHeight > window.innerHeight * 0.8 &&
               e.id !== 'debug-overlay'
             );
-            el.textContent = `PE:${pe} OV:${ov || 'auto'} FIX:${fixed.length}`;
+            el.textContent = `PE:${pe} OV:${ov||'auto'} FIX:${fixed.length} PRT:${portals}${lastErr ? ' ERR:'+lastErr : ''}`;
           };
           update();
           const i = setInterval(update, 500);
