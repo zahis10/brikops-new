@@ -388,11 +388,8 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
-      alert(`UPLOAD DEBUG\nannotated: ${annotatedFile?.size} bytes, ${annotatedFile?.type}\noriginal: ${pendingFile?.size} bytes, ${pendingFile?.type}`);
-      await Promise.all([
-        taskService.uploadAttachment(task.id, pendingFile),
-        taskService.uploadAttachment(task.id, annotatedFile),
-      ]);
+      await taskService.uploadAttachment(task.id, pendingFile);
+      await taskService.uploadAttachment(task.id, annotatedFile);
       toast.success('תמונה וסימון הועלו בהצלחה');
       setPendingFile(null);
       await loadTask();
@@ -407,7 +404,6 @@ const TaskDetailPage = () => {
         if (typeof detail === 'string') msg = detail;
         else if (detail?.message) msg = detail.message;
       }
-      alert(`UPLOAD ERROR\nstatus: ${err.response?.status}\ndata: ${JSON.stringify(err.response?.data)}\nmsg: ${err.message}`);
       toast.error(msg);
       console.error('[UPLOAD]', err);
       setPendingFile(null);
