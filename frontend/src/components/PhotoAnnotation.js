@@ -264,20 +264,16 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
 
     canvas.toBlob(
       (blob) => {
-        console.log('=== ANNOTATION SAVE DEBUG ===');
-        console.log('blob:', blob);
-        console.log('blob size:', blob?.size);
-        console.log('blob type:', blob?.type);
-        console.log('canvas:', canvas.width, 'x', canvas.height);
+        alert(`ANNOTATION DEBUG\nblob: ${blob?.size || 'NULL'} bytes\ntype: ${blob?.type || 'N/A'}\ncanvas: ${canvas.width}x${canvas.height}`);
 
         if (!blob || blob.size === 0) {
-          console.error('EMPTY BLOB — canvas export failed');
+          alert('EMPTY BLOB — canvas export failed');
           setSaving(false);
           return;
         }
 
         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
-        console.log('file size:', file.size);
+        alert(`FILE CREATED: ${file.size} bytes, ${file.type}`);
         onSaveRef.current(file);
       },
       'image/jpeg',

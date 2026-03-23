@@ -388,9 +388,7 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
-      console.log('=== UPLOAD DEBUG ===');
-      console.log('annotated file:', annotatedFile?.size, annotatedFile?.type);
-      console.log('original file:', pendingFile?.size, pendingFile?.type);
+      alert(`UPLOAD DEBUG\nannotated: ${annotatedFile?.size} bytes, ${annotatedFile?.type}\noriginal: ${pendingFile?.size} bytes, ${pendingFile?.type}`);
       await Promise.all([
         taskService.uploadAttachment(task.id, pendingFile),
         taskService.uploadAttachment(task.id, annotatedFile),
@@ -409,7 +407,7 @@ const TaskDetailPage = () => {
         if (typeof detail === 'string') msg = detail;
         else if (detail?.message) msg = detail.message;
       }
-      console.log('upload error:', err.response?.status, err.response?.data);
+      alert(`UPLOAD ERROR\nstatus: ${err.response?.status}\ndata: ${JSON.stringify(err.response?.data)}\nmsg: ${err.message}`);
       toast.error(msg);
       console.error('[UPLOAD]', err);
       setPendingFile(null);
