@@ -1147,12 +1147,12 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
         logger.warning(f"[ATTACH:REJECTED] task={task_id} filename={file.filename} reason=pillow_decode_failed error={pil_err}")
         raise HTTPException(status_code=400, detail={'error_code': 'INVALID_TASK_IMAGE', 'message': 'ניתן לצרף תמונות בלבד'})
 
-    await file.seek(0)
     logger.info(f"[ATTACH:VALIDATED] task={task_id} filename={file.filename} size={len(raw)} content_type={file_ct}")
 
     from services.storage_service import StorageService
     storage = StorageService()
-    result = await storage.upload_file_with_details(file, f"task_{task_id}")
+    validated_file = UploadFile(filename=file.filename, file=_io.BytesIO(raw), headers=file.headers)
+    result = await storage.upload_file_with_details(validated_file, f"task_{task_id}")
     logger.info(f"[ATTACH:STORED] task={task_id} file_url={result.file_url} elapsed={_time.time()-t_start:.2f}s")
 
     ts = _now()

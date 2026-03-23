@@ -388,26 +388,10 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
-      if (!hasAnnotations || !annotatedFile) {
-        alert(`Original only: ${pendingFile.size} bytes, ${pendingFile.type}`);
-        await taskService.uploadAttachment(task.id, pendingFile);
-        alert('Original uploaded OK');
-      } else {
-        alert(`Original: ${pendingFile.size} bytes, ${pendingFile.type}\nAnnotated: ${annotatedFile.size} bytes, ${annotatedFile.type}`);
-        try {
-          await taskService.uploadAttachment(task.id, annotatedFile);
-          alert('Annotated uploaded OK (first)');
-        } catch (e) {
-          alert(`Annotated FAILED: ${e.response?.status} ${JSON.stringify(e.response?.data)}\n${e.message}`);
-          throw e;
-        }
-        try {
-          await taskService.uploadAttachment(task.id, pendingFile);
-          alert('Original uploaded OK (second)');
-        } catch (e) {
-          alert(`Original FAILED: ${e.response?.status} ${JSON.stringify(e.response?.data)}\n${e.message}`);
-          throw e;
-        }
+      await taskService.uploadAttachment(task.id, pendingFile);
+      if (hasAnnotations && annotatedFile) {
+        await new Promise(r => setTimeout(r, 500));
+        await taskService.uploadAttachment(task.id, annotatedFile);
       }
       toast.success(hasAnnotations ? 'תמונה וסימון הועלו בהצלחה' : 'תמונה הועלתה בהצלחה');
       setPendingFile(null);

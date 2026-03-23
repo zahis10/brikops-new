@@ -499,9 +499,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       setSubmitStep('uploading');
       console.log('UPLOAD sizes', uploadList.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
       const results = [];
-      for (const img of uploadList) {
+      for (let i = 0; i < uploadList.length; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 500));
         try {
-          const val = await uploadWithRetry(taskService, taskId, img.file, img.name);
+          const val = await uploadWithRetry(taskService, taskId, uploadList[i].file, uploadList[i].name);
           results.push({ status: 'fulfilled', value: val });
         } catch (reason) {
           results.push({ status: 'rejected', reason });
