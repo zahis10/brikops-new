@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { tCategory, tStatus, tPriority } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,11 +11,13 @@ import {
   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
-  Copy, Smartphone
+  Copy, Smartphone, Loader2
 } from 'lucide-react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+
+const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
 
 const STATUS_CONFIG = {
   open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700', icon: CircleDot },
@@ -196,6 +198,7 @@ const TaskDetailPage = () => {
   const uploadGalleryRef = useRef(null);
   const uploadingRef = useRef(false);
   const [uploading, setUploading] = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);
 
   useEffect(() => {
     if (location.state?.returnTo) {
@@ -335,8 +338,13 @@ const TaskDetailPage = () => {
         reader.readAsDataURL(compressed);
       }
     } catch (err) {
-      console.error('[proof:file] failed to process image:', err);
-      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+      if (err?.code === 'UNSUPPORTED_FORMAT') {
+        toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
+        console.error('[COMPRESS] HEIC/unsupported:', err.original);
+      } else {
+        console.error('[proof:file] failed to process image:', err);
+        toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+      }
     } finally {
       if (e.target) e.target.value = '';
     }
@@ -347,14 +355,45 @@ const TaskDetailPage = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     uploadingRef.current = true;
-    setUploading(true);
     try {
       const compressed = await compressImage(file);
-      await taskService.uploadAttachment(task.id, compressed);
-      toast.success('תמונה הועלתה בהצלחה');
-      e.target.value = '';
+      setPendingFile(compressed);
+    } catch (err) {
+      if (err?.code === 'UNSUPPORTED_FORMAT') {
+        toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
+        console.error('[COMPRESS] HEIC/unsupported:', err.original);
+      } else {
+        let msg = 'שגיאה בהעלאת תמונה';
+        if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+          msg = 'הזמן הקצוב להעלאה עבר. נסה שוב';
+        } else if (!err?.response) {
+          msg = 'בעיית תקשורת. בדוק חיבור לאינטרנט';
+        } else {
+          const detail = err.response.data?.detail;
+          if (typeof detail === 'string') msg = detail;
+          else if (detail?.message) msg = detail.message;
+        }
+        toast.error(msg);
+        console.error('[UPLOAD]', err);
+      }
+    } finally {
+      uploadingRef.current = false;
+      if (e.target) e.target.value = '';
       if (uploadCameraRef.current) uploadCameraRef.current.value = '';
       if (uploadGalleryRef.current) uploadGalleryRef.current.value = '';
+    }
+  };
+
+  const handleAnnotationSave = useCallback(async (annotatedFile) => {
+    if (!pendingFile) return;
+    setUploading(true);
+    try {
+      await Promise.all([
+        taskService.uploadAttachment(task.id, pendingFile),
+        taskService.uploadAttachment(task.id, annotatedFile),
+      ]);
+      toast.success('תמונה וסימון הועלו בהצלחה');
+      setPendingFile(null);
       await loadTask();
     } catch (err) {
       let msg = 'שגיאה בהעלאת תמונה';
@@ -368,14 +407,39 @@ const TaskDetailPage = () => {
         else if (detail?.message) msg = detail.message;
       }
       toast.error(msg);
+      console.error('[UPLOAD]', err);
+      setPendingFile(null);
     } finally {
-      uploadingRef.current = false;
       setUploading(false);
-      if (e.target) e.target.value = '';
-      if (uploadCameraRef.current) uploadCameraRef.current.value = '';
-      if (uploadGalleryRef.current) uploadGalleryRef.current.value = '';
     }
-  };
+  }, [pendingFile, task?.id, loadTask]);
+
+  const handleAnnotationSkip = useCallback(async () => {
+    if (!pendingFile) return;
+    setUploading(true);
+    try {
+      await taskService.uploadAttachment(task.id, pendingFile);
+      toast.success('תמונה הועלתה בהצלחה');
+      setPendingFile(null);
+      await loadTask();
+    } catch (err) {
+      let msg = 'שגיאה בהעלאת תמונה';
+      if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+        msg = 'הזמן הקצוב להעלאה עבר. נסה שוב';
+      } else if (!err?.response) {
+        msg = 'בעיית תקשורת. בדוק חיבור לאינטרנט';
+      } else {
+        const detail = err.response.data?.detail;
+        if (typeof detail === 'string') msg = detail;
+        else if (detail?.message) msg = detail.message;
+      }
+      toast.error(msg);
+      console.error('[UPLOAD]', err);
+      setPendingFile(null);
+    } finally {
+      setUploading(false);
+    }
+  }, [pendingFile, task?.id, loadTask]);
 
   const removeProofFile = (fileId) => {
     setProofFiles(prev => prev.filter(f => f.id !== fileId));
@@ -1692,6 +1756,20 @@ const TaskDetailPage = () => {
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
+
+      {pendingFile && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-white animate-spin" />
+          </div>
+        }>
+          <PhotoAnnotation
+            imageFile={pendingFile}
+            onSave={handleAnnotationSave}
+            onSkip={handleAnnotationSkip}
+          />
+        </Suspense>
+      )}
 
     </div>
   );

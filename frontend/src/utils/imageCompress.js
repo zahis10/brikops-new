@@ -58,6 +58,14 @@ async function _doCompress(file) {
     console.warn('[compress:bitmap] fallback failed:', bitmapErr.message);
   }
 
+  const isHeic = file.type && (file.type.includes('heic') || file.type.includes('heif'));
+  const ext = file.name?.toLowerCase() || '';
+  const isHeicExt = ext.endsWith('.heic') || ext.endsWith('.heif');
+  if (isHeic || isHeicExt) {
+    console.error(`[compress] HEIC/HEIF not supported: ${file.name} (${file.type})`);
+    throw { code: 'UNSUPPORTED_FORMAT', original: new Error(`Cannot compress HEIC/HEIF: ${file.name}`) };
+  }
+
   console.warn(`[compress] all methods failed for ${file.name}, using original (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
   if (!file.type || file.type === '') {
     return new File([file], file.name, { type: 'image/jpeg', lastModified: Date.now() });
@@ -66,7 +74,9 @@ async function _doCompress(file) {
 }
 
 export async function compressImage(file) {
-  if (file.size <= MAX_SIZE && file.type && file.type.startsWith('image/') && !file.type.includes('heic')) {
+  const typeLC = (file.type || '').toLowerCase();
+  const isHeicType = typeLC.includes('heic') || typeLC.includes('heif');
+  if (file.size <= MAX_SIZE && typeLC.startsWith('image/') && !isHeicType) {
     return file;
   }
 
@@ -79,7 +89,8 @@ export async function compressImage(file) {
     ]);
     return result;
   } catch (err) {
-    console.warn(`[compress:timeout] ${file.name} — compression timed out or failed (${err.message}), using original (${(file.size/1024).toFixed(0)}KB)`);
+    if (err?.code === 'UNSUPPORTED_FORMAT') throw err;
+    console.warn(`[compress:timeout] ${file.name} — compression timed out or failed (${err?.message || err}), using original (${(file.size/1024).toFixed(0)}KB)`);
     return file;
   }
 }

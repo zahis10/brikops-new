@@ -366,8 +366,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
       }
     } catch (err) {
-      console.error('[defect:image] failed to process image:', err);
-      toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+      if (err?.code === 'UNSUPPORTED_FORMAT') {
+        toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
+        console.error('[COMPRESS] HEIC/unsupported:', err.original);
+      } else {
+        console.error('[defect:image] failed to process image:', err);
+        toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+      }
     } finally {
       if (e.target) e.target.value = '';
     }
