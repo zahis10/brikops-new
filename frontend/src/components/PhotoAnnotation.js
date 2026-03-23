@@ -9,16 +9,31 @@ const COLORS = [
   { value: '#000000', label: 'שחור' },
 ];
 
+function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new window.Image();
+    img.onload = () => {
+      resolve({ img, url });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Image load failed'));
+    };
+    img.src = url;
+  });
+}
+
 const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
+  const urlRef = useRef(null);
   const containerRef = useRef(null);
   const [color, setColor] = useState('#ef4444');
   const colorRef = useRef('#ef4444');
   const onSkipRef = useRef(onSkip);
   const onSaveRef = useRef(onSave);
   const [strokes, setStrokes] = useState([]);
-  const [currentStroke, setCurrentStroke] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const scaleRef = useRef(1);
   const drawingRef = useRef(false);
@@ -31,33 +46,25 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   useEffect(() => {
     let cancelled = false;
 
-    const loadImage = async () => {
-      let bitmap;
-      try {
-        bitmap = await createImageBitmap(imageFile);
-      } catch (_) {
-        const url = URL.createObjectURL(imageFile);
-        const img = new Image();
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-          img.src = url;
-        });
-        bitmap = img;
+    const doLoad = async () => {
+      const { img, url } = await loadImageFromFile(imageFile);
+
+      if (cancelled) {
         URL.revokeObjectURL(url);
+        return;
       }
 
-      if (cancelled) return;
+      urlRef.current = url;
 
-      let w = bitmap.width;
-      let h = bitmap.height;
+      let w = img.naturalWidth || img.width;
+      let h = img.naturalHeight || img.height;
       if (w > MAX_CANVAS_SIZE || h > MAX_CANVAS_SIZE) {
         const ratio = Math.min(MAX_CANVAS_SIZE / w, MAX_CANVAS_SIZE / h);
         w = Math.round(w * ratio);
         h = Math.round(h * ratio);
       }
 
-      imgRef.current = bitmap;
+      imgRef.current = img;
 
       const containerW = window.innerWidth;
       const containerH = window.innerHeight - 120;
@@ -72,15 +79,21 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       canvas.style.height = Math.round(h * displayScale) + 'px';
 
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(bitmap, 0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
       setLoaded(true);
     };
 
-    loadImage().catch(() => {
+    doLoad().catch(() => {
       if (!cancelled) onSkipRef.current();
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+    };
   }, [imageFile]);
 
   const getLineWidth = useCallback(() => {

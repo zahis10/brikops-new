@@ -29,17 +29,6 @@ async function canvasToFile(canvas, origName) {
 
 async function _doCompress(file) {
   try {
-    const bitmap = await createImageBitmap(file);
-    const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height);
-    bitmap.close();
-    const result = await canvasToFile(canvas, file.name);
-    console.log(`[compress:bitmap] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
-    return result;
-  } catch (bitmapErr) {
-    console.warn('[compress:bitmap] failed, trying Image fallback:', bitmapErr.message);
-  }
-
-  try {
     const img = new Image();
     const url = URL.createObjectURL(file);
     await new Promise((resolve, reject) => {
@@ -47,13 +36,26 @@ async function _doCompress(file) {
       img.onerror = () => reject(new Error('Image load failed'));
       img.src = url;
     });
-    const canvas = drawToCanvas(img, img.naturalWidth, img.naturalHeight);
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const canvas = drawToCanvas(img, w, h);
     URL.revokeObjectURL(url);
     const result = await canvasToFile(canvas, file.name);
-    console.log(`[compress:img] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
+    console.log(`[compress] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
     return result;
   } catch (imgErr) {
-    console.warn('[compress:img] fallback also failed:', imgErr.message);
+    console.warn('[compress] Image() failed:', imgErr.message);
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height);
+    bitmap.close();
+    const result = await canvasToFile(canvas, file.name);
+    console.log(`[compress:bitmap] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
+    return result;
+  } catch (bitmapErr) {
+    console.warn('[compress:bitmap] fallback failed:', bitmapErr.message);
   }
 
   console.warn(`[compress] all methods failed for ${file.name}, using original (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
