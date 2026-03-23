@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { X, Undo2, Save } from 'lucide-react';
 
 const MAX_CANVAS_SIZE = 1280;
@@ -42,6 +43,18 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSkipRef.current = onSkip; }, [onSkip]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        e.preventDefault();
+        onSkipRef.current();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,8 +268,9 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
     onSkipRef.current();
   }, []);
 
-  return (
-    <div className="fixed inset-0 z-[10000] bg-black flex flex-col" dir="rtl">
+  const content = (
+    <div className="fixed inset-0 bg-black flex flex-col" dir="rtl"
+         style={{ zIndex: 10001, pointerEvents: 'auto' }}>
       {!loaded && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black"
              style={{ pointerEvents: 'none' }}>
@@ -321,6 +335,8 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
       </div>
     </div>
   );
+
+  return ReactDOM.createPortal(content, document.body);
 };
 
 export default PhotoAnnotation;

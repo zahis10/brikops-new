@@ -1046,36 +1046,36 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         </div>
       </div>
         </DialogPrimitive.Content>
-
-        {annotatingIndex !== null && images[annotatingIndex] && (
-          <Suspense fallback={
-            <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
-              <Loader2 className="w-8 h-8 text-white animate-spin" />
-            </div>
-          }>
-            <PhotoAnnotation
-              imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
-              onSave={handleAnnotationSave}
-              onSkip={() => setAnnotatingIndex(null)}
-            />
-          </Suspense>
-        )}
-
-        {pendingFile && (
-          <Suspense fallback={
-            <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
-              <Loader2 className="w-8 h-8 text-white animate-spin" />
-            </div>
-          }>
-            <PhotoAnnotation
-              imageFile={pendingFile}
-              onSave={handlePendingAnnotationSave}
-              onSkip={handlePendingAnnotationSkip}
-            />
-          </Suspense>
-        )}
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+
+    {annotatingIndex !== null && images[annotatingIndex] && (
+      <Suspense fallback={
+        <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
+        </div>
+      }>
+        <PhotoAnnotation
+          imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
+          onSave={handleAnnotationSave}
+          onSkip={() => setAnnotatingIndex(null)}
+        />
+      </Suspense>
+    )}
+
+    {pendingFile && (
+      <Suspense fallback={
+        <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
+        </div>
+      }>
+        <PhotoAnnotation
+          imageFile={pendingFile}
+          onSave={handlePendingAnnotationSave}
+          onSkip={handlePendingAnnotationSkip}
+        />
+      </Suspense>
+    )}
   </>
   );
 };
