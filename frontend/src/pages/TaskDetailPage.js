@@ -344,10 +344,15 @@ const TaskDetailPage = () => {
   const handleAddPhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    console.log('[handleAddPhoto] called', Date.now(), 'file:', file.name, file.size, file.type);
     setUploading(true);
     try {
+      console.log('[handleAddPhoto] compressing...');
       const compressed = await compressImage(file);
+      console.log('[handleAddPhoto] compressed:', compressed.name, compressed.size);
+      console.log('[handleAddPhoto] uploading...');
       await taskService.uploadAttachment(task.id, compressed);
+      console.log('[handleAddPhoto] upload done');
       toast.success('תמונה הועלתה בהצלחה');
       loadTask();
     } catch (err) {
