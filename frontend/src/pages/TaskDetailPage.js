@@ -352,10 +352,16 @@ const TaskDetailPage = () => {
       loadTask();
     } catch (err) {
       console.error('[handleAddPhoto] upload failed:', err?.response?.status, err?.response?.data, err?.message);
-      const detail = err?.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail
-        : detail?.message ? detail.message
-        : 'שגיאה בהעלאת תמונה';
+      let msg = 'שגיאה בהעלאת תמונה';
+      if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+        msg = 'הזמן הקצוב להעלאה עבר. נסה שוב';
+      } else if (!err?.response) {
+        msg = 'בעיית תקשורת. בדוק חיבור לאינטרנט';
+      } else {
+        const detail = err.response.data?.detail;
+        if (typeof detail === 'string') msg = detail;
+        else if (detail?.message) msg = detail.message;
+      }
       toast.error(msg);
     } finally {
       setUploading(false);
