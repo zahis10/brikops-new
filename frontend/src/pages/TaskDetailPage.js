@@ -714,53 +714,6 @@ const TaskDetailPage = () => {
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50">
-      <div
-        id="debug-overlay"
-        style={{
-          position: 'fixed',
-          top: 0,
-          right: 0,
-          zIndex: 99999,
-          background: 'red',
-          color: 'white',
-          padding: '4px 8px',
-          fontSize: '10px',
-          pointerEvents: 'none',
-          direction: 'ltr',
-          maxWidth: '80vw',
-          wordBreak: 'break-all'
-        }}
-        ref={(el) => {
-          if (!el) return;
-          let lastErr = '';
-          const origOnErr = window.onerror;
-          window.onerror = function(msg) {
-            lastErr = String(msg).slice(0, 60);
-            if (origOnErr) origOnErr.apply(window, arguments);
-          };
-          const origUnhandled = window.onunhandledrejection;
-          window.onunhandledrejection = function(e) {
-            lastErr = 'P:' + String(e.reason).slice(0, 55);
-            if (origUnhandled) origUnhandled.apply(window, arguments);
-          };
-          const update = () => {
-            const pe = getComputedStyle(document.body).pointerEvents;
-            const ov = document.body.style.overflow;
-            const portals = document.querySelectorAll('[data-radix-portal]').length;
-            const fixed = [...document.querySelectorAll('*')].filter(
-              e => getComputedStyle(e).position === 'fixed' &&
-              e.offsetWidth > window.innerWidth * 0.8 &&
-              e.offsetHeight > window.innerHeight * 0.8 &&
-              e.id !== 'debug-overlay'
-            );
-            el.textContent = `PE:${pe} OV:${ov||'auto'} FIX:${fixed.length} PRT:${portals}${lastErr ? ' ERR:'+lastErr : ''}`;
-          };
-          update();
-          const i = setInterval(update, 500);
-          el._interval = i;
-          return () => clearInterval(i);
-        }}
-      />
       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
