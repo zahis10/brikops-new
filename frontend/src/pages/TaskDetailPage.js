@@ -351,7 +351,12 @@ const TaskDetailPage = () => {
       toast.success('תמונה הועלתה בהצלחה');
       loadTask();
     } catch (err) {
-      toast.error('שגיאה בהעלאת תמונה');
+      console.error('[handleAddPhoto] upload failed:', err?.response?.status, err?.response?.data, err?.message);
+      const detail = err?.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail
+        : detail?.message ? detail.message
+        : 'שגיאה בהעלאת תמונה';
+      toast.error(msg);
     } finally {
       setUploading(false);
       e.target.value = '';

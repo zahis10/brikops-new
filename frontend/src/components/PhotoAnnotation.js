@@ -239,7 +239,8 @@ const PhotoAnnotation = ({ imageFile, onSave, onSkip }) => {
   return (
     <div className="fixed inset-0 z-[10000] bg-black flex flex-col" dir="rtl">
       {!loaded && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black"
+             style={{ pointerEvents: 'none' }}>
           <div className="text-white text-sm">טוען תמונה...</div>
         </div>
       )}
