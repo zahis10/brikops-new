@@ -55,7 +55,7 @@ export function MobileSelect({ value, onChange, options, placeholder, className 
         <div
           ref={listRef}
           className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg max-h-60 overflow-y-auto"
-          style={{ zIndex: 9999, WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}
+          style={{ zIndex: 9999 }}
         >
           {placeholder && (
             <div

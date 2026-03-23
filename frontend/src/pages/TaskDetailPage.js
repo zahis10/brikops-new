@@ -713,7 +713,7 @@ const TaskDetailPage = () => {
   const hasCreatedEvent = timelineEvents.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50" style={{ WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50">
       <div
         id="debug-overlay"
         style={{
