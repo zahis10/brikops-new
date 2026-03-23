@@ -34,7 +34,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3).
     -   **Task Workflow Enforcement**: Strict status transitions and role-based permissions.
     -   **Proof Management**: Multi-image proof uploads with client-side compression and validation.
-    -   **Photo Annotation**: Konva.js-based canvas markup for defect photos (arrow, circle, text tools with color picker). Lazy-loaded via React.lazy to avoid bundle impact. V1 integrated in NewDefectModal only. Original photos preserved alongside annotated versions.
+    -   **Photo Annotation**: Vanilla HTML5 Canvas freehand drawing for defect photos (WhatsApp-style finger drawing, 3 colors: red/blue/black, undo). Zero dependencies (no Konva). Lazy-loaded via React.lazy (~6KB chunk). Uses createImageBitmap for EXIF auto-rotation. V1 integrated in NewDefectModal only. Original photos uploaded first, annotated second. Skip button available.
     -   **Billing System**: Centralized billing management with RBAC.
     -   **Admin & Member Management**: Tools for super_admin, PM, and owner-level team management.
     -   **QC (Quality Control) System**: Floor-level and unit-level quality control with template versioning, item management, RBAC, stage-based workflow, and an approver system. Supports scope models for templates and QC runs.

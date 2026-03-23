@@ -7,7 +7,7 @@ import {
   X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil
 } from 'lucide-react';
 
-const LazyPhotoAnnotation = React.lazy(() => import('./PhotoAnnotation'));
+const PhotoAnnotation = React.lazy(() => import('./PhotoAnnotation'));
 import { Button } from './ui/button';
 import { tCategory } from '../i18n';
 import { compressImage } from '../utils/imageCompress';
@@ -450,10 +450,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
     const uploadList = [];
     for (const img of imagesToUpload) {
-      uploadList.push({ file: img.file, name: img.name });
       if (img.isAnnotated && img.originalFile) {
         uploadList.push({ file: img.originalFile, name: 'original_' + (img.name || 'photo.jpg') });
       }
+      uploadList.push({ file: img.file, name: img.name });
     }
 
     if (uploadList.length > 0) {
@@ -1021,10 +1021,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           <Loader2 className="w-8 h-8 text-white animate-spin" />
         </div>
       }>
-        <LazyPhotoAnnotation
-          imageSrc={images[annotatingIndex].originalPreview || images[annotatingIndex].preview}
+        <PhotoAnnotation
+          imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
           onSave={handleAnnotationSave}
-          onCancel={() => setAnnotatingIndex(null)}
+          onSkip={() => setAnnotatingIndex(null)}
         />
       </Suspense>
     )}
