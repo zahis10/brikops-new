@@ -714,6 +714,41 @@ const TaskDetailPage = () => {
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50" style={{ WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}>
+      <div
+        id="debug-overlay"
+        style={{
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          zIndex: 99999,
+          background: 'red',
+          color: 'white',
+          padding: '4px 8px',
+          fontSize: '10px',
+          pointerEvents: 'none',
+          direction: 'ltr',
+          maxWidth: '50vw',
+          wordBreak: 'break-all'
+        }}
+        ref={(el) => {
+          if (!el) return;
+          const update = () => {
+            const pe = getComputedStyle(document.body).pointerEvents;
+            const ov = document.body.style.overflow;
+            const fixed = [...document.querySelectorAll('*')].filter(
+              e => getComputedStyle(e).position === 'fixed' &&
+              e.offsetWidth > window.innerWidth * 0.8 &&
+              e.offsetHeight > window.innerHeight * 0.8 &&
+              e.id !== 'debug-overlay'
+            );
+            el.textContent = `PE:${pe} OV:${ov || 'auto'} FIX:${fixed.length}`;
+          };
+          update();
+          const i = setInterval(update, 500);
+          el._interval = i;
+          return () => clearInterval(i);
+        }}
+      />
       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
