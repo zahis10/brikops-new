@@ -194,6 +194,7 @@ const TaskDetailPage = () => {
   const proofGalleryRef = useRef(null);
   const uploadCameraRef = useRef(null);
   const uploadGalleryRef = useRef(null);
+  const uploadingRef = useRef(false);
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
@@ -342,21 +343,20 @@ const TaskDetailPage = () => {
   };
 
   const handleAddPhoto = async (e) => {
+    if (uploadingRef.current) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    console.log('[handleAddPhoto] called', Date.now(), 'file:', file.name, file.size, file.type);
+    uploadingRef.current = true;
     setUploading(true);
     try {
-      console.log('[handleAddPhoto] compressing...');
       const compressed = await compressImage(file);
-      console.log('[handleAddPhoto] compressed:', compressed.name, compressed.size);
-      console.log('[handleAddPhoto] uploading...');
       await taskService.uploadAttachment(task.id, compressed);
-      console.log('[handleAddPhoto] upload done');
       toast.success('תמונה הועלתה בהצלחה');
-      loadTask();
+      e.target.value = '';
+      if (uploadCameraRef.current) uploadCameraRef.current.value = '';
+      if (uploadGalleryRef.current) uploadGalleryRef.current.value = '';
+      await loadTask();
     } catch (err) {
-      console.error('[handleAddPhoto] upload failed:', err?.response?.status, err?.response?.data, err?.message);
       let msg = 'שגיאה בהעלאת תמונה';
       if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
         msg = 'הזמן הקצוב להעלאה עבר. נסה שוב';
@@ -369,8 +369,11 @@ const TaskDetailPage = () => {
       }
       toast.error(msg);
     } finally {
+      uploadingRef.current = false;
       setUploading(false);
-      e.target.value = '';
+      if (e.target) e.target.value = '';
+      if (uploadCameraRef.current) uploadCameraRef.current.value = '';
+      if (uploadGalleryRef.current) uploadGalleryRef.current.value = '';
     }
   };
 
