@@ -149,6 +149,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
   const [images, setImages] = useState([]);
   const [annotatingIndex, setAnnotatingIndex] = useState(null);
+  const [pendingFile, setPendingFile] = useState(null);
   const [createdTaskId, setCreatedTaskId] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -352,12 +353,18 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       for (const f of compressed) {
         console.log(`[image:ready] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
       }
-      const newImages = compressed.map(file => ({
-        file,
-        preview: URL.createObjectURL(file),
-        name: file.name,
-      }));
-      setImages(prev => [...prev, ...newImages]);
+
+      if (compressed.length === 1) {
+        setPendingFile(compressed[0]);
+      } else {
+        const newImages = compressed.map(file => ({
+          file,
+          preview: URL.createObjectURL(file),
+          name: file.name,
+        }));
+        setImages(prev => [...prev, ...newImages]);
+        toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
+      }
     } catch (err) {
       console.error('[defect:image] failed to process image:', err);
       toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
@@ -396,6 +403,31 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     });
     setAnnotatingIndex(null);
   }, [annotatingIndex]);
+
+  const handlePendingAnnotationSave = useCallback((annotatedFile) => {
+    if (!pendingFile) return;
+    const annotatedPreview = URL.createObjectURL(annotatedFile);
+    const originalPreview = URL.createObjectURL(pendingFile);
+    setImages(prev => [...prev, {
+      file: annotatedFile,
+      preview: annotatedPreview,
+      name: 'annotated_' + (pendingFile.name || 'photo.jpg'),
+      originalFile: pendingFile,
+      originalPreview,
+      isAnnotated: true,
+    }]);
+    setPendingFile(null);
+  }, [pendingFile]);
+
+  const handlePendingAnnotationSkip = useCallback(() => {
+    if (!pendingFile) return;
+    setImages(prev => [...prev, {
+      file: pendingFile,
+      preview: URL.createObjectURL(pendingFile),
+      name: pendingFile.name,
+    }]);
+    setPendingFile(null);
+  }, [pendingFile]);
 
   const validate = useCallback(() => {
     const errs = {};
@@ -596,6 +628,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setAutoSelectedCompany(false);
     setAutoSelectedAssignee(false);
     setImages([]);
+    setPendingFile(null);
+    setAnnotatingIndex(null);
     setErrors({});
     setCreatedTaskId(null);
     setUploadError(null);
@@ -1025,6 +1059,20 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
           onSave={handleAnnotationSave}
           onSkip={() => setAnnotatingIndex(null)}
+        />
+      </Suspense>
+    )}
+
+    {pendingFile && (
+      <Suspense fallback={
+        <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
+        </div>
+      }>
+        <PhotoAnnotation
+          imageFile={pendingFile}
+          onSave={handlePendingAnnotationSave}
+          onSkip={handlePendingAnnotationSkip}
         />
       </Suspense>
     )}
