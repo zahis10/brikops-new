@@ -28,6 +28,8 @@ async function canvasToFile(canvas, origName) {
 }
 
 async function _doCompress(file) {
+  let lastErr = null;
+
   try {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -44,6 +46,7 @@ async function _doCompress(file) {
     console.log(`[compress] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
     return result;
   } catch (imgErr) {
+    lastErr = imgErr;
     console.warn('[compress] Image() failed:', imgErr.message);
   }
 
@@ -55,6 +58,7 @@ async function _doCompress(file) {
     console.log(`[compress:bitmap] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
     return result;
   } catch (bitmapErr) {
+    lastErr = bitmapErr;
     console.warn('[compress:bitmap] fallback failed:', bitmapErr.message);
   }
 
@@ -63,7 +67,7 @@ async function _doCompress(file) {
   const isHeicExt = ext.endsWith('.heic') || ext.endsWith('.heif');
   if (isHeic || isHeicExt) {
     console.error(`[compress] HEIC/HEIF not supported: ${file.name} (${file.type})`);
-    throw { code: 'UNSUPPORTED_FORMAT', original: new Error(`Cannot compress HEIC/HEIF: ${file.name}`) };
+    throw { code: 'UNSUPPORTED_FORMAT', original: lastErr };
   }
 
   console.warn(`[compress] all methods failed for ${file.name}, using original (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
