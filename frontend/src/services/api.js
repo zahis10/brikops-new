@@ -392,19 +392,25 @@ export const taskService = {
     return response.data;
   },
   async uploadAttachment(id, file) {
+    const fileBytes = await file.arrayBuffer();
+    const fileName = file.name || 'photo.jpg';
+    const fileType = file.type || 'image/jpeg';
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        const blob = new Blob([fileBytes], { type: fileType });
+        const safeFile = new File([blob], fileName, { type: fileType });
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', safeFile);
         const response = await axios.post(`${API}/tasks/${id}/attachments`, formData, {
           headers: getAuthHeader(),
           timeout: 90000,
         });
+        if (attempt > 1) console.log(`[uploadAttachment] succeeded on attempt ${attempt}/3`);
         return response.data;
       } catch (err) {
         const status = err.response?.status;
         const isServerError = !status || status >= 500;
-        console.warn(`[uploadAttachment] attempt ${attempt}/3 failed: status=${status || 'network'} file=${file.name} size=${file.size}`);
+        console.warn(`[uploadAttachment] attempt ${attempt}/3 failed: status=${status || 'network'} file=${fileName} size=${fileBytes.byteLength}`);
         if (attempt === 3 || !isServerError) throw err;
         await new Promise(r => setTimeout(r, attempt * 1000));
       }
