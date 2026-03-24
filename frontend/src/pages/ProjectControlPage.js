@@ -3377,39 +3377,20 @@ const ProjectControlPage = () => {
         </div>
       )}
 
-      {workMode === 'structure' && (
+      <div className="sticky top-[96px] z-[35] bg-white border-b border-slate-100">
+        <div className="max-w-[1100px] mx-auto px-4 py-2 flex gap-2 overflow-x-auto">
+          {MGMT_TABS.map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+              {tab.icon && <span className="text-sm">{tab.icon}</span>}
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
-          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} qcLoading={qcLoading} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
-
-          {isOnboarding && (
-            <OnboardingChecklist
-              hierarchy={hierarchy}
-              companies={companies}
-              stats={stats}
-              memberCount={memberCount}
-              projectId={projectId}
-              onQuickSetup={() => setShowQuickSetup(true)}
-              onCompanies={() => setActiveTab('companies')}
-              onTeam={() => setActiveTab('team')}
-              onDefects={() => handleWorkTab('defects')}
-              onDismiss={handleOnboardingDismiss}
-            />
-          )}
-
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-            {MGMT_TABS.map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-                {tab.icon && <span className="text-xs">{tab.icon}</span>}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {!activeTab && (
-            <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} />
-          )}
-
           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
 
           {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
@@ -3432,7 +3413,30 @@ const ProjectControlPage = () => {
         </div>
       )}
 
-      {workMode === 'defects' && hasFilterParams && (
+      {workMode === 'structure' && !activeTab && (
+        <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
+          <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} qcLoading={qcLoading} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
+
+          {isOnboarding && (
+            <OnboardingChecklist
+              hierarchy={hierarchy}
+              companies={companies}
+              stats={stats}
+              memberCount={memberCount}
+              projectId={projectId}
+              onQuickSetup={() => setShowQuickSetup(true)}
+              onCompanies={() => setActiveTab('companies')}
+              onTeam={() => setActiveTab('team')}
+              onDefects={() => handleWorkTab('defects')}
+              onDismiss={handleOnboardingDismiss}
+            />
+          )}
+
+          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} />
+        </div>
+      )}
+
+      {workMode === 'defects' && !activeTab && hasFilterParams && (
         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
@@ -3546,7 +3550,7 @@ const ProjectControlPage = () => {
         </div>
       )}
 
-      {workMode === 'defects' && !hasFilterParams && (
+      {workMode === 'defects' && !activeTab && !hasFilterParams && (
         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
           {hasBuildings && totalDefects === 0 && (
             <Card className="p-4 border-green-200 bg-green-50/50">
