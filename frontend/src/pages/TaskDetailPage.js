@@ -327,11 +327,13 @@ const TaskDetailPage = () => {
       const file = e.target.files[0];
       if (file) {
         const compressed = await compressImage(file);
+        const bytes = await compressed.arrayBuffer();
+        const stableFile = new File([bytes], compressed.name, { type: compressed.type });
         const reader = new FileReader();
         reader.onload = (ev) => {
-          setProofFiles(prev => [...prev, { file: compressed, preview: ev.target.result, id: Date.now() + Math.random() }]);
+          setProofFiles(prev => [...prev, { file: stableFile, preview: ev.target.result, id: Date.now() + Math.random() }]);
         };
-        reader.readAsDataURL(compressed);
+        reader.readAsDataURL(stableFile);
       }
     } catch (err) {
       if (err?.code === 'UNSUPPORTED_FORMAT') {
@@ -353,7 +355,9 @@ const TaskDetailPage = () => {
     uploadingRef.current = true;
     try {
       const compressed = await compressImage(file);
-      setPendingFile(compressed);
+      const bytes = await compressed.arrayBuffer();
+      const stableFile = new File([bytes], compressed.name, { type: compressed.type });
+      setPendingFile(stableFile);
     } catch (err) {
       if (err?.code === 'UNSUPPORTED_FORMAT') {
         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
@@ -384,6 +388,15 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
+      try {
+        const slice = pendingFile.slice(0, 1);
+        await slice.arrayBuffer();
+      } catch {
+        toast.error('התמונה אבדה, נא לצרף מחדש');
+        setPendingFile(null);
+        setUploading(false);
+        return;
+      }
       await taskService.uploadAttachment(task.id, pendingFile);
       if (hasAnnotations && annotatedFile) {
         await new Promise(r => setTimeout(r, 500));

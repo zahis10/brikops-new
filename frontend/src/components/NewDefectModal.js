@@ -377,12 +377,18 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       const compressed = await Promise.all(files.map(f => compressImage(f)));
 
       if (compressed.length === 1) {
-        setPendingFile(compressed[0]);
+        const bytes = await compressed[0].arrayBuffer();
+        const stableFile = new File([bytes], compressed[0].name, { type: compressed[0].type });
+        setPendingFile(stableFile);
       } else {
-        const newImages = compressed.map(file => ({
-          file,
-          preview: URL.createObjectURL(file),
-          name: file.name,
+        const newImages = await Promise.all(compressed.map(async (file) => {
+          const bytes = await file.arrayBuffer();
+          const stable = new File([bytes], file.name, { type: file.type });
+          return {
+            file: stable,
+            preview: URL.createObjectURL(stable),
+            name: stable.name,
+          };
         }));
         setImages(prev => [...prev, ...newImages]);
         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
@@ -647,6 +653,25 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         setSubmitStep(null);
       }
       return;
+    }
+
+    if (images.length > 0) {
+      const staleFiles = [];
+      for (const img of images) {
+        try {
+          const slice = img.file.slice(0, 1);
+          await slice.arrayBuffer();
+        } catch {
+          staleFiles.push(img);
+        }
+      }
+      if (staleFiles.length > 0) {
+        toast.error(staleFiles.length === 1
+          ? 'התמונה אבדה, נא לצרף מחדש'
+          : `${staleFiles.length} תמונות אבדו, נא לצרף מחדש`);
+        setImages(prev => prev.filter(img => !staleFiles.includes(img)));
+        return;
+      }
     }
 
     if (!validate()) return;
