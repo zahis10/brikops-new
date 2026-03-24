@@ -461,7 +461,7 @@ export default function HandoverOverviewPage() {
                                 <button
                                   key={unit.unit_id}
                                   onClick={(e) => handleCellClick(unit, b.building_name, e)}
-                                  title={`${sc.label}${unit.open_defects > 0 ? ` · ${unit.open_defects} ליקויים` : ''}${unit.spare_tiles_count === 0 ? ' · אין ריצוף ספייר' : unit.spare_tiles_count == null ? ' · לא עודכן ריצוף ספייר' : ''}`}
+                                  title={`${sc.label}${unit.open_defects > 0 ? ` · ${unit.open_defects} ליקויים` : ''}${(() => { const st = unit.spare_tiles; if (!Array.isArray(st) || st.length === 0) return ' · לא עודכן ריצוף ספייר'; const total = st.reduce((s, e) => s + (e.count || 0), 0); if (total === 0) return ' · אין ריצוף ספייר'; const types = st.filter(e => e.count > 0).length; return ` · ריצוף ספייר: ${total} אריחים (${types} סוגים)`; })()}`}
                                   className={`relative min-w-[44px] min-h-[44px] w-[52px] h-[52px] rounded-lg flex flex-col items-center justify-center
                                     transition-all hover:scale-105 hover:shadow-md active:scale-95
                                     ${dimmed ? 'opacity-25' : ''}
@@ -476,9 +476,15 @@ export default function HandoverOverviewPage() {
                                       {unit.open_defects > 9 ? '9+' : unit.open_defects}
                                     </span>
                                   )}
-                                  {(unit.spare_tiles_count === 0 || unit.spare_tiles_count == null) && (
-                                    <span className={`absolute -bottom-1 -left-1 rounded-full w-3 h-3 border border-white ${unit.spare_tiles_count === 0 ? 'bg-amber-500' : 'bg-blue-400'}`} />
-                                  )}
+                                  {(() => {
+                                    const st = unit.spare_tiles;
+                                    const isNotUpdated = !Array.isArray(st) || st.length === 0;
+                                    const isNone = Array.isArray(st) && st.length > 0 && st.reduce((s, e) => s + (e.count || 0), 0) === 0;
+                                    if (isNotUpdated || isNone) return (
+                                      <span className={`absolute -bottom-1 -left-1 rounded-full w-3 h-3 border border-white ${isNone ? 'bg-amber-500' : 'bg-blue-400'}`} />
+                                    );
+                                    return null;
+                                  })()}
                                   <span className="text-xs font-bold leading-none" style={{ color: sc.text }}>
                                     {unit.apartment_number}
                                   </span>

@@ -165,6 +165,10 @@ export const unitService = {
     const response = await axios.patch(`${API}/units/${unitId}`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async updateSpareTiles(unitId, spareTiles) {
+    const response = await axios.patch(`${API}/units/${unitId}/spare-tiles`, { spare_tiles: spareTiles }, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const archiveService = {

@@ -215,22 +215,51 @@ async def _build_location_maps(db, tasks):
         floor_map = {f['id']: f.get('display_label') or f.get('name', '') for f in floors}
 
     unit_map = {}
+    spare_tiles_map = {}
     if unit_ids:
-        units = await db.units.find({'id': {'$in': list(unit_ids)}}, {'_id': 0, 'id': 1, 'unit_no': 1, 'display_label': 1}).to_list(100000)
+        units = await db.units.find({'id': {'$in': list(unit_ids)}}, {'_id': 0, 'id': 1, 'unit_no': 1, 'display_label': 1, 'spare_tiles': 1}).to_list(100000)
         unit_map = {u['id']: u.get('display_label') or u.get('unit_no', '') for u in units}
+        spare_tiles_map = {u['id']: u.get('spare_tiles') for u in units if 'spare_tiles' in u}
 
     building_map = {}
     if building_ids:
         buildings = await db.buildings.find({'id': {'$in': list(building_ids)}}, {'_id': 0, 'id': 1, 'name': 1}).to_list(100)
         building_map = {b['id']: b.get('name', '') for b in buildings}
 
-    return floor_map, unit_map, building_map
+    return floor_map, unit_map, building_map, spare_tiles_map
 
 
-def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_map, building_map):
+EXPORT_SPARE_TILES_BASE_TYPES = [
+    'ריצוף יבש',
+    'ריצוף מרפסות',
+    'חיפוי אמבטיות',
+    'ריצוף אמבטיות',
+    'חיפוי מטבח',
+]
+
+
+def _spare_tiles_columns(spare_tiles_list):
+    if not spare_tiles_list or not isinstance(spare_tiles_list, list):
+        return [''] * 7
+    by_type = {e['type']: e for e in spare_tiles_list if isinstance(e, dict)}
+    base_counts = []
+    for bt in EXPORT_SPARE_TILES_BASE_TYPES:
+        entry = by_type.get(bt)
+        base_counts.append(entry['count'] if entry else '')
+    custom_types = [e for e in spare_tiles_list if isinstance(e, dict) and e.get('type') not in EXPORT_SPARE_TILES_BASE_TYPES and (e.get('count', 0) > 0 or e.get('notes'))]
+    custom_str = ', '.join(f"{e['type']}: {e['count']}" for e in custom_types) if custom_types else ''
+    all_notes = [f"{e['type']}: {e['notes']}" for e in spare_tiles_list if isinstance(e, dict) and e.get('notes')]
+    notes_str = ', '.join(all_notes) if all_notes else ''
+    return base_counts + [custom_str, notes_str]
+
+
+def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_map, building_map, spare_tiles_map=None):
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
+
+    if spare_tiles_map is None:
+        spare_tiles_map = {}
 
     wb = Workbook()
     ws = wb.active
@@ -240,7 +269,9 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
     headers = [
         'מספר ליקוי', 'פרויקט', 'בניין', 'קומה', 'דירה', 'תחום',
         'כותרת', 'תיאור', 'סטטוס', 'חברה/קבלן', 'תאריך יצירה',
-        'תאריך עדכון', 'חוסם מסירה', 'מספר תמונות', 'קישורי תמונות'
+        'תאריך עדכון', 'חוסם מסירה', 'מספר תמונות', 'קישורי תמונות',
+        'ספייר: ריצוף יבש', 'ספייר: ריצוף מרפסות', 'ספייר: חיפוי אמבטיות',
+        'ספייר: ריצוף אמבטיות', 'ספייר: חיפוי מטבח', 'ספייר: סוגים נוספים', 'ספייר: הערות',
     ]
 
     header_font = Font(name='Arial', bold=True, size=11, color='FFFFFF')
@@ -271,6 +302,9 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
         image_count = task.get('attachments_count', 0) or len(image_links)
         links_text = '\n'.join(image_links) if image_links else ''
 
+        unit_spare = spare_tiles_map.get(task.get('unit_id', ''))
+        spare_cols = _spare_tiles_columns(unit_spare)
+
         row_data = [
             task.get('display_number') or task.get('short_ref', ''),
             project_name,
@@ -287,7 +321,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
             'כן' if is_blocking else 'לא',
             image_count,
             links_text,
-        ]
+        ] + spare_cols
 
         for col_idx, value in enumerate(row_data, 1):
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
@@ -302,8 +336,9 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
                 link_cell.hyperlink = image_links[0]
                 link_cell.font = link_font
             else:
+                img_start_col = len(headers) + 1
                 for img_idx, img_url in enumerate(image_links):
-                    col = 15 + img_idx
+                    col = img_start_col + img_idx
                     c = ws.cell(row=row_idx, column=col, value=img_url)
                     c.hyperlink = img_url
                     c.font = link_font
@@ -322,7 +357,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
                         hdr.alignment = header_align
                         hdr.border = thin_border
 
-    col_widths = [12, 15, 12, 10, 10, 14, 25, 30, 14, 18, 16, 16, 12, 10, 40]
+    col_widths = [12, 15, 12, 10, 10, 14, 25, 30, 14, 18, 16, 16, 12, 10, 40, 14, 14, 14, 14, 14, 20, 25]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -784,7 +819,7 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
     filtered.sort(key=_sort_key, reverse=True)
 
     user_map, company_map = await _build_lookup_maps(db, filtered)
-    floor_map, unit_map, building_map_loc = await _build_location_maps(db, filtered)
+    floor_map, unit_map, building_map_loc, spare_tiles_map = await _build_location_maps(db, filtered)
 
     for t in filtered:
         t['_resolved_image_links'] = await _resolve_image_links(db, t)
@@ -817,7 +852,7 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
 
     excel_bytes = _generate_excel(
         filtered, project_name, user_map, company_map,
-        floor_map, unit_map, building_map_loc
+        floor_map, unit_map, building_map_loc, spare_tiles_map
     )
 
     filename = f"defects_{safe_scope}_{today}.xlsx"

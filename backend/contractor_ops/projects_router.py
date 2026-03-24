@@ -536,6 +536,72 @@ async def patch_unit(unit_id: str, body: dict, user: dict = Depends(get_current_
     return Unit(**updated)
 
 
+SPARE_TILES_BASE_TYPES = [
+    'ריצוף יבש',
+    'ריצוף מרפסות',
+    'חיפוי אמבטיות',
+    'ריצוף אמבטיות',
+    'חיפוי מטבח',
+]
+
+
+@router.patch("/units/{unit_id}/spare-tiles")
+async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(get_current_user)):
+    db = get_db()
+    unit_doc = await db.units.find_one({'id': unit_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not unit_doc:
+        raise HTTPException(status_code=404, detail='Unit not found')
+    await _check_structure_admin(user, unit_doc['project_id'])
+
+    if 'spare_tiles' not in body:
+        raise HTTPException(status_code=400, detail='spare_tiles field is required')
+
+    raw = body['spare_tiles']
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=422, detail='spare_tiles must be an array')
+    if len(raw) > 20:
+        raise HTTPException(status_code=422, detail='מקסימום 20 סוגי ריצוף')
+
+    validated = []
+    seen_types = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=422, detail='Each spare tile entry must be an object')
+        tile_type = entry.get('type', '')
+        if not isinstance(tile_type, str) or not tile_type.strip():
+            raise HTTPException(status_code=422, detail='type is required for each tile entry')
+        tile_type = tile_type.strip()[:50]
+        if tile_type.lower() in seen_types:
+            raise HTTPException(status_code=422, detail=f'סוג ריצוף כפול: {tile_type}')
+        seen_types.add(tile_type.lower())
+
+        count = entry.get('count', 0)
+        try:
+            count = int(count)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail='count must be an integer')
+        if count < 0:
+            raise HTTPException(status_code=422, detail='count must be >= 0')
+
+        notes = entry.get('notes', '') or ''
+        if not isinstance(notes, str):
+            notes = str(notes)
+        notes = notes.strip()[:500]
+
+        validated.append({'type': tile_type, 'count': count, 'notes': notes})
+
+    total_count = sum(e['count'] for e in validated)
+    all_notes = ', '.join(f"{e['type']}: {e['notes']}" for e in validated if e['notes'])
+    await db.units.update_one({'id': unit_id}, {'$set': {
+        'spare_tiles': validated,
+        'spare_tiles_count': total_count if validated else None,
+        'spare_tiles_notes': all_notes[:500] if all_notes else None,
+    }})
+    await _audit('unit', unit_id, 'update_spare_tiles', user['id'], {'spare_tiles': validated})
+    updated = await db.units.find_one({'id': unit_id}, {'_id': 0})
+    return Unit(**updated)
+
+
 @router.post("/floors/bulk")
 async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_current_user)):
     db = get_db()

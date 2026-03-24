@@ -1981,7 +1981,7 @@ async def handover_overview(
             "let": {"fid": "$floors.id"},
             "pipeline": [
                 {"$match": {"$expr": {"$eq": ["$floor_id", "$$fid"]}, "archived": {"$ne": True}}},
-                {"$project": {"_id": 0, "id": 1, "floor_id": 1, "building_id": 1, "unit_no": 1, "display_label": 1, "sort_index": 1, "spare_tiles_count": 1}},
+                {"$project": {"_id": 0, "id": 1, "floor_id": 1, "building_id": 1, "unit_no": 1, "display_label": 1, "sort_index": 1, "spare_tiles_count": 1, "spare_tiles": 1}},
             ],
             "as": "units",
         }},
@@ -2014,6 +2014,7 @@ async def handover_overview(
             "unit_display_label": "$units.display_label",
             "unit_sort_index": "$units.sort_index",
             "spare_tiles_count": "$units.spare_tiles_count",
+            "spare_tiles": "$units.spare_tiles",
             "protocols": 1,
         }},
     ]
@@ -2133,6 +2134,9 @@ async def handover_overview(
 
         raw_spare = r.get("spare_tiles_count")
         spare_tiles_count = raw_spare if isinstance(raw_spare, int) else None
+        spare_tiles = r.get("spare_tiles")
+        if not isinstance(spare_tiles, list):
+            spare_tiles = None
 
         building_data[bid]["floors"][fid]["units"].append({
             "unit_id": r["unit_id"],
@@ -2140,6 +2144,7 @@ async def handover_overview(
             "status": effective_status,
             "open_defects": unit_open_defects,
             "spare_tiles_count": spare_tiles_count,
+            "spare_tiles": spare_tiles,
             "protocols": proto_list,
         })
 
