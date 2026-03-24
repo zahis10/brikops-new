@@ -915,7 +915,7 @@ const ProjectPlansPage = () => {
                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">קומה</label>
                   <select
                     value={uploadFloorId}
-                    onChange={e => { setUploadFloorId(e.target.value); setUploadUnitId(''); }}
+                    onChange={e => { alert('FLOOR CHANGE: ' + e.target.value); setUploadFloorId(e.target.value); setUploadUnitId(''); }}
                     className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
                   >
                     <option value="">לא נבחרה</option>
