@@ -1,16 +1,24 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
+import { toast } from 'sonner';
 import { BACKEND_URL, configService } from '../services/api';
 
 const AuthContext = createContext(null);
 
 const API = `${BACKEND_URL}/api`;
 
+const RETRY_DELAY_MS = 5000;
+
 const _setBrikopsCookie = () => {
   document.cookie = 'brikops_logged_in=1; domain=.brikops.com; path=/; max-age=2592000; SameSite=Lax; Secure';
 };
 const _clearBrikopsCookie = () => {
   document.cookie = 'brikops_logged_in=; domain=.brikops.com; path=/; max-age=0';
+};
+
+const _isAuthError = (error) => {
+  const status = error?.response?.status;
+  return status === 401 || status === 403;
 };
 
 export const useAuth = () => {
@@ -24,6 +32,7 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [features, setFeatures] = useState(null);
+  const [networkError, setNetworkError] = useState(false);
   const [token, setToken] = useState(() => {
     const hash = window.location.hash;
     if (hash) {
@@ -49,19 +58,52 @@ export const AuthProvider = ({ children }) => {
     return localStorage.getItem('token');
   });
   const [loading, setLoading] = useState(true);
+  const retryTimerRef = useRef(null);
+  const toastShownRef = useRef(false);
 
-  const fetchCurrentUser = useCallback(async () => {
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
+
+  const fetchCurrentUser = useCallback(async (isRetry = false) => {
     try {
       const response = await axios.get(`${API}/auth/me`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setUser(response.data);
+      setNetworkError(false);
+      toastShownRef.current = false;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
     } catch (error) {
-      console.error('Failed to fetch user:', error);
-      setToken(null);
-      setUser(null);
-      localStorage.removeItem('token');
-      _clearBrikopsCookie();
+      if (_isAuthError(error)) {
+        setToken(null);
+        setUser(null);
+        setNetworkError(false);
+        localStorage.removeItem('token');
+        _clearBrikopsCookie();
+        if (retryTimerRef.current) {
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+      } else {
+        setNetworkError(true);
+        if (isRetry && !toastShownRef.current) {
+          toast.error('בעיית חיבור');
+          toastShownRef.current = true;
+        }
+        const savedToken = token;
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          if (savedToken === localStorage.getItem('token')) {
+            fetchCurrentUser(true);
+          }
+        }, RETRY_DELAY_MS);
+      }
     } finally {
       setLoading(false);
     }
@@ -78,7 +120,8 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     if (token) {
-      fetchCurrentUser();
+      toastShownRef.current = false;
+      fetchCurrentUser(false);
       fetchFeatures();
     } else {
       setLoading(false);
@@ -122,8 +165,13 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     setToken(null);
     setUser(null);
+    setNetworkError(false);
     localStorage.removeItem('token');
     _clearBrikopsCookie();
   };
@@ -133,6 +181,7 @@ export const AuthProvider = ({ children }) => {
     token,
     loading,
     features,
+    networkError,
     login,
     loginWithOtp,
     register,

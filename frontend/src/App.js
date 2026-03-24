@@ -67,12 +67,23 @@ const LoadingSpinner = () => (
   </div>
 );
 
+const ConnectingScreen = () => (
+  <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4" dir="rtl">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
+    <p className="text-slate-600 text-lg">מתחבר...</p>
+  </div>
+);
+
 const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, token, networkError } = useAuth();
   const location = useLocation();
 
   if (loading) {
     return <LoadingSpinner />;
+  }
+
+  if (!user && token && networkError) {
+    return <ConnectingScreen />;
   }
 
   if (!user) {

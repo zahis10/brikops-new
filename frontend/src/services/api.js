@@ -18,6 +18,10 @@ axios.interceptors.response.use(
     return response;
   },
   (error) => {
+    // NOTE: Do NOT add 401 handling here.
+    // Auth errors are handled in AuthContext.fetchCurrentUser.
+    // Adding token cleanup here would bypass the network
+    // error resilience logic. See #171.
     if (error.response?.status === 402) {
       const data = error.response.data;
       if (data?.code === 'PAYWALL' && _paywallCallback) {
