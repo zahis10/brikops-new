@@ -733,7 +733,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   if (!isOpen) return null;
 
   return (<>
-    <DialogPrimitive.Root modal={false} open={true} onOpenChange={(open) => { if (!open) handleClose(); }}>
+    <DialogPrimitive.Root modal={false} open={true} onOpenChange={(open) => {
+      if (!open && (pendingFile || annotatingIndex !== null)) return;
+      if (!open) handleClose();
+    }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
         <DialogPrimitive.Content
