@@ -22,11 +22,9 @@ export default function WaLoginPage() {
       const intended = sessionStorage.getItem('intendedPath');
       if (intended) {
         sessionStorage.removeItem('intendedPath');
-        console.log('[DEEP_LINK] WaLogin: restoring target', intended);
         window.history.replaceState({}, document.title, intended);
         window.location.href = intended;
       } else {
-        console.log('[DEEP_LINK] WaLogin: no saved target, going to /projects');
         window.history.replaceState({}, document.title, '/');
         window.location.href = '/projects';
       }

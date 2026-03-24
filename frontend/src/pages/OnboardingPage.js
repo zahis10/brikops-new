@@ -133,7 +133,6 @@ const OnboardingPage = () => {
     setLoading(true);
     try {
       const res = await onboardingService.requestOtp(e164);
-      console.log('[OTP-DEBUG] OnboardingPage handleRequestOtp result:', res);
       setPhoneE164(e164);
       setStep('otp');
       startResendCountdown();

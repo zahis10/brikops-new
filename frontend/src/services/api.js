@@ -2,7 +2,6 @@ import axios from 'axios';
 
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
-console.log('[API_BASE_URL]', BACKEND_URL || '(relative)');
 
 export { BACKEND_URL };
 
@@ -405,7 +404,6 @@ export const taskService = {
           headers: getAuthHeader(),
           timeout: 90000,
         });
-        if (attempt > 1) console.log(`[uploadAttachment] succeeded on attempt ${attempt}/3`);
         return response.data;
       } catch (err) {
         const status = err.response?.status;
@@ -516,7 +514,6 @@ export const onboardingService = {
   async requestOtp(phone_e164) {
     const response = await axios.post(`${API}/auth/request-otp`, { phone_e164 }, { timeout: 10000 });
     const data = response.data;
-    console.log('[OTP-DEBUG] request-otp response:', { status: response.status, success: data?.success, otpStatus: data?.status, rid: data?.rid });
     if (response.status === 200 && data?.success === true) {
       return data;
     }

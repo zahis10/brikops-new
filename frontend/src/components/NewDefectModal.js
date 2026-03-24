@@ -346,13 +346,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     try {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
-      for (const f of files) {
-        console.log(`[image:original] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
-      }
       const compressed = await Promise.all(files.map(f => compressImage(f)));
-      for (const f of compressed) {
-        console.log(`[image:ready] ${f.name} size=${(f.size/1024).toFixed(0)}KB type=${f.type}`);
-      }
 
       if (compressed.length === 1) {
         setPendingFile(compressed[0]);
@@ -466,7 +460,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
     if (uploadList.length > 0) {
       setSubmitStep('uploading');
-      console.log('UPLOAD sizes', uploadList.map(i => ({ name: i.name, sizeKB: (i.file.size / 1024).toFixed(0) })));
       const results = [];
       for (let i = 0; i < uploadList.length; i++) {
         if (i > 0) await new Promise(r => setTimeout(r, 500));
@@ -524,8 +517,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       if (failedResults.length > 0) {
         console.warn(`Upload: ${failedResults.length}/${imagesToUpload.length} failed, ${succeeded} succeeded — proceeding to assign`);
         toast.warning(`${failedResults.length} תמונות לא הועלו, אך ממשיך בשיוך הקבלן.`);
-      } else {
-        console.log(`Upload: all ${imagesToUpload.length} images uploaded successfully`);
       }
     }
 
@@ -538,7 +529,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     }
 
     setSubmitStep('assigning');
-    console.log('ASSIGN payload', { taskId, company_id: companyId, assignee_id: effectiveAssigneeId || null });
 
     let assignResult;
     try {
@@ -546,7 +536,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         taskService.assign(taskId, { company_id: companyId, assignee_id: effectiveAssigneeId || null }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: שיוך קבלן — נסה שוב')), 30000)),
       ]);
-      console.log('ASSIGN OK', { notification_status: assignResult?.notification_status });
     } catch (err) {
       console.error('ASSIGN FAILED', err);
       const detail = err.response?.data?.detail;
@@ -568,8 +557,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       const msgId = ns.provider_message_id || '';
       const pStatus = ns.provider_status || '';
       const ch = ns.channel === 'sms' ? 'SMS' : 'WhatsApp';
-      console.log('[WA-DEBUG]', { provider_status: pStatus, provider_message_id: msgId, to_phone_masked: phone, channel: ns.channel });
-
       switch (pStatus) {
         case 'sent':
         case 'queued':
@@ -593,7 +580,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           } else {
             toast.warning(`לא ניתן לשלוח הודעה לקבלן: ${ns.error || ns.reason || 'סיבה לא ידועה'}`);
           }
-          console.log('[WA-DEBUG] unexpected status', ns);
       }
     }
 
@@ -655,15 +641,12 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
       const { taskService } = await import('../services/api');
 
-      console.log('CREATE payload', taskData);
-
       let task;
       try {
         task = await Promise.race([
           taskService.create(taskData),
           new Promise((_, reject) => setTimeout(() => reject(new Error('שגיאת זמן בשלב: יצירת ליקוי — נסה שוב')), 30000)),
         ]);
-        console.log('Step 1 OK: task created id=' + task.id);
         setCreatedTaskId(task.id);
       } catch (err) {
         console.error('Step 1 FAILED: create task', err);

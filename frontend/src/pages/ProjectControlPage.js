@@ -175,8 +175,6 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
   const hasQc = qcSummary && qcSummary.totalFloors > 0 &&
     (qcSummary.completed > 0 || qcSummary.pending > 0 || qcSummary.failed > 0);
   const cardCount = hasQc ? 2 : 1;
-  console.log('[QC-DEBUG] KpiSection render:', { qcSummary, hasQc, cardCount, qcLoading });
-
   useEffect(() => {
     setActiveCard(prev => Math.min(prev, cardCount - 1));
   }, [cardCount]);
@@ -462,7 +460,6 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
         const defUnits = parseUnitsStr(defaultUnits);
         if (defUnits > 0) {
           unitsRequested = defUnits * floorCount;
-          console.log(`[BULK-UNITS] No exceptions path: defUnits=${defUnits} floorCount=${floorCount} unitsRequested=${unitsRequested}`);
           try {
             const res = await floorService.bulkCreateUnits({
               project_id: projectId, building_id: buildingId,
@@ -471,7 +468,6 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
               batch_id: batchId,
             });
             unitsCreated = res.created_count || 0;
-            console.log(`[BULK-UNITS] Created ${unitsCreated} units`);
           } catch (err) {
             const detail = err.response?.data?.detail || err.message || 'שגיאה לא ידועה';
             unitErrorDetails.push({ floor: 'all', error: detail, count: unitsRequested });
@@ -479,14 +475,12 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
           }
         } else {
           floorsNoUnits = floorCount;
-          console.log(`[BULK-UNITS] All floors with 0 units (no bulkCreateUnits call). floorsNoUnits=${floorsNoUnits}`);
         }
       } else {
         for (const fl of floorsList) {
           const unitCount = fl.units;
           if (unitCount <= 0) {
             floorsNoUnits++;
-            console.log(`[BULK-UNITS] Floor ${fl.floor}: 0 units (skipping)`);
             continue;
           }
           unitsRequested += unitCount;
@@ -498,7 +492,6 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
               batch_id: batchId,
             });
             unitsCreated += res.created_count || 0;
-            console.log(`[BULK-UNITS] Floor ${fl.floor}: requested=${unitCount} created=${res.created_count || 0}`);
           } catch (err) {
             const detail = err.response?.data?.detail || err.message || 'שגיאה לא ידועה';
             unitErrorDetails.push({ floor: fl.floor, error: detail, count: unitCount });
@@ -508,7 +501,6 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
       }
 
       const failedUnits = unitsRequested - unitsCreated;
-      console.log(`[BULK-UNITS] Summary: floors=${createdFloors} unitsRequested=${unitsRequested} unitsCreated=${unitsCreated} floorsNoUnits=${floorsNoUnits} failed=${failedUnits} errors=${unitErrorDetails.length}`);
       setResult({ building: buildingName, buildingId, floors: createdFloors, units: unitsCreated, unitsRequested, failedUnits, unitErrorDetails, batchId, floorsNoUnits });
       const noUnitsLabel = floorsNoUnits > 0 ? `, ${floorsNoUnits} קומות ללא דירות` : '';
       if (unitErrorDetails.length > 0) {
@@ -3244,7 +3236,6 @@ const ProjectControlPage = () => {
     const floorIds = [];
     hierarchy.forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
     if (floorIds.length === 0) { setQcSummary(null); setQcLoading(false); return; }
-    console.log('[QC-DEBUG] fetching batch status for', floorIds.length, 'floors');
     setQcLoading(true);
     qcService.getFloorsBatchStatus(floorIds, { projectId }).then(data => {
       const totalFloors = floorIds.length;
@@ -3256,7 +3247,6 @@ const ProjectControlPage = () => {
         if (f.badge === 'submitted' || (f.pass_count === f.total && f.total > 0)) { completed++; }
         else if (f.badge === 'in_progress' || f.badge === 'pending_review') { pending++; }
       }
-      console.log('[QC-DEBUG] qcSummary computed:', { totalFloors, completed, pending, failed });
       setQcSummary({ totalFloors, completed, pending, failed });
       setQcLoading(false);
     }).catch(err => {

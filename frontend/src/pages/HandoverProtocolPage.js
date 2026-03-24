@@ -312,7 +312,6 @@ const HandoverProtocolPage = () => {
       return;
     }
     setShareLoading(true);
-    console.log('[SHARE] started, cached:', !!pdfBlobRef.current);
     let blob = null;
     try {
       blob = pdfBlobRef.current || await handoverService.getPdfBlob(projectId, protocolId);
@@ -321,15 +320,12 @@ const HandoverProtocolPage = () => {
       const file = new File([blob], filename, { type: 'application/pdf' });
       const projectName = protocol.snapshot?.project_name || '';
       const apartment = protocol.snapshot?.unit_name || '';
-      console.log('[SHARE] blob ready, sharing...');
       await navigator.share({
         title: 'פרוטוקול מסירה',
         text: `פרוטוקול מסירה — ${projectName}${apartment ? ', דירה ' + apartment : ''}`,
         files: [file],
       });
-      console.log('[SHARE] success');
     } catch (err) {
-      console.log('[SHARE] error:', err?.name, err?.message);
       if (err?.name === 'AbortError') {
       } else if (err?.name === 'NotAllowedError') {
         toast.info('לא ניתן לשתף, מוריד PDF במקום...');

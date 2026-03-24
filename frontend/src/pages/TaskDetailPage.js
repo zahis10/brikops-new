@@ -144,7 +144,6 @@ const TaskDetailPage = () => {
       const src = params.get('src') || '';
       const uuidMatch = src.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
       if (uuidMatch) {
-        console.log('[WA_FIX] Extracted task ID from broken WA URL:', uuidMatch[1]);
         return uuidMatch[1];
       }
       const waPrefix = src.startsWith('wa') ? src.slice(2) : src;
@@ -154,7 +153,6 @@ const TaskDetailPage = () => {
         if (!extracted.includes('-') && extracted.length === 32) {
           extracted = `${extracted.slice(0,8)}-${extracted.slice(8,12)}-${extracted.slice(12,16)}-${extracted.slice(16,20)}-${extracted.slice(20)}`;
         }
-        console.log('[WA_FIX] Extracted task ID from broken WA URL (suffix):', extracted);
         return extracted;
       }
     }
@@ -208,7 +206,6 @@ const TaskDetailPage = () => {
       if (source === 'external') {
         sessionStorage.removeItem('deepLinkSource');
         setExternalEntry(true);
-        console.log('[DEEP_LINK] TaskDetailPage: external entry for task', id);
       }
     }
   }, [location.state, id]);
@@ -271,7 +268,6 @@ const TaskDetailPage = () => {
         ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
         : `/projects/${task.project_id}/control?tab=defects`;
       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
-      console.log('[DEEP_LINK] TaskDetailPage: set contractor back target', contractorBack);
     }
   }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo]);
 
@@ -388,10 +384,8 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
-      console.log('[UPLOAD] original:', pendingFile.name, pendingFile.size, 'bytes', pendingFile.type);
       await taskService.uploadAttachment(task.id, pendingFile);
       if (hasAnnotations && annotatedFile) {
-        console.log('[UPLOAD] annotated:', annotatedFile.name, annotatedFile.size, 'bytes', annotatedFile.type);
         await new Promise(r => setTimeout(r, 500));
         await taskService.uploadAttachment(task.id, annotatedFile);
       }

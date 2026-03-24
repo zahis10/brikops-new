@@ -45,7 +45,6 @@ async function _doCompress(file) {
     const canvas = drawToCanvas(img, w, h);
     URL.revokeObjectURL(url);
     const result = await canvasToFile(canvas, file.name);
-    console.log(`[compress] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
     return result;
   } catch (imgErr) {
     lastErr = imgErr;
@@ -57,7 +56,6 @@ async function _doCompress(file) {
     const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height);
     bitmap.close();
     const result = await canvasToFile(canvas, file.name);
-    console.log(`[compress:bitmap] ${file.name}: ${(file.size/1024).toFixed(0)}KB → ${(result.size/1024).toFixed(0)}KB`);
     return result;
   } catch (bitmapErr) {
     lastErr = bitmapErr;

@@ -77,7 +77,6 @@ const LoginPage = () => {
     setLoading(true);
     try {
       const res = await onboardingService.requestOtp(e164);
-      console.log('[OTP-DEBUG] LoginPage handleRequestOtp result:', res);
       setPhoneE164(e164);
       setPhoneStep('otp');
       toast('שולחים קוד אימות...', { icon: '📱' });

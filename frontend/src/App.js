@@ -80,7 +80,6 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
     if (currentPath && currentPath !== '/' && currentPath !== '/login' && currentPath !== '/projects') {
       sessionStorage.setItem(INTENDED_PATH_KEY, currentPath);
       sessionStorage.setItem('deepLinkSource', 'external');
-      console.log('[DEEP_LINK] ProtectedRoute: saved target', currentPath);
     }
     return <Navigate to="/login" replace />;
   }
