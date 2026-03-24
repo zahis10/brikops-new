@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { unitService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -57,6 +57,7 @@ const STATUS_LABEL_MAP = {
 const ApartmentDashboardPage = () => {
   const { projectId, unitId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, features } = useAuth();
 
   const [unitData, setUnitData] = useState(null);
@@ -303,10 +304,15 @@ const ApartmentDashboardPage = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
-                if (building?.id) {
+                const navState = location.state;
+                if (navState?.from === 'unit-home') {
+                  navigate(`/projects/${projectId}/units/${unitId}`);
+                } else if (navState?.buildingId) {
+                  navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`);
+                } else if (building?.id) {
                   navigate(`/projects/${projectId}/buildings/${building.id}/defects`);
                 } else {
-                  navigate(-1);
+                  navigate(`/projects/${projectId}/units/${unitId}`);
                 }
               }}
               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"

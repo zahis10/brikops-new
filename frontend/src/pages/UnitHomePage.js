@@ -68,7 +68,7 @@ const UnitHomePage = () => {
       iconColor: 'text-red-500',
       badge: kpi ? (kpi.open + kpi.in_progress) : null,
       badgeColor: 'bg-red-500',
-      onClick: () => navigate(`/projects/${projectId}/units/${unitId}/tasks`),
+      onClick: () => navigate(`/projects/${projectId}/units/${unitId}/defects`, { state: { from: 'unit-home' } }),
     },
     {
       key: 'plans',

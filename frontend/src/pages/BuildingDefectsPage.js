@@ -446,7 +446,7 @@ const BuildingDefectsPage = () => {
                             return (
                               <div key={unit.id} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 transition-colors group relative">
                                 <button
-                                  onClick={() => navigate(`/projects/${projectId}/units/${unit.id}/defects`)}
+                                  onClick={() => navigate(`/projects/${projectId}/units/${unit.id}/defects`, { state: { from: 'building-defects', buildingId } })}
                                   className="flex flex-col items-center gap-1 active:scale-95"
                                 >
                                   <div className="relative">
