@@ -136,18 +136,31 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const navigate = useNavigate();
   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
 
+  const [debugLog, setDebugLog] = useState([]);
+  const debugLogRef = useRef([]);
+  const addLog = useCallback((msg) => {
+    const line = new Date().toLocaleTimeString() + ' ' + msg;
+    console.log('[DefectModal]', msg);
+    debugLogRef.current = [...debugLogRef.current.slice(-15), line];
+    setDebugLog([...debugLogRef.current]);
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
-    console.log('[DefectModal] OPEN');
-    const handlePopState = () => {
-      console.warn('[DefectModal] POPSTATE fired while modal open — possible Android back gesture', { url: window.location.href, state: window.history.state });
-    };
-    window.addEventListener('popstate', handlePopState);
+    addLog('MODAL OPEN');
+    const popHandler = () => addLog('⚠️ POPSTATE (back gesture?)');
+    const errHandler = (e) => addLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
+    const rejHandler = (e) => addLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
+    window.addEventListener('popstate', popHandler);
+    window.addEventListener('error', errHandler);
+    window.addEventListener('unhandledrejection', rejHandler);
     return () => {
-      console.log('[DefectModal] UNMOUNT cleanup');
-      window.removeEventListener('popstate', handlePopState);
+      addLog('MODAL UNMOUNT');
+      window.removeEventListener('popstate', popHandler);
+      window.removeEventListener('error', errHandler);
+      window.removeEventListener('unhandledrejection', rejHandler);
     };
-  }, [isOpen]);
+  }, [isOpen, addLog]);
 
   const [projectId, setProjectId] = useState('');
   const [buildingId, setBuildingId] = useState('');
@@ -356,16 +369,17 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const cameraInputRef = useRef(null);
 
   const handleImageAdd = useCallback(async (e) => {
-    console.log('[DefectModal] handleImageAdd START', { fileCount: e.target?.files?.length });
+    addLog('IMAGE ADD: ' + (e.target?.files?.length || 0) + ' files');
     try {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
-      console.log('[DefectModal] compressing', files.length, 'files', files.map(f => ({ name: f.name, size: f.size, type: f.type })));
+      for (const f of files) addLog('FILE: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB ' + (f.type || 'no-type'));
       const compressed = await Promise.all(files.map(f => compressImage(f)));
-      console.log('[DefectModal] compression done', compressed.map(f => ({ name: f.name, size: f.size })));
+      for (const f of compressed) addLog('COMPRESSED: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB');
 
       if (compressed.length === 1) {
         setPendingFile(compressed[0]);
+        addLog('PENDING FILE SET (annotation prompt)');
       } else {
         const newImages = compressed.map(file => ({
           file,
@@ -375,8 +389,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         setImages(prev => [...prev, ...newImages]);
         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
       }
-      console.log('[DefectModal] handleImageAdd DONE');
+      addLog('IMAGE ADD DONE');
     } catch (err) {
+      addLog('❌ IMAGE ADD ERROR: ' + (err?.message || err));
       if (err?.code === 'UNSUPPORTED_FORMAT') {
         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
         console.error('[COMPRESS] HEIC/unsupported:', err.original);
@@ -387,7 +402,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     } finally {
       if (e.target) e.target.value = '';
     }
-  }, []);
+  }, [addLog]);
 
   const removeImage = useCallback((index) => {
     setImages(prev => {
@@ -462,7 +477,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
 
   const doUploadAndAssign = async (taskId) => {
-    console.log('[DefectModal] doUploadAndAssign START', { taskId, imageCount: images.length });
+    addLog('UPLOAD+ASSIGN START taskId=' + taskId + ' images=' + images.length);
     setUploadError(null);
 
     const { taskService } = await import('../services/api');
@@ -624,7 +639,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   };
 
   const handleSubmit = async () => {
-    console.log('[DefectModal] handleSubmit START', { createdTaskId, uploadError: !!uploadError, imageCount: images.length });
+    addLog('SUBMIT START images=' + images.length + ' retry=' + !!createdTaskId);
     if (createdTaskId && uploadError) {
       setSubmitting(true);
       setSubmitStep('uploading');
@@ -690,7 +705,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   };
 
   const handleClose = () => {
-    console.log('[DefectModal] handleClose TRIGGERED', { createdTaskId, uploadError: !!uploadError, stack: new Error().stack });
+    addLog('CLOSE TRIGGERED stack=' + new Error().stack?.split('\n').slice(1, 4).join(' | '));
     if (createdTaskId && uploadError) {
       toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
     }
@@ -1059,6 +1074,30 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
           onSave={handlePendingAnnotationSave}
         />
       </Suspense>
+    )}
+
+    {debugLog.length > 0 && (
+      <div style={{
+        position: 'fixed',
+        bottom: 80,
+        left: 8,
+        right: 8,
+        maxHeight: '40vh',
+        overflow: 'auto',
+        background: 'rgba(0,0,0,0.9)',
+        color: '#0f0',
+        fontSize: '11px',
+        fontFamily: 'monospace',
+        padding: 8,
+        borderRadius: 8,
+        zIndex: 99999,
+        direction: 'ltr',
+        pointerEvents: 'none',
+      }}>
+        {debugLog.map((line, i) => (
+          <div key={i}>{line}</div>
+        ))}
+      </div>
     )}
   </>
   );
