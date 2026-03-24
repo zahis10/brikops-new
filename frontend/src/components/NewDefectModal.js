@@ -136,25 +136,16 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const navigate = useNavigate();
   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
 
-  const modalHistoryGuardRef = useRef(false);
   useEffect(() => {
     if (!isOpen) return;
-    console.log('[DefectModal] OPEN — pushing history guard');
-    modalHistoryGuardRef.current = true;
-    window.history.pushState({ defectModalOpen: true }, '', window.location.href);
+    console.log('[DefectModal] OPEN');
     const handlePopState = () => {
-      if (modalHistoryGuardRef.current) {
-        console.log('[DefectModal] POPSTATE intercepted — blocking back navigation');
-        window.history.pushState({ defectModalOpen: true }, '', window.location.href);
-      }
+      console.warn('[DefectModal] POPSTATE fired while modal open — possible Android back gesture', { url: window.location.href, state: window.history.state });
     };
     window.addEventListener('popstate', handlePopState);
     return () => {
-      modalHistoryGuardRef.current = false;
+      console.log('[DefectModal] UNMOUNT cleanup');
       window.removeEventListener('popstate', handlePopState);
-      if (window.history.state?.defectModalOpen) {
-        window.history.back();
-      }
     };
   }, [isOpen]);
 
@@ -715,7 +706,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <DialogPrimitive.Content
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
           onPointerDownOutside={(e) => e.preventDefault()}
-          onInteractOutside={(e) => e.preventDefault()}
         >
           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>

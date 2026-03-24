@@ -400,13 +400,7 @@ export const taskService = {
   },
   async uploadAttachment(id, file) {
     console.log('[uploadAttachment] START', { id, fileName: file?.name, fileSize: file?.size, fileType: file?.type });
-    let fileBytes;
-    try {
-      fileBytes = await file.arrayBuffer();
-    } catch (abErr) {
-      console.error('[uploadAttachment] file.arrayBuffer() FAILED — file may be stale', abErr);
-      throw new Error(`קריאת קובץ נכשלה: ${abErr.message}`);
-    }
+    const fileBytes = await file.arrayBuffer();
     const fileName = file.name || 'photo.jpg';
     const fileType = file.type || 'image/jpeg';
     for (let attempt = 1; attempt <= 3; attempt++) {
