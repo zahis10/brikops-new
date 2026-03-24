@@ -21,6 +21,7 @@ from contractor_ops.schemas import (
 )
 from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET, TRADE_MAP
 from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_CODE, NO_IMAGE_MESSAGE
+from contractor_ops.upload_rate_limit import check_upload_rate_limit
 
 router = APIRouter(prefix="/api")
 
@@ -453,7 +454,8 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
     task_data['user_project_sub_role'] = membership.get('sub_role')
     
-    # Add location names
+    # TODO: N+1 — 5 sequential queries here (project, building, floor, unit, assignee).
+    # Optimize with $lookup aggregate when scale requires it.
     proj = await db.projects.find_one({'id': task['project_id']}, {'_id': 0, 'name': 1})
     task_data['project_name'] = proj['name'] if proj else ''
     
@@ -800,6 +802,7 @@ async def contractor_proof(
     request: Request,
     user: dict = Depends(get_current_user),
 ):
+    check_upload_rate_limit(user['id'])
     db = get_db()
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:
@@ -1114,6 +1117,7 @@ async def list_task_updates(task_id: str, user: dict = Depends(get_current_user)
 
 @router.post("/tasks/{task_id}/attachments")
 async def upload_task_attachment(task_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    check_upload_rate_limit(user['id'])
     import time as _time
     t_start = _time.time()
     ct = request.headers.get('content-type', '')

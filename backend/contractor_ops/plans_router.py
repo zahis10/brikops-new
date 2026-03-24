@@ -11,6 +11,8 @@ from contractor_ops.router import (
     PLAN_DISCIPLINES, PLAN_UPLOAD_ROLES,
 )
 
+from contractor_ops.upload_rate_limit import check_upload_rate_limit
+
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,7 @@ async def upload_project_plan(
     unit_id: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
+    check_upload_rate_limit(user['id'])
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -328,6 +331,7 @@ async def upload_plan_version(
     note: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
+    check_upload_rate_limit(user['id'])
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -502,6 +506,7 @@ async def replace_project_plan(
     note: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
+    check_upload_rate_limit(user['id'])
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
@@ -760,6 +765,7 @@ async def upload_unit_plan(
     plan_type: Optional[str] = Form(None),
     user: dict = Depends(get_current_user),
 ):
+    check_upload_rate_limit(user['id'])
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail='Viewers have read-only access')
     db = get_db()
