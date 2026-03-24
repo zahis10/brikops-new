@@ -295,7 +295,8 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
          style={{ zIndex: 10001, pointerEvents: 'auto' }}
          onClick={(e) => e.stopPropagation()}
-         onPointerDown={(e) => e.stopPropagation()}>
+         onPointerDown={(e) => e.stopPropagation()}
+         onTouchStart={(e) => e.stopPropagation()}>
       {!loaded && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black"
              style={{ pointerEvents: 'none' }}>
