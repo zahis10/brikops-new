@@ -78,10 +78,11 @@ async def migrate(execute: bool = False):
         old_count = unit.get('spare_tiles_count')
         old_notes = unit.get('spare_tiles_notes') or ''
 
-        has_count = old_count is not None and isinstance(old_count, int)
+        has_count = old_count is not None and isinstance(old_count, int) and old_count > 0
         has_notes = bool(old_notes.strip()) if isinstance(old_notes, str) else False
+        was_explicitly_zeroed = old_count is not None and isinstance(old_count, int) and old_count == 0
 
-        if has_count or has_notes:
+        if has_count or has_notes or was_explicitly_zeroed:
             spare_tiles = [{'type': 'ריצוף (כללי)', 'count': old_count if has_count else 0, 'notes': old_notes.strip() if has_notes else ''}]
             for bt in BASE_TYPES:
                 spare_tiles.append({'type': bt, 'count': 0, 'notes': ''})
