@@ -394,8 +394,9 @@ const TaskDetailPage = () => {
     if (!pendingFile) return;
     setUploading(true);
     try {
+      const fileToUpload = (hasAnnotations && annotatedFile) ? annotatedFile : pendingFile;
       try {
-        const slice = pendingFile.slice(0, 1);
+        const slice = fileToUpload.slice(0, 1);
         await slice.arrayBuffer();
       } catch {
         toast.error('התמונה אבדה, נא לצרף מחדש');
@@ -403,12 +404,8 @@ const TaskDetailPage = () => {
         setUploading(false);
         return;
       }
-      await taskService.uploadAttachment(task.id, pendingFile);
-      if (hasAnnotations && annotatedFile) {
-        await new Promise(r => setTimeout(r, 500));
-        await taskService.uploadAttachment(task.id, annotatedFile);
-      }
-      toast.success(hasAnnotations ? 'תמונה וסימון הועלו בהצלחה' : 'תמונה הועלתה בהצלחה');
+      await taskService.uploadAttachment(task.id, fileToUpload);
+      toast.success(hasAnnotations ? 'תמונה עם סימון הועלתה בהצלחה' : 'תמונה הועלתה בהצלחה');
       setPendingFile(null);
       await loadTask();
     } catch (err) {
