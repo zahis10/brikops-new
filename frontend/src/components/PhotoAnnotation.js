@@ -155,96 +155,37 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     };
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !loaded) return;
+  const startStroke = useCallback((pos) => {
+    const newStroke = { color: colorRef.current, points: [pos] };
+    currentStrokeRef.current = newStroke;
+    drawingRef.current = true;
+  }, []);
 
-    const startStroke = (pos) => {
-      const newStroke = { color: colorRef.current, points: [pos] };
-      currentStrokeRef.current = newStroke;
-      drawingRef.current = true;
+  const moveStroke = useCallback((pos) => {
+    if (!drawingRef.current || !currentStrokeRef.current) return;
+    currentStrokeRef.current = {
+      ...currentStrokeRef.current,
+      points: [...currentStrokeRef.current.points, pos],
     };
+    setStrokes(allStrokes => {
+      redraw([...allStrokes, currentStrokeRef.current]);
+      return allStrokes;
+    });
+  }, [redraw]);
 
-    const moveStroke = (pos) => {
-      if (!drawingRef.current || !currentStrokeRef.current) return;
-      currentStrokeRef.current = {
-        ...currentStrokeRef.current,
-        points: [...currentStrokeRef.current.points, pos],
-      };
-      setStrokes(allStrokes => {
-        redraw([...allStrokes, currentStrokeRef.current]);
-        return allStrokes;
+  const endStroke = useCallback(() => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    const stroke = currentStrokeRef.current;
+    currentStrokeRef.current = null;
+    if (stroke && stroke.points.length >= 2) {
+      setStrokes(prev => {
+        const newAll = [...prev, stroke];
+        redraw(newAll);
+        return newAll;
       });
-    };
-
-    const endStroke = () => {
-      if (!drawingRef.current) return;
-      drawingRef.current = false;
-      const stroke = currentStrokeRef.current;
-      currentStrokeRef.current = null;
-      if (stroke && stroke.points.length >= 2) {
-        setStrokes(prev => {
-          const newAll = [...prev, stroke];
-          redraw(newAll);
-          return newAll;
-        });
-      }
-    };
-
-    const handleTouchStart = (e) => {
-      e.preventDefault();
-      const touch = e.touches[0];
-      if (!touch) return;
-      const pos = getPos(touch.clientX, touch.clientY);
-      if (pos) startStroke(pos);
-    };
-
-    const handleTouchMove = (e) => {
-      e.preventDefault();
-      const touch = e.touches[0];
-      if (!touch) return;
-      const pos = getPos(touch.clientX, touch.clientY);
-      if (pos) moveStroke(pos);
-    };
-
-    const handleTouchEnd = (e) => {
-      e.preventDefault();
-      endStroke();
-    };
-
-    const handleMouseDown = (e) => {
-      const pos = getPos(e.clientX, e.clientY);
-      if (pos) startStroke(pos);
-    };
-
-    const handleMouseMove = (e) => {
-      if (!(e.buttons & 1)) return;
-      const pos = getPos(e.clientX, e.clientY);
-      if (pos) moveStroke(pos);
-    };
-
-    const handleMouseUp = () => {
-      endStroke();
-    };
-
-    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
-    canvas.addEventListener('mousedown', handleMouseDown);
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      canvas.removeEventListener('touchstart', handleTouchStart);
-      canvas.removeEventListener('touchmove', handleTouchMove);
-      canvas.removeEventListener('touchend', handleTouchEnd);
-      canvas.removeEventListener('touchcancel', handleTouchEnd);
-      canvas.removeEventListener('mousedown', handleMouseDown);
-      canvas.removeEventListener('mousemove', handleMouseMove);
-      canvas.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [loaded, getPos, redraw]);
+    }
+  }, [redraw]);
 
   const handleUndo = useCallback(() => {
     setStrokes(prev => {
@@ -316,6 +257,25 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         <canvas
           ref={canvasRef}
           style={{ touchAction: 'none', display: 'block' }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            const pos = getPos(e.clientX, e.clientY);
+            if (pos) startStroke(pos);
+          }}
+          onPointerMove={(e) => {
+            e.preventDefault();
+            const pos = getPos(e.clientX, e.clientY);
+            if (pos) moveStroke(pos);
+          }}
+          onPointerUp={(e) => {
+            e.preventDefault();
+            endStroke();
+          }}
+          onPointerCancel={(e) => {
+            e.preventDefault();
+            endStroke();
+          }}
         />
       </div>
 
