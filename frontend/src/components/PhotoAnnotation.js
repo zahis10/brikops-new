@@ -41,15 +41,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   const drawingRef = useRef(false);
   const currentStrokeRef = useRef(null);
 
-  const [annoDebugLog, setAnnoDebugLog] = useState([]);
-  const annoDebugRef = useRef([]);
-  const addAnnoLog = useCallback((msg) => {
-    const line = new Date().toLocaleTimeString() + ' ' + msg;
-    console.log('[PhotoAnnotation]', msg);
-    annoDebugRef.current = [...annoDebugRef.current.slice(-15), line];
-    setAnnoDebugLog([...annoDebugRef.current]);
-  }, []);
-
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
@@ -58,27 +49,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   useEffect(() => { savingRef.current = saving; }, [saving]);
 
   useEffect(() => {
-    addAnnoLog('ANNOTATION OPEN file=' + (imageFile?.name || 'unknown'));
     const viewport = document.querySelector('meta[name="viewport"]');
     const originalViewport = viewport?.content;
     if (viewport) {
       viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
     }
-    const popHandler = () => addAnnoLog('⚠️ POPSTATE (back gesture?)');
-    const errHandler = (e) => addAnnoLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
-    const rejHandler = (e) => addAnnoLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
-    window.addEventListener('popstate', popHandler);
-    window.addEventListener('error', errHandler);
-    window.addEventListener('unhandledrejection', rejHandler);
     return () => {
-      window.removeEventListener('popstate', popHandler);
-      window.removeEventListener('error', errHandler);
-      window.removeEventListener('unhandledrejection', rejHandler);
       document.body.style.pointerEvents = '';
       document.body.style.overflow = '';
       if (viewport && originalViewport !== undefined) viewport.content = originalViewport;
     };
-  }, [addAnnoLog, imageFile]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -274,7 +255,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   }, [redraw]);
 
   const handleSave = useCallback(() => {
-    addAnnoLog('SAVE START strokes=' + strokesRef.current.length);
     if (saving) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -282,7 +262,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
     const hasAnnotations = strokesRef.current.length > 0;
     if (!hasAnnotations) {
-      addAnnoLog('SAVE: no annotations, calling onSave(null)');
       onSaveRef.current(null, false);
       return;
     }
@@ -290,19 +269,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     canvas.toBlob(
       (blob) => {
         if (!blob || blob.size === 0) {
-          addAnnoLog('❌ SAVE: blob empty/null');
           setSaving(false);
           return;
         }
 
-        addAnnoLog('SAVE DONE blob=' + (blob.size / 1024).toFixed(0) + 'KB');
         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
         onSaveRef.current(file, true);
       },
       'image/jpeg',
       0.70
     );
-  }, [saving, addAnnoLog]);
+  }, [saving]);
 
   const content = (
     <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
@@ -361,29 +338,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
           בטל
         </button>
       </div>
-      {annoDebugLog.length > 0 && (
-        <div style={{
-          position: 'fixed',
-          bottom: 80,
-          left: 8,
-          right: 8,
-          maxHeight: '40vh',
-          overflow: 'auto',
-          background: 'rgba(0,0,0,0.9)',
-          color: '#0f0',
-          fontSize: '11px',
-          fontFamily: 'monospace',
-          padding: 8,
-          borderRadius: 8,
-          zIndex: 99999,
-          direction: 'ltr',
-          pointerEvents: 'none',
-        }}>
-          {annoDebugLog.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
-        </div>
-      )}
     </div>
   );
 

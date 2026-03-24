@@ -78,11 +78,9 @@ async function _doCompress(file) {
 }
 
 export async function compressImage(file) {
-  console.log('[compressImage] START', { name: file.name, size: file.size, type: file.type });
   const typeLC = (file.type || '').toLowerCase();
   const isHeicType = typeLC.includes('heic') || typeLC.includes('heif');
   if (file.size <= MAX_SIZE && typeLC.startsWith('image/') && !isHeicType) {
-    console.log('[compressImage] SKIP — already small enough', { size: file.size });
     return file;
   }
 
@@ -93,7 +91,6 @@ export async function compressImage(file) {
         setTimeout(() => reject(new Error('compression timeout')), COMPRESS_TIMEOUT_MS)
       ),
     ]);
-    console.log('[compressImage] DONE', { inputSize: file.size, outputSize: result.size, outputName: result.name });
     return result;
   } catch (err) {
     if (err?.code === 'UNSUPPORTED_FORMAT') throw err;

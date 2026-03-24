@@ -1653,7 +1653,10 @@ const TaskDetailPage = () => {
       <DialogPrimitive.Root modal={false} open={!!tradeMismatchModal} onOpenChange={(v) => { if (!v) setTradeMismatchModal(null); }}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
-          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
+          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none"
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
@@ -1699,7 +1702,10 @@ const TaskDetailPage = () => {
       <DialogPrimitive.Root modal={false} open={!!imageModal} onOpenChange={(v) => { if (!v) setImageModal(null); }}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
-          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
+          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none"
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogPrimitive.Title className="sr-only">תצוגת תמונה</DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">תצוגה מוגדלת של תמונה מצורפת</DialogPrimitive.Description>
             <div className="relative max-w-full max-h-full pointer-events-auto">

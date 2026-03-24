@@ -399,7 +399,6 @@ export const taskService = {
     return response.data;
   },
   async uploadAttachment(id, file) {
-    console.log('[uploadAttachment] START', { id, fileName: file?.name, fileSize: file?.size, fileType: file?.type });
     const fileBytes = await file.arrayBuffer();
     const fileName = file.name || 'photo.jpg';
     const fileType = file.type || 'image/jpeg';
@@ -413,7 +412,6 @@ export const taskService = {
           headers: getAuthHeader(),
           timeout: 90000,
         });
-        console.log('[uploadAttachment] SUCCESS', { attempt, fileName });
         return response.data;
       } catch (err) {
         const status = err.response?.status;
