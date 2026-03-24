@@ -271,7 +271,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
   const handleSave = useCallback(() => {
     try {
-      alert('SAVE START');
+      alert('SAVE START saving=' + saving + ' canvas=' + !!canvasRef.current + ' strokes=' + strokesRef.current.length);
       if (saving) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
