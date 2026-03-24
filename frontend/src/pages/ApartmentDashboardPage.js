@@ -309,8 +309,6 @@ const ApartmentDashboardPage = () => {
                   navigate(`/projects/${projectId}/units/${unitId}`);
                 } else if (navState?.buildingId) {
                   navigate(`/projects/${projectId}/buildings/${navState.buildingId}/defects`);
-                } else if (building?.id) {
-                  navigate(`/projects/${projectId}/buildings/${building.id}/defects`);
                 } else {
                   navigate(`/projects/${projectId}/units/${unitId}`);
                 }
