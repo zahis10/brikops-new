@@ -62,6 +62,21 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   }, []);
 
   useEffect(() => {
+    const handler = (e) => {
+      alert('GLOBAL ERROR: ' + (e.message || e.error?.message));
+    };
+    const handler2 = (e) => {
+      alert('REJECTION: ' + (e.reason?.message || e.reason));
+    };
+    window.addEventListener('error', handler);
+    window.addEventListener('unhandledrejection', handler2);
+    return () => {
+      window.removeEventListener('error', handler);
+      window.removeEventListener('unhandledrejection', handler2);
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     const doLoad = async () => {
@@ -255,30 +270,36 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   }, [redraw]);
 
   const handleSave = useCallback(() => {
-    if (saving) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    setSaving(true);
+    try {
+      alert('SAVE START');
+      if (saving) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      setSaving(true);
 
-    const hasAnnotations = strokesRef.current.length > 0;
-    if (!hasAnnotations) {
-      onSaveRef.current(null, false);
-      return;
+      const hasAnnotations = strokesRef.current.length > 0;
+      if (!hasAnnotations) {
+        onSaveRef.current(null, false);
+        return;
+      }
+
+      canvas.toBlob(
+        (blob) => {
+          alert('TOBLOB: blob=' + (blob ? blob.size : 'null'));
+          if (!blob || blob.size === 0) {
+            setSaving(false);
+            return;
+          }
+
+          const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
+          onSaveRef.current(file, true);
+        },
+        'image/jpeg',
+        0.70
+      );
+    } catch (err) {
+      alert('SAVE CATCH: ' + (err?.message || err));
     }
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob || blob.size === 0) {
-          setSaving(false);
-          return;
-        }
-
-        const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
-        onSaveRef.current(file, true);
-      },
-      'image/jpeg',
-      0.70
-    );
   }, [saving]);
 
   const content = (
