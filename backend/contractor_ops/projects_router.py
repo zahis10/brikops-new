@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
 from contractor_ops.router import (
     get_db, get_current_user, require_roles, require_super_admin,
     _check_project_access, _check_project_read_access, _check_structure_admin,
-    _audit, _now, _is_super_admin, _priority_sort_key, logger,
+    _get_project_role, _audit, _now, _is_super_admin, _priority_sort_key, logger,
 )
 from contractor_ops.billing import get_user_org, get_subscription
 from contractor_ops.schemas import (
@@ -551,7 +551,9 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
     unit_doc = await db.units.find_one({'id': unit_id, 'archived': {'$ne': True}}, {'_id': 0})
     if not unit_doc:
         raise HTTPException(status_code=404, detail='Unit not found')
-    await _check_structure_admin(user, unit_doc['project_id'])
+    role = await _get_project_role(user, unit_doc['project_id'])
+    if role not in ('project_manager', 'management_team'):
+        raise HTTPException(status_code=403, detail='אין הרשאה לעדכן ריצוף ספייר')
 
     if 'spare_tiles' not in body:
         raise HTTPException(status_code=400, detail='spare_tiles field is required')
@@ -570,7 +572,9 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
         tile_type = entry.get('type', '')
         if not isinstance(tile_type, str) or not tile_type.strip():
             raise HTTPException(status_code=422, detail='type is required for each tile entry')
-        tile_type = tile_type.strip()[:50]
+        tile_type = tile_type.strip()
+        if len(tile_type) > 50:
+            raise HTTPException(status_code=422, detail='שם סוג ריצוף ארוך מדי (מקסימום 50 תווים)')
         if tile_type.lower() in seen_types:
             raise HTTPException(status_code=422, detail=f'סוג ריצוף כפול: {tile_type}')
         seen_types.add(tile_type.lower())
@@ -586,7 +590,9 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
         notes = entry.get('notes', '') or ''
         if not isinstance(notes, str):
             notes = str(notes)
-        notes = notes.strip()[:500]
+        notes = notes.strip()
+        if len(notes) > 500:
+            raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 500 תווים)')
 
         validated.append({'type': tile_type, 'count': count, 'notes': notes})
 

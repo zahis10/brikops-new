@@ -38,7 +38,11 @@ async def migrate(execute: bool = False):
         'spare_tiles': {'$exists': False},
         '$or': [
             {'spare_tiles_count': {'$ne': None, '$exists': True}},
-            {'spare_tiles_notes': {'$ne': None, '$ne': '', '$exists': True}},
+            {'$and': [
+                {'spare_tiles_notes': {'$exists': True}},
+                {'spare_tiles_notes': {'$ne': None}},
+                {'spare_tiles_notes': {'$ne': ''}},
+            ]},
         ],
     })
     no_data = await db.units.count_documents({
