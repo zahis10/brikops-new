@@ -136,31 +136,33 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const navigate = useNavigate();
   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
 
-  const [debugLog, setDebugLog] = useState([]);
-  const debugLogRef = useRef([]);
-  const addLog = useCallback((msg) => {
-    const line = new Date().toLocaleTimeString() + ' ' + msg;
-    console.log('[DefectModal]', msg);
-    debugLogRef.current = [...debugLogRef.current.slice(-15), line];
-    setDebugLog([...debugLogRef.current]);
-  }, []);
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
 
   useEffect(() => {
     if (!isOpen) return;
-    addLog('MODAL OPEN');
-    const popHandler = () => addLog('⚠️ POPSTATE (back gesture?)');
-    const errHandler = (e) => addLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
-    const rejHandler = (e) => addLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
-    window.addEventListener('popstate', popHandler);
-    window.addEventListener('error', errHandler);
-    window.addEventListener('unhandledrejection', rejHandler);
-    return () => {
-      addLog('MODAL UNMOUNT');
-      window.removeEventListener('popstate', popHandler);
-      window.removeEventListener('error', errHandler);
-      window.removeEventListener('unhandledrejection', rejHandler);
+    window.history.pushState({ modal: 'new-defect' }, '');
+    const handlePopState = () => {
+      if (isOpenRef.current) {
+        window.history.pushState({ modal: 'new-defect' }, '');
+      }
     };
-  }, [isOpen, addLog]);
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = () => {
+      if (document.visibilityState === 'visible' && isOpenRef.current) {
+        window.history.pushState({ modal: 'new-defect' }, '');
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, [isOpen]);
 
   const [projectId, setProjectId] = useState('');
   const [buildingId, setBuildingId] = useState('');
@@ -369,17 +371,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const cameraInputRef = useRef(null);
 
   const handleImageAdd = useCallback(async (e) => {
-    addLog('IMAGE ADD: ' + (e.target?.files?.length || 0) + ' files');
     try {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
-      for (const f of files) addLog('FILE: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB ' + (f.type || 'no-type'));
       const compressed = await Promise.all(files.map(f => compressImage(f)));
-      for (const f of compressed) addLog('COMPRESSED: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB');
 
       if (compressed.length === 1) {
         setPendingFile(compressed[0]);
-        addLog('PENDING FILE SET (annotation prompt)');
       } else {
         const newImages = compressed.map(file => ({
           file,
@@ -389,9 +387,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         setImages(prev => [...prev, ...newImages]);
         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
       }
-      addLog('IMAGE ADD DONE');
     } catch (err) {
-      addLog('❌ IMAGE ADD ERROR: ' + (err?.message || err));
       if (err?.code === 'UNSUPPORTED_FORMAT') {
         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
         console.error('[COMPRESS] HEIC/unsupported:', err.original);
@@ -402,7 +398,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     } finally {
       if (e.target) e.target.value = '';
     }
-  }, [addLog]);
+  }, []);
 
   const removeImage = useCallback((index) => {
     setImages(prev => {
@@ -477,7 +473,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
 
   const doUploadAndAssign = async (taskId) => {
-    addLog('UPLOAD+ASSIGN START taskId=' + taskId + ' images=' + images.length);
     setUploadError(null);
 
     const { taskService } = await import('../services/api');
@@ -639,7 +634,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   };
 
   const handleSubmit = async () => {
-    addLog('SUBMIT START images=' + images.length + ' retry=' + !!createdTaskId);
     if (createdTaskId && uploadError) {
       setSubmitting(true);
       setSubmitStep('uploading');
@@ -705,7 +699,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   };
 
   const handleClose = () => {
-    addLog('CLOSE TRIGGERED stack=' + new Error().stack?.split('\n').slice(1, 4).join(' | '));
     if (createdTaskId && uploadError) {
       toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
     }
@@ -1076,29 +1069,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       </Suspense>
     )}
 
-    {debugLog.length > 0 && (
-      <div style={{
-        position: 'fixed',
-        bottom: 80,
-        left: 8,
-        right: 8,
-        maxHeight: '40vh',
-        overflow: 'auto',
-        background: 'rgba(0,0,0,0.9)',
-        color: '#0f0',
-        fontSize: '11px',
-        fontFamily: 'monospace',
-        padding: 8,
-        borderRadius: 8,
-        zIndex: 99999,
-        direction: 'ltr',
-        pointerEvents: 'none',
-      }}>
-        {debugLog.map((line, i) => (
-          <div key={i}>{line}</div>
-        ))}
-      </div>
-    )}
   </>
   );
 };
