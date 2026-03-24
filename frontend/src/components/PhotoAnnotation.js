@@ -178,6 +178,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       const newStroke = { color: colorRef.current, points: [pos] };
       currentStrokeRef.current = newStroke;
       drawingRef.current = true;
+      alert('STROKE START');
     };
 
     const moveStroke = (pos) => {
@@ -201,6 +202,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         setStrokes(prev => {
           const newAll = [...prev, stroke];
           redraw(newAll);
+          alert('STROKE END strokes=' + newAll.length);
           return newAll;
         });
       }
