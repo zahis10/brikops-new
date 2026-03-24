@@ -26,7 +26,9 @@ async function canvasToFile(canvas, origName) {
   );
   if (!blob || blob.size === 0) throw new Error('Canvas toBlob returned empty');
   const outName = origName.replace(/\.[^.]+$/, '.jpg');
-  return new File([blob], outName, { type: 'image/jpeg', lastModified: Date.now() });
+  const f = new File([blob], outName, { type: 'image/jpeg', lastModified: Date.now() });
+  f._fromCompress = true;
+  return f;
 }
 
 async function _doCompress(file) {
@@ -72,7 +74,9 @@ async function _doCompress(file) {
 
   console.warn(`[compress] all methods failed for ${file.name}, using original (${(file.size/1024).toFixed(0)}KB, type=${file.type})`);
   if (!file.type || file.type === '') {
-    return new File([file], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+    const f = new File([file], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+    f._fromCompress = true;
+    return f;
   }
   return file;
 }

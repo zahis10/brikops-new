@@ -327,8 +327,11 @@ const TaskDetailPage = () => {
       const file = e.target.files[0];
       if (file) {
         const compressed = await compressImage(file);
-        const bytes = await compressed.arrayBuffer();
-        const stableFile = new File([bytes], compressed.name, { type: compressed.type });
+        let stableFile = compressed;
+        if (!compressed._fromCompress) {
+          const bytes = await compressed.arrayBuffer();
+          stableFile = new File([bytes], compressed.name, { type: compressed.type });
+        }
         const reader = new FileReader();
         reader.onload = (ev) => {
           setProofFiles(prev => [...prev, { file: stableFile, preview: ev.target.result, id: Date.now() + Math.random() }]);
@@ -355,8 +358,11 @@ const TaskDetailPage = () => {
     uploadingRef.current = true;
     try {
       const compressed = await compressImage(file);
-      const bytes = await compressed.arrayBuffer();
-      const stableFile = new File([bytes], compressed.name, { type: compressed.type });
+      let stableFile = compressed;
+      if (!compressed._fromCompress) {
+        const bytes = await compressed.arrayBuffer();
+        stableFile = new File([bytes], compressed.name, { type: compressed.type });
+      }
       setPendingFile(stableFile);
     } catch (err) {
       if (err?.code === 'UNSUPPORTED_FORMAT') {

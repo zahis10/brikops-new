@@ -370,20 +370,29 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
+  const processingImageRef = useRef(false);
   const handleImageAdd = useCallback(async (e) => {
+    if (processingImageRef.current) return;
+    processingImageRef.current = true;
     try {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
       const compressed = await Promise.all(files.map(f => compressImage(f)));
 
       if (compressed.length === 1) {
-        const bytes = await compressed[0].arrayBuffer();
-        const stableFile = new File([bytes], compressed[0].name, { type: compressed[0].type });
+        let stableFile = compressed[0];
+        if (!stableFile._fromCompress) {
+          const bytes = await stableFile.arrayBuffer();
+          stableFile = new File([bytes], compressed[0].name, { type: compressed[0].type });
+        }
         setPendingFile(stableFile);
       } else {
         const newImages = await Promise.all(compressed.map(async (file) => {
-          const bytes = await file.arrayBuffer();
-          const stable = new File([bytes], file.name, { type: file.type });
+          let stable = file;
+          if (!file._fromCompress) {
+            const bytes = await file.arrayBuffer();
+            stable = new File([bytes], file.name, { type: file.type });
+          }
           return {
             file: stable,
             preview: URL.createObjectURL(stable),
@@ -402,6 +411,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
       }
     } finally {
+      processingImageRef.current = false;
       if (e.target) e.target.value = '';
     }
   }, []);
@@ -486,9 +496,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
 
     const uploadList = [];
     for (const img of imagesToUpload) {
-      if (img.isAnnotated && img.originalFile) {
-        uploadList.push({ file: img.originalFile, name: 'original_' + (img.name || 'photo.jpg') });
-      }
       uploadList.push({ file: img.file, name: img.name });
     }
 
