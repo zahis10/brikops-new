@@ -692,7 +692,7 @@ const ProjectPlansPage = () => {
               <option value="all">כל הקומות</option>
               {allFloors.map(f => (
                 <option key={f.id} value={f.id}>
-                  {f.building_name ? `${f.building_name} - ` : ''}{f.name || `קומה ${f.number || ''}`}
+                  {f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}
                 </option>
               ))}
             </select>
@@ -915,20 +915,20 @@ const ProjectPlansPage = () => {
                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">קומה</label>
                   <select
                     value={uploadFloorId}
-                    onChange={e => { alert('FLOOR CHANGE: ' + e.target.value); setUploadFloorId(e.target.value); setUploadUnitId(''); }}
+                    onChange={e => { setUploadFloorId(e.target.value); setUploadUnitId(''); }}
                     className="w-full h-10 px-3 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-300"
                   >
                     <option value="">לא נבחרה</option>
                     {allFloors.map(f => (
                       <option key={f.id} value={f.id}>
-                        {f.building_name ? `${f.building_name} - ` : ''}{f.name || `קומה ${f.number || ''}`}
+                        {f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}
                       </option>
                     ))}
                   </select>
                 </div>
               )}
 
-              {uploadFloorId && uploadFloorUnits.length > 0 && (
+              {uploadFloorId && uploadPlanType === 'tenant_changes' && uploadFloorUnits.length > 0 && (
                 <div>
                   <label className="text-xs font-medium text-slate-600 mb-1.5 block">דירה</label>
                   <select
@@ -1040,7 +1040,7 @@ const ProjectPlansPage = () => {
                       <select value={editFields.floor_id} onChange={e => setEditFields(p => ({ ...p, floor_id: e.target.value, unit_id: '' }))} className="w-full h-9 px-3 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-300">
                         <option value="">לא נבחרה</option>
                         {allFloors.map(f => (
-                          <option key={f.id} value={f.id}>{f.building_name ? `${f.building_name} - ` : ''}{f.name || `קומה ${f.number || ''}`}</option>
+                          <option key={f.id} value={f.id}>{f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}</option>
                         ))}
                       </select>
                     </div>
@@ -1423,7 +1423,7 @@ const ProjectPlansPage = () => {
                                   >
                                     <option value="">קומה</option>
                                     {allFloors.map(f => (
-                                      <option key={f.id} value={f.id}>{f.building_name ? `${f.building_name} - ` : ''}{f.name || `קומה ${f.number || ''}`}</option>
+                                      <option key={f.id} value={f.id}>{f.building_name ? `${f.building_name} - ` : ''}{f.display_label || f.name || `קומה ${f.floor_number || ''}`}</option>
                                     ))}
                                   </select>
                                 )}
