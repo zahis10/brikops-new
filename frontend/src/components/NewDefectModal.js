@@ -136,6 +136,28 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const navigate = useNavigate();
   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
 
+  const modalHistoryGuardRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) return;
+    console.log('[DefectModal] OPEN — pushing history guard');
+    modalHistoryGuardRef.current = true;
+    window.history.pushState({ defectModalOpen: true }, '', window.location.href);
+    const handlePopState = () => {
+      if (modalHistoryGuardRef.current) {
+        console.log('[DefectModal] POPSTATE intercepted — blocking back navigation');
+        window.history.pushState({ defectModalOpen: true }, '', window.location.href);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      modalHistoryGuardRef.current = false;
+      window.removeEventListener('popstate', handlePopState);
+      if (window.history.state?.defectModalOpen) {
+        window.history.back();
+      }
+    };
+  }, [isOpen]);
+
   const [projectId, setProjectId] = useState('');
   const [buildingId, setBuildingId] = useState('');
   const [floorId, setFloorId] = useState('');
@@ -343,10 +365,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const cameraInputRef = useRef(null);
 
   const handleImageAdd = useCallback(async (e) => {
+    console.log('[DefectModal] handleImageAdd START', { fileCount: e.target?.files?.length });
     try {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
+      console.log('[DefectModal] compressing', files.length, 'files', files.map(f => ({ name: f.name, size: f.size, type: f.type })));
       const compressed = await Promise.all(files.map(f => compressImage(f)));
+      console.log('[DefectModal] compression done', compressed.map(f => ({ name: f.name, size: f.size })));
 
       if (compressed.length === 1) {
         setPendingFile(compressed[0]);
@@ -359,6 +384,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         setImages(prev => [...prev, ...newImages]);
         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
       }
+      console.log('[DefectModal] handleImageAdd DONE');
     } catch (err) {
       if (err?.code === 'UNSUPPORTED_FORMAT') {
         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
@@ -445,6 +471,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
 
   const doUploadAndAssign = async (taskId) => {
+    console.log('[DefectModal] doUploadAndAssign START', { taskId, imageCount: images.length });
     setUploadError(null);
 
     const { taskService } = await import('../services/api');
@@ -606,6 +633,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   };
 
   const handleSubmit = async () => {
+    console.log('[DefectModal] handleSubmit START', { createdTaskId, uploadError: !!uploadError, imageCount: images.length });
     if (createdTaskId && uploadError) {
       setSubmitting(true);
       setSubmitStep('uploading');
@@ -671,6 +699,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   };
 
   const handleClose = () => {
+    console.log('[DefectModal] handleClose TRIGGERED', { createdTaskId, uploadError: !!uploadError, stack: new Error().stack });
     if (createdTaskId && uploadError) {
       toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
     }
@@ -686,6 +715,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <DialogPrimitive.Content
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
           onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
         >
           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>

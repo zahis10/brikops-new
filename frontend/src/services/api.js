@@ -399,7 +399,14 @@ export const taskService = {
     return response.data;
   },
   async uploadAttachment(id, file) {
-    const fileBytes = await file.arrayBuffer();
+    console.log('[uploadAttachment] START', { id, fileName: file?.name, fileSize: file?.size, fileType: file?.type });
+    let fileBytes;
+    try {
+      fileBytes = await file.arrayBuffer();
+    } catch (abErr) {
+      console.error('[uploadAttachment] file.arrayBuffer() FAILED — file may be stale', abErr);
+      throw new Error(`קריאת קובץ נכשלה: ${abErr.message}`);
+    }
     const fileName = file.name || 'photo.jpg';
     const fileType = file.type || 'image/jpeg';
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -412,6 +419,7 @@ export const taskService = {
           headers: getAuthHeader(),
           timeout: 90000,
         });
+        console.log('[uploadAttachment] SUCCESS', { attempt, fileName });
         return response.data;
       } catch (err) {
         const status = err.response?.status;

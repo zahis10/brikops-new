@@ -54,7 +54,21 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     if (viewport) {
       viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
     }
+    let guardActive = true;
+    window.history.pushState({ annotationOpen: true }, '', window.location.href);
+    const handlePopState = () => {
+      if (guardActive) {
+        console.log('[PhotoAnnotation] POPSTATE intercepted — blocking back navigation');
+        window.history.pushState({ annotationOpen: true }, '', window.location.href);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
     return () => {
+      guardActive = false;
+      window.removeEventListener('popstate', handlePopState);
+      if (window.history.state?.annotationOpen) {
+        window.history.back();
+      }
       document.body.style.pointerEvents = '';
       document.body.style.overflow = '';
       if (viewport && originalViewport !== undefined) viewport.content = originalViewport;
@@ -283,7 +297,9 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
   const content = (
     <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
-         style={{ zIndex: 10001, pointerEvents: 'auto' }}>
+         style={{ zIndex: 10001, pointerEvents: 'auto' }}
+         onTouchStart={(e) => e.stopPropagation()}
+         onClick={(e) => e.stopPropagation()}>
       {!loaded && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black"
              style={{ pointerEvents: 'none' }}>
@@ -297,7 +313,8 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
           {COLORS.map(c => (
             <button
               key={c.value}
-              onClick={() => setColor(c.value)}
+              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setColor(c.value); }}
+              onTouchEnd={(e) => { e.stopPropagation(); }}
               className={`w-8 h-8 rounded-full border-2 transition-transform ${
                 color === c.value ? 'border-white scale-110' : 'border-slate-600'
               }`}
@@ -322,7 +339,8 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-t border-slate-700 shrink-0"
            style={{ position: 'relative', zIndex: 20 }}>
         <button
-          onClick={handleSave}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleSave(); }}
+          onTouchEnd={(e) => { e.stopPropagation(); }}
           disabled={!loaded || saving}
           className="flex items-center gap-2 px-6 py-2.5 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
@@ -330,7 +348,8 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
           {saving ? 'שומר...' : 'שמור'}
         </button>
         <button
-          onClick={handleUndo}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleUndo(); }}
+          onTouchEnd={(e) => { e.stopPropagation(); }}
           disabled={strokes.length === 0}
           className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-xl text-sm hover:bg-slate-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
