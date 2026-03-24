@@ -552,7 +552,7 @@ async def patch_unit_spare_tiles(unit_id: str, body: dict, user: dict = Depends(
     if not unit_doc:
         raise HTTPException(status_code=404, detail='Unit not found')
     role = await _get_project_role(user, unit_doc['project_id'])
-    if role not in ('project_manager', 'management_team'):
+    if role not in ('project_manager', 'owner', 'management_team'):
         raise HTTPException(status_code=403, detail='אין הרשאה לעדכן ריצוף ספייר')
 
     if 'spare_tiles' not in body:
