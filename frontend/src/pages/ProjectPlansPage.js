@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { projectService, projectPlanService, disciplineService, buildingService } from '../services/api';
+import { projectService, projectPlanService, disciplineService, buildingService, floorService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { t } from '../i18n';
@@ -555,7 +555,7 @@ const ProjectPlansPage = () => {
     if (!uploadFloorId) { setUploadFloorUnits([]); return; }
     const floor = allFloors.find(f => f.id === uploadFloorId);
     if (floor) {
-      buildingService.getUnits(floor.id)
+      floorService.getUnits(floor.id)
         .then(units => setUploadFloorUnits(Array.isArray(units) ? units : []))
         .catch(() => setUploadFloorUnits([]));
     }
@@ -567,7 +567,7 @@ const ProjectPlansPage = () => {
     if (!fid) { setEditFloorUnits([]); return; }
     const floor = allFloors.find(f => f.id === fid);
     if (floor) {
-      buildingService.getUnits(floor.id)
+      floorService.getUnits(floor.id)
         .then(units => setEditFloorUnits(Array.isArray(units) ? units : []))
         .catch(() => setEditFloorUnits([]));
     }
