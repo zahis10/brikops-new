@@ -698,6 +698,217 @@ async def update_billing_contact_endpoint(org_id: str, request: Request, user: d
     return result
 
 
+RENEWAL_MAX_ATTEMPTS = 3
+RENEWAL_GRACE_DAYS = 7
+
+
+@router.post("/billing/run-renewals")
+async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
+    import uuid
+    from datetime import timedelta
+    from contractor_ops.billing import (
+        BILLING_V1_ENABLED, get_subscription, mark_paid,
+        compute_org_billing_amount, apply_pending_decreases,
+        _now, _now_dt, _parse_dt,
+    )
+    from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
+
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    if not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail='Super admin only')
+
+    db = get_db()
+    now = _now_dt()
+    now_iso = _now()
+    period_ym = now.strftime("%Y-%m")
+
+    all_subs = await db.subscriptions.find(
+        {'status': {'$in': ['active', 'past_due']}, 'auto_renew': True},
+        {'_id': 0, 'org_id': 1, 'paid_until': 1, 'status': 1, 'auto_renew': 1}
+    ).to_list(10000)
+
+    due_orgs = []
+    for sub in all_subs:
+        paid_until = _parse_dt(sub.get('paid_until'))
+        if paid_until and paid_until < now:
+            due_orgs.append({'org_id': sub['org_id'], 'status': sub.get('status', 'active'), 'paid_until': paid_until})
+
+    results = {'processed': 0, 'charged': 0, 'skipped': 0, 'failed': 0, 'past_due': 0, 'errors': []}
+
+    for org_info in due_orgs:
+        org_id = org_info['org_id']
+        sub_status = org_info['status']
+        paid_until_dt = org_info['paid_until']
+        results['processed'] += 1
+
+        existing_success = await db.gi_webhook_log.find_one({
+            'org_id': org_id,
+            'cycle': 'monthly',
+            'result': 'success',
+            'created_at': {'$gte': (now - timedelta(days=35)).isoformat()},
+        }, {'_id': 0, 'id': 1})
+        if existing_success:
+            logger.info("[RENEWALS] Org %s already has successful charge this period, skipping", org_id)
+            results['skipped'] += 1
+            continue
+
+        existing_attempt = await db.billing_renewal_attempts.find_one({
+            'org_id': org_id,
+            'period_ym': period_ym,
+            'result': 'success',
+        }, {'_id': 0})
+        if existing_attempt:
+            logger.info("[RENEWALS] Org %s already renewed for %s, skipping", org_id, period_ym)
+            results['skipped'] += 1
+            continue
+
+        attempt_count = await db.billing_renewal_attempts.count_documents({
+            'org_id': org_id,
+            'period_ym': period_ym,
+        })
+
+        if attempt_count >= RENEWAL_MAX_ATTEMPTS:
+            days_overdue = (now - paid_until_dt).days
+            if days_overdue > RENEWAL_GRACE_DAYS and sub_status != 'past_due':
+                await db.subscriptions.update_one(
+                    {'org_id': org_id},
+                    {'$set': {'status': 'past_due', 'updated_at': now_iso}}
+                )
+                await db.audit_events.insert_one({
+                    'id': str(uuid.uuid4()),
+                    'event_type': 'billing',
+                    'entity_type': 'organization',
+                    'entity_id': org_id,
+                    'action': 'billing_past_due',
+                    'actor_id': 'system',
+                    'created_at': now_iso,
+                    'payload': {
+                        'period_ym': period_ym,
+                        'attempts': attempt_count,
+                        'days_overdue': days_overdue,
+                    },
+                })
+                logger.warning("[RENEWALS] Org %s moved to past_due after %d attempts, %d days overdue",
+                               org_id, attempt_count, days_overdue)
+                results['past_due'] += 1
+            else:
+                logger.info("[RENEWALS] Org %s: %d attempts exhausted, %d days overdue (grace=%d days, status=%s)",
+                            org_id, attempt_count, days_overdue, RENEWAL_GRACE_DAYS, sub_status)
+                results['skipped'] += 1
+            continue
+
+        org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1})
+        if not org:
+            results['skipped'] += 1
+            continue
+
+        billing_data = org.get('billing', {})
+        card_token = billing_data.get('gi_card_token', '')
+        client_id = billing_data.get('gi_client_id', '')
+        org_name = org.get('name', '')
+
+        attempt_id = str(uuid.uuid4())
+        attempt_entry = {
+            'id': attempt_id,
+            'org_id': org_id,
+            'period_ym': period_ym,
+            'attempt_number': attempt_count + 1,
+            'result': 'pending',
+            'created_at': now_iso,
+        }
+        await db.billing_renewal_attempts.insert_one(attempt_entry)
+
+        if not card_token:
+            await db.billing_renewal_attempts.update_one(
+                {'id': attempt_id},
+                {'$set': {'result': 'no_card_token', 'error': 'No saved card token'}}
+            )
+            logger.warning("[RENEWALS] Org %s has no card token, skipping charge", org_id)
+            results['failed'] += 1
+            results['errors'].append({'org_id': org_id, 'error': 'no_card_token'})
+            continue
+
+        try:
+            await apply_pending_decreases(org_id)
+            billing_calc = await compute_org_billing_amount(org_id, 'monthly')
+            amount = billing_calc.get('amount_ils', 0)
+        except Exception as e:
+            await db.billing_renewal_attempts.update_one(
+                {'id': attempt_id},
+                {'$set': {'result': 'billing_calc_error', 'error': str(e)}}
+            )
+            logger.error("[RENEWALS] compute_org_billing_amount failed for org %s: %s", org_id, str(e))
+            results['failed'] += 1
+            results['errors'].append({'org_id': org_id, 'error': f'billing_calc_error: {e}'})
+            continue
+
+        if not amount or amount <= 0:
+            await db.billing_renewal_attempts.update_one(
+                {'id': attempt_id},
+                {'$set': {'result': 'zero_amount', 'error': f'Amount is {amount}'}}
+            )
+            logger.warning("[RENEWALS] Org %s has zero amount, skipping", org_id)
+            results['skipped'] += 1
+            continue
+
+        try:
+            description = f"מנוי BrikOps — חודשי — {org_name}"
+            charge_result = await charge_saved_card(
+                client_id=client_id,
+                card_token=card_token,
+                description=description,
+                amount=amount,
+                remarks=f"org_id={org_id} cycle=monthly renewal=auto period={period_ym}",
+            )
+            doc_id = charge_result.get('id', '')
+
+            try:
+                await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal doc={doc_id} amount={amount}")
+                await db.billing_renewal_attempts.update_one(
+                    {'id': attempt_id},
+                    {'$set': {'result': 'success', 'gi_document_id': doc_id, 'amount': amount}}
+                )
+                logger.info("[RENEWALS] Charged org=%s amount=%.2f doc=%s", org_id, amount, doc_id)
+                results['charged'] += 1
+            except Exception as mp_err:
+                await db.billing_renewal_attempts.update_one(
+                    {'id': attempt_id},
+                    {'$set': {
+                        'result': 'charged_but_mark_paid_failed',
+                        'gi_document_id': doc_id,
+                        'amount': amount,
+                        'error': str(mp_err),
+                    }}
+                )
+                logger.error("[RENEWALS] Charge succeeded (doc=%s) but mark_paid failed for org %s: %s",
+                             doc_id, org_id, str(mp_err))
+                results['failed'] += 1
+                results['errors'].append({'org_id': org_id, 'error': f'mark_paid_failed: {mp_err}', 'gi_document_id': doc_id})
+
+        except GreenInvoiceError as e:
+            await db.billing_renewal_attempts.update_one(
+                {'id': attempt_id},
+                {'$set': {'result': 'charge_failed', 'error': str(e), 'error_code': e.error_code}}
+            )
+            logger.error("[RENEWALS] Charge failed for org %s (attempt %d): %s",
+                         org_id, attempt_count + 1, str(e))
+            results['failed'] += 1
+            results['errors'].append({'org_id': org_id, 'error': str(e), 'attempt': attempt_count + 1})
+
+        except Exception as e:
+            await db.billing_renewal_attempts.update_one(
+                {'id': attempt_id},
+                {'$set': {'result': 'unexpected_error', 'error': str(e)}}
+            )
+            logger.error("[RENEWALS] Unexpected error for org %s: %s", org_id, str(e))
+            results['failed'] += 1
+            results['errors'].append({'org_id': org_id, 'error': f'unexpected: {e}'})
+
+    logger.info("[RENEWALS] Run complete: %s", results)
+    return results
+
+
 _webhook_call_times: list = []
 WEBHOOK_RATE_LIMIT_MAX = 30
 WEBHOOK_RATE_LIMIT_WINDOW = 60

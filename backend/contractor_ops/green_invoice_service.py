@@ -207,6 +207,53 @@ async def get_document(document_id: str) -> dict:
     return await _request("GET", f"/documents/{document_id}")
 
 
+async def charge_saved_card(
+    client_id: str,
+    card_token: str,
+    description: str,
+    amount: float,
+    currency: str = "ILS",
+    remarks: str = "",
+) -> dict:
+    if not card_token:
+        raise GreenInvoiceError("No card token available for recurring charge")
+    payload = {
+        "type": 320,
+        "lang": "he",
+        "currency": currency,
+        "vatType": 0,
+        "signed": True,
+        "rounding": True,
+        "amount": amount,
+        "maxPayments": 1,
+        "client": {"id": client_id} if client_id else {},
+        "income": [
+            {
+                "description": description,
+                "quantity": 1,
+                "price": amount,
+                "currency": currency,
+                "vatType": 0,
+            }
+        ],
+        "payment": [
+            {
+                "type": 3,
+                "cardToken": card_token,
+                "price": amount,
+                "currency": currency,
+            }
+        ],
+    }
+    if remarks:
+        payload["remarks"] = remarks
+
+    logger.info("[GI] Charging saved card: amount=%.2f %s client_id=%s", amount, currency, client_id or "none")
+    result = await _request("POST", "/documents", json_body=payload)
+    logger.info("[GI] Charge completed: doc_id=%s", result.get("id", "<no id>"))
+    return result
+
+
 def compute_payload_hash(payload: dict) -> str:
     import json
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)

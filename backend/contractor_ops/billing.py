@@ -1307,6 +1307,54 @@ async def cancel_payment_request(org_id: str, request_id: str, actor_id: str) ->
     raise ValueError(msg)
 
 
+async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dict:
+    db = get_db()
+    from contractor_ops.billing_plans import get_plan, snapshot_pricing
+
+    sub = await get_subscription(org_id)
+    total_monthly = 0
+    breakdown = []
+    if sub:
+        project_billings = await db.project_billing.find(
+            {'org_id': org_id, 'status': 'active'}, {'_id': 0}
+        ).to_list(1000)
+        for pb in project_billings:
+            contracted = pb.get('contracted_units', 0)
+            observed = await compute_observed_units(pb['project_id'])
+            await _refresh_peak_units(pb, observed)
+            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
+            contracted = pb.get('contracted_units', 0)
+            peak = pb.get('cycle_peak_units', contracted)
+            peak = max(peak, observed, contracted)
+            billable = max(contracted, peak)
+            plan_id = pb.get('plan_id')
+            plan = await get_plan(plan_id) if plan_id else None
+            if plan:
+                pricing = snapshot_pricing(plan, billable)
+                proj_monthly = pricing['monthly_total']
+            else:
+                proj_monthly = pb.get('monthly_total', 0)
+            total_monthly += proj_monthly
+            proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
+            breakdown.append({
+                'project_id': pb.get('project_id'),
+                'project_name': proj.get('name', '') if proj else '',
+                'plan_id': plan_id,
+                'contracted_units': contracted,
+                'observed_units': observed,
+                'cycle_peak_units': peak,
+                'billable_units': billable,
+                'monthly_total': proj_monthly,
+            })
+
+    amount_ils = total_monthly if cycle == 'monthly' else total_monthly * 12
+    return {
+        'amount_ils': amount_ils,
+        'total_monthly': total_monthly,
+        'breakdown': breakdown,
+    }
+
+
 async def create_payment_request(org_id: str, user_id: str, cycle: str, note: str = '', contact_email: str = '', requested_by_kind: str = 'unknown') -> dict:
     db = get_db()
     from contractor_ops.billing_plans import get_plan, snapshot_pricing

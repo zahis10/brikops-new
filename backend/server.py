@@ -675,8 +675,10 @@ async def migrate_billing_orgs():
         await db.gi_webhook_log.create_index([("gi_document_id", 1), ("result", 1)])
         await db.gi_webhook_log.create_index([("org_id", 1), ("cycle", 1), ("result", 1)])
         await db.gi_webhook_log.create_index("raw_payload_expires_at", expireAfterSeconds=0, sparse=True)
+        await db.billing_renewal_attempts.create_index([("org_id", 1), ("period_ym", 1)])
+        await db.billing_renewal_attempts.create_index([("org_id", 1), ("period_ym", 1), ("result", 1)])
     except Exception as e:
-        logger.warning(f"[GI-INDEXES] Webhook log index creation warning: {e}")
+        logger.warning(f"[GI-INDEXES] Webhook/renewal index creation warning: {e}")
 
 
 async def backfill_join_codes():
