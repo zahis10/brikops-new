@@ -59,15 +59,79 @@ async def billing_org(org_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/billing/org/{org_id}/checkout")
-async def billing_checkout(org_id: str, user: dict = Depends(get_current_user)):
-    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+async def billing_checkout(org_id: str, request: Request, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, preview_renewal
+    from config import GI_BASE_URL
     if not BILLING_V1_ENABLED:
         raise HTTPException(status_code=404, detail='Not found')
+    if not GI_BASE_URL:
+        raise HTTPException(status_code=501, detail='Credit card payment coming soon')
     if not _is_super_admin(user):
         billing_role = await check_org_billing_role(user['id'], org_id)
         if not billing_role:
             raise HTTPException(status_code=403, detail='אין הרשאת ניהול חיוב')
-    raise HTTPException(status_code=501, detail='Credit card payment coming soon', headers={'X-Feature': 'stripe_checkout'})
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    cycle = body.get('cycle', 'monthly')
+    renewal = await preview_renewal(org_id, cycle)
+    amount = renewal.get('amount_ils', 0)
+    if not amount or amount <= 0:
+        raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
+    db = get_db()
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1})
+    org_name = org.get('name', '') if org else ''
+    billing_contact = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'billing': 1})
+    billing_email = ''
+    if billing_contact and billing_contact.get('billing'):
+        billing_email = billing_contact['billing'].get('billing_email', '')
+    if not billing_email:
+        user_doc = await db.users.find_one({'id': user['id']}, {'_id': 0, 'email': 1})
+        billing_email = user_doc.get('email', '') if user_doc else ''
+    from config import PASSWORD_RESET_BASE_URL
+    base_url = PASSWORD_RESET_BASE_URL.rstrip('/')
+    success_url = f"{base_url}/billing/org/{org_id}?payment=success"
+    failure_url = f"{base_url}/billing/org/{org_id}?payment=failure"
+    cycle_he = 'שנתי' if cycle == 'yearly' else 'חודשי'
+    description = f"מנוי BrikOps — {cycle_he} — {org_name}"
+    from contractor_ops.green_invoice_service import create_payment_form, GreenInvoiceError
+    try:
+        result = await create_payment_form(
+            client_name=org_name or 'לקוח BrikOps',
+            client_email=billing_email,
+            description=description,
+            amount=amount,
+            success_url=success_url,
+            failure_url=failure_url,
+            remarks=f"org_id={org_id} cycle={cycle}",
+        )
+    except GreenInvoiceError as e:
+        logger.error("[BILLING-GI] Payment form creation failed for org %s: %s", org_id, str(e))
+        raise HTTPException(status_code=502, detail=f'שגיאה ביצירת טופס תשלום: {str(e)}')
+    payment_url = result.get('url', '')
+    if not payment_url:
+        logger.error("[BILLING-GI] No URL in payment form response for org %s: %s", org_id, result)
+        raise HTTPException(status_code=502, detail='לא התקבל קישור תשלום')
+    import uuid
+    from contractor_ops.billing import _now
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'billing',
+        'entity_type': 'checkout',
+        'entity_id': org_id,
+        'action': 'gi_checkout_created',
+        'actor_id': user['id'],
+        'payload': {
+            'org_id': org_id,
+            'cycle': cycle,
+            'amount': amount,
+            'payment_url': payment_url,
+        },
+        'created_at': _now(),
+    })
+    return {'url': payment_url, 'amount': amount, 'cycle': cycle}
 
 
 @router.get("/billing/preview-renewal")
@@ -617,3 +681,192 @@ async def update_billing_contact_endpoint(org_id: str, request: Request, user: d
     if result.get('error'):
         raise HTTPException(status_code=400, detail=result['error'])
     return result
+
+
+_webhook_call_times: list = []
+WEBHOOK_RATE_LIMIT_MAX = 30
+WEBHOOK_RATE_LIMIT_WINDOW = 60
+
+
+@router.post("/billing/webhook/greeninvoice")
+async def billing_webhook_greeninvoice(request: Request):
+    import time
+    import uuid
+    import json
+    from contractor_ops.billing import _now, get_subscription, mark_paid
+    from contractor_ops.green_invoice_service import get_document, compute_payload_hash, GreenInvoiceError
+    from config import GI_BASE_URL
+
+    client_ip = request.client.host if request.client else 'unknown'
+    now_ts = time.time()
+
+    while _webhook_call_times and _webhook_call_times[0] < now_ts - WEBHOOK_RATE_LIMIT_WINDOW:
+        _webhook_call_times.pop(0)
+    if len(_webhook_call_times) >= WEBHOOK_RATE_LIMIT_MAX:
+        logger.warning("[GI-WEBHOOK] Rate limited from IP=%s", client_ip)
+        return {"status": "rate_limited"}
+    _webhook_call_times.append(now_ts)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        logger.error("[GI-WEBHOOK] Invalid JSON from IP=%s", client_ip)
+        return {"status": "invalid_json"}
+
+    payload_hash = compute_payload_hash(payload)
+    safe_summary = {k: payload.get(k) for k in ("id", "type", "number", "total", "currency", "status") if k in payload}
+    logger.info("[GI-WEBHOOK] Received webhook IP=%s hash=%s summary=%s",
+                client_ip, payload_hash, json.dumps(safe_summary, ensure_ascii=False))
+
+    db = get_db()
+    doc_id = payload.get("id", "")
+    if not doc_id:
+        logger.warning("[GI-WEBHOOK] No document id in payload hash=%s", payload_hash)
+        await db.gi_webhook_log.insert_one({
+            'id': str(uuid.uuid4()),
+            'payload': payload,
+            'payload_hash': payload_hash,
+            'ip': client_ip,
+            'result': 'no_doc_id',
+            'created_at': _now(),
+        })
+        return {"status": "ok"}
+
+    existing = await db.gi_webhook_log.find_one({'gi_document_id': doc_id, 'result': 'success'}, {'_id': 0, 'id': 1})
+    if existing:
+        logger.info("[GI-WEBHOOK] Duplicate doc_id=%s, already processed", doc_id)
+        return {"status": "ok"}
+
+    from config import GI_WEBHOOK_SECRET
+    if GI_WEBHOOK_SECRET:
+        incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
+        if incoming_secret != GI_WEBHOOK_SECRET:
+            logger.warning("[GI-WEBHOOK] Invalid webhook secret from IP=%s", client_ip)
+            await db.gi_webhook_log.insert_one({
+                'id': str(uuid.uuid4()),
+                'payload_hash': payload_hash,
+                'ip': client_ip,
+                'result': 'auth_failed',
+                'created_at': _now(),
+            })
+            return {"status": "ok"}
+
+    if not GI_BASE_URL:
+        logger.error("[GI-WEBHOOK] GI_BASE_URL not configured, cannot verify document")
+        await db.gi_webhook_log.insert_one({
+            'id': str(uuid.uuid4()),
+            'gi_document_id': doc_id,
+            'payload_hash': payload_hash,
+            'ip': client_ip,
+            'result': 'no_gi_config',
+            'created_at': _now(),
+        })
+        return {"status": "ok"}
+
+    verified_doc = None
+    try:
+        verified_doc = await get_document(doc_id)
+    except GreenInvoiceError as e:
+        logger.error("[GI-WEBHOOK] Failed to verify doc %s: %s", doc_id, str(e))
+        await db.gi_webhook_log.insert_one({
+            'id': str(uuid.uuid4()),
+            'gi_document_id': doc_id,
+            'payload_hash': payload_hash,
+            'ip': client_ip,
+            'result': 'verification_failed',
+            'error': str(e),
+            'created_at': _now(),
+        })
+        return {"status": "ok"}
+
+    doc_status = verified_doc.get("status", "")
+    if doc_status not in ("", "active", "paid"):
+        logger.warning("[GI-WEBHOOK] Doc %s has non-paid status: %s", doc_id, doc_status)
+        await db.gi_webhook_log.insert_one({
+            'id': str(uuid.uuid4()),
+            'gi_document_id': doc_id,
+            'payload_hash': payload_hash,
+            'ip': client_ip,
+            'result': 'not_paid_status',
+            'doc_status': doc_status,
+            'created_at': _now(),
+        })
+        return {"status": "ok"}
+
+    remarks = verified_doc.get("remarks", "") or ""
+    org_id = ""
+    cycle = "monthly"
+    if remarks:
+        for part in remarks.split():
+            if part.startswith("org_id="):
+                org_id = part.split("=", 1)[1]
+            elif part.startswith("cycle="):
+                cycle = part.split("=", 1)[1]
+
+    doc_total = verified_doc.get("total", 0) or verified_doc.get("amount", 0) or 0
+
+    log_entry = {
+        'id': str(uuid.uuid4()),
+        'gi_document_id': doc_id,
+        'payload_hash': payload_hash,
+        'ip': client_ip,
+        'org_id': org_id,
+        'cycle': cycle,
+        'doc_total': doc_total,
+        'doc_status': doc_status,
+        'result': 'pending',
+        'created_at': _now(),
+    }
+
+    if not org_id:
+        log_entry['result'] = 'no_org_id'
+        logger.warning("[GI-WEBHOOK] Could not extract org_id from verified remarks: %s", remarks)
+        await db.gi_webhook_log.insert_one(log_entry)
+        return {"status": "ok"}
+
+    if doc_total <= 0:
+        log_entry['result'] = 'zero_amount'
+        logger.warning("[GI-WEBHOOK] Doc %s has zero/negative total: %s", doc_id, doc_total)
+        await db.gi_webhook_log.insert_one(log_entry)
+        return {"status": "ok"}
+
+    try:
+        result = await mark_paid(org_id, 'gi_webhook', None, cycle, f"GI doc={doc_id} total={doc_total}")
+        log_entry['result'] = 'success'
+        log_entry['mark_paid_result'] = {
+            'paid_until': result.get('paid_until'),
+            'status': result.get('status'),
+        }
+        logger.info("[GI-WEBHOOK] Payment processed for org=%s doc=%s cycle=%s total=%s", org_id, doc_id, cycle, doc_total)
+    except Exception as e:
+        log_entry['result'] = 'mark_paid_error'
+        log_entry['error'] = str(e)
+        logger.error("[GI-WEBHOOK] mark_paid failed for org=%s: %s", org_id, str(e))
+
+    payment_details = {}
+    if verified_doc.get("payment") and isinstance(verified_doc["payment"], list) and len(verified_doc["payment"]) > 0:
+        p = verified_doc["payment"][0]
+        payment_details = {
+            'card_suffix': p.get("cardSuffix", p.get("last4", "")),
+            'card_type': p.get("cardType", ""),
+        }
+        if p.get("cardToken"):
+            payment_details['has_card_token'] = True
+
+    if payment_details:
+        log_entry['payment_details'] = payment_details
+        if payment_details.get('has_card_token') and org_id:
+            p = verified_doc["payment"][0]
+            await db.organizations.update_one(
+                {'id': org_id},
+                {'$set': {
+                    'billing.gi_card_token': p["cardToken"],
+                    'billing.gi_card_suffix': payment_details.get('card_suffix', ''),
+                    'billing.gi_document_id': doc_id,
+                }}
+            )
+            logger.info("[GI-WEBHOOK] Saved card token for org=%s suffix=%s",
+                        org_id, payment_details.get('card_suffix', ''))
+
+    await db.gi_webhook_log.insert_one(log_entry)
+    return {"status": "ok"}

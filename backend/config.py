@@ -203,6 +203,11 @@ SMTP_REPLY_TO = os.environ.get('SMTP_REPLY_TO', 'support@brikops.com')
 RESET_TOKEN_TTL_MINUTES = int(os.environ.get('RESET_TOKEN_TTL_MINUTES', '60'))
 PASSWORD_RESET_BASE_URL = os.environ.get('PASSWORD_RESET_BASE_URL', 'https://app.brikops.com')
 
+GI_BASE_URL = os.environ.get('GI_BASE_URL', '')
+GI_API_KEY_ID = os.environ.get('GI_API_KEY_ID', '')
+GI_API_SECRET = os.environ.get('GI_API_SECRET', '')
+GI_WEBHOOK_SECRET = os.environ.get('GI_WEBHOOK_SECRET', '')
+
 
 def log_sanitized_startup():
     logger.info("=" * 60)
@@ -252,6 +257,9 @@ def log_sanitized_startup():
     logger.info(f"  SMTP_PORT:          {SMTP_PORT}")
     logger.info(f"  SMTP_USER:          {'****' + SMTP_USER[-10:] if len(SMTP_USER) > 10 else SMTP_USER or 'NOT SET'}")
     logger.info(f"  SMTP_PASS:          {'SET' if SMTP_PASS else 'NOT SET'}")
+    logger.info(f"  GI_BASE_URL:        {GI_BASE_URL or 'NOT SET'}")
+    logger.info(f"  GI_API_KEY_ID:      {'SET' if GI_API_KEY_ID else 'NOT SET'}")
+    logger.info(f"  GI_API_SECRET:      {'SET' if GI_API_SECRET else 'NOT SET'}")
     logger.info("=" * 60)
     logger.info("Isolation guard PASSED — all required vars present.")
     logger.info("=" * 60)

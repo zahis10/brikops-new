@@ -135,6 +135,7 @@ export default function OrgBillingPage() {
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoDeleting, setLogoDeleting] = useState(false);
   const logoFileRef = useRef(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   const isSA = user?.platform_role === 'super_admin';
   const isOwner = data?.owner_user_id === user?.id;
@@ -651,6 +652,30 @@ export default function OrgBillingPage() {
   }, [location.search]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const paymentStatus = params.get('payment');
+    if (paymentStatus === 'success') {
+      toast.success('התשלום התקבל בהצלחה! הרישיון יעודכן תוך דקות ספורות.');
+      const newParams = new URLSearchParams(location.search);
+      newParams.delete('payment');
+      const newSearch = newParams.toString();
+      navigate(`${location.pathname}${newSearch ? '?' + newSearch : ''}${location.hash}`, { replace: true });
+      setTimeout(async () => {
+        try {
+          const updated = await billingService.orgBilling(orgId);
+          setData(updated);
+        } catch {}
+      }, 3000);
+    } else if (paymentStatus === 'failure') {
+      toast.error('התשלום לא הושלם. ניתן לנסות שוב.');
+      const newParams = new URLSearchParams(location.search);
+      newParams.delete('payment');
+      const newSearch = newParams.toString();
+      navigate(`${location.pathname}${newSearch ? '?' + newSearch : ''}${location.hash}`, { replace: true });
+    }
+  }, [location.search, location.pathname, location.hash, navigate, orgId]);
+
+  useEffect(() => {
     if (data && location.hash === '#billing') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1072,30 +1097,37 @@ export default function OrgBillingPage() {
           )}
 
           {!(needsUpgrade && data.projects?.length > 0) && (<>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+          <div className="bg-white border border-emerald-200 rounded-lg p-4 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">בקרוב</span>
             </div>
             <button
+              disabled={checkoutLoading}
               onClick={async () => {
+                setCheckoutLoading(true);
                 try {
-                  await billingService.checkout(orgId);
+                  const result = await billingService.checkout(orgId, renewalCycle);
+                  if (result.url) {
+                    window.location.href = result.url;
+                  } else {
+                    toast.error('לא התקבל קישור תשלום');
+                  }
                 } catch (err) {
                   if (err.response?.status === 501) {
                     toast('תשלום באשראי ייפתח בקרוב — בינתיים אפשר לשלוח בקשת תשלום', { icon: '💳' });
                   } else {
-                    toast.error(err.response?.data?.detail || 'שגיאה');
+                    toast.error(err.response?.data?.detail || 'שגיאה ביצירת טופס תשלום');
                   }
+                } finally {
+                  setCheckoutLoading(false);
                 }
               }}
-              className="w-full bg-slate-300 text-slate-500 font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-400 hover:text-slate-600 transition-colors"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
-              <CreditCard className="w-4 h-4" />
-              שלם באשראי
-              <span className="text-xs opacity-70">(בקרוב)</span>
+              {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+              {checkoutLoading ? 'מעביר לתשלום...' : 'שלם באשראי'}
             </button>
-            <p className="text-xs text-slate-400 text-center">בקרוב תוכל לחדש אוטומטית ללא התערבות.</p>
+            <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח של חשבונית ירוקה (Morning)</p>
           </div>
 
           <div className="bg-white border border-amber-200 rounded-lg p-4 space-y-4">

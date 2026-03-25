@@ -889,8 +889,8 @@ export const billingService = {
     const response = await axios.post(`${API}/billing/project/${projectId}/setup-complete`, {}, { headers: getAuthHeader() });
     return response.data;
   },
-  async checkout(orgId) {
-    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, {}, { headers: getAuthHeader() });
+  async checkout(orgId, cycle = 'monthly') {
+    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle }, { headers: getAuthHeader() });
     return response.data;
   },
   async previewRenewal(orgId, cycle) {
