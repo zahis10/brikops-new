@@ -1251,6 +1251,7 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
     if attempt.get('resolved'):
         raise HTTPException(status_code=400, detail="Already resolved")
 
+    resolved_attempt_id = attempt['id']
     org_id = attempt['org_id']
     doc_id = attempt.get('gi_document_id', '')
     amount = attempt.get('amount', 0)
@@ -1258,7 +1259,7 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
     result = await mark_paid(org_id, 'system_renewal_resolve', None, 'monthly', f"Resolved failed renewal doc={doc_id} amount={amount}")
 
     await db.billing_renewal_attempts.update_one(
-        {'id': attempt_id},
+        {'id': resolved_attempt_id},
         {'$set': {
             'resolved': True,
             'resolved_at': _now(),
@@ -1268,5 +1269,5 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
     )
 
     logger.info("[RESOLVE-RENEWAL] Resolved attempt=%s org=%s doc=%s by=%s",
-                attempt_id, org_id, doc_id, user.get('email', ''))
+                resolved_attempt_id, org_id, doc_id, user.get('email', ''))
     return {"status": "resolved", "mark_paid_result": result}
