@@ -646,32 +646,37 @@ async def migrate_billing_orgs():
         sample = await db.organizations.find_one()
         if sample:
             logger.info("[BILLING-MIGRATE] Organizations already exist, skipping migration")
-            return
+        else:
+            owners = await db.users.find(
+                {'role': {'$in': ['owner', 'admin']}},
+                {'_id': 0, 'id': 1, 'name': 1, 'role': 1}
+            ).to_list(100)
 
-        owners = await db.users.find(
-            {'role': {'$in': ['owner', 'admin']}},
-            {'_id': 0, 'id': 1, 'name': 1, 'role': 1}
-        ).to_list(100)
+            if not owners:
+                logger.info("[BILLING-MIGRATE] No owner/admin users found, skipping")
+            else:
+                for owner in owners:
+                    org = await create_organization(owner['id'], f"הארגון של {owner.get('name', '')}")
+                    sub = await create_trial_subscription(org['id'], trial_days=30)
+                    count = await migrate_existing_projects(owner['id'], org['id'])
+                    logger.info(f"[BILLING-MIGRATE] Created org for {owner['id']}: org={org['id']}, projects_migrated={count}")
 
-        if not owners:
-            logger.info("[BILLING-MIGRATE] No owner/admin users found, skipping")
-            return
-
-        for owner in owners:
-            org = await create_organization(owner['id'], f"הארגון של {owner.get('name', '')}")
-            sub = await create_trial_subscription(org['id'], trial_days=30)
-            count = await migrate_existing_projects(owner['id'], org['id'])
-            logger.info(f"[BILLING-MIGRATE] Created org for {owner['id']}: org={org['id']}, projects_migrated={count}")
-
-        await db.subscriptions.create_index("org_id", unique=True)
-        await db.organization_memberships.create_index([("org_id", 1), ("user_id", 1)], unique=True)
-        await db.organization_memberships.create_index("user_id")
-        await db.project_billing.create_index("project_id", unique=True)
-        await db.project_billing.create_index("org_id")
-        await db.billing_plans.create_index("id", unique=True)
-        logger.info("[BILLING-MIGRATE] Billing migration complete")
+                await db.subscriptions.create_index("org_id", unique=True)
+                await db.organization_memberships.create_index([("org_id", 1), ("user_id", 1)], unique=True)
+                await db.organization_memberships.create_index("user_id")
+                await db.project_billing.create_index("project_id", unique=True)
+                await db.project_billing.create_index("org_id")
+                await db.billing_plans.create_index("id", unique=True)
+                logger.info("[BILLING-MIGRATE] Billing migration complete")
     except Exception as e:
         logger.warning(f"[BILLING-MIGRATE] Migration warning: {e}")
+
+    try:
+        await db.gi_webhook_log.create_index([("gi_document_id", 1), ("result", 1)])
+        await db.gi_webhook_log.create_index([("org_id", 1), ("cycle", 1), ("result", 1)])
+        await db.gi_webhook_log.create_index("raw_payload_expires_at", expireAfterSeconds=0, sparse=True)
+    except Exception as e:
+        logger.warning(f"[GI-INDEXES] Webhook log index creation warning: {e}")
 
 
 async def backfill_join_codes():

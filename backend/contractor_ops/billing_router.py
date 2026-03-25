@@ -728,23 +728,35 @@ async def billing_webhook_greeninvoice(request: Request):
         logger.error("[GI-WEBHOOK] Invalid JSON from IP=%s", client_ip)
         return {"status": "invalid_json"}
 
+    from datetime import datetime, timedelta, timezone
+
     payload_hash = compute_payload_hash(payload)
     safe_summary = {k: payload.get(k) for k in ("id", "type", "number", "total", "currency", "status") if k in payload}
     logger.info("[GI-WEBHOOK] Received webhook IP=%s hash=%s summary=%s",
                 client_ip, payload_hash, json.dumps(safe_summary, ensure_ascii=False))
 
     db = get_db()
+
+    RAW_PAYLOAD_LOG_LIMIT = 10
+    raw_log_count = await db.gi_webhook_log.count_documents({'raw_payload': {'$exists': True}})
+    should_log_raw = raw_log_count < RAW_PAYLOAD_LOG_LIMIT
+
+    def _add_raw(entry: dict) -> dict:
+        if should_log_raw:
+            entry['raw_payload'] = payload
+            entry['raw_payload_expires_at'] = datetime.now(timezone.utc) + timedelta(days=30)
+        return entry
+
     doc_id = payload.get("id", "")
     if not doc_id:
         logger.warning("[GI-WEBHOOK] No document id in payload hash=%s", payload_hash)
-        await db.gi_webhook_log.insert_one({
+        await db.gi_webhook_log.insert_one(_add_raw({
             'id': str(uuid.uuid4()),
-            'payload': payload,
             'payload_hash': payload_hash,
             'ip': client_ip,
             'result': 'no_doc_id',
             'created_at': _now(),
-        })
+        }))
         return {"status": "ok"}
 
     existing = await db.gi_webhook_log.find_one({'gi_document_id': doc_id, 'result': 'success'}, {'_id': 0, 'id': 1})
@@ -757,25 +769,25 @@ async def billing_webhook_greeninvoice(request: Request):
         incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
         if incoming_secret != GI_WEBHOOK_SECRET:
             logger.warning("[GI-WEBHOOK] Invalid webhook secret from IP=%s", client_ip)
-            await db.gi_webhook_log.insert_one({
+            await db.gi_webhook_log.insert_one(_add_raw({
                 'id': str(uuid.uuid4()),
                 'payload_hash': payload_hash,
                 'ip': client_ip,
                 'result': 'auth_failed',
                 'created_at': _now(),
-            })
+            }))
             return {"status": "ok"}
 
     if not GI_BASE_URL:
         logger.error("[GI-WEBHOOK] GI_BASE_URL not configured, cannot verify document")
-        await db.gi_webhook_log.insert_one({
+        await db.gi_webhook_log.insert_one(_add_raw({
             'id': str(uuid.uuid4()),
             'gi_document_id': doc_id,
             'payload_hash': payload_hash,
             'ip': client_ip,
             'result': 'no_gi_config',
             'created_at': _now(),
-        })
+        }))
         return {"status": "ok"}
 
     verified_doc = None
@@ -783,7 +795,7 @@ async def billing_webhook_greeninvoice(request: Request):
         verified_doc = await get_document(doc_id)
     except GreenInvoiceError as e:
         logger.error("[GI-WEBHOOK] Failed to verify doc %s: %s", doc_id, str(e))
-        await db.gi_webhook_log.insert_one({
+        await db.gi_webhook_log.insert_one(_add_raw({
             'id': str(uuid.uuid4()),
             'gi_document_id': doc_id,
             'payload_hash': payload_hash,
@@ -791,13 +803,13 @@ async def billing_webhook_greeninvoice(request: Request):
             'result': 'verification_failed',
             'error': str(e),
             'created_at': _now(),
-        })
+        }))
         return {"status": "ok"}
 
     doc_status = verified_doc.get("status", "")
     if doc_status not in ("", "active", "paid"):
         logger.warning("[GI-WEBHOOK] Doc %s has non-paid status: %s", doc_id, doc_status)
-        await db.gi_webhook_log.insert_one({
+        await db.gi_webhook_log.insert_one(_add_raw({
             'id': str(uuid.uuid4()),
             'gi_document_id': doc_id,
             'payload_hash': payload_hash,
@@ -805,7 +817,7 @@ async def billing_webhook_greeninvoice(request: Request):
             'result': 'not_paid_status',
             'doc_status': doc_status,
             'created_at': _now(),
-        })
+        }))
         return {"status": "ok"}
 
     remarks = verified_doc.get("remarks", "") or ""
@@ -832,6 +844,11 @@ async def billing_webhook_greeninvoice(request: Request):
         'result': 'pending',
         'created_at': _now(),
     }
+    if should_log_raw:
+        log_entry['raw_payload'] = payload
+        log_entry['raw_verified_doc'] = verified_doc
+        log_entry['raw_payload_expires_at'] = datetime.now(timezone.utc) + timedelta(days=30)
+        logger.info("[GI-WEBHOOK] Logging full raw payload+doc (%d/%d)", raw_log_count + 1, RAW_PAYLOAD_LOG_LIMIT)
 
     if not org_id:
         log_entry['result'] = 'no_org_id'
