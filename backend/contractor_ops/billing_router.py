@@ -103,7 +103,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
             )
             logger.info("[BILLING-GI] Stored gi_client_id=%s for org=%s", gi_client_id, org_id)
         except GreenInvoiceError as e:
-            logger.warning("[BILLING-GI] Client creation failed for org %s: %s, proceeding without client_id", org_id, str(e))
+            logger.warning("[BILLING-GI] Client creation failed for org %s: %s — proceeding without client_id (webhook will backfill)", org_id, str(e))
             gi_client_id = ''
     from config import PASSWORD_RESET_BASE_URL
     base_url = PASSWORD_RESET_BASE_URL.rstrip('/')
