@@ -112,6 +112,45 @@ async def _request(method: str, path: str, json_body: dict = None, retry_on_5xx:
     return data
 
 
+async def search_clients(email: str) -> Optional[dict]:
+    result = await _request("POST", "/clients/search", json_body={
+        "email": email,
+        "page": 1,
+        "pageSize": 1,
+    })
+    items = result.get("items", [])
+    if items:
+        logger.info("[GI] Client found by email=%s id=%s", email, items[0].get("id", "?"))
+        return items[0]
+    return None
+
+
+async def create_client(name: str, email: str, tax_id: str = "") -> dict:
+    payload = {
+        "name": name,
+        "emails": [email] if email else [],
+        "country": "IL",
+        "active": True,
+    }
+    if tax_id:
+        payload["taxId"] = tax_id
+    result = await _request("POST", "/clients", json_body=payload)
+    logger.info("[GI] Client created: id=%s name=%s", result.get("id", "?"), name)
+    return result
+
+
+async def create_or_get_client(name: str, email: str, tax_id: str = "") -> str:
+    if email:
+        existing = await search_clients(email)
+        if existing:
+            return existing["id"]
+    result = await create_client(name, email, tax_id)
+    client_id = result.get("id", "")
+    if not client_id:
+        raise GreenInvoiceError("Client creation returned no id")
+    return client_id
+
+
 async def create_payment_form(
     client_name: str,
     client_email: str,
@@ -121,7 +160,16 @@ async def create_payment_form(
     success_url: str = "",
     failure_url: str = "",
     remarks: str = "",
+    client_id: str = "",
 ) -> dict:
+    if client_id:
+        client_block = {"id": client_id}
+    else:
+        client_block = {
+            "name": client_name,
+            "emails": [client_email] if client_email else [],
+            "add": True,
+        }
     payload = {
         "type": 320,
         "lang": "he",
@@ -131,11 +179,7 @@ async def create_payment_form(
         "rounding": True,
         "amount": amount,
         "maxPayments": 1,
-        "client": {
-            "name": client_name,
-            "emails": [client_email] if client_email else [],
-            "add": True,
-        },
+        "client": client_block,
         "income": [
             {
                 "description": description,
@@ -151,7 +195,8 @@ async def create_payment_form(
     if remarks:
         payload["remarks"] = remarks
 
-    logger.info("[GI] Creating payment form: amount=%.2f %s client=%s", amount, currency, client_name)
+    logger.info("[GI] Creating payment form: amount=%.2f %s client_id=%s client_name=%s",
+                amount, currency, client_id or "inline", client_name)
     result = await _request("POST", "/payments/form", json_body=payload)
     logger.info("[GI] Payment form created: url=%s", result.get("url", "<no url>"))
     return result

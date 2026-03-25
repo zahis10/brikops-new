@@ -81,22 +81,36 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
     if not amount or amount <= 0:
         raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
     db = get_db()
-    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1})
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
     org_name = org.get('name', '') if org else ''
-    billing_contact = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'billing': 1})
-    billing_email = ''
-    if billing_contact and billing_contact.get('billing'):
-        billing_email = billing_contact['billing'].get('billing_email', '')
+    billing_data = org.get('billing', {}) if org else {}
+    billing_email = billing_data.get('billing_email', '')
     if not billing_email:
         user_doc = await db.users.find_one({'id': user['id']}, {'_id': 0, 'email': 1})
         billing_email = user_doc.get('email', '') if user_doc else ''
+    from contractor_ops.green_invoice_service import create_payment_form, create_or_get_client, GreenInvoiceError
+    gi_client_id = billing_data.get('gi_client_id', '')
+    if not gi_client_id:
+        try:
+            gi_client_id = await create_or_get_client(
+                name=org_name or 'לקוח BrikOps',
+                email=billing_email,
+                tax_id=org.get('tax_id', '') if org else '',
+            )
+            await db.organizations.update_one(
+                {'id': org_id},
+                {'$set': {'billing.gi_client_id': gi_client_id}}
+            )
+            logger.info("[BILLING-GI] Stored gi_client_id=%s for org=%s", gi_client_id, org_id)
+        except GreenInvoiceError as e:
+            logger.warning("[BILLING-GI] Client creation failed for org %s: %s, proceeding without client_id", org_id, str(e))
+            gi_client_id = ''
     from config import PASSWORD_RESET_BASE_URL
     base_url = PASSWORD_RESET_BASE_URL.rstrip('/')
     success_url = f"{base_url}/billing/org/{org_id}?payment=success"
     failure_url = f"{base_url}/billing/org/{org_id}?payment=failure"
     cycle_he = 'שנתי' if cycle == 'yearly' else 'חודשי'
     description = f"מנוי BrikOps — {cycle_he} — {org_name}"
-    from contractor_ops.green_invoice_service import create_payment_form, GreenInvoiceError
     try:
         result = await create_payment_form(
             client_name=org_name or 'לקוח BrikOps',
@@ -106,6 +120,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
             success_url=success_url,
             failure_url=failure_url,
             remarks=f"org_id={org_id} cycle={cycle}",
+            client_id=gi_client_id,
         )
     except GreenInvoiceError as e:
         logger.error("[BILLING-GI] Payment form creation failed for org %s: %s", org_id, str(e))
@@ -853,20 +868,32 @@ async def billing_webhook_greeninvoice(request: Request):
         if p.get("cardToken"):
             payment_details['has_card_token'] = True
 
+    gi_client_id_from_doc = ""
+    if verified_doc.get("client") and isinstance(verified_doc["client"], dict):
+        gi_client_id_from_doc = verified_doc["client"].get("id", "")
+
     if payment_details:
         log_entry['payment_details'] = payment_details
-        if payment_details.get('has_card_token') and org_id:
-            p = verified_doc["payment"][0]
+        if org_id:
+            update_fields = {'billing.gi_document_id': doc_id}
+            if payment_details.get('has_card_token'):
+                p = verified_doc["payment"][0]
+                update_fields['billing.gi_card_token'] = p["cardToken"]
+                update_fields['billing.gi_card_suffix'] = payment_details.get('card_suffix', '')
+            if gi_client_id_from_doc:
+                update_fields['billing.gi_client_id'] = gi_client_id_from_doc
             await db.organizations.update_one(
                 {'id': org_id},
-                {'$set': {
-                    'billing.gi_card_token': p["cardToken"],
-                    'billing.gi_card_suffix': payment_details.get('card_suffix', ''),
-                    'billing.gi_document_id': doc_id,
-                }}
+                {'$set': update_fields}
             )
-            logger.info("[GI-WEBHOOK] Saved card token for org=%s suffix=%s",
-                        org_id, payment_details.get('card_suffix', ''))
+            logger.info("[GI-WEBHOOK] Updated billing for org=%s suffix=%s client_id=%s",
+                        org_id, payment_details.get('card_suffix', ''), gi_client_id_from_doc or 'none')
+    elif gi_client_id_from_doc and org_id:
+        await db.organizations.update_one(
+            {'id': org_id},
+            {'$set': {'billing.gi_client_id': gi_client_id_from_doc, 'billing.gi_document_id': doc_id}}
+        )
+        logger.info("[GI-WEBHOOK] Stored gi_client_id=%s for org=%s from webhook", gi_client_id_from_doc, org_id)
 
     await db.gi_webhook_log.insert_one(log_entry)
     return {"status": "ok"}
