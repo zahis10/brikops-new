@@ -443,11 +443,11 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
             is_company_member = True
     logger.info(f"[GET_TASK] task_id={task_id} user_id={user['id']} membership_role={membership['role']} user_role={user.get('role')} is_contractor={is_contractor} is_assignee={is_assignee} is_company_member={is_company_member} assignee_id={task.get('assignee_id')} task_company_id={task.get('company_id')}")
     if is_contractor and not is_assignee and not is_company_member:
-        logger.info(f"[GET_TASK] 404 contractor_not_assignee_or_company task_id={task_id} user_id={user['id']}")
-        raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+        logger.info(f"[GET_TASK] 403 contractor_not_assignee_or_company task_id={task_id} user_id={user['id']}")
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לצפות בליקוי הזה')
     if membership['role'] == 'none' and not is_assignee:
         logger.info(f"[GET_TASK] 403 no_membership_not_assignee task_id={task_id} user_id={user['id']}")
-        raise HTTPException(status_code=403, detail='No access to this task')
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לצפות בליקוי הזה')
     task_data = Task(**task).dict()
     from services.object_storage import resolve_urls_in_doc
     resolve_urls_in_doc(task_data)
