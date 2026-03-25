@@ -620,6 +620,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             raise HTTPException(status_code=400, detail='סיסמה חייבת להיות לפחות 8 תווים')
 
         db = get_db()
+        existing = await db.users.find_one({'id': user['id']}, {'_id': 0, 'password_hash': 1})
+        if existing and existing.get('password_hash'):
+            raise HTTPException(status_code=400, detail='סיסמה כבר הוגדרה. יש להשתמש בשינוי סיסמה.')
+
         hashed = await _hash_password(req.password)
         await db.users.update_one(
             {'id': user['id']},

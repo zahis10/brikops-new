@@ -44,7 +44,7 @@ const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error
 
 const AccountSettingsPage = () => {
   const { user, logout } = useAuth();
-  const { setShowCompleteForm, identityStatus } = useIdentity();
+  const { setShowCompleteForm, identityStatus, refreshIdentity } = useIdentity();
   const navigate = useNavigate();
   const location = useLocation();
   const phoneRef = useRef(null);
@@ -114,6 +114,10 @@ const AccountSettingsPage = () => {
   const [pwLoading, setPwLoading] = useState(false);
   const [pwErrors, setPwErrors] = useState({});
   const [pwServerError, setPwServerError] = useState('');
+  const [setPwForm2, setSetPwForm2] = useState({ newPassword: '', confirmPassword: '' });
+  const [setPwLoading2, setSetPwLoading2] = useState(false);
+  const [setPwErrors2, setSetPwErrors2] = useState({});
+  const [setPwServerError2, setSetPwServerError2] = useState('');
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
   const [showConfirmPw, setShowConfirmPw] = useState(false);
@@ -185,6 +189,33 @@ const AccountSettingsPage = () => {
       else setPwServerError('אירעה שגיאה. נסה שוב מאוחר יותר.');
     } finally {
       setPwLoading(false);
+    }
+  };
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    setSetPwServerError2('');
+    const errs = {};
+    if (!setPwForm2.newPassword || setPwForm2.newPassword.length < 8) errs.newPassword = 'סיסמה חייבת להכיל לפחות 8 תווים';
+    else if (!/[a-zA-Zא-ת]/.test(setPwForm2.newPassword)) errs.newPassword = 'סיסמה חייבת להכיל לפחות אות אחת';
+    else if (!/[0-9]/.test(setPwForm2.newPassword)) errs.newPassword = 'סיסמה חייבת להכיל לפחות ספרה אחת';
+    if (setPwForm2.newPassword && setPwForm2.newPassword !== setPwForm2.confirmPassword) errs.confirmPassword = 'הסיסמאות לא תואמות';
+    setSetPwErrors2(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    setSetPwLoading2(true);
+    try {
+      await authService.setPassword(setPwForm2.newPassword);
+      toast.success('סיסמה הוגדרה בהצלחה');
+      setSetPwForm2({ newPassword: '', confirmPassword: '' });
+      await refreshIdentity();
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail || '';
+      if (status === 400) setSetPwServerError2(detail || 'סיסמה לא תקינה');
+      else setSetPwServerError2('אירעה שגיאה. נסה שוב מאוחר יותר.');
+    } finally {
+      setSetPwLoading2(false);
     }
   };
 
@@ -537,7 +568,7 @@ const AccountSettingsPage = () => {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <Lock className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">שינוי סיסמה</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{hasPassword ? 'שינוי סיסמה' : 'הגדרת סיסמה'}</h2>
           </div>
 
           {!hasPassword && !hasEmail ? (
@@ -550,6 +581,41 @@ const AccountSettingsPage = () => {
                 השלמת חשבון (אימייל+סיסמה)
               </Button>
             </div>
+          ) : !hasPassword && hasEmail ? (
+            <form onSubmit={handleSetPassword} className="space-y-3">
+              {setPwServerError2 && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{setPwServerError2}</span>
+                </div>
+              )}
+              <p className="text-sm text-slate-500">טרם הוגדרה סיסמה לחשבון זה. הגדר סיסמה כדי להתחבר גם באימייל.</p>
+              <div className="space-y-1">
+                <label htmlFor="setPw" className="block text-sm font-medium text-slate-700">סיסמה חדשה</label>
+                <PasswordInput
+                  id="setPw"
+                  value={setPwForm2.newPassword}
+                  onChange={(e) => { setSetPwForm2(f => ({ ...f, newPassword: e.target.value })); setSetPwErrors2(p => { const n = {...p}; delete n.newPassword; return n; }); setSetPwServerError2(''); }}
+                  placeholder="לפחות 8 תווים, אות וספרה"
+                  show={showNewPw} onToggle={() => setShowNewPw(p => !p)}
+                  error={setPwErrors2.newPassword}
+                />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="setConfirmPw" className="block text-sm font-medium text-slate-700">אימות סיסמה</label>
+                <PasswordInput
+                  id="setConfirmPw"
+                  value={setPwForm2.confirmPassword}
+                  onChange={(e) => { setSetPwForm2(f => ({ ...f, confirmPassword: e.target.value })); setSetPwErrors2(p => { const n = {...p}; delete n.confirmPassword; return n; }); setSetPwServerError2(''); }}
+                  placeholder="הזן שוב את הסיסמה"
+                  show={showConfirmPw} onToggle={() => setShowConfirmPw(p => !p)}
+                  error={setPwErrors2.confirmPassword}
+                />
+              </div>
+              <Button type="submit" className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-white font-medium" disabled={setPwLoading2}>
+                {setPwLoading2 ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />שומר...</span> : 'הגדר סיסמה'}
+              </Button>
+            </form>
           ) : (
             <form onSubmit={handleChangePassword} className="space-y-3">
               {pwServerError && (
