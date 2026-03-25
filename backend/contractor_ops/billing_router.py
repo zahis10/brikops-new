@@ -1196,13 +1196,15 @@ async def billing_failed_renewals(request: Request, user: dict = Depends(get_cur
     if not _is_super_admin(user):
         raise HTTPException(status_code=403, detail="Super admin only")
     db = get_db()
+    query = {'result': 'charged_but_mark_paid_failed', '$or': [{'resolved': {'$exists': False}}, {'resolved': False}]}
     cursor = db.billing_renewal_attempts.find(
-        {'result': 'charged_but_mark_paid_failed'},
+        query,
         sort=[('created_at', -1)],
     ).limit(50)
     items = []
     async for doc in cursor:
         org = await db.organizations.find_one({'id': doc.get('org_id')}, {'name': 1})
+        ca = doc.get('created_at', '')
         items.append({
             'id': doc.get('id'),
             'org_id': doc.get('org_id'),
@@ -1210,12 +1212,10 @@ async def billing_failed_renewals(request: Request, user: dict = Depends(get_cur
             'gi_document_id': doc.get('gi_document_id', ''),
             'amount': doc.get('amount', 0),
             'error': doc.get('error', ''),
-            'created_at': doc.get('created_at', '') if isinstance(doc.get('created_at'), str) else (doc['created_at'].isoformat() if doc.get('created_at') else ''),
-            'resolved': doc.get('resolved', False),
-            'resolved_at': doc.get('resolved_at', None) if isinstance(doc.get('resolved_at'), str) else (doc['resolved_at'].isoformat() if doc.get('resolved_at') else None),
+            'period_ym': doc.get('period_ym', ''),
+            'created_at': ca if isinstance(ca, str) else (ca.isoformat() if ca else ''),
         })
-    unresolved = [i for i in items if not i.get('resolved')]
-    return {"items": items, "unresolved_count": len(unresolved)}
+    return {"items": items, "unresolved_count": len(items)}
 
 
 @router.post("/billing/resolve-failed-renewal")
@@ -1226,10 +1226,24 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
     db = get_db()
     body = await request.json()
     attempt_id = body.get('attempt_id')
-    if not attempt_id:
-        raise HTTPException(status_code=400, detail="attempt_id required")
+    org_id_param = body.get('org_id')
+    period_ym = body.get('period_ym')
 
-    attempt = await db.billing_renewal_attempts.find_one({'id': attempt_id})
+    attempt = None
+    if attempt_id:
+        attempt = await db.billing_renewal_attempts.find_one({'id': attempt_id})
+    elif org_id_param:
+        query = {
+            'org_id': org_id_param,
+            'result': 'charged_but_mark_paid_failed',
+            '$or': [{'resolved': {'$exists': False}}, {'resolved': False}],
+        }
+        if period_ym:
+            query['period_ym'] = period_ym
+        attempt = await db.billing_renewal_attempts.find_one(query, sort=[('created_at', -1)])
+    else:
+        raise HTTPException(status_code=400, detail="attempt_id or org_id required")
+
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
     if attempt.get('result') != 'charged_but_mark_paid_failed':

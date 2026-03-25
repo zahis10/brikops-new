@@ -442,7 +442,7 @@ const AdminBillingPage = () => {
               </span>
             </div>
             <p className="text-xs text-red-600">הלקוחות חויבו בהצלחה אך המנוי לא עודכן. יש ללחוץ "תקן" כדי לעדכן את המנוי.</p>
-            {failedRenewals.items.filter(i => !i.resolved).map(item => (
+            {failedRenewals.items.map(item => (
               <div key={item.id} className="bg-white rounded-lg border border-red-200 p-3 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
