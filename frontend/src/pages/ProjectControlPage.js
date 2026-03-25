@@ -3337,7 +3337,7 @@ const ProjectControlPage = () => {
         </div>
       </header>
 
-      <div className="sticky top-[48px] z-40 bg-white border-b border-slate-200">
+      <div className="sticky top-[58px] z-40 bg-white border-b border-slate-200">
         <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
           {workTabs.map(wt => {
             const Icon = wt.icon;
@@ -3353,7 +3353,7 @@ const ProjectControlPage = () => {
         </div>
       </div>
 
-      <div className="sticky top-[92px] z-[38] bg-white border-b border-slate-100">
+      <div className="sticky top-[150px] z-[38] bg-white border-b border-slate-100">
         <div className="max-w-[1100px] mx-auto px-4 py-2 flex gap-2 overflow-x-auto">
           {MGMT_TABS.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
@@ -3366,7 +3366,7 @@ const ProjectControlPage = () => {
       </div>
 
       {pendingApprovalCount > 0 && !approvalBannerDismissed && (
-        <div className="sticky top-[132px] z-[36] max-w-[1100px] mx-auto px-4 pt-2">
+        <div className="sticky top-[205px] z-[36] max-w-[1100px] mx-auto px-4 pt-2">
           <div className="flex items-center gap-2 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 shadow-sm">
             <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0" />
             <span className="flex-1 text-sm font-semibold text-orange-800">
