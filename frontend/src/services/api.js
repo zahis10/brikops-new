@@ -940,6 +940,14 @@ export const billingService = {
     const response = await axios.post(`${API}/billing/org/${orgId}/payment-requests/${requestId}/reject`, { rejection_reason: rejectionReason }, { headers: getAuthHeader() });
     return response.data;
   },
+  async failedRenewals() {
+    const response = await axios.get(`${API}/billing/failed-renewals`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async resolveFailedRenewal(attemptId) {
+    const response = await axios.post(`${API}/billing/resolve-failed-renewal`, { attempt_id: attemptId }, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const invoiceService = {

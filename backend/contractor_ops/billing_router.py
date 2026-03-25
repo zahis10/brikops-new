@@ -702,6 +702,60 @@ RENEWAL_MAX_ATTEMPTS = 3
 RENEWAL_GRACE_DAYS = 7
 
 
+def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str, error_message: str, timestamp: str):
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from config import STEPUP_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_FROM_NAME, SMTP_REPLY_TO
+
+    if not STEPUP_EMAIL or not SMTP_USER or not SMTP_PASS:
+        logger.warning("[RENEWAL-ALERT] Cannot send alert email: STEPUP_EMAIL or SMTP not configured")
+        return
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = f'{SMTP_FROM_NAME} <{SMTP_FROM}>'
+    msg['To'] = STEPUP_EMAIL
+    msg['Reply-To'] = SMTP_REPLY_TO
+    msg['Subject'] = '⚠️ BrikOps: חיוב הצליח אבל עדכון המנוי נכשל'
+
+    text_body = (
+        f'ארגון: {org_name}\n'
+        f'סכום: ₪{amount:.2f}\n'
+        f'מסמך GI: {gi_document_id}\n'
+        f'שגיאה: {error_message}\n'
+        f'זמן: {timestamp}\n\n'
+        '→ היכנס לפאנל ניהול ולחץ "Resolve"'
+    )
+    html_body = f'''
+    <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #dc2626;">⚠️ חיוב הצליח — עדכון מנוי נכשל</h2>
+        <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                <tr><td style="padding: 4px 0; font-weight: bold; width: 100px;">ארגון:</td><td>{org_name}</td></tr>
+                <tr><td style="padding: 4px 0; font-weight: bold;">סכום:</td><td>₪{amount:.2f}</td></tr>
+                <tr><td style="padding: 4px 0; font-weight: bold;">מסמך GI:</td><td style="font-family: monospace;">{gi_document_id}</td></tr>
+                <tr><td style="padding: 4px 0; font-weight: bold;">שגיאה:</td><td style="color: #dc2626;">{error_message}</td></tr>
+                <tr><td style="padding: 4px 0; font-weight: bold;">זמן:</td><td>{timestamp}</td></tr>
+            </table>
+        </div>
+        <p style="color: #666; font-size: 13px;">הלקוח חויב בהצלחה אך המנוי לא עודכן. היכנס לפאנל ניהול ולחץ <b>"Resolve"</b> כדי לתקן.</p>
+    </div>
+    '''
+    msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, STEPUP_EMAIL, msg.as_string())
+        logger.info("[RENEWAL-ALERT] Alert email sent to %s for org=%s doc=%s", STEPUP_EMAIL[:4] + '***', org_name, gi_document_id)
+    except Exception as e:
+        logger.error("[RENEWAL-ALERT] Failed to send alert email: %s", str(e))
+
+
 @router.post("/billing/run-renewals")
 async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
     import uuid
@@ -734,7 +788,7 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
         if paid_until and paid_until < now:
             due_orgs.append({'org_id': sub['org_id'], 'status': sub.get('status', 'active'), 'paid_until': paid_until})
 
-    results = {'processed': 0, 'charged': 0, 'skipped': 0, 'failed': 0, 'past_due': 0, 'errors': []}
+    results = {'processed': 0, 'charged': 0, 'skipped': 0, 'failed': 0, 'past_due': 0, 'charged_but_mark_paid_failed': 0, 'errors': []}
 
     for org_info in due_orgs:
         org_id = org_info['org_id']
@@ -883,8 +937,18 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
                 )
                 logger.error("[RENEWALS] Charge succeeded (doc=%s) but mark_paid failed for org %s: %s",
                              doc_id, org_id, str(mp_err))
-                results['failed'] += 1
+                results['charged_but_mark_paid_failed'] += 1
                 results['errors'].append({'org_id': org_id, 'error': f'mark_paid_failed: {mp_err}', 'gi_document_id': doc_id})
+                try:
+                    _send_billing_alert_email(
+                        org_name=org_name,
+                        amount=amount,
+                        gi_document_id=doc_id,
+                        error_message=str(mp_err),
+                        timestamp=now_iso,
+                    )
+                except Exception:
+                    pass
 
         except GreenInvoiceError as e:
             await db.billing_renewal_attempts.update_one(
@@ -1125,3 +1189,70 @@ async def billing_webhook_greeninvoice(request: Request):
 
     await db.gi_webhook_log.insert_one(log_entry)
     return {"status": "ok"}
+
+
+@router.get("/billing/failed-renewals")
+async def billing_failed_renewals(request: Request, user: dict = Depends(get_current_user)):
+    if not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Super admin only")
+    db = get_db()
+    cursor = db.billing_renewal_attempts.find(
+        {'result': 'charged_but_mark_paid_failed'},
+        sort=[('created_at', -1)],
+    ).limit(50)
+    items = []
+    async for doc in cursor:
+        org = await db.organizations.find_one({'id': doc.get('org_id')}, {'name': 1})
+        items.append({
+            'id': doc.get('id'),
+            'org_id': doc.get('org_id'),
+            'org_name': org.get('name', '') if org else '',
+            'gi_document_id': doc.get('gi_document_id', ''),
+            'amount': doc.get('amount', 0),
+            'error': doc.get('error', ''),
+            'created_at': doc.get('created_at', '') if isinstance(doc.get('created_at'), str) else (doc['created_at'].isoformat() if doc.get('created_at') else ''),
+            'resolved': doc.get('resolved', False),
+            'resolved_at': doc.get('resolved_at', None) if isinstance(doc.get('resolved_at'), str) else (doc['resolved_at'].isoformat() if doc.get('resolved_at') else None),
+        })
+    unresolved = [i for i in items if not i.get('resolved')]
+    return {"items": items, "unresolved_count": len(unresolved)}
+
+
+@router.post("/billing/resolve-failed-renewal")
+async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(get_current_user)):
+    if not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Super admin only")
+    from contractor_ops.billing import mark_paid, _now
+    db = get_db()
+    body = await request.json()
+    attempt_id = body.get('attempt_id')
+    if not attempt_id:
+        raise HTTPException(status_code=400, detail="attempt_id required")
+
+    attempt = await db.billing_renewal_attempts.find_one({'id': attempt_id})
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    if attempt.get('result') != 'charged_but_mark_paid_failed':
+        raise HTTPException(status_code=400, detail="Attempt is not in charged_but_mark_paid_failed state")
+    if attempt.get('resolved'):
+        raise HTTPException(status_code=400, detail="Already resolved")
+
+    org_id = attempt['org_id']
+    doc_id = attempt.get('gi_document_id', '')
+    amount = attempt.get('amount', 0)
+
+    result = await mark_paid(org_id, 'system_renewal_resolve', None, 'monthly', f"Resolved failed renewal doc={doc_id} amount={amount}")
+
+    await db.billing_renewal_attempts.update_one(
+        {'id': attempt_id},
+        {'$set': {
+            'resolved': True,
+            'resolved_at': _now(),
+            'resolved_by': user.get('email', user.get('id', '')),
+            'resolve_result': result,
+        }}
+    )
+
+    logger.info("[RESOLVE-RENEWAL] Resolved attempt=%s org=%s doc=%s by=%s",
+                attempt_id, org_id, doc_id, user.get('email', ''))
+    return {"status": "resolved", "mark_paid_result": result}

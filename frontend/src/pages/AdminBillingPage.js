@@ -90,6 +90,8 @@ const AdminBillingPage = () => {
   const [openRequests, setOpenRequests] = useState({ open_count: 0, requests: [] });
   const [openRequestsExpanded, setOpenRequestsExpanded] = useState(false);
   const [showAudit, setShowAudit] = useState(true);
+  const [failedRenewals, setFailedRenewals] = useState({ items: [], unresolved_count: 0 });
+  const [resolvingId, setResolvingId] = useState(null);
 
   const loadOrgInvoices = useCallback(async (orgList, gen) => {
     const results = {};
@@ -132,16 +134,18 @@ const AdminBillingPage = () => {
     }
     setLoadError(null);
     try {
-      const [orgsData, auditData, openReqs] = await Promise.all([
+      const [orgsData, auditData, openReqs, failedRen] = await Promise.all([
         billingService.listOrgs(),
         billingService.auditLog(),
         billingService.openPaymentRequestsSummary().catch(() => ({ open_count: 0, requests: [] })),
+        billingService.failedRenewals().catch(() => ({ items: [], unresolved_count: 0 })),
       ]);
       if (gen !== loadGenRef.current) return;
       hasDataRef.current = true;
       setOrgs(orgsData);
       setAudit(auditData);
       setOpenRequests(openReqs);
+      setFailedRenewals(failedRen);
       if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
       if (orgsData.length > 0) loadOrgInvoices(orgsData, gen);
     } catch (err) {
@@ -303,6 +307,24 @@ const AdminBillingPage = () => {
     }
   };
 
+  const handleResolveRenewal = async (attemptId) => {
+    setResolvingId(attemptId);
+    try {
+      await billingService.resolveFailedRenewal(attemptId);
+      toast.success('החידוש תוקן בהצלחה');
+      loadData();
+    } catch (err) {
+      if (isStepupError(err)) {
+        startStepup(() => handleResolveRenewal(attemptId));
+      } else {
+        const detail = err.response?.data?.detail;
+        toast.error(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בתיקון'));
+      }
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
   const formatDate = (iso) => {
     if (!iso) return '—';
     try {
@@ -410,6 +432,44 @@ const AdminBillingPage = () => {
             </section>
           );
         })()}
+
+        {failedRenewals.unresolved_count > 0 && (
+          <section className="bg-red-50 rounded-xl border-2 border-red-300 p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+              <span className="text-sm font-bold text-red-700">
+                ⚠️ חיובים שהצליחו אבל עדכון המנוי נכשל ({failedRenewals.unresolved_count})
+              </span>
+            </div>
+            <p className="text-xs text-red-600">הלקוחות חויבו בהצלחה אך המנוי לא עודכן. יש ללחוץ "תקן" כדי לעדכן את המנוי.</p>
+            {failedRenewals.items.filter(i => !i.resolved).map(item => (
+              <div key={item.id} className="bg-white rounded-lg border border-red-200 p-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-bold text-slate-800 text-sm">{item.org_name || item.org_id}</span>
+                    <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">נכשל</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-slate-500">
+                    <span>סכום: <bdi dir="ltr">₪{(item.amount || 0).toLocaleString('he-IL')}</bdi></span>
+                    <span>מסמך: <span className="font-mono">{item.gi_document_id?.slice(0, 8)}...</span></span>
+                    <span>{formatDateTime(item.created_at)}</span>
+                  </div>
+                  {item.error && <div className="text-[10px] text-red-500 mt-1 truncate">{item.error}</div>}
+                </div>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={resolvingId === item.id}
+                  onClick={() => handleResolveRenewal(item.id)}
+                  className="flex-shrink-0"
+                >
+                  {resolvingId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 ml-1" />}
+                  תקן
+                </Button>
+              </div>
+            ))}
+          </section>
+        )}
 
         <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <button
