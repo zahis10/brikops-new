@@ -22,6 +22,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessibilityPage from './pages/AccessibilityPage';
 import WaLoginPage from './pages/WaLoginPage';
+import PendingDeletionPage from './pages/PendingDeletionPage';
 
 const JoinRequestsPage = React.lazy(() => import('./pages/JoinRequestsPage'));
 const TaskDetailPage = React.lazy(() => import('./pages/TaskDetailPage'));
@@ -99,6 +100,10 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
     return <Navigate to="/pending" replace />;
   }
 
+  if (user.user_status === 'pending_deletion') {
+    return <Navigate to="/account/pending-deletion" replace />;
+  }
+
   if (requireSuperAdmin && user.platform_role !== 'super_admin') {
     return <Navigate to="/projects" replace />;
   }
@@ -151,6 +156,7 @@ const AppRoutes = () => {
         />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/pending" element={<PendingApprovalPage />} />
+        <Route path="/account/pending-deletion" element={<PendingDeletionPage />} />
         <Route
           path="/projects"
           element={

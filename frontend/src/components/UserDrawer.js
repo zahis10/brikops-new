@@ -135,7 +135,12 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
       onRefresh();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה בהסרה מהארגון');
+      const detail = err.response?.data?.detail;
+      if (err.response?.status === 409 && typeof detail === 'string' && detail.includes('מחיקה')) {
+        toast.error('לא ניתן להסיר — למשתמש יש בקשת מחיקה פעילה');
+      } else {
+        toast.error(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בהסרה מהארגון'));
+      }
     } finally {
       setRemovingOrg(false);
     }

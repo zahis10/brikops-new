@@ -72,7 +72,8 @@ export const AuthProvider = ({ children }) => {
       const response = await axios.get(`${API}/auth/me`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setUser(response.data);
+      const userData = response.data;
+      setUser(userData);
       setNetworkError(false);
       toastShownRef.current = false;
       if (retryTimerRef.current) {
@@ -176,6 +177,16 @@ export const AuthProvider = ({ children }) => {
     _clearBrikopsCookie();
   };
 
+  const refreshUser = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await axios.get(`${API}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setUser(response.data);
+    } catch {}
+  }, [token]);
+
   const value = {
     user,
     token,
@@ -186,6 +197,7 @@ export const AuthProvider = ({ children }) => {
     loginWithOtp,
     register,
     logout,
+    refreshUser,
     isAuthenticated: !!token && !!user
   };
 

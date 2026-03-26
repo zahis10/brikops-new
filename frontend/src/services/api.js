@@ -1197,6 +1197,29 @@ export const authService = {
   },
 };
 
+export const deletionService = {
+  async requestOtp() {
+    const response = await axios.post(`${API}/users/me/request-deletion-otp`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async requestDeletion(body) {
+    const response = await axios.post(`${API}/users/me/request-deletion`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async requestFullDeletion(body) {
+    const response = await axios.post(`${API}/users/me/request-full-deletion`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async cancelDeletion() {
+    const response = await axios.post(`${API}/users/me/cancel-deletion`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async getStatus() {
+    const response = await axios.get(`${API}/users/me/deletion-status`, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const templateService = {
   async list(params = {}) {
     const response = await axios.get(`${API}/admin/qc/templates`, { headers: getAuthHeader(), params });
