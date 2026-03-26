@@ -7,14 +7,15 @@ import { Loader2, AlertTriangle, Clock, XCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
 const PendingDeletionPage = () => {
-  const { user, logout, refreshUser } = useAuth();
+  const { user, loading: authLoading, token, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(true);
   const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
-    if (!user) {
+    if (authLoading) return;
+    if (!user || !token) {
       navigate('/login', { replace: true });
       return;
     }
@@ -22,14 +23,17 @@ const PendingDeletionPage = () => {
       navigate('/projects', { replace: true });
       return;
     }
+    let cancelled = false;
     deletionService.getStatus()
       .then(data => {
+        if (cancelled) return;
         setStatus(data);
         if (!data.pending) {
           navigate('/projects', { replace: true });
         }
       })
       .catch(err => {
+        if (cancelled) return;
         const httpStatus = err.response?.status;
         if (httpStatus === 401 || httpStatus === 403) {
           logout();
@@ -38,8 +42,11 @@ const PendingDeletionPage = () => {
           navigate('/projects', { replace: true });
         }
       })
-      .finally(() => setLoading(false));
-  }, [navigate, user, logout]);
+      .finally(() => {
+        if (!cancelled) setFetching(false);
+      });
+    return () => { cancelled = true; };
+  }, [navigate, user, token, authLoading, logout]);
 
   const getDaysRemaining = () => {
     if (!status?.scheduled_for) return null;
@@ -72,7 +79,7 @@ const PendingDeletionPage = () => {
     navigate('/login', { replace: true });
   };
 
-  if (loading) {
+  if (authLoading || fetching) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="w-8 h-8 animate-spin text-amber-500" />

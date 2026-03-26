@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useIdentity } from '../contexts/IdentityContext';
-import { authService, userService, deletionService } from '../services/api';
+import { authService, userService, deletionService, billingService } from '../services/api';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
@@ -44,11 +44,12 @@ const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error
 
 const DeleteAccountSection = ({ user }) => {
   const navigate = useNavigate();
-  const { logout, refreshUser } = useAuth();
+  const { refreshUser } = useAuth();
+  const [isOrgOwner, setIsOrgOwner] = useState(false);
   const hasOrg = !!user?.organization;
 
   const [wizardMode, setWizardMode] = useState(null);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0);
   const [authMethod, setAuthMethod] = useState(null);
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -58,9 +59,15 @@ const DeleteAccountSection = ({ user }) => {
   const [error, setError] = useState('');
   const [otpDebugCode, setOtpDebugCode] = useState('');
 
+  useEffect(() => {
+    if (hasOrg) {
+      billingService.me().then(b => setIsOrgOwner(!!b?.is_owner)).catch(() => {});
+    }
+  }, [hasOrg]);
+
   const resetWizard = () => {
     setWizardMode(null);
-    setStep(1);
+    setStep(0);
     setAuthMethod(null);
     setPassword('');
     setOtpCode('');
@@ -71,11 +78,19 @@ const DeleteAccountSection = ({ user }) => {
     setOtpDebugCode('');
   };
 
-  const handleStartDeletion = async (mode) => {
+  const handleStartDeletion = (mode) => {
+    if (mode === 'account' && isOrgOwner) {
+      setWizardMode('owner_blocked');
+      return;
+    }
     setWizardMode(mode);
     setStep(1);
     setError('');
+  };
+
+  const handleProceedToAuth = async () => {
     setLoading(true);
+    setError('');
     try {
       const resp = await deletionService.requestOtp();
       setAuthMethod(resp.auth_method);
@@ -91,19 +106,36 @@ const DeleteAccountSection = ({ user }) => {
 
   const handleConfirmDeletion = async () => {
     setError('');
+
+    if (authMethod === 'password' && !password.trim()) {
+      setError('נא להזין סיסמה');
+      return;
+    }
+    if (authMethod !== 'password' && !otpCode.trim()) {
+      setError('נא להזין קוד אימות');
+      return;
+    }
+    if (wizardMode === 'full') {
+      if (!typedOrgName.trim()) {
+        setError('נא להקליד את שם הארגון');
+        return;
+      }
+      if (typedOrgName !== user?.organization?.name) {
+        setError('שם הארגון אינו תואם. יש להקליד בדיוק כפי שמופיע.');
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const body = {};
       if (authMethod === 'password') {
-        if (!password.trim()) { setError('נא להזין סיסמה'); setLoading(false); return; }
         body.password = password;
       } else {
-        if (!otpCode.trim()) { setError('נא להזין קוד אימות'); setLoading(false); return; }
         body.otp_code = otpCode;
       }
 
       if (wizardMode === 'full') {
-        if (!typedOrgName.trim()) { setError('נא להקליד את שם הארגון'); setLoading(false); return; }
         body.typed_org_name = typedOrgName;
         await deletionService.requestFullDeletion(body);
       } else {
@@ -121,39 +153,108 @@ const DeleteAccountSection = ({ user }) => {
     }
   };
 
+  if (wizardMode === 'owner_blocked') {
+    return (
+      <div className="bg-white rounded-2xl shadow-lg border border-red-100 p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Trash2 className="w-5 h-5 text-red-500" />
+          <h2 className="text-lg font-semibold text-red-700">מחיקת חשבון</h2>
+        </div>
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg space-y-3">
+          <p className="text-sm text-amber-800 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>יש להעביר בעלות על הארגון לפני מחיקת החשבון.</span>
+          </p>
+          <Button
+            onClick={() => navigate('/org/transfer/settings')}
+            variant="outline"
+            className="w-full h-10 text-sm text-amber-700 border-amber-300 hover:bg-amber-100"
+          >
+            העבר בעלות על הארגון
+          </Button>
+          <Button onClick={resetWizard} variant="ghost" className="w-full h-10 text-sm">
+            ביטול
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (wizardMode) {
+    const isFull = wizardMode === 'full';
     return (
       <div className="bg-white rounded-2xl shadow-lg border border-red-200 p-6">
         <div className="flex items-center gap-2 mb-4">
           <Trash2 className="w-5 h-5 text-red-500" />
           <h2 className="text-lg font-semibold text-red-700">
-            {wizardMode === 'full' ? 'מחיקת חשבון וארגון' : 'מחיקת חשבון'}
+            {isFull ? 'מחיקת חשבון וארגון' : 'מחיקת חשבון'}
           </h2>
         </div>
 
+        <div className="flex items-center gap-1 mb-4">
+          {[1, 2, 3].map(s => (
+            <div key={s} className={`h-1 flex-1 rounded-full ${step >= s ? 'bg-red-500' : 'bg-slate-200'}`} />
+          ))}
+        </div>
+
         {step === 1 && (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-6 h-6 animate-spin text-red-500" />
+          <div className="space-y-4">
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg space-y-2">
+              <p className="text-sm font-semibold text-red-700 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                אזהרה — פעולה בלתי הפיכה
+              </p>
+              <ul className="text-sm text-red-700 space-y-1 mr-6 list-disc">
+                <li>כל הנתונים האישיים שלך יימחקו לצמיתות</li>
+                <li>לא תוכל לגשת לחשבון שלך יותר</li>
+                {isFull && (
+                  <>
+                    <li>כל הפרויקטים, המשימות והנתונים של הארגון יימחקו</li>
+                    <li>כל חברי הארגון יאבדו את הגישה שלהם</li>
+                  </>
+                )}
+              </ul>
+              <p className="text-xs text-red-500 pt-1">
+                {isFull
+                  ? 'לאחר תקופת המתנה, החשבון והארגון יימחקו סופית.'
+                  : 'לאחר תקופת המתנה, החשבון יימחק סופית.'}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={handleProceedToAuth}
+                disabled={loading}
+                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
+              >
+                {loading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </span>
+                ) : 'המשך'}
+              </Button>
+              <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
+                ביטול
+              </Button>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-4">
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-700 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>
-                  {wizardMode === 'full'
-                    ? 'פעולה זו תמחק את החשבון שלך, את הארגון וכל הנתונים לצמיתות לאחר תקופת המתנה.'
-                    : 'פעולה זו תמחק את החשבון שלך לצמיתות לאחר תקופת המתנה.'}
-                </span>
-              </p>
-            </div>
+            <p className="text-sm text-slate-700 font-medium">שלב 2 — אימות זהות</p>
 
-            {wizardMode === 'full' && (
+            {isFull && (
               <div className="space-y-1">
                 <label className="block text-sm font-medium text-slate-700">
-                  הקלד את שם הארגון לאישור: <span className="font-bold text-red-600">{user?.organization?.name}</span>
+                  הקלד את שם הארגון בדיוק: <span className="font-bold text-red-600">{user?.organization?.name}</span>
                 </label>
                 <input
                   type="text"
@@ -209,6 +310,43 @@ const DeleteAccountSection = ({ user }) => {
 
             <div className="flex gap-3 pt-2">
               <Button
+                onClick={() => { setError(''); setStep(3); }}
+                disabled={loading || (authMethod === 'password' ? !password.trim() : !otpCode.trim()) || (isFull && !typedOrgName.trim())}
+                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
+              >
+                המשך
+              </Button>
+              <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
+                ביטול
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700 font-medium">שלב 3 — אישור סופי</p>
+
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg space-y-2">
+              <p className="text-sm font-bold text-red-700">
+                {isFull
+                  ? `החשבון והארגון "${user?.organization?.name}" יימחקו לצמיתות לאחר תקופת ההמתנה.`
+                  : 'החשבון שלך יימחק לצמיתות לאחר תקופת ההמתנה.'}
+              </p>
+              <p className="text-sm text-red-600">
+                האם אתה בטוח? לא ניתן לבטל פעולה זו לאחר תום תקופת ההמתנה.
+              </p>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button
                 onClick={handleConfirmDeletion}
                 disabled={loading}
                 className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
@@ -216,31 +354,14 @@ const DeleteAccountSection = ({ user }) => {
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    שולח...
+                    מוחק...
                   </span>
-                ) : 'אשר מחיקה'}
+                ) : 'אשר מחיקה סופית'}
               </Button>
-              <Button
-                onClick={resetWizard}
-                disabled={loading}
-                variant="outline"
-                className="flex-1 h-11"
-              >
+              <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
                 ביטול
               </Button>
             </div>
-          </div>
-        )}
-
-        {step === 1 && error && (
-          <div className="space-y-3 mt-4">
-            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-            <Button onClick={resetWizard} variant="outline" className="w-full h-11">
-              ביטול
-            </Button>
           </div>
         )}
       </div>
@@ -267,7 +388,7 @@ const DeleteAccountSection = ({ user }) => {
           מחק את החשבון שלי
         </Button>
 
-        {hasOrg && user?.organization && (
+        {isOrgOwner && user?.organization && (
           <Button
             onClick={() => handleStartDeletion('full')}
             variant="outline"
