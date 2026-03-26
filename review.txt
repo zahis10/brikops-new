@@ -1,100 +1,1601 @@
-=== Task #109 — Company Contact Fallback in Contractor Dropdown ===
-
-========================================
-INVESTIGATION: Backend notification recipient resolution
-========================================
-
-notification_service.py _resolve_target_phone (lines 323-350):
-  1. First checks assignee_id → looks up user → gets phone_e164
-  2. If no assignee, falls back to company_id → looks up companies collection → gets phone_e164
-
-BUT: The fallback checks self.db.companies (global), not project_companies.
-Project companies store contact_phone/contact_phone_raw, not phone_e164/phone.
-So the company phone fallback does NOT work for project companies.
-
-DECISION: Rule #1 applied — UI fallback only, no WhatsApp from contact.
-  - Selecting company contact sets company_id, keeps assignee_id null
-  - No fake user IDs ever stored in DB
-
-========================================
-CHANGES MADE
-========================================
-
-1. NewDefectModal.js (lines 298-329):
-   - Contractor filter effect: when no membership-linked contractors exist
-     for selected company, checks company.contact_name and creates fallback
-     option with value "__company_contact__" and label "דוד כהן (איש קשר החברה)"
-   - Fallback auto-selects the contact option
-   - Real contractors always take precedence
-
-2. NewDefectModal.js (line 615):
-   - Create payload now includes company_id when a company is selected
-
-3. NewDefectModal.js (lines 497-502):
-   - doUploadAndAssign detects __company_contact__ sentinel and skips
-     the assign API call — defect created with company_id, no assignee_id
-
-4. TaskDetailPage.js (line 8):
-   - Added projectCompanyService import
-
-5. TaskDetailPage.js (lines 141, 207-212):
-   - Added projectCompanies state
-   - Loads project companies alongside memberships
-
-6. TaskDetailPage.js (lines 845-859):
-   - Contractor dropdown adds contactFallbacks from project companies
-     that have contact_name but no linked contractor memberships
-   - Fallback options use "__contact__{companyId}" value format
-   - Label: "{contact_name} ({company_name})"
-
-7. TaskDetailPage.js (lines 425-452):
-   - handleAssignContractor handles __contact__ prefix:
-     PATCHes { company_id: pcId, assignee_id: null }
-   - Also handles empty value (לא שויך):
-     PATCHes { company_id: null, assignee_id: null }
-
-8. TaskDetailPage.js (line 492):
-   - getCompanyName also checks projectCompanies for name resolution
-
-9. Backend tasks_router.py (line 311-312):
-   - update_task allows nullable company_id/assignee_id:
-     nullable_fields = {'company_id', 'assignee_id'}
-     Ensures PATCH can clear these fields to null
-
-========================================
-PROOF RESULTS
-========================================
-
-PROOF 1: Create defect with company contact (NewDefectModal)
-  POST /api/tasks with company_id, no assignee_id
-  Result: id=b9fc3b9d status=open company_id=61e69864 assignee_id=None
-  ✅ Company set, no assignee
-
-PROOF 2: Update via PATCH (TaskDetailPage contact fallback)
-  PATCH /api/tasks/{id} with company_id, assignee_id=null
-  Result: company_id=61e69864 assignee_id=None
-  ✅ Company set, assignee stays null
-
-PROOF 3: Clear assignment via PATCH
-  PATCH /api/tasks/{id} with company_id=null, assignee_id=null
-  Result: company_id=None assignee_id=None
-  ✅ Both cleared to null
-
-PROOF 4: No fake assignee IDs in DB
-  DB record: company_id=None assignee_id=None
-  No __contact__ or __company_contact__ in DB
-  ✅ No fake user IDs
-
-PROOF 5: Project companies endpoint returns contact_name
-  name=חברת חשמל חדשה contact_name=דוד כהן contact_phone=0507569991
-  ✅ Contact info available for frontend fallback
-
-========================================
-GUARDRAILS VERIFIED
-========================================
-- Fallback appears ONLY when contractor list is empty ✅
-- Real contractors always take precedence ✅
-- No fake user IDs stored in DB ✅
-- Normal contractor assignment flow unchanged ✅
-- Build passes ✅
-- Code review: PASS ✅
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index b14d12b..fa4bbf2 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -23,6 +23,12 @@ from contractor_ops.billing import (
+ router = APIRouter(prefix="/api")
+ 
+ 
++async def _check_not_pending_deletion(db, user_id: str):
++    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'user_status': 1})
++    if target and target.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
++
++
+ @router.post("/admin/stepup/request")
+ async def stepup_request(request: Request, user: dict = Depends(require_super_admin)):
+     user_id = user.get('id', '')
+@@ -99,9 +105,11 @@ async def stepup_verify(request: Request, user: dict = Depends(require_super_adm
+ @router.post("/admin/revoke-session/{user_id}")
+ async def admin_revoke_session(user_id: str, request: Request, admin: dict = Depends(require_stepup)):
+     db = get_db()
+-    target_user = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1})
++    target_user = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1, 'user_status': 1})
+     if not target_user:
+         raise HTTPException(status_code=404, detail='User not found')
++    if target_user.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='לא ניתן לבצע פעולה על משתמש בתהליך מחיקה')
+     old_sv = target_user.get('session_version', 0)
+     new_sv = old_sv + 1
+     await db.users.update_one({'id': user_id}, {'$set': {'session_version': new_sv}})
+@@ -221,6 +229,7 @@ async def admin_change_org_owner(org_id: str, request: Request, user: dict = Dep
+     org = await db.organizations.find_one({'id': org_id})
+     if not org:
+         raise HTTPException(status_code=404, detail='ארגון לא נמצא')
++    await _check_not_pending_deletion(db, new_owner_id)
+     membership = await db.org_memberships.find_one({'org_id': org_id, 'user_id': new_owner_id})
+     if not membership:
+         raise HTTPException(status_code=400, detail='המשתמש אינו חבר בארגון')
+@@ -459,9 +468,11 @@ async def admin_change_user_phone(user_id: str, request: Request, admin: dict =
+     except ValueError as e:
+         raise HTTPException(status_code=422, detail=str(e))
+ 
+-    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'phone_e164': 1, 'name': 1})
++    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'phone_e164': 1, 'name': 1, 'user_status': 1})
+     if not target:
+         raise HTTPException(status_code=404, detail='משתמש לא נמצא')
++    if target.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
+ 
+     conflict = await db.users.find_one({'phone_e164': new_phone, 'id': {'$ne': user_id}})
+     if conflict:
+@@ -495,9 +506,11 @@ async def admin_update_preferred_language(user_id: str, request: Request, admin:
+     if lang not in ALLOWED_PREFERRED_LANGUAGES:
+         raise HTTPException(status_code=400, detail=f'שפה לא חוקית. ערכים מותרים: {", ".join(sorted(ALLOWED_PREFERRED_LANGUAGES))}')
+ 
+-    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'preferred_language': 1})
++    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'preferred_language': 1, 'user_status': 1})
+     if not target:
+         raise HTTPException(status_code=404, detail='משתמש לא נמצא')
++    if target.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='לא ניתן לבצע פעולה על משתמש בתהליך מחיקה')
+ 
+     old_value = target.get('preferred_language', 'he')
+     await db.users.update_one({'id': user_id}, {'$set': {'preferred_language': lang}})
+@@ -530,9 +543,11 @@ async def admin_reset_user_password(user_id: str, request: Request, admin: dict
+ 
+     _validate_new_password(new_password)
+ 
+-    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1})
++    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1, 'user_status': 1})
+     if not target:
+         raise HTTPException(status_code=404, detail='משתמש לא נמצא')
++    if target.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
+ 
+     password_hash = await _hash_password(new_password)
+     old_sv = target.get('session_version', 0)
+@@ -601,6 +616,8 @@ async def admin_change_user_role(user_id: str, project_id: str, request: Request
+     if new_role not in valid_roles:
+         raise HTTPException(status_code=400, detail=f'תפקיד לא תקין: {new_role}')
+ 
++    await _check_not_pending_deletion(db, user_id)
++
+     membership = await db.project_memberships.find_one({
+         'user_id': user_id, 'project_id': project_id
+     })
+diff --git a/backend/contractor_ops/auth_router.py b/backend/contractor_ops/auth_router.py
+index 0e77222..203ebff 100644
+--- a/backend/contractor_ops/auth_router.py
++++ b/backend/contractor_ops/auth_router.py
+@@ -3,7 +3,7 @@ from datetime import datetime, timezone
+ 
+ from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+ from contractor_ops.router import (
+-    get_db, get_current_user,
++    get_db, get_current_user, get_current_user_allow_pending_deletion,
+     _hash_password, _verify_password, _create_token,
+     _get_otp_service, _audit, _now,
+     ensure_user_org, MANAGEMENT_ROLES, logger,
+@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api")
+ 
+ 
+ @router.post("/auth/logout-all")
+-async def logout_all_sessions(request: Request, user: dict = Depends(get_current_user)):
++async def logout_all_sessions(request: Request, user: dict = Depends(get_current_user_allow_pending_deletion)):
+     db = get_db()
+     user_id = user['id']
+     old_sv = user.get('session_version', 0)
+@@ -388,7 +388,7 @@ async def dev_login(request: Request):
+ 
+ 
+ @router.get("/auth/me", response_model=UserResponse)
+-async def get_me(user: dict = Depends(get_current_user)):
++async def get_me(user: dict = Depends(get_current_user_allow_pending_deletion)):
+     db = get_db()
+     user_id = user['id']
+ 
+diff --git a/backend/contractor_ops/deletion_router.py b/backend/contractor_ops/deletion_router.py
+new file mode 100644
+index 0000000..0c5455f
+--- /dev/null
++++ b/backend/contractor_ops/deletion_router.py
+@@ -0,0 +1,609 @@
++import uuid
++import logging
++from datetime import datetime, timezone, timedelta
++
++from fastapi import APIRouter, HTTPException, Depends, Request
++
++from contractor_ops.router import (
++    get_db, get_current_user, get_current_user_allow_pending_deletion,
++    _is_super_admin, _verify_password, _now, _audit,
++    require_stepup,
++)
++from contractor_ops.billing import get_user_org
++
++logger = logging.getLogger(__name__)
++
++router = APIRouter(prefix="/api", tags=["deletion"])
++
++DELETION_GRACE_DAYS = 7
++
++_otp_service_ref = None
++
++
++def set_deletion_otp_service(svc):
++    global _otp_service_ref
++    _otp_service_ref = svc
++
++
++def _scheduled_for():
++    return (datetime.now(timezone.utc) + timedelta(days=DELETION_GRACE_DAYS)).isoformat()
++
++
++async def _verify_auth_for_deletion(user: dict, body: dict, db):
++    pw_hash = user.get('password_hash')
++    if pw_hash:
++        password = body.get('password', '').strip()
++        if not password:
++            raise HTTPException(status_code=400, detail='נדרשת סיסמה לאישור מחיקה')
++        valid = await _verify_password(password, pw_hash)
++        if not valid:
++            raise HTTPException(status_code=401, detail='סיסמה שגויה')
++        return
++    otp_code = body.get('otp_code', '').strip()
++    if not otp_code:
++        raise HTTPException(status_code=400, detail='נדרש קוד אימות (OTP) לאישור מחיקה')
++    otp_svc = _otp_service_ref
++    if not otp_svc:
++        raise HTTPException(status_code=503, detail='שירות OTP לא זמין')
++    phone = user.get('phone_e164', '')
++    if not phone:
++        raise HTTPException(status_code=400, detail='לא נמצא מספר טלפון בחשבון')
++    result = await otp_svc.verify_otp(phone, otp_code)
++    if not result.get('success'):
++        detail = result.get('error', 'קוד אימות שגוי')
++        raise HTTPException(status_code=403, detail=detail)
++
++
++@router.post("/users/me/request-deletion-otp")
++async def request_deletion_otp(user: dict = Depends(get_current_user)):
++    pw_hash = user.get('password_hash')
++    if pw_hash:
++        return {'auth_method': 'password', 'message': 'יש להזין סיסמה לאישור'}
++    otp_svc = _otp_service_ref
++    if not otp_svc:
++        raise HTTPException(status_code=503, detail='שירות OTP לא זמין')
++    phone = user.get('phone_e164', '')
++    if not phone:
++        raise HTTPException(status_code=400, detail='לא נמצא מספר טלפון בחשבון')
++    result = await otp_svc.request_otp(phone)
++    if not result.get('success'):
++        error_type = result.get('error', '')
++        if error_type in ('rate_limited', 'too_many_attempts'):
++            raise HTTPException(status_code=429, detail=result['message'])
++        raise HTTPException(status_code=422, detail=result['message'])
++    resp = {
++        'auth_method': 'otp',
++        'message': 'קוד אימות נשלח',
++        'expires_in': result.get('expires_in', 600),
++    }
++    import os
++    if os.environ.get('APP_MODE', '') == 'dev' and os.environ.get('SMS_MODE', '') == 'stub':
++        debug_code = result.get('debug_code')
++        if debug_code:
++            resp['otp_debug_code'] = debug_code
++    return resp
++
++
++@router.post("/users/me/request-deletion")
++async def request_account_deletion(request: Request, user: dict = Depends(get_current_user)):
++    db = get_db()
++    user_id = user['id']
++
++    if user.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='כבר קיימת בקשת מחיקה פעילה')
++
++    org = await get_user_org(user_id)
++    if org and org.get('owner_user_id') == user_id:
++        raise HTTPException(
++            status_code=400,
++            detail='יש להעביר בעלות על הארגון לפני מחיקת החשבון'
++        )
++
++    body = await request.json()
++    await _verify_auth_for_deletion(user, body, db)
++
++    ts = _now()
++    scheduled = _scheduled_for()
++    old_sv = user.get('session_version', 0)
++    new_sv = old_sv + 1
++
++    await db.users.update_one({'id': user_id}, {'$set': {
++        'user_status': 'pending_deletion',
++        'deletion_requested_at': ts,
++        'deletion_scheduled_for': scheduled,
++        'deletion_type': 'account_only',
++        'session_version': new_sv,
++    }})
++
++    await db.audit_events.insert_one({
++        'id': str(uuid.uuid4()),
++        'entity_type': 'user',
++        'entity_id': user_id,
++        'action': 'deletion_requested',
++        'actor_id': user_id,
++        'payload': {
++            'deletion_type': 'account_only',
++            'scheduled_for': scheduled,
++        },
++        'created_at': ts,
++    })
++
++    logger.info(f"[DELETION] account_only requested user={user_id} scheduled={scheduled}")
++    return {
++        'success': True,
++        'deletion_type': 'account_only',
++        'scheduled_for': scheduled,
++        'message': f'בקשת מחיקת חשבון התקבלה. החשבון יימחק ב-{DELETION_GRACE_DAYS} ימים.',
++    }
++
++
++@router.post("/users/me/request-full-deletion")
++async def request_full_deletion(request: Request, user: dict = Depends(get_current_user)):
++    db = get_db()
++    user_id = user['id']
++
++    if user.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='כבר קיימת בקשת מחיקה פעילה')
++
++    org = await get_user_org(user_id)
++    if not org:
++        raise HTTPException(status_code=400, detail='אין לך ארגון. השתמש במחיקת חשבון רגילה.')
++
++    if org.get('owner_user_id') != user_id:
++        raise HTTPException(status_code=403, detail='רק בעל הארגון יכול למחוק את הארגון')
++
++    body = await request.json()
++
++    typed_org_name = body.get('typed_org_name', '')
++    if not typed_org_name:
++        raise HTTPException(status_code=400, detail='יש להקליד את שם הארגון לאישור')
++
++    expected = org.get('name', '')
++    if typed_org_name != expected:
++        raise HTTPException(status_code=422, detail=f'שם הארגון אינו תואם. יש להקליד בדיוק: {expected}')
++
++    await _verify_auth_for_deletion(user, body, db)
++
++    ts = _now()
++    scheduled = _scheduled_for()
++    old_sv = user.get('session_version', 0)
++    new_sv = old_sv + 1
++
++    await db.users.update_one({'id': user_id}, {'$set': {
++        'user_status': 'pending_deletion',
++        'deletion_requested_at': ts,
++        'deletion_scheduled_for': scheduled,
++        'deletion_type': 'full_purge',
++        'deletion_org_id': org['id'],
++        'session_version': new_sv,
++    }})
++
++    org_id = org['id']
++    await db.organizations.update_one({'id': org_id}, {'$set': {
++        'status': 'pending_purge',
++        'purge_scheduled_for': scheduled,
++        'purge_requested_at': ts,
++        'purge_requested_by': user_id,
++    }})
++
++    await db.audit_events.insert_one({
++        'id': str(uuid.uuid4()),
++        'entity_type': 'organization',
++        'entity_id': org_id,
++        'action': 'full_deletion_requested',
++        'actor_id': user_id,
++        'payload': {
++            'deletion_type': 'full_purge',
++            'org_name': org.get('name', ''),
++            'scheduled_for': scheduled,
++        },
++        'created_at': ts,
++    })
++
++    logger.info(f"[DELETION] full_purge requested user={user_id} org={org_id} scheduled={scheduled}")
++    return {
++        'success': True,
++        'deletion_type': 'full_purge',
++        'org_name': org.get('name', ''),
++        'scheduled_for': scheduled,
++        'message': f'בקשת מחיקת חשבון וארגון התקבלה. הכל יימחק ב-{DELETION_GRACE_DAYS} ימים.',
++    }
++
++
++@router.post("/users/me/cancel-deletion")
++async def cancel_deletion(user: dict = Depends(get_current_user_allow_pending_deletion)):
++    db = get_db()
++    user_id = user['id']
++
++    if user.get('user_status') != 'pending_deletion':
++        raise HTTPException(status_code=409, detail='אין בקשת מחיקה פעילה')
++
++    ts = _now()
++    deletion_type = user.get('deletion_type', 'account_only')
++
++    await db.users.update_one({'id': user_id}, {
++        '$set': {'user_status': 'active'},
++        '$unset': {
++            'deletion_requested_at': '',
++            'deletion_scheduled_for': '',
++            'deletion_type': '',
++            'deletion_org_id': '',
++        },
++    })
++
++    if deletion_type == 'full_purge':
++        org = await get_user_org(user_id)
++        if org and org.get('status') == 'pending_purge':
++            await db.organizations.update_one({'id': org['id']}, {
++                '$set': {'status': 'active'},
++                '$unset': {
++                    'purge_scheduled_for': '',
++                    'purge_requested_at': '',
++                    'purge_requested_by': '',
++                },
++            })
++
++    await db.audit_events.insert_one({
++        'id': str(uuid.uuid4()),
++        'entity_type': 'user',
++        'entity_id': user_id,
++        'action': 'deletion_cancelled',
++        'actor_id': user_id,
++        'payload': {'deletion_type': deletion_type},
++        'created_at': ts,
++    })
++
++    logger.info(f"[DELETION] cancelled user={user_id} type={deletion_type}")
++    return {'success': True, 'message': 'בקשת המחיקה בוטלה. החשבון פעיל.'}
++
++
++@router.get("/users/me/deletion-status")
++async def get_deletion_status(user: dict = Depends(get_current_user_allow_pending_deletion)):
++    if user.get('user_status') != 'pending_deletion':
++        return {'pending': False}
++
++    return {
++        'pending': True,
++        'deletion_type': user.get('deletion_type', 'account_only'),
++        'requested_at': user.get('deletion_requested_at'),
++        'scheduled_for': user.get('deletion_scheduled_for'),
++    }
++
++
++async def _collect_s3_keys_for_user(db, user_id: str, org_id: str = None):
++    keys = []
++
++    user_doc = await db.users.find_one({'id': user_id}, {'_id': 0, 'photo_url': 1})
++    if user_doc and user_doc.get('photo_url'):
++        keys.append(user_doc['photo_url'])
++
++    if org_id:
++        org_doc = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'logo_url': 1})
++        if org_doc and org_doc.get('logo_url'):
++            keys.append(org_doc['logo_url'])
++
++        org_projects = await db.projects.find(
++            {'org_id': org_id}, {'_id': 0, 'id': 1}
++        ).to_list(10000)
++        project_ids = [p['id'] for p in org_projects]
++
++        if project_ids:
++            tasks = await db.tasks.find(
++                {'project_id': {'$in': project_ids}},
++                {'_id': 0, 'proof_urls': 1, 'file_url': 1}
++            ).to_list(100000)
++            for t in tasks:
++                for url in (t.get('proof_urls') or []):
++                    if url:
++                        keys.append(url)
++                if t.get('file_url'):
++                    keys.append(t['file_url'])
++
++            updates = await db.task_updates.find(
++                {'project_id': {'$in': project_ids}},
++                {'_id': 0, 'attachment_url': 1}
++            ).to_list(100000)
++            for u in updates:
++                if u.get('attachment_url'):
++                    keys.append(u['attachment_url'])
++
++            plans = await db.project_plans.find(
++                {'project_id': {'$in': project_ids}},
++                {'_id': 0, 'file_url': 1, 'thumbnail_url': 1}
++            ).to_list(10000)
++            for p in plans:
++                if p.get('file_url'):
++                    keys.append(p['file_url'])
++                if p.get('thumbnail_url'):
++                    keys.append(p['thumbnail_url'])
++
++            qc_inspections = await db.qc_inspections.find(
++                {'project_id': {'$in': project_ids}},
++                {'_id': 0, 'items': 1}
++            ).to_list(100000)
++            for insp in qc_inspections:
++                for item in (insp.get('items') or []):
++                    for photo in (item.get('photos') or []):
++                        if isinstance(photo, dict) and photo.get('url'):
++                            keys.append(photo['url'])
++                        elif isinstance(photo, str) and photo:
++                            keys.append(photo)
++
++            handovers = await db.handover_protocols.find(
++                {'project_id': {'$in': project_ids}},
++                {'_id': 0, 'pdf_url': 1, 'signatures': 1}
++            ).to_list(10000)
++            for h in handovers:
++                if h.get('pdf_url'):
++                    keys.append(h['pdf_url'])
++                for sig in (h.get('signatures') or []):
++                    if isinstance(sig, dict) and sig.get('signature_url'):
++                        keys.append(sig['signature_url'])
++
++    return [k for k in keys if k and isinstance(k, str)]
++
++
++async def _anonymize_user_db(db, user_id: str):
++    ts = _now()
++    await db.users.update_one({'id': user_id}, {'$set': {
++        'user_status': 'deleted',
++        'name': 'משתמש שנמחק',
++        'email': None,
++        'phone': None,
++        'phone_e164': None,
++        'password_hash': None,
++        'photo_url': None,
++        'specialties': [],
++        'deleted_at': ts,
++    }})
++
++
++async def _anonymize_org_db(db, org_id: str, project_ids: list):
++    ts = _now()
++
++    await db.organizations.update_one({'id': org_id}, {
++        '$set': {
++            'status': 'deleted',
++            'name': 'ארגון שנמחק',
++            'logo_url': None,
++            'deleted_at': ts,
++            'billing_email': None,
++            'billing_name': 'משתמש שנמחק',
++            'billing_cc_emails': [],
++            'billing_contact_name': None,
++            'tax_id': None,
++        },
++        '$unset': {
++            'billing.gi_card_token': '',
++            'billing.gi_card_suffix': '',
++        },
++    })
++
++    if project_ids:
++        await db.project_memberships.delete_many({'project_id': {'$in': project_ids}})
++    await db.organization_memberships.delete_many({'org_id': org_id})
++
++
++async def _clean_s3_keys(keys: list, db=None, job_id: str = None):
++    from services.object_storage import delete as s3_delete
++    deleted = 0
++    failed = 0
++    failed_keys = []
++    for key in keys:
++        try:
++            result = s3_delete(key)
++            if result:
++                deleted += 1
++            else:
++                failed += 1
++                failed_keys.append(key)
++                logger.warning(f"[DELETION] S3 delete returned false key={key[:50]}...")
++        except Exception as e:
++            failed += 1
++            failed_keys.append(key)
++            logger.warning(f"[DELETION] S3 delete exception key={key[:50]}... error={e}")
++    if db and job_id and failed_keys:
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            's3_failed_keys': failed_keys,
++        }})
++    return deleted, failed
++
++
++@router.post("/admin/execute-deletion/{target_user_id}")
++async def execute_deletion(target_user_id: str, admin: dict = Depends(require_stepup)):
++    db = get_db()
++
++    target = await db.users.find_one({'id': target_user_id}, {'_id': 0})
++    if not target:
++        raise HTTPException(status_code=404, detail='משתמש לא נמצא')
++
++    if target.get('user_status') != 'pending_deletion':
++        raise HTTPException(status_code=409, detail='המשתמש אינו בתהליך מחיקה')
++
++    scheduled = target.get('deletion_scheduled_for', '')
++    if scheduled and scheduled > _now():
++        raise HTTPException(
++            status_code=409,
++            detail=f'תקופת הגרייס טרם הסתיימה. מחיקה אפשרית מ-{scheduled}'
++        )
++
++    existing_job = await db.deletion_jobs.find_one({
++        'user_id': target_user_id,
++        'status': {'$in': ['collecting', 'db_done', 's3_cleaning']},
++    })
++    if existing_job:
++        raise HTTPException(status_code=409, detail='כבר קיימת משימת מחיקה בביצוע')
++
++    deletion_type = target.get('deletion_type', 'account_only')
++    ts = _now()
++    job_id = str(uuid.uuid4())
++
++    org_id = None
++    project_ids = []
++    if deletion_type == 'full_purge':
++        org_id = target.get('deletion_org_id')
++        if not org_id:
++            org = await get_user_org(target_user_id)
++            if org:
++                org_id = org['id']
++        if org_id:
++            org_projects = await db.projects.find(
++                {'org_id': org_id}, {'_id': 0, 'id': 1}
++            ).to_list(10000)
++            project_ids = [p['id'] for p in org_projects]
++
++    await db.deletion_jobs.insert_one({
++        'id': job_id,
++        'user_id': target_user_id,
++        'org_id': org_id,
++        'deletion_type': deletion_type,
++        'status': 'collecting',
++        'created_at': ts,
++        'completed_at': None,
++        'executed_by': admin['id'],
++    })
++
++    try:
++        s3_keys = await _collect_s3_keys_for_user(db, target_user_id, org_id)
++
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': 'db_done',
++            's3_keys_count': len(s3_keys),
++            's3_keys': s3_keys,
++        }})
++
++        await _anonymize_user_db(db, target_user_id)
++
++        if deletion_type == 'full_purge' and org_id:
++            await _anonymize_org_db(db, org_id, project_ids)
++
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': 's3_cleaning',
++        }})
++
++        deleted, failed = await _clean_s3_keys(s3_keys, db=db, job_id=job_id)
++
++        final_status = 'complete' if failed == 0 else 's3_partial'
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': final_status,
++            'completed_at': _now(),
++            's3_deleted': deleted,
++            's3_failed': failed,
++        }})
++
++        await db.audit_events.insert_one({
++            'id': str(uuid.uuid4()),
++            'entity_type': 'user',
++            'entity_id': target_user_id,
++            'action': 'deletion_executed',
++            'actor_id': admin['id'],
++            'payload': {
++                'job_id': job_id,
++                'deletion_type': deletion_type,
++                'org_id': org_id,
++                's3_keys': len(s3_keys),
++                's3_deleted': deleted,
++                's3_failed': failed,
++            },
++            'created_at': _now(),
++        })
++
++        logger.info(
++            f"[DELETION] executed user={target_user_id} type={deletion_type} "
++            f"org={org_id} s3_keys={len(s3_keys)} deleted={deleted} failed={failed} "
++            f"job={job_id} by={admin['id']}"
++        )
++
++        return {
++            'success': True,
++            'job_id': job_id,
++            'deletion_type': deletion_type,
++            'status': final_status,
++            's3_keys': len(s3_keys),
++            's3_deleted': deleted,
++            's3_failed': failed,
++        }
++
++    except Exception as e:
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': 'error',
++            'error': str(e)[:500],
++        }})
++        logger.error(f"[DELETION] execution failed user={target_user_id} job={job_id} error={e}")
++        raise HTTPException(status_code=500, detail=f'שגיאה בביצוע מחיקה: {str(e)[:200]}')
++
++
++@router.post("/admin/resume-deletion-job/{job_id}")
++async def resume_deletion_job(job_id: str, admin: dict = Depends(require_stepup)):
++    db = get_db()
++
++    job = await db.deletion_jobs.find_one({'id': job_id}, {'_id': 0})
++    if not job:
++        raise HTTPException(status_code=404, detail='משימת מחיקה לא נמצאה')
++
++    if job['status'] != 's3_partial':
++        raise HTTPException(status_code=409, detail='ניתן לחדש רק משימות שנכשלו בשלב ניקוי S3')
++
++    remaining_keys = job.get('s3_failed_keys', [])
++    if not remaining_keys:
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': 'complete',
++            'completed_at': _now(),
++        }})
++        return {'success': True, 'job_id': job_id, 'status': 'complete', 's3_deleted': 0, 's3_failed': 0}
++
++    await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++        'status': 's3_cleaning',
++    }})
++
++    try:
++        deleted, failed = await _clean_s3_keys(remaining_keys, db=db, job_id=job_id)
++
++        final_status = 'complete' if failed == 0 else 's3_partial'
++        prev_deleted = job.get('s3_deleted', 0)
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': final_status,
++            'completed_at': _now() if final_status == 'complete' else None,
++            's3_deleted': prev_deleted + deleted,
++            's3_failed': failed,
++        }})
++
++        logger.info(
++            f"[DELETION] resumed job={job_id} user={job.get('user_id')} "
++            f"remaining={len(remaining_keys)} deleted={deleted} failed={failed} by={admin['id']}"
++        )
++
++        return {
++            'success': True,
++            'job_id': job_id,
++            'status': final_status,
++            's3_deleted': deleted,
++            's3_failed': failed,
++        }
++    except Exception as e:
++        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
++            'status': 'error',
++            'error': str(e)[:500],
++        }})
++        logger.error(f"[DELETION] resume failed job={job_id} error={e}")
++        raise HTTPException(status_code=500, detail=f'שגיאה בחידוש מחיקה: {str(e)[:200]}')
++
++
++@router.get("/admin/deletion-jobs")
++async def list_deletion_jobs(admin: dict = Depends(require_stepup)):
++    db = get_db()
++    jobs = await db.deletion_jobs.find(
++        {}, {'_id': 0}
++    ).sort('created_at', -1).to_list(100)
++    return {'jobs': jobs}
++
++
++@router.get("/admin/pending-deletions")
++async def list_pending_deletions(admin: dict = Depends(require_stepup)):
++    db = get_db()
++    users = await db.users.find(
++        {'user_status': 'pending_deletion'},
++        {'_id': 0, 'id': 1, 'name': 1, 'email': 1, 'phone_e164': 1,
++         'deletion_requested_at': 1, 'deletion_scheduled_for': 1, 'deletion_type': 1}
++    ).to_list(1000)
++    return {'users': users}
+diff --git a/backend/contractor_ops/member_management.py b/backend/contractor_ops/member_management.py
+index 43acfff..fd59fe5 100644
+--- a/backend/contractor_ops/member_management.py
++++ b/backend/contractor_ops/member_management.py
+@@ -283,6 +283,10 @@ async def remove_member_from_project(project_id: str, target_user_id: str,
+     if org_owner_id and target_user_id == org_owner_id:
+         raise HTTPException(status_code=403, detail='לא ניתן להסיר את בעלי הארגון מהפרויקט')
+ 
++    target_user_check = await db.users.find_one({'id': target_user_id}, {'_id': 0, 'user_status': 1})
++    if target_user_check and target_user_check.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
++
+     if target_user_id == user['id']:
+         pm_count = await db.project_memberships.count_documents({
+             'project_id': project_id, 'role': 'project_manager'
+@@ -346,6 +350,10 @@ async def remove_member_from_org(target_user_id: str, request: Request,
+     if target_user_id == org.get('owner_user_id'):
+         raise HTTPException(status_code=403, detail='לא ניתן להסיר את בעלי הארגון — יש להעביר בעלות קודם')
+ 
++    target_user = await db.users.find_one({'id': target_user_id}, {'_id': 0, 'user_status': 1})
++    if target_user and target_user.get('user_status') == 'pending_deletion':
++        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
++
+     target_org_mem = await db.organization_memberships.find_one({
+         'user_id': target_user_id, 'org_id': org_id
+     })
+diff --git a/backend/contractor_ops/ownership_transfer.py b/backend/contractor_ops/ownership_transfer.py
+index 5f05588..1929609 100644
+--- a/backend/contractor_ops/ownership_transfer.py
++++ b/backend/contractor_ops/ownership_transfer.py
+@@ -482,10 +482,48 @@ def create_transfer_router(get_current_user):
+         if not recipient:
+             raise HTTPException(status_code=404, detail='משתמש לא נמצא. יש להירשם קודם.')
+ 
++        if recipient.get('user_status') == 'pending_deletion':
++            raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות למשתמש בתהליך מחיקה')
++
++        if recipient.get('user_status') != 'active':
++            raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות למשתמש לא פעיל')
++
+         new_owner_id = recipient['id']
+         org_id = request['org_id']
+         initiator_id = request.get('initiator_user_id', '')
+ 
++        target_org_mem = await db.organization_memberships.find_one({
++            'user_id': new_owner_id, 'org_id': org_id
++        }, {'_id': 0, 'role': 1})
++        target_project_mem = None
++        if not target_org_mem:
++            org_projects = await db.projects.find(
++                {'org_id': org_id}, {'_id': 0, 'id': 1}
++            ).to_list(1000)
++            proj_ids = [p['id'] for p in org_projects]
++            if proj_ids:
++                target_project_mem = await db.project_memberships.find_one({
++                    'user_id': new_owner_id,
++                    'project_id': {'$in': proj_ids},
++                }, {'_id': 0, 'role': 1})
++
++        if not target_org_mem and not target_project_mem:
++            raise HTTPException(status_code=409, detail='המשתמש חייב להיות חבר בארגון לפני העברת בעלות')
++
++        ALLOWED_OWNER_ROLES = {'project_manager', 'management_team', 'billing_admin'}
++
++        org_role = target_org_mem.get('role') if target_org_mem else None
++        pm_role = target_project_mem.get('role') if target_project_mem else None
++
++        all_roles = set()
++        if org_role:
++            all_roles.add(org_role)
++        if pm_role:
++            all_roles.add(pm_role)
++
++        if all_roles and not all_roles.intersection(ALLOWED_OWNER_ROLES):
++            raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות למשתמש בתפקיד זה. התפקידים המותרים: מנהל פרויקט, צוות ניהול, מנהל חיובים.')
++
+         from contractor_ops.member_management import check_role_conflict_for_ownership
+         await check_role_conflict_for_ownership(db, new_owner_id, org_id,
+                                                  actor_id=initiator_id)
+@@ -525,6 +563,11 @@ def create_transfer_router(get_current_user):
+             upsert=True
+         )
+ 
++        await db.organization_memberships.update_one(
++            {'org_id': org_id, 'user_id': initiator_id},
++            {'$set': {'role': 'billing_admin'}},
++        )
++
+         await db.users.update_one(
+             {'id': initiator_id},
+             {'$inc': {'session_version': 1}}
+diff --git a/backend/contractor_ops/router.py b/backend/contractor_ops/router.py
+index 2dfada4..c107d1d 100644
+--- a/backend/contractor_ops/router.py
++++ b/backend/contractor_ops/router.py
+@@ -174,6 +174,42 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
+             raise HTTPException(status_code=401, detail='Session revoked. Please login again.')
+         user['_jwt_sv'] = jwt_sv
+         user['_jwt_exp'] = payload.get('exp', 0)
++        if user.get('user_status') == 'pending_deletion':
++            raise HTTPException(
++                status_code=403,
++                detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'},
++            )
++        return user
++    except jwt.PyJWTError as e:
++        raise HTTPException(status_code=401, detail=f'Invalid token: {str(e)}')
++
++
++async def get_current_user_allow_pending_deletion(credentials: HTTPAuthorizationCredentials = Depends(security)):
++    db = get_db()
++    try:
++        token = credentials.credentials
++        payload = jwt.decode(
++            token, JWT_SECRET,
++            algorithms=JWT_ALLOWED_ALGORITHMS,
++            options={'require': ['exp', 'iat', 'iss']},
++            leeway=JWT_CLOCK_SKEW_SECONDS,
++            issuer=APP_ID,
++        )
++        if payload.get('secret_version') != JWT_SECRET_VERSION:
++            raise HTTPException(status_code=401, detail='Token secret version mismatch')
++        user = await db.users.find_one({'id': payload['user_id']}, {'_id': 0})
++        if not user:
++            raise HTTPException(status_code=401, detail='User not found')
++        if user.get('user_status') == 'pending_pm_approval':
++            raise HTTPException(status_code=403, detail='Account pending approval')
++        if user.get('user_status') == 'suspended':
++            raise HTTPException(status_code=403, detail='Account suspended')
++        jwt_sv = payload.get('sv', 0)
++        db_sv = user.get('session_version', 0)
++        if jwt_sv < db_sv:
++            raise HTTPException(status_code=401, detail='Session revoked. Please login again.')
++        user['_jwt_sv'] = jwt_sv
++        user['_jwt_exp'] = payload.get('exp', 0)
+         return user
+     except jwt.PyJWTError as e:
+         raise HTTPException(status_code=401, detail=f'Invalid token: {str(e)}')
+diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+index e93915a..8f254c8 100644
+--- a/backend/contractor_ops/schemas.py
++++ b/backend/contractor_ops/schemas.py
+@@ -70,6 +70,8 @@ class UserStatus(str, Enum):
+     pending_pm_approval = "pending_pm_approval"
+     rejected = "rejected"
+     suspended = "suspended"
++    pending_deletion = "pending_deletion"
++    deleted = "deleted"
+ 
+ 
+ class Category(str, Enum):
+diff --git a/backend/server.py b/backend/server.py
+index bff35c2..35dbacf 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -389,6 +389,10 @@ app.include_router(admin_router)
+ from contractor_ops.billing_router import router as billing_router
+ app.include_router(billing_router)
+ 
++from contractor_ops.deletion_router import router as deletion_router, set_deletion_otp_service
++set_deletion_otp_service(otp_service)
++app.include_router(deletion_router)
++
+ from contractor_ops.ownership_transfer import (
+     create_transfer_router, set_transfer_db, set_transfer_sms_client,
+     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,
+diff --git a/frontend/src/App.js b/frontend/src/App.js
+index 06fdda1..2c021c8 100644
+--- a/frontend/src/App.js
++++ b/frontend/src/App.js
+@@ -22,6 +22,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
+ import ResetPasswordPage from './pages/ResetPasswordPage';
+ import AccessibilityPage from './pages/AccessibilityPage';
+ import WaLoginPage from './pages/WaLoginPage';
++import PendingDeletionPage from './pages/PendingDeletionPage';
+ 
+ const JoinRequestsPage = React.lazy(() => import('./pages/JoinRequestsPage'));
+ const TaskDetailPage = React.lazy(() => import('./pages/TaskDetailPage'));
+@@ -99,6 +100,10 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
+     return <Navigate to="/pending" replace />;
+   }
+ 
++  if (user.user_status === 'pending_deletion') {
++    return <Navigate to="/account/pending-deletion" replace />;
++  }
++
+   if (requireSuperAdmin && user.platform_role !== 'super_admin') {
+     return <Navigate to="/projects" replace />;
+   }
+@@ -151,6 +156,7 @@ const AppRoutes = () => {
+         />
+         <Route path="/onboarding" element={<OnboardingPage />} />
+         <Route path="/pending" element={<PendingApprovalPage />} />
++        <Route path="/account/pending-deletion" element={<PendingDeletionPage />} />
+         <Route
+           path="/projects"
+           element={
+diff --git a/frontend/src/components/UserDrawer.js b/frontend/src/components/UserDrawer.js
+index 2cf3820..73aa439 100644
+--- a/frontend/src/components/UserDrawer.js
++++ b/frontend/src/components/UserDrawer.js
+@@ -135,7 +135,8 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
+       onRefresh();
+       onClose();
+     } catch (err) {
+-      toast.error(err.response?.data?.detail || 'שגיאה בהסרה מהארגון');
++      const detail = err.response?.data?.detail;
++      toast.error(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בהסרה מהארגון'));
+     } finally {
+       setRemovingOrg(false);
+     }
+diff --git a/frontend/src/contexts/AuthContext.js b/frontend/src/contexts/AuthContext.js
+index e25fcbf..1aeab5d 100644
+--- a/frontend/src/contexts/AuthContext.js
++++ b/frontend/src/contexts/AuthContext.js
+@@ -72,7 +72,8 @@ export const AuthProvider = ({ children }) => {
+       const response = await axios.get(`${API}/auth/me`, {
+         headers: { Authorization: `Bearer ${token}` }
+       });
+-      setUser(response.data);
++      const userData = response.data;
++      setUser(userData);
+       setNetworkError(false);
+       toastShownRef.current = false;
+       if (retryTimerRef.current) {
+@@ -176,6 +177,16 @@ export const AuthProvider = ({ children }) => {
+     _clearBrikopsCookie();
+   };
+ 
++  const refreshUser = useCallback(async () => {
++    if (!token) return;
++    try {
++      const response = await axios.get(`${API}/auth/me`, {
++        headers: { Authorization: `Bearer ${token}` }
++      });
++      setUser(response.data);
++    } catch {}
++  }, [token]);
++
+   const value = {
+     user,
+     token,
+@@ -186,6 +197,7 @@ export const AuthProvider = ({ children }) => {
+     loginWithOtp,
+     register,
+     logout,
++    refreshUser,
+     isAuthenticated: !!token && !!user
+   };
+ 
+diff --git a/frontend/src/pages/AccountSettingsPage.js b/frontend/src/pages/AccountSettingsPage.js
+index 5796577..797ce8f 100644
+--- a/frontend/src/pages/AccountSettingsPage.js
++++ b/frontend/src/pages/AccountSettingsPage.js
+@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
+ import { useNavigate, useLocation } from 'react-router-dom';
+ import { useAuth } from '../contexts/AuthContext';
+ import { useIdentity } from '../contexts/IdentityContext';
+-import { authService, userService } from '../services/api';
++import { authService, userService, deletionService, billingService } from '../services/api';
+ import { Button } from '../components/ui/button';
+ import { toast } from 'sonner';
+ import { Link } from 'react-router-dom';
+ import {
+-  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle, Bell, Accessibility, FileText
++  Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle, Bell, Accessibility, FileText, Trash2, AlertTriangle
+ } from 'lucide-react';
+ import PhoneChangeModal from '../components/PhoneChangeModal';
+ import { tRole, tTrade } from '../i18n';
+@@ -42,6 +42,367 @@ const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error
+   </div>
+ );
+ 
++const DeleteAccountSection = ({ user }) => {
++  const navigate = useNavigate();
++  const { refreshUser } = useAuth();
++  const [isOrgOwner, setIsOrgOwner] = useState(false);
++  const hasOrg = !!user?.organization;
++
++  const [wizardMode, setWizardMode] = useState(null);
++  const [step, setStep] = useState(0);
++  const [authMethod, setAuthMethod] = useState(null);
++  const [password, setPassword] = useState('');
++  const [otpCode, setOtpCode] = useState('');
++  const [showPw, setShowPw] = useState(false);
++  const [typedOrgName, setTypedOrgName] = useState('');
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState('');
++  const [otpDebugCode, setOtpDebugCode] = useState('');
++
++  useEffect(() => {
++    if (hasOrg) {
++      billingService.me().then(b => setIsOrgOwner(!!b?.is_owner)).catch(() => {});
++    }
++  }, [hasOrg]);
++
++  const resetWizard = () => {
++    setWizardMode(null);
++    setStep(0);
++    setAuthMethod(null);
++    setPassword('');
++    setOtpCode('');
++    setShowPw(false);
++    setTypedOrgName('');
++    setLoading(false);
++    setError('');
++    setOtpDebugCode('');
++  };
++
++  const handleStartDeletion = (mode) => {
++    if (mode === 'account' && isOrgOwner) {
++      setWizardMode('owner_blocked');
++      return;
++    }
++    setWizardMode(mode);
++    setStep(1);
++    setError('');
++  };
++
++  const handleProceedToAuth = async () => {
++    setLoading(true);
++    setError('');
++    try {
++      const resp = await deletionService.requestOtp();
++      setAuthMethod(resp.auth_method);
++      if (resp.otp_debug_code) setOtpDebugCode(resp.otp_debug_code);
++      setStep(2);
++    } catch (err) {
++      const detail = err.response?.data?.detail;
++      setError(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בשליחת קוד אימות'));
++    } finally {
++      setLoading(false);
++    }
++  };
++
++  const handleConfirmDeletion = async () => {
++    setError('');
++
++    if (authMethod === 'password' && !password.trim()) {
++      setError('נא להזין סיסמה');
++      return;
++    }
++    if (authMethod !== 'password' && !otpCode.trim()) {
++      setError('נא להזין קוד אימות');
++      return;
++    }
++    if (wizardMode === 'full') {
++      if (!typedOrgName.trim()) {
++        setError('נא להקליד את שם הארגון');
++        return;
++      }
++      if (typedOrgName !== user?.organization?.name) {
++        setError('שם הארגון אינו תואם. יש להקליד בדיוק כפי שמופיע.');
++        return;
++      }
++    }
++
++    setLoading(true);
++    try {
++      const body = {};
++      if (authMethod === 'password') {
++        body.password = password;
++      } else {
++        body.otp_code = otpCode;
++      }
++
++      if (wizardMode === 'full') {
++        body.typed_org_name = typedOrgName;
++        await deletionService.requestFullDeletion(body);
++      } else {
++        await deletionService.requestDeletion(body);
++      }
++
++      toast.success('בקשת המחיקה נשלחה בהצלחה');
++      if (refreshUser) await refreshUser();
++      navigate('/account/pending-deletion', { replace: true });
++    } catch (err) {
++      const detail = err.response?.data?.detail;
++      setError(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בשליחת בקשת מחיקה'));
++    } finally {
++      setLoading(false);
++    }
++  };
++
++  if (wizardMode === 'owner_blocked') {
++    return (
++      <div className="bg-white rounded-2xl shadow-lg border border-red-100 p-6">
++        <div className="flex items-center gap-2 mb-4">
++          <Trash2 className="w-5 h-5 text-red-500" />
++          <h2 className="text-lg font-semibold text-red-700">מחיקת חשבון</h2>
++        </div>
++        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg space-y-3">
++          <p className="text-sm text-amber-800 flex items-start gap-2">
++            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
++            <span>יש להעביר בעלות על הארגון לפני מחיקת החשבון.</span>
++          </p>
++          <Button
++            onClick={() => navigate('/org/transfer/settings')}
++            variant="outline"
++            className="w-full h-10 text-sm text-amber-700 border-amber-300 hover:bg-amber-100"
++          >
++            העבר בעלות על הארגון
++          </Button>
++          <Button onClick={resetWizard} variant="ghost" className="w-full h-10 text-sm">
++            ביטול
++          </Button>
++        </div>
++      </div>
++    );
++  }
++
++  if (wizardMode) {
++    const isFull = wizardMode === 'full';
++    return (
++      <div className="bg-white rounded-2xl shadow-lg border border-red-200 p-6">
++        <div className="flex items-center gap-2 mb-4">
++          <Trash2 className="w-5 h-5 text-red-500" />
++          <h2 className="text-lg font-semibold text-red-700">
++            {isFull ? 'מחיקת חשבון וארגון' : 'מחיקת חשבון'}
++          </h2>
++        </div>
++
++        <div className="flex items-center gap-1 mb-4">
++          {[1, 2, 3].map(s => (
++            <div key={s} className={`h-1 flex-1 rounded-full ${step >= s ? 'bg-red-500' : 'bg-slate-200'}`} />
++          ))}
++        </div>
++
++        {step === 1 && (
++          <div className="space-y-4">
++            <div className="p-4 bg-red-50 border border-red-200 rounded-lg space-y-2">
++              <p className="text-sm font-semibold text-red-700 flex items-center gap-2">
++                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
++                אזהרה — פעולה בלתי הפיכה
++              </p>
++              <ul className="text-sm text-red-700 space-y-1 mr-6 list-disc">
++                <li>כל הנתונים האישיים שלך יימחקו לצמיתות</li>
++                <li>לא תוכל לגשת לחשבון שלך יותר</li>
++                {isFull && (
++                  <>
++                    <li>כל הפרויקטים, המשימות והנתונים של הארגון יימחקו</li>
++                    <li>כל חברי הארגון יאבדו את הגישה שלהם</li>
++                  </>
++                )}
++              </ul>
++              <p className="text-xs text-red-500 pt-1">
++                {isFull
++                  ? 'לאחר תקופת המתנה, החשבון והארגון יימחקו סופית.'
++                  : 'לאחר תקופת המתנה, החשבון יימחק סופית.'}
++              </p>
++            </div>
++
++            <div className="flex gap-3">
++              <Button
++                onClick={handleProceedToAuth}
++                disabled={loading}
++                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
++              >
++                {loading ? (
++                  <span className="flex items-center justify-center gap-2">
++                    <Loader2 className="w-5 h-5 animate-spin" />
++                  </span>
++                ) : 'המשך'}
++              </Button>
++              <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
++                ביטול
++              </Button>
++            </div>
++
++            {error && (
++              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
++                <AlertCircle className="w-4 h-4 flex-shrink-0" />
++                <span>{error}</span>
++              </div>
++            )}
++          </div>
++        )}
++
++        {step === 2 && (
++          <div className="space-y-4">
++            <p className="text-sm text-slate-700 font-medium">שלב 2 — אימות זהות</p>
++
++            {authMethod === 'password' ? (
++              <div className="space-y-1">
++                <label className="block text-sm font-medium text-slate-700">סיסמה נוכחית</label>
++                <div className="relative">
++                  <input
++                    type={showPw ? 'text' : 'password'}
++                    value={password}
++                    onChange={e => { setPassword(e.target.value); setError(''); }}
++                    placeholder="הזן סיסמה"
++                    className="w-full h-11 px-3 py-2 pl-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
++                  />
++                  <button type="button" onClick={() => setShowPw(p => !p)} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
++                    {showPw ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
++                  </button>
++                </div>
++              </div>
++            ) : (
++              <div className="space-y-1">
++                <label className="block text-sm font-medium text-slate-700">קוד אימות (נשלח ב-SMS)</label>
++                <input
++                  type="text"
++                  inputMode="numeric"
++                  maxLength={6}
++                  value={otpCode}
++                  onChange={e => { setOtpCode(e.target.value.replace(/\D/g, '')); setError(''); }}
++                  placeholder="הזן קוד 6 ספרות"
++                  className="w-full h-11 px-3 py-2 text-center text-slate-900 bg-white border border-slate-300 rounded-lg tracking-widest text-lg font-mono focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
++                  dir="ltr"
++                />
++                {otpDebugCode && (
++                  <p className="text-xs text-slate-400 text-center mt-1">(dev) קוד: {otpDebugCode}</p>
++                )}
++              </div>
++            )}
++
++            {error && (
++              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
++                <AlertCircle className="w-4 h-4 flex-shrink-0" />
++                <span>{error}</span>
++              </div>
++            )}
++
++            <div className="flex gap-3 pt-2">
++              <Button
++                onClick={() => { setError(''); setStep(3); }}
++                disabled={loading || (authMethod === 'password' ? !password.trim() : !otpCode.trim())}
++                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
++              >
++                המשך
++              </Button>
++              <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
++                ביטול
++              </Button>
++            </div>
++          </div>
++        )}
++
++        {step === 3 && (
++          <div className="space-y-4">
++            <p className="text-sm text-slate-700 font-medium">שלב 3 — אישור סופי</p>
++
++            <div className="p-4 bg-red-50 border border-red-200 rounded-lg space-y-2">
++              <p className="text-sm font-bold text-red-700">
++                {isFull
++                  ? `החשבון והארגון "${user?.organization?.name}" יימחקו לצמיתות לאחר תקופת ההמתנה.`
++                  : 'החשבון שלך יימחק לצמיתות לאחר תקופת ההמתנה.'}
++              </p>
++              <p className="text-sm text-red-600">
++                האם אתה בטוח? לא ניתן לבטל פעולה זו לאחר תום תקופת ההמתנה.
++              </p>
++            </div>
++
++            {isFull && (
++              <div className="space-y-1">
++                <label className="block text-sm font-medium text-slate-700">
++                  הקלד את שם הארגון בדיוק: <span className="font-bold text-red-600">{user?.organization?.name}</span>
++                </label>
++                <input
++                  type="text"
++                  value={typedOrgName}
++                  onChange={e => { setTypedOrgName(e.target.value); setError(''); }}
++                  placeholder={user?.organization?.name}
++                  className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
++                />
++              </div>
++            )}
++
++            {error && (
++              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
++                <AlertCircle className="w-4 h-4 flex-shrink-0" />
++                <span>{error}</span>
++              </div>
++            )}
++
++            <div className="flex gap-3 pt-2">
++              <Button
++                onClick={handleConfirmDeletion}
++                disabled={loading}
++                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
++              >
++                {loading ? (
++                  <span className="flex items-center justify-center gap-2">
++                    <Loader2 className="w-5 h-5 animate-spin" />
++                    מוחק...
++                  </span>
++                ) : 'אשר מחיקה סופית'}
++              </Button>
++              <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
++                ביטול
++              </Button>
++            </div>
++          </div>
++        )}
++      </div>
++    );
++  }
++
++  return (
++    <div className="bg-white rounded-2xl shadow-lg border border-red-100 p-6">
++      <div className="flex items-center gap-2 mb-4">
++        <Trash2 className="w-5 h-5 text-red-500" />
++        <h2 className="text-lg font-semibold text-red-700">מחיקת חשבון</h2>
++      </div>
++      <p className="text-sm text-slate-600 mb-4">
++        מחיקת החשבון היא פעולה בלתי הפיכה. לאחר תקופת המתנה כל הנתונים שלך יימחקו לצמיתות.
++      </p>
++
++      <div className="space-y-3">
++        <Button
++          onClick={() => handleStartDeletion('account')}
++          variant="outline"
++          className="w-full h-11 justify-start text-sm text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
++        >
++          <Trash2 className="w-4 h-4 ml-2" />
++          מחק את החשבון שלי
++        </Button>
++
++        {isOrgOwner && user?.organization && (
++          <Button
++            onClick={() => handleStartDeletion('full')}
++            variant="outline"
++            className="w-full h-11 justify-start text-sm text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
++          >
++            <AlertTriangle className="w-4 h-4 ml-2" />
++            מחק הכל ({user.organization.name})
++          </Button>
++        )}
++      </div>
++    </div>
++  );
++};
++
+ const AccountSettingsPage = () => {
+   const { user, logout } = useAuth();
+   const { setShowCompleteForm, identityStatus, refreshIdentity } = useIdentity();
+@@ -665,6 +1026,8 @@ const AccountSettingsPage = () => {
+           )}
+         </div>
+ 
++        <DeleteAccountSection user={user} />
++
+         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+           <div className="flex items-center gap-2 mb-4">
+             <FileText className="w-5 h-5 text-amber-500" />
+diff --git a/frontend/src/pages/PendingDeletionPage.js b/frontend/src/pages/PendingDeletionPage.js
+new file mode 100644
+index 0000000..498df2c
+--- /dev/null
++++ b/frontend/src/pages/PendingDeletionPage.js
+@@ -0,0 +1,171 @@
++import React, { useState, useEffect } from 'react';
++import { useNavigate } from 'react-router-dom';
++import { useAuth } from '../contexts/AuthContext';
++import { deletionService } from '../services/api';
++import { toast } from 'sonner';
++import { Loader2, AlertTriangle, Clock, XCircle } from 'lucide-react';
++import { Button } from '../components/ui/button';
++
++const PendingDeletionPage = () => {
++  const { user, loading: authLoading, token, logout, refreshUser } = useAuth();
++  const navigate = useNavigate();
++  const [status, setStatus] = useState(null);
++  const [fetching, setFetching] = useState(true);
++  const [cancelling, setCancelling] = useState(false);
++
++  useEffect(() => {
++    if (authLoading) return;
++    if (!user || !token) {
++      navigate('/login', { replace: true });
++      return;
++    }
++    if (user.user_status !== 'pending_deletion') {
++      navigate('/projects', { replace: true });
++      return;
++    }
++    let cancelled = false;
++    deletionService.getStatus()
++      .then(data => {
++        if (cancelled) return;
++        setStatus(data);
++        if (!data.pending) {
++          navigate('/projects', { replace: true });
++        }
++      })
++      .catch(err => {
++        if (cancelled) return;
++        const httpStatus = err.response?.status;
++        if (httpStatus === 401 || httpStatus === 403) {
++          logout();
++          navigate('/login', { replace: true });
++        } else {
++          navigate('/projects', { replace: true });
++        }
++      })
++      .finally(() => {
++        if (!cancelled) setFetching(false);
++      });
++    return () => { cancelled = true; };
++  }, [navigate, user, token, authLoading, logout]);
++
++  const getDaysRemaining = () => {
++    if (!status?.scheduled_for) return null;
++    const scheduled = new Date(status.scheduled_for);
++    const now = new Date();
++    const diff = Math.ceil((scheduled - now) / (1000 * 60 * 60 * 24));
++    return Math.max(0, diff);
++  };
++
++  const handleCancel = async () => {
++    setCancelling(true);
++    try {
++      await deletionService.cancelDeletion();
++      toast.success('המחיקה בוטלה בהצלחה');
++      if (refreshUser) {
++        await refreshUser();
++      }
++      navigate('/projects', { replace: true });
++    } catch (err) {
++      const detail = err.response?.data?.detail;
++      const msg = typeof detail === 'object' ? detail.message : detail;
++      toast.error(msg || 'שגיאה בביטול המחיקה');
++    } finally {
++      setCancelling(false);
++    }
++  };
++
++  const handleLogout = () => {
++    logout();
++    navigate('/login', { replace: true });
++  };
++
++  if (authLoading || fetching) {
++    return (
++      <div className="min-h-screen flex items-center justify-center bg-slate-50">
++        <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
++      </div>
++    );
++  }
++
++  const daysRemaining = getDaysRemaining();
++  const deletionType = status?.deletion_type;
++
++  return (
++    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-slate-50 flex items-center justify-center px-4 py-8" dir="rtl">
++      <div className="w-full max-w-md space-y-6">
++        <div className="text-center space-y-3">
++          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
++            <AlertTriangle className="w-8 h-8 text-red-500" />
++          </div>
++          <h1 className="text-2xl font-bold text-slate-900">החשבון שלך בתהליך מחיקה</h1>
++          <p className="text-slate-600">
++            {deletionType === 'full_purge'
++              ? 'החשבון והארגון שלך מתוכננים למחיקה מלאה.'
++              : 'החשבון שלך מתוכנן למחיקה.'}
++          </p>
++        </div>
++
++        {daysRemaining !== null && (
++          <div className="bg-white rounded-2xl shadow-lg border border-red-200 p-6 text-center space-y-2">
++            <Clock className="w-6 h-6 text-red-500 mx-auto" />
++            <p className="text-4xl font-black text-red-600">{daysRemaining}</p>
++            <p className="text-sm text-slate-600">ימים נותרו לפני מחיקה סופית</p>
++          </div>
++        )}
++
++        <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 space-y-3">
++          <h2 className="font-semibold text-slate-900">מה יקרה?</h2>
++          <ul className="space-y-2 text-sm text-slate-600">
++            <li className="flex items-start gap-2">
++              <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
++              <span>כל הנתונים האישיים שלך יימחקו לצמיתות</span>
++            </li>
++            <li className="flex items-start gap-2">
++              <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
++              <span>לא תוכל לגשת לחשבון שלך יותר</span>
++            </li>
++            {deletionType === 'full_purge' && (
++              <>
++                <li className="flex items-start gap-2">
++                  <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
++                  <span>כל הפרויקטים, המשימות והנתונים של הארגון יימחקו</span>
++                </li>
++                <li className="flex items-start gap-2">
++                  <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
++                  <span>כל חברי הארגון יאבדו את הגישה שלהם</span>
++                </li>
++              </>
++            )}
++          </ul>
++          <p className="text-xs text-slate-400 pt-2">
++            ניתן לבטל את המחיקה בכל עת לפני תום תקופת ההמתנה.
++          </p>
++        </div>
++
++        <div className="space-y-3">
++          <Button
++            onClick={handleCancel}
++            disabled={cancelling}
++            className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-bold text-base rounded-xl shadow-lg"
++          >
++            {cancelling ? (
++              <span className="flex items-center justify-center gap-2">
++                <Loader2 className="w-5 h-5 animate-spin" />
++                מבטל...
++              </span>
++            ) : 'בטל מחיקה'}
++          </Button>
++
++          <button
++            onClick={handleLogout}
++            className="w-full text-center text-sm text-slate-500 hover:text-slate-700 py-2"
++          >
++            התנתק
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++};
++
++export default PendingDeletionPage;
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index a88368b..4c540ec 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -1197,6 +1197,29 @@ export const authService = {
+   },
+ };
+ 
++export const deletionService = {
++  async requestOtp() {
++    const response = await axios.post(`${API}/users/me/request-deletion-otp`, {}, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async requestDeletion(body) {
++    const response = await axios.post(`${API}/users/me/request-deletion`, body, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async requestFullDeletion(body) {
++    const response = await axios.post(`${API}/users/me/request-full-deletion`, body, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async cancelDeletion() {
++    const response = await axios.post(`${API}/users/me/cancel-deletion`, {}, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async getStatus() {
++    const response = await axios.get(`${API}/users/me/deletion-status`, { headers: getAuthHeader() });
++    return response.data;
++  },
++};
++
+ export const templateService = {
+   async list(params = {}) {
+     const response = await axios.get(`${API}/admin/qc/templates`, { headers: getAuthHeader(), params });
+diff --git a/replit.md b/replit.md
+index d64078d..88d8492 100644
+--- a/replit.md
++++ b/replit.md
+@@ -42,6 +42,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
+     -   **G4 Tenant Data Import**: Excel/CSV import of tenant (buyer) data for handover protocols with preview and upsert functionality.
+     -   **Admin CS Dashboard**: Read-only analytics dashboard for super_admin providing KPIs, alerts, activity charts, and organization data.
+     -   **WhatsApp Auto-Reminders**: Automated and manual WhatsApp reminders for contractors with open defects and PM daily digests, with cooldowns, Shabbat protection, and per-user reminder preferences (enable/disable per type + weekday selection, stored on user document as `reminder_preferences`). Preferences only apply to cron/automated triggers; manual sends always bypass. Company contacts (is_company=True) always receive regardless of preferences.
++    -   **Account & Org Deletion**: Self-service account deletion with 7-day grace period. Two flows: Flow A (account-only, requires org ownership transfer first) and Flow B (full purge — org + account for org owners). Auth gate blocks pending_deletion users from all endpoints except cancel-deletion, logout, and auth/me. Deletion execution endpoint (admin/cron) collects S3 keys, anonymizes DB, cleans storage. Concurrent deletion guards on admin user modification endpoints. Router: `deletion_router.py`. UserStatus enum includes `pending_deletion`.
+     -   **Identity System**: Manages user accounts, status, and audit logging.
+     -   **Structure Permissions**: Role-based restrictions for building/floor/unit mutations.
+     -   **Unit Type Tags & Notes**: Optional `unit_type_tag` (mekhir_lemishtaken / shuk_hofshi) and `unit_note` (max 200 chars) fields on units. Supported in create and PATCH endpoints. Displayed as colored badges and gray text in InnerBuildingPage and BuildingDefectsPage with client-side filter chips and inline edit modal.
