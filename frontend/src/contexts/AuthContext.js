@@ -132,16 +132,23 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     try {
       const response = await axios.post(`${API}/auth/login`, { email, password });
-      const { token: newToken, user: userData, platform_role } = response.data;
+      const data = response.data;
+      if (!data || !data.token) {
+        console.error('[AUTH] Login response missing token', { status: response.status, hasData: !!data });
+        return { success: false, error: 'תגובה לא תקינה מהשרת' };
+      }
+      const { token: newToken, user: userData, platform_role } = data;
       setToken(newToken);
       setUser({ ...userData, platform_role: platform_role || 'none' });
-      localStorage.setItem('token', newToken);
-      _setBrikopsCookie();
+      try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
+      try { _setBrikopsCookie(); } catch (e) { /* ignore cookie errors */ }
       return { success: true };
     } catch (error) {
+      console.error('[AUTH] Login error', error?.message, error?.response?.status, error?.stack);
+      const detail = error.response?.data?.detail;
       return {
         success: false,
-        error: error.response?.data?.detail || 'Login failed'
+        error: detail || (error.message ? `שגיאה טכנית: ${error.message}` : 'Login failed')
       };
     }
   };
@@ -149,8 +156,8 @@ export const AuthProvider = ({ children }) => {
   const loginWithOtp = (newToken, userData, platformRole) => {
     setToken(newToken);
     setUser({ ...userData, platform_role: platformRole || userData?.platform_role || 'none' });
-    localStorage.setItem('token', newToken);
-    _setBrikopsCookie();
+    try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
+    try { _setBrikopsCookie(); } catch (e) { /* ignore */ }
   };
 
   const register = async (userData) => {
