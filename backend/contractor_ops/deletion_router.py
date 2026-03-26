@@ -388,17 +388,28 @@ async def _anonymize_org_db(db, org_id: str, project_ids: list):
     await db.organization_memberships.delete_many({'org_id': org_id})
 
 
-async def _clean_s3_keys(keys: list):
+async def _clean_s3_keys(keys: list, db=None, job_id: str = None):
     from services.object_storage import delete as s3_delete
     deleted = 0
     failed = 0
+    failed_keys = []
     for key in keys:
         try:
-            s3_delete(key)
-            deleted += 1
+            result = s3_delete(key)
+            if result:
+                deleted += 1
+            else:
+                failed += 1
+                failed_keys.append(key)
+                logger.warning(f"[DELETION] S3 delete returned false key={key[:50]}...")
         except Exception as e:
-            logger.warning(f"[DELETION] S3 delete failed key={key[:50]}... error={e}")
             failed += 1
+            failed_keys.append(key)
+            logger.warning(f"[DELETION] S3 delete exception key={key[:50]}... error={e}")
+    if db and job_id and failed_keys:
+        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+            's3_failed_keys': failed_keys,
+        }})
     return deleted, failed
 
 
@@ -462,6 +473,7 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
         await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
             'status': 'db_done',
             's3_keys_count': len(s3_keys),
+            's3_keys': s3_keys,
         }})
 
         await _anonymize_user_db(db, target_user_id)
@@ -473,7 +485,7 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
             'status': 's3_cleaning',
         }})
 
-        deleted, failed = await _clean_s3_keys(s3_keys)
+        deleted, failed = await _clean_s3_keys(s3_keys, db=db, job_id=job_id)
 
         final_status = 'complete' if failed == 0 else 's3_partial'
         await db.deletion_jobs.update_one({'id': job_id}, {'$set': {

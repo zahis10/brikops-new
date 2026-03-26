@@ -105,9 +105,11 @@ async def stepup_verify(request: Request, user: dict = Depends(require_super_adm
 @router.post("/admin/revoke-session/{user_id}")
 async def admin_revoke_session(user_id: str, request: Request, admin: dict = Depends(require_stepup)):
     db = get_db()
-    target_user = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1})
+    target_user = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1, 'user_status': 1})
     if not target_user:
         raise HTTPException(status_code=404, detail='User not found')
+    if target_user.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='לא ניתן לבצע פעולה על משתמש בתהליך מחיקה')
     old_sv = target_user.get('session_version', 0)
     new_sv = old_sv + 1
     await db.users.update_one({'id': user_id}, {'$set': {'session_version': new_sv}})
@@ -503,9 +505,11 @@ async def admin_update_preferred_language(user_id: str, request: Request, admin:
     if lang not in ALLOWED_PREFERRED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f'שפה לא חוקית. ערכים מותרים: {", ".join(sorted(ALLOWED_PREFERRED_LANGUAGES))}')
 
-    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'preferred_language': 1})
+    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'preferred_language': 1, 'user_status': 1})
     if not target:
         raise HTTPException(status_code=404, detail='משתמש לא נמצא')
+    if target.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='לא ניתן לבצע פעולה על משתמש בתהליך מחיקה')
 
     old_value = target.get('preferred_language', 'he')
     await db.users.update_one({'id': user_id}, {'$set': {'preferred_language': lang}})
