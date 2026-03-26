@@ -19,7 +19,7 @@ async def create_company(company: Company, user: dict = Depends(require_roles('p
     company_id = str(uuid.uuid4())
     doc = {
         'id': company_id, 'name': company.name,
-        'trade': company.trade.value if company.trade else None,
+        'trade': company.trade,
         'contact_name': company.contact_name, 'contact_phone': company.contact_phone,
         'contact_email': company.contact_email, 'created_at': _now(),
     }

@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Optional, List, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class TaskStatus(str, Enum):
@@ -191,7 +191,7 @@ class Unit(BaseModel):
 class Company(BaseModel):
     id: Optional[str] = None
     name: str
-    trade: Optional[Category] = None
+    trade: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
     contact_email: Optional[str] = None
@@ -200,6 +200,21 @@ class Company(BaseModel):
     whatsapp_enabled: bool = False
     whatsapp_opt_in: bool = False
     created_at: Optional[str] = None
+
+    @validator('trade', pre=True, always=True)
+    def validate_trade(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, Enum):
+            v = v.value
+        if not isinstance(v, str):
+            return None
+        v = v.strip()
+        if len(v) < 1:
+            return None
+        if len(v) > 50:
+            raise ValueError('trade name too long')
+        return v
 
 
 class UserCreate(BaseModel):
@@ -565,11 +580,26 @@ class ProjectCompany(BaseModel):
     id: Optional[str] = None
     project_id: str
     name: str
-    trade: Optional[Category] = None
+    trade: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
     contact_email: Optional[str] = None
     created_at: Optional[str] = None
+
+    @validator('trade', pre=True, always=True)
+    def validate_trade(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, Enum):
+            v = v.value
+        if not isinstance(v, str):
+            return None
+        v = v.strip()
+        if len(v) < 1:
+            return None
+        if len(v) > 50:
+            raise ValueError('trade name too long')
+        return v
 
 class TeamInvite(BaseModel):
     id: Optional[str] = None

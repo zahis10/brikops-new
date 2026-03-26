@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { projectService, buildingService, floorService, companyService, userService, membershipService, inviteService, tradeService } from '../services/api';
+import { projectService, buildingService, floorService, companyService, projectCompanyService, userService, membershipService, inviteService, tradeService } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import {
@@ -931,17 +931,24 @@ const AddCompanyForm = ({ modalProject, onClose, onSuccess }) => {
 
     setSubmitting(true);
     try {
-      await companyService.create({
+      const payload = {
         name: name.trim(),
         trade,
         contact_name: contactName.trim(),
         contact_phone: contactPhone.trim(),
-      });
+      };
+      if (projectId) {
+        await projectCompanyService.create(projectId, payload);
+      } else {
+        await companyService.create(payload);
+      }
       toast.success('חברה נוצרה בהצלחה');
       onSuccess();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה ביצירת חברה');
+      const detail = err.response?.data?.detail;
+      const msg = Array.isArray(detail) ? (detail[0]?.msg || 'שגיאה ביצירת חברה') : (typeof detail === 'string' ? detail : 'שגיאה ביצירת חברה');
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }
