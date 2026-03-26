@@ -283,6 +283,10 @@ async def remove_member_from_project(project_id: str, target_user_id: str,
     if org_owner_id and target_user_id == org_owner_id:
         raise HTTPException(status_code=403, detail='לא ניתן להסיר את בעלי הארגון מהפרויקט')
 
+    target_user_check = await db.users.find_one({'id': target_user_id}, {'_id': 0, 'user_status': 1})
+    if target_user_check and target_user_check.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
+
     if target_user_id == user['id']:
         pm_count = await db.project_memberships.count_documents({
             'project_id': project_id, 'role': 'project_manager'
@@ -345,6 +349,10 @@ async def remove_member_from_org(target_user_id: str, request: Request,
 
     if target_user_id == org.get('owner_user_id'):
         raise HTTPException(status_code=403, detail='לא ניתן להסיר את בעלי הארגון — יש להעביר בעלות קודם')
+
+    target_user = await db.users.find_one({'id': target_user_id}, {'_id': 0, 'user_status': 1})
+    if target_user and target_user.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
 
     target_org_mem = await db.organization_memberships.find_one({
         'user_id': target_user_id, 'org_id': org_id

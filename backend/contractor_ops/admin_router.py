@@ -23,6 +23,12 @@ from contractor_ops.billing import (
 router = APIRouter(prefix="/api")
 
 
+async def _check_not_pending_deletion(db, user_id: str):
+    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'user_status': 1})
+    if target and target.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
+
+
 @router.post("/admin/stepup/request")
 async def stepup_request(request: Request, user: dict = Depends(require_super_admin)):
     user_id = user.get('id', '')
@@ -459,9 +465,11 @@ async def admin_change_user_phone(user_id: str, request: Request, admin: dict = 
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'phone_e164': 1, 'name': 1})
+    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'phone_e164': 1, 'name': 1, 'user_status': 1})
     if not target:
         raise HTTPException(status_code=404, detail='משתמש לא נמצא')
+    if target.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
 
     conflict = await db.users.find_one({'phone_e164': new_phone, 'id': {'$ne': user_id}})
     if conflict:
@@ -530,9 +538,11 @@ async def admin_reset_user_password(user_id: str, request: Request, admin: dict 
 
     _validate_new_password(new_password)
 
-    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1})
+    target = await db.users.find_one({'id': user_id}, {'_id': 0, 'id': 1, 'name': 1, 'session_version': 1, 'user_status': 1})
     if not target:
         raise HTTPException(status_code=404, detail='משתמש לא נמצא')
+    if target.get('user_status') == 'pending_deletion':
+        raise HTTPException(status_code=409, detail='משתמש בתהליך מחיקה, לא ניתן לערוך')
 
     password_hash = await _hash_password(new_password)
     old_sv = target.get('session_version', 0)
@@ -600,6 +610,8 @@ async def admin_change_user_role(user_id: str, project_id: str, request: Request
     valid_roles = {'project_manager', 'management_team', 'contractor', 'viewer'}
     if new_role not in valid_roles:
         raise HTTPException(status_code=400, detail=f'תפקיד לא תקין: {new_role}')
+
+    await _check_not_pending_deletion(db, user_id)
 
     membership = await db.project_memberships.find_one({
         'user_id': user_id, 'project_id': project_id

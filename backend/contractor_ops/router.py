@@ -174,6 +174,42 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             raise HTTPException(status_code=401, detail='Session revoked. Please login again.')
         user['_jwt_sv'] = jwt_sv
         user['_jwt_exp'] = payload.get('exp', 0)
+        if user.get('user_status') == 'pending_deletion':
+            raise HTTPException(
+                status_code=403,
+                detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'},
+            )
+        return user
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f'Invalid token: {str(e)}')
+
+
+async def get_current_user_allow_pending_deletion(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    db = get_db()
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(
+            token, JWT_SECRET,
+            algorithms=JWT_ALLOWED_ALGORITHMS,
+            options={'require': ['exp', 'iat', 'iss']},
+            leeway=JWT_CLOCK_SKEW_SECONDS,
+            issuer=APP_ID,
+        )
+        if payload.get('secret_version') != JWT_SECRET_VERSION:
+            raise HTTPException(status_code=401, detail='Token secret version mismatch')
+        user = await db.users.find_one({'id': payload['user_id']}, {'_id': 0})
+        if not user:
+            raise HTTPException(status_code=401, detail='User not found')
+        if user.get('user_status') == 'pending_pm_approval':
+            raise HTTPException(status_code=403, detail='Account pending approval')
+        if user.get('user_status') == 'suspended':
+            raise HTTPException(status_code=403, detail='Account suspended')
+        jwt_sv = payload.get('sv', 0)
+        db_sv = user.get('session_version', 0)
+        if jwt_sv < db_sv:
+            raise HTTPException(status_code=401, detail='Session revoked. Please login again.')
+        user['_jwt_sv'] = jwt_sv
+        user['_jwt_exp'] = payload.get('exp', 0)
         return user
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f'Invalid token: {str(e)}')

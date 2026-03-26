@@ -482,9 +482,39 @@ def create_transfer_router(get_current_user):
         if not recipient:
             raise HTTPException(status_code=404, detail='משתמש לא נמצא. יש להירשם קודם.')
 
+        if recipient.get('user_status') == 'pending_deletion':
+            raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות למשתמש בתהליך מחיקה')
+
+        if recipient.get('user_status') != 'active':
+            raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות למשתמש לא פעיל')
+
         new_owner_id = recipient['id']
         org_id = request['org_id']
         initiator_id = request.get('initiator_user_id', '')
+
+        target_org_mem = await db.organization_memberships.find_one({
+            'user_id': new_owner_id, 'org_id': org_id
+        }, {'_id': 0, 'role': 1})
+        target_project_mem = None
+        if not target_org_mem:
+            org_projects = await db.projects.find(
+                {'org_id': org_id}, {'_id': 0, 'id': 1}
+            ).to_list(1000)
+            proj_ids = [p['id'] for p in org_projects]
+            if proj_ids:
+                target_project_mem = await db.project_memberships.find_one({
+                    'user_id': new_owner_id,
+                    'project_id': {'$in': proj_ids},
+                }, {'_id': 0, 'role': 1})
+
+        if not target_org_mem and not target_project_mem:
+            raise HTTPException(status_code=409, detail='המשתמש חייב להיות חבר בארגון לפני העברת בעלות')
+
+        pm_role = None
+        if target_project_mem:
+            pm_role = target_project_mem.get('role')
+        if pm_role == 'contractor':
+            raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות לקבלן. יש לשנות את תפקידו קודם.')
 
         from contractor_ops.member_management import check_role_conflict_for_ownership
         await check_role_conflict_for_ownership(db, new_owner_id, org_id,
@@ -523,6 +553,11 @@ def create_transfer_router(get_current_user):
                 'created_at': ts,
             }},
             upsert=True
+        )
+
+        await db.organization_memberships.update_one(
+            {'org_id': org_id, 'user_id': initiator_id},
+            {'$set': {'role': 'billing_admin'}},
         )
 
         await db.users.update_one(

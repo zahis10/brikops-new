@@ -389,6 +389,10 @@ app.include_router(admin_router)
 from contractor_ops.billing_router import router as billing_router
 app.include_router(billing_router)
 
+from contractor_ops.deletion_router import router as deletion_router, set_deletion_otp_service
+set_deletion_otp_service(otp_service)
+app.include_router(deletion_router)
+
 from contractor_ops.ownership_transfer import (
     create_transfer_router, set_transfer_db, set_transfer_sms_client,
     set_transfer_otp_service, ensure_indexes as ensure_transfer_indexes,

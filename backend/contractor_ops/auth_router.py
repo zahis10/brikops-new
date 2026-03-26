@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from contractor_ops.router import (
-    get_db, get_current_user,
+    get_db, get_current_user, get_current_user_allow_pending_deletion,
     _hash_password, _verify_password, _create_token,
     _get_otp_service, _audit, _now,
     ensure_user_org, MANAGEMENT_ROLES, logger,
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api")
 
 
 @router.post("/auth/logout-all")
-async def logout_all_sessions(request: Request, user: dict = Depends(get_current_user)):
+async def logout_all_sessions(request: Request, user: dict = Depends(get_current_user_allow_pending_deletion)):
     db = get_db()
     user_id = user['id']
     old_sv = user.get('session_version', 0)
@@ -388,7 +388,7 @@ async def dev_login(request: Request):
 
 
 @router.get("/auth/me", response_model=UserResponse)
-async def get_me(user: dict = Depends(get_current_user)):
+async def get_me(user: dict = Depends(get_current_user_allow_pending_deletion)):
     db = get_db()
     user_id = user['id']
 
