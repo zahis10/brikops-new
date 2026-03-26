@@ -41,7 +41,12 @@ async def create_project_company(project_id: str, body: dict = Body(...), user: 
     db = get_db()
     await _check_project_access(user, project_id)
     name = (body.get('name') or '').strip()
-    trade = (body.get('trade') or '').strip() or None
+    raw_trade = body.get('trade')
+    if raw_trade is not None and not isinstance(raw_trade, str):
+        raise HTTPException(status_code=422, detail='שם תחום חייב להיות טקסט')
+    trade = (raw_trade or '').strip() or None
+    if trade and len(trade) > 50:
+        raise HTTPException(status_code=422, detail='שם תחום ארוך מדי (עד 50 תווים)')
     contact_name = (body.get('contact_name') or '').strip() or None
     contact_phone = (body.get('contact_phone') or '').strip() or None
     if not name:
@@ -85,6 +90,15 @@ async def update_project_company(project_id: str, company_id: str, body: dict = 
     existing = await db.project_companies.find_one({'id': company_id, 'project_id': project_id, 'deletedAt': {'$exists': False}})
     if not existing:
         raise HTTPException(status_code=404, detail='Company not found')
+    if 'trade' in body:
+        raw_trade = body['trade']
+        if raw_trade is not None and not isinstance(raw_trade, str):
+            raise HTTPException(status_code=422, detail='שם תחום חייב להיות טקסט')
+        if isinstance(raw_trade, str):
+            raw_trade = raw_trade.strip() or None
+            if raw_trade and len(raw_trade) > 50:
+                raise HTTPException(status_code=422, detail='שם תחום ארוך מדי (עד 50 תווים)')
+            body['trade'] = raw_trade
     update_data = {}
     for field in ('name', 'trade', 'contact_name', 'contact_phone', 'contact_email'):
         if field in body:

@@ -208,12 +208,12 @@ class Company(BaseModel):
         if isinstance(v, Enum):
             v = v.value
         if not isinstance(v, str):
-            return None
+            raise ValueError('שם תחום חייב להיות טקסט')
         v = v.strip()
         if len(v) < 1:
             return None
         if len(v) > 50:
-            raise ValueError('trade name too long')
+            raise ValueError('שם תחום ארוך מדי (עד 50 תווים)')
         return v
 
 
@@ -593,12 +593,12 @@ class ProjectCompany(BaseModel):
         if isinstance(v, Enum):
             v = v.value
         if not isinstance(v, str):
-            return None
+            raise ValueError('שם תחום חייב להיות טקסט')
         v = v.strip()
         if len(v) < 1:
             return None
         if len(v) > 50:
-            raise ValueError('trade name too long')
+            raise ValueError('שם תחום ארוך מדי (עד 50 תווים)')
         return v
 
 class TeamInvite(BaseModel):
