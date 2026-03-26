@@ -345,6 +345,10 @@ async def _collect_s3_keys_for_user(db, user_id: str, org_id: str = None):
 
 async def _anonymize_user_references(db, user_id: str):
     anon = 'משתמש שנמחק'
+    await db.tasks.update_many(
+        {'created_by': user_id, 'created_by_name': {'$exists': True}},
+        {'$set': {'created_by_name': anon}}
+    )
     await db.task_updates.update_many(
         {'user_id': user_id},
         {'$set': {'user_name': anon}}
@@ -355,6 +359,7 @@ async def _anonymize_user_references(db, user_id: str):
             {f'signatures.contractor.signer_user_id': user_id},
             {f'signatures.tenant.signer_user_id': user_id},
             {f'signatures.tenant_2.signer_user_id': user_id},
+            {'legal_sections.signer_user_id': user_id},
             {'legal_sections.signature.signer_user_id': user_id},
             {'legal_sections.signatures.tenant.signer_user_id': user_id},
             {'legal_sections.signatures.tenant_2.signer_user_id': user_id},
@@ -373,6 +378,9 @@ async def _anonymize_user_references(db, user_id: str):
                     update_set[f'signatures.{role}.signer_name'] = anon
 
         for i, section in enumerate(proto.get('legal_sections') or []):
+            if section.get('signer_user_id') == user_id:
+                update_set[f'legal_sections.{i}.signer_name'] = anon
+
             old_sig = section.get('signature')
             if isinstance(old_sig, dict) and old_sig.get('signer_user_id') == user_id:
                 update_set[f'legal_sections.{i}.signature.signer_name'] = anon
