@@ -1050,6 +1050,8 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
   const allFilled = !!name.trim();
 
   const handleSubmit = async () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setShowSuggestions(false);
     const errs = {};
     if (!name.trim()) errs.name = 'שדה חובה';
     setErrors(errs);
@@ -1066,6 +1068,7 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
       if (onCreated && result?.id) onCreated(result.id);
       onClose();
     } catch (err) {
+      console.error('[COMPANY_CREATE]', err.response?.status, err.response?.data, err.message);
       const detail = err.response?.data?.detail;
       const msg = Array.isArray(detail) ? (detail[0]?.msg || 'שגיאה ביצירת חברה') : (typeof detail === 'string' ? detail : 'שגיאה ביצירת חברה');
       toast.error(msg);
@@ -1245,6 +1248,7 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
         }
       }, 150);
     } catch (err) {
+      console.error('[COMPANY_CREATE]', err.response?.status, err.response?.data, err.message);
       const detail = err.response?.data?.detail;
       const msg = Array.isArray(detail) ? (detail[0]?.msg || 'שגיאה ביצירת חברה') : (typeof detail === 'string' ? detail : 'שגיאה ביצירת חברה');
       toast.error(msg);

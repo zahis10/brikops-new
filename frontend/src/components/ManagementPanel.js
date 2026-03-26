@@ -946,6 +946,7 @@ const AddCompanyForm = ({ modalProject, onClose, onSuccess }) => {
       onSuccess();
       onClose();
     } catch (err) {
+      console.error('[COMPANY_CREATE]', err.response?.status, err.response?.data, err.message);
       const detail = err.response?.data?.detail;
       const msg = Array.isArray(detail) ? (detail[0]?.msg || 'שגיאה ביצירת חברה') : (typeof detail === 'string' ? detail : 'שגיאה ביצירת חברה');
       toast.error(msg);
