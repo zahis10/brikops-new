@@ -343,6 +343,54 @@ async def _collect_s3_keys_for_user(db, user_id: str, org_id: str = None):
     return [k for k in keys if k and isinstance(k, str)]
 
 
+async def _anonymize_user_references(db, user_id: str):
+    anon = 'משתמש שנמחק'
+    await db.task_updates.update_many(
+        {'user_id': user_id},
+        {'$set': {'user_name': anon}}
+    )
+    protocols = await db.handover_protocols.find(
+        {'$or': [
+            {f'signatures.pm.signer_user_id': user_id},
+            {f'signatures.contractor.signer_user_id': user_id},
+            {f'signatures.tenant.signer_user_id': user_id},
+            {f'signatures.tenant_2.signer_user_id': user_id},
+            {'legal_sections.signature.signer_user_id': user_id},
+            {'legal_sections.signatures.tenant.signer_user_id': user_id},
+            {'legal_sections.signatures.tenant_2.signer_user_id': user_id},
+            {'legal_sections.signatures.pm.signer_user_id': user_id},
+            {'legal_sections.signatures.contractor.signer_user_id': user_id},
+        ]},
+        {'_id': 1, 'signatures': 1, 'legal_sections': 1}
+    ).to_list(100000)
+
+    for proto in protocols:
+        update_set = {}
+        sigs = proto.get('signatures') or {}
+        if isinstance(sigs, dict):
+            for role, sig in sigs.items():
+                if isinstance(sig, dict) and sig.get('signer_user_id') == user_id:
+                    update_set[f'signatures.{role}.signer_name'] = anon
+
+        for i, section in enumerate(proto.get('legal_sections') or []):
+            old_sig = section.get('signature')
+            if isinstance(old_sig, dict) and old_sig.get('signer_user_id') == user_id:
+                update_set[f'legal_sections.{i}.signature.signer_name'] = anon
+                update_set[f'legal_sections.{i}.signer_name'] = anon
+
+            section_sigs = section.get('signatures') or {}
+            if isinstance(section_sigs, dict):
+                for slot, slot_sig in section_sigs.items():
+                    if isinstance(slot_sig, dict) and slot_sig.get('signer_user_id') == user_id:
+                        update_set[f'legal_sections.{i}.signatures.{slot}.signer_name'] = anon
+
+        if update_set:
+            await db.handover_protocols.update_one(
+                {'_id': proto['_id']},
+                {'$set': update_set}
+            )
+
+
 async def _anonymize_user_db(db, user_id: str):
     ts = _now()
     await db.users.update_one({'id': user_id}, {'$set': {
@@ -356,6 +404,9 @@ async def _anonymize_user_db(db, user_id: str):
         'specialties': [],
         'deleted_at': ts,
     }})
+    await db.organization_memberships.delete_many({'user_id': user_id})
+    await db.project_memberships.delete_many({'user_id': user_id})
+    await _anonymize_user_references(db, user_id)
 
 
 async def _anonymize_org_db(db, org_id: str, project_ids: list):
@@ -381,6 +432,13 @@ async def _anonymize_org_db(db, org_id: str, project_ids: list):
 
     if project_ids:
         await db.project_memberships.delete_many({'project_id': {'$in': project_ids}})
+        await db.tasks.delete_many({'project_id': {'$in': project_ids}})
+        await db.task_updates.delete_many({'project_id': {'$in': project_ids}})
+        await db.handover_protocols.delete_many({'project_id': {'$in': project_ids}})
+        await db.qc_inspections.delete_many({'project_id': {'$in': project_ids}})
+        await db.project_plans.delete_many({'project_id': {'$in': project_ids}})
+        await db.project_companies.delete_many({'project_id': {'$in': project_ids}})
+    await db.projects.delete_many({'org_id': org_id})
     await db.organization_memberships.delete_many({'org_id': org_id})
 
 
@@ -481,6 +539,8 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
             'status': 's3_cleaning',
         }})
 
+        # TODO: For large orgs, run S3 cleanup asynchronously (background task)
+        # to avoid EB 120s timeout. Return 202 after DB work, clean S3 in background.
         deleted, failed = await _clean_s3_keys(s3_keys, db=db, job_id=job_id)
 
         final_status = 'complete' if failed == 0 else 's3_partial'
@@ -607,3 +667,38 @@ async def list_pending_deletions(admin: dict = Depends(require_stepup)):
          'deletion_requested_at': 1, 'deletion_scheduled_for': 1, 'deletion_type': 1}
     ).to_list(1000)
     return {'users': users}
+
+
+@router.post("/admin/process-overdue-deletions")
+async def process_overdue_deletions(admin: dict = Depends(require_stepup)):
+    db = get_db()
+    now = _now()
+    overdue_users = await db.users.find(
+        {
+            'user_status': 'pending_deletion',
+            'deletion_scheduled_for': {'$lt': now},
+        },
+        {'_id': 0, 'id': 1, 'name': 1, 'deletion_type': 1, 'deletion_scheduled_for': 1}
+    ).to_list(1000)
+
+    if not overdue_users:
+        return {'processed': 0, 'errors': []}
+
+    processed = 0
+    errors = []
+    for u in overdue_users:
+        try:
+            await execute_deletion(u['id'], admin)
+            processed += 1
+        except HTTPException as e:
+            errors.append({'user_id': u['id'], 'detail': e.detail})
+            logger.warning(f"[DELETION] overdue processing failed user={u['id']} detail={e.detail}")
+        except Exception as e:
+            errors.append({'user_id': u['id'], 'detail': str(e)[:200]})
+            logger.error(f"[DELETION] overdue processing error user={u['id']} error={e}")
+
+    logger.info(
+        f"[DELETION] process-overdue: total={len(overdue_users)} processed={processed} "
+        f"errors={len(errors)} by={admin['id']}"
+    )
+    return {'processed': processed, 'errors': errors}

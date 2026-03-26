@@ -61,9 +61,11 @@ const DeleteAccountSection = ({ user }) => {
 
   useEffect(() => {
     if (hasOrg) {
-      billingService.me().then(b => setIsOrgOwner(!!b?.is_owner)).catch(() => {});
+      billingService.me().then(b => setIsOrgOwner(!!b?.is_owner)).catch(() => {
+        setIsOrgOwner(user?.organization?.owner_user_id === user?.id);
+      });
     }
-  }, [hasOrg]);
+  }, [hasOrg, user?.organization?.owner_user_id, user?.id]);
 
   const resetWizard = () => {
     setWizardMode(null);
