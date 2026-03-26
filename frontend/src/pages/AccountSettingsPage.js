@@ -251,21 +251,6 @@ const DeleteAccountSection = ({ user }) => {
           <div className="space-y-4">
             <p className="text-sm text-slate-700 font-medium">שלב 2 — אימות זהות</p>
 
-            {isFull && (
-              <div className="space-y-1">
-                <label className="block text-sm font-medium text-slate-700">
-                  הקלד את שם הארגון בדיוק: <span className="font-bold text-red-600">{user?.organization?.name}</span>
-                </label>
-                <input
-                  type="text"
-                  value={typedOrgName}
-                  onChange={e => { setTypedOrgName(e.target.value); setError(''); }}
-                  placeholder={user?.organization?.name}
-                  className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
-                />
-              </div>
-            )}
-
             {authMethod === 'password' ? (
               <div className="space-y-1">
                 <label className="block text-sm font-medium text-slate-700">סיסמה נוכחית</label>
@@ -311,7 +296,7 @@ const DeleteAccountSection = ({ user }) => {
             <div className="flex gap-3 pt-2">
               <Button
                 onClick={() => { setError(''); setStep(3); }}
-                disabled={loading || (authMethod === 'password' ? !password.trim() : !otpCode.trim()) || (isFull && !typedOrgName.trim())}
+                disabled={loading || (authMethod === 'password' ? !password.trim() : !otpCode.trim())}
                 className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
               >
                 המשך
@@ -337,6 +322,21 @@ const DeleteAccountSection = ({ user }) => {
                 האם אתה בטוח? לא ניתן לבטל פעולה זו לאחר תום תקופת ההמתנה.
               </p>
             </div>
+
+            {isFull && (
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-slate-700">
+                  הקלד את שם הארגון בדיוק: <span className="font-bold text-red-600">{user?.organization?.name}</span>
+                </label>
+                <input
+                  type="text"
+                  value={typedOrgName}
+                  onChange={e => { setTypedOrgName(e.target.value); setError(''); }}
+                  placeholder={user?.organization?.name}
+                  className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
+                />
+              </div>
+            )}
 
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
@@ -395,7 +395,7 @@ const DeleteAccountSection = ({ user }) => {
             className="w-full h-11 justify-start text-sm text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
           >
             <AlertTriangle className="w-4 h-4 ml-2" />
-            מחק חשבון + ארגון ({user.organization.name})
+            מחק הכל ({user.organization.name})
           </Button>
         )}
       </div>
