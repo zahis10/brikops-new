@@ -229,6 +229,7 @@ async def admin_change_org_owner(org_id: str, request: Request, user: dict = Dep
     org = await db.organizations.find_one({'id': org_id})
     if not org:
         raise HTTPException(status_code=404, detail='ארגון לא נמצא')
+    await _check_not_pending_deletion(db, new_owner_id)
     membership = await db.org_memberships.find_one({'org_id': org_id, 'user_id': new_owner_id})
     if not membership:
         raise HTTPException(status_code=400, detail='המשתמש אינו חבר בארגון')

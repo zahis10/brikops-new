@@ -540,20 +540,16 @@ async def resume_deletion_job(job_id: str, admin: dict = Depends(require_stepup)
     if not job:
         raise HTTPException(status_code=404, detail='משימת מחיקה לא נמצאה')
 
-    if job['status'] not in ('s3_partial', 'error'):
-        raise HTTPException(status_code=409, detail='ניתן לחדש רק משימות שנכשלו חלקית')
+    if job['status'] != 's3_partial':
+        raise HTTPException(status_code=409, detail='ניתן לחדש רק משימות שנכשלו בשלב ניקוי S3')
 
     remaining_keys = job.get('s3_failed_keys', [])
     if not remaining_keys:
-        stored_keys = job.get('s3_keys', [])
-        if stored_keys:
-            remaining_keys = stored_keys
-        else:
-            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-                'status': 'complete',
-                'completed_at': _now(),
-            }})
-            return {'success': True, 'job_id': job_id, 'status': 'complete', 's3_deleted': 0, 's3_failed': 0}
+        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+            'status': 'complete',
+            'completed_at': _now(),
+        }})
+        return {'success': True, 'job_id': job_id, 'status': 'complete', 's3_deleted': 0, 's3_failed': 0}
 
     await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
         'status': 's3_cleaning',
