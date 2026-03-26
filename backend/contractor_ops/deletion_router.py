@@ -154,14 +154,12 @@ async def request_full_deletion(request: Request, user: dict = Depends(get_curre
 
     body = await request.json()
 
-    typed_org_name = body.get('typed_org_name', '').strip()
+    typed_org_name = body.get('typed_org_name', '')
     if not typed_org_name:
         raise HTTPException(status_code=400, detail='יש להקליד את שם הארגון לאישור')
 
-    import re
-    expected = re.sub(r'\s+', ' ', org.get('name', '').strip())
-    actual = re.sub(r'\s+', ' ', typed_org_name)
-    if expected != actual:
+    expected = org.get('name', '')
+    if typed_org_name != expected:
         raise HTTPException(status_code=422, detail=f'שם הארגון אינו תואם. יש להקליד בדיוק: {expected}')
 
     await _verify_auth_for_deletion(user, body, db)
@@ -363,24 +361,16 @@ async def _anonymize_user_db(db, user_id: str):
 async def _anonymize_org_db(db, org_id: str, project_ids: list):
     ts = _now()
 
-    billing_records = await db.billing_subscriptions.find(
-        {'org_id': org_id}, {'_id': 0, 'id': 1}
-    ).to_list(10000)
-    for rec in billing_records:
-        await db.billing_subscriptions.update_one({'id': rec['id']}, {'$set': {
-            'billing_email': None,
-            'billing_name': 'משתמש שנמחק',
-        }, '$unset': {
-            'gi_card_token': '',
-            'gi_card_suffix': '',
-        }})
-
     await db.organizations.update_one({'id': org_id}, {'$set': {
         'status': 'deleted',
         'name': 'ארגון שנמחק',
         'logo_url': None,
         'deleted_at': ts,
         'billing': {},
+        'billing_email': None,
+        'billing_cc_emails': [],
+        'billing_contact_name': None,
+        'tax_id': None,
     }})
 
     if project_ids:
@@ -535,6 +525,66 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
         }})
         logger.error(f"[DELETION] execution failed user={target_user_id} job={job_id} error={e}")
         raise HTTPException(status_code=500, detail=f'שגיאה בביצוע מחיקה: {str(e)[:200]}')
+
+
+@router.post("/admin/resume-deletion-job/{job_id}")
+async def resume_deletion_job(job_id: str, admin: dict = Depends(require_stepup)):
+    db = get_db()
+
+    job = await db.deletion_jobs.find_one({'id': job_id}, {'_id': 0})
+    if not job:
+        raise HTTPException(status_code=404, detail='משימת מחיקה לא נמצאה')
+
+    if job['status'] not in ('s3_partial', 'error'):
+        raise HTTPException(status_code=409, detail='ניתן לחדש רק משימות שנכשלו חלקית')
+
+    remaining_keys = job.get('s3_failed_keys', [])
+    if not remaining_keys:
+        stored_keys = job.get('s3_keys', [])
+        if stored_keys:
+            remaining_keys = stored_keys
+        else:
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': 'complete',
+                'completed_at': _now(),
+            }})
+            return {'success': True, 'job_id': job_id, 'status': 'complete', 's3_deleted': 0, 's3_failed': 0}
+
+    await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+        'status': 's3_cleaning',
+    }})
+
+    try:
+        deleted, failed = await _clean_s3_keys(remaining_keys, db=db, job_id=job_id)
+
+        final_status = 'complete' if failed == 0 else 's3_partial'
+        prev_deleted = job.get('s3_deleted', 0)
+        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+            'status': final_status,
+            'completed_at': _now() if final_status == 'complete' else None,
+            's3_deleted': prev_deleted + deleted,
+            's3_failed': failed,
+        }})
+
+        logger.info(
+            f"[DELETION] resumed job={job_id} user={job.get('user_id')} "
+            f"remaining={len(remaining_keys)} deleted={deleted} failed={failed} by={admin['id']}"
+        )
+
+        return {
+            'success': True,
+            'job_id': job_id,
+            'status': final_status,
+            's3_deleted': deleted,
+            's3_failed': failed,
+        }
+    except Exception as e:
+        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+            'status': 'error',
+            'error': str(e)[:500],
+        }})
+        logger.error(f"[DELETION] resume failed job={job_id} error={e}")
+        raise HTTPException(status_code=500, detail=f'שגיאה בחידוש מחיקה: {str(e)[:200]}')
 
 
 @router.get("/admin/deletion-jobs")

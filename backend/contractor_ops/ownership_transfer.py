@@ -515,8 +515,13 @@ def create_transfer_router(get_current_user):
         org_role = target_org_mem.get('role') if target_org_mem else None
         pm_role = target_project_mem.get('role') if target_project_mem else None
 
-        effective_role = org_role or pm_role
-        if effective_role and effective_role not in ALLOWED_OWNER_ROLES:
+        all_roles = set()
+        if org_role:
+            all_roles.add(org_role)
+        if pm_role:
+            all_roles.add(pm_role)
+
+        if all_roles and not all_roles.intersection(ALLOWED_OWNER_ROLES):
             raise HTTPException(status_code=409, detail='לא ניתן להעביר בעלות למשתמש בתפקיד זה. התפקידים המותרים: מנהל פרויקט, צוות ניהול, מנהל חיובים.')
 
         from contractor_ops.member_management import check_role_conflict_for_ownership
