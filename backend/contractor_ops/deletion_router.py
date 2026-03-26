@@ -361,17 +361,22 @@ async def _anonymize_user_db(db, user_id: str):
 async def _anonymize_org_db(db, org_id: str, project_ids: list):
     ts = _now()
 
-    await db.organizations.update_one({'id': org_id}, {'$set': {
-        'status': 'deleted',
-        'name': 'ארגון שנמחק',
-        'logo_url': None,
-        'deleted_at': ts,
-        'billing': {},
-        'billing_email': None,
-        'billing_cc_emails': [],
-        'billing_contact_name': None,
-        'tax_id': None,
-    }})
+    await db.organizations.update_one({'id': org_id}, {
+        '$set': {
+            'status': 'deleted',
+            'name': 'ארגון שנמחק',
+            'logo_url': None,
+            'deleted_at': ts,
+            'billing_email': None,
+            'billing_cc_emails': [],
+            'billing_contact_name': None,
+            'tax_id': None,
+        },
+        '$unset': {
+            'billing.gi_card_token': '',
+            'billing.gi_card_suffix': '',
+        },
+    })
 
     if project_ids:
         await db.project_memberships.delete_many({'project_id': {'$in': project_ids}})
