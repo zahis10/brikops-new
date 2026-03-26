@@ -368,6 +368,7 @@ async def _anonymize_org_db(db, org_id: str, project_ids: list):
             'logo_url': None,
             'deleted_at': ts,
             'billing_email': None,
+            'billing_name': 'משתמש שנמחק',
             'billing_cc_emails': [],
             'billing_contact_name': None,
             'tax_id': None,

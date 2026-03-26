@@ -71,6 +71,7 @@ class UserStatus(str, Enum):
     rejected = "rejected"
     suspended = "suspended"
     pending_deletion = "pending_deletion"
+    deleted = "deleted"
 
 
 class Category(str, Enum):
