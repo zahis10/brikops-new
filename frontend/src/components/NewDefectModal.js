@@ -353,9 +353,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     );
   }, [category, companies]);
 
-  const filteredCompanies = category && categoryMatchedCompanies.length === 0
-    ? companies
-    : (category ? categoryMatchedCompanies : companies);
+  const filteredCompanies = category ? categoryMatchedCompanies : companies;
 
   useEffect(() => {
     if (!category) return;
@@ -912,7 +910,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               </div>
             ) : category && filteredCompanies.length === 0 && !loading.companies ? (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center space-y-2">
-                <p className="text-sm text-amber-800 font-medium">אין חברות בתחום זה</p>
+                <p className="text-sm text-amber-800 font-medium">אין חברות המשויכות לתחום {tCategory(category)}</p>
                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
                 <Button
                   onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}

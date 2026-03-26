@@ -220,10 +220,10 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
         <div className="px-4 pb-4 space-y-4 overflow-y-auto" dir="rtl">
           <div className="space-y-3">
             {member.user_phone && (
-              <div className="flex items-center gap-2 text-sm text-slate-600">
+              <a href={`tel:${member.user_phone}`} className="flex items-center gap-2 text-sm text-slate-600 hover:text-amber-600 transition-colors">
                 <Phone className="w-4 h-4 text-slate-400 shrink-0" />
                 <bdi className="font-mono" dir="ltr">{formatIsraeliPhone(member.user_phone)}</bdi>
-              </div>
+              </a>
             )}
 
             <div className="flex items-center gap-2 text-sm text-slate-600">
