@@ -1383,13 +1383,12 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
     renewal = await preview_renewal(org_id, cycle)
     requested_paid_until = renewal['new_paid_until']
 
-    sub = await get_subscription(org_id)
     total_monthly = 0
     billing_breakdown = []
-    if sub:
-        project_billings = await db.project_billing.find(
-            {'org_id': org_id, 'status': 'active'}, {'_id': 0}
-        ).to_list(1000)
+    project_billings = await db.project_billing.find(
+        {'org_id': org_id, 'status': 'active'}, {'_id': 0}
+    ).to_list(1000)
+    if project_billings:
         for pb in project_billings:
             contracted = pb.get('contracted_units', 0)
             observed = await compute_observed_units(pb['project_id'])

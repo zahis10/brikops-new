@@ -113,7 +113,7 @@ const TrialBanner = () => {
 
       const reason = billing.read_only_reason;
       const isSuspended = reason === 'suspended';
-      const showUpgrade = !isSuspended && (reason === 'payment_expired' || reason === 'trial_expired');
+      const showUpgrade = !isSuspended;
 
       return (
         <div

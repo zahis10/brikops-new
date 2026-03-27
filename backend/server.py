@@ -1085,6 +1085,8 @@ from starlette.responses import JSONResponse
 PAYWALL_EXEMPT_PREFIXES = (
     '/api/auth/', '/api/billing/', '/api/admin/',
     '/api/debug/', '/api/updates/feed', '/api/webhooks/',
+    '/api/users/me/request-deletion', '/api/users/me/request-full-deletion',
+    '/api/users/me/cancel-deletion', '/api/users/me/request-deletion-otp',
 )
 
 @app.middleware("http")
