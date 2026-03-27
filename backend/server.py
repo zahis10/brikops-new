@@ -1152,6 +1152,8 @@ async def canonical_redirect_middleware(request: Request, call_next):
         return await call_next(request)
     if request.url.path == '/health':
         return await call_next(request)
+    if request.url.path.startswith('/internal/'):
+        return await call_next(request)
     if request.url.path.startswith('/api/'):
         return await call_next(request)
     path = request.url.path
