@@ -7,13 +7,13 @@ import { compressImage } from '../../utils/imageCompress';
 import {
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
 } from '../ui/drawer';
-
-const PhotoAnnotation = React.lazy(() => import('../PhotoAnnotation'));
 import {
   CheckCircle2, AlertTriangle, CircleDot, MinusCircle,
   Bug, ExternalLink, Loader2, X, Camera, ImagePlus, Info,
   ChevronLeft, Trash2,
 } from 'lucide-react';
+
+const PhotoAnnotation = React.lazy(() => import('../PhotoAnnotation'));
 
 const STATUS_OPTIONS = [
   { value: 'ok', label: 'תקין', icon: CheckCircle2, color: 'bg-green-100 text-green-700 border-green-300', activeColor: 'bg-green-500 text-white border-green-500' },
