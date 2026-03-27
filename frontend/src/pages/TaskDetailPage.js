@@ -455,7 +455,11 @@ const TaskDetailPage = () => {
   }, [pendingFile, task?.id, loadTask]);
 
   const removeProofFile = (fileId) => {
-    setProofFiles(prev => prev.filter(f => f.id !== fileId));
+    setProofFiles(prev => {
+      const removed = prev.find(f => f.id === fileId);
+      if (removed?.preview) URL.revokeObjectURL(removed.preview);
+      return prev.filter(f => f.id !== fileId);
+    });
   };
 
   const handleSubmitProof = async () => {
@@ -468,6 +472,7 @@ const TaskDetailPage = () => {
     try {
       const result = await taskService.submitContractorProof(id, files, proofNote);
       toast.success(result.message || 'נשלח לאישור מנהל');
+      proofFiles.forEach(pf => { if (pf.preview) URL.revokeObjectURL(pf.preview); });
       setProofFiles([]);
       setProofNote('');
       await loadTask();
