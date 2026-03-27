@@ -18,6 +18,7 @@ const _clearBrikopsCookie = () => {
 
 const _isAuthError = (error) => {
   const status = error?.response?.status;
+  if (status === 403 && error?.response?.data?.detail?.code === 'pending_deletion') return false;
   return status === 401 || status === 403;
 };
 
@@ -65,6 +66,21 @@ export const AuthProvider = ({ children }) => {
     return () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    const interceptorId = axios.interceptors.response.use(undefined, (error) => {
+      if (
+        error.response?.status === 403 &&
+        error.response?.data?.detail?.code === 'pending_deletion'
+      ) {
+        error._pendingDeletion = true;
+        setUser(prev => prev ? { ...prev, user_status: 'pending_deletion' } : prev);
+        toast.dismiss();
+      }
+      return Promise.reject(error);
+    });
+    return () => axios.interceptors.response.eject(interceptorId);
   }, []);
 
   const fetchCurrentUser = useCallback(async (isRetry = false) => {
@@ -194,6 +210,16 @@ export const AuthProvider = ({ children }) => {
     } catch {}
   }, [token]);
 
+  const forceUserStatus = useCallback((status) => {
+    setUser(prev => prev ? { ...prev, user_status: status } : prev);
+  }, []);
+
+  const replaceToken = useCallback((newToken) => {
+    if (!newToken) return;
+    setToken(newToken);
+    try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
+  }, []);
+
   const value = {
     user,
     token,
@@ -205,6 +231,8 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     refreshUser,
+    forceUserStatus,
+    replaceToken,
     isAuthenticated: !!token && !!user
   };
 

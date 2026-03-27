@@ -44,7 +44,7 @@ const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error
 
 const DeleteAccountSection = ({ user }) => {
   const navigate = useNavigate();
-  const { refreshUser } = useAuth();
+  const { refreshUser, forceUserStatus, replaceToken } = useAuth();
   const [isOrgOwner, setIsOrgOwner] = useState(false);
   const hasOrg = !!user?.organization;
 
@@ -137,15 +137,19 @@ const DeleteAccountSection = ({ user }) => {
         body.otp_code = otpCode;
       }
 
+      let result;
       if (wizardMode === 'full') {
         body.typed_org_name = typedOrgName;
-        await deletionService.requestFullDeletion(body);
+        result = await deletionService.requestFullDeletion(body);
       } else {
-        await deletionService.requestDeletion(body);
+        result = await deletionService.requestDeletion(body);
       }
 
       toast.success('בקשת המחיקה נשלחה בהצלחה');
-      if (refreshUser) await refreshUser();
+      if (result?.token) {
+        replaceToken(result.token);
+      }
+      forceUserStatus('pending_deletion');
       navigate('/account/pending-deletion', { replace: true });
     } catch (err) {
       const detail = err.response?.data?.detail;

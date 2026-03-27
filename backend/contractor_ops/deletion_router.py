@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from contractor_ops.router import (
     get_db, get_current_user, get_current_user_allow_pending_deletion,
     _is_super_admin, _verify_password, _now, _audit,
-    require_stepup,
+    require_stepup, _create_token,
 )
 from contractor_ops.billing import get_user_org
 
@@ -129,11 +129,17 @@ async def request_account_deletion(request: Request, user: dict = Depends(get_cu
     })
 
     logger.info(f"[DELETION] account_only requested user={user_id} scheduled={scheduled}")
+    fresh_token = _create_token(
+        user_id, user.get('email', ''), user.get('role', 'viewer'),
+        user.get('platform_role', 'none'), session_version=new_sv,
+        phone_e164=user.get('phone_e164', ''),
+    )
     return {
         'success': True,
         'deletion_type': 'account_only',
         'scheduled_for': scheduled,
         'message': f'בקשת מחיקת חשבון התקבלה. החשבון יימחק ב-{DELETION_GRACE_DAYS} ימים.',
+        'token': fresh_token,
     }
 
 
@@ -201,12 +207,18 @@ async def request_full_deletion(request: Request, user: dict = Depends(get_curre
     })
 
     logger.info(f"[DELETION] full_purge requested user={user_id} org={org_id} scheduled={scheduled}")
+    fresh_token = _create_token(
+        user_id, user.get('email', ''), user.get('role', 'viewer'),
+        user.get('platform_role', 'none'), session_version=new_sv,
+        phone_e164=user.get('phone_e164', ''),
+    )
     return {
         'success': True,
         'deletion_type': 'full_purge',
         'org_name': org.get('name', ''),
         'scheduled_for': scheduled,
         'message': f'בקשת מחיקת חשבון וארגון התקבלה. הכל יימחק ב-{DELETION_GRACE_DAYS} ימים.',
+        'token': fresh_token,
     }
 
 
