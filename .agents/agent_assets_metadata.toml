@@ -90,3 +90,9 @@ id = "Hhih25JjJ_C-9nXzhLTsl"
 uri = "file://review1.txt"
 type = "text"
 title = "#211 Handover Photo Annotation + Android Fixes — Full Diff (327 lines)"
+
+[[outputs]]
+id = "uGeCjGUZR8Wa5wgYvwdLd"
+uri = "file://review2.txt"
+type = "text"
+title = "#212 Contractor Proof Photo Annotation + Safety Fixes — Full Diff (139 lines)"
