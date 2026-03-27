@@ -867,7 +867,7 @@ const HandoverSectionPage = () => {
                 }`}
               >
                 {markingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <MinusCircle className="w-4 h-4" />}
-                {isNarrow ? 'N/A' : 'לא רלוונטי'}
+                {isNarrow ? 'לא רלו׳' : 'לא רלוונטי'}
               </button>
             )}
             {showReset && (
