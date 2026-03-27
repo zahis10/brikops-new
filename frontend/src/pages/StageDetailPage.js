@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { qcService, BACKEND_URL } from '../services/api';
 import { getStageVisualStatus, getQualityBadge, getReviewBadge } from '../utils/qcVisualStatus';
@@ -11,6 +11,9 @@ import {
 } from 'lucide-react';
 import WhatsAppRejectionModal from '../components/WhatsAppRejectionModal';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { compressImage } from '../utils/imageCompress';
+
+const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
 
 const STATUS_CONFIG = {
   pass: { icon: CheckCircle2, label: 'תקין', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', btnBg: 'bg-emerald-500 text-white' },
@@ -329,8 +332,8 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
       {/* Hidden file inputs: camera (direct capture) + picker (OS native chooser) */}
       {effectiveCanEdit && (
         <>
-          <input ref={cameraRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={handleFileChange} />
-          <input ref={pickerRef} type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" onChange={handleFileChange} />
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
+          <input ref={pickerRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
         </>
       )}
 
@@ -742,6 +745,9 @@ export default function StageDetailPage() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [lastRejectedItemId, setLastRejectedItemId] = useState(null);
   const [whatsAppModal, setWhatsAppModal] = useState(null);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingItemId, setPendingItemId] = useState(null);
+  const processingImageRef = useRef(false);
 
   const itemRefs = useRef({});
 
@@ -1047,16 +1053,11 @@ export default function StageDetailPage() {
     setValidationErrors(prev => prev.filter(e => e.item_id !== itemId || e.field !== 'photo'));
 
     const MAX_FILE_SIZE = 10 * 1024 * 1024;
-    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
     const fileArray = Array.from(files);
     const validFiles = [];
     for (const file of fileArray) {
       if (file.size > MAX_FILE_SIZE) {
         toast.error('הקובץ גדול מדי (מקסימום 10MB)');
-        continue;
-      }
-      if (file.type && !ALLOWED_TYPES.includes(file.type)) {
-        toast.error('פורמט לא נתמך. השתמש ב-JPEG, PNG או WebP');
         continue;
       }
       validFiles.push(file);
@@ -1139,8 +1140,10 @@ export default function StageDetailPage() {
             },
           };
         });
-        if (!err.response) {
-          toast.error('שגיאת רשת — נסה שוב');
+        if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+          toast.error('הזמן הקצוב להעלאה עבר. נסה שוב');
+        } else if (!err.response) {
+          toast.error('בעיית תקשורת. בדוק חיבור לאינטרנט');
         }
       }
       URL.revokeObjectURL(entry.blobUrl);
@@ -1201,6 +1204,76 @@ export default function StageDetailPage() {
       }
       return prev;
     });
+  };
+
+  const handlePhotosSelected = async (itemId, files) => {
+    if (processingImageRef.current) return;
+    processingImageRef.current = true;
+    try {
+      const fileArray = Array.from(files || []);
+      if (fileArray.length === 0) return;
+
+      const stableFiles = [];
+      for (const file of fileArray) {
+        try {
+          const compressed = await compressImage(file);
+          let stable = compressed;
+          if (!compressed._fromCompress) {
+            const bytes = await compressed.arrayBuffer();
+            stable = new File([bytes], compressed.name, { type: compressed.type });
+          }
+          stable._fromCompress = true;
+          stableFiles.push(stable);
+        } catch (err) {
+          if (err?.code === 'UNSUPPORTED_FORMAT') {
+            toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
+            console.error('[QC:compress] HEIC/unsupported:', err.original);
+          } else {
+            console.error('[QC:compress] failed:', err);
+            toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+          }
+        }
+      }
+      if (stableFiles.length === 0) return;
+
+      if (stableFiles.length === 1) {
+        setPendingFile(stableFiles[0]);
+        setPendingItemId(itemId);
+      } else {
+        handleUploadPhotos(itemId, stableFiles);
+      }
+    } finally {
+      processingImageRef.current = false;
+    }
+  };
+
+  const handleAnnotationSave = async (annotatedFile, hasAnnotations) => {
+    if (!pendingFile || !pendingItemId) return;
+    try {
+      const fileToUpload = (hasAnnotations && annotatedFile) ? annotatedFile : pendingFile;
+      try {
+        const slice = fileToUpload.slice(0, 1);
+        await slice.arrayBuffer();
+      } catch {
+        toast.error('התמונה אבדה, נא לצרף מחדש');
+        setPendingFile(null);
+        setPendingItemId(null);
+        return;
+      }
+      const itemId = pendingItemId;
+      setPendingFile(null);
+      setPendingItemId(null);
+      handleUploadPhotos(itemId, [fileToUpload]);
+    } catch (err) {
+      console.error('[QC:annotation] save failed:', err);
+      if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+        toast.error('הזמן הקצוב להעלאה עבר. נסה שוב');
+      } else if (!err?.response) {
+        toast.error('בעיית תקשורת. בדוק חיבור לאינטרנט');
+      } else {
+        toast.error('שגיאה בהעלאת תמונה');
+      }
+    }
   };
 
   const handleRetryUpload = async (itemId, clientId) => {
@@ -1861,7 +1934,7 @@ export default function StageDetailPage() {
               localState={localChanges[item.id]}
               onToggle={handleToggle}
               onNoteChange={handleNoteChange}
-              onUploadPhotos={handleUploadPhotos}
+              onUploadPhotos={handlePhotosSelected}
               uploadState={uploadingItems[item.id] || null}
               onRetryUpload={(clientId) => handleRetryUpload(item.id, clientId)}
               itemErrors={validationErrors.filter(e => e.item_id === item.id)}
@@ -2153,6 +2226,19 @@ export default function StageDetailPage() {
           rejectionContext={whatsAppModal.rejectionContext}
           onClose={() => setWhatsAppModal(null)}
         />
+      )}
+
+      {pendingFile && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-white animate-spin" />
+          </div>
+        }>
+          <PhotoAnnotation
+            imageFile={pendingFile}
+            onSave={handleAnnotationSave}
+          />
+        </Suspense>
       )}
     </div>
   );
