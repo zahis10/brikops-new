@@ -190,11 +190,14 @@ const TaskDetailPage = () => {
   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
   const [forceClosing, setForceClosing] = useState(false);
 
+  const [pendingProofFile, setPendingProofFile] = useState(null);
+
   const proofCameraRef = useRef(null);
   const proofGalleryRef = useRef(null);
   const uploadCameraRef = useRef(null);
   const uploadGalleryRef = useRef(null);
   const uploadingRef = useRef(false);
+  const proofProcessingRef = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
 
@@ -323,21 +326,19 @@ const TaskDetailPage = () => {
   };
 
   const handleProofFileChange = async (e) => {
+    if (proofProcessingRef.current) return;
+    proofProcessingRef.current = true;
     try {
-      const file = e.target.files[0];
-      if (file) {
-        const compressed = await compressImage(file);
-        let stableFile = compressed;
-        if (!compressed._fromCompress) {
-          const bytes = await compressed.arrayBuffer();
-          stableFile = new File([bytes], compressed.name, { type: compressed.type });
-        }
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          setProofFiles(prev => [...prev, { file: stableFile, preview: ev.target.result, id: Date.now() + Math.random() }]);
-        };
-        reader.readAsDataURL(stableFile);
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const compressed = await compressImage(file);
+      let stableFile = compressed;
+      if (!compressed._fromCompress) {
+        const bytes = await compressed.arrayBuffer();
+        stableFile = new File([bytes], compressed.name, { type: compressed.type });
       }
+      stableFile._fromCompress = true;
+      setPendingProofFile(stableFile);
     } catch (err) {
       if (err?.code === 'UNSUPPORTED_FORMAT') {
         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
@@ -347,9 +348,35 @@ const TaskDetailPage = () => {
         toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
       }
     } finally {
+      proofProcessingRef.current = false;
       if (e.target) e.target.value = '';
     }
   };
+
+  const handleProofAnnotationSave = useCallback(async (annotatedFile, hasAnnotations) => {
+    if (!pendingProofFile) return;
+    try {
+      const fileToUpload = (hasAnnotations && annotatedFile) ? annotatedFile : pendingProofFile;
+      try {
+        const slice = fileToUpload.slice(0, 1);
+        await slice.arrayBuffer();
+      } catch {
+        toast.error('התמונה אבדה, נא לצרף מחדש');
+        setPendingProofFile(null);
+        return;
+      }
+      const newEntry = {
+        file: fileToUpload,
+        preview: URL.createObjectURL(fileToUpload),
+        id: Date.now() + Math.random(),
+      };
+      setProofFiles(prev => [...prev, newEntry]);
+      setPendingProofFile(null);
+    } catch (err) {
+      console.error('[proof:annotation] save failed:', err);
+      toast.error('שגיאה בשמירת התמונה');
+    }
+  }, [pendingProofFile]);
 
   const handleAddPhoto = async (e) => {
     if (uploadingRef.current) return;
@@ -445,8 +472,10 @@ const TaskDetailPage = () => {
       setProofNote('');
       await loadTask();
     } catch (err) {
-      if (err.code === 'ECONNABORTED') {
+      if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
         toast.error('הזמן הקצוב לשליחה עבר. בדוק חיבור אינטרנט ונסה שוב.');
+      } else if (!err?.response) {
+        toast.error('בעיית תקשורת. בדוק חיבור לאינטרנט');
       } else if (err.response?.status === 400) {
         toast.error(err.response?.data?.detail || 'שגיאה בנתונים שנשלחו');
       } else if (err.response?.status >= 500) {
@@ -1752,6 +1781,19 @@ const TaskDetailPage = () => {
           <PhotoAnnotation
             imageFile={pendingFile}
             onSave={handleAnnotationSave}
+          />
+        </Suspense>
+      )}
+
+      {pendingProofFile && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-white animate-spin" />
+          </div>
+        }>
+          <PhotoAnnotation
+            imageFile={pendingProofFile}
+            onSave={handleProofAnnotationSave}
           />
         </Suspense>
       )}
