@@ -96,3 +96,9 @@ id = "uGeCjGUZR8Wa5wgYvwdLd"
 uri = "file://review2.txt"
 type = "text"
 title = "#212 Contractor Proof Photo Annotation + Safety Fixes — Full Diff (139 lines)"
+
+[[outputs]]
+id = "-tFBL-wqdxD-rzS_5vwTn"
+uri = "file://review3.txt"
+type = "text"
+title = "review3.txt — דיפים Tasks #213-#215"
