@@ -527,7 +527,7 @@ SCORE_WEIGHTS = {
     'defects_closed': 20,
     'qc_items_checked': 15,
     'photos_uploaded': 10,
-    'comments': 5,
+    'comments': 10,
 }
 
 
@@ -559,9 +559,11 @@ def _compute_status(score: int) -> str:
 @router.get("/projects/{project_id}/team-activity")
 async def get_team_activity(
     project_id: str,
-    period: int = Query(7, ge=7, le=30),
+    period: int = Query(7),
     user: dict = Depends(get_current_user),
 ):
+    if period not in (7, 30):
+        raise HTTPException(status_code=422, detail="period must be 7 or 30")
     db = get_db()
     await _check_project_read_access(user, project_id)
     role = await _get_project_role(user, project_id)

@@ -197,9 +197,35 @@ export default function TeamActivitySection({ projectId }) {
       )}
 
       <div className="border border-slate-100 rounded-xl overflow-hidden">
-        {(members || []).map(member => (
-          <MemberRow key={member.user_id} member={member} />
-        ))}
+        {(() => {
+          const nonContractors = (members || []).filter(m => m.role !== 'contractor');
+          const contractors = (members || []).filter(m => m.role === 'contractor');
+          const companyGroups = {};
+          const ungrouped = [];
+          contractors.forEach(m => {
+            const company = m.company_name || '';
+            if (company) {
+              if (!companyGroups[company]) companyGroups[company] = [];
+              companyGroups[company].push(m);
+            } else {
+              ungrouped.push(m);
+            }
+          });
+          return (
+            <>
+              {nonContractors.map(m => <MemberRow key={m.user_id} member={m} />)}
+              {Object.entries(companyGroups).map(([company, group]) => (
+                <div key={company}>
+                  <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-100">
+                    <span className="text-[11px] font-semibold text-slate-500">{company}</span>
+                  </div>
+                  {group.map(m => <MemberRow key={m.user_id} member={m} />)}
+                </div>
+              ))}
+              {ungrouped.map(m => <MemberRow key={m.user_id} member={m} />)}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
