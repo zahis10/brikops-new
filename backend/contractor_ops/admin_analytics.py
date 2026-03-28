@@ -118,6 +118,21 @@ async def user_activity(
         field, default = sort_key_mongo[sort]
         all_users.sort(key=lambda u: u.get(field) or default, reverse=(order == 'desc'))
 
+    if sort == 'score':
+        for u in all_users:
+            lla = u.get('last_login_at')
+            if lla:
+                try:
+                    ld = (now - datetime.fromisoformat(lla.replace('Z', '+00:00'))).days
+                    u['_login_score'] = ADMIN_SCORE_WEIGHTS['login_recency'] * max(0, 1 - max(0, ld - 1) / period) if ld <= period else 0
+                    if ld <= 1:
+                        u['_login_score'] = ADMIN_SCORE_WEIGHTS['login_recency']
+                except Exception:
+                    u['_login_score'] = 0
+            else:
+                u['_login_score'] = 0
+        all_users.sort(key=lambda u: u['_login_score'], reverse=(order == 'desc'))
+
     total_count = len(all_users)
     if not all_users:
         return {
@@ -128,11 +143,8 @@ async def user_activity(
             'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
         }
 
-    if sort not in ('score',):
-        start = (page - 1) * limit
-        page_users = all_users[start:start + limit]
-    else:
-        page_users = all_users
+    start = (page - 1) * limit
+    page_users = all_users[start:start + limit]
 
     page_user_ids = [u['id'] for u in page_users]
     user_map = {u['id']: u for u in page_users}
@@ -239,10 +251,7 @@ async def user_activity(
             },
         })
 
-    if sort == 'score':
-        results.sort(key=lambda r: r['activity_score'], reverse=(order == 'desc'))
-        start = (page - 1) * limit
-        results = results[start:start + limit]
+    results.sort(key=lambda r: r['activity_score'], reverse=(order == 'desc'))
 
     return {
         'users': results,
