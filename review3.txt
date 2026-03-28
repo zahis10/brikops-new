@@ -1,0 +1,1788 @@
+diff --git a/backend/contractor_ops/admin_analytics.py b/backend/contractor_ops/admin_analytics.py
+new file mode 100644
+index 0000000..bb3c58d
+--- /dev/null
++++ b/backend/contractor_ops/admin_analytics.py
+@@ -0,0 +1,497 @@
++import logging
++from datetime import datetime, timezone, timedelta
++from fastapi import APIRouter, Depends, HTTPException, Query
++from contractor_ops.router import get_db, get_current_user
++
++logger = logging.getLogger(__name__)
++
++router = APIRouter(prefix="/api/admin/analytics")
++
++TERMINAL_STATUSES = {'closed', 'done', 'cancelled'}
++
++ADMIN_SCORE_WEIGHTS = {
++    'login_recency': 30,
++    'defects_created': 15,
++    'defects_closed': 15,
++    'qc_checked': 15,
++    'handover': 10,
++    'photos': 10,
++    'whatsapp': 5,
++}
++
++
++def _require_super_admin(user: dict):
++    if user.get('platform_role') != 'super_admin':
++        raise HTTPException(status_code=403, detail='Forbidden')
++
++
++def _compute_admin_score(metrics: dict, period: int) -> int:
++    score = 0.0
++    login_days = metrics.get('login_days_ago')
++    if login_days is not None:
++        if login_days <= 1:
++            score += ADMIN_SCORE_WEIGHTS['login_recency']
++        elif login_days <= period:
++            score += ADMIN_SCORE_WEIGHTS['login_recency'] * max(0, 1 - (login_days - 1) / period)
++
++    caps = {
++        'defects_created': max(3, period / 7 * 3),
++        'defects_closed': max(3, period / 7 * 3),
++        'qc_checked': max(5, period / 7 * 5),
++        'handover': max(2, period / 7 * 2),
++        'photos': max(3, period / 7 * 3),
++        'whatsapp': max(2, period / 7 * 2),
++    }
++    for key in ['defects_created', 'defects_closed', 'qc_checked', 'handover', 'photos', 'whatsapp']:
++        val = metrics.get(key, 0)
++        if val > 0:
++            score += ADMIN_SCORE_WEIGHTS[key] * min(1.0, val / caps[key])
++
++    return min(100, max(0, round(score)))
++
++
++def _compute_admin_status(score: int, login_days_ago) -> str:
++    if login_days_ago is None:
++        return 'never'
++    if score >= 50 or login_days_ago < 7:
++        return 'active'
++    if score >= 20 or login_days_ago <= 14:
++        return 'low'
++    return 'dormant'
++
++
++@router.get("/user-activity")
++async def user_activity(
++    period: int = Query(7),
++    role: str = Query(None),
++    org_id: str = Query(None),
++    sort: str = Query('score'),
++    order: str = Query('desc'),
++    page: int = Query(1, ge=1),
++    limit: int = Query(50, ge=1, le=200),
++    search: str = Query(None),
++    user: dict = Depends(get_current_user),
++):
++    if period not in (7, 30, 90):
++        raise HTTPException(status_code=422, detail="period must be 7, 30 or 90")
++    _require_super_admin(user)
++    db = get_db()
++    now = datetime.now(timezone.utc)
++    period_start = (now - timedelta(days=period)).isoformat()
++
++    orgs = await db.organizations.find({}, {'_id': 0, 'id': 1, 'name': 1}).to_list(5000)
++    org_name_map = {o['id']: o.get('name', '') for o in orgs}
++
++    user_filter = {}
++    if role:
++        user_filter['role'] = role
++    if search:
++        user_filter['name'] = {'$regex': search, '$options': 'i'}
++
++    all_users = await db.users.find(
++        user_filter,
++        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1, 'login_count': 1}
++    ).to_list(None)
++
++    if org_id:
++        org_mems = await db.organization_memberships.find(
++            {'org_id': org_id},
++            {'_id': 0, 'user_id': 1}
++        ).to_list(None)
++        org_member_ids = {m['user_id'] for m in org_mems}
++        all_users = [u for u in all_users if u['id'] in org_member_ids]
++
++    org_mems_all = await db.organization_memberships.find(
++        {'user_id': {'$in': [u['id'] for u in all_users]}},
++        {'_id': 0, 'user_id': 1, 'org_id': 1}
++    ).to_list(None) if all_users else []
++    user_org_map = {m['user_id']: m['org_id'] for m in org_mems_all}
++
++    sort_key_mongo = {
++        'name': ('name', ''),
++        'login_count': ('login_count', 0),
++        'last_login': ('last_login_at', ''),
++        'role': ('role', ''),
++    }
++
++    if sort in sort_key_mongo:
++        field, default = sort_key_mongo[sort]
++        all_users.sort(key=lambda u: u.get(field) or default, reverse=(order == 'desc'))
++
++    if sort == 'score':
++        for u in all_users:
++            lla = u.get('last_login_at')
++            if lla:
++                try:
++                    ld = (now - datetime.fromisoformat(lla.replace('Z', '+00:00'))).days
++                    u['_login_score'] = ADMIN_SCORE_WEIGHTS['login_recency'] * max(0, 1 - max(0, ld - 1) / period) if ld <= period else 0
++                    if ld <= 1:
++                        u['_login_score'] = ADMIN_SCORE_WEIGHTS['login_recency']
++                except Exception:
++                    u['_login_score'] = 0
++            else:
++                u['_login_score'] = 0
++        all_users.sort(key=lambda u: u['_login_score'], reverse=(order == 'desc'))
++
++    total_count = len(all_users)
++    if not all_users:
++        return {
++            'users': [],
++            'total_count': 0,
++            'page': page,
++            'limit': limit,
++            'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
++        }
++
++    start = (page - 1) * limit
++    page_users = all_users[start:start + limit]
++
++    page_user_ids = [u['id'] for u in page_users]
++    user_map = {u['id']: u for u in page_users}
++
++    defects_created_agg = await db.tasks.aggregate([
++        {'$match': {'created_by': {'$in': page_user_ids}, 'created_at': {'$gte': period_start}}},
++        {'$group': {'_id': '$created_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    defects_created = {r['_id']: r['count'] for r in defects_created_agg}
++
++    defects_closed_agg = await db.task_status_history.aggregate([
++        {'$match': {
++            'changed_by': {'$in': page_user_ids},
++            'new_status': {'$in': list(TERMINAL_STATUSES)},
++            'created_at': {'$gte': period_start},
++        }},
++        {'$group': {'_id': '$changed_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    defects_closed = {r['_id']: r['count'] for r in defects_closed_agg}
++
++    qc_agg = await db.qc_items.aggregate([
++        {'$match': {
++            'updated_by': {'$in': page_user_ids},
++            'status': {'$in': ['pass', 'fail']},
++            'updated_at': {'$gte': period_start},
++        }},
++        {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    qc_checked = {r['_id']: r['count'] for r in qc_agg}
++
++    handover_agg = await db.handover_protocols.aggregate([
++        {'$match': {
++            'updated_at': {'$gte': period_start},
++            'updated_by': {'$in': page_user_ids},
++        }},
++        {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    handover_counts = {r['_id']: r['count'] for r in handover_agg}
++
++    photos_agg = await db.task_updates.aggregate([
++        {'$match': {
++            'user_id': {'$in': page_user_ids},
++            'attachment_url': {'$exists': True, '$ne': None},
++            'created_at': {'$gte': period_start},
++        }},
++        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    photos = {r['_id']: r['count'] for r in photos_agg}
++
++    wa_agg = await db.notification_jobs.aggregate([
++        {'$match': {
++            'channel': 'whatsapp',
++            'status': 'sent',
++            'created_at': {'$gte': period_start},
++            'triggered_by': {'$in': page_user_ids},
++        }},
++        {'$group': {'_id': '$triggered_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    wa_counts = {r['_id']: r['count'] for r in wa_agg}
++
++    results = []
++    for uid in page_user_ids:
++        u = user_map[uid]
++        login_days_ago = None
++        last_login = u.get('last_login_at')
++        if last_login:
++            try:
++                login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
++                login_days_ago = max(0, (now - login_dt).days)
++            except Exception:
++                pass
++
++        metrics = {
++            'login_days_ago': login_days_ago,
++            'defects_created': defects_created.get(uid, 0),
++            'defects_closed': defects_closed.get(uid, 0),
++            'qc_checked': qc_checked.get(uid, 0),
++            'handover': handover_counts.get(uid, 0),
++            'photos': photos.get(uid, 0),
++            'whatsapp': wa_counts.get(uid, 0),
++        }
++
++        activity_score = _compute_admin_score(metrics, period)
++        status = _compute_admin_status(activity_score, login_days_ago)
++
++        oid = user_org_map.get(uid, '')
++        results.append({
++            'user_id': uid,
++            'name': u.get('name', ''),
++            'role': u.get('role', ''),
++            'org_id': oid,
++            'org_name': org_name_map.get(oid, ''),
++            'last_login': u.get('last_login_at'),
++            'login_count': u.get('login_count', 0),
++            'activity_score': activity_score,
++            'status': status,
++            'metrics': {
++                'defects_created': metrics['defects_created'],
++                'defects_closed': metrics['defects_closed'],
++                'qc_checked': metrics['qc_checked'],
++                'handover': metrics['handover'],
++                'photos': metrics['photos'],
++                'whatsapp': metrics['whatsapp'],
++            },
++        })
++
++    if sort == 'score':
++        results.sort(key=lambda r: r['activity_score'], reverse=(order == 'desc'))
++
++    return {
++        'users': results,
++        'total_count': total_count,
++        'page': page,
++        'limit': limit,
++        'orgs': [{'id': o['id'], 'name': o.get('name', '')} for o in orgs],
++    }
++
++
++@router.get("/feature-usage")
++async def feature_usage(
++    period: int = Query(7),
++    user: dict = Depends(get_current_user),
++):
++    if period not in (7, 30, 90):
++        raise HTTPException(status_code=422, detail="period must be 7, 30 or 90")
++    _require_super_admin(user)
++    db = get_db()
++    now = datetime.now(timezone.utc)
++    period_start = (now - timedelta(days=period)).isoformat()
++    prev_period_start = (now - timedelta(days=period * 2)).isoformat()
++
++    active_orgs = await db.organizations.find(
++        {'status': {'$ne': 'deleted'}},
++        {'_id': 0, 'id': 1}
++    ).to_list(5000)
++    total_orgs = len(active_orgs)
++    if total_orgs == 0:
++        total_orgs = 1
++
++    projects = await db.projects.find(
++        {'status': {'$nin': ['archived', 'deleted']}},
++        {'_id': 0, 'id': 1, 'org_id': 1}
++    ).to_list(None)
++    project_org_map = {p['id']: p.get('org_id', '') for p in projects}
++    project_ids = [p['id'] for p in projects]
++
++    features = {}
++
++    defects_curr = await db.tasks.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}}},
++        {'$group': {
++            '_id': '$project_id',
++            'count': {'$sum': 1},
++        }}
++    ]).to_list(None)
++    defects_prev = await db.tasks.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'created_at': {'$gte': prev_period_start, '$lt': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    defects_power = await db.tasks.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}, 'created_by': {'$exists': True, '$ne': None}}},
++        {'$group': {'_id': '$created_by', 'count': {'$sum': 1}}},
++        {'$sort': {'count': -1}},
++        {'$limit': 5},
++    ]).to_list(None)
++    defects_orgs = set()
++    defects_total = 0
++    for r in defects_curr:
++        org = project_org_map.get(r['_id'], '')
++        if org:
++            defects_orgs.add(org)
++        defects_total += r['count']
++    defects_prev_total = sum(r['count'] for r in defects_prev)
++    features['defects'] = {
++        'name': 'ליקויים',
++        'orgs_using': len(defects_orgs),
++        'adoption_pct': round(len(defects_orgs) / total_orgs * 100),
++        'total_actions': defects_total,
++        'trend': _trend(defects_total, defects_prev_total),
++        'top_power_users': [{'user_id': r['_id'], 'count': r['count'], 'name': ''} for r in defects_power],
++    }
++
++    active_run_ids_agg = await db.qc_runs.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}}},
++        {'$project': {'_id': 0, 'id': 1}}
++    ]).to_list(None)
++    active_run_ids = [r['id'] for r in active_run_ids_agg]
++
++    qc_curr = await db.qc_items.aggregate([
++        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}, 'run_id': {'$in': active_run_ids}}},
++        {'$lookup': {
++            'from': 'qc_runs', 'localField': 'run_id', 'foreignField': 'id', 'as': 'run',
++            'pipeline': [{'$project': {'_id': 0, 'project_id': 1}}]
++        }},
++        {'$unwind': '$run'},
++        {'$group': {'_id': '$run.project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    qc_prev = await db.qc_items.aggregate([
++        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}, 'run_id': {'$in': active_run_ids}}},
++        {'$lookup': {
++            'from': 'qc_runs', 'localField': 'run_id', 'foreignField': 'id', 'as': 'run',
++            'pipeline': [{'$project': {'_id': 0, 'project_id': 1}}]
++        }},
++        {'$unwind': '$run'},
++        {'$group': {'_id': '$run.project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    qc_power = await db.qc_items.aggregate([
++        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}, 'run_id': {'$in': active_run_ids}}},
++        {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}},
++        {'$sort': {'count': -1}},
++        {'$limit': 5},
++    ]).to_list(None)
++    qc_orgs = set()
++    qc_total = 0
++    for r in qc_curr:
++        org = project_org_map.get(r['_id'], '')
++        if org:
++            qc_orgs.add(org)
++        qc_total += r['count']
++    qc_prev_total = sum(r['count'] for r in qc_prev)
++    features['qc'] = {
++        'name': 'בקרת ביצוע',
++        'orgs_using': len(qc_orgs),
++        'adoption_pct': round(len(qc_orgs) / total_orgs * 100),
++        'total_actions': qc_total,
++        'trend': _trend(qc_total, qc_prev_total),
++        'top_power_users': [{'user_id': r['_id'], 'count': r['count'], 'name': ''} for r in qc_power],
++    }
++
++    ho_curr = await db.handover_protocols.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    ho_prev = await db.handover_protocols.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    ho_power = await db.handover_protocols.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}}},
++        {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}},
++        {'$sort': {'count': -1}},
++        {'$limit': 5},
++    ]).to_list(None)
++    ho_orgs = set()
++    ho_total = 0
++    for r in ho_curr:
++        org = project_org_map.get(r['_id'], '')
++        if org:
++            ho_orgs.add(org)
++        ho_total += r['count']
++    ho_prev_total = sum(r['count'] for r in ho_prev)
++    features['handover'] = {
++        'name': 'מסירות',
++        'orgs_using': len(ho_orgs),
++        'adoption_pct': round(len(ho_orgs) / total_orgs * 100),
++        'total_actions': ho_total,
++        'trend': _trend(ho_total, ho_prev_total),
++        'top_power_users': [{'user_id': r['_id'], 'count': r['count'], 'name': ''} for r in ho_power],
++    }
++
++    wa_curr = await db.notification_jobs.aggregate([
++        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    wa_prev = await db.notification_jobs.aggregate([
++        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': prev_period_start, '$lt': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    wa_power = await db.notification_jobs.aggregate([
++        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}, 'triggered_by': {'$exists': True, '$ne': None}}},
++        {'$group': {'_id': '$triggered_by', 'count': {'$sum': 1}}},
++        {'$sort': {'count': -1}},
++        {'$limit': 5},
++    ]).to_list(None)
++    wa_orgs = set()
++    wa_total = 0
++    for r in wa_curr:
++        org = project_org_map.get(r.get('_id', ''), '')
++        if org:
++            wa_orgs.add(org)
++        wa_total += r['count']
++    wa_prev_total = sum(r['count'] for r in wa_prev)
++    features['whatsapp'] = {
++        'name': 'WhatsApp',
++        'orgs_using': len(wa_orgs),
++        'adoption_pct': round(len(wa_orgs) / total_orgs * 100),
++        'total_actions': wa_total,
++        'trend': _trend(wa_total, wa_prev_total),
++        'top_power_users': [{'user_id': r['_id'], 'count': r['count'], 'name': ''} for r in wa_power],
++    }
++
++    plans_curr = await db.project_plans.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    plans_prev = await db.project_plans.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': prev_period_start, '$lt': period_start}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    plans_power = await db.project_plans.aggregate([
++        {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': period_start}, 'uploaded_by': {'$exists': True, '$ne': None}}},
++        {'$group': {'_id': '$uploaded_by', 'count': {'$sum': 1}}},
++        {'$sort': {'count': -1}},
++        {'$limit': 5},
++    ]).to_list(None)
++    plans_orgs = set()
++    plans_total = 0
++    for r in plans_curr:
++        org = project_org_map.get(r['_id'], '')
++        if org:
++            plans_orgs.add(org)
++        plans_total += r['count']
++    plans_prev_total = sum(r['count'] for r in plans_prev)
++    features['plans'] = {
++        'name': 'תוכניות',
++        'orgs_using': len(plans_orgs),
++        'adoption_pct': round(len(plans_orgs) / total_orgs * 100),
++        'total_actions': plans_total,
++        'trend': _trend(plans_total, plans_prev_total),
++        'top_power_users': [{'user_id': r['_id'], 'count': r['count'], 'name': ''} for r in plans_power],
++    }
++
++    user_ids_all = set()
++    for f in features.values():
++        for pu in f['top_power_users']:
++            if pu['user_id']:
++                user_ids_all.add(pu['user_id'])
++    if user_ids_all:
++        users_docs = await db.users.find(
++            {'id': {'$in': list(user_ids_all)}},
++            {'_id': 0, 'id': 1, 'name': 1}
++        ).to_list(None)
++        name_map = {u['id']: u.get('name', '') for u in users_docs}
++        for f in features.values():
++            for pu in f['top_power_users']:
++                pu['name'] = name_map.get(pu['user_id'], '')
++
++    return {'features': features, 'total_orgs': total_orgs}
++
++
++def _trend(current: int, previous: int) -> str:
++    if current == 0:
++        return 'inactive'
++    if previous == 0 and current > 0:
++        return 'new'
++    if current > previous * 1.2:
++        return 'growing'
++    if current < previous * 0.8:
++        return 'declining'
++    return 'stable'
+diff --git a/backend/contractor_ops/snapshot_cron.py b/backend/contractor_ops/snapshot_cron.py
+new file mode 100644
+index 0000000..87d9363
+--- /dev/null
++++ b/backend/contractor_ops/snapshot_cron.py
+@@ -0,0 +1,246 @@
++import logging
++from datetime import datetime, timezone, timedelta
++
++from fastapi import APIRouter, Request, HTTPException
++from config import CRON_SECRET
++from contractor_ops.router import get_db
++
++logger = logging.getLogger(__name__)
++
++router = APIRouter(tags=["cron"])
++
++try:
++    import zoneinfo
++    IL_TZ = zoneinfo.ZoneInfo("Asia/Jerusalem")
++except ImportError:
++    from dateutil import tz as _tz
++    IL_TZ = _tz.gettz("Asia/Jerusalem")
++
++TERMINAL_STATUSES = {"closed", "done", "cancelled"}
++ACTIVE_STATUSES = {"open", "assigned", "in_progress", "pending_contractor_proof",
++                   "returned_to_contractor", "reopened", "pending_manager_approval",
++                   "waiting_verify"}
++
++
++def _israel_today() -> str:
++    return datetime.now(IL_TZ).strftime("%Y-%m-%d")
++
++
++def _israel_day_start_utc(date_str: str) -> str:
++    dt = datetime.strptime(date_str, "%Y-%m-%d")
++    local_start = dt.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=IL_TZ)
++    return local_start.astimezone(timezone.utc).isoformat()
++
++
++@router.post("/internal/cron/daily-snapshots")
++async def cron_daily_snapshots(request: Request):
++    cron_secret = request.headers.get("X-Cron-Secret", "")
++    if not CRON_SECRET or cron_secret != CRON_SECRET:
++        logger.warning("[SNAPSHOT-CRON] Invalid or missing X-Cron-Secret")
++        raise HTTPException(status_code=403, detail="Forbidden")
++
++    db = get_db()
++    today = _israel_today()
++    day_start_utc = _israel_day_start_utc(today)
++    now_utc = datetime.now(timezone.utc).isoformat()
++
++    projects = await db.projects.find(
++        {"status": {"$nin": ["archived", "deleted"]}},
++        {"_id": 0, "id": 1, "org_id": 1}
++    ).to_list(None)
++
++    if not projects:
++        logger.info("[SNAPSHOT-CRON] No active projects found")
++        return {"date": today, "snapshots_created": 0, "skipped": 0}
++
++    project_ids = [p["id"] for p in projects]
++    project_org_map = {p["id"]: p.get("org_id", "") for p in projects}
++
++    existing = await db.daily_project_snapshots.find(
++        {"date": today, "project_id": {"$in": project_ids}},
++        {"_id": 0, "project_id": 1}
++    ).to_list(None)
++    existing_ids = {doc["project_id"] for doc in existing}
++
++    new_project_ids = [pid for pid in project_ids if pid not in existing_ids]
++    if not new_project_ids:
++        logger.info(f"[SNAPSHOT-CRON] All {len(project_ids)} projects already have snapshots for {today}")
++        return {"date": today, "snapshots_created": 0, "skipped": len(project_ids)}
++
++    defect_agg = await db.tasks.aggregate([
++        {"$match": {"project_id": {"$in": new_project_ids}}},
++        {"$group": {
++            "_id": "$project_id",
++            "total": {"$sum": 1},
++            "open": {"$sum": {"$cond": [{"$in": ["$status", list(ACTIVE_STATUSES)]}, 1, 0]}},
++            "in_progress": {"$sum": {"$cond": [{"$in": ["$status", ["in_progress", "pending_contractor_proof", "pending_manager_approval", "returned_to_contractor"]]}, 1, 0]}},
++            "closed": {"$sum": {"$cond": [{"$in": ["$status", list(TERMINAL_STATUSES)]}, 1, 0]}},
++            "overdue": {"$sum": {"$cond": [
++                {"$and": [
++                    {"$ne": ["$due_date", None]},
++                    {"$lt": ["$due_date", today]},
++                    {"$not": {"$in": ["$status", list(TERMINAL_STATUSES)]}}
++                ]}, 1, 0
++            ]}},
++            "created_today": {"$sum": {"$cond": [{"$gte": ["$created_at", day_start_utc]}, 1, 0]}},
++            "closed_today": {"$sum": {"$cond": [
++                {"$and": [
++                    {"$in": ["$status", list(TERMINAL_STATUSES)]},
++                    {"$gte": ["$updated_at", day_start_utc]}
++                ]}, 1, 0
++            ]}},
++        }}
++    ]).to_list(None)
++    defect_map = {r["_id"]: r for r in defect_agg}
++
++    qc_agg = await db.qc_runs.aggregate([
++        {"$match": {"project_id": {"$in": new_project_ids}}},
++        {"$unwind": "$stages"},
++        {"$unwind": "$stages.items"},
++        {"$group": {
++            "_id": "$project_id",
++            "total_items": {"$sum": 1},
++            "checked": {"$sum": {"$cond": [
++                {"$in": ["$stages.items.status", ["pass", "fail", "na"]]}, 1, 0
++            ]}},
++        }}
++    ]).to_list(None)
++    qc_map = {r["_id"]: r for r in qc_agg}
++
++    handover_agg = await db.handover_protocols.aggregate([
++        {"$match": {"project_id": {"$in": new_project_ids}}},
++        {"$group": {
++            "_id": "$project_id",
++            "total_units": {"$sum": 1},
++            "signed": {"$sum": {"$cond": [{"$eq": ["$status", "signed"]}, 1, 0]}},
++            "in_progress": {"$sum": {"$cond": [{"$in": ["$status", ["in_progress", "partially_signed"]]}, 1, 0]}},
++            "not_started": {"$sum": {"$cond": [{"$in": ["$status", ["draft", "not_started"]]}, 1, 0]}},
++        }}
++    ]).to_list(None)
++    handover_map = {r["_id"]: r for r in handover_agg}
++
++    membership_agg = await db.project_memberships.aggregate([
++        {"$match": {"project_id": {"$in": new_project_ids}}},
++        {"$group": {"_id": "$project_id", "total": {"$sum": 1}}}
++    ]).to_list(None)
++    membership_map = {r["_id"]: r["total"] for r in membership_agg}
++
++    membership_users = await db.project_memberships.find(
++        {"project_id": {"$in": new_project_ids}},
++        {"_id": 0, "project_id": 1, "user_id": 1}
++    ).to_list(None)
++    project_user_ids = {}
++    all_user_ids = set()
++    for m in membership_users:
++        project_user_ids.setdefault(m["project_id"], []).append(m["user_id"])
++        all_user_ids.add(m["user_id"])
++
++    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
++    user_logins = {}
++    if all_user_ids:
++        login_docs = await db.users.find(
++            {"id": {"$in": list(all_user_ids)}},
++            {"_id": 0, "id": 1, "last_login_at": 1}
++        ).to_list(None)
++        user_logins = {u["id"]: u.get("last_login_at", "") for u in login_docs}
++
++    photos_agg = await db.task_updates.aggregate([
++        {"$match": {
++            "project_id": {"$in": new_project_ids},
++            "attachment_url": {"$exists": True, "$ne": None},
++            "created_at": {"$gte": day_start_utc},
++        }},
++        {"$group": {"_id": "$project_id", "count": {"$sum": 1}}}
++    ]).to_list(None)
++    photos_map = {r["_id"]: r["count"] for r in photos_agg}
++
++    wa_sent_agg = await db.notification_jobs.aggregate([
++        {"$match": {
++            "channel": "whatsapp",
++            "status": {"$in": ["sent", "delivered", "read"]},
++            "created_at": {"$gte": day_start_utc},
++            "task_id": {"$exists": True},
++        }},
++        {"$lookup": {
++            "from": "tasks",
++            "localField": "task_id",
++            "foreignField": "id",
++            "as": "task_doc",
++            "pipeline": [{"$project": {"_id": 0, "project_id": 1}}]
++        }},
++        {"$unwind": "$task_doc"},
++        {"$group": {"_id": "$task_doc.project_id", "count": {"$sum": 1}}}
++    ]).to_list(None)
++    wa_map = {r["_id"]: r["count"] for r in wa_sent_agg}
++
++    snapshots = []
++    for pid in new_project_ids:
++        d = defect_map.get(pid, {})
++        q = qc_map.get(pid, {})
++        h = handover_map.get(pid, {})
++        total_members = membership_map.get(pid, 0)
++
++        user_ids_for_project = project_user_ids.get(pid, [])
++        active_today = sum(1 for uid in user_ids_for_project if user_logins.get(uid, "") >= day_start_utc)
++        active_7d = sum(1 for uid in user_ids_for_project if user_logins.get(uid, "") >= seven_days_ago)
++
++        qc_total = q.get("total_items", 0)
++        qc_checked = q.get("checked", 0)
++        qc_pct = round(qc_checked / qc_total * 100, 1) if qc_total > 0 else 0.0
++
++        h_total = h.get("total_units", 0)
++        h_signed = h.get("signed", 0)
++        h_in_progress = h.get("in_progress", 0)
++        h_not_started = h.get("not_started", 0)
++        h_pct = round(h_signed / h_total * 100, 1) if h_total > 0 else 0.0
++
++        snapshots.append({
++            "project_id": pid,
++            "org_id": project_org_map.get(pid, ""),
++            "date": today,
++            "defects": {
++                "open": d.get("open", 0),
++                "in_progress": d.get("in_progress", 0),
++                "closed": d.get("closed", 0),
++                "overdue": d.get("overdue", 0),
++                "created_today": d.get("created_today", 0),
++                "closed_today": d.get("closed_today", 0),
++            },
++            "qc": {
++                "total_items": qc_total,
++                "checked": qc_checked,
++                "completion_pct": qc_pct,
++            },
++            "handover": {
++                "total_units": h_total,
++                "signed": h_signed,
++                "in_progress": h_in_progress,
++                "not_started": h_not_started,
++                "completion_pct": h_pct,
++            },
++            "team": {
++                "total_members": total_members,
++                "active_today": active_today,
++                "active_7d": active_7d,
++            },
++            "photos_uploaded_today": photos_map.get(pid, 0),
++            "whatsapp_sent_today": wa_map.get(pid, 0),
++            "created_at": now_utc,
++        })
++
++    created_count = 0
++    if snapshots:
++        try:
++            result = await db.daily_project_snapshots.insert_many(snapshots, ordered=False)
++            created_count = len(result.inserted_ids)
++        except Exception as e:
++            details = getattr(e, 'details', {})
++            created_count = details.get('nInserted', 0)
++            logger.warning(f"[SNAPSHOT-CRON] Bulk insert error: {e} — nInserted={created_count}")
++
++    logger.info(f"[SNAPSHOT-CRON] date={today} created={created_count} skipped={len(existing_ids)}")
++    return {
++        "date": today,
++        "snapshots_created": created_count,
++        "skipped": len(existing_ids),
++    }
+diff --git a/backend/contractor_ops/stats_router.py b/backend/contractor_ops/stats_router.py
+index 0085d4e..6e93a2a 100644
+--- a/backend/contractor_ops/stats_router.py
++++ b/backend/contractor_ops/stats_router.py
+@@ -1,7 +1,7 @@
+ from typing import Optional
+-from datetime import datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ 
+-from fastapi import APIRouter, Depends, Query
++from fastapi import APIRouter, Depends, Query, HTTPException
+ from contractor_ops.router import (
+     get_db, get_current_user,
+     _check_project_access, _check_project_read_access,
+@@ -516,3 +516,263 @@ async def get_task_buckets(
+         'buckets': buckets,
+         'status_counts': status_counts,
+     }
++
++
++TERMINAL_STATUSES = {'closed', 'done', 'cancelled'}
++PM_OWNER_ROLES = {'project_manager', 'owner', 'management_team'}
++
++SCORE_WEIGHTS = {
++    'login': 30,
++    'defects_opened': 20,
++    'defects_closed': 15,
++    'qc_items_checked': 15,
++    'photos_uploaded': 10,
++    'comments': 10,
++}
++
++
++def _compute_activity_score(metrics: dict, period: int) -> int:
++    score = 0.0
++    login_days = metrics.get('login_days_ago')
++    if login_days is not None:
++        if login_days <= 1:
++            score += SCORE_WEIGHTS['login']
++        elif login_days <= period:
++            score += SCORE_WEIGHTS['login'] * max(0, 1 - (login_days - 1) / period)
++
++    for key in ['defects_opened', 'defects_closed', 'qc_items_checked', 'photos_uploaded', 'comments']:
++        val = metrics.get(key, 0)
++        if val > 0:
++            score += SCORE_WEIGHTS[key] * min(1.0, val / max(3, period / 7 * 3))
++
++    return min(100, max(0, round(score)))
++
++
++def _compute_status(score: int) -> str:
++    if score >= 40:
++        return 'active'
++    if score >= 15:
++        return 'low'
++    return 'dormant'
++
++
++@router.get("/projects/{project_id}/team-activity")
++async def get_team_activity(
++    project_id: str,
++    period: int = Query(7),
++    user: dict = Depends(get_current_user),
++):
++    if period not in (7, 30):
++        raise HTTPException(status_code=422, detail="period must be 7 or 30")
++    db = get_db()
++    await _check_project_read_access(user, project_id)
++    role = await _get_project_role(user, project_id)
++    if role not in PM_OWNER_ROLES and user.get('platform_role') != 'super_admin':
++        raise HTTPException(status_code=403, detail="אין הרשאה")
++
++    now = datetime.now(timezone.utc)
++    period_start = (now - timedelta(days=period)).isoformat()
++    prev_period_start = (now - timedelta(days=period * 2)).isoformat()
++
++    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'created_at': 1})
++    project_age_days = 0
++    if project and project.get('created_at'):
++        try:
++            created = datetime.fromisoformat(project['created_at'].replace('Z', '+00:00'))
++            project_age_days = (now - created).days
++        except Exception:
++            project_age_days = 999
++
++    memberships = await db.project_memberships.find(
++        {'project_id': project_id},
++        {'_id': 0, 'user_id': 1, 'role': 1, 'company_name': 1}
++    ).to_list(None)
++    if not memberships:
++        return {'summary': {'total_members': 0, 'active': 0, 'low': 0, 'dormant': 0, 'team_score': 0}, 'members': []}
++
++    user_ids = [m['user_id'] for m in memberships]
++    member_role_map = {m['user_id']: m.get('role', '') for m in memberships}
++    member_company_map = {m['user_id']: m.get('company_name', '') for m in memberships}
++
++    users_docs = await db.users.find(
++        {'id': {'$in': user_ids}},
++        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1}
++    ).to_list(None)
++    user_map = {u['id']: u for u in users_docs}
++
++    defects_opened_agg = await db.tasks.aggregate([
++        {'$match': {'project_id': project_id, 'created_by': {'$in': user_ids}, 'created_at': {'$gte': period_start}}},
++        {'$group': {'_id': '$created_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    defects_opened = {r['_id']: r['count'] for r in defects_opened_agg}
++
++    defects_closed_agg = await db.task_status_history.aggregate([
++        {'$match': {
++            'task_id': {'$in': await _get_project_task_ids(db, project_id)},
++            'changed_by': {'$in': user_ids},
++            'new_status': {'$in': list(TERMINAL_STATUSES)},
++            'created_at': {'$gte': period_start},
++        }},
++        {'$group': {'_id': '$changed_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    defects_closed = {r['_id']: r['count'] for r in defects_closed_agg}
++
++    comments_agg = await db.task_updates.aggregate([
++        {'$match': {'project_id': project_id, 'user_id': {'$in': user_ids}, 'created_at': {'$gte': period_start}}},
++        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    comments = {r['_id']: r['count'] for r in comments_agg}
++
++    photos_agg = await db.task_updates.aggregate([
++        {'$match': {
++            'project_id': project_id,
++            'user_id': {'$in': user_ids},
++            'attachment_url': {'$exists': True, '$ne': None},
++            'created_at': {'$gte': period_start},
++        }},
++        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    photos = {r['_id']: r['count'] for r in photos_agg}
++
++    qc_agg = await db.qc_items.aggregate([
++        {'$match': {
++            'updated_by': {'$in': user_ids},
++            'status': {'$in': ['pass', 'fail']},
++            'updated_at': {'$gte': period_start},
++        }},
++        {'$lookup': {
++            'from': 'qc_runs',
++            'localField': 'run_id',
++            'foreignField': 'id',
++            'as': 'run',
++            'pipeline': [
++                {'$match': {'project_id': project_id}},
++                {'$project': {'_id': 0, 'id': 1}}
++            ]
++        }},
++        {'$match': {'run': {'$ne': []}}},
++        {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    qc_checked = {r['_id']: r['count'] for r in qc_agg}
++
++    prev_actions_agg = await db.task_updates.aggregate([
++        {'$match': {
++            'project_id': project_id,
++            'user_id': {'$in': user_ids},
++            'created_at': {'$gte': prev_period_start, '$lt': period_start},
++        }},
++        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    prev_actions = {r['_id']: r['count'] for r in prev_actions_agg}
++
++    curr_actions_agg = await db.task_updates.aggregate([
++        {'$match': {
++            'project_id': project_id,
++            'user_id': {'$in': user_ids},
++            'created_at': {'$gte': period_start},
++        }},
++        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
++    ]).to_list(None)
++    curr_actions = {r['_id']: r['count'] for r in curr_actions_agg}
++
++    members_result = []
++    total_score = 0
++    active_count = 0
++    low_count = 0
++    dormant_count = 0
++
++    for uid in user_ids:
++        u = user_map.get(uid, {})
++        login_days_ago = None
++        last_login = u.get('last_login_at')
++        if last_login:
++            try:
++                login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
++                login_days_ago = max(0, (now - login_dt).days)
++            except Exception:
++                pass
++
++        metrics = {
++            'login_days_ago': login_days_ago,
++            'defects_opened': defects_opened.get(uid, 0),
++            'defects_closed': defects_closed.get(uid, 0),
++            'qc_items_checked': qc_checked.get(uid, 0),
++            'photos_uploaded': photos.get(uid, 0),
++            'comments': comments.get(uid, 0),
++        }
++
++        activity_score = _compute_activity_score(metrics, period)
++        status = _compute_status(activity_score)
++
++        if project_age_days < period * 2:
++            trend = 'new'
++        else:
++            curr = curr_actions.get(uid, 0)
++            prev = prev_actions.get(uid, 0)
++            if prev == 0 and curr == 0:
++                trend = 'stable'
++            elif prev == 0 and curr > 0:
++                trend = 'growing'
++            elif curr > prev * 1.25:
++                trend = 'growing'
++            elif curr < prev * 0.75:
++                trend = 'declining'
++            else:
++                trend = 'stable'
++
++        if status == 'active':
++            active_count += 1
++        elif status == 'low':
++            low_count += 1
++        else:
++            dormant_count += 1
++        total_score += activity_score
++
++        login_relative = None
++        if login_days_ago is not None:
++            if login_days_ago == 0:
++                login_relative = 'היום'
++            elif login_days_ago == 1:
++                login_relative = 'אתמול'
++            else:
++                login_relative = f'לפני {login_days_ago} ימים'
++
++        members_result.append({
++            'user_id': uid,
++            'name': u.get('name', ''),
++            'role': member_role_map.get(uid, u.get('role', '')),
++            'company_name': member_company_map.get(uid, ''),
++            'activity_score': activity_score,
++            'status': status,
++            'trend': trend,
++            'last_login_relative': login_relative,
++            'metrics': {
++                'defects_opened': metrics['defects_opened'],
++                'defects_closed': metrics['defects_closed'],
++                'qc_items_checked': metrics['qc_items_checked'],
++                'photos_uploaded': metrics['photos_uploaded'],
++                'comments': metrics['comments'],
++            },
++        })
++
++    members_result.sort(key=lambda m: m['activity_score'], reverse=True)
++    team_score = round(total_score / len(user_ids)) if user_ids else 0
++
++    return {
++        'summary': {
++            'total_members': len(user_ids),
++            'active': active_count,
++            'low': low_count,
++            'dormant': dormant_count,
++            'team_score': team_score,
++        },
++        'members': members_result,
++    }
++
++
++async def _get_project_task_ids(db, project_id: str) -> list:
++    tasks = await db.tasks.find(
++        {'project_id': project_id},
++        {'_id': 0, 'id': 1}
++    ).to_list(None)
++    return [t['id'] for t in tasks]
+diff --git a/backend/server.py b/backend/server.py
+index 3c512d4..fa21e7b 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -284,6 +284,9 @@ reminder_api_router, reminder_cron_router = create_reminder_router(require_roles
+ app.include_router(reminder_api_router)
+ app.include_router(reminder_cron_router)
+ 
++from contractor_ops.snapshot_cron import router as snapshot_cron_router
++app.include_router(snapshot_cron_router)
++
+ from contractor_ops.sms_service import SMSClient
+ from config import SMS_ENABLED, TWILIO_MESSAGING_SERVICE_SID
+ sms_client = SMSClient(
+@@ -365,6 +368,9 @@ app.include_router(import_router)
+ from contractor_ops.admin_dashboard import router as admin_dashboard_router
+ app.include_router(admin_dashboard_router)
+ 
++from contractor_ops.admin_analytics import router as admin_analytics_router
++app.include_router(admin_analytics_router)
++
+ from contractor_ops.invites_router import router as invites_router
+ app.include_router(invites_router)
+ 
+@@ -483,6 +489,19 @@ async def create_indexes():
+         await db.project_plans.create_index("id", unique=True)
+         await db.unit_plans.create_index([("project_id", 1), ("unit_id", 1), ("created_at", -1)])
+         await db.unit_plans.create_index("id", unique=True)
++        await db.tasks.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
++        await db.tasks.create_index([("created_by", 1), ("created_at", -1)])
++        await db.task_updates.create_index([("project_id", 1), ("user_id", 1), ("created_at", -1)])
++        await db.task_updates.create_index([("user_id", 1), ("created_at", -1)])
++        await db.qc_runs.create_index([("project_id", 1), ("updated_at", -1)])
++        await db.audit_events.create_index([("actor_id", 1), ("action", 1), ("created_at", -1)])
++        await db.audit_events.create_index([("action", 1), ("created_at", -1)])
++        await db.daily_project_snapshots.create_index(
++            [("project_id", 1), ("date", -1)], unique=True
++        )
++        await db.daily_project_snapshots.create_index(
++            [("created_at", 1)], expireAfterSeconds=15552000
++        )
+         logger.info("[INDEXES] All MongoDB indexes created successfully")
+     except Exception as e:
+         logger.warning(f"[INDEXES] Index creation warning: {e}")
+@@ -1152,6 +1171,8 @@ async def canonical_redirect_middleware(request: Request, call_next):
+         return await call_next(request)
+     if request.url.path == '/health':
+         return await call_next(request)
++    if request.url.path.startswith('/internal/'):
++        return await call_next(request)
+     if request.url.path.startswith('/api/'):
+         return await call_next(request)
+     path = request.url.path
+diff --git a/frontend/src/App.js b/frontend/src/App.js
+index 2c021c8..71f8162 100644
+--- a/frontend/src/App.js
++++ b/frontend/src/App.js
+@@ -52,6 +52,7 @@ const BuildingQCPage = React.lazy(() => import('./pages/BuildingQCPage'));
+ const UnitQCSelectionPage = React.lazy(() => import('./pages/UnitQCSelectionPage'));
+ const InnerBuildingPage = React.lazy(() => import('./pages/InnerBuildingPage'));
+ const AdminDashboardPage = React.lazy(() => import('./pages/AdminDashboardPage'));
++const AdminActivityPage = React.lazy(() => import('./pages/AdminActivityPage'));
+ const AdminQCTemplatesPage = React.lazy(() => import('./pages/AdminQCTemplatesPage'));
+ const AdminHandoverTemplateEditor = React.lazy(() => import('./pages/AdminHandoverTemplateEditor'));
+ const ApartmentDashboardPage = React.lazy(() => import('./pages/ApartmentDashboardPage'));
+@@ -181,6 +182,14 @@ const AppRoutes = () => {
+             </ProtectedRoute>
+           }
+         />
++        <Route
++          path="/admin/activity"
++          element={
++            <ProtectedRoute requireSuperAdmin>
++              <AdminActivityPage />
++            </ProtectedRoute>
++          }
++        />
+         <Route
+           path="/admin/billing"
+           element={
+diff --git a/frontend/src/components/TeamActivitySection.js b/frontend/src/components/TeamActivitySection.js
+new file mode 100644
+index 0000000..83ff689
+--- /dev/null
++++ b/frontend/src/components/TeamActivitySection.js
+@@ -0,0 +1,238 @@
++import React, { useState, useEffect, useCallback } from 'react';
++import { projectService } from '../services/api';
++import { tRole } from '../i18n';
++import {
++  Users, ChevronDown, ChevronUp, Loader2,
++  TrendingUp, TrendingDown, Minus, Sparkles,
++  Camera, MessageSquare, AlertTriangle, CheckCircle2, ClipboardCheck,
++} from 'lucide-react';
++
++const STATUS_CONFIG = {
++  active: { label: 'פעיל', color: 'bg-green-500', badge: 'bg-green-100 text-green-700', dot: 'bg-green-500' },
++  low: { label: 'נמוך', color: 'bg-orange-500', badge: 'bg-orange-100 text-orange-700', dot: 'bg-orange-400' },
++  dormant: { label: 'רדום', color: 'bg-red-500', badge: 'bg-red-100 text-red-700', dot: 'bg-red-400' },
++};
++
++const TREND_ICON = {
++  growing: { Icon: TrendingUp, color: 'text-green-500' },
++  stable: { Icon: Minus, color: 'text-slate-400' },
++  declining: { Icon: TrendingDown, color: 'text-red-500' },
++  new: { Icon: Sparkles, color: 'text-blue-500' },
++};
++
++const ScoreRing = ({ score, size = 64, stroke = 5 }) => {
++  const radius = (size - stroke) / 2;
++  const circumference = 2 * Math.PI * radius;
++  const offset = circumference - (score / 100) * circumference;
++  const color = score >= 60 ? '#22c55e' : score >= 30 ? '#f59e0b' : '#ef4444';
++
++  return (
++    <div className="relative" style={{ width: size, height: size }}>
++      <svg width={size} height={size} className="transform -rotate-90">
++        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e2e8f0" strokeWidth={stroke} />
++        <circle
++          cx={size / 2} cy={size / 2} r={radius} fill="none"
++          stroke={color} strokeWidth={stroke} strokeLinecap="round"
++          strokeDasharray={circumference} strokeDashoffset={offset}
++          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
++        />
++      </svg>
++      <div className="absolute inset-0 flex items-center justify-center">
++        <span className="text-lg font-black text-slate-800">{score}</span>
++      </div>
++    </div>
++  );
++};
++
++const MetricPill = ({ icon: Icon, label, value, color }) => {
++  if (!value) return null;
++  return (
++    <div className="flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
++      <Icon className={`w-3 h-3 ${color}`} />
++      <span className="text-slate-500">{label}</span>
++      <span className="font-bold text-slate-700">{value}</span>
++    </div>
++  );
++};
++
++const MemberRow = ({ member }) => {
++  const [expanded, setExpanded] = useState(false);
++  const statusCfg = STATUS_CONFIG[member.status] || STATUS_CONFIG.dormant;
++  const trendCfg = TREND_ICON[member.trend] || TREND_ICON.stable;
++  const TrendIcon = trendCfg.Icon;
++  const m = member.metrics || {};
++
++  return (
++    <div className="border-b border-slate-100 last:border-b-0">
++      <button
++        onClick={() => setExpanded(!expanded)}
++        className="w-full flex items-center gap-2 p-2.5 hover:bg-slate-50/50 transition-colors"
++      >
++        <div className={`w-2 h-2 rounded-full shrink-0 ${statusCfg.dot}`} />
++        <div className="flex-1 min-w-0 text-right">
++          <div className="flex items-center gap-1.5">
++            <span className="text-sm font-medium text-slate-800 truncate">{member.name || 'ללא שם'}</span>
++            {member.company_name && (
++              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">{member.company_name}</span>
++            )}
++          </div>
++          <div className="flex items-center gap-1.5 mt-0.5">
++            <span className="text-[10px] text-slate-400">{tRole(member.role)}</span>
++            {member.last_login_relative && (
++              <span className="text-[10px] text-slate-400">· {member.last_login_relative}</span>
++            )}
++          </div>
++        </div>
++        <div className="flex items-center gap-2 shrink-0">
++          <TrendIcon className={`w-3 h-3 ${trendCfg.color}`} />
++          <span className="text-sm font-bold text-slate-700 w-7 text-center">{member.activity_score}</span>
++          {expanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
++        </div>
++      </button>
++      {expanded && (
++        <div className="px-3 pb-3 pt-0.5">
++          <div className="flex flex-wrap gap-1.5">
++            <MetricPill icon={AlertTriangle} label="נפתחו" value={m.defects_opened} color="text-red-500" />
++            <MetricPill icon={CheckCircle2} label="נסגרו" value={m.defects_closed} color="text-green-500" />
++            <MetricPill icon={ClipboardCheck} label="QC" value={m.qc_items_checked} color="text-indigo-500" />
++            <MetricPill icon={Camera} label="תמונות" value={m.photos_uploaded} color="text-blue-500" />
++            <MetricPill icon={MessageSquare} label="תגובות" value={m.comments} color="text-purple-500" />
++          </div>
++        </div>
++      )}
++    </div>
++  );
++};
++
++export default function TeamActivitySection({ projectId }) {
++  const [data, setData] = useState(null);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState(false);
++  const [period, setPeriod] = useState(7);
++
++  const load = useCallback(async (p) => {
++    setLoading(true);
++    setError(false);
++    try {
++      const result = await projectService.getTeamActivity(projectId, p);
++      setData(result);
++    } catch {
++      setError(true);
++    } finally {
++      setLoading(false);
++    }
++  }, [projectId]);
++
++  useEffect(() => { load(period); }, [load, period]);
++
++  if (error) return null;
++
++  if (loading && !data) {
++    return (
++      <div className="bg-white rounded-xl border shadow-sm p-4">
++        <div className="flex items-center gap-2 mb-3">
++          <Users className="w-4 h-4 text-violet-500" />
++          <h3 className="text-sm font-bold text-slate-700">פעילות צוות</h3>
++        </div>
++        <div className="flex justify-center py-6">
++          <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
++        </div>
++      </div>
++    );
++  }
++
++  if (!data) return null;
++  const { summary, members } = data;
++  if (!summary || summary.total_members === 0) return null;
++
++  return (
++    <div className="bg-white rounded-xl border shadow-sm p-4">
++      <div className="flex items-center justify-between mb-3">
++        <div className="flex items-center gap-2">
++          <Users className="w-4 h-4 text-violet-500" />
++          <h3 className="text-sm font-bold text-slate-700">פעילות צוות</h3>
++          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">{summary.total_members}</span>
++        </div>
++        <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
++          {[7, 30].map(p => (
++            <button
++              key={p}
++              onClick={() => { if (p !== period) { setPeriod(p); } }}
++              className={`text-[11px] px-2.5 py-1 rounded-md font-medium transition-all ${
++                period === p ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'
++              }`}
++            >
++              {p} ימים
++            </button>
++          ))}
++        </div>
++      </div>
++
++      <div className="flex items-center gap-4 mb-4 p-3 bg-gradient-to-l from-violet-50 to-slate-50 rounded-xl">
++        <ScoreRing score={summary.team_score} />
++        <div className="flex-1">
++          <p className="text-xs text-slate-500 mb-2">ציון פעילות צוות</p>
++          <div className="flex flex-wrap gap-1.5">
++            <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
++              {summary.active} פעילים
++            </span>
++            {summary.low > 0 && (
++              <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">
++                {summary.low} נמוך
++              </span>
++            )}
++            {summary.dormant > 0 && (
++              <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">
++                {summary.dormant} רדום
++              </span>
++            )}
++          </div>
++        </div>
++      </div>
++
++      {loading && (
++        <div className="flex justify-center py-2 mb-2">
++          <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
++        </div>
++      )}
++
++      <div className="border border-slate-100 rounded-xl overflow-hidden">
++        {(() => {
++          const nonContractors = (members || []).filter(m => m.role !== 'contractor');
++          const contractors = (members || []).filter(m => m.role === 'contractor');
++          const companyGroups = {};
++          const ungrouped = [];
++          contractors.forEach(m => {
++            const company = m.company_name || '';
++            if (company) {
++              if (!companyGroups[company]) companyGroups[company] = [];
++              companyGroups[company].push(m);
++            } else {
++              ungrouped.push(m);
++            }
++          });
++          const sortedCompanyEntries = Object.entries(companyGroups)
++            .map(([company, group]) => {
++              group.sort((a, b) => b.activity_score - a.activity_score);
++              return [company, group];
++            })
++            .sort((a, b) => b[1][0].activity_score - a[1][0].activity_score);
++          return (
++            <>
++              {nonContractors.map(m => <MemberRow key={m.user_id} member={m} />)}
++              {sortedCompanyEntries.map(([company, group]) => (
++                <div key={company}>
++                  <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-100">
++                    <span className="text-[11px] font-semibold text-slate-500">{company}</span>
++                  </div>
++                  {group.map(m => <MemberRow key={m.user_id} member={m} />)}
++                </div>
++              ))}
++              {ungrouped.map(m => <MemberRow key={m.user_id} member={m} />)}
++            </>
++          );
++        })()}
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/src/pages/AdminActivityPage.js b/frontend/src/pages/AdminActivityPage.js
+new file mode 100644
+index 0000000..aa9a404
+--- /dev/null
++++ b/frontend/src/pages/AdminActivityPage.js
+@@ -0,0 +1,350 @@
++import React, { useState, useEffect, useCallback } from 'react';
++import { useNavigate } from 'react-router-dom';
++import { BACKEND_URL } from '../services/api';
++import {
++  Loader2, ChevronLeft, ChevronRight, Search, TrendingUp, TrendingDown,
++  Minus, Sparkles, Users, ArrowUpDown
++} from 'lucide-react';
++
++const ROLE_LABELS = {
++  project_manager: 'מנהל פרויקט',
++  contractor: 'קבלן',
++  owner: 'בעלים',
++  management_team: 'צוות ניהולי',
++  super_admin: 'אדמין',
++  worker: 'עובד',
++};
++
++const STATUS_DOTS = {
++  active: 'bg-emerald-400',
++  low: 'bg-amber-400',
++  dormant: 'bg-red-400',
++  never: 'bg-slate-300',
++};
++
++const STATUS_LABELS = {
++  active: 'פעיל',
++  low: 'נמוך',
++  dormant: 'רדום',
++  never: 'מעולם לא',
++};
++
++const TREND_ICONS = {
++  growing: { icon: TrendingUp, color: 'text-emerald-500', label: 'עולה' },
++  declining: { icon: TrendingDown, color: 'text-red-500', label: 'יורד' },
++  stable: { icon: Minus, color: 'text-slate-400', label: 'יציב' },
++  new: { icon: Sparkles, color: 'text-blue-500', label: 'חדש' },
++  inactive: { icon: Minus, color: 'text-slate-300', label: 'לא פעיל' },
++};
++
++const FEATURE_COLORS = {
++  defects: 'border-red-200 bg-red-50',
++  qc: 'border-blue-200 bg-blue-50',
++  handover: 'border-emerald-200 bg-emerald-50',
++  whatsapp: 'border-green-200 bg-green-50',
++  plans: 'border-violet-200 bg-violet-50',
++};
++
++function formatLoginDate(iso) {
++  if (!iso) return 'מעולם לא';
++  try {
++    const d = new Date(iso);
++    const now = new Date();
++    const diff = Math.floor((now - d) / 1000);
++    if (diff < 60) return 'עכשיו';
++    if (diff < 3600) return `לפני ${Math.floor(diff / 60)} דק׳`;
++    if (diff < 86400) return `לפני ${Math.floor(diff / 3600)} שע׳`;
++    if (diff < 604800) return `לפני ${Math.floor(diff / 86400)} ימים`;
++    return d.toLocaleDateString('he-IL');
++  } catch {
++    return '—';
++  }
++}
++
++function TrendBadge({ trend }) {
++  const t = TREND_ICONS[trend] || TREND_ICONS.stable;
++  const Icon = t.icon;
++  return (
++    <span className={`inline-flex items-center gap-0.5 text-xs ${t.color}`}>
++      <Icon className="w-3.5 h-3.5" />
++      <span>{t.label}</span>
++    </span>
++  );
++}
++
++export default function AdminActivityPage() {
++  const navigate = useNavigate();
++  const [period, setPeriod] = useState(30);
++  const [role, setRole] = useState('');
++  const [orgId, setOrgId] = useState('');
++  const [search, setSearch] = useState('');
++  const [sort, setSort] = useState('score');
++  const [order, setOrder] = useState('desc');
++  const [page, setPage] = useState(1);
++  const [limit] = useState(50);
++  const [data, setData] = useState(null);
++  const [featureData, setFeatureData] = useState(null);
++  const [loading, setLoading] = useState(true);
++  const [featureLoading, setFeatureLoading] = useState(true);
++
++  const authHeaders = useCallback(() => {
++    const token = localStorage.getItem('token');
++    return { 'Authorization': `Bearer ${token}` };
++  }, []);
++
++  const loadUsers = useCallback(async () => {
++    setLoading(true);
++    try {
++      const params = new URLSearchParams({
++        period: String(period), page: String(page), limit: String(limit),
++        sort, order,
++      });
++      if (role) params.set('role', role);
++      if (orgId) params.set('org_id', orgId);
++      if (search) params.set('search', search);
++      const res = await fetch(
++        `${BACKEND_URL}/api/admin/analytics/user-activity?${params}`,
++        { headers: authHeaders() }
++      );
++      if (res.ok) setData(await res.json());
++    } catch {}
++    finally { setLoading(false); }
++  }, [period, page, limit, sort, order, role, orgId, search, authHeaders]);
++
++  const loadFeatures = useCallback(async () => {
++    setFeatureLoading(true);
++    try {
++      const res = await fetch(
++        `${BACKEND_URL}/api/admin/analytics/feature-usage?period=${period}`,
++        { headers: authHeaders() }
++      );
++      if (res.ok) setFeatureData(await res.json());
++    } catch {}
++    finally { setFeatureLoading(false); }
++  }, [period, authHeaders]);
++
++  useEffect(() => { loadUsers(); }, [loadUsers]);
++  useEffect(() => { loadFeatures(); }, [loadFeatures]);
++
++  const toggleSort = (col) => {
++    if (sort === col) {
++      setOrder(o => o === 'desc' ? 'asc' : 'desc');
++    } else {
++      setSort(col);
++      setOrder('desc');
++    }
++    setPage(1);
++  };
++
++  const totalPages = data ? Math.ceil(data.total_count / limit) : 0;
++  const orgs = data?.orgs || [];
++
++  return (
++    <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
++      <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
++        <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
++          <button onClick={() => navigate('/admin')} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
++            <ChevronRight className="w-5 h-5" />
++          </button>
++          <Users className="w-5 h-5 text-amber-400" />
++          <h1 className="text-base font-bold">פעילות משתמשים</h1>
++        </div>
++      </header>
++
++      <div className="max-w-[1200px] mx-auto px-4 py-4 space-y-6">
++        <div className="flex flex-wrap gap-2 items-center">
++          <div className="flex bg-white border border-slate-200 rounded-lg overflow-hidden text-sm">
++            {[7, 30, 90].map(p => (
++              <button
++                key={p}
++                onClick={() => { setPeriod(p); setPage(1); }}
++                className={`px-3 py-1.5 transition-colors ${period === p ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
++              >
++                {p} ימים
++              </button>
++            ))}
++          </div>
++          <div className="relative">
++            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
++            <input
++              type="text"
++              placeholder="חיפוש שם..."
++              value={search}
++              onChange={e => { setSearch(e.target.value); setPage(1); }}
++              className="pr-8 pl-3 py-1.5 border border-slate-200 rounded-lg text-sm w-40"
++            />
++          </div>
++          <select
++            value={role}
++            onChange={e => { setRole(e.target.value); setPage(1); }}
++            className="border border-slate-200 rounded-lg text-sm px-2 py-1.5"
++          >
++            <option value="">כל התפקידים</option>
++            {Object.entries(ROLE_LABELS).map(([k, v]) => (
++              <option key={k} value={k}>{v}</option>
++            ))}
++          </select>
++          <select
++            value={orgId}
++            onChange={e => { setOrgId(e.target.value); setPage(1); }}
++            className="border border-slate-200 rounded-lg text-sm px-2 py-1.5"
++          >
++            <option value="">כל הארגונים</option>
++            {orgs.map(o => (
++              <option key={o.id} value={o.id}>{o.name || o.id}</option>
++            ))}
++          </select>
++        </div>
++
++        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
++          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
++            <h2 className="text-sm font-bold text-slate-800">פעילות משתמשים</h2>
++            {data && <span className="text-xs text-slate-500">{data.total_count} משתמשים</span>}
++          </div>
++          {loading ? (
++            <div className="flex items-center justify-center py-12">
++              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
++            </div>
++          ) : (
++            <>
++              <div className="overflow-x-auto">
++                <table className="w-full text-sm">
++                  <thead>
++                    <tr className="border-b border-slate-100 bg-slate-50 text-slate-500">
++                      <SortHeader label="שם" col="name" current={sort} order={order} onSort={toggleSort} />
++                      <th className="px-3 py-2 text-right font-medium">תפקיד</th>
++                      <th className="px-3 py-2 text-right font-medium">ארגון</th>
++                      <SortHeader label="כניסה אחרונה" col="last_login" current={sort} order={order} onSort={toggleSort} />
++                      <SortHeader label="כניסות" col="login_count" current={sort} order={order} onSort={toggleSort} />
++                      <th className="px-3 py-2 text-center font-medium">ליקויים</th>
++                      <th className="px-3 py-2 text-center font-medium">בק״ב</th>
++                      <th className="px-3 py-2 text-center font-medium">מסירות</th>
++                      <th className="px-3 py-2 text-center font-medium">תמונות</th>
++                      <SortHeader label="ציון" col="score" current={sort} order={order} onSort={toggleSort} />
++                      <th className="px-3 py-2 text-center font-medium">סטטוס</th>
++                    </tr>
++                  </thead>
++                  <tbody>
++                    {(data?.users || []).map(u => (
++                      <tr key={u.user_id} className="border-b border-slate-50 hover:bg-slate-50/50">
++                        <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{u.name || '—'}</td>
++                        <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
++                          <span className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">{ROLE_LABELS[u.role] || u.role}</span>
++                        </td>
++                        <td className="px-3 py-2 text-slate-600 whitespace-nowrap text-xs">{u.org_name || '—'}</td>
++                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{formatLoginDate(u.last_login)}</td>
++                        <td className="px-3 py-2 text-center text-slate-600">{u.login_count || 0}</td>
++                        <td className="px-3 py-2 text-center">
++                          <span className="text-xs">{u.metrics?.defects_created || 0}/{u.metrics?.defects_closed || 0}</span>
++                        </td>
++                        <td className="px-3 py-2 text-center text-xs">{u.metrics?.qc_checked || 0}</td>
++                        <td className="px-3 py-2 text-center text-xs">{u.metrics?.handover || 0}</td>
++                        <td className="px-3 py-2 text-center text-xs">{u.metrics?.photos || 0}</td>
++                        <td className="px-3 py-2 text-center">
++                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${
++                            u.activity_score >= 50 ? 'bg-emerald-100 text-emerald-700' :
++                            u.activity_score >= 20 ? 'bg-amber-100 text-amber-700' :
++                            'bg-slate-100 text-slate-500'
++                          }`}>{u.activity_score}</span>
++                        </td>
++                        <td className="px-3 py-2 text-center">
++                          <span className="inline-flex items-center gap-1">
++                            <span className={`w-2 h-2 rounded-full ${STATUS_DOTS[u.status] || 'bg-slate-300'}`} />
++                            <span className="text-xs text-slate-500">{STATUS_LABELS[u.status] || u.status}</span>
++                          </span>
++                        </td>
++                      </tr>
++                    ))}
++                    {(!data?.users || data.users.length === 0) && (
++                      <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</td></tr>
++                    )}
++                  </tbody>
++                </table>
++              </div>
++              {totalPages > 1 && (
++                <div className="flex items-center justify-center gap-2 py-3 border-t border-slate-100">
++                  <button
++                    disabled={page <= 1}
++                    onClick={() => setPage(p => p - 1)}
++                    className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-30"
++                  >
++                    <ChevronRight className="w-4 h-4" />
++                  </button>
++                  <span className="text-xs text-slate-500">עמוד {page} מתוך {totalPages}</span>
++                  <button
++                    disabled={page >= totalPages}
++                    onClick={() => setPage(p => p + 1)}
++                    className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-30"
++                  >
++                    <ChevronLeft className="w-4 h-4" />
++                  </button>
++                </div>
++              )}
++            </>
++          )}
++        </div>
++
++        <div>
++          <h2 className="text-sm font-bold text-slate-800 mb-3">אימוץ פיצ׳רים</h2>
++          {featureLoading ? (
++            <div className="flex items-center justify-center py-8">
++              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
++            </div>
++          ) : (
++            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
++              {featureData && Object.entries(featureData.features || {}).map(([key, f]) => (
++                <div key={key} className={`rounded-xl border p-4 ${FEATURE_COLORS[key] || 'border-slate-200 bg-white'}`}>
++                  <div className="flex items-center justify-between mb-3">
++                    <h3 className="font-bold text-slate-800 text-sm">{f.name}</h3>
++                    <TrendBadge trend={f.trend} />
++                  </div>
++                  <div className="grid grid-cols-3 gap-2 mb-3">
++                    <div className="text-center">
++                      <div className="text-lg font-bold text-slate-800">{f.adoption_pct}%</div>
++                      <div className="text-[10px] text-slate-500">אימוץ</div>
++                    </div>
++                    <div className="text-center">
++                      <div className="text-lg font-bold text-slate-800">{f.orgs_using}</div>
++                      <div className="text-[10px] text-slate-500">ארגונים</div>
++                    </div>
++                    <div className="text-center">
++                      <div className="text-lg font-bold text-slate-800">{f.total_actions}</div>
++                      <div className="text-[10px] text-slate-500">פעולות</div>
++                    </div>
++                  </div>
++                  {f.top_power_users?.length > 0 && (
++                    <div className="border-t border-slate-200/50 pt-2">
++                      <div className="text-[10px] text-slate-500 mb-1">משתמשים מובילים</div>
++                      {f.top_power_users.slice(0, 3).map((pu, i) => (
++                        <div key={i} className="flex items-center justify-between text-xs text-slate-600">
++                          <span>{pu.name || pu.user_id?.slice(0, 8)}</span>
++                          <span className="font-medium">{pu.count}</span>
++                        </div>
++                      ))}
++                    </div>
++                  )}
++                </div>
++              ))}
++            </div>
++          )}
++        </div>
++      </div>
++    </div>
++  );
++}
++
++function SortHeader({ label, col, current, order, onSort }) {
++  const active = current === col;
++  return (
++    <th
++      className="px-3 py-2 text-right font-medium cursor-pointer hover:text-slate-700 select-none whitespace-nowrap"
++      onClick={() => onSort(col)}
++    >
++      <span className="inline-flex items-center gap-1">
++        {label}
++        <ArrowUpDown className={`w-3 h-3 ${active ? 'text-slate-800' : 'text-slate-300'}`} />
++        {active && <span className="text-[9px]">{order === 'desc' ? '▼' : '▲'}</span>}
++      </span>
++    </th>
++  );
++}
+diff --git a/frontend/src/pages/AdminPage.js b/frontend/src/pages/AdminPage.js
+index addde31..5d4fff6 100644
+--- a/frontend/src/pages/AdminPage.js
++++ b/frontend/src/pages/AdminPage.js
+@@ -65,6 +65,7 @@ const TABS = [
+   { id: 'users', label: 'משתמשים', icon: Users },
+   { id: 'orgs', label: 'ארגונים', icon: Building2 },
+   { id: 'billing', label: 'חיובים', icon: CreditCard },
++  { id: 'activity', label: 'פעילות', icon: TrendingUp },
+   { id: 'qc-templates', label: 'תבניות בקרת ביצוע / מסירה', icon: ClipboardList },
+   { id: 'log', label: 'יומן', icon: ClipboardList },
+ ];
+@@ -139,6 +140,7 @@ const AdminPage = () => {
+     if (tabId === 'users') { navigate('/admin/users'); return; }
+     if (tabId === 'orgs') { navigate('/admin/orgs'); return; }
+     if (tabId === 'billing') { navigate('/admin/billing?view=billing'); return; }
++    if (tabId === 'activity') { navigate('/admin/activity'); return; }
+     if (tabId === 'qc-templates') { navigate('/admin/qc-templates'); return; }
+     setActiveTab(tabId);
+   };
+diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
+index e50ac6a..fc212ef 100644
+--- a/frontend/src/pages/ProjectDashboardPage.js
++++ b/frontend/src/pages/ProjectDashboardPage.js
+@@ -14,6 +14,8 @@ import {
+   Construction, FileSignature, Send, MessageSquare
+ } from 'lucide-react';
+ 
++const TeamActivitySection = React.lazy(() => import('../components/TeamActivitySection'));
++
+ const formatHours = (h) => {
+   if (!h || h === 0) return '—';
+   if (h < 1) return `${Math.round(h * 60)} דק׳`;
+@@ -340,6 +342,12 @@ export default function ProjectDashboardPage() {
+           />
+         </div>
+ 
++        {isPmOrOwner && (
++          <React.Suspense fallback={null}>
++            <TeamActivitySection projectId={projectId} />
++          </React.Suspense>
++        )}
++
+         {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
+           <div className="bg-white rounded-xl border shadow-sm p-4">
+             <div className="flex items-center justify-between mb-4">
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 4c540ec..cfea06a 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -100,6 +100,10 @@ export const projectService = {
+     const response = await axios.get(`${API}/projects/${projectId}/dashboard`, { headers: getAuthHeader() });
+     return response.data;
+   },
++  async getTeamActivity(projectId, period = 7) {
++    const response = await axios.get(`${API}/projects/${projectId}/team-activity?period=${period}`, { headers: getAuthHeader() });
++    return response.data;
++  },
+   async updateContractorProfile(projectId, userId, body) {
+     const response = await axios.put(`${API}/projects/${projectId}/members/${userId}/contractor-profile`, body, { headers: getAuthHeader() });
+     return response.data;
+diff --git a/replit.md b/replit.md
+index 88d8492..d4dfae8 100644
+--- a/replit.md
++++ b/replit.md
+@@ -52,6 +52,9 @@ BrikOps is a full-stack application with a clear separation between frontend and
+     -   **Defects V2**: Parallel building-level and apartment-level defect views.
+     -   **Defects Export**: Supports Excel and PDF exports with Hebrew RTL formatting.
+     -   **Handover PDF Export**: Generates PDF of signed handover protocols using WeasyPrint.
++    -   **Analytics Infrastructure**: Login tracking (`last_login_at`, `login_count`) on all 4 login paths (email+password, WhatsApp, OTP verify, phone+password). Daily project snapshots cron (`POST /internal/cron/daily-snapshots`) collecting defects, QC, handover, team activity, photos, WhatsApp stats per project per day into `daily_project_snapshots` collection (idempotent, no Shabbat skip, date=Asia/Jerusalem). Compound indexes on tasks, task_updates, qc_runs, audit_events, daily_project_snapshots.
++    -   **PM Team Activity Dashboard**: `GET /api/projects/{project_id}/team-activity?period=7|30` endpoint in stats_router.py. Returns per-member activity data (defects_opened, defects_closed, qc_items_checked, photos_uploaded, comments), activity score (0-100), status (active/low/dormant), trend (growing/stable/declining/new). Score weights: login 30, defects_opened 20, defects_closed 15, qc_items_checked 15, photos_uploaded 10, comments 10 (total 100). Handover items dropped (no per-user attribution). Trend compares current vs previous period actions (>25% = growing, <75% = declining). Frontend: TeamActivitySection component (lazy-loaded) with period toggle, score ring, summary badges, contractor grouping by company, expandable member rows. Visible to PM/owner/management_team only. Positioned after KPI cards in ProjectDashboardPage.
++    -   **Admin Analytics**: `GET /api/admin/analytics/user-activity?period=7|30|90&role=&org_id=&sort=&order=&page=1&limit=50&search=` returns paginated per-user platform-wide activity (defects, QC, handover, photos, WA), activity score (0-100), status (active/low/dormant/never). Score weights: login_recency 30, defects_created 15, defects_closed 15, qc_checked 15, handover 10, photos 10, whatsapp 5. `GET /api/admin/analytics/feature-usage?period=7|30|90` returns per-feature adoption stats (defects, QC, handover, WhatsApp, plans — annotation deferred). Frontend: AdminActivityPage with sortable/filterable/paginated user table and feature usage card grid. Accessible via "פעילות" tab in AdminPage. Route: `/admin/activity`.
+     -   **Observability**: Structured per-request logging (two-tier: WARNING ≥800ms, DEBUG ≥500ms), Hebrew error boundary, and health/readiness endpoints.
+     -   **Performance Optimization**: Task list endpoint pagination (limit/offset query params, default 50, max 200, returns envelope `{items, total, limit, offset}`). MongoDB indexes on `project_plans` and `unit_plans` collections. S3 presigned URL TTL cache (10min, max 5000 entries, thread-safe). Feature flags fetched once at login via AuthContext (eliminates per-page waterfall requests).
+     -   **Deploy Checklist**: If backend response format changes (e.g. array → envelope), frontend MUST be rebuilt (`cd frontend && CI=true REACT_APP_BACKEND_URL="" npx craco build`) and deployed in the same release. `taskService.list()` has defensive guards for both formats.
