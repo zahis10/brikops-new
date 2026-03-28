@@ -251,7 +251,8 @@ async def user_activity(
             },
         })
 
-    results.sort(key=lambda r: r['activity_score'], reverse=(order == 'desc'))
+    if sort == 'score':
+        results.sort(key=lambda r: r['activity_score'], reverse=(order == 'desc'))
 
     return {
         'users': results,
