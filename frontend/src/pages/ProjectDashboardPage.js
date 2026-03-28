@@ -14,6 +14,8 @@ import {
   Construction, FileSignature, Send, MessageSquare
 } from 'lucide-react';
 
+const TeamActivitySection = React.lazy(() => import('../components/TeamActivitySection'));
+
 const formatHours = (h) => {
   if (!h || h === 0) return '—';
   if (h < 1) return `${Math.round(h * 60)} דק׳`;
@@ -339,6 +341,12 @@ export default function ProjectDashboardPage() {
             onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team`)}
           />
         </div>
+
+        {isPmOrOwner && (
+          <React.Suspense fallback={null}>
+            <TeamActivitySection projectId={projectId} />
+          </React.Suspense>
+        )}
 
         {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
           <div className="bg-white rounded-xl border shadow-sm p-4">

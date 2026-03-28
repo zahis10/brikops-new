@@ -1,7 +1,7 @@
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from contractor_ops.router import (
     get_db, get_current_user,
     _check_project_access, _check_project_read_access,
@@ -516,3 +516,229 @@ async def get_task_buckets(
         'buckets': buckets,
         'status_counts': status_counts,
     }
+
+
+TERMINAL_STATUSES = {'closed', 'done', 'cancelled'}
+PM_OWNER_ROLES = {'project_manager', 'owner', 'management_team'}
+
+SCORE_WEIGHTS = {
+    'login': 30,
+    'defects_opened': 20,
+    'defects_closed': 20,
+    'qc_items_checked': 15,
+    'photos_uploaded': 10,
+    'comments': 5,
+}
+
+
+def _compute_activity_score(metrics: dict, period: int) -> int:
+    score = 0.0
+    login_days = metrics.get('login_days_ago')
+    if login_days is not None:
+        if login_days <= 1:
+            score += SCORE_WEIGHTS['login']
+        elif login_days <= period:
+            score += SCORE_WEIGHTS['login'] * max(0, 1 - (login_days - 1) / period)
+
+    for key in ['defects_opened', 'defects_closed', 'qc_items_checked', 'photos_uploaded', 'comments']:
+        val = metrics.get(key, 0)
+        if val > 0:
+            score += SCORE_WEIGHTS[key] * min(1.0, val / max(3, period / 7 * 3))
+
+    return min(100, max(0, round(score)))
+
+
+def _compute_status(score: int) -> str:
+    if score >= 40:
+        return 'active'
+    if score >= 15:
+        return 'low'
+    return 'dormant'
+
+
+@router.get("/projects/{project_id}/team-activity")
+async def get_team_activity(
+    project_id: str,
+    period: int = Query(7, ge=7, le=30),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    role = await _get_project_role(user, project_id)
+    if role not in PM_OWNER_ROLES and user.get('platform_role') != 'super_admin':
+        raise HTTPException(status_code=403, detail="אין הרשאה")
+
+    now = datetime.now(timezone.utc)
+    period_start = (now - timedelta(days=period)).isoformat()
+
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'created_at': 1})
+    project_age_days = 0
+    if project and project.get('created_at'):
+        try:
+            created = datetime.fromisoformat(project['created_at'].replace('Z', '+00:00'))
+            project_age_days = (now - created).days
+        except Exception:
+            project_age_days = 999
+
+    memberships = await db.project_memberships.find(
+        {'project_id': project_id},
+        {'_id': 0, 'user_id': 1, 'role': 1, 'company_name': 1}
+    ).to_list(None)
+    if not memberships:
+        return {'summary': {'total_members': 0, 'active': 0, 'low': 0, 'dormant': 0, 'team_score': 0}, 'members': []}
+
+    user_ids = [m['user_id'] for m in memberships]
+    member_role_map = {m['user_id']: m.get('role', '') for m in memberships}
+    member_company_map = {m['user_id']: m.get('company_name', '') for m in memberships}
+
+    users_docs = await db.users.find(
+        {'id': {'$in': user_ids}},
+        {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1}
+    ).to_list(None)
+    user_map = {u['id']: u for u in users_docs}
+
+    defects_opened_agg = await db.tasks.aggregate([
+        {'$match': {'project_id': project_id, 'created_by': {'$in': user_ids}, 'created_at': {'$gte': period_start}}},
+        {'$group': {'_id': '$created_by', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    defects_opened = {r['_id']: r['count'] for r in defects_opened_agg}
+
+    defects_closed_agg = await db.task_status_history.aggregate([
+        {'$match': {
+            'task_id': {'$in': await _get_project_task_ids(db, project_id)},
+            'changed_by': {'$in': user_ids},
+            'new_status': {'$in': list(TERMINAL_STATUSES)},
+            'created_at': {'$gte': period_start},
+        }},
+        {'$group': {'_id': '$changed_by', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    defects_closed = {r['_id']: r['count'] for r in defects_closed_agg}
+
+    comments_agg = await db.task_updates.aggregate([
+        {'$match': {'project_id': project_id, 'user_id': {'$in': user_ids}, 'created_at': {'$gte': period_start}}},
+        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    comments = {r['_id']: r['count'] for r in comments_agg}
+
+    photos_agg = await db.task_updates.aggregate([
+        {'$match': {
+            'project_id': project_id,
+            'user_id': {'$in': user_ids},
+            'attachment_url': {'$exists': True, '$ne': None},
+            'created_at': {'$gte': period_start},
+        }},
+        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    photos = {r['_id']: r['count'] for r in photos_agg}
+
+    qc_agg = await db.qc_items.aggregate([
+        {'$match': {
+            'updated_by': {'$in': user_ids},
+            'status': {'$in': ['pass', 'fail']},
+            'updated_at': {'$gte': period_start},
+        }},
+        {'$lookup': {
+            'from': 'qc_runs',
+            'localField': 'run_id',
+            'foreignField': 'id',
+            'as': 'run',
+            'pipeline': [
+                {'$match': {'project_id': project_id}},
+                {'$project': {'_id': 0, 'id': 1}}
+            ]
+        }},
+        {'$match': {'run': {'$ne': []}}},
+        {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    qc_checked = {r['_id']: r['count'] for r in qc_agg}
+
+    members_result = []
+    total_score = 0
+    active_count = 0
+    low_count = 0
+    dormant_count = 0
+
+    for uid in user_ids:
+        u = user_map.get(uid, {})
+        login_days_ago = None
+        last_login = u.get('last_login_at')
+        if last_login:
+            try:
+                login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
+                login_days_ago = max(0, (now - login_dt).days)
+            except Exception:
+                pass
+
+        metrics = {
+            'login_days_ago': login_days_ago,
+            'defects_opened': defects_opened.get(uid, 0),
+            'defects_closed': defects_closed.get(uid, 0),
+            'qc_items_checked': qc_checked.get(uid, 0),
+            'photos_uploaded': photos.get(uid, 0),
+            'comments': comments.get(uid, 0),
+        }
+
+        activity_score = _compute_activity_score(metrics, period)
+        status = _compute_status(activity_score)
+
+        if project_age_days < period * 2:
+            trend = 'new'
+        else:
+            trend = 'stable'
+
+        if status == 'active':
+            active_count += 1
+        elif status == 'low':
+            low_count += 1
+        else:
+            dormant_count += 1
+        total_score += activity_score
+
+        login_relative = None
+        if login_days_ago is not None:
+            if login_days_ago == 0:
+                login_relative = 'היום'
+            elif login_days_ago == 1:
+                login_relative = 'אתמול'
+            else:
+                login_relative = f'לפני {login_days_ago} ימים'
+
+        members_result.append({
+            'user_id': uid,
+            'name': u.get('name', ''),
+            'role': member_role_map.get(uid, u.get('role', '')),
+            'company_name': member_company_map.get(uid, ''),
+            'activity_score': activity_score,
+            'status': status,
+            'trend': trend,
+            'last_login_relative': login_relative,
+            'metrics': {
+                'defects_opened': metrics['defects_opened'],
+                'defects_closed': metrics['defects_closed'],
+                'qc_items_checked': metrics['qc_items_checked'],
+                'photos_uploaded': metrics['photos_uploaded'],
+                'comments': metrics['comments'],
+            },
+        })
+
+    members_result.sort(key=lambda m: m['activity_score'], reverse=True)
+    team_score = round(total_score / len(user_ids)) if user_ids else 0
+
+    return {
+        'summary': {
+            'total_members': len(user_ids),
+            'active': active_count,
+            'low': low_count,
+            'dormant': dormant_count,
+            'team_score': team_score,
+        },
+        'members': members_result,
+    }
+
+
+async def _get_project_task_ids(db, project_id: str) -> list:
+    tasks = await db.tasks.find(
+        {'project_id': project_id},
+        {'_id': 0, 'id': 1}
+    ).to_list(None)
+    return [t['id'] for t in tasks]

@@ -100,6 +100,10 @@ export const projectService = {
     const response = await axios.get(`${API}/projects/${projectId}/dashboard`, { headers: getAuthHeader() });
     return response.data;
   },
+  async getTeamActivity(projectId, period = 7) {
+    const response = await axios.get(`${API}/projects/${projectId}/team-activity?period=${period}`, { headers: getAuthHeader() });
+    return response.data;
+  },
   async updateContractorProfile(projectId, userId, body) {
     const response = await axios.put(`${API}/projects/${projectId}/members/${userId}/contractor-profile`, body, { headers: getAuthHeader() });
     return response.data;
