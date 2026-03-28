@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminAnalyticsService } from '../services/api';
 import {
   Loader2, ChevronLeft, ChevronRight, Search, TrendingUp, TrendingDown,
-  Minus, Sparkles, Users, ArrowUpDown
+  Minus, Sparkles, Users, ArrowUpDown, Info,
 } from 'lucide-react';
 
 const ROLE_LABELS = {
@@ -59,6 +59,54 @@ function formatLoginDate(iso) {
   } catch {
     return '—';
   }
+}
+
+const ADMIN_SCORE_LINES = [
+  'כניסה לאפליקציה (30 נק׳)',
+  'פתיחת ליקויים (15 נק׳)',
+  'סגירת ליקויים (15 נק׳)',
+  'בדיקות QC (15 נק׳)',
+  'מסירות (10 נק׳)',
+  'העלאת תמונות (10 נק׳)',
+  'WhatsApp (5 נק׳)',
+];
+
+function AdminScoreTooltip() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [open]);
+
+  return (
+    <span className="relative inline-flex" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className="p-0.5 rounded-full hover:bg-slate-200/60 transition-colors"
+        aria-label="הסבר ציון"
+      >
+        <Info className="w-3 h-3 text-slate-400" />
+      </button>
+      {open && (
+        <div className="absolute z-50 top-full mt-1 end-0 w-52 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-right">
+          <p className="text-xs font-bold text-slate-700 mb-1.5">הציון מבוסס על:</p>
+          <ul className="space-y-0.5">
+            {ADMIN_SCORE_LINES.map((line, i) => (
+              <li key={i} className="text-[11px] text-slate-600 flex items-start gap-1">
+                <span className="text-slate-400 mt-px">•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </span>
+  );
 }
 
 function TrendBadge({ trend }) {
@@ -206,7 +254,14 @@ export default function AdminActivityPage() {
                       <th className="px-3 py-2 text-center font-medium">בק״ב</th>
                       <th className="px-3 py-2 text-center font-medium">מסירות</th>
                       <th className="px-3 py-2 text-center font-medium">תמונות</th>
-                      <SortHeader label="ציון" col="score" current={sort} order={order} onSort={toggleSort} />
+                      <th className="px-3 py-2 text-right font-medium cursor-pointer hover:text-slate-700 select-none whitespace-nowrap" onClick={() => toggleSort('score')}>
+                        <span className="inline-flex items-center gap-1">
+                          ציון
+                          <AdminScoreTooltip />
+                          <ArrowUpDown className={`w-3 h-3 ${sort === 'score' ? 'text-slate-800' : 'text-slate-300'}`} />
+                          {sort === 'score' && <span className="text-[9px]">{order === 'desc' ? '▼' : '▲'}</span>}
+                        </span>
+                      </th>
                       <th className="px-3 py-2 text-center font-medium">סטטוס</th>
                     </tr>
                   </thead>

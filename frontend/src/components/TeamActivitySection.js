@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { projectService } from '../services/api';
 import { tRole } from '../i18n';
 import {
   Users, ChevronDown, ChevronUp, Loader2,
   TrendingUp, TrendingDown, Minus, Sparkles,
-  Camera, MessageSquare, AlertTriangle, CheckCircle2, ClipboardCheck,
+  Camera, MessageSquare, AlertTriangle, CheckCircle2, ClipboardCheck, Info,
 } from 'lucide-react';
 
 const STATUS_CONFIG = {
@@ -41,6 +41,53 @@ const ScoreRing = ({ score, size = 64, stroke = 5 }) => {
         <span className="text-lg font-black text-slate-800">{score}</span>
       </div>
     </div>
+  );
+};
+
+const PM_SCORE_LINES = [
+  'כניסה לאפליקציה (30 נק׳)',
+  'פתיחת ליקויים (20 נק׳)',
+  'סגירת ליקויים (15 נק׳)',
+  'בדיקות QC (15 נק׳)',
+  'העלאת תמונות (10 נק׳)',
+  'תגובות ועדכונים (10 נק׳)',
+];
+
+const ScoreInfoTooltip = () => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [open]);
+
+  return (
+    <span className="relative inline-flex" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className="p-0.5 rounded-full hover:bg-slate-200/60 transition-colors"
+        aria-label="הסבר ציון"
+      >
+        <Info className="w-3.5 h-3.5 text-slate-400" />
+      </button>
+      {open && (
+        <div className="absolute z-50 top-full mt-1 start-0 w-52 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-right">
+          <p className="text-xs font-bold text-slate-700 mb-1.5">הציון מבוסס על:</p>
+          <ul className="space-y-0.5">
+            {PM_SCORE_LINES.map((line, i) => (
+              <li key={i} className="text-[11px] text-slate-600 flex items-start gap-1">
+                <span className="text-slate-400 mt-px">•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </span>
   );
 };
 
@@ -171,7 +218,7 @@ export default function TeamActivitySection({ projectId }) {
       <div className="flex items-center gap-4 mb-4 p-3 bg-gradient-to-l from-violet-50 to-slate-50 rounded-xl">
         <ScoreRing score={summary.team_score} />
         <div className="flex-1">
-          <p className="text-xs text-slate-500 mb-2">ציון פעילות צוות</p>
+          <p className="text-xs text-slate-500 mb-2 flex items-center gap-1">ציון פעילות צוות <ScoreInfoTooltip /></p>
           <div className="flex flex-wrap gap-1.5">
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
               {summary.active} פעילים
