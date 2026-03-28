@@ -94,14 +94,14 @@ async def user_activity(
     ).to_list(None)
 
     if org_id:
-        org_mems = await db.org_memberships.find(
+        org_mems = await db.organization_memberships.find(
             {'org_id': org_id},
             {'_id': 0, 'user_id': 1}
         ).to_list(None)
         org_member_ids = {m['user_id'] for m in org_mems}
         all_users = [u for u in all_users if u['id'] in org_member_ids]
 
-    org_mems_all = await db.org_memberships.find(
+    org_mems_all = await db.organization_memberships.find(
         {'user_id': {'$in': [u['id'] for u in all_users]}},
         {'_id': 0, 'user_id': 1, 'org_id': 1}
     ).to_list(None) if all_users else []
