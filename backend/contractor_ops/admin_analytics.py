@@ -108,15 +108,15 @@ async def user_activity(
     user_org_map = {m['user_id']: m['org_id'] for m in org_mems_all}
 
     sort_key_mongo = {
-        'name': 'name',
-        'login_count': 'login_count',
-        'last_login': 'last_login_at',
-        'role': 'role',
+        'name': ('name', ''),
+        'login_count': ('login_count', 0),
+        'last_login': ('last_login_at', ''),
+        'role': ('role', ''),
     }
 
     if sort in sort_key_mongo:
-        mongo_sort_dir = -1 if order == 'desc' else 1
-        all_users.sort(key=lambda u: u.get(sort_key_mongo[sort]) or '', reverse=(order == 'desc'))
+        field, default = sort_key_mongo[sort]
+        all_users.sort(key=lambda u: u.get(field) or default, reverse=(order == 'desc'))
 
     total_count = len(all_users)
     if not all_users:
@@ -317,8 +317,14 @@ async def feature_usage(
         'top_power_users': [{'user_id': r['_id'], 'count': r['count'], 'name': ''} for r in defects_power],
     }
 
+    active_run_ids_agg = await db.qc_runs.aggregate([
+        {'$match': {'project_id': {'$in': project_ids}}},
+        {'$project': {'_id': 0, 'id': 1}}
+    ]).to_list(None)
+    active_run_ids = [r['id'] for r in active_run_ids_agg]
+
     qc_curr = await db.qc_items.aggregate([
-        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}}},
+        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}, 'run_id': {'$in': active_run_ids}}},
         {'$lookup': {
             'from': 'qc_runs', 'localField': 'run_id', 'foreignField': 'id', 'as': 'run',
             'pipeline': [{'$project': {'_id': 0, 'project_id': 1}}]
@@ -327,7 +333,7 @@ async def feature_usage(
         {'$group': {'_id': '$run.project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     qc_prev = await db.qc_items.aggregate([
-        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}}},
+        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}, 'run_id': {'$in': active_run_ids}}},
         {'$lookup': {
             'from': 'qc_runs', 'localField': 'run_id', 'foreignField': 'id', 'as': 'run',
             'pipeline': [{'$project': {'_id': 0, 'project_id': 1}}]
@@ -336,7 +342,7 @@ async def feature_usage(
         {'$group': {'_id': '$run.project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     qc_power = await db.qc_items.aggregate([
-        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}}},
+        {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}, 'run_id': {'$in': active_run_ids}}},
         {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
@@ -359,15 +365,15 @@ async def feature_usage(
     }
 
     ho_curr = await db.handover_protocols.aggregate([
-        {'$match': {'updated_at': {'$gte': period_start}}},
+        {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     ho_prev = await db.handover_protocols.aggregate([
-        {'$match': {'updated_at': {'$gte': prev_period_start, '$lt': period_start}}},
+        {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     ho_power = await db.handover_protocols.aggregate([
-        {'$match': {'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}}},
+        {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
@@ -390,15 +396,15 @@ async def feature_usage(
     }
 
     wa_curr = await db.notification_jobs.aggregate([
-        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'created_at': {'$gte': period_start}}},
+        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     wa_prev = await db.notification_jobs.aggregate([
-        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'created_at': {'$gte': prev_period_start, '$lt': period_start}}},
+        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     wa_power = await db.notification_jobs.aggregate([
-        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'created_at': {'$gte': period_start}, 'triggered_by': {'$exists': True, '$ne': None}}},
+        {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}, 'triggered_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$triggered_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
@@ -421,15 +427,15 @@ async def feature_usage(
     }
 
     plans_curr = await db.project_plans.aggregate([
-        {'$match': {'uploaded_at': {'$gte': period_start}}},
+        {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     plans_prev = await db.project_plans.aggregate([
-        {'$match': {'uploaded_at': {'$gte': prev_period_start, '$lt': period_start}}},
+        {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
     ]).to_list(None)
     plans_power = await db.project_plans.aggregate([
-        {'$match': {'uploaded_at': {'$gte': period_start}, 'uploaded_by': {'$exists': True, '$ne': None}}},
+        {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': period_start}, 'uploaded_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$uploaded_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
