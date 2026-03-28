@@ -770,6 +770,37 @@ async def get_team_activity(
     }
 
 
+@router.get("/projects/{project_id}/activity-trend")
+async def get_activity_trend(
+    project_id: str,
+    days: int = Query(30),
+    user: dict = Depends(get_current_user),
+):
+    if days < 3 or days > 90:
+        raise HTTPException(status_code=422, detail="days must be 3-90")
+    db = get_db()
+    await _check_project_read_access(user, project_id)
+    role = await _get_project_role(user, project_id)
+    if role not in PM_OWNER_ROLES and user.get('platform_role') != 'super_admin':
+        raise HTTPException(status_code=403, detail="אין הרשאה")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    docs = await db.daily_project_snapshots.find(
+        {
+            "project_id": project_id,
+            "date": {"$gte": cutoff},
+            "team.team_score": {"$exists": True},
+        },
+        {"_id": 0, "date": 1, "team.team_score": 1},
+    ).sort("date", 1).to_list(None)
+
+    trend = [{"date": d["date"], "team_score": d["team"]["team_score"]} for d in docs]
+    if len(trend) < 3:
+        trend = []
+
+    return {"project_id": project_id, "days": days, "trend": trend}
+
+
 async def _get_project_task_ids(db, project_id: str) -> list:
     tasks = await db.tasks.find(
         {'project_id': project_id},

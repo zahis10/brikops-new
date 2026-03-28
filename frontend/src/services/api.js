@@ -104,6 +104,10 @@ export const projectService = {
     const response = await axios.get(`${API}/projects/${projectId}/team-activity?period=${period}`, { headers: getAuthHeader() });
     return response.data;
   },
+  async getActivityTrend(projectId, days = 30) {
+    const response = await axios.get(`${API}/projects/${projectId}/activity-trend?days=${days}`, { headers: getAuthHeader() });
+    return response.data;
+  },
   async updateContractorProfile(projectId, userId, body) {
     const response = await axios.put(`${API}/projects/${projectId}/members/${userId}/contractor-profile`, body, { headers: getAuthHeader() });
     return response.data;

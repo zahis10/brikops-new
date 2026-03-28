@@ -2,8 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminAnalyticsService } from '../services/api';
 import {
-  Loader2, ChevronLeft, ChevronRight, Search, TrendingUp, TrendingDown,
+  Loader2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
+  Search, TrendingUp, TrendingDown,
   Minus, Sparkles, Users, ArrowUpDown, Info,
+  AlertTriangle, CheckCircle2, ClipboardCheck, Camera, LogIn,
 } from 'lucide-react';
 
 const ROLE_LABELS = {
@@ -106,6 +108,80 @@ function AdminScoreTooltip() {
         </div>
       )}
     </span>
+  );
+}
+
+function MobileUserCard({ user }) {
+  const [expanded, setExpanded] = useState(false);
+  const m = user.metrics || {};
+  const statusDot = STATUS_DOTS[user.status] || 'bg-slate-300';
+  const statusLabel = STATUS_LABELS[user.status] || user.status;
+
+  return (
+    <div className="border-b border-slate-100 last:border-b-0">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 p-3 hover:bg-slate-50/50 transition-colors"
+      >
+        <div className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
+        <div className="flex-1 min-w-0 text-right">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium text-slate-800 truncate">{user.name || '—'}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">
+              {ROLE_LABELS[user.role] || user.role}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-[10px] text-slate-400">{user.org_name || '—'}</span>
+            <span className="text-[10px] text-slate-400">· {statusLabel}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${
+            user.activity_score >= 50 ? 'bg-emerald-100 text-emerald-700' :
+            user.activity_score >= 20 ? 'bg-amber-100 text-amber-700' :
+            'bg-slate-100 text-slate-500'
+          }`}>{user.activity_score}</span>
+          {expanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 pt-0.5">
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            <div className="flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
+              <AlertTriangle className="w-3 h-3 text-red-500" />
+              <span className="text-slate-400">נפתחו</span>
+              <span className="font-bold text-slate-700">{m.defects_created || 0}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
+              <CheckCircle2 className="w-3 h-3 text-green-500" />
+              <span className="text-slate-400">נסגרו</span>
+              <span className="font-bold text-slate-700">{m.defects_closed || 0}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
+              <ClipboardCheck className="w-3 h-3 text-indigo-500" />
+              <span className="text-slate-400">בק״ב</span>
+              <span className="font-bold text-slate-700">{m.qc_checked || 0}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
+              <Camera className="w-3 h-3 text-blue-500" />
+              <span className="text-slate-400">תמונות</span>
+              <span className="font-bold text-slate-700">{m.photos || 0}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
+              <LogIn className="w-3 h-3 text-violet-500" />
+              <span className="text-slate-400">כניסות</span>
+              <span className="font-bold text-slate-700">{user.login_count || 0}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span>מסירות: {m.handover || 0}</span>
+            <span>·</span>
+            <span>כניסה אחרונה: {formatLoginDate(user.last_login)}</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -241,7 +317,15 @@ export default function AdminActivityPage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="md:hidden">
+                {(data?.users || []).map(u => (
+                  <MobileUserCard key={u.user_id} user={u} />
+                ))}
+                {(!data?.users || data.users.length === 0) && (
+                  <div className="px-4 py-8 text-center text-slate-400 text-sm">אין תוצאות</div>
+                )}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50 text-slate-500">

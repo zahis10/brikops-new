@@ -91,6 +91,39 @@ const ScoreInfoTooltip = () => {
   );
 };
 
+const Sparkline = ({ data, width = 120, height = 40 }) => {
+  if (!data || data.length < 3) return null;
+  const scores = data.map(d => d.team_score);
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const range = max - min || 1;
+  const padded_min = min - range * 0.1;
+  const padded_max = max + range * 0.1;
+  const padded_range = padded_max - padded_min || 1;
+
+  const latest = scores[scores.length - 1];
+  const color = latest >= 60 ? '#22c55e' : latest >= 30 ? '#f59e0b' : '#ef4444';
+
+  const points = scores.map((s, i) => {
+    const x = (i / (scores.length - 1)) * width;
+    const y = height - ((s - padded_min) / padded_range) * height;
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="shrink-0">
+      <polyline
+        points={points}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+};
+
 const MetricPill = ({ icon: Icon, label, value, color }) => {
   if (!value) return null;
   return (
@@ -156,6 +189,7 @@ export default function TeamActivitySection({ projectId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [period, setPeriod] = useState(7);
+  const [trendData, setTrendData] = useState(null);
 
   const load = useCallback(async (p) => {
     setLoading(true);
@@ -171,6 +205,12 @@ export default function TeamActivitySection({ projectId }) {
   }, [projectId]);
 
   useEffect(() => { load(period); }, [load, period]);
+
+  useEffect(() => {
+    projectService.getActivityTrend(projectId, 30)
+      .then(r => setTrendData(r.trend))
+      .catch(() => {});
+  }, [projectId]);
 
   if (error) return null;
 
@@ -217,6 +257,7 @@ export default function TeamActivitySection({ projectId }) {
 
       <div className="flex items-center gap-4 mb-4 p-3 bg-gradient-to-l from-violet-50 to-slate-50 rounded-xl">
         <ScoreRing score={summary.team_score} />
+        <Sparkline data={trendData} />
         <div className="flex-1">
           <p className="text-xs text-slate-500 mb-2 flex items-center gap-1">ציון פעילות צוות <ScoreInfoTooltip /></p>
           <div className="flex flex-wrap gap-1.5">
@@ -236,6 +277,13 @@ export default function TeamActivitySection({ projectId }) {
           </div>
         </div>
       </div>
+
+      {summary.team_score < 30 && summary.active === 0 && (
+        <div className="flex items-center gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg mb-4">
+          <Info className="w-4 h-4 text-blue-400 shrink-0" />
+          <span className="text-[11px] text-blue-700">הציונים ישתפרו ככל שחברי הצוות ישתמשו באפליקציה</span>
+        </div>
+      )}
 
       {loading && (
         <div className="flex justify-center py-2 mb-2">

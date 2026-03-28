@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Request, HTTPException
@@ -39,6 +40,7 @@ async def cron_daily_snapshots(request: Request):
         logger.warning("[SNAPSHOT-CRON] Invalid or missing X-Cron-Secret")
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    snap_start = time.monotonic()
     db = get_db()
     today = _israel_today()
     day_start_utc = _israel_day_start_utc(today)
@@ -193,6 +195,11 @@ async def cron_daily_snapshots(request: Request):
         active_today = sum(1 for uid in user_ids_for_project if user_logins.get(uid, "") >= day_start_utc)
         active_7d = sum(1 for uid in user_ids_for_project if user_logins.get(uid, "") >= seven_days_ago)
 
+        team_score = round(
+            (active_7d / total_members) * 70 +
+            (active_today / total_members) * 30
+        ) if total_members > 0 else 0
+
         qc_total = q.get("total_items", 0)
         qc_checked = q.get("checked", 0)
         qc_pct = round(qc_checked / qc_total * 100, 1) if qc_total > 0 else 0.0
@@ -231,6 +238,7 @@ async def cron_daily_snapshots(request: Request):
                 "total_members": total_members,
                 "active_today": active_today,
                 "active_7d": active_7d,
+                "team_score": team_score,
             },
             "photos_uploaded_today": photos_map.get(pid, 0),
             "whatsapp_sent_today": wa_map.get(pid, 0),
@@ -248,6 +256,7 @@ async def cron_daily_snapshots(request: Request):
             logger.warning(f"[SNAPSHOT-CRON] Bulk insert error: {e} — nInserted={created_count}")
 
     logger.info(f"[SNAPSHOT-CRON] date={today} created={created_count} skipped={len(existing_ids)}")
+    logger.info(f"[SNAPSHOT] completed in {time.monotonic()-snap_start:.1f}s")
     return {
         "date": today,
         "snapshots_created": created_count,
