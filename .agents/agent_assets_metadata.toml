@@ -102,3 +102,9 @@ id = "-tFBL-wqdxD-rzS_5vwTn"
 uri = "file://review3.txt"
 type = "text"
 title = "review3.txt — דיפים Tasks #213-#215"
+
+[[outputs]]
+id = "j93L_Qy6er_ALi-5YJSPJ"
+uri = "file://security_report.txt"
+type = "text"
+title = "BrikOps Security Report — 294 Issues"

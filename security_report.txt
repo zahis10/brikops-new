@@ -1,0 +1,1175 @@
+======================================================================
+  BrikOps Security Scan Report
+  Generated: 2026-03-28
+======================================================================
+
+SUMMARY
+----------------------------------------------------------------------
+Total issues found: 294
+
+Dependency Audit:  67 vulnerabilities
+  Critical: 2  |  High: 31  |  Moderate: 27  |  Low: 6  |  Info: 1
+SAST (Code) Scan:  61 findings
+HoundDog (Privacy): 166 findings
+
+======================================================================
+SECTION 1: DEPENDENCY VULNERABILITIES (67)
+======================================================================
+
+--- CRITICAL (1) ---
+
+  1. GHSA-87r5-mp6g-5w5j@jsonpath-1.2.1
+     Package:  jsonpath@1.2.1
+     Severity: critical
+     Fix:      1.3.0
+     Source:    
+
+--- HIGH (16) ---
+
+  1. GHSA-752w-5fwx-jx9f@pyjwt-2.11.0
+     Package:  pyjwt@2.11.0
+     Severity: high
+     Fix:      2.12.0
+     Source:    
+
+  2. GHSA-3936-cmfr-pm3m@black-26.1.0
+     Package:  black@26.1.0
+     Severity: high
+     Fix:      26.3.1
+     Source:    
+
+  3. GHSA-jr27-m4p2-rc6r@pyasn1-0.6.2
+     Package:  pyasn1@0.6.2
+     Severity: high
+     Fix:      0.6.3
+     Source:    
+
+  4. GHSA-25h7-pfq9-p65f@flatted-3.3.3
+     Package:  flatted@3.3.3
+     Severity: high
+     Fix:      3.4.0
+     Source:    
+
+  5. GHSA-rf6f-7fwh-wjgh@flatted-3.3.3
+     Package:  flatted@3.3.3
+     Severity: high
+     Fix:      3.4.2
+     Source:    
+
+  6. GHSA-2328-f5f3-gj25@node-forge-1.3.3
+     Package:  node-forge@1.3.3
+     Severity: high
+     Fix:      1.4.0
+     Source:    
+
+  7. GHSA-5m6q-g25r-mvwx@node-forge-1.3.3
+     Package:  node-forge@1.3.3
+     Severity: high
+     Fix:      1.4.0
+     Source:    
+
+  8. GHSA-ppp5-5v6c-4jwp@node-forge-1.3.3
+     Package:  node-forge@1.3.3
+     Severity: high
+     Fix:      1.4.0
+     Source:    
+
+  9. GHSA-q67f-28xg-22rw@node-forge-1.3.3
+     Package:  node-forge@1.3.3
+     Severity: high
+     Fix:      1.4.0
+     Source:    
+
+  10. GHSA-rp65-9cf3-cjxr@nth-check-1.0.2
+     Package:  nth-check@1.0.2
+     Severity: high
+     Fix:      2.0.1
+     Source:    
+
+  11. GHSA-37ch-88jc-xwx2@path-to-regexp-0.1.12
+     Package:  path-to-regexp@0.1.12
+     Severity: high
+     Fix:      0.1.13
+     Source:    
+
+  12. GHSA-c2c7-rcm5-vvqj@picomatch-2.3.1
+     Package:  picomatch@2.3.1
+     Severity: high
+     Fix:      2.3.2
+     Source:    
+
+  13. GHSA-c2c7-rcm5-vvqj@picomatch-4.0.3
+     Package:  picomatch@4.0.3
+     Severity: high
+     Fix:      4.0.4
+     Source:    
+
+  14. GHSA-5c6j-r48x-rmvq@serialize-javascript-4.0.0
+     Package:  serialize-javascript@4.0.0
+     Severity: high
+     Fix:      7.0.3
+     Source:    
+
+  15. GHSA-5c6j-r48x-rmvq@serialize-javascript-6.0.2
+     Package:  serialize-javascript@6.0.2
+     Severity: high
+     Fix:      7.0.3
+     Source:    
+
+  16. GHSA-qpx9-hpmf-5gmw@underscore-1.13.6
+     Package:  underscore@1.13.6
+     Severity: high
+     Fix:      1.13.8
+     Source:    
+
+--- MODERATE (14) ---
+
+  1. GHSA-m87m-mmvp-v9qm@pymongo-4.5.0
+     Package:  pymongo@4.5.0
+     Severity: moderate
+     Fix:      4.6.3
+     Source:    
+
+  2. GHSA-gc5v-m9x4-r6x2@requests-2.32.5
+     Package:  requests@2.32.5
+     Severity: moderate
+     Fix:      2.33.0
+     Source:    
+
+  3. GHSA-2c2j-9gv5-cj73@starlette-0.37.2
+     Package:  starlette@0.37.2
+     Severity: moderate
+     Fix:      0.47.2
+     Source:    
+
+  4. GHSA-2g4f-4pwh-qvx6@ajv-6.12.6
+     Package:  ajv@6.12.6
+     Severity: moderate
+     Fix:      6.14.0
+     Source:    
+
+  5. GHSA-f886-m6hf-6m8v@brace-expansion-1.1.12
+     Package:  brace-expansion@1.1.12
+     Severity: moderate
+     Fix:      1.1.13
+     Source:    
+
+  6. GHSA-f886-m6hf-6m8v@brace-expansion-2.0.2
+     Package:  brace-expansion@2.0.2
+     Severity: moderate
+     Fix:      2.0.3
+     Source:    
+
+  7. GHSA-3v7f-55p6-f55p@picomatch-2.3.1
+     Package:  picomatch@2.3.1
+     Severity: moderate
+     Fix:      2.3.2
+     Source:    
+
+  8. GHSA-3v7f-55p6-f55p@picomatch-4.0.3
+     Package:  picomatch@4.0.3
+     Severity: moderate
+     Fix:      4.0.4
+     Source:    
+
+  9. GHSA-7fh5-64p2-3v2j@postcss-7.0.39
+     Package:  postcss@7.0.39
+     Severity: moderate
+     Fix:      8.4.31
+     Source:    
+
+  10. GHSA-qj8w-gfj5-8c6v@serialize-javascript-4.0.0
+     Package:  serialize-javascript@4.0.0
+     Severity: moderate
+     Fix:      7.0.5
+     Source:    
+
+  11. GHSA-qj8w-gfj5-8c6v@serialize-javascript-6.0.2
+     Package:  serialize-javascript@6.0.2
+     Severity: moderate
+     Fix:      7.0.5
+     Source:    
+
+  12. GHSA-4v9v-hfq4-rm2v@webpack-dev-server-4.15.2
+     Package:  webpack-dev-server@4.15.2
+     Severity: moderate
+     Fix:      5.2.1
+     Source:    
+
+  13. GHSA-9jgg-88mc-972h@webpack-dev-server-4.15.2
+     Package:  webpack-dev-server@4.15.2
+     Severity: moderate
+     Fix:      5.2.1
+     Source:    
+
+  14. GHSA-48c2-rrv3-qjmp@yaml-1.10.2
+     Package:  yaml@1.10.2
+     Severity: moderate
+     Fix:      1.10.3
+     Source:    
+
+--- LOW (4) ---
+
+  1. GHSA-5239-wwwm-4pmq@pygments-2.19.2
+     Package:  pygments@2.19.2
+     Severity: low
+     Fix:      N/A
+     Source:    
+
+  2. GHSA-m959-cc7f-wv43@cryptography-46.0.5
+     Package:  cryptography@46.0.5
+     Severity: low
+     Fix:      46.0.6
+     Source:    
+
+  3. GHSA-xffm-g5w8-qvg7@@eslint/plugin-kit-0.2.8
+     Package:  @eslint/plugin-kit@0.2.8
+     Severity: low
+     Fix:      0.3.4
+     Source:    
+
+  4. GHSA-vpq2-c234-7xj6@@tootallnate/once-1.1.2
+     Package:  @tootallnate/once@1.1.2
+     Severity: low
+     Fix:      3.0.1
+     Source:    
+
+--- INFO (1) ---
+
+  1. GHSA-f96h-pmfr-66vw@starlette-0.37.2
+     Package:  starlette@0.37.2
+     Severity: info
+     Fix:      0.40.0
+     Source:    
+
+======================================================================
+SECTION 2: STATIC ANALYSIS (SAST) FINDINGS (61)
+======================================================================
+
+--- HIGH (8) ---
+
+  1. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_invites.py:218
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  2. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_notifications.py:42
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  3. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_notifications.py:53
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  4. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_notifications.py:81
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  5. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_notifications.py:93
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  6. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_onboarding.py:386
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  7. [HIGH] hashicorp-tf-password
+     File: backend/contractor_ops/test_onboarding.py:391
+     A gitleaks Hashicorp Tf Password detected. Avoid hardcoding credentials directly in connection strings as this creates security risks. Instead, use environment variables to store and access credential
+
+  8. [HIGH] detect-child-process
+     File: frontend/plugins/visual-edits/dev-server-setup.js:465
+     Detected calls to child_process from a function argument `req`. This could lead to a command injection if the input is user controllable. Try to avoid calls to child_process, and if it is needed ensur
+
+--- MEDIUM (50) ---
+
+  1. [MEDIUM] python-logger-credential-disclosure
+     File: backend/contractor_ops/billing_router.py:1046
+     Detected a python logger call with a potential hardcoded secret "[GI-WEBHOOK] Invalid webhook secret from IP=%s" being logged. This may lead to secret credentials being exposed. Make sure that the log
+
+  2. [MEDIUM] direct-use-of-jinja2
+     File: backend/services/handover_pdf_service.py:247
+     Detected direct use of jinja2. If not done properly, this may bypass HTML escaping which opens up the application to cross-site scripting (XSS) vulnerabilities. Prefer using the Flask method 'render_t
+
+  3. [MEDIUM] direct-use-of-jinja2
+     File: backend/services/handover_pdf_service.py:252
+     Detected direct use of jinja2. If not done properly, this may bypass HTML escaping which opens up the application to cross-site scripting (XSS) vulnerabilities. Prefer using the Flask method 'render_t
+
+  4. [MEDIUM] insecure-hash-algorithm-md5
+     File: backend/services/storage_service.py:34
+     Detected MD5 hash algorithm which is considered insecure. MD5 is not collision resistant and is therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead.
+
+  5. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:29
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  6. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:31
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  7. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:31
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  8. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:41
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  9. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:41
+     Detected that function argument `fromFile` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To addres
+
+  10. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:41
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  11. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:41
+     Detected that function argument `fromFile` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To addres
+
+  12. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:47
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  13. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:47
+     Detected that function argument `fromFile` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To addres
+
+  14. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:47
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  15. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:47
+     Detected that function argument `fromFile` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To addres
+
+  16. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:49
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  17. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:50
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  18. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:50
+     Detected that function argument `fromFile` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To addres
+
+  19. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:86
+     Detected that function argument `absPath` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address
+
+  20. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/babel-metadata-plugin.js:90
+     Detected that function argument `absPath` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address
+
+  21. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:24
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  22. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:24
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  23. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:26
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  24. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:26
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  25. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:34
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  26. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:34
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  27. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:34
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  28. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:34
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  29. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:40
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  30. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:40
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  31. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:40
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  32. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:40
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  33. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:42
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  34. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:43
+     Detected that function argument `source` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  35. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:43
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  36. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:109
+     Detected that function argument `change` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  37. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:109
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  38. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:113
+     Detected that function argument `change` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  39. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:113
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  40. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:223
+     Detected that function argument `change` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address 
+
+  41. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:223
+     Detected that function argument `frontendRoot` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To ad
+
+  42. [MEDIUM] detect-redos
+     File: frontend/plugins/visual-edits/dev-server-setup.js:358
+     Detected the use of a regular expression `^https:\/\/([a-zA-Z0-9-]+\.)*emergent\.sh$` which appears to be vulnerable to a Regular expression Denial-of-Service (ReDoS). For this reason, it is recommend
+
+  43. [MEDIUM] detect-redos
+     File: frontend/plugins/visual-edits/dev-server-setup.js:363
+     Detected the use of a regular expression `^https:\/\/([a-zA-Z0-9-]+\.)*emergentagent\.com$` which appears to be vulnerable to a Regular expression Denial-of-Service (ReDoS). For this reason, it is rec
+
+  44. [MEDIUM] detect-redos
+     File: frontend/plugins/visual-edits/dev-server-setup.js:368
+     Detected the use of a regular expression `^https:\/\/([a-zA-Z0-9-]+\.)*appspot\.com$` which appears to be vulnerable to a Regular expression Denial-of-Service (ReDoS). For this reason, it is recommend
+
+  45. [MEDIUM] detect-non-literal-fs-filename
+     File: frontend/plugins/visual-edits/dev-server-setup.js:495
+     Detected that function argument `dir` has entered the fs module. An attacker could potentially control the location of this file, to include going backwards in the directory with '../'. To address thi
+
+  46. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:498
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  47. [MEDIUM] path-join-resolve-traversal
+     File: frontend/plugins/visual-edits/dev-server-setup.js:498
+     Detected possible user input going into a `path.join` or `path.resolve` function. This could possibly lead to a path traversal vulnerability,  where the attacker can access arbitrary files stored in t
+
+  48. [MEDIUM] html-in-template-string
+     File: frontend/plugins/visual-edits/dev-server-setup.js:602
+     This template literal looks like HTML and has interpolated variables. These variables are not HTML-encoded by default. If the variables contain HTML tags, these may be interpreted by the browser, resu
+
+  49. [MEDIUM] missing-integrity
+     File: frontend/public/index.html:26
+     This tag is missing an 'integrity' subresource integrity attribute. The 'integrity' attribute allows for the browser to verify that externally hosted files (for example from a CDN) are delivered witho
+
+  50. [MEDIUM] unsafe-dynamic-method
+     File: mockup/src/App.tsx:40
+     Using non-static data to retrieve and run functions from the object is dangerous. If the data is user-controlled, it may allow executing arbitrary code.
+
+--- LOW (3) ---
+
+  1. [LOW] use-defusedcsv
+     File: backend/contractor_ops/excel_router.py:16
+     Detected the generation of a CSV file using the built-in `csv` module. If user data is used to generate the data in this file, it is possible that an attacker could inject a formula when the CSV is im
+
+  2. [LOW] unsafe-formatstring
+     File: frontend/plugins/visual-edits/dev-server-setup.js:875
+     Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use co
+
+  3. [LOW] unsafe-formatstring
+     File: frontend/src/pages/ProjectControlPage.js:498
+     Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use co
+
+======================================================================
+SECTION 3: PRIVACY / DATA-FLOW FINDINGS (166)
+======================================================================
+
+--- CRITICAL (52) ---
+
+  1. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_e2e.py:36
+     Email and Password exposed via HTTP HTTP
+
+  2. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_audit_immutability.py:17
+     Email and Password exposed via HTTP HTTP
+
+  3. [CRITICAL] AUTH-TOKEN
+     File: backend/config.py:262
+     Auth Token exposed to Logs Logs
+
+  4. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_onboarding.py:86
+     Email and Password exposed via HTTP HTTP
+
+  5. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_onboarding.py:102
+     Email and Password exposed via HTTP HTTP
+
+  6. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/debug_router.py:782
+     Email and Password exposed via HTTP HTTP
+
+  7. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/router.py:191
+     Auth Token exposed to JSON Web Token JSON Web Token
+
+  8. [CRITICAL] AUTH-TOKEN
+     File: backend/config.py:221
+     Auth Token exposed to Logs Logs
+
+  9. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_e2e.py:179
+     Email and Password exposed via HTTP HTTP
+
+  10. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:41
+     Email and Password exposed via HTTP HTTP
+
+  11. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/green_invoice_service.py:83
+     Auth Token exposed to Logs Logs
+
+  12. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_onboarding.py:99
+     Email and Password exposed via HTTP HTTP
+
+  13. [CRITICAL] SIGNED-URL
+     File: backend/scripts/test_intelligence_closure.py:294
+     Signed URL exposed to Standard Output Standard Output
+
+  14. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_e2e_invite_proof.py:388
+     Email and Password exposed via HTTP HTTP
+
+  15. [CRITICAL] PASSWORD
+     File: backend/config.py:246
+     Password exposed to Logs Logs
+
+  16. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_e2e.py:186
+     Email and Password exposed via HTTP HTTP
+
+  17. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:80
+     Email and Password exposed via HTTP HTTP
+
+  18. [CRITICAL] AUTH-TOKEN
+     File: backend/config.py:240
+     Auth Token exposed to Logs Logs
+
+  19. [CRITICAL] PASSWORD
+     File: backend/contractor_ops/test_onboarding.py:395
+     Password exposed via HTTP HTTP
+
+  20. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:52
+     Email and Password exposed via HTTP HTTP
+
+  21. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_invites.py:37
+     Email and Password exposed via HTTP HTTP
+
+  22. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/router.py:146
+     Auth Token exposed to JSON Web Token JSON Web Token
+
+  23. [CRITICAL] PASSWORD
+     File: backend/contractor_ops/test_onboarding.py:382
+     Password exposed via HTTP HTTP
+
+  24. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/green_invoice_service.py:95
+     Auth Token exposed to Logs Logs
+
+  25. [CRITICAL] AUTH-TOKEN
+     File: backend/services/object_storage.py:170
+     Auth Token exposed to Logs Logs
+
+  26. [CRITICAL] AUTH-TOKEN
+     File: backend/config.py:261
+     Auth Token exposed to Logs Logs
+
+  27. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_e2e.py:33
+     Email and Password exposed via HTTP HTTP
+
+  28. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:86
+     Email and Password exposed via HTTP HTTP
+
+  29. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/router.py:153
+     Auth Token exposed to JSON Web Token JSON Web Token
+
+  30. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_cross_project_rbac.py:121
+     Email and Password exposed via HTTP HTTP
+
+  31. [CRITICAL] AUTH-TOKEN
+     File: backend/config.py:235
+     Auth Token exposed to Logs Logs
+
+  32. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_onboarding.py:65
+     Email and Password exposed via HTTP HTTP
+
+  33. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_e2e_invite_proof.py:92
+     Email and Password exposed via HTTP HTTP
+
+  34. [CRITICAL] AUTH-TOKEN
+     File: backend/config.py:241
+     Auth Token exposed to Logs Logs
+
+  35. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/green_invoice_service.py:109
+     Auth Token exposed to Logs Logs
+
+  36. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_onboarding.py:70
+     Email and Password exposed via HTTP HTTP
+
+  37. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_onboarding.py:89
+     Email and Password exposed via HTTP HTTP
+
+  38. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_cross_project_rbac.py:142
+     Email and Password exposed via HTTP HTTP
+
+  39. [CRITICAL] PASSWORD
+     File: backend/contractor_ops/test_onboarding.py:385
+     Password exposed via HTTP HTTP
+
+  40. [CRITICAL] AUTH-TOKEN
+     File: backend/contractor_ops/onboarding_router.py:100
+     Auth Token exposed to JSON Web Token JSON Web Token
+
+  41. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_invites.py:209
+     Email and Password exposed via HTTP HTTP
+
+  42. [CRITICAL] AUTH-TOKEN
+     File: backend/server.py:1124
+     Auth Token exposed to JSON Web Token JSON Web Token
+
+  43. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:92
+     Email and Password exposed via HTTP HTTP
+
+  44. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:48
+     Email and Password exposed via HTTP HTTP
+
+  45. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/debug_router.py:788
+     Email and Password exposed via HTTP HTTP
+
+  46. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:74
+     Email and Password exposed via HTTP HTTP
+
+  47. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_invites.py:217
+     Email and Password exposed via HTTP HTTP
+
+  48. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_cross_project_rbac.py:17
+     Email and Password exposed via HTTP HTTP
+
+  49. [CRITICAL] PASSWORD
+     File: backend/contractor_ops/test_onboarding.py:390
+     Password exposed via HTTP HTTP
+
+  50. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:51
+     Email and Password exposed via HTTP HTTP
+
+  51. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:176
+     Email and Password exposed via HTTP HTTP
+
+  52. [CRITICAL] PASSWORD, EMAIL
+     File: backend/contractor_ops/test_notifications.py:37
+     Email and Password exposed via HTTP HTTP
+
+--- MEDIUM (93) ---
+
+  1. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_router.py:266
+     Phone Number exposed to Logs Logs
+
+  2. [MEDIUM] IP-ADDRESS
+     File: backend/contractor_ops/onboarding_router.py:1644
+     IP Address exposed to Logs Logs
+
+  3. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:298
+     Phone Number exposed to Logs Logs
+
+  4. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:356
+     Phone Number exposed to Logs Logs
+
+  5. [MEDIUM] PHONE-NUMBER, EMAIL
+     File: backend/seed_data.py:81
+     Email and Phone Number exposed to Standard Output Standard Output
+
+  6. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:201
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  7. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/qc_router.py:1277
+     Phone Number exposed to Logs Logs
+
+  8. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/debug_router.py:486
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  9. [MEDIUM] PHONE-NUMBER
+     File: backend/config.py:236
+     Phone Number exposed to Logs Logs
+
+  10. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:283
+     IP Address and Phone Number exposed to Logs Logs
+
+  11. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/sms_service.py:82
+     Phone Number exposed to Logs Logs
+
+  12. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/ownership_transfer.py:258
+     Phone Number exposed to Logs Logs
+
+  13. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:294
+     Phone Number exposed to Logs Logs
+
+  14. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:123
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  15. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:163
+     Phone Number exposed via HTTP HTTP
+
+  16. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/auth_router.py:377
+     Phone Number exposed to Logs Logs
+
+  17. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:343
+     Phone Number exposed to Logs Logs
+
+  18. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:296
+     IP Address and Phone Number exposed to Logs Logs
+
+  19. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/wa_login.py:221
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  20. [MEDIUM] IP-ADDRESS
+     File: backend/contractor_ops/onboarding_router.py:1556
+     IP Address exposed to Logs Logs
+
+  21. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:118
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  22. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:276
+     Phone Number exposed to Logs Logs
+
+  23. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/reminder_service.py:274
+     Phone Number exposed to Logs Logs
+
+  24. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/sms_service.py:78
+     Phone Number exposed to Logs Logs
+
+  25. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:84
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  26. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:145
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  27. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:180
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  28. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:136
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  29. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:84
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  30. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:112
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  31. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:153
+     Phone Number exposed via HTTP HTTP
+
+  32. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:304
+     Phone Number exposed to Logs Logs
+
+  33. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/debug_router.py:421
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  34. [MEDIUM] PHONE-NUMBER
+     File: backend/server.py:597
+     Phone Number exposed to Logs Logs
+
+  35. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/qc_router.py:1291
+     Phone Number exposed to Logs Logs
+
+  36. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:168
+     Phone Number exposed via HTTP HTTP
+
+  37. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:211
+     IP Address and Phone Number exposed to Logs Logs
+
+  38. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:301
+     IP Address and Phone Number exposed to Logs Logs
+
+  39. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/sms_service.py:74
+     Phone Number exposed to Logs Logs
+
+  40. [MEDIUM] PHONE-NUMBER
+     File: backend/config.py:232
+     Phone Number exposed to Logs Logs
+
+  41. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:287
+     IP Address and Phone Number exposed to Logs Logs
+
+  42. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:298
+     IP Address and Phone Number exposed to Logs Logs
+
+  43. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:164
+     Phone Number exposed to Logs Logs
+
+  44. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:217
+     IP Address and Phone Number exposed to Logs Logs
+
+  45. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:240
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  46. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:130
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  47. [MEDIUM] PHONE-NUMBER
+     File: backend/config.py:121
+     Phone Number exposed to Standard Output Standard Output
+
+  48. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:146
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  49. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:290
+     Phone Number exposed to Logs Logs
+
+  50. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:460
+     Phone Number exposed to Logs Logs
+
+  51. [MEDIUM] IP-ADDRESS
+     File: backend/contractor_ops/billing_router.py:996
+     IP Address exposed to Logs Logs
+
+  52. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:317
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  53. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:157
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  54. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:112
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  55. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/reminder_service.py:136
+     Phone Number exposed to Logs Logs
+
+  56. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:90
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  57. [MEDIUM] IP-ADDRESS
+     File: backend/contractor_ops/billing_router.py:1003
+     IP Address exposed to Logs Logs
+
+  58. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:158
+     Phone Number exposed via HTTP HTTP
+
+  59. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/reminder_service.py:100
+     Phone Number exposed to Logs Logs
+
+  60. [MEDIUM] IP-ADDRESS
+     File: backend/contractor_ops/billing_router.py:1046
+     IP Address exposed to Logs Logs
+
+  61. [MEDIUM] PHONE-NUMBER
+     File: backend/config.py:237
+     Phone Number exposed to Logs Logs
+
+  62. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/reminder_service.py:378
+     Phone Number exposed to Logs Logs
+
+  63. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/auth_router.py:325
+     Phone Number exposed to Logs Logs
+
+  64. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/debug_router.py:296
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  65. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:289
+     Phone Number exposed to Logs Logs
+
+  66. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:47
+     Phone Number exposed via HTTP HTTP
+
+  67. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:151
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  68. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:164
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  69. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:140
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  70. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:324
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  71. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/sms_service.py:47
+     Phone Number exposed to Logs Logs
+
+  72. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:170
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  73. [MEDIUM] PHONE-NUMBER
+     File: backend/server.py:604
+     Phone Number exposed to Logs Logs
+
+  74. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:223
+     IP Address and Phone Number exposed to Logs Logs
+
+  75. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/reminder_service.py:140
+     Phone Number exposed to Logs Logs
+
+  76. [MEDIUM] IP-ADDRESS
+     File: backend/contractor_ops/billing_router.py:1010
+     IP Address exposed to Logs Logs
+
+  77. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:547
+     Phone Number exposed to Logs Logs
+
+  78. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:100
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  79. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/qc_router.py:1294
+     Phone Number exposed to Logs Logs
+
+  80. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:251
+     IP Address and Phone Number exposed to Logs Logs
+
+  81. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:235
+     IP Address and Phone Number exposed to Logs Logs
+
+  82. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:207
+     IP Address and Phone Number exposed to Logs Logs
+
+  83. [MEDIUM] PHONE-NUMBER, FULL-NAME
+     File: backend/contractor_ops/test_phone_normalization_e2e.py:134
+     Full Name and Phone Number exposed via HTTP HTTP
+
+  84. [MEDIUM] PHONE-NUMBER
+     File: backend/config.py:119
+     Phone Number exposed to Logs Logs
+
+  85. [MEDIUM] PHONE-NUMBER
+     File: backend/server.py:580
+     Phone Number exposed to Logs Logs
+
+  86. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:174
+     Phone Number exposed to Logs Logs
+
+  87. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:124
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  88. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:271
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  89. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:253
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  90. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:96
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  91. [MEDIUM] AUTH-TOKEN, PHONE-NUMBER
+     File: backend/contractor_ops/test_invites.py:265
+     Auth Token and Phone Number exposed via HTTP HTTP
+
+  92. [MEDIUM] IP-ADDRESS, PHONE-NUMBER
+     File: backend/contractor_ops/onboarding_router.py:232
+     IP Address and Phone Number exposed to Logs Logs
+
+  93. [MEDIUM] PHONE-NUMBER
+     File: backend/contractor_ops/notification_service.py:285
+     Phone Number exposed to Logs Logs
+
+--- LOW (21) ---
+
+  1. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:354
+     Full Name exposed via HTTP HTTP
+
+  2. [LOW] EMAIL
+     File: backend/contractor_ops/billing_router.py:754
+     Email exposed to Logs Logs
+
+  3. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:345
+     Full Name exposed via HTTP HTTP
+
+  4. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:336
+     Full Name exposed via HTTP HTTP
+
+  5. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:270
+     Full Name exposed via HTTP HTTP
+
+  6. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:363
+     Full Name exposed via HTTP HTTP
+
+  7. [LOW] EMAIL
+     File: backend/contractor_ops/test_invites.py:35
+     Email exposed to Standard Output Standard Output
+
+  8. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:313
+     Full Name exposed via HTTP HTTP
+
+  9. [LOW] EMAIL
+     File: backend/contractor_ops/green_invoice_service.py:123
+     Email exposed to Logs Logs
+
+  10. [LOW] EMAIL
+     File: backend/contractor_ops/demo_seed.py:158
+     Email exposed to Logs Logs
+
+  11. [LOW] EMAIL
+     File: backend/scripts/identity_audit.py:117
+     Email exposed to Standard Output Standard Output
+
+  12. [LOW] USERNAME
+     File: backend/contractor_ops/billing.py:513
+     Username exposed to Logs Logs
+
+  13. [LOW] EMAIL
+     File: backend/scripts/identity_audit.py:130
+     Email exposed to Standard Output Standard Output
+
+  14. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:324
+     Full Name exposed via HTTP HTTP
+
+  15. [LOW] EMAIL
+     File: backend/contractor_ops/billing_router.py:104
+     Email exposed to Logs Logs
+
+  16. [LOW] EMAIL
+     File: backend/contractor_ops/demo_seed.py:156
+     Email exposed to Logs Logs
+
+  17. [LOW] EMAIL
+     File: backend/contractor_ops/identity_router.py:221
+     Email exposed to Logs Logs
+
+  18. [LOW] FULL-NAME
+     File: backend/contractor_ops/test_onboarding.py:189
+     Full Name exposed via HTTP HTTP
+
+  19. [LOW] EMAIL
+     File: backend/contractor_ops/identity_service.py:122
+     Email exposed to Logs Logs
+
+  20. [LOW] EMAIL
+     File: backend/contractor_ops/billing_router.py:130
+     Email exposed to Logs Logs
+
+  21. [LOW] EMAIL
+     File: backend/config.py:253
+     Email exposed to Logs Logs
+
+======================================================================
+END OF REPORT
+======================================================================
