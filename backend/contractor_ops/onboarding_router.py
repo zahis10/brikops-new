@@ -333,6 +333,13 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             sv = user.get('session_version', 0)
             token = _create_token(user['id'], user['phone_e164'], user['role'],
                                   platform_role=platform_role, session_version=sv)
+            await db.users.update_one(
+                {'id': user['id']},
+                {
+                    '$set': {'last_login_at': _now()},
+                    '$inc': {'login_count': 1},
+                }
+            )
             return {
                 'verified': True,
                 'user_exists': True,
@@ -602,6 +609,13 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         sa_check = is_super_admin_phone(user.get('phone_e164', ''))
         platform_role = 'super_admin' if sa_check['matched'] else user.get('platform_role', 'none')
         token = _create_token(user['id'], user['phone_e164'], user['role'], platform_role=platform_role, session_version=user.get('session_version', 0))
+        await db.users.update_one(
+            {'id': user['id']},
+            {
+                '$set': {'last_login_at': _now()},
+                '$inc': {'login_count': 1},
+            }
+        )
         return TokenResponse(
             token=token,
             user=UserResponse(

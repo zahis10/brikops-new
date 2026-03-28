@@ -337,7 +337,10 @@ async def login(credentials: UserLogin):
                           whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True))
     await db.users.update_one(
         {'id': user['id']},
-        {'$set': {'last_login_at': datetime.now(timezone.utc).isoformat()}}
+        {
+            '$set': {'last_login_at': datetime.now(timezone.utc).isoformat()},
+            '$inc': {'login_count': 1},
+        }
     )
 
     return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}

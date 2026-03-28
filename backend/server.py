@@ -284,6 +284,9 @@ reminder_api_router, reminder_cron_router = create_reminder_router(require_roles
 app.include_router(reminder_api_router)
 app.include_router(reminder_cron_router)
 
+from contractor_ops.snapshot_cron import router as snapshot_cron_router
+app.include_router(snapshot_cron_router)
+
 from contractor_ops.sms_service import SMSClient
 from config import SMS_ENABLED, TWILIO_MESSAGING_SERVICE_SID
 sms_client = SMSClient(
@@ -483,6 +486,16 @@ async def create_indexes():
         await db.project_plans.create_index("id", unique=True)
         await db.unit_plans.create_index([("project_id", 1), ("unit_id", 1), ("created_at", -1)])
         await db.unit_plans.create_index("id", unique=True)
+        await db.tasks.create_index([("project_id", 1), ("status", 1), ("created_at", -1)])
+        await db.tasks.create_index([("created_by", 1), ("created_at", -1)])
+        await db.task_updates.create_index([("project_id", 1), ("user_id", 1), ("created_at", -1)])
+        await db.task_updates.create_index([("user_id", 1), ("created_at", -1)])
+        await db.qc_runs.create_index([("project_id", 1), ("updated_at", -1)])
+        await db.audit_events.create_index([("actor_id", 1), ("action", 1), ("created_at", -1)])
+        await db.audit_events.create_index([("action", 1), ("created_at", -1)])
+        await db.daily_project_snapshots.create_index(
+            [("project_id", 1), ("date", -1)], unique=True
+        )
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

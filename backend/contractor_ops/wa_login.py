@@ -349,7 +349,10 @@ async def verify_magic_link(token: str = Query(...)):
 
     await db["users"].update_one(
         {"id": user["id"]},
-        {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}}
+        {
+            "$set": {"last_login_at": datetime.now(timezone.utc).isoformat()},
+            "$inc": {"login_count": 1},
+        }
     )
 
     logger.info(f"[WA-LOGIN] Verified login for user={user['id']}, prefix={doc.get('token_prefix', '')}")
