@@ -368,6 +368,9 @@ app.include_router(import_router)
 from contractor_ops.admin_dashboard import router as admin_dashboard_router
 app.include_router(admin_dashboard_router)
 
+from contractor_ops.admin_analytics import router as admin_analytics_router
+app.include_router(admin_analytics_router)
+
 from contractor_ops.invites_router import router as invites_router
 app.include_router(invites_router)
 

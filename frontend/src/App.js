@@ -52,6 +52,7 @@ const BuildingQCPage = React.lazy(() => import('./pages/BuildingQCPage'));
 const UnitQCSelectionPage = React.lazy(() => import('./pages/UnitQCSelectionPage'));
 const InnerBuildingPage = React.lazy(() => import('./pages/InnerBuildingPage'));
 const AdminDashboardPage = React.lazy(() => import('./pages/AdminDashboardPage'));
+const AdminActivityPage = React.lazy(() => import('./pages/AdminActivityPage'));
 const AdminQCTemplatesPage = React.lazy(() => import('./pages/AdminQCTemplatesPage'));
 const AdminHandoverTemplateEditor = React.lazy(() => import('./pages/AdminHandoverTemplateEditor'));
 const ApartmentDashboardPage = React.lazy(() => import('./pages/ApartmentDashboardPage'));
@@ -178,6 +179,14 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute requireSuperAdmin>
               <AdminDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/activity"
+          element={
+            <ProtectedRoute requireSuperAdmin>
+              <AdminActivityPage />
             </ProtectedRoute>
           }
         />
