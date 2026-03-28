@@ -53,6 +53,7 @@ async def cron_daily_snapshots(request: Request):
 
     if not projects:
         logger.info("[SNAPSHOT-CRON] No active projects found")
+        logger.info(f"[SNAPSHOT] completed in {time.monotonic()-snap_start:.1f}s")
         return {"date": today, "snapshots_created": 0, "skipped": 0}
 
     project_ids = [p["id"] for p in projects]
@@ -67,6 +68,7 @@ async def cron_daily_snapshots(request: Request):
     new_project_ids = [pid for pid in project_ids if pid not in existing_ids]
     if not new_project_ids:
         logger.info(f"[SNAPSHOT-CRON] All {len(project_ids)} projects already have snapshots for {today}")
+        logger.info(f"[SNAPSHOT] completed in {time.monotonic()-snap_start:.1f}s")
         return {"date": today, "snapshots_created": 0, "skipped": len(project_ids)}
 
     defect_agg = await db.tasks.aggregate([

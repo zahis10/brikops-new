@@ -91,7 +91,7 @@ const ScoreInfoTooltip = () => {
   );
 };
 
-const Sparkline = ({ data, width = 120, height = 40 }) => {
+const Sparkline = ({ data, width = 120, height = 40, currentScore }) => {
   if (!data || data.length < 3) return null;
   const scores = data.map(d => d.team_score);
   const min = Math.min(...scores);
@@ -101,8 +101,8 @@ const Sparkline = ({ data, width = 120, height = 40 }) => {
   const padded_max = max + range * 0.1;
   const padded_range = padded_max - padded_min || 1;
 
-  const latest = scores[scores.length - 1];
-  const color = latest >= 60 ? '#22c55e' : latest >= 30 ? '#f59e0b' : '#ef4444';
+  const s = currentScore != null ? currentScore : scores[scores.length - 1];
+  const color = s >= 60 ? '#22c55e' : s >= 30 ? '#f59e0b' : '#ef4444';
 
   const points = scores.map((s, i) => {
     const x = (i / (scores.length - 1)) * width;
@@ -257,7 +257,7 @@ export default function TeamActivitySection({ projectId }) {
 
       <div className="flex items-center gap-4 mb-4 p-3 bg-gradient-to-l from-violet-50 to-slate-50 rounded-xl">
         <ScoreRing score={summary.team_score} />
-        <Sparkline data={trendData} />
+        <Sparkline data={trendData} currentScore={summary.team_score} />
         <div className="flex-1">
           <p className="text-xs text-slate-500 mb-2 flex items-center gap-1">ציון פעילות צוות <ScoreInfoTooltip /></p>
           <div className="flex flex-wrap gap-1.5">
