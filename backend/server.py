@@ -496,6 +496,8 @@ async def create_indexes():
         await db.qc_runs.create_index([("project_id", 1), ("updated_at", -1)])
         await db.audit_events.create_index([("actor_id", 1), ("action", 1), ("created_at", -1)])
         await db.audit_events.create_index([("action", 1), ("created_at", -1)])
+        await db.qc_items.create_index([("run_id", 1), ("status", 1), ("updated_at", -1)])
+        await db.qc_items.create_index([("updated_by", 1), ("updated_at", -1)])
         await db.daily_project_snapshots.create_index(
             [("project_id", 1), ("date", -1)], unique=True
         )

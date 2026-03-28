@@ -4,22 +4,20 @@ import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from zoneinfo import ZoneInfo
-
 import httpx
 
 from .notification_service import (
     NotificationEngine, validate_e164, mask_phone, _resolve_fallback_image,
 )
+from contractor_ops.utils.timezone import IL_TZ
+from contractor_ops.constants import TERMINAL_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
 
 OVERDUE_THRESHOLD_DAYS = 7
 COOLDOWN_HOURS = 48
-TERMINAL_STATUSES = ("closed", "done", "cancelled")
 SEND_PACING_SECONDS = 0.1
 DEFECT_LIST_MAX_CHARS = 1024
-IL_TZ = ZoneInfo("Asia/Jerusalem")
 DEFAULT_WORKDAYS = [0, 1, 2, 3, 4]
 PYTHON_TO_ISRAEL_WEEKDAY = {6: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
 
@@ -183,7 +181,7 @@ async def send_contractor_reminder(
     skip_cooldown: bool = False,
     skip_preferences: bool = False,
 ) -> dict:
-    open_filter = {"status": {"$nin": list(TERMINAL_STATUSES)}}
+    open_filter = {"status": {"$nin": list(TERMINAL_TASK_STATUSES)}}
     tasks = await _db.tasks.find({
         "project_id": project_id,
         "company_id": company_id,
@@ -294,7 +292,7 @@ async def send_pm_digest(
     now = _now_dt()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
-    open_filter = {"project_id": project_id, "status": {"$nin": list(TERMINAL_STATUSES)}}
+    open_filter = {"project_id": project_id, "status": {"$nin": list(TERMINAL_TASK_STATUSES)}}
     open_count = await _db.tasks.count_documents(open_filter)
 
     overdue_cutoff = (now - timedelta(days=OVERDUE_THRESHOLD_DAYS)).isoformat()
@@ -310,7 +308,7 @@ async def send_pm_digest(
 
     closed_today = await _db.tasks.count_documents({
         "project_id": project_id,
-        "status": {"$in": list(TERMINAL_STATUSES)},
+        "status": {"$in": list(TERMINAL_TASK_STATUSES)},
         "updated_at": {"$gte": today_start},
     })
 
@@ -402,7 +400,7 @@ async def send_all_contractor_reminders() -> dict:
             pid = project["id"]
             open_tasks = await _db.tasks.find({
                 "project_id": pid,
-                "status": {"$nin": list(TERMINAL_STATUSES)},
+                "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
                 "company_id": {"$exists": True, "$nin": [None, ""]},
             }, {"_id": 0, "company_id": 1}).to_list(1000)
 

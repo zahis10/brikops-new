@@ -518,7 +518,7 @@ async def get_task_buckets(
     }
 
 
-TERMINAL_STATUSES = {'closed', 'done', 'cancelled'}
+from contractor_ops.constants import TERMINAL_TASK_STATUSES
 PM_OWNER_ROLES = {'project_manager', 'owner', 'management_team'}
 
 SCORE_WEIGHTS = {
@@ -610,7 +610,7 @@ async def get_team_activity(
         {'$match': {
             'task_id': {'$in': await _get_project_task_ids(db, project_id)},
             'changed_by': {'$in': user_ids},
-            'new_status': {'$in': list(TERMINAL_STATUSES)},
+            'new_status': {'$in': list(TERMINAL_TASK_STATUSES)},
             'created_at': {'$gte': period_start},
         }},
         {'$group': {'_id': '$changed_by', 'count': {'$sum': 1}}}

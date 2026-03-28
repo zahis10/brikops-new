@@ -5,6 +5,8 @@ import os
 import uuid
 import logging
 
+from contractor_ops.utils.timezone import IL_TZ
+
 logger = logging.getLogger(__name__)
 
 BILLING_V1_ENABLED = os.environ.get('BILLING_V1_ENABLED', 'false').lower() == 'true'
@@ -63,19 +65,17 @@ def _now_dt():
 
 
 def _start_of_next_billing_period(billing_cycle: str = 'monthly') -> str:
-    from zoneinfo import ZoneInfo
-    jlm = ZoneInfo('Asia/Jerusalem')
-    now_jlm = datetime.now(jlm)
+    now_il = datetime.now(IL_TZ)
     if billing_cycle == 'yearly':
-        next_start = now_jlm.replace(year=now_jlm.year + 1, month=1, day=1,
-                                      hour=0, minute=0, second=0, microsecond=0)
+        next_start = now_il.replace(year=now_il.year + 1, month=1, day=1,
+                                     hour=0, minute=0, second=0, microsecond=0)
     else:
-        month = now_jlm.month + 1
-        year = now_jlm.year
+        month = now_il.month + 1
+        year = now_il.year
         if month > 12:
             month = 1
             year += 1
-        next_start = now_jlm.replace(year=year, month=month, day=1,
+        next_start = now_il.replace(year=year, month=month, day=1,
                                       hour=0, minute=0, second=0, microsecond=0)
     return next_start.astimezone(timezone.utc).isoformat()
 
@@ -1001,7 +1001,6 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
 
 
 async def preview_renewal(org_id: str, cycle: str) -> dict:
-    from zoneinfo import ZoneInfo
     db = get_db()
     sub = await get_subscription(org_id)
     now_utc = _now_dt()
@@ -1024,8 +1023,7 @@ async def preview_renewal(org_id: str, cycle: str) -> dict:
         day = min(effective_start.day, 28)
         new_paid_until = effective_start.replace(year=year, month=month, day=day)
 
-    jlm = ZoneInfo('Asia/Jerusalem')
-    local_dt = new_paid_until.astimezone(jlm)
+    local_dt = new_paid_until.astimezone(IL_TZ)
     end_of_day_local = local_dt.replace(hour=23, minute=59, second=59, microsecond=0)
     end_of_day_utc = end_of_day_local.astimezone(timezone.utc)
 
@@ -1367,10 +1365,8 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
         'status': {'$in': OPEN_REQUEST_STATUSES},
     }, {'_id': 0}, sort=[('created_at', -1)])
     if existing:
-        from zoneinfo import ZoneInfo
-        jlm = ZoneInfo('Asia/Jerusalem')
         pu = _parse_dt(existing.get('requested_paid_until'))
-        display = pu.astimezone(jlm).strftime('%d/%m/%Y') if pu else '—'
+        display = pu.astimezone(IL_TZ).strftime('%d/%m/%Y') if pu else '—'
         return {
             'request_id': existing['id'],
             'requested_paid_until': existing.get('requested_paid_until'),

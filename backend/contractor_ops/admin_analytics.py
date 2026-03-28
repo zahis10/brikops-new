@@ -2,12 +2,11 @@ import logging
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from contractor_ops.router import get_db, get_current_user
+from contractor_ops.constants import TERMINAL_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/analytics")
-
-TERMINAL_STATUSES = {'closed', 'done', 'cancelled'}
 
 ADMIN_SCORE_WEIGHTS = {
     'login_recency': 30,
@@ -91,20 +90,20 @@ async def user_activity(
     all_users = await db.users.find(
         user_filter,
         {'_id': 0, 'id': 1, 'name': 1, 'role': 1, 'last_login_at': 1, 'login_count': 1}
-    ).to_list(None)
+    ).to_list(5000)
 
     if org_id:
         org_mems = await db.organization_memberships.find(
             {'org_id': org_id},
             {'_id': 0, 'user_id': 1}
-        ).to_list(None)
+        ).to_list(5000)
         org_member_ids = {m['user_id'] for m in org_mems}
         all_users = [u for u in all_users if u['id'] in org_member_ids]
 
     org_mems_all = await db.organization_memberships.find(
         {'user_id': {'$in': [u['id'] for u in all_users]}},
         {'_id': 0, 'user_id': 1, 'org_id': 1}
-    ).to_list(None) if all_users else []
+    ).to_list(5000) if all_users else []
     user_org_map = {m['user_id']: m['org_id'] for m in org_mems_all}
 
     sort_key_mongo = {
@@ -152,17 +151,17 @@ async def user_activity(
     defects_created_agg = await db.tasks.aggregate([
         {'$match': {'created_by': {'$in': page_user_ids}, 'created_at': {'$gte': period_start}}},
         {'$group': {'_id': '$created_by', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     defects_created = {r['_id']: r['count'] for r in defects_created_agg}
 
     defects_closed_agg = await db.task_status_history.aggregate([
         {'$match': {
             'changed_by': {'$in': page_user_ids},
-            'new_status': {'$in': list(TERMINAL_STATUSES)},
+            'new_status': {'$in': list(TERMINAL_TASK_STATUSES)},
             'created_at': {'$gte': period_start},
         }},
         {'$group': {'_id': '$changed_by', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     defects_closed = {r['_id']: r['count'] for r in defects_closed_agg}
 
     qc_agg = await db.qc_items.aggregate([
@@ -172,7 +171,7 @@ async def user_activity(
             'updated_at': {'$gte': period_start},
         }},
         {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     qc_checked = {r['_id']: r['count'] for r in qc_agg}
 
     handover_agg = await db.handover_protocols.aggregate([
@@ -181,7 +180,7 @@ async def user_activity(
             'updated_by': {'$in': page_user_ids},
         }},
         {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     handover_counts = {r['_id']: r['count'] for r in handover_agg}
 
     photos_agg = await db.task_updates.aggregate([
@@ -191,7 +190,7 @@ async def user_activity(
             'created_at': {'$gte': period_start},
         }},
         {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     photos = {r['_id']: r['count'] for r in photos_agg}
 
     wa_agg = await db.notification_jobs.aggregate([
@@ -202,7 +201,7 @@ async def user_activity(
             'triggered_by': {'$in': page_user_ids},
         }},
         {'$group': {'_id': '$triggered_by', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     wa_counts = {r['_id']: r['count'] for r in wa_agg}
 
     results = []
@@ -287,7 +286,7 @@ async def feature_usage(
     projects = await db.projects.find(
         {'status': {'$nin': ['archived', 'deleted']}},
         {'_id': 0, 'id': 1, 'org_id': 1}
-    ).to_list(None)
+    ).to_list(5000)
     project_org_map = {p['id']: p.get('org_id', '') for p in projects}
     project_ids = [p['id'] for p in projects]
 
@@ -299,17 +298,17 @@ async def feature_usage(
             '_id': '$project_id',
             'count': {'$sum': 1},
         }}
-    ]).to_list(None)
+    ]).to_list(5000)
     defects_prev = await db.tasks.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'created_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     defects_power = await db.tasks.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}, 'created_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$created_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
-    ]).to_list(None)
+    ]).to_list(5000)
     defects_orgs = set()
     defects_total = 0
     for r in defects_curr:
@@ -330,7 +329,7 @@ async def feature_usage(
     active_run_ids_agg = await db.qc_runs.aggregate([
         {'$match': {'project_id': {'$in': project_ids}}},
         {'$project': {'_id': 0, 'id': 1}}
-    ]).to_list(None)
+    ]).to_list(5000)
     active_run_ids = [r['id'] for r in active_run_ids_agg]
 
     qc_curr = await db.qc_items.aggregate([
@@ -341,7 +340,7 @@ async def feature_usage(
         }},
         {'$unwind': '$run'},
         {'$group': {'_id': '$run.project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     qc_prev = await db.qc_items.aggregate([
         {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}, 'run_id': {'$in': active_run_ids}}},
         {'$lookup': {
@@ -350,13 +349,13 @@ async def feature_usage(
         }},
         {'$unwind': '$run'},
         {'$group': {'_id': '$run.project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     qc_power = await db.qc_items.aggregate([
         {'$match': {'status': {'$in': ['pass', 'fail']}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}, 'run_id': {'$in': active_run_ids}}},
         {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
-    ]).to_list(None)
+    ]).to_list(5000)
     qc_orgs = set()
     qc_total = 0
     for r in qc_curr:
@@ -377,17 +376,17 @@ async def feature_usage(
     ho_curr = await db.handover_protocols.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     ho_prev = await db.handover_protocols.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     ho_power = await db.handover_protocols.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'updated_at': {'$gte': period_start}, 'updated_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$updated_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
-    ]).to_list(None)
+    ]).to_list(5000)
     ho_orgs = set()
     ho_total = 0
     for r in ho_curr:
@@ -408,17 +407,17 @@ async def feature_usage(
     wa_curr = await db.notification_jobs.aggregate([
         {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     wa_prev = await db.notification_jobs.aggregate([
         {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     wa_power = await db.notification_jobs.aggregate([
         {'$match': {'channel': 'whatsapp', 'status': 'sent', 'project_id': {'$in': project_ids}, 'created_at': {'$gte': period_start}, 'triggered_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$triggered_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
-    ]).to_list(None)
+    ]).to_list(5000)
     wa_orgs = set()
     wa_total = 0
     for r in wa_curr:
@@ -439,17 +438,17 @@ async def feature_usage(
     plans_curr = await db.project_plans.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     plans_prev = await db.project_plans.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': prev_period_start, '$lt': period_start}}},
         {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}}
-    ]).to_list(None)
+    ]).to_list(5000)
     plans_power = await db.project_plans.aggregate([
         {'$match': {'project_id': {'$in': project_ids}, 'uploaded_at': {'$gte': period_start}, 'uploaded_by': {'$exists': True, '$ne': None}}},
         {'$group': {'_id': '$uploaded_by', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 5},
-    ]).to_list(None)
+    ]).to_list(5000)
     plans_orgs = set()
     plans_total = 0
     for r in plans_curr:
@@ -476,7 +475,7 @@ async def feature_usage(
         users_docs = await db.users.find(
             {'id': {'$in': list(user_ids_all)}},
             {'_id': 0, 'id': 1, 'name': 1}
-        ).to_list(None)
+        ).to_list(5000)
         name_map = {u['id']: u.get('name', '') for u in users_docs}
         for f in features.values():
             for pu in f['top_power_users']:

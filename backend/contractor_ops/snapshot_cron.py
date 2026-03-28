@@ -5,32 +5,16 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from config import CRON_SECRET
 from contractor_ops.router import get_db
+from contractor_ops.utils.timezone import israel_today, israel_day_start_utc
+from contractor_ops.constants import TERMINAL_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["cron"])
 
-try:
-    import zoneinfo
-    IL_TZ = zoneinfo.ZoneInfo("Asia/Jerusalem")
-except ImportError:
-    from dateutil import tz as _tz
-    IL_TZ = _tz.gettz("Asia/Jerusalem")
-
-TERMINAL_STATUSES = {"closed", "done", "cancelled"}
 ACTIVE_STATUSES = {"open", "assigned", "in_progress", "pending_contractor_proof",
                    "returned_to_contractor", "reopened", "pending_manager_approval",
                    "waiting_verify"}
-
-
-def _israel_today() -> str:
-    return datetime.now(IL_TZ).strftime("%Y-%m-%d")
-
-
-def _israel_day_start_utc(date_str: str) -> str:
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
-    local_start = dt.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=IL_TZ)
-    return local_start.astimezone(timezone.utc).isoformat()
 
 
 @router.post("/internal/cron/daily-snapshots")
@@ -42,8 +26,8 @@ async def cron_daily_snapshots(request: Request):
 
     snap_start = time.monotonic()
     db = get_db()
-    today = _israel_today()
-    day_start_utc = _israel_day_start_utc(today)
+    today = israel_today()
+    day_start_utc = israel_day_start_utc(today)
     now_utc = datetime.now(timezone.utc).isoformat()
 
     projects = await db.projects.find(
@@ -78,18 +62,18 @@ async def cron_daily_snapshots(request: Request):
             "total": {"$sum": 1},
             "open": {"$sum": {"$cond": [{"$in": ["$status", list(ACTIVE_STATUSES)]}, 1, 0]}},
             "in_progress": {"$sum": {"$cond": [{"$in": ["$status", ["in_progress", "pending_contractor_proof", "pending_manager_approval", "returned_to_contractor"]]}, 1, 0]}},
-            "closed": {"$sum": {"$cond": [{"$in": ["$status", list(TERMINAL_STATUSES)]}, 1, 0]}},
+            "closed": {"$sum": {"$cond": [{"$in": ["$status", list(TERMINAL_TASK_STATUSES)]}, 1, 0]}},
             "overdue": {"$sum": {"$cond": [
                 {"$and": [
                     {"$ne": ["$due_date", None]},
                     {"$lt": ["$due_date", today]},
-                    {"$not": {"$in": ["$status", list(TERMINAL_STATUSES)]}}
+                    {"$not": {"$in": ["$status", list(TERMINAL_TASK_STATUSES)]}}
                 ]}, 1, 0
             ]}},
             "created_today": {"$sum": {"$cond": [{"$gte": ["$created_at", day_start_utc]}, 1, 0]}},
             "closed_today": {"$sum": {"$cond": [
                 {"$and": [
-                    {"$in": ["$status", list(TERMINAL_STATUSES)]},
+                    {"$in": ["$status", list(TERMINAL_TASK_STATUSES)]},
                     {"$gte": ["$updated_at", day_start_utc]}
                 ]}, 1, 0
             ]}},
