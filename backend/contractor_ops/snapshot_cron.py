@@ -93,17 +93,25 @@ async def cron_daily_snapshots(request: Request):
     ]).to_list(None)
     defect_map = {r["_id"]: r for r in defect_agg}
 
-    qc_agg = await db.qc_runs.aggregate([
-        {"$match": {"project_id": {"$in": new_project_ids}}},
-        {"$unwind": "$stages"},
-        {"$unwind": "$stages.items"},
+    qc_agg = await db.qc_items.aggregate([
+        {"$lookup": {
+            "from": "qc_runs",
+            "localField": "run_id",
+            "foreignField": "id",
+            "as": "run",
+            "pipeline": [
+                {"$match": {"project_id": {"$in": new_project_ids}}},
+                {"$project": {"_id": 0, "project_id": 1}},
+            ],
+        }},
+        {"$unwind": "$run"},
         {"$group": {
-            "_id": "$project_id",
+            "_id": "$run.project_id",
             "total_items": {"$sum": 1},
             "checked": {"$sum": {"$cond": [
-                {"$in": ["$stages.items.status", ["pass", "fail", "na"]]}, 1, 0
+                {"$in": ["$status", ["pass", "fail", "na"]]}, 1, 0
             ]}},
-        }}
+        }},
     ]).to_list(None)
     qc_map = {r["_id"]: r for r in qc_agg}
 

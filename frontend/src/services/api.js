@@ -1476,3 +1476,18 @@ export const exportService = {
     return { success: true, filename };
   },
 };
+
+export const adminAnalyticsService = {
+  async getUserActivity(params) {
+    const response = await axios.get(`${API}/admin/analytics/user-activity`, {
+      headers: getAuthHeader(), params,
+    });
+    return response.data;
+  },
+  async getFeatureUsage(period) {
+    const response = await axios.get(`${API}/admin/analytics/feature-usage`, {
+      headers: getAuthHeader(), params: { period },
+    });
+    return response.data;
+  },
+};

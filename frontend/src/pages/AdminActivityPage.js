@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BACKEND_URL } from '../services/api';
+import { adminAnalyticsService } from '../services/api';
 import {
   Loader2, ChevronLeft, ChevronRight, Search, TrendingUp, TrendingDown,
   Minus, Sparkles, Users, ArrowUpDown
@@ -87,41 +87,27 @@ export default function AdminActivityPage() {
   const [loading, setLoading] = useState(true);
   const [featureLoading, setFeatureLoading] = useState(true);
 
-  const authHeaders = useCallback(() => {
-    const token = localStorage.getItem('token');
-    return { 'Authorization': `Bearer ${token}` };
-  }, []);
-
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        period: String(period), page: String(page), limit: String(limit),
-        sort, order,
-      });
-      if (role) params.set('role', role);
-      if (orgId) params.set('org_id', orgId);
-      if (search) params.set('search', search);
-      const res = await fetch(
-        `${BACKEND_URL}/api/admin/analytics/user-activity?${params}`,
-        { headers: authHeaders() }
-      );
-      if (res.ok) setData(await res.json());
+      const params = { period, page, limit, sort, order };
+      if (role) params.role = role;
+      if (orgId) params.org_id = orgId;
+      if (search) params.search = search;
+      const result = await adminAnalyticsService.getUserActivity(params);
+      setData(result);
     } catch {}
     finally { setLoading(false); }
-  }, [period, page, limit, sort, order, role, orgId, search, authHeaders]);
+  }, [period, page, limit, sort, order, role, orgId, search]);
 
   const loadFeatures = useCallback(async () => {
     setFeatureLoading(true);
     try {
-      const res = await fetch(
-        `${BACKEND_URL}/api/admin/analytics/feature-usage?period=${period}`,
-        { headers: authHeaders() }
-      );
-      if (res.ok) setFeatureData(await res.json());
+      const result = await adminAnalyticsService.getFeatureUsage(period);
+      setFeatureData(result);
     } catch {}
     finally { setFeatureLoading(false); }
-  }, [period, authHeaders]);
+  }, [period]);
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
   useEffect(() => { loadFeatures(); }, [loadFeatures]);
