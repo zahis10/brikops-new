@@ -572,6 +572,7 @@ async def get_team_activity(
 
     now = datetime.now(timezone.utc)
     period_start = (now - timedelta(days=period)).isoformat()
+    prev_period_start = (now - timedelta(days=period * 2)).isoformat()
 
     project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'created_at': 1})
     project_age_days = 0
@@ -654,6 +655,26 @@ async def get_team_activity(
     ]).to_list(None)
     qc_checked = {r['_id']: r['count'] for r in qc_agg}
 
+    prev_actions_agg = await db.task_updates.aggregate([
+        {'$match': {
+            'project_id': project_id,
+            'user_id': {'$in': user_ids},
+            'created_at': {'$gte': prev_period_start, '$lt': period_start},
+        }},
+        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    prev_actions = {r['_id']: r['count'] for r in prev_actions_agg}
+
+    curr_actions_agg = await db.task_updates.aggregate([
+        {'$match': {
+            'project_id': project_id,
+            'user_id': {'$in': user_ids},
+            'created_at': {'$gte': period_start},
+        }},
+        {'$group': {'_id': '$user_id', 'count': {'$sum': 1}}}
+    ]).to_list(None)
+    curr_actions = {r['_id']: r['count'] for r in curr_actions_agg}
+
     members_result = []
     total_score = 0
     active_count = 0
@@ -686,7 +707,18 @@ async def get_team_activity(
         if project_age_days < period * 2:
             trend = 'new'
         else:
-            trend = 'stable'
+            curr = curr_actions.get(uid, 0)
+            prev = prev_actions.get(uid, 0)
+            if prev == 0 and curr == 0:
+                trend = 'stable'
+            elif prev == 0 and curr > 0:
+                trend = 'growing'
+            elif curr > prev * 1.25:
+                trend = 'growing'
+            elif curr < prev * 0.75:
+                trend = 'declining'
+            else:
+                trend = 'stable'
 
         if status == 'active':
             active_count += 1
