@@ -524,7 +524,7 @@ PM_OWNER_ROLES = {'project_manager', 'owner', 'management_team'}
 SCORE_WEIGHTS = {
     'login': 30,
     'defects_opened': 20,
-    'defects_closed': 20,
+    'defects_closed': 15,
     'qc_items_checked': 15,
     'photos_uploaded': 10,
     'comments': 10,

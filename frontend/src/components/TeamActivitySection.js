@@ -211,10 +211,16 @@ export default function TeamActivitySection({ projectId }) {
               ungrouped.push(m);
             }
           });
+          const sortedCompanyEntries = Object.entries(companyGroups)
+            .map(([company, group]) => {
+              group.sort((a, b) => b.activity_score - a.activity_score);
+              return [company, group];
+            })
+            .sort((a, b) => b[1][0].activity_score - a[1][0].activity_score);
           return (
             <>
               {nonContractors.map(m => <MemberRow key={m.user_id} member={m} />)}
-              {Object.entries(companyGroups).map(([company, group]) => (
+              {sortedCompanyEntries.map(([company, group]) => (
                 <div key={company}>
                   <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-100">
                     <span className="text-[11px] font-semibold text-slate-500">{company}</span>
