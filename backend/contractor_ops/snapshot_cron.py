@@ -94,6 +94,7 @@ async def cron_daily_snapshots(request: Request):
     defect_map = {r["_id"]: r for r in defect_agg}
 
     qc_agg = await db.qc_items.aggregate([
+        {"$match": {"status": {"$in": ["pass", "fail", "pending", "na"]}}},
         {"$lookup": {
             "from": "qc_runs",
             "localField": "run_id",
