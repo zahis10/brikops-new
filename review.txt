@@ -1,74 +1,169 @@
-diff --git a/backend/requirements.txt b/backend/requirements.txt
-index b005320..9e93525 100644
---- a/backend/requirements.txt
-+++ b/backend/requirements.txt
-@@ -6,7 +6,7 @@ anyio==4.12.1
- arabic-reshaper==3.0.0
- attrs==25.4.0
- bcrypt==4.1.3
--black==26.1.0
-+black==26.3.1
- boto3==1.42.42
- botocore==1.42.42
- brotli==1.2.0
-@@ -14,12 +14,12 @@ certifi==2026.1.4
- cffi==2.0.0
- charset-normalizer==3.4.4
- click==8.3.1
--cryptography==46.0.5
-+cryptography==46.0.6
- cssselect2==0.9.0
- distro==1.9.0
- dnspython==2.8.0
- email-validator==2.3.0
--fastapi==0.110.1
-+fastapi==0.115.14
- fastuuid==0.14.0
- filelock==3.20.3
- flake8==7.3.0
-@@ -45,7 +45,6 @@ isort==7.0.0
- Jinja2==3.1.6
- jiter==0.13.0
- jmespath==1.1.0
--jq==1.11.0
- jsonschema==4.26.0
- jsonschema-specifications==2025.9.1
- librt==0.7.8
-@@ -70,7 +69,7 @@ pluggy==1.6.0
- propcache==0.4.1
- proto-plus==1.27.1
- protobuf==5.29.6
--pyasn1==0.6.2
-+pyasn1==0.6.3
- pyasn1_modules==0.4.2
- pycodestyle==2.14.0
- pycparser==3.0
-@@ -79,8 +78,8 @@ pydantic_core==2.41.5
- pydyf==0.12.1
- pyflakes==3.4.0
- Pygments==2.19.2
--PyJWT==2.11.0
--pymongo==4.5.0
-+PyJWT==2.12.0
-+pymongo==4.6.3
- pyparsing==3.3.2
- pyphen==0.17.2
- pytest==9.0.2
-@@ -93,7 +92,7 @@ PyYAML==6.0.3
- referencing==0.37.0
- regex==2026.1.15
- reportlab==4.4.10
--requests==2.32.5
-+requests==2.33.0
- requests-oauthlib==2.0.0
- rich==14.3.2
- rpds-py==0.30.0
-@@ -103,7 +102,7 @@ s5cmd==0.2.0
- shellingham==1.5.4
- six==1.17.0
- sniffio==1.3.1
--starlette==0.37.2
-+starlette==0.46.2
- tenacity==9.1.2
- tinycss2==1.5.1
- tinyhtml5==2.0.0
+================================================================================
+  Task #220 — Contractor i18n: סיכום שינויי קוד
+  תאריך: 29 מרץ 2026
+================================================================================
+
+סטטיסטיקה כללית:
+  11 קבצים שונו | +707 שורות | -137 שורות
+
+קבצים שהשתנו:
+  frontend/src/i18n/index.js                (+29 / -7)
+  frontend/src/i18n/he.json                 (+81 / -2)
+  frontend/src/i18n/en.json                 (+90 / -2)
+  frontend/src/i18n/ar.json                 (+171 — קובץ חדש)
+  frontend/src/i18n/zh.json                 (+171 — קובץ חדש)
+  frontend/src/App.js                       (+11 / -0)
+  frontend/src/contexts/AuthContext.js      (+10 / -0)
+  frontend/src/pages/TaskDetailPage.js      (+104 / -86)
+  frontend/src/pages/AccountSettingsPage.js (+18 / -5)
+  frontend/src/pages/RegisterPage.js        (+9 / -0)
+  replit.md                                 (+64 / -35)
+
+================================================================================
+1. תשתית i18n — frontend/src/i18n/index.js
+================================================================================
+
+שינויים:
+  - הוספת import ל-ar.json ו-zh.json
+  - שינוי locales → LOCALES (const) עם 4 שפות: he, en, ar, zh
+  - שינוי currentLocale ל-let (mutable) במקום const
+  - פונקציה חדשה: setLanguage(lang)
+      • מנרמלת region tags: en-US → en, zh-TW → zh
+      • מעדכנת document.documentElement.lang
+      • fallback ל-he אם שפה לא מוכרת
+  - פונקציה חדשה: getLanguage() — מחזירה את השפה הנוכחית
+  - שדרוג t(section, key):
+      • שרשרת fallback: שפה נוכחית → he → key
+      • התראת dev console כש-key חסר בשפה הנוכחית
+        (מבחין בין fallback לעברית לבין חסר לגמרי)
+  - פונקציות חדשות: tStatus(), tPriority() (מעטפות ל-t)
+  - פונקציה חדשה: getLocale() — alias ל-getLanguage
+
+================================================================================
+2. קבצי שפה — he.json / en.json
+================================================================================
+
+מפתחות חדשים שנוספו (זהים ב-he ו-en):
+
+  statuses:
+    + approved, done, cancelled
+
+  taskDetail (סעיף חדש — ~45 מפתחות):
+    location, unit, assignment, company, contractor, not_assigned,
+    assigned_contractor, upload_proof_title, upload_proof_desc,
+    take_photo, from_gallery, uploading, execution_note_placeholder,
+    submit_proof, submitting, photos_selected_one, photos_selected_other,
+    proof_locked_pending, proof_locked_closed, opening_photos,
+    contractor_proofs, view, download, unknown_user, before, after,
+    comparison_title, timeline, defect_opened, updates, no_updates,
+    add_comment_placeholder, created, updated, back_to_my_defects,
+    back_to_dashboard, back_to_defects_list, error_not_found,
+    error_forbidden, error_load, error_not_found_desc,
+    error_forbidden_desc, error_load_desc, retry, preview,
+    image_view_title, image_view_desc, attached_image
+
+  toasts (סעיף חדש — 19 מפתחות):
+    not_found, forbidden, load_error, proof_sent, upload_error,
+    upload_timeout, photo_lost, format_error, process_error,
+    photo_uploaded, photo_annotated_uploaded, upload_at_least_one,
+    save_error, network_error, save_success, wa_language_updated,
+    language_update_error, reminder_prefs_updated, reminder_prefs_error
+
+  settings (סעיף חדש — 3 מפתחות):
+    wa_language_title, wa_language_desc, saving
+
+================================================================================
+3. קבצי שפה חדשים — ar.json / zh.json
+================================================================================
+
+  - 171 שורות כל אחד
+  - מכילים את כל הסעיפים של he.json בתרגום ערבית/סינית
+  - מסומנים עם _review_status: "ai_generated_needs_native_review"
+  - דורשים בדיקת דובר שפת אם לפני שימוש בפרודקשן
+
+================================================================================
+4. App.js — סנכרון שפה לפי תפקיד
+================================================================================
+
+שינויים:
+  - import של setLanguage מ-i18n
+  - useEffect חדש ב-ProtectedRoute:
+      • אם user.role === 'contractor': מפעיל setLanguage(preferred_language)
+      • אם תפקיד אחר (PM/admin): מאלץ setLanguage('he')
+  - מבטיח שמנהלים תמיד רואים ממשק בעברית
+
+================================================================================
+5. AuthContext.js — שפה בהתחברות
+================================================================================
+
+שינויים (3 נקודות כניסה):
+  - fetchCurrentUser: אם role=contractor ויש preferred_language → setLanguage
+  - login (סיסמה): אם role=contractor ויש preferred_language → setLanguage
+  - loginWithOtp: אם role=contractor ויש preferred_language → setLanguage
+  - בכל המקרים: setLanguage נקרא *לפני* setUser (מבטיח render ראשון בשפה הנכונה)
+
+================================================================================
+6. TaskDetailPage.js — תרגום ~45 מחרוזות
+================================================================================
+
+שינויים מבניים:
+  - STATUS_CONFIG ו-PRIORITY_CONFIG שופצו:
+      • הפרדת label מ-color/icon
+      • STATUS_COLORS ו-PRIORITY_COLORS שומרים עיצוב בלבד
+      • getStatusConfig(key) ו-getPriorityConfig(key) מחזירים label מתורגם
+      • STATUS_CONFIG ו-PRIORITY_CONFIG כעת Proxy objects עם get דינמי
+        (תואמות לאחור — כל קוד שמשתמש ב-STATUS_CONFIG[s].label עדיין עובד)
+
+מחרוזות שהוחלפו ב-t():
+  - כפתורי חזרה: "חזרה לליקויים שלי" / "חזרה למרכז ניהול" / "חזרה לרשימת ליקויים"
+  - מצבי שגיאה (404/403/כללי): כותרת + תיאור + כפתור "נסה שוב"
+  - כרטיס מיקום: "מיקום", "דירה"
+  - כרטיס שיוך: "שיוך", "חברה:", "קבלן:", "לא שויך", "קבלן משויך"
+  - אזור העלאת הוכחות: כותרת, תיאור, כפתורי "צלם"/"מגלריה"/"שלח",
+    ספירת תמונות, הערת ביצוע placeholder, מצב "מעלה"/"שולח"
+  - נעילת הוכחות: "ממתין לאישור" / "ליקוי סגור"
+  - אזור תמונות: "תמונות פתיחה", "הוכחות קבלן", "צפייה", "הורדה"
+  - השוואה: "לפני", "אחרי", "השוואה — לפני / אחרי"
+  - ציר זמן: "ציר זמן", "ליקוי נפתח"
+  - עדכונים/תגובות: כותרת, "אין עדכונים", placeholder "הוסף תגובה"
+  - פוטר: "נוצר:", "עודכן:"
+  - מודל תמונה: sr-only title/desc, alt text
+  - Toast messages: כל הודעות ההצלחה/שגיאה (~15 הודעות)
+  - toLocaleString: שימוש ב-getLocale() במקום 'he-IL' hardcoded
+
+================================================================================
+7. AccountSettingsPage.js — הגדרות שפה
+================================================================================
+
+שינויים:
+  - import של t ו-setLanguage מ-i18n
+  - כותרת "שפת הודעות WhatsApp" → t('settings', 'wa_language_title')
+  - תיאור → t('settings', 'wa_language_desc')
+  - הודעת הצלחה → t('toasts', 'wa_language_updated')
+  - הודעת שגיאה → t('toasts', 'language_update_error')
+  - טקסט "שומר..." → t('settings', 'saving')
+  - שינוי שפה מפעיל setLanguage + reload *רק* לקבלנים
+    (מנהלים — רק שומר preference לשרת, ללא שינוי UI)
+
+================================================================================
+8. RegisterPage.js — זיהוי שפה אוטומטי
+================================================================================
+
+שינויים:
+  - פונקציה חדשה: detectLanguage()
+      • קורא navigator.language
+      • ממפה ar* → ar, zh* → zh, en* → en, אחרת → he
+  - מוסיף preferred_language: detectLanguage() ל-registration payload
+  - קבלן חדש שנרשם יקבל שפה מותאמת אוטומטית
+
+================================================================================
+9. הגנות ופוליסות
+================================================================================
+
+  - שפת UI משתנה רק לקבלנים — PM/admin תמיד רואים עברית
+  - fallback chain מבטיח שמפתח חסר תמיד מציג עברית (ולא מפתח גולמי)
+  - ar.json / zh.json מסומנים כ-AI generated — דורשים review לפני שימוש
+  - RTL לא משתנה — כל השפות נשארות RTL (אין שינוי dir)
+  - אין שינויי אבטחה, הרשאות, או API
+
+================================================================================
