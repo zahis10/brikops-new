@@ -715,6 +715,8 @@ const OnboardingPage = () => {
         <input
           id="onb-otp"
           type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
           value={otpCode}
           onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
           placeholder="123456"

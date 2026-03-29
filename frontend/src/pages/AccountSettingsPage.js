@@ -279,6 +279,7 @@ const DeleteAccountSection = ({ user }) => {
                 <input
                   type="text"
                   inputMode="numeric"
+                  autoComplete="one-time-code"
                   maxLength={6}
                   value={otpCode}
                   onChange={e => { setOtpCode(e.target.value.replace(/\D/g, '')); setError(''); }}

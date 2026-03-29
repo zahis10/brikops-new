@@ -207,7 +207,7 @@ class OTPService:
                     )
                     await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'sms_not_configured', 'rid': rid})
                 else:
-                    text = f"BrikOps: קוד האימות שלך הוא {code}. בתוקף {self.ttl_seconds // 60} דקות."
+                    text = f"BrikOps: קוד האימות שלך הוא {code}. בתוקף {self.ttl_seconds // 60} דקות.\n\n@app.brikops.com #{code}"
                     logger.info(f"[OTP] rid={rid} sending SMS to {masked}")
 
                     t_sms = _time.perf_counter()
