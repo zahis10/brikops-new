@@ -81,11 +81,15 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   const { user, loading, token, networkError } = useAuth();
   const location = useLocation();
 
+  const userRole = user?.role;
+  const userLang = user?.preferred_language;
   useEffect(() => {
-    if (user?.preferred_language) {
-      setLanguage(user.preferred_language);
+    if (userRole === 'contractor' && userLang) {
+      setLanguage(userLang);
+    } else if (userRole && userRole !== 'contractor') {
+      setLanguage('he');
     }
-  }, [user?.preferred_language]);
+  }, [userLang, userRole]);
 
   if (loading) {
     return <LoadingSpinner />;

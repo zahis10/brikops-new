@@ -90,7 +90,7 @@ export const AuthProvider = ({ children }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const userData = response.data;
-      if (userData.preferred_language) {
+      if (userData.role === 'contractor' && userData.preferred_language) {
         setLanguage(userData.preferred_language);
       }
       setUser(userData);
@@ -158,7 +158,7 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: 'תגובה לא תקינה מהשרת' };
       }
       const { token: newToken, user: userData, platform_role } = data;
-      if (userData?.preferred_language) {
+      if (userData?.role === 'contractor' && userData?.preferred_language) {
         setLanguage(userData.preferred_language);
       }
       setToken(newToken);
@@ -177,7 +177,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const loginWithOtp = (newToken, userData, platformRole) => {
-    if (userData?.preferred_language) {
+    if (userData?.role === 'contractor' && userData?.preferred_language) {
       setLanguage(userData.preferred_language);
     }
     setToken(newToken);

@@ -731,9 +731,13 @@ const AccountSettingsPage = () => {
               try {
                 await authService.updateMyPreferredLanguage(newLang);
                 setWaLang(newLang);
-                setLanguage(newLang);
+                if (user?.role === 'contractor') {
+                  setLanguage(newLang);
+                }
                 toast.success(t('toasts', 'wa_language_updated'));
-                window.location.reload();
+                if (user?.role === 'contractor') {
+                  window.location.reload();
+                }
               } catch (err) {
                 toast.error(err.response?.data?.detail || t('toasts', 'language_update_error'));
               } finally {
