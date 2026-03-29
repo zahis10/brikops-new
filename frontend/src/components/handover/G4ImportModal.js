@@ -162,17 +162,19 @@ export default function G4ImportModal({ projectId, onClose }) {
     }
     const status = item.match?.status;
     if (status === 'matched') {
+      const label = [item.match?.building_name, item.match?.unit_label].filter(Boolean).join(' / ');
       return (
         <span className="inline-flex items-center gap-0.5 text-emerald-600 text-[10px]">
           <CheckCircle2 className="w-3 h-3" />
-          {item.match?.building_name && <span>{item.match.building_name}</span>}
+          {label && <span>{label}</span>}
         </span>
       );
     }
     if (status === 'overwrite') {
+      const label = [item.match?.building_name, item.match?.unit_label].filter(Boolean).join(' / ');
       return (
         <span className="inline-flex items-center gap-0.5 text-amber-600 text-[10px]">
-          <RefreshCw className="w-3 h-3" /> יוחלף
+          <RefreshCw className="w-3 h-3" /> יוחלף {label && `(${label})`}
         </span>
       );
     }

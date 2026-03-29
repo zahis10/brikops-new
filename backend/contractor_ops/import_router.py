@@ -690,9 +690,7 @@ async def execute_import(
             row_errors.append("שם רוכש חסר")
 
         submitted_uid = (row_data.get("unit_id") or "").strip()
-        if not submitted_uid:
-            row_errors.append("יחידה לא שויכה — יש לוודא שהשורה תואמה בתצוגה מקדימה")
-        elif submitted_uid not in valid_unit_ids:
+        if submitted_uid and submitted_uid not in valid_unit_ids:
             row_errors.append("יחידה לא נמצאה בפרויקט")
 
         if row_errors:
@@ -741,7 +739,14 @@ async def execute_import(
             "import_batch_id": batch_id,
         }
 
-        upsert_filter = {"project_id": project_id, "unit_id": submitted_uid}
+        if submitted_uid:
+            upsert_filter = {"project_id": project_id, "unit_id": submitted_uid}
+        else:
+            upsert_filter = {
+                "project_id": project_id,
+                "building_name": doc["building_name"],
+                "apartment_number": doc["apartment_number"],
+            }
 
         try:
             await db.unit_tenant_data.update_one(
