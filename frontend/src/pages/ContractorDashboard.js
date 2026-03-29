@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { projectService, taskService } from '../services/api';
-import { tCategory, tStatus, tPriority, t } from '../i18n';
+import { tCategory, tStatus, tPriority, t, getLanguage } from '../i18n';
 import { toast } from 'sonner';
 import {
   LogOut, Clock, CheckCircle2, AlertTriangle,
@@ -102,6 +102,7 @@ function TaskCardSkeleton() {
 const ContractorDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const lang = getLanguage();
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState(null);
@@ -528,7 +529,7 @@ const ContractorDashboard = () => {
                     <p className="text-sm text-slate-600 line-through truncate">{task.title}</p>
                     <p className="text-[11px] text-slate-400">
                       {task.project_name && <span>{task.project_name}</span>}
-                      {task.updated_at && <span> · {new Date(task.updated_at).toLocaleDateString('he-IL')}</span>}
+                      {task.updated_at && <span> · {new Date(task.updated_at).toLocaleDateString(lang === 'en' ? 'en-US' : lang === 'ar' ? 'ar-SA' : lang === 'zh' ? 'zh-CN' : 'he-IL')}</span>}
                     </p>
                   </div>
                   <ChevronLeft className="w-4 h-4 text-slate-300 flex-shrink-0" />

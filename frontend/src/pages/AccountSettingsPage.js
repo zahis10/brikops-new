@@ -288,7 +288,7 @@ const DeleteAccountSection = ({ user }) => {
                   dir="ltr"
                 />
                 {otpDebugCode && (
-                  <p className="text-xs text-slate-400 text-center mt-1">(dev) קוד: {otpDebugCode}</p>
+                  <p className="text-xs text-slate-400 text-center mt-1">(dev) OTP: {otpDebugCode}</p>
                 )}
               </div>
             )}
