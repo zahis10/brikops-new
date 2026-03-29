@@ -41,18 +41,6 @@ HEADER_ALIASES = {
 
 REQUIRED_COLUMNS = {"apartment", "tenant_name"}
 
-LEGACY_COLUMN_MAP = {
-    0: "building",
-    1: "floor",
-    2: "apartment",
-    3: "tenant_name",
-    4: "tenant_id",
-    5: "tenant_phone",
-    6: "tenant_email",
-    7: "tenant_2_name",
-    8: "tenant_2_id",
-}
-
 
 def _normalize_header(h):
     if h is None:
