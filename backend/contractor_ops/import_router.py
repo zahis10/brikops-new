@@ -78,12 +78,15 @@ def _detect_columns(header_cells: list) -> dict:
             if matched_key:
                 break
         if not matched_key:
+            norm_tokens = set(re.split(r'[\s/\-_]+', norm))
             candidate_groups = []
             for key, aliases in HEADER_ALIASES.items():
                 if key in col_map:
                     continue
                 for alias in aliases:
-                    if alias.lower() in norm:
+                    alias_lower = alias.lower()
+                    alias_tokens = set(re.split(r'[\s/\-_]+', alias_lower))
+                    if len(alias_tokens) >= 2 and alias_tokens.issubset(norm_tokens):
                         candidate_groups.append(key)
                         break
             if len(candidate_groups) == 1:
@@ -687,7 +690,9 @@ async def execute_import(
             row_errors.append("שם רוכש חסר")
 
         submitted_uid = (row_data.get("unit_id") or "").strip()
-        if submitted_uid and submitted_uid not in valid_unit_ids:
+        if not submitted_uid:
+            row_errors.append("יחידה לא שויכה — יש לוודא שהשורה תואמה בתצוגה מקדימה")
+        elif submitted_uid not in valid_unit_ids:
             row_errors.append("יחידה לא נמצאה בפרויקט")
 
         if row_errors:
@@ -736,14 +741,7 @@ async def execute_import(
             "import_batch_id": batch_id,
         }
 
-        if submitted_uid:
-            upsert_filter = {"project_id": project_id, "unit_id": submitted_uid}
-        else:
-            upsert_filter = {
-                "project_id": project_id,
-                "building_name": doc["building_name"],
-                "apartment_number": doc["apartment_number"],
-            }
+        upsert_filter = {"project_id": project_id, "unit_id": submitted_uid}
 
         try:
             await db.unit_tenant_data.update_one(
