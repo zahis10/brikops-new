@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { tCategory, tStatus, tPriority } from '../i18n';
+import { t, tCategory, tStatus, tPriority, getLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
 import { taskService, companyService, notificationService, projectService, tradeService, projectCompanyService } from '../services/api';
 import { toast } from 'sonner';
@@ -19,25 +19,39 @@ import { Card } from '../components/ui/card';
 
 const PhotoAnnotation = React.lazy(() => import('../components/PhotoAnnotation'));
 
-const STATUS_CONFIG = {
-  open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700', icon: CircleDot },
-  assigned: { label: 'שויך', color: 'bg-purple-100 text-purple-700', icon: User },
-  in_progress: { label: 'בביצוע', color: 'bg-amber-100 text-amber-700', icon: RefreshCw },
-  waiting_verify: { label: 'ממתין לאימות', color: 'bg-orange-100 text-orange-700', icon: Eye },
-  pending_contractor_proof: { label: 'ממתין להוכחת קבלן', color: 'bg-orange-100 text-orange-700', icon: Camera },
-  pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-indigo-100 text-indigo-700', icon: ShieldCheck },
-  returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700', icon: ArrowDownCircle },
-  closed: { label: 'סגור', color: 'bg-green-100 text-green-700', icon: CheckCircle },
-  approved: { label: 'אושר', color: 'bg-green-100 text-green-700', icon: CheckCircle },
-  reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700', icon: RefreshCw },
+const STATUS_COLORS = {
+  open: { color: 'bg-blue-100 text-blue-700', icon: CircleDot },
+  assigned: { color: 'bg-purple-100 text-purple-700', icon: User },
+  in_progress: { color: 'bg-amber-100 text-amber-700', icon: RefreshCw },
+  waiting_verify: { color: 'bg-orange-100 text-orange-700', icon: Eye },
+  pending_contractor_proof: { color: 'bg-orange-100 text-orange-700', icon: Camera },
+  pending_manager_approval: { color: 'bg-indigo-100 text-indigo-700', icon: ShieldCheck },
+  returned_to_contractor: { color: 'bg-rose-100 text-rose-700', icon: ArrowDownCircle },
+  closed: { color: 'bg-green-100 text-green-700', icon: CheckCircle },
+  approved: { color: 'bg-green-100 text-green-700', icon: CheckCircle },
+  reopened: { color: 'bg-red-100 text-red-700', icon: RefreshCw },
 };
 
-const PRIORITY_CONFIG = {
-  low: { label: 'נמוך', color: 'bg-slate-100 text-slate-600' },
-  medium: { label: 'בינוני', color: 'bg-blue-100 text-blue-600' },
-  high: { label: 'גבוה', color: 'bg-amber-100 text-amber-600' },
-  critical: { label: 'קריטי', color: 'bg-red-100 text-red-600' },
+const PRIORITY_COLORS = {
+  low: { color: 'bg-slate-100 text-slate-600' },
+  medium: { color: 'bg-blue-100 text-blue-600' },
+  high: { color: 'bg-amber-100 text-amber-600' },
+  critical: { color: 'bg-red-100 text-red-600' },
 };
+
+const getStatusConfig = (key) => ({
+  label: tStatus(key),
+  color: STATUS_COLORS[key]?.color || 'bg-slate-100',
+  icon: STATUS_COLORS[key]?.icon || CircleDot,
+});
+
+const getPriorityConfig = (key) => ({
+  label: tPriority(key),
+  color: PRIORITY_COLORS[key]?.color || 'bg-slate-100',
+});
+
+const STATUS_CONFIG = new Proxy({}, { get: (_, key) => getStatusConfig(key) });
+const PRIORITY_CONFIG = new Proxy({}, { get: (_, key) => getPriorityConfig(key) });
 
 const NOTIF_STATUS_CONFIG = {
   queued: { label: 'בתור', color: 'text-blue-600', icon: Clock },
@@ -246,16 +260,16 @@ const TaskDetailPage = () => {
       }
     } catch (err) {
       if (err?.response?.status === 404) {
-        toast.error('הליקוי לא נמצא');
+        toast.error(t('toasts', 'not_found'));
         setErrorState('not_found');
       } else if (err?.response?.status === 403) {
-        toast.error('אין לך הרשאה לצפות בליקוי זה');
+        toast.error(t('toasts', 'forbidden'));
         setErrorState('forbidden');
       } else {
         const serverMsg = err.response?.data?.detail;
         const isHebrew = /[\u0590-\u05FF]/.test(serverMsg);
         console.error('[TASK_LOAD]', err.response?.status, err.response?.data, err.message);
-        toast.error(isHebrew ? serverMsg : 'שגיאה בטעינת הליקוי');
+        toast.error(isHebrew ? serverMsg : t('toasts', 'load_error'));
         setErrorState('load_error');
       }
     } finally {
@@ -282,9 +296,9 @@ const TaskDetailPage = () => {
       setComment('');
       const updatesData = await taskService.getUpdates(id);
       setUpdates(updatesData);
-      toast.success('תגובה נוספה');
+      toast.success(t('toasts', 'save_success'));
     } catch (err) {
-      toast.error('שגיאה בהוספת תגובה');
+      toast.error(t('toasts', 'network_error'));
     } finally {
       setSending(false);
     }
@@ -341,11 +355,11 @@ const TaskDetailPage = () => {
       setPendingProofFile(stableFile);
     } catch (err) {
       if (err?.code === 'UNSUPPORTED_FORMAT') {
-        toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
+        toast.error(t('toasts', 'format_error'));
         console.error('[COMPRESS] HEIC/unsupported:', err.original);
       } else {
         console.error('[proof:file] failed to process image:', err);
-        toast.error('שגיאה בעיבוד התמונה. נסה שוב.');
+        toast.error(t('toasts', 'process_error'));
       }
     } finally {
       proofProcessingRef.current = false;
@@ -361,7 +375,7 @@ const TaskDetailPage = () => {
         const slice = fileToUpload.slice(0, 1);
         await slice.arrayBuffer();
       } catch {
-        toast.error('התמונה אבדה, נא לצרף מחדש');
+        toast.error(t('toasts', 'photo_lost'));
         setPendingProofFile(null);
         return;
       }
@@ -374,7 +388,7 @@ const TaskDetailPage = () => {
       setPendingProofFile(null);
     } catch (err) {
       console.error('[proof:annotation] save failed:', err);
-      toast.error('שגיאה בשמירת התמונה');
+      toast.error(t('toasts', 'save_error'));
     }
   }, [pendingProofFile]);
 
@@ -464,29 +478,29 @@ const TaskDetailPage = () => {
 
   const handleSubmitProof = async () => {
     if (proofFiles.length === 0) {
-      toast.error('יש להעלות לפחות תמונת תיקון אחת');
+      toast.error(t('toasts', 'upload_at_least_one'));
       return;
     }
     const files = proofFiles.map(f => f.file);
     setSubmittingProof(true);
     try {
       const result = await taskService.submitContractorProof(id, files, proofNote);
-      toast.success(result.message || 'נשלח לאישור מנהל');
+      toast.success(result.message || t('toasts', 'proof_sent'));
       proofFiles.forEach(pf => { if (pf.preview) URL.revokeObjectURL(pf.preview); });
       setProofFiles([]);
       setProofNote('');
       await loadTask();
     } catch (err) {
       if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
-        toast.error('הזמן הקצוב לשליחה עבר. בדוק חיבור אינטרנט ונסה שוב.');
+        toast.error(t('toasts', 'upload_timeout'));
       } else if (!err?.response) {
-        toast.error('בעיית תקשורת. בדוק חיבור לאינטרנט');
+        toast.error(t('toasts', 'network_error'));
       } else if (err.response?.status === 400) {
-        toast.error(err.response?.data?.detail || 'שגיאה בנתונים שנשלחו');
+        toast.error(err.response?.data?.detail || t('toasts', 'upload_error'));
       } else if (err.response?.status >= 500) {
-        toast.error('שגיאה בשרת. נסה שוב בעוד רגע.');
+        toast.error(t('toasts', 'upload_error'));
       } else {
-        toast.error(err.response?.data?.detail || 'שגיאה בשליחת הוכחת תיקון');
+        toast.error(err.response?.data?.detail || t('toasts', 'upload_error'));
       }
     } finally {
       setSubmittingProof(false);
@@ -701,24 +715,24 @@ const TaskDetailPage = () => {
             <AlertTriangle className="w-16 h-16 text-amber-400 mx-auto" />
           )}
           <h2 className="text-xl font-bold text-slate-700">
-            {isForbidden ? 'אין לך הרשאה לצפות בליקוי הזה' : isLoadError ? 'שגיאה בטעינת הליקוי' : 'הליקוי לא קיים או הוסר'}
+            {isForbidden ? t('taskDetail', 'error_forbidden') : isLoadError ? t('taskDetail', 'error_load') : t('taskDetail', 'error_not_found')}
           </h2>
           <p className="text-slate-500 text-sm">
-            {isForbidden ? 'ליקוי זה שייך לפרויקט שאין לך גישה אליו' : isLoadError ? 'בדוק את החיבור לאינטרנט ונסה שוב' : 'ייתכן שהליקוי נמחק או שהקישור אינו תקין'}
+            {isForbidden ? t('taskDetail', 'error_forbidden_desc') : isLoadError ? t('taskDetail', 'error_load_desc') : t('taskDetail', 'error_not_found_desc')}
           </p>
           {isLoadError ? (
             <Button
               onClick={() => { setErrorState(null); setLoading(true); loadTask(); }}
               className="bg-amber-500 hover:bg-amber-600 text-white mt-4"
             >
-              נסה שוב
+              {t('taskDetail', 'retry')}
             </Button>
           ) : (
             <Button
               onClick={() => navigate(errorBackUrl)}
               className="bg-amber-500 hover:bg-amber-600 text-white mt-4"
             >
-              חזרה לליקויים שלי
+              {t('taskDetail', 'back_to_my_defects')}
             </Button>
           )}
         </div>
@@ -784,8 +798,8 @@ const TaskDetailPage = () => {
           >
             {(() => {
               const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
-              if (externalEntry && !location.state?.returnTo) return 'חזרה לליקויים שלי';
-              return rt && rt.includes('/dashboard') ? 'חזרה למרכז ניהול' : 'חזרה לרשימת ליקויים';
+              if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects');
+              return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list');
             })()}
             <ArrowRight className="w-4 h-4" />
           </button>
@@ -886,32 +900,32 @@ const TaskDetailPage = () => {
           if (!beforePhoto?.attachment_url || !afterPhoto?.attachment_url) return null;
           const fmtDate = (d) => {
             if (!d) return '';
-            try { return new Date(d).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; }
+            try { return new Date(d).toLocaleDateString(getLocale() === 'he' ? 'he-IL' : getLocale(), { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; }
           };
           return (
             <Card className="p-4 rounded-xl shadow-sm">
               <h3 className="text-sm font-semibold text-slate-600 mb-3 flex items-center gap-2">
-                📸 השוואה — לפני / אחרי
+                📸 {t('taskDetail', 'comparison_title')}
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col items-center">
                   <img
                     src={beforePhoto.attachment_url}
-                    alt="לפני"
+                    alt={t('taskDetail', 'before')}
                     className="w-full h-48 object-cover rounded-lg border-2 border-red-50 cursor-pointer"
                     onClick={() => setImageModal(beforePhoto.attachment_url)}
                   />
-                  <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-red-100 text-red-600">לפני</span>
+                  <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-red-100 text-red-600">{t('taskDetail', 'before')}</span>
                   {beforePhoto.created_at && <span className="text-[11px] text-slate-400 mt-1">{fmtDate(beforePhoto.created_at)}</span>}
                 </div>
                 <div className="flex flex-col items-center">
                   <img
                     src={afterPhoto.attachment_url}
-                    alt="אחרי"
+                    alt={t('taskDetail', 'after')}
                     className="w-full h-48 object-cover rounded-lg border-2 border-green-50 cursor-pointer"
                     onClick={() => setImageModal(afterPhoto.attachment_url)}
                   />
-                  <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-green-100 text-green-600">אחרי</span>
+                  <span className="mt-2 px-3 py-1 text-xs font-medium rounded-full bg-green-100 text-green-600">{t('taskDetail', 'after')}</span>
                   {afterPhoto.created_at && <span className="text-[11px] text-slate-400 mt-1">{fmtDate(afterPhoto.created_at)}</span>}
                 </div>
               </div>
@@ -922,7 +936,7 @@ const TaskDetailPage = () => {
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
             <Building2 className="w-4 h-4" />
-            מיקום
+            {t('taskDetail', 'location')}
           </h3>
           <div className="flex items-center gap-2 text-sm text-slate-700 flex-wrap">
             {task.project_name && (
@@ -948,7 +962,7 @@ const TaskDetailPage = () => {
               <>
                 <ChevronRight className="w-3 h-3 text-slate-400 rtl:rotate-180" />
                 <span className="bg-slate-100 px-2 py-1 rounded flex items-center gap-1">
-                  <DoorOpen className="w-3 h-3" /> דירה {task.unit_name}
+                  <DoorOpen className="w-3 h-3" /> {t('taskDetail', 'unit')} {task.unit_name}
                 </span>
               </>
             )}
@@ -958,21 +972,21 @@ const TaskDetailPage = () => {
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
             <Briefcase className="w-4 h-4" />
-            שיוך
+            {t('taskDetail', 'assignment')}
           </h3>
           <div className="space-y-2 text-sm">
             <div className="flex items-center gap-2">
               <Briefcase className="w-4 h-4 text-slate-400" />
-              <span className="text-slate-600">חברה:</span>
-              <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || 'לא שויך'}</span>
+              <span className="text-slate-600">{t('taskDetail', 'company')}</span>
+              <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || t('taskDetail', 'not_assigned')}</span>
             </div>
             <div className="flex items-center gap-2">
               <User className="w-4 h-4 text-slate-400" />
-              <span className="text-slate-600">קבלן:</span>
+              <span className="text-slate-600">{t('taskDetail', 'contractor')}</span>
               <span className="font-medium">
                 {task.assignee_id
-                  ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך')
-                  : 'לא שויך'}
+                  ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || t('taskDetail', 'assigned_contractor'))
+                  : t('taskDetail', 'not_assigned')}
               </span>
             </div>
           </div>
@@ -1201,10 +1215,10 @@ const TaskDetailPage = () => {
           <Card className="p-6 border-2 border-amber-400 bg-amber-50 shadow-md">
             <h3 className="text-base font-bold text-amber-800 mb-2 flex items-center gap-2">
               <Camera className="w-5 h-5" />
-              העלאת תמונות תיקון
+              {t('taskDetail', 'upload_proof_title')}
             </h3>
             <p className="text-sm text-amber-700 mb-4">
-              צלם או העלה תמונות של התיקון שבוצע ושלח לאישור המנהל
+              {t('taskDetail', 'upload_proof_desc')}
             </p>
 
             <input ref={proofCameraRef} type="file" accept="image/*" capture="environment" onChange={handleProofFileChange} className="hidden" />
@@ -1214,7 +1228,7 @@ const TaskDetailPage = () => {
               <div className="mb-4 grid grid-cols-2 gap-3">
                 {proofFiles.map((pf) => (
                   <div key={pf.id} className="relative group">
-                    <img src={pf.preview} alt="תצוגה מקדימה" className="w-full h-32 object-cover rounded-xl border-2 border-amber-300 bg-white" />
+                    <img src={pf.preview} alt={t('taskDetail', 'preview')} className="w-full h-32 object-cover rounded-xl border-2 border-amber-300 bg-white" />
                     <button
                       onClick={() => removeProofFile(pf.id)}
                       className="absolute top-1 left-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-md hover:bg-red-600 transition-colors"
@@ -1232,26 +1246,26 @@ const TaskDetailPage = () => {
                 className="flex-1 py-5 border-2 border-dashed border-amber-400 rounded-xl bg-white hover:bg-amber-50 transition-colors flex flex-col items-center gap-2"
               >
                 <Camera className="w-8 h-8 text-amber-500" />
-                <span className="text-sm font-semibold text-amber-700">צלם תמונה</span>
+                <span className="text-sm font-semibold text-amber-700">{t('taskDetail', 'take_photo')}</span>
               </button>
               <button
                 onClick={() => proofGalleryRef.current?.click()}
                 className="flex-1 py-5 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 transition-colors flex flex-col items-center gap-2"
               >
                 <Upload className="w-8 h-8 text-slate-400" />
-                <span className="text-sm font-semibold text-slate-600">בחר מגלריה</span>
+                <span className="text-sm font-semibold text-slate-600">{t('taskDetail', 'from_gallery')}</span>
               </button>
             </div>
 
             {proofFiles.length > 0 && (
-              <p className="text-xs text-amber-600 mb-3 text-center font-medium">{proofFiles.length} תמונ{proofFiles.length === 1 ? 'ה' : 'ות'} נבחר{proofFiles.length === 1 ? 'ה' : 'ו'}</p>
+              <p className="text-xs text-amber-600 mb-3 text-center font-medium">{proofFiles.length} {proofFiles.length === 1 ? t('taskDetail', 'photos_selected_one') : t('taskDetail', 'photos_selected_other')}</p>
             )}
 
             <input
               type="text"
               value={proofNote}
               onChange={e => setProofNote(e.target.value)}
-              placeholder="הערת ביצוע (אופציונלי)..."
+              placeholder={t('taskDetail', 'execution_note_placeholder')}
               className="w-full px-4 py-3 border border-amber-300 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white mb-4"
             />
 
@@ -1261,7 +1275,7 @@ const TaskDetailPage = () => {
               className="w-full h-12 text-base font-bold bg-amber-500 hover:bg-amber-600 text-white gap-2 rounded-xl shadow-sm"
             >
               <Send className="w-5 h-5" />
-              {submittingProof ? 'שולח...' : `שלח ${proofFiles.length > 0 ? `(${proofFiles.length}) ` : ''}לאישור מנהל`}
+              {submittingProof ? t('taskDetail', 'submitting') : `${t('taskDetail', 'submit_proof')}${proofFiles.length > 0 ? ` (${proofFiles.length})` : ''}`}
             </Button>
           </Card>
         )}
@@ -1272,8 +1286,8 @@ const TaskDetailPage = () => {
               <ShieldCheck className="w-5 h-5" />
               <span className="text-sm font-medium">
                 {task.status === 'pending_manager_approval'
-                  ? 'ההוכחה נשלחה — ממתין לאישור מנהל'
-                  : 'הליקוי סגור — לא ניתן להעלות הוכחה'}
+                  ? t('taskDetail', 'proof_locked_pending')
+                  : t('taskDetail', 'proof_locked_closed')}
               </span>
             </div>
           </Card>
@@ -1283,7 +1297,7 @@ const TaskDetailPage = () => {
           <Card className="p-5">
             <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
               <Camera className="w-4 h-4" />
-              תמונות פתיחה ({openingAttachments.length})
+              {t('taskDetail', 'opening_photos')} ({openingAttachments.length})
             </h3>
             <div className="space-y-3">
               {openingAttachments.map((att, i) => (
@@ -1294,7 +1308,7 @@ const TaskDetailPage = () => {
                   >
                     <img
                       src={att.attachment_url}
-                      alt={`תמונת פתיחה ${i + 1}`}
+                      alt={`${t('taskDetail', 'opening_photos')} ${i + 1}`}
                       className="w-full h-full object-cover"
                       onError={e => { e.target.style.display = 'none'; }}
                     />
@@ -1302,12 +1316,12 @@ const TaskDetailPage = () => {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
                       <User className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="text-sm font-medium text-slate-700">{att.user_name || 'לא ידוע'}</span>
+                      <span className="text-sm font-medium text-slate-700">{att.user_name || t('taskDetail', 'unknown_user')}</span>
                     </div>
                     <div className="flex items-center gap-1.5 mb-2">
                       <Clock className="w-3.5 h-3.5 text-slate-400" />
                       <span className="text-xs text-slate-500">
-                        {att.created_at ? new Date(att.created_at).toLocaleString('he-IL') : ''}
+                        {att.created_at ? new Date(att.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale()) : ''}
                       </span>
                     </div>
                     <div className="flex gap-2">
@@ -1316,7 +1330,7 @@ const TaskDetailPage = () => {
                         className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        צפייה
+                        {t('taskDetail', 'view')}
                       </button>
                       <a
                         href={att.attachment_url}
@@ -1326,7 +1340,7 @@ const TaskDetailPage = () => {
                         className="flex items-center gap-1 text-xs text-green-600 hover:text-green-800"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        הורדה
+                        {t('taskDetail', 'download')}
                       </a>
                     </div>
                   </div>
@@ -1360,7 +1374,7 @@ const TaskDetailPage = () => {
           <Card className="p-5">
             <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
               <Camera className="w-4 h-4" />
-              הוכחות קבלן ({attachments.length})
+              {t('taskDetail', 'contractor_proofs')} ({attachments.length})
             </h3>
             <div className="space-y-3">
               {attachments.map((att, i) => (
@@ -1371,7 +1385,7 @@ const TaskDetailPage = () => {
                   >
                     <img
                       src={att.attachment_url}
-                      alt={`הוכחה ${i + 1}`}
+                      alt={`${t('taskDetail', 'contractor_proofs')} ${i + 1}`}
                       className="w-full h-full object-cover"
                       onError={e => { e.target.style.display = 'none'; }}
                     />
@@ -1379,12 +1393,12 @@ const TaskDetailPage = () => {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
                       <User className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="text-sm font-medium text-slate-700">{att.user_name || 'לא ידוע'}</span>
+                      <span className="text-sm font-medium text-slate-700">{att.user_name || t('taskDetail', 'unknown_user')}</span>
                     </div>
                     <div className="flex items-center gap-1.5 mb-2">
                       <Clock className="w-3.5 h-3.5 text-slate-400" />
                       <span className="text-xs text-slate-500">
-                        {att.created_at ? new Date(att.created_at).toLocaleString('he-IL') : ''}
+                        {att.created_at ? new Date(att.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale()) : ''}
                       </span>
                     </div>
                     {att.content && att.content !== 'הוכחת תיקון מקבלן' && (
@@ -1396,7 +1410,7 @@ const TaskDetailPage = () => {
                         className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        צפייה
+                        {t('taskDetail', 'view')}
                       </button>
                       <a
                         href={att.attachment_url}
@@ -1406,7 +1420,7 @@ const TaskDetailPage = () => {
                         className="flex items-center gap-1 text-xs text-green-600 hover:text-green-800"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        הורדה
+                        {t('taskDetail', 'download')}
                       </a>
                     </div>
                   </div>
@@ -1459,7 +1473,7 @@ const TaskDetailPage = () => {
           <Card className="p-5">
             <h3 className="text-sm font-semibold text-slate-500 mb-4 flex items-center gap-2">
               <Clock className="w-4 h-4" />
-              ציר זמן
+              {t('taskDetail', 'timeline')}
             </h3>
             <div className="relative pr-6">
               <div className="absolute right-2.5 top-0 bottom-0 w-0.5 bg-slate-200" />
@@ -1470,10 +1484,10 @@ const TaskDetailPage = () => {
                 </div>
                 <div className="mr-4 pb-2">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-sm font-medium text-slate-700">ליקוי נפתח</span>
+                    <span className="text-sm font-medium text-slate-700">{t('taskDetail', 'defect_opened')}</span>
                   </div>
                   <span className="text-xs text-slate-400">
-                    {new Date(task.created_at).toLocaleString('he-IL')}
+                    {new Date(task.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale())}
                   </span>
                 </div>
               </div>
@@ -1507,7 +1521,7 @@ const TaskDetailPage = () => {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-slate-400">
-                          {evt.created_at ? new Date(evt.created_at).toLocaleString('he-IL') : ''}
+                          {evt.created_at ? new Date(evt.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale()) : ''}
                         </span>
                         {evt.user_name && (
                           <span className="text-xs text-slate-400">• {evt.user_name}</span>
@@ -1639,17 +1653,17 @@ const TaskDetailPage = () => {
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-slate-500 mb-3 flex items-center gap-2">
             <MessageSquare className="w-4 h-4" />
-            עדכונים ({comments.length})
+            {t('taskDetail', 'updates')} ({comments.length})
           </h3>
           <div className="space-y-3">
             {comments.length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-4">אין עדכונים עדיין</p>
+              <p className="text-sm text-slate-400 text-center py-4">{t('taskDetail', 'no_updates')}</p>
             )}
             {comments.map(u => (
               <div key={u.id} className="border-b border-slate-100 pb-3 last:border-0">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-slate-400">
-                    {new Date(u.created_at).toLocaleString('he-IL')}
+                    {new Date(u.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale())}
                   </span>
                   <span className="text-sm font-medium text-slate-700">{u.user_name}</span>
                 </div>
@@ -1683,7 +1697,7 @@ const TaskDetailPage = () => {
                 value={comment}
                 onChange={e => setComment(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddComment()}
-                placeholder="הוסף תגובה..."
+                placeholder={t('taskDetail', 'add_comment_placeholder')}
                 className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
               />
             </div>
@@ -1692,8 +1706,8 @@ const TaskDetailPage = () => {
 
         <div className="text-xs text-slate-400 text-center pb-4">
           <Clock className="w-3 h-3 inline ml-1" />
-          נוצר: {new Date(task.created_at).toLocaleString('he-IL')}
-          {task.updated_at && ` | עודכן: ${new Date(task.updated_at).toLocaleString('he-IL')}`}
+          {t('taskDetail', 'created')} {new Date(task.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale())}
+          {task.updated_at && ` | ${t('taskDetail', 'updated')} ${new Date(task.updated_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale())}`}
           {process.env.REACT_APP_GIT_SHA && (
             <span className="mr-2">| v{process.env.REACT_APP_GIT_SHA}</span>
           )}
@@ -1750,10 +1764,10 @@ const TaskDetailPage = () => {
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
           <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
-            <DialogPrimitive.Title className="sr-only">תצוגת תמונה</DialogPrimitive.Title>
-            <DialogPrimitive.Description className="sr-only">תצוגה מוגדלת של תמונה מצורפת</DialogPrimitive.Description>
+            <DialogPrimitive.Title className="sr-only">{t('taskDetail', 'image_view_title')}</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="sr-only">{t('taskDetail', 'image_view_desc')}</DialogPrimitive.Description>
             <div className="relative max-w-full max-h-full pointer-events-auto">
-              <img src={imageModal} alt="תמונה מצורפת לליקוי" className="max-w-full max-h-[85vh] rounded-lg" />
+              <img src={imageModal} alt={t('taskDetail', 'attached_image')} className="max-w-full max-h-[85vh] rounded-lg" />
               <div className="absolute top-2 left-2 flex gap-2">
                 <DialogPrimitive.Close asChild>
                   <button

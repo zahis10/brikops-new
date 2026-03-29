@@ -10,7 +10,7 @@ import {
   Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle, Bell, Accessibility, FileText, Trash2, AlertTriangle
 } from 'lucide-react';
 import PhoneChangeModal from '../components/PhoneChangeModal';
-import { tRole, tTrade } from '../i18n';
+import { tRole, tTrade, t, setLanguage } from '../i18n';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 
 const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error }) => (
@@ -718,9 +718,9 @@ const AccountSettingsPage = () => {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <MessageCircle className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">שפת הודעות WhatsApp</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t('settings', 'wa_language_title')}</h2>
           </div>
-          <p className="text-sm text-slate-500 mb-4">בחר את השפה שבה תקבל הודעות WhatsApp</p>
+          <p className="text-sm text-slate-500 mb-4">{t('settings', 'wa_language_desc')}</p>
           <select
             className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             value={waLang}
@@ -731,9 +731,11 @@ const AccountSettingsPage = () => {
               try {
                 await authService.updateMyPreferredLanguage(newLang);
                 setWaLang(newLang);
-                toast.success('שפת WhatsApp עודכנה בהצלחה');
+                setLanguage(newLang);
+                toast.success(t('toasts', 'wa_language_updated'));
+                window.location.reload();
               } catch (err) {
-                toast.error(err.response?.data?.detail || 'שגיאה בעדכון שפה');
+                toast.error(err.response?.data?.detail || t('toasts', 'language_update_error'));
               } finally {
                 setWaLangSaving(false);
               }
@@ -747,7 +749,7 @@ const AccountSettingsPage = () => {
           {waLangSaving && (
             <div className="flex items-center gap-2 mt-2 text-sm text-slate-500">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>שומר...</span>
+              <span>{t('settings', 'saving')}</span>
             </div>
           )}
         </div>

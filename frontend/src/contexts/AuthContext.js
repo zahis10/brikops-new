@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import axios from 'axios';
 import { toast } from 'sonner';
 import { BACKEND_URL, configService } from '../services/api';
+import { setLanguage } from '../i18n';
 
 const AuthContext = createContext(null);
 
@@ -89,6 +90,9 @@ export const AuthProvider = ({ children }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const userData = response.data;
+      if (userData.preferred_language) {
+        setLanguage(userData.preferred_language);
+      }
       setUser(userData);
       setNetworkError(false);
       toastShownRef.current = false;
@@ -154,6 +158,9 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: 'תגובה לא תקינה מהשרת' };
       }
       const { token: newToken, user: userData, platform_role } = data;
+      if (userData?.preferred_language) {
+        setLanguage(userData.preferred_language);
+      }
       setToken(newToken);
       setUser({ ...userData, platform_role: platform_role || 'none' });
       try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
@@ -170,6 +177,9 @@ export const AuthProvider = ({ children }) => {
   };
 
   const loginWithOtp = (newToken, userData, platformRole) => {
+    if (userData?.preferred_language) {
+      setLanguage(userData.preferred_language);
+    }
     setToken(newToken);
     setUser({ ...userData, platform_role: platformRole || userData?.platform_role || 'none' });
     try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }

@@ -1,14 +1,31 @@
 import he from './he.json';
 import en from './en.json';
+import ar from './ar.json';
+import zh from './zh.json';
 
-const locales = { he, en };
-const currentLocale = 'he';
+const LOCALES = { he, en, ar, zh };
+let currentLocale = 'he';
+
+export function setLanguage(lang) {
+  const base = (lang || '').split('-')[0].split('_')[0].toLowerCase();
+  currentLocale = LOCALES[base] ? base : 'he';
+  document.documentElement.lang = currentLocale;
+}
+
+export function getLanguage() {
+  return currentLocale;
+}
 
 export function t(section, key) {
-  const dict = locales[currentLocale] || locales.he;
-  const sectionData = dict[section];
-  if (!sectionData) return key;
-  return sectionData[key] || key;
+  const val = LOCALES[currentLocale]?.[section]?.[key]
+    ?? LOCALES['he']?.[section]?.[key]
+    ?? key;
+  if (process.env.NODE_ENV === 'development'
+      && !LOCALES[currentLocale]?.[section]?.[key]
+      && !LOCALES['he']?.[section]?.[key]) {
+    console.warn(`[i18n] Missing key: ${section}.${key}`);
+  }
+  return val;
 }
 
 export function tTrade(key) {

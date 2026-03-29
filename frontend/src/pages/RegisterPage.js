@@ -18,6 +18,14 @@ const RegisterPage = () => {
   const [loading, setLoading] = useState(false);
   const [rolesLoading, setRolesLoading] = useState(false);
 
+  const detectLanguage = () => {
+    const lang = (navigator.language || '').toLowerCase();
+    if (lang.startsWith('ar')) return 'ar';
+    if (lang.startsWith('zh')) return 'zh';
+    if (lang.startsWith('en')) return 'en';
+    return 'he';
+  };
+
   const [formData, setFormData] = useState({
     full_name: '',
     phone_e164: phoneFromState,
@@ -119,6 +127,7 @@ const RegisterPage = () => {
         track: formData.track,
         role: formData.role,
         project_id: formData.project_id,
+        preferred_language: detectLanguage(),
       };
       if (track === 'subcontractor' && formData.company_id) {
         payload.company_id = formData.company_id;
