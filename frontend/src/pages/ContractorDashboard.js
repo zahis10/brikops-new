@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { projectService, taskService } from '../services/api';
-import { tCategory } from '../i18n';
+import { tCategory, tStatus, tPriority, t } from '../i18n';
 import { toast } from 'sonner';
 import {
   LogOut, Clock, CheckCircle2, AlertTriangle,
@@ -12,24 +12,24 @@ import { Card } from '../components/ui/card';
 
 const PAGE_SIZE = 50;
 
-const STATUS_CONFIG = {
-  open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
-  assigned: { label: 'שויך', color: 'bg-purple-100 text-purple-700' },
-  in_progress: { label: 'בביצוע', color: 'bg-amber-100 text-amber-700' },
-  waiting_verify: { label: 'ממתין לאימות', color: 'bg-orange-100 text-orange-700' },
-  pending_contractor_proof: { label: 'ממתין להוכחת קבלן', color: 'bg-orange-100 text-orange-700' },
-  pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-indigo-100 text-indigo-700' },
-  closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
-  reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
+const STATUS_COLORS = {
+  open: 'bg-blue-100 text-blue-700',
+  assigned: 'bg-purple-100 text-purple-700',
+  in_progress: 'bg-amber-100 text-amber-700',
+  waiting_verify: 'bg-orange-100 text-orange-700',
+  pending_contractor_proof: 'bg-orange-100 text-orange-700',
+  pending_manager_approval: 'bg-indigo-100 text-indigo-700',
+  closed: 'bg-green-100 text-green-700',
+  reopened: 'bg-red-100 text-red-700',
 };
 
 const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 const PRIORITY_BORDER = { critical: 'border-r-red-500', high: 'border-r-orange-500', medium: 'border-r-blue-400', low: 'border-r-slate-300' };
-const PRIORITY_BADGE = {
-  critical: { label: 'קריטי', cls: 'bg-red-100 text-red-700' },
-  high: { label: 'גבוה', cls: 'bg-orange-100 text-orange-700' },
-  medium: { label: 'בינוני', cls: 'bg-blue-100 text-blue-600' },
-  low: { label: 'נמוך', cls: 'bg-slate-100 text-slate-500' },
+const PRIORITY_BADGE_CLS = {
+  critical: 'bg-red-100 text-red-700',
+  high: 'bg-orange-100 text-orange-700',
+  medium: 'bg-blue-100 text-blue-600',
+  low: 'bg-slate-100 text-slate-500',
 };
 
 const OPEN_STATUSES = ['open', 'assigned', 'in_progress', 'pending_contractor_proof', 'reopened', 'waiting_verify'];
@@ -48,11 +48,11 @@ function getWaitingTime(task) {
   if (!ref) return null;
   const diff = Date.now() - new Date(ref).getTime();
   const hours = Math.floor(diff / (1000 * 60 * 60));
-  if (hours < 1) return 'עכשיו';
-  if (hours < 24) return `${hours} שעות`;
+  if (hours < 1) return t('dashboard', 'time_now');
+  if (hours < 24) return `${hours} ${t('dashboard', 'time_hours')}`;
   const days = Math.floor(hours / 24);
-  if (days === 1) return 'יום';
-  return `${days} ימים`;
+  if (days === 1) return t('dashboard', 'time_day');
+  return `${days} ${t('dashboard', 'time_days')}`;
 }
 
 function getWaitingHours(task) {
@@ -66,7 +66,7 @@ function ProgressRing({ percentage, size = 90, strokeWidth = 8 }) {
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (percentage / 100) * circumference;
   return (
-    <svg width={size} height={size} className="transform -rotate-90" role="progressbar" aria-valuenow={Math.round(percentage)} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${Math.round(percentage)}%`}>
+    <svg width={size} height={size} className="transform -rotate-90" role="progressbar" aria-valuenow={Math.round(percentage)} aria-valuemin={0} aria-valuemax={100} aria-label={t('dashboard', 'progress_aria').replace('{pct}', Math.round(percentage))}>
       <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
         stroke="#e2e8f0" strokeWidth={strokeWidth} />
       <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
@@ -160,7 +160,7 @@ const ContractorDashboard = () => {
     } catch (err) {
       if (err.name === 'AbortError' || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to load tasks:', err);
-      toast.error('שגיאה בטעינת נתונים');
+      toast.error(t('dashboard', 'load_error'));
     } finally {
       loadMoreRef.current = false;
       if (!signal.aborted) {
@@ -209,7 +209,7 @@ const ContractorDashboard = () => {
       } catch (error) {
         if (cancelled) return;
         console.error('Failed to load tasks:', error);
-        toast.error('שגיאה בטעינת נתונים');
+        toast.error(t('dashboard', 'load_error'));
         setInitialLoading(false);
       } finally {
         if (!cancelled) setLoading(false);
@@ -322,17 +322,17 @@ const ContractorDashboard = () => {
                 {getInitials(user?.name)}
               </div>
               <div>
-                <h1 className="text-base font-bold leading-tight">{user?.name || 'קבלן'}</h1>
+                <h1 className="text-base font-bold leading-tight">{user?.name || t('dashboard', 'contractor_fallback')}</h1>
                 <p className="text-xs text-blue-100">
                   {[companyName, tradeName].filter(Boolean).join(' · ') || 'BrikOps'}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label="הגדרות חשבון">
+              <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'settings_aria')}>
                 <Settings className="w-5 h-5" />
               </button>
-              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label="יציאה">
+              <button onClick={handleLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'logout_aria')}>
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
@@ -341,19 +341,19 @@ const ContractorDashboard = () => {
           <div className="mt-3 grid grid-cols-4 gap-2 bg-white/10 rounded-xl p-2.5">
             <div className="text-center">
               <p className="text-xl font-bold">{headerStats.totalHandled}</p>
-              <p className="text-[10px] text-blue-100">סה"כ טופלו</p>
+              <p className="text-[10px] text-blue-100">{t('dashboard', 'total_handled')}</p>
             </div>
             <div className="text-center">
               <p className="text-xl font-bold">{headerStats.successRate}%</p>
-              <p className="text-[10px] text-blue-100">שיעור הצלחה</p>
+              <p className="text-[10px] text-blue-100">{t('dashboard', 'success_rate')}</p>
             </div>
             <div className="text-center">
               <p className="text-xl font-bold">—</p>
-              <p className="text-[10px] text-blue-100">שע׳ ממוצע</p>
+              <p className="text-[10px] text-blue-100">{t('dashboard', 'avg_hours')}</p>
             </div>
             <div className="text-center">
               <p className="text-xl font-bold">{stats?.open || 0}</p>
-              <p className="text-[10px] text-blue-100">ממתינים לי</p>
+              <p className="text-[10px] text-blue-100">{t('dashboard', 'waiting_for_me')}</p>
             </div>
           </div>
         </div>
@@ -369,7 +369,7 @@ const ContractorDashboard = () => {
                 selectedProjectId === 'all' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
               }`}
             >
-              הכל ({totalTasks != null ? totalTasks : stats?.total || 0})
+              {t('dashboard', 'all_filter')} ({totalTasks != null ? totalTasks : stats?.total || 0})
             </button>
             {projects.map(p => (
               <button key={p.id}
@@ -393,7 +393,7 @@ const ContractorDashboard = () => {
           >
             <span className="flex items-center gap-2">
               <Flame className="w-5 h-5" />
-              <span>{urgentCount} ליקויים דורשים טיפול מיידי</span>
+              <span>{t('dashboard', 'urgent_banner').replace('{count}', urgentCount)}</span>
             </span>
             <ChevronLeft className="w-5 h-5" />
           </button>
@@ -408,19 +408,19 @@ const ContractorDashboard = () => {
               </div>
             </div>
             <div className="flex-1">
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">התקדמות החודש</h3>
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('dashboard', 'monthly_progress')}</h3>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
                   <p className="text-lg font-bold text-green-600">{monthlyStats.closedThisMonth}</p>
-                  <p className="text-[10px] text-slate-500">טופלו</p>
+                  <p className="text-[10px] text-slate-500">{t('dashboard', 'monthly_handled')}</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold text-amber-600">{monthlyStats.inProgressThisMonth}</p>
-                  <p className="text-[10px] text-slate-500">בטיפול</p>
+                  <p className="text-[10px] text-slate-500">{t('dashboard', 'monthly_in_progress')}</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold text-slate-600">{monthlyStats.waitingThisMonth}</p>
-                  <p className="text-[10px] text-slate-500">ממתינים</p>
+                  <p className="text-[10px] text-slate-500">{t('dashboard', 'monthly_waiting')}</p>
                 </div>
               </div>
             </div>
@@ -431,7 +431,7 @@ const ContractorDashboard = () => {
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4 text-slate-500" />
-              דורשים טיפול
+              {t('dashboard', 'needs_attention')}
             </h2>
             <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
               {sortedOpenTasks.length}
@@ -447,14 +447,14 @@ const ContractorDashboard = () => {
           ) : sortedOpenTasks.length === 0 ? (
             <Card className="p-8 text-center">
               <CheckCircle2 className="w-12 h-12 text-green-300 mx-auto mb-3" />
-              <p className="text-sm text-slate-500">אין ליקויים פתוחים — כל הכבוד!</p>
+              <p className="text-sm text-slate-500">{t('dashboard', 'no_open_defects')}</p>
             </Card>
           ) : (
             <div className="space-y-2.5">
               {sortedOpenTasks.map(task => {
-                const statusCfg = STATUS_CONFIG[task.status] || {};
+                const statusColor = STATUS_COLORS[task.status] || 'bg-slate-100';
                 const priBorder = PRIORITY_BORDER[task.priority] || 'border-r-slate-300';
-                const priBadge = PRIORITY_BADGE[task.priority] || PRIORITY_BADGE.medium;
+                const priBadgeCls = PRIORITY_BADGE_CLS[task.priority] || PRIORITY_BADGE_CLS.medium;
                 const waitStr = getWaitingTime(task);
                 const location = [task.project_name, task.building_name, task.floor_name, task.unit_name].filter(Boolean).join(' · ');
 
@@ -463,8 +463,8 @@ const ContractorDashboard = () => {
                     <div className="p-3">
                       <div className="flex items-start justify-between mb-1.5">
                         <h4 className="text-sm font-medium text-slate-800 flex-1 leading-snug">{task.title}</h4>
-                        <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap mr-2 ${statusCfg.color || 'bg-slate-100'}`}>
-                          {statusCfg.label || task.status}
+                        <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap mr-2 ${statusColor}`}>
+                          {tStatus(task.status)}
                         </span>
                       </div>
 
@@ -473,11 +473,11 @@ const ContractorDashboard = () => {
                       )}
 
                       <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                        <span className={`px-1.5 py-0.5 rounded ${priBadge.cls}`}>{priBadge.label}</span>
+                        <span className={`px-1.5 py-0.5 rounded ${priBadgeCls}`}>{tPriority(task.priority)}</span>
                         <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{tCategory(task.category)}</span>
                         {waitStr && (
                           <span className="text-slate-400 flex items-center gap-0.5">
-                            <Clock className="w-3 h-3" /> ממתין {waitStr}
+                            <Clock className="w-3 h-3" /> {t('dashboard', 'waiting_label')} {waitStr}
                           </span>
                         )}
                       </div>
@@ -488,14 +488,14 @@ const ContractorDashboard = () => {
                           className="flex-1 py-2.5 rounded-lg bg-green-500 hover:bg-green-600 text-white text-sm font-medium flex items-center justify-center gap-1.5 touch-manipulation active:scale-[0.97] transition-all"
                         >
                           <Camera className="w-4 h-4" />
-                          צלם ותקן
+                          {t('dashboard', 'photo_fix')}
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.id}`, { state: { returnTo: '/' } }); }}
                           className="py-2.5 px-4 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium flex items-center justify-center gap-1 touch-manipulation active:scale-[0.97] transition-all"
                         >
                           <Eye className="w-4 h-4" />
-                          פרטים
+                          {t('dashboard', 'details')}
                         </button>
                       </div>
                     </div>
@@ -511,7 +511,7 @@ const ContractorDashboard = () => {
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-green-500" />
-                טופלו לאחרונה
+                {t('dashboard', 'recently_handled')}
               </h2>
               <span className="text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
                 {completedTasks.length}
@@ -543,7 +543,7 @@ const ContractorDashboard = () => {
             {loadingMore && (
               <div className="inline-flex items-center gap-2 text-sm text-slate-500">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                טוען עוד...
+                {t('dashboard', 'loading_more')}
               </div>
             )}
           </div>

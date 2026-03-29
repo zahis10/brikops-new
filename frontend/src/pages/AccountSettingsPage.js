@@ -10,7 +10,7 @@ import {
   Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Phone, Building2, Briefcase, MessageCircle, Bell, Accessibility, FileText, Trash2, AlertTriangle
 } from 'lucide-react';
 import PhoneChangeModal from '../components/PhoneChangeModal';
-import { tRole, tTrade, t, setLanguage } from '../i18n';
+import { tRole, tTrade, t, setLanguage, getLanguage } from '../i18n';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 
 const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error }) => (
@@ -27,7 +27,7 @@ const PasswordInput = ({ id, value, onChange, placeholder, show, onToggle, error
       <button
         type="button" onClick={onToggle}
         className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation"
-        aria-label={show ? 'הסתר סיסמה' : 'הצג סיסמה'}
+        aria-label={show ? t('account', 'hide_password') : t('account', 'show_password')}
         aria-pressed={show}
       >
         {show ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -100,7 +100,7 @@ const DeleteAccountSection = ({ user }) => {
       setStep(2);
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בשליחת קוד אימות'));
+      setError(typeof detail === 'object' ? detail.message : (detail || t('account', 'err_otp_send')));
     } finally {
       setLoading(false);
     }
@@ -110,20 +110,20 @@ const DeleteAccountSection = ({ user }) => {
     setError('');
 
     if (authMethod === 'password' && !password.trim()) {
-      setError('נא להזין סיסמה');
+      setError(t('account', 'err_enter_password'));
       return;
     }
     if (authMethod !== 'password' && !otpCode.trim()) {
-      setError('נא להזין קוד אימות');
+      setError(t('account', 'err_enter_otp'));
       return;
     }
     if (wizardMode === 'full') {
       if (!typedOrgName.trim()) {
-        setError('נא להקליד את שם הארגון');
+        setError(t('account', 'err_type_org_name'));
         return;
       }
       if (typedOrgName !== user?.organization?.name) {
-        setError('שם הארגון אינו תואם. יש להקליד בדיוק כפי שמופיע.');
+        setError(t('account', 'err_org_mismatch'));
         return;
       }
     }
@@ -145,7 +145,7 @@ const DeleteAccountSection = ({ user }) => {
         result = await deletionService.requestDeletion(body);
       }
 
-      toast.success('בקשת המחיקה נשלחה בהצלחה');
+      toast.success(t('account', 'deletion_sent'));
       if (result?.token) {
         replaceToken(result.token);
       }
@@ -153,7 +153,7 @@ const DeleteAccountSection = ({ user }) => {
       navigate('/account/pending-deletion', { replace: true });
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === 'object' ? detail.message : (detail || 'שגיאה בשליחת בקשת מחיקה'));
+      setError(typeof detail === 'object' ? detail.message : (detail || t('account', 'err_deletion_send')));
     } finally {
       setLoading(false);
     }
@@ -164,22 +164,22 @@ const DeleteAccountSection = ({ user }) => {
       <div className="bg-white rounded-2xl shadow-lg border border-red-100 p-6">
         <div className="flex items-center gap-2 mb-4">
           <Trash2 className="w-5 h-5 text-red-500" />
-          <h2 className="text-lg font-semibold text-red-700">מחיקת חשבון</h2>
+          <h2 className="text-lg font-semibold text-red-700">{t('account', 'delete_account')}</h2>
         </div>
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg space-y-3">
           <p className="text-sm text-amber-800 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            <span>יש להעביר בעלות על הארגון לפני מחיקת החשבון.</span>
+            <span>{t('account', 'transfer_ownership_hint')}</span>
           </p>
           <Button
             onClick={() => navigate('/org/transfer/settings')}
             variant="outline"
             className="w-full h-10 text-sm text-amber-700 border-amber-300 hover:bg-amber-100"
           >
-            העבר בעלות על הארגון
+            {t('account', 'transfer_ownership')}
           </Button>
           <Button onClick={resetWizard} variant="ghost" className="w-full h-10 text-sm">
-            ביטול
+            {t('account', 'cancel')}
           </Button>
         </div>
       </div>
@@ -193,7 +193,7 @@ const DeleteAccountSection = ({ user }) => {
         <div className="flex items-center gap-2 mb-4">
           <Trash2 className="w-5 h-5 text-red-500" />
           <h2 className="text-lg font-semibold text-red-700">
-            {isFull ? 'מחיקת חשבון וארגון' : 'מחיקת חשבון'}
+            {isFull ? t('account', 'delete_account_and_org') : t('account', 'delete_account')}
           </h2>
         </div>
 
@@ -208,22 +208,22 @@ const DeleteAccountSection = ({ user }) => {
             <div className="p-4 bg-red-50 border border-red-200 rounded-lg space-y-2">
               <p className="text-sm font-semibold text-red-700 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                אזהרה — פעולה בלתי הפיכה
+                {t('account', 'warning_irreversible')}
               </p>
               <ul className="text-sm text-red-700 space-y-1 mr-6 list-disc">
-                <li>כל הנתונים האישיים שלך יימחקו לצמיתות</li>
-                <li>לא תוכל לגשת לחשבון שלך יותר</li>
+                <li>{t('account', 'warn_personal_data')}</li>
+                <li>{t('account', 'warn_no_access')}</li>
                 {isFull && (
                   <>
-                    <li>כל הפרויקטים, המשימות והנתונים של הארגון יימחקו</li>
-                    <li>כל חברי הארגון יאבדו את הגישה שלהם</li>
+                    <li>{t('account', 'warn_org_data')}</li>
+                    <li>{t('account', 'warn_org_members')}</li>
                   </>
                 )}
               </ul>
               <p className="text-xs text-red-500 pt-1">
                 {isFull
-                  ? 'לאחר תקופת המתנה, החשבון והארגון יימחקו סופית.'
-                  : 'לאחר תקופת המתנה, החשבון יימחק סופית.'}
+                  ? t('account', 'warn_org_wait')
+                  : t('account', 'warn_account_wait')}
               </p>
             </div>
 
@@ -237,10 +237,10 @@ const DeleteAccountSection = ({ user }) => {
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
                   </span>
-                ) : 'המשך'}
+                ) : t('account', 'continue')}
               </Button>
               <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
-                ביטול
+                {t('account', 'cancel')}
               </Button>
             </div>
 
@@ -255,17 +255,17 @@ const DeleteAccountSection = ({ user }) => {
 
         {step === 2 && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-700 font-medium">שלב 2 — אימות זהות</p>
+            <p className="text-sm text-slate-700 font-medium">{t('account', 'step2_title')}</p>
 
             {authMethod === 'password' ? (
               <div className="space-y-1">
-                <label className="block text-sm font-medium text-slate-700">סיסמה נוכחית</label>
+                <label className="block text-sm font-medium text-slate-700">{t('account', 'current_password')}</label>
                 <div className="relative">
                   <input
                     type={showPw ? 'text' : 'password'}
                     value={password}
                     onChange={e => { setPassword(e.target.value); setError(''); }}
-                    placeholder="הזן סיסמה"
+                    placeholder={t('account', 'enter_password')}
                     className="w-full h-11 px-3 py-2 pl-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
                   />
                   <button type="button" onClick={() => setShowPw(p => !p)} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
@@ -275,7 +275,7 @@ const DeleteAccountSection = ({ user }) => {
               </div>
             ) : (
               <div className="space-y-1">
-                <label className="block text-sm font-medium text-slate-700">קוד אימות (נשלח ב-SMS)</label>
+                <label className="block text-sm font-medium text-slate-700">{t('account', 'otp_label')}</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -283,7 +283,7 @@ const DeleteAccountSection = ({ user }) => {
                   maxLength={6}
                   value={otpCode}
                   onChange={e => { setOtpCode(e.target.value.replace(/\D/g, '')); setError(''); }}
-                  placeholder="הזן קוד 6 ספרות"
+                  placeholder={t('account', 'otp_placeholder')}
                   className="w-full h-11 px-3 py-2 text-center text-slate-900 bg-white border border-slate-300 rounded-lg tracking-widest text-lg font-mono focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500"
                   dir="ltr"
                 />
@@ -306,10 +306,10 @@ const DeleteAccountSection = ({ user }) => {
                 disabled={loading || (authMethod === 'password' ? !password.trim() : !otpCode.trim())}
                 className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-medium"
               >
-                המשך
+                {t('account', 'continue')}
               </Button>
               <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
-                ביטול
+                {t('account', 'cancel')}
               </Button>
             </div>
           </div>
@@ -317,23 +317,23 @@ const DeleteAccountSection = ({ user }) => {
 
         {step === 3 && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-700 font-medium">שלב 3 — אישור סופי</p>
+            <p className="text-sm text-slate-700 font-medium">{t('account', 'step3_title')}</p>
 
             <div className="p-4 bg-red-50 border border-red-200 rounded-lg space-y-2">
               <p className="text-sm font-bold text-red-700">
                 {isFull
-                  ? `החשבון והארגון "${user?.organization?.name}" יימחקו לצמיתות לאחר תקופת ההמתנה.`
-                  : 'החשבון שלך יימחק לצמיתות לאחר תקופת ההמתנה.'}
+                  ? t('account', 'confirm_full_delete').replace('{orgName}', user?.organization?.name || '')
+                  : t('account', 'confirm_account_delete')}
               </p>
               <p className="text-sm text-red-600">
-                האם אתה בטוח? לא ניתן לבטל פעולה זו לאחר תום תקופת ההמתנה.
+                {t('account', 'confirm_sure')}
               </p>
             </div>
 
             {isFull && (
               <div className="space-y-1">
                 <label className="block text-sm font-medium text-slate-700">
-                  הקלד את שם הארגון בדיוק: <span className="font-bold text-red-600">{user?.organization?.name}</span>
+                  {t('account', 'type_org_name')} <span className="font-bold text-red-600">{user?.organization?.name}</span>
                 </label>
                 <input
                   type="text"
@@ -361,12 +361,12 @@ const DeleteAccountSection = ({ user }) => {
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    מוחק...
+                    {t('account', 'deleting')}
                   </span>
-                ) : 'אשר מחיקה סופית'}
+                ) : t('account', 'confirm_delete')}
               </Button>
               <Button onClick={resetWizard} disabled={loading} variant="outline" className="flex-1 h-11">
-                ביטול
+                {t('account', 'cancel')}
               </Button>
             </div>
           </div>
@@ -379,10 +379,10 @@ const DeleteAccountSection = ({ user }) => {
     <div className="bg-white rounded-2xl shadow-lg border border-red-100 p-6">
       <div className="flex items-center gap-2 mb-4">
         <Trash2 className="w-5 h-5 text-red-500" />
-        <h2 className="text-lg font-semibold text-red-700">מחיקת חשבון</h2>
+        <h2 className="text-lg font-semibold text-red-700">{t('account', 'delete_account')}</h2>
       </div>
       <p className="text-sm text-slate-600 mb-4">
-        מחיקת החשבון היא פעולה בלתי הפיכה. לאחר תקופת המתנה כל הנתונים שלך יימחקו לצמיתות.
+        {t('account', 'delete_desc')}
       </p>
 
       <div className="space-y-3">
@@ -392,7 +392,7 @@ const DeleteAccountSection = ({ user }) => {
           className="w-full h-11 justify-start text-sm text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
         >
           <Trash2 className="w-4 h-4 ml-2" />
-          מחק את החשבון שלי
+          {t('account', 'delete_my_account')}
         </Button>
 
         {isOrgOwner && user?.organization && (
@@ -402,7 +402,7 @@ const DeleteAccountSection = ({ user }) => {
             className="w-full h-11 justify-start text-sm text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
           >
             <AlertTriangle className="w-4 h-4 ml-2" />
-            מחק הכל ({user.organization.name})
+            {t('account', 'delete_all')} ({user.organization.name})
           </Button>
         )}
       </div>
@@ -426,7 +426,10 @@ const AccountSettingsPage = () => {
   const [reminderPrefs, setReminderPrefs] = useState(null);
   const [reminderPrefsSaving, setReminderPrefsSaving] = useState(false);
 
-  const DAY_LABELS = ['א', 'ב', 'ג', 'ד', 'ה'];
+  const DAY_LABELS = [
+    t('account', 'day_sun'), t('account', 'day_mon'), t('account', 'day_tue'),
+    t('account', 'day_wed'), t('account', 'day_thu')
+  ];
 
   const memberships = user?.project_memberships_summary || [];
   const userRoles = new Set(memberships.map(m => m.role));
@@ -448,10 +451,10 @@ const AccountSettingsPage = () => {
     try {
       const result = await userService.updateReminderPreferences({ [type]: { [field]: value } });
       setReminderPrefs(result);
-      toast.success('הגדרות התראות עודכנו');
+      toast.success(t('toasts', 'reminder_prefs_updated'));
     } catch (err) {
       setReminderPrefs(prev);
-      toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+      toast.error(err.response?.data?.detail || t('toasts', 'reminder_prefs_error'));
     } finally {
       setReminderPrefsSaving(false);
     }
@@ -501,9 +504,9 @@ const AccountSettingsPage = () => {
     setEmailServerError('');
     const errs = {};
     const email = emailForm.newEmail.trim().toLowerCase();
-    if (!email) errs.newEmail = 'נא להזין כתובת אימייל';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.newEmail = 'כתובת אימייל לא תקינה';
-    if (!emailForm.currentPassword) errs.currentPassword = 'נא להזין סיסמה נוכחית';
+    if (!email) errs.newEmail = t('account', 'err_email_required');
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.newEmail = t('account', 'err_email_invalid');
+    if (!emailForm.currentPassword) errs.currentPassword = t('account', 'err_password_required');
     setEmailErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
@@ -512,15 +515,15 @@ const AccountSettingsPage = () => {
       const result = await authService.changeEmail(emailForm.currentPassword, email);
       setCurrentEmail(result.email);
       setEmailForm({ newEmail: '', currentPassword: '' });
-      toast.success('האימייל עודכן בהצלחה');
+      toast.success(t('account', 'email_updated'));
     } catch (err) {
       const status = err.response?.status;
       const detail = err.response?.data?.detail || '';
-      if (status === 401) setEmailServerError('סיסמה נוכחית שגויה');
-      else if (status === 403) setEmailServerError('אין הרשאה לבצע פעולה זו');
-      else if (status === 409) setEmailServerError(detail || 'כתובת אימייל כבר רשומה במערכת');
-      else if (status === 400) setEmailServerError(detail || 'נתונים לא תקינים');
-      else setEmailServerError('אירעה שגיאה. נסה שוב מאוחר יותר.');
+      if (status === 401) setEmailServerError(t('account', 'err_wrong_password'));
+      else if (status === 403) setEmailServerError(t('account', 'err_no_permission'));
+      else if (status === 409) setEmailServerError(detail || t('account', 'err_email_exists'));
+      else if (status === 400) setEmailServerError(detail || t('account', 'err_invalid_data'));
+      else setEmailServerError(t('account', 'err_generic'));
     } finally {
       setEmailLoading(false);
     }
@@ -530,18 +533,18 @@ const AccountSettingsPage = () => {
     e.preventDefault();
     setPwServerError('');
     const errs = {};
-    if (!pwForm.currentPassword) errs.currentPassword = 'נא להזין סיסמה נוכחית';
-    if (!pwForm.newPassword || pwForm.newPassword.length < 8) errs.newPassword = 'סיסמה חייבת להכיל לפחות 8 תווים';
-    else if (!/[a-zA-Zא-ת]/.test(pwForm.newPassword)) errs.newPassword = 'סיסמה חייבת להכיל לפחות אות אחת';
-    else if (!/[0-9]/.test(pwForm.newPassword)) errs.newPassword = 'סיסמה חייבת להכיל לפחות ספרה אחת';
-    if (pwForm.newPassword && pwForm.newPassword !== pwForm.confirmPassword) errs.confirmPassword = 'הסיסמאות לא תואמות';
+    if (!pwForm.currentPassword) errs.currentPassword = t('account', 'err_password_required');
+    if (!pwForm.newPassword || pwForm.newPassword.length < 8) errs.newPassword = t('account', 'err_pw_min_length');
+    else if (!/[a-zA-Zא-ת]/.test(pwForm.newPassword)) errs.newPassword = t('account', 'err_pw_letter');
+    else if (!/[0-9]/.test(pwForm.newPassword)) errs.newPassword = t('account', 'err_pw_digit');
+    if (pwForm.newPassword && pwForm.newPassword !== pwForm.confirmPassword) errs.confirmPassword = t('account', 'err_pw_mismatch');
     setPwErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
     setPwLoading(true);
     try {
       const result = await authService.changePassword(pwForm.currentPassword, pwForm.newPassword);
-      toast.success('הסיסמה שונתה בהצלחה. יש להתחבר מחדש.');
+      toast.success(t('account', 'password_changed'));
       if (result.force_relogin) {
         setTimeout(() => {
           logout();
@@ -551,10 +554,10 @@ const AccountSettingsPage = () => {
     } catch (err) {
       const status = err.response?.status;
       const detail = err.response?.data?.detail || '';
-      if (status === 401) setPwServerError('סיסמה נוכחית שגויה');
-      else if (status === 403) setPwServerError('אין הרשאה לבצע פעולה זו');
-      else if (status === 400) setPwServerError(detail || 'סיסמה לא תקינה');
-      else setPwServerError('אירעה שגיאה. נסה שוב מאוחר יותר.');
+      if (status === 401) setPwServerError(t('account', 'err_wrong_password'));
+      else if (status === 403) setPwServerError(t('account', 'err_no_permission'));
+      else if (status === 400) setPwServerError(detail || t('account', 'err_pw_invalid'));
+      else setPwServerError(t('account', 'err_generic'));
     } finally {
       setPwLoading(false);
     }
@@ -564,24 +567,24 @@ const AccountSettingsPage = () => {
     e.preventDefault();
     setSetPwServerError2('');
     const errs = {};
-    if (!setPwForm2.newPassword || setPwForm2.newPassword.length < 8) errs.newPassword = 'סיסמה חייבת להכיל לפחות 8 תווים';
-    else if (!/[a-zA-Zא-ת]/.test(setPwForm2.newPassword)) errs.newPassword = 'סיסמה חייבת להכיל לפחות אות אחת';
-    else if (!/[0-9]/.test(setPwForm2.newPassword)) errs.newPassword = 'סיסמה חייבת להכיל לפחות ספרה אחת';
-    if (setPwForm2.newPassword && setPwForm2.newPassword !== setPwForm2.confirmPassword) errs.confirmPassword = 'הסיסמאות לא תואמות';
+    if (!setPwForm2.newPassword || setPwForm2.newPassword.length < 8) errs.newPassword = t('account', 'err_pw_min_length');
+    else if (!/[a-zA-Zא-ת]/.test(setPwForm2.newPassword)) errs.newPassword = t('account', 'err_pw_letter');
+    else if (!/[0-9]/.test(setPwForm2.newPassword)) errs.newPassword = t('account', 'err_pw_digit');
+    if (setPwForm2.newPassword && setPwForm2.newPassword !== setPwForm2.confirmPassword) errs.confirmPassword = t('account', 'err_pw_mismatch');
     setSetPwErrors2(errs);
     if (Object.keys(errs).length > 0) return;
 
     setSetPwLoading2(true);
     try {
       await authService.setPassword(setPwForm2.newPassword);
-      toast.success('סיסמה הוגדרה בהצלחה');
+      toast.success(t('account', 'password_set'));
       setSetPwForm2({ newPassword: '', confirmPassword: '' });
       await refreshIdentity();
     } catch (err) {
       const status = err.response?.status;
       const detail = err.response?.data?.detail || '';
-      if (status === 400) setSetPwServerError2(detail || 'סיסמה לא תקינה');
-      else setSetPwServerError2('אירעה שגיאה. נסה שוב מאוחר יותר.');
+      if (status === 400) setSetPwServerError2(detail || t('account', 'err_pw_invalid'));
+      else setSetPwServerError2(t('account', 'err_generic'));
     } finally {
       setSetPwLoading2(false);
     }
@@ -595,21 +598,21 @@ const AccountSettingsPage = () => {
             <ArrowRight className="w-5 h-5 text-slate-600" />
           </button>
           <div>
-            <h1 className="text-xl font-bold text-slate-900">הגדרות חשבון</h1>
-            <p className="text-sm text-slate-500">{user.name || 'משתמש'}</p>
+            <h1 className="text-xl font-bold text-slate-900">{t('account', 'page_title')}</h1>
+            <p className="text-sm text-slate-500">{user.name || t('account', 'user_fallback')}</p>
           </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <Mail className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">כתובת אימייל</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t('account', 'email_section')}</h2>
           </div>
 
           <div className="text-sm text-slate-600 mb-4">
-            אימייל נוכחי:{' '}
+            {t('account', 'current_email')}{' '}
             <span className="font-medium text-slate-900" dir="ltr">
-              {hasEmail ? currentEmail : 'לא מוגדר'}
+              {hasEmail ? currentEmail : t('account', 'not_set')}
             </span>
           </div>
 
@@ -622,7 +625,7 @@ const AccountSettingsPage = () => {
                 </div>
               )}
               <div className="space-y-1">
-                <label htmlFor="newEmail" className="block text-sm font-medium text-slate-700">אימייל חדש</label>
+                <label htmlFor="newEmail" className="block text-sm font-medium text-slate-700">{t('account', 'new_email')}</label>
                 <input
                   id="newEmail" type="email" dir="ltr"
                   value={emailForm.newEmail}
@@ -638,28 +641,28 @@ const AccountSettingsPage = () => {
                 )}
               </div>
               <div className="space-y-1">
-                <label htmlFor="emailCurrentPw" className="block text-sm font-medium text-slate-700">סיסמה נוכחית</label>
+                <label htmlFor="emailCurrentPw" className="block text-sm font-medium text-slate-700">{t('account', 'current_password')}</label>
                 <PasswordInput
                   id="emailCurrentPw"
                   value={emailForm.currentPassword}
                   onChange={(e) => { setEmailForm(f => ({ ...f, currentPassword: e.target.value })); setEmailErrors(p => { const n = {...p}; delete n.currentPassword; return n; }); setEmailServerError(''); }}
-                  placeholder="הזן סיסמה נוכחית"
+                  placeholder={t('account', 'enter_current_password')}
                   show={showEmailPw} onToggle={() => setShowEmailPw(p => !p)}
                   error={emailErrors.currentPassword}
                 />
               </div>
               <Button type="submit" className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-white font-medium" disabled={emailLoading}>
-                {emailLoading ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />מעדכן...</span> : 'עדכן אימייל'}
+                {emailLoading ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />{t('account', 'updating')}</span> : t('account', 'update_email')}
               </Button>
             </form>
           ) : (
             <div className="text-center py-4 space-y-3">
-              <p className="text-sm text-slate-500">לא הוגדר אימייל עדיין. השלם את החשבון כדי להוסיף אימייל וסיסמה.</p>
+              <p className="text-sm text-slate-500">{t('account', 'no_email_hint')}</p>
               <Button
                 onClick={() => setShowCompleteForm(true)}
                 className="bg-amber-500 hover:bg-amber-600 text-white font-medium"
               >
-                השלמת חשבון (אימייל+סיסמה)
+                {t('account', 'complete_account')}
               </Button>
             </div>
           )}
@@ -669,26 +672,26 @@ const AccountSettingsPage = () => {
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
             <div className="flex items-center gap-2 mb-4">
               <Briefcase className="w-5 h-5 text-amber-500" />
-              <h2 className="text-lg font-semibold text-slate-900">פרטי עבודה</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{t('account', 'work_details')}</h2>
             </div>
 
             {user.organization && (
               <div className="flex items-center gap-2 mb-4 text-sm text-slate-600">
                 <Building2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <span>ארגון: <span className="font-medium text-slate-900">{user.organization.name || user.organization.id}</span></span>
+                <span>{t('account', 'organization')} <span className="font-medium text-slate-900">{user.organization.name || user.organization.id}</span></span>
               </div>
             )}
 
             {user.project_memberships_summary && user.project_memberships_summary.length > 0 && (
               <div className="space-y-3">
-                <p className="text-sm font-medium text-slate-700">פרויקטים</p>
+                <p className="text-sm font-medium text-slate-700">{t('account', 'projects')}</p>
                 {user.project_memberships_summary.map((pm, idx) => (
                   <div key={pm.project_id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-1">
                     <div className="font-medium text-slate-900 text-sm">{pm.project_name || pm.project_id}</div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                      {pm.role && <span>תפקיד: <span className="text-slate-700">{tRole(pm.role)}</span></span>}
-                      {pm.contractor_trade_key && <span>מקצוע: <span className="text-slate-700">{tTrade(pm.contractor_trade_key)}</span></span>}
-                      {pm.company_name && <span>חברה: <span className="text-slate-700">{pm.company_name}</span></span>}
+                      {pm.role && <span>{t('account', 'role_label')} <span className="text-slate-700">{tRole(pm.role)}</span></span>}
+                      {pm.contractor_trade_key && <span>{t('account', 'trade_label')} <span className="text-slate-700">{tTrade(pm.contractor_trade_key)}</span></span>}
+                      {pm.company_name && <span>{t('account', 'company_label')} <span className="text-slate-700">{pm.company_name}</span></span>}
                     </div>
                   </div>
                 ))}
@@ -700,19 +703,19 @@ const AccountSettingsPage = () => {
         <div ref={phoneRef} id="phone" className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <Phone className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">מספר טלפון</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t('account', 'phone_section')}</h2>
           </div>
           <div className="text-sm text-slate-600 mb-4">
-            מספר נוכחי:{' '}
+            {t('account', 'current_phone')}{' '}
             <span className="font-medium text-slate-900">
-              {user.phone_e164 ? <bdi dir="ltr">{user.phone_e164}</bdi> : 'לא מוגדר'}
+              {user.phone_e164 ? <bdi dir="ltr">{user.phone_e164}</bdi> : t('account', 'not_set')}
             </span>
           </div>
           <Button
             onClick={() => setShowPhoneChange(true)}
             className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-white font-medium"
           >
-            שינוי מספר טלפון
+            {t('account', 'change_phone')}
           </Button>
         </div>
 
@@ -762,10 +765,10 @@ const AccountSettingsPage = () => {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <Bell className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">הודעות WhatsApp</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t('account', 'wa_notifications')}</h2>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-700">קבל הודעות WhatsApp על ליקויים ועדכונים</span>
+            <span className="text-sm text-slate-700">{t('account', 'wa_receive_desc')}</span>
             <button
               type="button"
               role="switch"
@@ -780,9 +783,9 @@ const AccountSettingsPage = () => {
                     try {
                       await authService.updateWhatsAppNotifications(true);
                       setWaNotifEnabled(true);
-                      toast.success('הודעות WhatsApp הופעלו');
+                      toast.success(t('account', 'wa_enabled'));
                     } catch (err) {
-                      toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+                      toast.error(err.response?.data?.detail || t('account', 'wa_update_error'));
                     } finally {
                       setWaNotifSaving(false);
                     }
@@ -797,7 +800,7 @@ const AccountSettingsPage = () => {
           {waNotifSaving && (
             <div className="flex items-center gap-2 mt-2 text-sm text-slate-500">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>שומר...</span>
+              <span>{t('settings', 'saving')}</span>
             </div>
           )}
         </div>
@@ -807,9 +810,9 @@ const AccountSettingsPage = () => {
             <AlertDialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
             <AlertDialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center outline-none pointer-events-none">
               <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 mx-4 max-w-sm w-full pointer-events-auto" dir="rtl">
-                <AlertDialogPrimitive.Title className="text-lg font-semibold text-slate-900 mb-3">כיבוי הודעות WhatsApp</AlertDialogPrimitive.Title>
+                <AlertDialogPrimitive.Title className="text-lg font-semibold text-slate-900 mb-3">{t('account', 'wa_disable_title')}</AlertDialogPrimitive.Title>
                 <AlertDialogPrimitive.Description className="text-sm text-slate-600 mb-5">
-                  לא תקבל עדכונים על ליקויים חדשים או שינויים. ניתן להפעיל מחדש בכל עת.
+                  {t('account', 'wa_disable_desc')}
                 </AlertDialogPrimitive.Description>
                 <div className="flex gap-3">
                   <AlertDialogPrimitive.Action asChild>
@@ -820,23 +823,23 @@ const AccountSettingsPage = () => {
                         try {
                           await authService.updateWhatsAppNotifications(false);
                           setWaNotifEnabled(false);
-                          toast.success('הודעות WhatsApp כובו');
+                          toast.success(t('account', 'wa_disabled'));
                         } catch (err) {
-                          toast.error(err.response?.data?.detail || 'שגיאה בעדכון הגדרות');
+                          toast.error(err.response?.data?.detail || t('account', 'wa_update_error'));
                         } finally {
                           setWaNotifSaving(false);
                         }
                       }}
                       className="flex-1 h-10 bg-red-500 hover:bg-red-600 text-white font-medium"
                     >
-                      כבה הודעות
+                      {t('account', 'wa_disable_confirm')}
                     </Button>
                   </AlertDialogPrimitive.Action>
                   <AlertDialogPrimitive.Cancel asChild>
                     <Button
                       className="flex-1 h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
                     >
-                      ביטול
+                      {t('account', 'cancel')}
                     </Button>
                   </AlertDialogPrimitive.Cancel>
                 </div>
@@ -849,14 +852,14 @@ const AccountSettingsPage = () => {
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
             <div className="flex items-center gap-2 mb-4">
               <Bell className="w-5 h-5 text-amber-500" />
-              <h2 className="text-lg font-semibold text-slate-900">הגדרות תזכורות</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{t('account', 'reminder_settings')}</h2>
             </div>
-            <p className="text-xs text-slate-400 mb-4">שליטה בתזכורות אוטומטיות בלבד. שליחה ידנית אינה מושפעת מהגדרות אלה.</p>
+            <p className="text-xs text-slate-400 mb-4">{t('account', 'reminder_auto_only')}</p>
 
             {isContractor && (
               <div className="space-y-3 mb-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-700 font-medium">תזכורות ליקויים</span>
+                  <span className="text-sm text-slate-700 font-medium">{t('account', 'defect_reminders')}</span>
                   <button
                     type="button"
                     role="switch"
@@ -870,7 +873,7 @@ const AccountSettingsPage = () => {
                 </div>
                 {reminderPrefs.contractor_reminder?.enabled !== false && (
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-500 ml-1">ימים:</span>
+                    <span className="text-xs text-slate-500 ml-1">{t('account', 'days_label')}</span>
                     {DAY_LABELS.map((label, idx) => (
                       <button
                         key={idx}
@@ -895,7 +898,7 @@ const AccountSettingsPage = () => {
               <div className="space-y-3">
                 {isContractor && <div className="border-t border-slate-100 pt-3" />}
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-700 font-medium">סיכום יומי</span>
+                  <span className="text-sm text-slate-700 font-medium">{t('account', 'daily_digest')}</span>
                   <button
                     type="button"
                     role="switch"
@@ -909,7 +912,7 @@ const AccountSettingsPage = () => {
                 </div>
                 {reminderPrefs.pm_digest?.enabled !== false && (
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-500 ml-1">ימים:</span>
+                    <span className="text-xs text-slate-500 ml-1">{t('account', 'days_label')}</span>
                     {DAY_LABELS.map((label, idx) => (
                       <button
                         key={idx}
@@ -933,7 +936,7 @@ const AccountSettingsPage = () => {
             {reminderPrefsSaving && (
               <div className="flex items-center gap-2 mt-3 text-sm text-slate-500">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>שומר...</span>
+                <span>{t('settings', 'saving')}</span>
               </div>
             )}
           </div>
@@ -942,17 +945,17 @@ const AccountSettingsPage = () => {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <Lock className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">{hasPassword ? 'שינוי סיסמה' : 'הגדרת סיסמה'}</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{hasPassword ? t('account', 'change_password') : t('account', 'set_password')}</h2>
           </div>
 
           {!hasPassword && !hasEmail ? (
             <div className="text-center py-4 space-y-3">
-              <p className="text-sm text-slate-500">לא הוגדרה סיסמה. יש להשלים חשבון תחילה.</p>
+              <p className="text-sm text-slate-500">{t('account', 'no_password_hint')}</p>
               <Button
                 onClick={() => setShowCompleteForm(true)}
                 className="bg-amber-500 hover:bg-amber-600 text-white font-medium"
               >
-                השלמת חשבון (אימייל+סיסמה)
+                {t('account', 'complete_account')}
               </Button>
             </div>
           ) : !hasPassword && hasEmail ? (
@@ -963,31 +966,31 @@ const AccountSettingsPage = () => {
                   <span>{setPwServerError2}</span>
                 </div>
               )}
-              <p className="text-sm text-slate-500">טרם הוגדרה סיסמה לחשבון זה. הגדר סיסמה כדי להתחבר גם באימייל.</p>
+              <p className="text-sm text-slate-500">{t('account', 'set_password_hint')}</p>
               <div className="space-y-1">
-                <label htmlFor="setPw" className="block text-sm font-medium text-slate-700">סיסמה חדשה</label>
+                <label htmlFor="setPw" className="block text-sm font-medium text-slate-700">{t('account', 'new_password')}</label>
                 <PasswordInput
                   id="setPw"
                   value={setPwForm2.newPassword}
                   onChange={(e) => { setSetPwForm2(f => ({ ...f, newPassword: e.target.value })); setSetPwErrors2(p => { const n = {...p}; delete n.newPassword; return n; }); setSetPwServerError2(''); }}
-                  placeholder="לפחות 8 תווים, אות וספרה"
+                  placeholder={t('account', 'password_placeholder')}
                   show={showNewPw} onToggle={() => setShowNewPw(p => !p)}
                   error={setPwErrors2.newPassword}
                 />
               </div>
               <div className="space-y-1">
-                <label htmlFor="setConfirmPw" className="block text-sm font-medium text-slate-700">אימות סיסמה</label>
+                <label htmlFor="setConfirmPw" className="block text-sm font-medium text-slate-700">{t('account', 'confirm_password')}</label>
                 <PasswordInput
                   id="setConfirmPw"
                   value={setPwForm2.confirmPassword}
                   onChange={(e) => { setSetPwForm2(f => ({ ...f, confirmPassword: e.target.value })); setSetPwErrors2(p => { const n = {...p}; delete n.confirmPassword; return n; }); setSetPwServerError2(''); }}
-                  placeholder="הזן שוב את הסיסמה"
+                  placeholder={t('account', 'reenter_password')}
                   show={showConfirmPw} onToggle={() => setShowConfirmPw(p => !p)}
                   error={setPwErrors2.confirmPassword}
                 />
               </div>
               <Button type="submit" className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-white font-medium" disabled={setPwLoading2}>
-                {setPwLoading2 ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />שומר...</span> : 'הגדר סיסמה'}
+                {setPwLoading2 ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />{t('settings', 'saving')}</span> : t('account', 'set_password_btn')}
               </Button>
             </form>
           ) : (
@@ -999,41 +1002,41 @@ const AccountSettingsPage = () => {
                 </div>
               )}
               <div className="space-y-1">
-                <label htmlFor="currentPw" className="block text-sm font-medium text-slate-700">סיסמה נוכחית</label>
+                <label htmlFor="currentPw" className="block text-sm font-medium text-slate-700">{t('account', 'current_password')}</label>
                 <PasswordInput
                   id="currentPw"
                   value={pwForm.currentPassword}
                   onChange={(e) => { setPwForm(f => ({ ...f, currentPassword: e.target.value })); setPwErrors(p => { const n = {...p}; delete n.currentPassword; return n; }); setPwServerError(''); }}
-                  placeholder="הזן סיסמה נוכחית"
+                  placeholder={t('account', 'enter_current_password')}
                   show={showCurrentPw} onToggle={() => setShowCurrentPw(p => !p)}
                   error={pwErrors.currentPassword}
                 />
               </div>
               <div className="space-y-1">
-                <label htmlFor="newPw" className="block text-sm font-medium text-slate-700">סיסמה חדשה</label>
+                <label htmlFor="newPw" className="block text-sm font-medium text-slate-700">{t('account', 'new_password')}</label>
                 <PasswordInput
                   id="newPw"
                   value={pwForm.newPassword}
                   onChange={(e) => { setPwForm(f => ({ ...f, newPassword: e.target.value })); setPwErrors(p => { const n = {...p}; delete n.newPassword; return n; }); setPwServerError(''); }}
-                  placeholder="לפחות 8 תווים, אות וספרה"
+                  placeholder={t('account', 'password_placeholder')}
                   show={showNewPw} onToggle={() => setShowNewPw(p => !p)}
                   error={pwErrors.newPassword}
                 />
               </div>
               <div className="space-y-1">
-                <label htmlFor="confirmPw" className="block text-sm font-medium text-slate-700">אימות סיסמה חדשה</label>
+                <label htmlFor="confirmPw" className="block text-sm font-medium text-slate-700">{t('account', 'confirm_new_password')}</label>
                 <PasswordInput
                   id="confirmPw"
                   value={pwForm.confirmPassword}
                   onChange={(e) => { setPwForm(f => ({ ...f, confirmPassword: e.target.value })); setPwErrors(p => { const n = {...p}; delete n.confirmPassword; return n; }); setPwServerError(''); }}
-                  placeholder="הזן שוב את הסיסמה החדשה"
+                  placeholder={t('account', 'reenter_new_password')}
                   show={showConfirmPw} onToggle={() => setShowConfirmPw(p => !p)}
                   error={pwErrors.confirmPassword}
                 />
               </div>
-              <p className="text-xs text-slate-400">שים לב: לאחר שינוי סיסמה תידרש כניסה מחדש.</p>
+              <p className="text-xs text-slate-400">{t('account', 'relogin_note')}</p>
               <Button type="submit" className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-white font-medium" disabled={pwLoading}>
-                {pwLoading ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />מעדכן...</span> : 'שנה סיסמה'}
+                {pwLoading ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin" />{t('account', 'updating')}</span> : t('account', 'change_password_btn')}
               </Button>
             </form>
           )}
@@ -1044,12 +1047,12 @@ const AccountSettingsPage = () => {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-900">מידע משפטי</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t('account', 'legal_section')}</h2>
           </div>
           <div className="space-y-3">
             <Link to="/accessibility" className="flex items-center gap-2 text-sm text-amber-600 hover:text-amber-700 font-medium">
               <Accessibility className="w-4 h-4" />
-              הצהרת נגישות
+              {t('account', 'accessibility_statement')}
             </Link>
           </div>
         </div>

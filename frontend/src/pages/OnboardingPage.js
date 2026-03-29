@@ -11,6 +11,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
 import { navigateToProject } from '../utils/navigation';
+import { t } from '../i18n';
 
 const OnboardingPage = () => {
   const [searchParams] = useSearchParams();
@@ -54,10 +55,10 @@ const OnboardingPage = () => {
 
   const validatePassword = useCallback((pw) => {
     const common = new Set(['123456', '1234567', '12345678', '123456789', '1234567890', '111111', '000000', 'password', 'qwerty', 'abcdef', 'abcd1234', 'password1', 'abc123', 'admin123', '11111111']);
-    if (!pw || pw.length < 8) return 'סיסמה נדרשת (לפחות 8 תווים)';
-    if (!/[a-zA-Zא-ת]/.test(pw)) return 'סיסמה חייבת לכלול לפחות אות אחת';
-    if (!/[0-9]/.test(pw)) return 'סיסמה חייבת לכלול לפחות מספר אחד';
-    if (common.has(pw.toLowerCase())) return 'סיסמה זו נפוצה מדי, יש לבחור סיסמה חזקה יותר';
+    if (!pw || pw.length < 8) return t('onboarding', 'pw_min_length');
+    if (!/[a-zA-Zא-ת]/.test(pw)) return t('onboarding', 'pw_letter');
+    if (!/[0-9]/.test(pw)) return t('onboarding', 'pw_digit');
+    if (common.has(pw.toLowerCase())) return t('onboarding', 'pw_common');
     return '';
   }, []);
 
@@ -90,7 +91,7 @@ const OnboardingPage = () => {
           }
         })
         .catch(err => {
-          const detail = err.response?.data?.detail || 'ההזמנה לא נמצאה או שפגה תוקפה';
+          const detail = err.response?.data?.detail || t('onboarding', 'err_invite_not_found');
           setInviteError(detail);
           setStep('invite-error');
         })
@@ -122,12 +123,12 @@ const OnboardingPage = () => {
   const handleRequestOtp = useCallback(async (e) => {
     e.preventDefault();
     if (!phone.trim()) {
-      toast.error('יש להזין מספר טלפון');
+      toast.error(t('onboarding', 'err_phone_required'));
       return;
     }
     const e164 = canonicalE164(phone);
     if (!isValidIsraeliMobile(e164)) {
-      toast.error('מספר טלפון לא תקין');
+      toast.error(t('onboarding', 'err_phone_invalid'));
       return;
     }
     setLoading(true);
@@ -136,22 +137,22 @@ const OnboardingPage = () => {
       setPhoneE164(e164);
       setStep('otp');
       startResendCountdown();
-      toast('שולחים קוד אימות...', { icon: '📱' });
+      toast(t('onboarding', 'toast_sending_otp'), { icon: '📱' });
     } catch (err) {
       const status = err.response?.status;
       const detail = err.response?.data?.detail || err.message;
       if (status === 429) {
-        toast.error(typeof detail === 'string' ? detail : 'יותר מדי בקשות. נסה שוב בעוד מספר דקות.');
+        toast.error(typeof detail === 'string' ? detail : t('onboarding', 'err_too_many_requests'));
       } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
         setPhoneE164(e164);
         setStep('otp');
         startResendCountdown();
-        toast('שולחים קוד אימות, ייתכן עיכוב קצר...', { icon: '⏳' });
+        toast(t('onboarding', 'toast_sending_delayed'), { icon: '⏳' });
       } else if (status >= 500) {
-        toast.error('שגיאה בשרת. נסה שוב בעוד רגע.');
+        toast.error(t('onboarding', 'err_server'));
       } else {
         console.error('[OTP-DEBUG] OnboardingPage error:', { status, detail, code: err.code, message: err.message });
-        toast.error(typeof detail === 'string' ? detail : 'שגיאה בשליחת קוד');
+        toast.error(typeof detail === 'string' ? detail : t('onboarding', 'err_otp_send'));
       }
     } finally {
       setLoading(false);
@@ -164,17 +165,17 @@ const OnboardingPage = () => {
     try {
       await onboardingService.requestOtp(phoneE164);
       startResendCountdown();
-      toast('שולחים קוד חדש...', { icon: '📱' });
+      toast(t('onboarding', 'toast_resending'), { icon: '📱' });
     } catch (err) {
       const status = err.response?.status;
       const detail = err.response?.data?.detail || err.message;
       if (status === 429) {
-        toast.error(typeof detail === 'string' ? detail : 'יותר מדי בקשות.');
+        toast.error(typeof detail === 'string' ? detail : t('onboarding', 'err_too_many_requests'));
       } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
         startResendCountdown();
-        toast('שולחים קוד, ייתכן עיכוב קצר...', { icon: '⏳' });
+        toast(t('onboarding', 'toast_resend_delayed'), { icon: '⏳' });
       } else {
-        toast.error(typeof detail === 'string' ? detail : 'שגיאה בשליחה חוזרת');
+        toast.error(typeof detail === 'string' ? detail : t('onboarding', 'err_resend'));
       }
     } finally {
       setLoading(false);
@@ -184,7 +185,7 @@ const OnboardingPage = () => {
   const handleVerifyOtp = useCallback(async (e) => {
     e.preventDefault();
     if (!otpCode.trim() || otpCode.length < 4) {
-      toast.error('יש להזין קוד אימות');
+      toast.error(t('onboarding', 'err_otp_required'));
       return;
     }
     setLoading(true);
@@ -195,14 +196,14 @@ const OnboardingPage = () => {
         if (isInviteFlow) {
           return;
         }
-        toast.success('התחברת בהצלחה!');
+        toast.success(t('onboarding', 'toast_logged_in'));
         navigate('/projects');
         return;
       }
       setPhoneVerified(true);
       if (isInviteFlow) {
         setStep('invite-login-needed');
-        toast.success('טלפון אומת. יש ליצור חשבון כדי להמשיך.');
+        toast.success(t('onboarding', 'toast_phone_verified_create'));
         return;
       }
       try {
@@ -218,9 +219,9 @@ const OnboardingPage = () => {
       } catch {
         setStep('choose-path');
       }
-      toast.success('טלפון אומת בהצלחה');
+      toast.success(t('onboarding', 'toast_phone_verified'));
     } catch (err) {
-      const detail = err.response?.data?.detail || 'קוד לא תקין';
+      const detail = err.response?.data?.detail || t('onboarding', 'err_otp_invalid');
       toast.error(detail);
     } finally {
       setLoading(false);
@@ -230,7 +231,7 @@ const OnboardingPage = () => {
   const handleLoginPassword = useCallback(async (e) => {
     e.preventDefault();
     if (!password) {
-      toast.error('יש להזין סיסמה');
+      toast.error(t('onboarding', 'err_password_required'));
       return;
     }
     setLoading(true);
@@ -241,11 +242,11 @@ const OnboardingPage = () => {
         if (isInviteFlow) {
           return;
         }
-        toast.success('התחברת בהצלחה!');
+        toast.success(t('onboarding', 'toast_logged_in'));
         navigate('/projects');
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'סיסמה שגויה';
+      const detail = err.response?.data?.detail || t('onboarding', 'err_wrong_password');
       toast.error(detail);
     } finally {
       setLoading(false);
@@ -255,19 +256,19 @@ const OnboardingPage = () => {
   const handleCreateOrg = useCallback(async (e) => {
     e.preventDefault();
     if (!fullName || fullName.trim().length < 2) {
-      toast.error('שם מלא נדרש (לפחות 2 תווים)');
+      toast.error(t('onboarding', 'err_name_required'));
       return;
     }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      toast.error('כתובת אימייל נדרשת');
+      toast.error(t('onboarding', 'err_email_required'));
       return;
     }
     if (!orgName || orgName.trim().length < 2) {
-      toast.error('שם ארגון נדרש (לפחות 2 תווים)');
+      toast.error(t('onboarding', 'err_org_required'));
       return;
     }
     if (!projectName || projectName.trim().length < 2) {
-      toast.error('שם פרויקט נדרש (לפחות 2 תווים)');
+      toast.error(t('onboarding', 'err_project_required'));
       return;
     }
     const pwErr = validatePassword(password);
@@ -289,7 +290,7 @@ const OnboardingPage = () => {
       });
       if (result.success && result.token) {
         loginWithOtp(result.token, result.user, result.user?.platform_role);
-        toast.success('הארגון נוצר בהצלחה! תקופת ניסיון 7 ימים.');
+        toast.success(t('onboarding', 'toast_org_created'));
         if (result.project?.id) {
           localStorage.setItem('lastProjectId', result.project.id);
           navigate(`/projects/${result.project.id}/control?showQuickSetup=true`);
@@ -298,7 +299,7 @@ const OnboardingPage = () => {
         }
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'שגיאה ביצירת ארגון';
+      const detail = err.response?.data?.detail || t('onboarding', 'err_create_org');
       toast.error(detail);
     } finally {
       setLoading(false);
@@ -309,11 +310,11 @@ const OnboardingPage = () => {
     e.preventDefault();
     const invite = selectedInvite || inviteInfo || (inviteToken ? { invite_id: inviteToken } : null);
     if (!invite) {
-      toast.error('יש לבחור הזמנה');
+      toast.error(t('onboarding', 'err_invite_required'));
       return;
     }
     if (!fullName || fullName.trim().length < 2) {
-      toast.error('שם מלא נדרש');
+      toast.error(t('onboarding', 'err_name_required_short'));
       return;
     }
     if (!authToken) {
@@ -337,14 +338,14 @@ const OnboardingPage = () => {
       if (result.success && result.token) {
         loginWithOtp(result.token, result.user, result.user?.platform_role);
         if (result.org_name && result.project_name) {
-          toast.success(`הצטרפת לארגון ${result.org_name} בפרויקט ${result.project_name}`);
+          toast.success(t('onboarding', 'toast_joined_org_project').replace('{org}', result.org_name).replace('{project}', result.project_name));
         } else if (result.project_name) {
-          toast.success(`הצטרפת לפרויקט ${result.project_name} בהצלחה!`);
+          toast.success(t('onboarding', 'toast_joined_project').replace('{project}', result.project_name));
         } else {
-          toast.success('הצטרפת לפרויקט בהצלחה!');
+          toast.success(t('onboarding', 'toast_joined_generic'));
         }
         if (result.effective_access === 'read_only' && result.org_id) {
-          toast('הגישה מוגבלת כרגע — פנה למנהל הארגון להפעלת המנוי', { icon: 'ℹ️', duration: 6000 });
+          toast(t('onboarding', 'toast_access_limited'), { icon: 'ℹ️', duration: 6000 });
         }
         const projectId = result.project_id || invite.project_id;
         const memberRole = result.invite_role || invite.role || 'viewer';
@@ -355,7 +356,7 @@ const OnboardingPage = () => {
         }
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'שגיאה בקבלת הזמנה';
+      const detail = err.response?.data?.detail || t('onboarding', 'err_accept_invite');
       toast.error(detail);
     } finally {
       setLoading(false);
@@ -365,11 +366,11 @@ const OnboardingPage = () => {
   const handleJoinByCode = useCallback(async (e) => {
     e.preventDefault();
     if (!joinCode.trim()) {
-      toast.error('יש להזין קוד הצטרפות');
+      toast.error(t('onboarding', 'err_join_code_required'));
       return;
     }
     if (!fullName || fullName.trim().length < 2) {
-      toast.error('שם מלא נדרש');
+      toast.error(t('onboarding', 'err_name_required_short'));
       return;
     }
     setLoading(true);
@@ -381,11 +382,11 @@ const OnboardingPage = () => {
         password: password || undefined,
       });
       if (result.success) {
-        toast.success(result.message || 'הבקשה נשלחה');
+        toast.success(result.message || t('onboarding', 'toast_request_sent'));
         navigate('/login');
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'קוד הצטרפות לא תקין';
+      const detail = err.response?.data?.detail || t('onboarding', 'err_join_code_invalid');
       toast.error(detail);
     } finally {
       setLoading(false);
@@ -418,7 +419,7 @@ const OnboardingPage = () => {
         BrikOps
       </h1>
       <p className="text-slate-500 text-sm mt-1">
-        {isInviteFlow ? 'הזמנה לפרויקט' : 'הרשמה למערכת'}
+        {isInviteFlow ? t('onboarding', 'invite_title') : t('onboarding', 'register_title')}
       </p>
     </div>
   );
@@ -428,16 +429,16 @@ const OnboardingPage = () => {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
         <Mail className="w-8 h-8 text-blue-500 mx-auto mb-2" />
         <p className="text-sm font-medium text-blue-800">
-          יש לך הזמנה לפרויקט
+          {t('onboarding', 'invite_has_invite')}
         </p>
         <p className="text-xs text-blue-600 mt-1">
-          התחבר כדי לצפות בפרטי ההזמנה ולהצטרף
+          {t('onboarding', 'invite_login_hint')}
         </p>
       </div>
       <form onSubmit={handleRequestOtp} className="space-y-4">
         <div className="space-y-2">
           <label htmlFor="onb-phone" className="block text-sm font-medium text-slate-700">
-            מספר טלפון <span className="text-red-500">*</span>
+            {t('onboarding', 'phone_label')} <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
@@ -454,12 +455,12 @@ const OnboardingPage = () => {
         </div>
         <Button type="submit" disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
           {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-          שלח קוד אימות
+          {t('onboarding', 'send_otp')}
         </Button>
       </form>
       <div className="text-center mt-3">
         <button type="button" onClick={() => navigate('/login')} className="text-sm text-amber-600 hover:text-amber-700 font-medium">
-          יש לי כבר חשבון - התחברות
+          {t('onboarding', 'have_account')}
         </button>
       </div>
     </div>
@@ -470,7 +471,7 @@ const OnboardingPage = () => {
       return (
         <div className="flex flex-col items-center py-8" dir="rtl">
           <Loader2 className="w-8 h-8 text-amber-500 animate-spin mb-4" />
-          <p className="text-sm text-slate-500">טוען פרטי הזמנה...</p>
+          <p className="text-sm text-slate-500">{t('onboarding', 'loading_invite')}</p>
         </div>
       );
     }
@@ -479,15 +480,15 @@ const OnboardingPage = () => {
       <div className="space-y-4" dir="rtl">
         <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center">
           <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-3" />
-          <h3 className="text-lg font-bold text-slate-900 mb-1">הוזמנת לפרויקט</h3>
+          <h3 className="text-lg font-bold text-slate-900 mb-1">{t('onboarding', 'invited_to_project')}</h3>
           <p className="text-base font-semibold text-green-800">{inviteInfo.project_name}</p>
-          <p className="text-sm text-slate-600 mt-1">תפקיד: {inviteInfo.role_display}</p>
+          <p className="text-sm text-slate-600 mt-1">{t('onboarding', 'role_label')} {inviteInfo.role_display}</p>
         </div>
 
         <form onSubmit={handleAcceptInvite} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="invite-fullname" className="block text-sm font-medium text-slate-700">
-              שם מלא <span className="text-red-500">*</span>
+              {t('onboarding', 'full_name')} <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <input
@@ -495,7 +496,7 @@ const OnboardingPage = () => {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="ישראל ישראלי"
+                placeholder={t('onboarding', 'name_placeholder')}
                 className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
                 autoFocus
               />
@@ -505,7 +506,7 @@ const OnboardingPage = () => {
 
           <div className="space-y-2">
             <label htmlFor="invite-password" className="block text-sm font-medium text-slate-700">
-              סיסמה {!status?.has_account && <span className="text-red-500">*</span>}
+              {t('onboarding', 'password')} {!status?.has_account && <span className="text-red-500">*</span>}
             </label>
             <div className="relative">
               <input
@@ -513,10 +514,10 @@ const OnboardingPage = () => {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={status?.has_account ? 'השאר ריק לשמירת סיסמה קיימת' : 'לפחות 8 תווים, אות + מספר'}
+                placeholder={status?.has_account ? t('onboarding', 'keep_existing_pw') : t('onboarding', 'pw_requirements')}
                 className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
               />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? t('onboarding', 'hide_password') : t('onboarding', 'show_password')} aria-pressed={showPassword}>
                 {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
               </button>
             </div>
@@ -524,7 +525,7 @@ const OnboardingPage = () => {
 
           <div className="space-y-2">
             <label htmlFor="invite-email" className="block text-sm font-medium text-slate-700">
-              כתובת אימייל (אופציונלי)
+              {t('onboarding', 'email_optional')}
             </label>
             <div className="relative">
               <input
@@ -538,12 +539,12 @@ const OnboardingPage = () => {
               />
               <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             </div>
-            <p className="text-xs text-slate-400">לשחזור סיסמה והתראות</p>
+            <p className="text-xs text-slate-400">{t('onboarding', 'email_recovery_hint')}</p>
           </div>
 
           <div className="space-y-2">
             <label htmlFor="invite-lang" className="block text-sm font-medium text-slate-700">
-              שפת WhatsApp
+              {t('onboarding', 'wa_language')}
             </label>
             <select
               id="invite-lang"
@@ -560,7 +561,7 @@ const OnboardingPage = () => {
 
           <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
             {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
-            המשך לפרויקט
+            {t('onboarding', 'continue_to_project')}
           </Button>
         </form>
       </div>
@@ -570,10 +571,10 @@ const OnboardingPage = () => {
   const renderInviteError = () => (
     <div className="space-y-4 text-center" dir="rtl">
       <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
-      <h3 className="text-lg font-bold text-slate-900">ההזמנה לא תקינה</h3>
-      <p className="text-sm text-slate-600">{inviteError || 'ההזמנה לא נמצאה, פגה תוקפה, או שכבר טופלה.'}</p>
+      <h3 className="text-lg font-bold text-slate-900">{t('onboarding', 'invite_invalid')}</h3>
+      <p className="text-sm text-slate-600">{inviteError || t('onboarding', 'invite_error_desc')}</p>
       <Button onClick={() => navigate('/login')} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
-        חזרה להתחברות
+        {t('onboarding', 'back_to_login')}
       </Button>
     </div>
   );
@@ -584,17 +585,17 @@ const OnboardingPage = () => {
         <Mail className="w-8 h-8 text-blue-500 mx-auto mb-2" />
         <p className="text-sm font-medium text-blue-800">
           {inviteInfo?.project_name
-            ? `יש לך הזמנה לפרויקט "${inviteInfo.project_name}". צור חשבון כדי להמשיך.`
-            : 'יש לך הזמנה לפרויקט. צור חשבון כדי להמשיך.'}
+            ? t('onboarding', 'invite_create_account_for').replace('{project}', inviteInfo.project_name)
+            : t('onboarding', 'invite_create_account')}
         </p>
         {inviteInfo?.role_display && (
-          <p className="text-xs text-blue-600 mt-1">תפקיד: {inviteInfo.role_display}</p>
+          <p className="text-xs text-blue-600 mt-1">{t('onboarding', 'role_label')} {inviteInfo.role_display}</p>
         )}
       </div>
       <form onSubmit={handleAcceptInvite} className="space-y-4">
         <div className="space-y-2">
           <label htmlFor="join-fullname" className="block text-sm font-medium text-slate-700">
-            שם מלא <span className="text-red-500">*</span>
+            {t('onboarding', 'full_name')} <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
@@ -602,7 +603,7 @@ const OnboardingPage = () => {
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="ישראל ישראלי"
+              placeholder={t('onboarding', 'name_placeholder')}
               className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
               autoFocus
             />
@@ -611,7 +612,7 @@ const OnboardingPage = () => {
         </div>
         <div className="space-y-2">
           <label htmlFor="join-password" className="block text-sm font-medium text-slate-700">
-            סיסמה <span className="text-red-500">*</span>
+            {t('onboarding', 'password')} <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
@@ -619,17 +620,17 @@ const OnboardingPage = () => {
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="לפחות 8 תווים, אות + מספר"
+              placeholder={t('onboarding', 'pw_requirements')}
               className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
             />
-            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
+            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? t('onboarding', 'hide_password') : t('onboarding', 'show_password')} aria-pressed={showPassword}>
               {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
             </button>
           </div>
         </div>
         <div className="space-y-2">
           <label htmlFor="join-email" className="block text-sm font-medium text-slate-700">
-            כתובת אימייל (אופציונלי)
+            {t('onboarding', 'email_optional')}
           </label>
           <div className="relative">
             <input
@@ -643,12 +644,12 @@ const OnboardingPage = () => {
             />
             <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           </div>
-          <p className="text-xs text-slate-400">לשחזור סיסמה והתראות</p>
+          <p className="text-xs text-slate-400">{t('onboarding', 'email_recovery_hint')}</p>
         </div>
 
         <div className="space-y-2">
           <label htmlFor="join-lang" className="block text-sm font-medium text-slate-700">
-            שפת WhatsApp
+            {t('onboarding', 'wa_language')}
           </label>
           <select
             id="join-lang"
@@ -665,7 +666,7 @@ const OnboardingPage = () => {
 
         <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
           {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
-          צור חשבון והצטרף
+          {t('onboarding', 'create_and_join')}
         </Button>
       </form>
     </div>
@@ -675,7 +676,7 @@ const OnboardingPage = () => {
     <form onSubmit={handleRequestOtp} className="space-y-4" dir="rtl">
       <div className="space-y-2">
         <label htmlFor="onb-phone" className="block text-sm font-medium text-slate-700">
-          מספר טלפון <span className="text-red-500">*</span>
+          {t('onboarding', 'phone_label')} <span className="text-red-500">*</span>
         </label>
         <div className="relative">
           <input
@@ -692,11 +693,11 @@ const OnboardingPage = () => {
       </div>
       <Button type="submit" disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
         {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-        שלח קוד אימות
+        {t('onboarding', 'send_otp')}
       </Button>
       <div className="text-center mt-3">
         <button type="button" onClick={() => navigate('/login')} className="text-sm text-amber-600 hover:text-amber-700 font-medium">
-          יש לי כבר חשבון - התחברות
+          {t('onboarding', 'have_account')}
         </button>
       </div>
     </form>
@@ -706,12 +707,12 @@ const OnboardingPage = () => {
     <form onSubmit={handleVerifyOtp} className="space-y-4" dir="rtl">
       <div className="text-center">
         <p className="text-sm text-slate-600">
-          שולחים קוד אימות ל-<bdi dir="ltr" className="font-mono font-medium text-slate-900 inline-block">{phoneE164}</bdi>
+          {t('onboarding', 'otp_sent_to')} <bdi dir="ltr" className="font-mono font-medium text-slate-900 inline-block">{phoneE164}</bdi>
         </p>
-        <p className="text-xs text-slate-400 mt-1">הקוד יכול להגיע עד 60 שניות</p>
+        <p className="text-xs text-slate-400 mt-1">{t('onboarding', 'otp_delay_hint')}</p>
       </div>
       <div className="space-y-2">
-        <label htmlFor="onb-otp" className="block text-sm font-medium text-slate-700">קוד אימות</label>
+        <label htmlFor="onb-otp" className="block text-sm font-medium text-slate-700">{t('onboarding', 'otp_label')}</label>
         <input
           id="onb-otp"
           type="text"
@@ -726,22 +727,22 @@ const OnboardingPage = () => {
       </div>
       <Button type="submit" disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
         {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-        אימות
+        {t('onboarding', 'verify')}
       </Button>
       <div className="text-center">
         {resendCountdown > 0 ? (
           <p className="text-sm text-slate-400">
-            לא קיבלת? אפשר לשלוח שוב בעוד {resendCountdown} שניות
+            {t('onboarding', 'resend_countdown').replace('{seconds}', resendCountdown)}
           </p>
         ) : (
           <button type="button" onClick={handleResendOtp} disabled={loading} className="text-sm text-amber-600 hover:text-amber-700 font-medium">
-            לא קיבלת קוד? שלח שוב
+            {t('onboarding', 'resend_otp')}
           </button>
         )}
       </div>
       <button type="button" onClick={() => { setStep('phone'); setOtpCode(''); setResendCountdown(0); if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; } }} className="w-full text-sm text-slate-500 hover:text-slate-700">
         <ArrowRight className="w-3 h-3 inline ml-1" />
-        חזרה
+        {t('onboarding', 'back')}
       </button>
     </form>
   );
@@ -750,10 +751,10 @@ const OnboardingPage = () => {
     <form onSubmit={handleLoginPassword} className="space-y-4" dir="rtl">
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800 text-center">
         <CheckCircle2 className="w-4 h-4 inline ml-1" />
-        נמצא חשבון קיים. הזן סיסמה להתחברות.
+        {t('onboarding', 'existing_account_found')}
       </div>
       <div className="space-y-2">
-        <label htmlFor="login-password" className="block text-sm font-medium text-slate-700">סיסמה</label>
+        <label htmlFor="login-password" className="block text-sm font-medium text-slate-700">{t('onboarding', 'password')}</label>
         <div className="relative">
           <input
             id="login-password"
@@ -763,14 +764,14 @@ const OnboardingPage = () => {
             className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
             autoFocus
           />
-          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
+          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? t('onboarding', 'hide_password') : t('onboarding', 'show_password')} aria-pressed={showPassword}>
             {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
           </button>
         </div>
       </div>
       <Button type="submit" disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
         {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-        התחבר
+        {t('onboarding', 'login')}
       </Button>
     </form>
   );
@@ -779,12 +780,12 @@ const OnboardingPage = () => {
     <div className="space-y-4" dir="rtl">
       <p className="text-sm text-slate-600 text-center mb-2">
         <CheckCircle2 className="w-4 h-4 inline ml-1 text-green-500" />
-        הטלפון אומת בהצלחה. מה תרצה לעשות?
+        {t('onboarding', 'phone_verified_choose')}
       </p>
 
       {status?.pending_invites?.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-slate-700">הזמנות ממתינות:</h3>
+          <h3 className="text-sm font-semibold text-slate-700">{t('onboarding', 'pending_invites')}</h3>
           {status.pending_invites.map((inv) => (
             <button
               key={inv.invite_id}
@@ -792,7 +793,7 @@ const OnboardingPage = () => {
               className="w-full p-3 border border-slate-200 rounded-lg hover:border-amber-400 hover:bg-amber-50 transition-colors text-right"
             >
               <div className="font-medium text-slate-900">{inv.project_name}</div>
-              <div className="text-xs text-slate-500">תפקיד: {inv.role} {inv.sub_role ? `(${inv.sub_role})` : ''}</div>
+              <div className="text-xs text-slate-500">{t('onboarding', 'role_label')} {inv.role} {inv.sub_role ? `(${inv.sub_role})` : ''}</div>
             </button>
           ))}
         </div>
@@ -807,8 +808,8 @@ const OnboardingPage = () => {
             <Building2 className="w-5 h-5 text-amber-600" />
           </div>
           <div className="text-right">
-            <div className="font-medium text-slate-900">חשבון חדש + ארגון</div>
-            <div className="text-xs text-slate-500">צור ארגון חדש עם תקופת ניסיון חינמית</div>
+            <div className="font-medium text-slate-900">{t('onboarding', 'new_account_org')}</div>
+            <div className="text-xs text-slate-500">{t('onboarding', 'new_account_org_desc')}</div>
           </div>
         </button>
 
@@ -820,8 +821,8 @@ const OnboardingPage = () => {
             <KeyRound className="w-5 h-5 text-blue-600" />
           </div>
           <div className="text-right">
-            <div className="font-medium text-slate-900">הצטרפות עם קוד</div>
-            <div className="text-xs text-slate-500">קיבלת קוד הצטרפות מהמנהל? הזן אותו כאן</div>
+            <div className="font-medium text-slate-900">{t('onboarding', 'join_with_code')}</div>
+            <div className="text-xs text-slate-500">{t('onboarding', 'join_with_code_desc')}</div>
           </div>
         </button>
       </div>
@@ -833,10 +834,10 @@ const OnboardingPage = () => {
     const isInvite = path === 'invite';
     const isCode = path === 'code';
 
-    const title = isNew ? 'יצירת חשבון חדש' : isInvite ? 'קבלת הזמנה' : 'הצטרפות עם קוד';
-    const subtitle = isNew ? 'מלא את הפרטים ליצירת ארגון חדש' :
-      isInvite ? `הצטרפות לפרויקט: ${selectedInvite?.project_name}` :
-      'הזן קוד הצטרפות שקיבלת מהמנהל';
+    const title = isNew ? t('onboarding', 'create_new_account') : isInvite ? t('onboarding', 'accept_invite') : t('onboarding', 'join_with_code');
+    const subtitle = isNew ? t('onboarding', 'fill_details_new_org') :
+      isInvite ? `${t('onboarding', 'joining_project')} ${selectedInvite?.project_name}` :
+      t('onboarding', 'enter_join_code_desc');
 
     const handleSubmit = isNew ? handleCreateOrg : isInvite ? handleAcceptInvite : handleJoinByCode;
 
@@ -850,7 +851,7 @@ const OnboardingPage = () => {
         {isCode && (
           <div className="space-y-2">
             <label htmlFor="onb-joincode" className="block text-sm font-medium text-slate-700">
-              קוד הצטרפות <span className="text-red-500">*</span>
+              {t('onboarding', 'join_code_label')} <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <input
@@ -869,7 +870,7 @@ const OnboardingPage = () => {
 
         <div className="space-y-2">
           <label htmlFor="onb-fullname" className="block text-sm font-medium text-slate-700">
-            שם מלא <span className="text-red-500">*</span>
+            {t('onboarding', 'full_name')} <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <input
@@ -877,7 +878,7 @@ const OnboardingPage = () => {
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="ישראל ישראלי"
+              placeholder={t('onboarding', 'name_placeholder')}
               className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
               autoFocus={!isCode}
             />
@@ -888,7 +889,7 @@ const OnboardingPage = () => {
         {isNew && (
           <>
             <div className="space-y-2">
-              <label htmlFor="onb-email" className="block text-sm font-medium text-slate-700">אימייל <span className="text-red-500">*</span></label>
+              <label htmlFor="onb-email" className="block text-sm font-medium text-slate-700">{t('onboarding', 'email_label')} <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
                   id="onb-email"
@@ -903,28 +904,28 @@ const OnboardingPage = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <label htmlFor="onb-orgname" className="block text-sm font-medium text-slate-700">שם הארגון <span className="text-red-500">*</span></label>
+              <label htmlFor="onb-orgname" className="block text-sm font-medium text-slate-700">{t('onboarding', 'org_name_label')} <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
                   id="onb-orgname"
                   type="text"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="למשל: חברת בנייה א.ב"
+                  placeholder={t('onboarding', 'org_name_placeholder')}
                   className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
                 />
                 <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               </div>
             </div>
             <div className="space-y-2">
-              <label htmlFor="onb-projectname" className="block text-sm font-medium text-slate-700">שם הפרויקט <span className="text-red-500">*</span></label>
+              <label htmlFor="onb-projectname" className="block text-sm font-medium text-slate-700">{t('onboarding', 'project_name_label')} <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
                   id="onb-projectname"
                   type="text"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="הפרויקט הראשון שלי"
+                  placeholder={t('onboarding', 'project_name_placeholder')}
                   className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
                 />
                 <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -935,7 +936,7 @@ const OnboardingPage = () => {
 
         <div className="space-y-2">
           <label htmlFor="onb-password" className="block text-sm font-medium text-slate-700">
-            סיסמה {(isNew || !status?.has_account) && <span className="text-red-500">*</span>}
+            {t('onboarding', 'password')} {(isNew || !status?.has_account) && <span className="text-red-500">*</span>}
           </label>
           <div className="relative">
             <input
@@ -943,10 +944,10 @@ const OnboardingPage = () => {
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => { setPassword(e.target.value); setPasswordError(''); }}
-              placeholder={status?.has_account ? 'השאר ריק לשמירת סיסמה קיימת' : 'לפחות 8 תווים, אות + מספר'}
+              placeholder={status?.has_account ? t('onboarding', 'keep_existing_pw') : t('onboarding', 'pw_requirements')}
               className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${passwordError ? 'border-red-400' : 'border-slate-300'}`}
             />
-            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'} aria-pressed={showPassword}>
+            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute left-3 top-1/2 -translate-y-1/2" aria-label={showPassword ? t('onboarding', 'hide_password') : t('onboarding', 'show_password')} aria-pressed={showPassword}>
               {showPassword ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
             </button>
           </div>
@@ -957,7 +958,7 @@ const OnboardingPage = () => {
           <>
             <div className="space-y-2">
               <label htmlFor="onb-invite-email" className="block text-sm font-medium text-slate-700">
-                כתובת אימייל (אופציונלי)
+                {t('onboarding', 'email_optional')}
               </label>
               <div className="relative">
                 <input
@@ -971,12 +972,12 @@ const OnboardingPage = () => {
                 />
                 <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               </div>
-              <p className="text-xs text-slate-400">לשחזור סיסמה והתראות</p>
+              <p className="text-xs text-slate-400">{t('onboarding', 'email_recovery_hint')}</p>
             </div>
 
             <div className="space-y-2">
               <label htmlFor="onb-invite-lang" className="block text-sm font-medium text-slate-700">
-                שפת WhatsApp
+                {t('onboarding', 'wa_language')}
               </label>
               <select
                 id="onb-invite-lang"
@@ -996,13 +997,13 @@ const OnboardingPage = () => {
         {isNew && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
             <Building2 className="w-4 h-4 inline ml-1" />
-            תקופת ניסיון חינמית של 7 ימים כוללת פרויקט אחד.
+            {t('onboarding', 'trial_info')}
           </div>
         )}
 
         <Button type="submit" disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11">
           {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-          {isNew ? 'צור ארגון והתחל' : isInvite ? 'קבל הזמנה' : 'שלח בקשת הצטרפות'}
+          {isNew ? t('onboarding', 'create_org_start') : isInvite ? t('onboarding', 'accept_invite') : t('onboarding', 'send_join_request')}
         </Button>
 
         <button
@@ -1011,7 +1012,7 @@ const OnboardingPage = () => {
           className="w-full text-sm text-slate-500 hover:text-slate-700 flex items-center justify-center gap-1"
         >
           <ArrowRight className="w-3 h-3" />
-          חזרה לבחירת נתיב
+          {t('onboarding', 'back_to_path')}
         </button>
       </form>
     );

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { HardHat, Loader2, Users, Wrench } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+import { t } from '../i18n';
 
 const RegisterPage = () => {
   const navigate = useNavigate();
@@ -99,23 +100,23 @@ const RegisterPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.full_name.trim()) {
-      toast.error('יש להזין שם מלא');
+      toast.error(t('register', 'err_name_required'));
       return;
     }
     if (!formData.track) {
-      toast.error('יש לבחור מסלול');
+      toast.error(t('register', 'err_track_required'));
       return;
     }
     if (!formData.role) {
-      toast.error('יש לבחור תפקיד');
+      toast.error(t('register', 'err_role_required'));
       return;
     }
     if (!formData.project_id) {
-      toast.error('יש לבחור פרויקט');
+      toast.error(t('register', 'err_project_required'));
       return;
     }
     if (track === 'subcontractor' && !formData.company_id) {
-      toast.error('יש לבחור חברה');
+      toast.error(t('register', 'err_company_required'));
       return;
     }
 
@@ -134,10 +135,10 @@ const RegisterPage = () => {
       }
 
       await onboardingService.registerWithPhone(payload);
-      toast.success('הרשמה בוצעה בהצלחה! ממתין לאישור');
+      toast.success(t('register', 'toast_registered'));
       navigate('/pending');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'שגיאה בהרשמה');
+      toast.error(error.response?.data?.detail || t('register', 'err_register'));
     } finally {
       setLoading(false);
     }
@@ -151,7 +152,7 @@ const RegisterPage = () => {
             <HardHat className="w-9 h-9 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
-            הרשמה למערכת
+            {t('register', 'title')}
           </h1>
           <p className="text-slate-500 text-sm mt-1">BrikOps</p>
         </div>
@@ -159,7 +160,7 @@ const RegisterPage = () => {
         <form onSubmit={handleSubmit} className="space-y-4" dir="rtl">
           <div className="space-y-2">
             <label htmlFor="phone_display" className="block text-sm font-medium text-slate-700">
-              מספר טלפון
+              {t('register', 'phone_label')}
             </label>
             <input
               id="phone_display"
@@ -173,7 +174,7 @@ const RegisterPage = () => {
 
           <div className="space-y-2">
             <label htmlFor="full_name" className="block text-sm font-medium text-slate-700">
-              שם מלא
+              {t('register', 'full_name')}
               <span className="text-red-500 mr-1">*</span>
             </label>
             <input
@@ -182,14 +183,14 @@ const RegisterPage = () => {
               type="text"
               value={formData.full_name}
               onChange={handleChange}
-              placeholder="הזן שם מלא"
+              placeholder={t('register', 'full_name_placeholder')}
               className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
             />
           </div>
 
           <div className="space-y-2">
             <span className="block text-sm font-medium text-slate-700">
-              מסלול
+              {t('register', 'track')}
               <span className="text-red-500 mr-1">*</span>
             </span>
             <div className="grid grid-cols-2 gap-3">
@@ -203,7 +204,7 @@ const RegisterPage = () => {
                 }`}
               >
                 <Users className="w-6 h-6" />
-                <span className="text-sm font-medium">הנהלה</span>
+                <span className="text-sm font-medium">{t('register', 'management')}</span>
               </button>
               <button
                 type="button"
@@ -215,7 +216,7 @@ const RegisterPage = () => {
                 }`}
               >
                 <Wrench className="w-6 h-6" />
-                <span className="text-sm font-medium">קבלן משנה</span>
+                <span className="text-sm font-medium">{t('register', 'subcontractor')}</span>
               </button>
             </div>
           </div>
@@ -223,7 +224,7 @@ const RegisterPage = () => {
           {track && (
             <div className="space-y-2">
               <label htmlFor="role" className="block text-sm font-medium text-slate-700">
-                תפקיד
+                {t('register', 'role_label')}
                 <span className="text-red-500 mr-1">*</span>
               </label>
               {rolesLoading ? (
@@ -238,7 +239,7 @@ const RegisterPage = () => {
                   onChange={handleChange}
                   className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
                 >
-                  <option value="">בחר תפקיד...</option>
+                  <option value="">{t('register', 'select_role')}</option>
                   {roles.map((role) => (
                     <option key={role.value || role.id || role} value={role.value || role.id || role}>
                       {role.label || role.name || role}
@@ -252,7 +253,7 @@ const RegisterPage = () => {
           {track === 'subcontractor' && (
             <div className="space-y-2">
               <label htmlFor="company_id" className="block text-sm font-medium text-slate-700">
-                חברה
+                {t('register', 'company_label')}
                 <span className="text-red-500 mr-1">*</span>
               </label>
               <select
@@ -262,7 +263,7 @@ const RegisterPage = () => {
                 onChange={handleChange}
                 className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
               >
-                <option value="">בחר חברה...</option>
+                <option value="">{t('register', 'select_company')}</option>
                 {companies.map((company) => (
                   <option key={company._id || company.id} value={company._id || company.id}>
                     {company.name}
@@ -274,7 +275,7 @@ const RegisterPage = () => {
 
           <div className="space-y-2">
             <label htmlFor="project_id" className="block text-sm font-medium text-slate-700">
-              פרויקט
+              {t('register', 'project_label')}
               <span className="text-red-500 mr-1">*</span>
             </label>
             <select
@@ -284,7 +285,7 @@ const RegisterPage = () => {
               onChange={handleChange}
               className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
             >
-              <option value="">בחר פרויקט...</option>
+              <option value="">{t('register', 'select_project')}</option>
               {projects.map((project) => (
                 <option key={project._id || project.id} value={project._id || project.id}>
                   {project.name}
@@ -301,10 +302,11 @@ const RegisterPage = () => {
             {loading ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-5 h-5 animate-spin" />
-                שולח...
+                {t('register', 'submitting')}
               </span>
             ) : (
-              'הרשמה ושליחת בקשה'
+              t('register', 'submit')
+
             )}
           </Button>
         </form>
