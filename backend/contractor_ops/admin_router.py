@@ -203,7 +203,7 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
 async def admin_invoices_summary(user: dict = Depends(require_super_admin)):
     db = get_db()
     pipeline = [
-        {'$sort': {'period_ym': -1}},
+        {'$sort': {'org_id': 1, 'period_ym': -1}},
         {'$group': {
             '_id': '$org_id',
             'period_ym': {'$first': '$period_ym'},
