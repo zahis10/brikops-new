@@ -36,7 +36,7 @@ HEADER_ALIASES = {
     'tenant_2_name': ['שם נוסף', 'שם שני', 'שם בן/בת זוג', 'שם 2'],
     'tenant_2_id': ['ת"ז נוסף', 'ת"ז 2', 'תז שני', 'ת״ז נוסף'],
     'handover_date': ['תאריך מסירה', 'תאריך מסירת דירה', 'מסירה', 'handover date'],
-    'unit_type': ['אפיון', 'תאור אפיון', 'סוג דירה', 'אפיון דירה', 'type'],
+    'unit_type': ['אפיון', 'תאור אפיון', 'סוג דירה', 'אפיון דירה'],
 }
 
 REQUIRED_COLUMNS = {"apartment", "tenant_name"}
@@ -337,6 +337,18 @@ async def _cross_reference(rows: list, project_id: str, detected_keys: set):
     has_building_col = 'building' in detected_keys
     all_units = units
 
+    existing_docs = await db.unit_tenant_data.find(
+        {"project_id": project_id}
+    ).to_list(10000)
+
+    existing_by_uid = {}
+    existing_by_text = {}
+    for doc in existing_docs:
+        if doc.get("unit_id"):
+            existing_by_uid[doc["unit_id"]] = doc
+        key = (doc.get("building_name", ""), doc.get("apartment_number", ""))
+        existing_by_text[key] = doc
+
     overwrite_count = 0
 
     for v in rows:
@@ -399,16 +411,9 @@ async def _cross_reference(rows: list, project_id: str, detected_keys: set):
                 if row_floor and row_floor != floor_name and row_floor != floor_num:
                     v["warnings"].append(f"קומה באקסל \"{row_floor}\" שונה ממה שבמערכת \"{floor_name}\"")
 
-            existing = await db.unit_tenant_data.find_one({
-                "project_id": project_id,
-                "unit_id": mu['id'],
-            })
+            existing = existing_by_uid.get(mu['id'])
             if not existing:
-                existing = await db.unit_tenant_data.find_one({
-                    "project_id": project_id,
-                    "building_name": match_info["building_name"],
-                    "apartment_number": apt_raw,
-                })
+                existing = existing_by_text.get((match_info["building_name"], apt_raw))
             if existing:
                 match_info["status"] = "overwrite"
                 v["overwrite"] = True
@@ -449,10 +454,9 @@ async def _cross_reference(rows: list, project_id: str, detected_keys: set):
                     "unit_id": mu['id'],
                     "unit_label": mu.get('display_label') or mu.get('unit_no', ''),
                 }
-                existing = await db.unit_tenant_data.find_one({
-                    "project_id": project_id,
-                    "unit_id": mu['id'],
-                })
+                existing = existing_by_uid.get(mu['id'])
+                if not existing:
+                    existing = existing_by_text.get((match_info["building_name"], apt_raw))
                 if existing:
                     match_info["status"] = "overwrite"
                     v["overwrite"] = True
@@ -460,6 +464,13 @@ async def _cross_reference(rows: list, project_id: str, detected_keys: set):
                 else:
                     v["overwrite"] = False
                 v["match"] = match_info
+        elif len(matched_units) > 1 and matched_building:
+            v["match"] = {"status": "ambiguous_unit"}
+            v["errors"].append(
+                f"דירה {apt_raw} מופיעה {len(matched_units)} "
+                f"פעמים בבניין {matched_building['name']}"
+            )
+            v["valid"] = False
         else:
             v["match"] = {"status": "unit_not_found"}
             v["warnings"].append(f"דירה {apt_raw} לא נמצאה" + (f" בבניין {matched_building['name']}" if matched_building else " בפרויקט"))
