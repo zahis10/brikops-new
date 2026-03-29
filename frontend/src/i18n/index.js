@@ -21,9 +21,9 @@ export function t(section, key) {
     ?? LOCALES['he']?.[section]?.[key]
     ?? key;
   if (process.env.NODE_ENV === 'development'
-      && !LOCALES[currentLocale]?.[section]?.[key]
-      && !LOCALES['he']?.[section]?.[key]) {
-    console.warn(`[i18n] Missing key: ${section}.${key}`);
+      && !LOCALES[currentLocale]?.[section]?.[key]) {
+    const fallback = LOCALES['he']?.[section]?.[key] ? ' (falling back to he)' : ' (no fallback)';
+    console.warn(`[i18n] Missing ${currentLocale} key: ${section}.${key}${fallback}`);
   }
   return val;
 }
