@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BillingProvider, useBilling } from './contexts/BillingContext';
 import { IdentityProvider } from './contexts/IdentityContext';
 import { setPaywallCallback } from './services/api';
+import { setLanguage } from './i18n';
 import { Toaster } from './components/ui/sonner';
 import TrialBanner from './components/TrialBanner';
 import CompleteAccountBanner from './components/CompleteAccountBanner';
@@ -79,6 +80,12 @@ const ConnectingScreen = () => (
 const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   const { user, loading, token, networkError } = useAuth();
   const location = useLocation();
+
+  useEffect(() => {
+    if (user?.preferred_language) {
+      setLanguage(user.preferred_language);
+    }
+  }, [user?.preferred_language]);
 
   if (loading) {
     return <LoadingSpinner />;
