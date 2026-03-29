@@ -671,33 +671,89 @@ async def execute_import(
         if uid:
             submitted_unit_ids.add(uid)
 
-    valid_unit_ids = set()
+    valid_unit_ids = {}
     if submitted_unit_ids:
         cursor = db.units.find(
             {"project_id": project_id, "id": {"$in": list(submitted_unit_ids)}},
-            {"id": 1, "_id": 0}
+            {"id": 1, "building_id": 1, "_id": 0}
         )
         async for u in cursor:
-            valid_unit_ids.add(u["id"])
+            valid_unit_ids[u["id"]] = u
+
+    all_units = []
+    cursor = db.units.find({"project_id": project_id}, {"id": 1, "unit_no": 1, "building_id": 1, "_id": 0})
+    async for u in cursor:
+        all_units.append(u)
+
+    buildings = []
+    cursor = db.buildings.find({"project_id": project_id}, {"id": 1, "name": 1, "_id": 0})
+    async for b in cursor:
+        buildings.append(b)
+    building_by_id = {b["id"]: b for b in buildings}
+    building_by_name = {}
+    for b in buildings:
+        building_by_name[b["name"].strip().lower()] = b
+        building_by_name[_normalize_building_name(b["name"]).lower()] = b
+
+    units_by_building = {}
+    for u in all_units:
+        bid = u.get("building_id", "")
+        units_by_building.setdefault(bid, []).append(u)
 
     for row in body.rows:
         row_data = row.dict()
         row_errors = []
 
-        if not row_data.get("apartment_number", "").strip():
+        apt_number = (row_data.get("apartment_number") or "").strip()
+        if not apt_number:
             row_errors.append("דירה חסרה")
-        if not row_data.get("tenant_name", "").strip():
+        if not (row_data.get("tenant_name") or "").strip():
             row_errors.append("שם רוכש חסר")
 
         submitted_uid = (row_data.get("unit_id") or "").strip()
-        if submitted_uid and submitted_uid not in valid_unit_ids:
-            row_errors.append("יחידה לא נמצאה בפרויקט")
+
+        resolved_uid = None
+        resolved_building_id = None
+
+        if submitted_uid:
+            if submitted_uid in valid_unit_ids:
+                resolved_uid = submitted_uid
+                resolved_building_id = valid_unit_ids[submitted_uid].get("building_id")
+            else:
+                row_errors.append("יחידה לא נמצאה בפרויקט")
+        elif not row_errors:
+            bname = (row_data.get("building_name") or "").strip()
+            if bname:
+                matched_building = building_by_name.get(bname.lower()) or building_by_name.get(_normalize_building_name(bname).lower())
+                if matched_building:
+                    search_units = units_by_building.get(matched_building["id"], [])
+                    apt_norm = _normalize_unit_no(apt_number)
+                    found = [u for u in search_units if u.get("unit_no") == apt_number or _normalize_unit_no(u.get("unit_no", "")) == apt_norm]
+                    if len(found) == 1:
+                        resolved_uid = found[0]["id"]
+                        resolved_building_id = matched_building["id"]
+                    elif len(found) > 1:
+                        row_errors.append("כפילות יחידות — לא ניתן לשייך")
+                    else:
+                        row_errors.append("דירה לא נמצאה בפרויקט")
+                else:
+                    row_errors.append("בניין לא נמצא בפרויקט")
+            else:
+                apt_norm = _normalize_unit_no(apt_number)
+                found = [u for u in all_units if u.get("unit_no") == apt_number or _normalize_unit_no(u.get("unit_no", "")) == apt_norm]
+                if len(found) == 1:
+                    resolved_uid = found[0]["id"]
+                    resolved_building_id = found[0].get("building_id")
+                elif len(found) > 1:
+                    row_errors.append("כפילות יחידות בפרויקט — יש לציין בניין")
+                else:
+                    row_errors.append("דירה לא נמצאה בפרויקט")
 
         if row_errors:
             skipped += 1
             errors.append({
                 "source_row": row_data.get("source_row"),
-                "apartment": row_data.get("apartment_number", ""),
+                "apartment": apt_number,
                 "errors": row_errors,
             })
             continue
@@ -721,32 +777,29 @@ async def execute_import(
                 "id_number": row_data.get("tenant_2_id_number", "").strip(),
             }
 
+        resolved_building_name = (row_data.get("building_name") or "").strip()
+        if resolved_building_id and resolved_building_id in building_by_id:
+            resolved_building_name = building_by_id[resolved_building_id]["name"]
+
         doc = {
             "project_id": project_id,
-            "building_name": row_data.get("building_name", "").strip(),
-            "building_id": row_data.get("building_id", "").strip() or None,
-            "floor": row_data.get("floor", "").strip(),
-            "floor_id": row_data.get("floor_id", "").strip() or None,
-            "apartment_number": row_data["apartment_number"].strip(),
-            "unit_id": submitted_uid or None,
+            "building_name": resolved_building_name,
+            "building_id": resolved_building_id or (row_data.get("building_id") or "").strip() or None,
+            "floor": (row_data.get("floor") or "").strip(),
+            "floor_id": (row_data.get("floor_id") or "").strip() or None,
+            "apartment_number": apt_number,
+            "unit_id": resolved_uid,
             "tenant": tenant,
             "tenant_2": tenant_2,
             "handover_date": row_data.get("handover_date") or None,
-            "unit_type": row_data.get("unit_type", "").strip() or None,
+            "unit_type": (row_data.get("unit_type") or "").strip() or None,
             "source": "g4_import",
             "imported_at": ts,
             "imported_by": user["id"],
             "import_batch_id": batch_id,
         }
 
-        if submitted_uid:
-            upsert_filter = {"project_id": project_id, "unit_id": submitted_uid}
-        else:
-            upsert_filter = {
-                "project_id": project_id,
-                "building_name": doc["building_name"],
-                "apartment_number": doc["apartment_number"],
-            }
+        upsert_filter = {"project_id": project_id, "unit_id": resolved_uid}
 
         try:
             await db.unit_tenant_data.update_one(
