@@ -1,8 +1,30 @@
 import React, { useState, useRef } from 'react';
-import { X, Upload, Download, Loader2, CheckCircle2, AlertTriangle, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { X, Upload, Download, Loader2, CheckCircle2, AlertTriangle, FileSpreadsheet, RefreshCw, Building2, Search } from 'lucide-react';
 import { g4ImportService } from '../../services/api';
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+const FILTER_OPTIONS = [
+  { id: 'all', label: 'הכל' },
+  { id: 'matched', label: 'תקינות' },
+  { id: 'errors', label: 'שגיאות' },
+  { id: 'overwrite', label: 'יוחלפו' },
+];
+
+const COLUMN_LABELS = {
+  building: 'בניין',
+  floor: 'קומה',
+  apartment: 'דירה',
+  tenant_name: 'שם רוכש',
+  tenant_id: 'ת"ז',
+  tenant_phone: 'טלפון',
+  tenant_phone_2: 'טלפון נוסף',
+  tenant_email: 'אימייל',
+  tenant_2_name: 'שם נוסף',
+  tenant_2_id: 'ת"ז נוסף',
+  handover_date: 'תאריך מסירה',
+  unit_type: 'אפיון',
+};
 
 export default function G4ImportModal({ projectId, onClose }) {
   const [step, setStep] = useState('upload');
@@ -11,6 +33,7 @@ export default function G4ImportModal({ projectId, onClose }) {
   const [error, setError] = useState(null);
   const [previewData, setPreviewData] = useState(null);
   const [importResult, setImportResult] = useState(null);
+  const [filter, setFilter] = useState('all');
   const fileInputRef = useRef(null);
 
   const handleDownloadTemplate = async () => {
@@ -27,9 +50,7 @@ export default function G4ImportModal({ projectId, onClose }) {
   const handleFileSelect = (e) => {
     const selected = e.target.files?.[0];
     if (!selected) return;
-
     setError(null);
-
     const ext = selected.name.split('.').pop()?.toLowerCase();
     if (!['xlsx', 'csv'].includes(ext)) {
       setError('פורמט לא נתמך. יש להעלות קובץ xlsx או csv');
@@ -59,11 +80,33 @@ export default function G4ImportModal({ projectId, onClose }) {
 
   const handleExecute = async () => {
     if (!previewData) return;
-    const validRows = previewData.rows
-      .filter(r => r.valid)
-      .map(r => r.row);
 
-    if (validRows.length === 0) {
+    const importableRows = previewData.rows
+      .filter(r => {
+        if (!r.valid) return false;
+        const status = r.match?.status;
+        return status === 'matched' || status === 'overwrite';
+      })
+      .map(r => ({
+        building_name: r.match?.building_name || r.row?.building || '',
+        building_id: r.match?.building_id || '',
+        floor: r.row?.floor || '',
+        floor_id: r.match?.floor_id || '',
+        apartment_number: r.row?.apartment || '',
+        unit_id: r.match?.unit_id || '',
+        tenant_name: r.row?.tenant_name || '',
+        tenant_id_number: r.row?.tenant_id || '',
+        tenant_phone: r.row?.tenant_phone || '',
+        tenant_phone_2: r.row?.tenant_phone_2 || '',
+        tenant_email: r.row?.tenant_email || '',
+        tenant_2_name: r.row?.tenant_2_name || '',
+        tenant_2_id_number: r.row?.tenant_2_id || '',
+        handover_date: r.row?.handover_date || null,
+        unit_type: r.row?.unit_type || '',
+        source_row: r.row?.source_row || null,
+      }));
+
+    if (importableRows.length === 0) {
       setError('אין שורות תקינות לייבוא');
       return;
     }
@@ -71,7 +114,7 @@ export default function G4ImportModal({ projectId, onClose }) {
     try {
       setLoading(true);
       setError(null);
-      const result = await g4ImportService.execute(projectId, validRows);
+      const result = await g4ImportService.execute(projectId, importableRows);
       setImportResult(result);
       setStep('done');
     } catch (err) {
@@ -87,14 +130,69 @@ export default function G4ImportModal({ projectId, onClose }) {
     setPreviewData(null);
     setImportResult(null);
     setError(null);
+    setFilter('all');
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const getFilteredRows = () => {
+    if (!previewData) return [];
+    const rows = previewData.rows;
+    switch (filter) {
+      case 'matched':
+        return rows.filter(r => r.valid && (r.match?.status === 'matched' || r.match?.status === 'overwrite'));
+      case 'errors':
+        return rows.filter(r => !r.valid || r.match?.status === 'unit_not_found' || r.match?.status === 'building_not_found' || r.match?.status === 'ambiguous_unit');
+      case 'overwrite':
+        return rows.filter(r => r.overwrite);
+      default:
+        return rows;
+    }
+  };
+
+  const importableCount = previewData
+    ? previewData.rows.filter(r => r.valid && (r.match?.status === 'matched' || r.match?.status === 'overwrite')).length
+    : 0;
+
+  const detectedCols = previewData?.detected_columns || {};
+  const hasCol = (key) => key in detectedCols;
+
+  const getMatchStatusBadge = (item) => {
+    if (!item.valid) {
+      return <span className="text-red-600 text-[10px]">{item.errors?.join(', ')}</span>;
+    }
+    const status = item.match?.status;
+    if (status === 'matched') {
+      return (
+        <span className="inline-flex items-center gap-0.5 text-emerald-600 text-[10px]">
+          <CheckCircle2 className="w-3 h-3" />
+          {item.match?.building_name && <span>{item.match.building_name}</span>}
+        </span>
+      );
+    }
+    if (status === 'overwrite') {
+      return (
+        <span className="inline-flex items-center gap-0.5 text-amber-600 text-[10px]">
+          <RefreshCw className="w-3 h-3" /> יוחלף
+        </span>
+      );
+    }
+    if (status === 'unit_not_found') {
+      return <span className="text-orange-600 text-[10px]">לא נמצא</span>;
+    }
+    if (status === 'building_not_found') {
+      return <span className="text-red-600 text-[10px]">בניין לא נמצא</span>;
+    }
+    if (status === 'ambiguous_unit') {
+      return <span className="text-red-600 text-[10px]">כפילות בניינים</span>;
+    }
+    return <span className="text-slate-400 text-[10px]">—</span>;
   };
 
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
-        className="absolute inset-x-3 top-[5%] bottom-[5%] sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-2xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        className="absolute inset-x-3 top-[5%] bottom-[5%] sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-3xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         dir="rtl"
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
@@ -119,7 +217,7 @@ export default function G4ImportModal({ projectId, onClose }) {
             <div className="space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center space-y-3">
                 <p className="text-sm text-slate-600">
-                  העלו קובץ Excel או CSV עם נתוני הרוכשים בפורמט הקבוע
+                  העלו קובץ Excel או CSV עם נתוני הרוכשים — העמודות יזוהו אוטומטית
                 </p>
                 <button
                   onClick={handleDownloadTemplate}
@@ -132,9 +230,7 @@ export default function G4ImportModal({ projectId, onClose }) {
               </div>
 
               <div className="space-y-3">
-                <label
-                  className="block border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/30 transition-colors"
-                >
+                <label className="block border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/30 transition-colors">
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -169,10 +265,30 @@ export default function G4ImportModal({ projectId, onClose }) {
 
           {step === 'preview' && previewData && (
             <div className="space-y-4">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <Search className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+                  <div className="text-xs text-indigo-800">
+                    <span className="font-semibold">זוהו {Object.keys(detectedCols).length} עמודות: </span>
+                    {Object.keys(detectedCols).map(k => COLUMN_LABELS[k] || k).join(', ')}
+                    {previewData.unmatched_columns?.length > 0 && (
+                      <div className="mt-1 text-indigo-600">
+                        עמודות לא מזוהות: {previewData.unmatched_columns.join(', ')} — יתעלמו
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex flex-wrap gap-2">
                 <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">
-                  <CheckCircle2 className="w-3 h-3" /> {previewData.valid_count} שורות תקינות
+                  <CheckCircle2 className="w-3 h-3" /> {previewData.matched_count ?? 0} תקינות
                 </span>
+                {previewData.not_found_count > 0 && (
+                  <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-orange-100 text-orange-700">
+                    <Building2 className="w-3 h-3" /> {previewData.not_found_count} לא נמצאו
+                  </span>
+                )}
                 {previewData.error_count > 0 && (
                   <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-red-100 text-red-700">
                     <AlertTriangle className="w-3 h-3" /> {previewData.error_count} שגיאות
@@ -183,6 +299,18 @@ export default function G4ImportModal({ projectId, onClose }) {
                     <RefreshCw className="w-3 h-3" /> {previewData.overwrite_count} יוחלפו
                   </span>
                 )}
+              </div>
+
+              <div className="flex gap-1.5">
+                {FILTER_OPTIONS.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFilter(f.id)}
+                    className={`text-xs px-2.5 py-1 rounded-full transition-colors ${filter === f.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
               </div>
 
               {previewData.overwrite_count > 0 && (
@@ -200,17 +328,20 @@ export default function G4ImportModal({ projectId, onClose }) {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-2 py-2 text-right font-medium text-slate-500">#</th>
-                        <th className="px-2 py-2 text-right font-medium text-slate-500">בניין</th>
-                        <th className="px-2 py-2 text-right font-medium text-slate-500">קומה</th>
+                        {hasCol('building') && <th className="px-2 py-2 text-right font-medium text-slate-500">בניין</th>}
+                        {hasCol('floor') && <th className="px-2 py-2 text-right font-medium text-slate-500">קומה</th>}
                         <th className="px-2 py-2 text-right font-medium text-slate-500">דירה</th>
                         <th className="px-2 py-2 text-right font-medium text-slate-500">שם רוכש</th>
-                        <th className="px-2 py-2 text-right font-medium text-slate-500">ת"ז</th>
-                        <th className="px-2 py-2 text-right font-medium text-slate-500">טלפון</th>
+                        {hasCol('tenant_id') && <th className="px-2 py-2 text-right font-medium text-slate-500">ת"ז</th>}
+                        {hasCol('tenant_phone') && <th className="px-2 py-2 text-right font-medium text-slate-500">טלפון</th>}
+                        {hasCol('tenant_phone_2') && <th className="px-2 py-2 text-right font-medium text-slate-500">טלפון 2</th>}
+                        {hasCol('handover_date') && <th className="px-2 py-2 text-right font-medium text-slate-500">מסירה</th>}
+                        {hasCol('unit_type') && <th className="px-2 py-2 text-right font-medium text-slate-500">אפיון</th>}
                         <th className="px-2 py-2 text-right font-medium text-slate-500">סטטוס</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {previewData.rows.map((item, idx) => {
+                      {getFilteredRows().map((item, idx) => {
                         const r = item.row;
                         const hasError = !item.valid;
                         const hasWarning = item.warnings?.length > 0;
@@ -223,28 +354,21 @@ export default function G4ImportModal({ projectId, onClose }) {
                         return (
                           <tr key={idx} className={`border-b border-slate-100 ${bgClass}`}>
                             <td className="px-2 py-1.5 text-slate-400">{r.source_row || idx + 2}</td>
-                            <td className="px-2 py-1.5">{r.building_name}</td>
-                            <td className="px-2 py-1.5">{r.floor}</td>
-                            <td className="px-2 py-1.5 font-medium">{r.apartment_number}</td>
+                            {hasCol('building') && <td className="px-2 py-1.5">{r.building}</td>}
+                            {hasCol('floor') && <td className="px-2 py-1.5">{r.floor}</td>}
+                            <td className="px-2 py-1.5 font-medium">{r.apartment}</td>
                             <td className="px-2 py-1.5">{r.tenant_name}</td>
-                            <td className="px-2 py-1.5 font-mono">{r.tenant_id_number}</td>
-                            <td className="px-2 py-1.5 font-mono" dir="ltr">{r.tenant_phone}</td>
+                            {hasCol('tenant_id') && <td className="px-2 py-1.5 font-mono">{r.tenant_id}</td>}
+                            {hasCol('tenant_phone') && <td className="px-2 py-1.5 font-mono" dir="ltr">{r.tenant_phone}</td>}
+                            {hasCol('tenant_phone_2') && <td className="px-2 py-1.5 font-mono" dir="ltr">{r.tenant_phone_2}</td>}
+                            {hasCol('handover_date') && <td className="px-2 py-1.5" dir="ltr">{r.handover_date || ''}</td>}
+                            {hasCol('unit_type') && <td className="px-2 py-1.5">{r.unit_type}</td>}
                             <td className="px-2 py-1.5">
-                              {hasError && (
-                                <span className="text-red-600" title={item.errors.join(', ')}>
-                                  {item.errors.join(', ')}
-                                </span>
-                              )}
+                              {getMatchStatusBadge(item)}
                               {!hasError && hasWarning && (
-                                <span className="text-amber-600" title={item.warnings.join(', ')}>
+                                <div className="text-amber-600 text-[10px]" title={item.warnings.join(', ')}>
                                   {item.warnings.join(', ')}
-                                </span>
-                              )}
-                              {!hasError && !hasWarning && isOverwrite && (
-                                <span className="text-amber-600">יוחלף</span>
-                              )}
-                              {!hasError && !hasWarning && !isOverwrite && (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -253,6 +377,13 @@ export default function G4ImportModal({ projectId, onClose }) {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600">
+                {previewData.total} שורות: {importableCount} לייבוא
+                {previewData.not_found_count > 0 && `, ${previewData.not_found_count} לא נמצאו`}
+                {previewData.error_count > 0 && `, ${previewData.error_count} שגיאות`}
+                {previewData.overwrite_count > 0 && `, ${previewData.overwrite_count} יוחלפו`}
               </div>
 
               <div className="flex gap-2">
@@ -264,11 +395,11 @@ export default function G4ImportModal({ projectId, onClose }) {
                 </button>
                 <button
                   onClick={handleExecute}
-                  disabled={loading || previewData.valid_count === 0}
+                  disabled={loading || importableCount === 0}
                   className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white text-sm font-medium py-2.5 rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  {loading ? 'מייבא...' : `ייבוא ${previewData.valid_count} שורות`}
+                  {loading ? 'מייבא...' : `ייבוא ${importableCount} שורות`}
                 </button>
               </div>
             </div>
