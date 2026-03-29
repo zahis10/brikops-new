@@ -1,169 +1,346 @@
 ================================================================================
-  Task #220 — Contractor i18n: סיכום שינויי קוד
-  תאריך: 29 מרץ 2026
+  TaskDetailPage.js — Diff + STATUS_CONFIG Proxy Compatibility Analysis
+  Task #220 | 29 March 2026
 ================================================================================
 
-סטטיסטיקה כללית:
-  11 קבצים שונו | +707 שורות | -137 שורות
+DIFF: git diff 7f5caeb..HEAD -- frontend/src/pages/TaskDetailPage.js
+Lines changed: +104 / -86
 
-קבצים שהשתנו:
-  frontend/src/i18n/index.js                (+29 / -7)
-  frontend/src/i18n/he.json                 (+81 / -2)
-  frontend/src/i18n/en.json                 (+90 / -2)
-  frontend/src/i18n/ar.json                 (+171 — קובץ חדש)
-  frontend/src/i18n/zh.json                 (+171 — קובץ חדש)
-  frontend/src/App.js                       (+11 / -0)
-  frontend/src/contexts/AuthContext.js      (+10 / -0)
-  frontend/src/pages/TaskDetailPage.js      (+104 / -86)
-  frontend/src/pages/AccountSettingsPage.js (+18 / -5)
-  frontend/src/pages/RegisterPage.js        (+9 / -0)
-  replit.md                                 (+64 / -35)
+--- a/frontend/src/pages/TaskDetailPage.js
++++ b/frontend/src/pages/TaskDetailPage.js
+
+  IMPORT LINE
+  -------------------------------------------------------------------
+- import { tCategory, tStatus, tPriority } from '../i18n';
++ import { t, tCategory, tStatus, tPriority, getLocale } from '../i18n';
+
+  STATUS_CONFIG / PRIORITY_CONFIG REFACTOR (lines 21-56)
+  -------------------------------------------------------------------
+  Before:
+    const STATUS_CONFIG = {
+      open:    { label: 'פתוח',   color: 'bg-blue-100 text-blue-700', icon: CircleDot },
+      assigned:{ label: 'שויך',   color: 'bg-purple-100 text-purple-700', icon: User },
+      ...10 entries with hardcoded Hebrew labels...
+    };
+    const PRIORITY_CONFIG = {
+      low:     { label: 'נמוך',   color: 'bg-slate-100 text-slate-600' },
+      ...4 entries with hardcoded Hebrew labels...
+    };
+
+  After:
+    const STATUS_COLORS = {
+      open:    { color: 'bg-blue-100 text-blue-700', icon: CircleDot },
+      ...10 entries — color+icon only, no label...
+    };
+    const PRIORITY_COLORS = {
+      low:     { color: 'bg-slate-100 text-slate-600' },
+      ...4 entries — color only, no label...
+    };
+
+    const getStatusConfig = (key) => ({
+      label: tStatus(key),                             // dynamic i18n lookup
+      color: STATUS_COLORS[key]?.color || 'bg-slate-100',
+      icon:  STATUS_COLORS[key]?.icon  || CircleDot,
+    });
+    const getPriorityConfig = (key) => ({
+      label: tPriority(key),                           // dynamic i18n lookup
+      color: PRIORITY_COLORS[key]?.color || 'bg-slate-100',
+    });
+
+    const STATUS_CONFIG   = new Proxy({}, { get: (_, key) => getStatusConfig(key) });
+    const PRIORITY_CONFIG = new Proxy({}, { get: (_, key) => getPriorityConfig(key) });
+
+  ERROR HANDLING (lines ~260-290)
+  -------------------------------------------------------------------
+- toast.error('הליקוי לא נמצא');
++ toast.error(t('toasts', 'not_found'));
+
+- toast.error('אין לך הרשאה לצפות בליקוי זה');
++ toast.error(t('toasts', 'forbidden'));
+
+- toast.error('שגיאה בטעינת הליקוי');
++ toast.error(t('toasts', 'load_error'));
+
+  ERROR STATES UI (lines ~695-730)
+  -------------------------------------------------------------------
+- <h2>הליקוי לא קיים או הוסר</h2>
+- <p>ייתכן שהליקוי נמחק או שהקישור אינו תקין</p>
++ <h2>{t('taskDetail', 'error_not_found')}</h2>
++ <p>{t('taskDetail', 'error_not_found_desc')}</p>
+
+- <h2>אין לך הרשאה לצפות בליקוי הזה</h2>
++ <h2>{t('taskDetail', 'error_forbidden')}</h2>
+
+- <h2>שגיאה בטעינת הליקוי</h2>
++ <h2>{t('taskDetail', 'error_load')}</h2>
+
+- <button>נסה שוב</button>
++ <button>{t('taskDetail', 'retry')}</button>
+
+  BACK BUTTONS (lines ~700-710)
+  -------------------------------------------------------------------
+- 'חזרה לליקויים שלי'
++ t('taskDetail', 'back_to_my_defects')
+
+- 'חזרה למרכז ניהול'
++ t('taskDetail', 'back_to_dashboard')
+
+- 'חזרה לרשימת ליקויים'
++ t('taskDetail', 'back_to_defects_list')
+
+  LOCATION CARD (lines ~1050-1070)
+  -------------------------------------------------------------------
+- <span>מיקום</span>
++ <span>{t('taskDetail', 'location')}</span>
+
+- <span>דירה {task.unit}</span>
++ <span>{t('taskDetail', 'unit')} {task.unit}</span>
+
+  ASSIGNMENT CARD (lines ~1080-1110)
+  -------------------------------------------------------------------
+- <span>שיוך</span>
++ <span>{t('taskDetail', 'assignment')}</span>
+
+- <span>חברה:</span>
++ <span>{t('taskDetail', 'company')}</span>
+
+- <span>קבלן:</span>
++ <span>{t('taskDetail', 'contractor')}</span>
+
+- <span>לא שויך</span>
++ <span>{t('taskDetail', 'not_assigned')}</span>
+
+- <span>קבלן משויך</span>
++ <span>{t('taskDetail', 'assigned_contractor')}</span>
+
+  PROOF UPLOAD SECTION (lines ~1200-1320)
+  -------------------------------------------------------------------
+- <h3>העלאת תמונות תיקון</h3>
+- <p>צלם או העלה תמונות של התיקון שבוצע ושלח לאישור המנהל</p>
++ <h3>{t('taskDetail', 'upload_proof_title')}</h3>
++ <p>{t('taskDetail', 'upload_proof_desc')}</p>
+
+- <span>צלם תמונה</span>
++ <span>{t('taskDetail', 'take_photo')}</span>
+
+- <span>בחר מגלריה</span>
++ <span>{t('taskDetail', 'from_gallery')}</span>
+
+- <span>מעלה...</span>
++ <span>{t('taskDetail', 'uploading')}</span>
+
+- placeholder="הערת ביצוע (אופציונלי)..."
++ placeholder={t('taskDetail', 'execution_note_placeholder')}
+
+- <span>שלח לאישור מנהל</span>
++ <span>{t('taskDetail', 'submit_proof')}</span>
+
+- <span>שולח...</span>
++ <span>{t('taskDetail', 'submitting')}</span>
+
+- `${count} תמונה/ות נבחרו`
++ `${count} ${count===1 ? t('taskDetail','photos_selected_one') : t('taskDetail','photos_selected_other')}`
+
+  PROOF LOCKED STATES (lines ~1330-1350)
+  -------------------------------------------------------------------
+- 'ההוכחה נשלחה — ממתין לאישור מנהל'
++ t('taskDetail', 'proof_locked_pending')
+
+- 'הליקוי סגור — לא ניתן להעלות הוכחה'
++ t('taskDetail', 'proof_locked_closed')
+
+  PHOTO SECTIONS (lines ~1360-1430)
+  -------------------------------------------------------------------
+- <span>תמונות פתיחה</span>
++ <span>{t('taskDetail', 'opening_photos')}</span>
+
+- <span>הוכחות קבלן</span>
++ <span>{t('taskDetail', 'contractor_proofs')}</span>
+
+- <span>צפייה</span>
++ <span>{t('taskDetail', 'view')}</span>
+
+- <span>הורדה</span>
++ <span>{t('taskDetail', 'download')}</span>
+
+- 'לא ידוע'
++ t('taskDetail', 'unknown_user')
+
+  COMPARISON (lines ~1450-1470)
+  -------------------------------------------------------------------
+- <span>לפני</span>  /  <span>אחרי</span>
++ <span>{t('taskDetail', 'before')}</span>  /  <span>{t('taskDetail', 'after')}</span>
+
+- <h3>השוואה — לפני / אחרי</h3>
++ <h3>{t('taskDetail', 'comparison_title')}</h3>
+
+  TIMELINE (lines ~1500-1520)
+  -------------------------------------------------------------------
+- <h3>ציר זמן</h3>
++ <h3>{t('taskDetail', 'timeline')}</h3>
+
+- <span>ליקוי נפתח</span>
++ <span>{t('taskDetail', 'defect_opened')}</span>
+
+  UPDATES / COMMENTS (lines ~1640-1700)
+  -------------------------------------------------------------------
+- <h3>עדכונים ({comments.length})</h3>
++ <h3>{t('taskDetail', 'updates')} ({comments.length})</h3>
+
+- <p>אין עדכונים עדיין</p>
++ <p>{t('taskDetail', 'no_updates')}</p>
+
+- placeholder="הוסף תגובה..."
++ placeholder={t('taskDetail', 'add_comment_placeholder')}
+
+  FOOTER TIMESTAMPS (lines ~1706-1710)
+  -------------------------------------------------------------------
+- נוצר: {new Date(task.created_at).toLocaleString('he-IL')}
+- {task.updated_at && ` | עודכן: ${...toLocaleString('he-IL')}`}
++ {t('taskDetail', 'created')} {new Date(task.created_at).toLocaleString(getLocale() === 'he' ? 'he-IL' : getLocale())}
++ {task.updated_at && ` | ${t('taskDetail', 'updated')} ${...toLocaleString(...)}`}
+
+  IMAGE MODAL (lines ~1764-1772)
+  -------------------------------------------------------------------
+- <DialogPrimitive.Title className="sr-only">תצוגת תמונה</DialogPrimitive.Title>
+- <DialogPrimitive.Description className="sr-only">תצוגה מוגדלת של תמונה מצורפת</DialogPrimitive.Description>
+- <img src={imageModal} alt="תמונה מצורפת לליקוי" ... />
++ <DialogPrimitive.Title className="sr-only">{t('taskDetail', 'image_view_title')}</DialogPrimitive.Title>
++ <DialogPrimitive.Description className="sr-only">{t('taskDetail', 'image_view_desc')}</DialogPrimitive.Description>
++ <img src={imageModal} alt={t('taskDetail', 'attached_image')} ... />
+
+  TOAST MESSAGES (scattered throughout)
+  -------------------------------------------------------------------
+- toast.success('נשלח לאישור מנהל')
++ toast.success(t('toasts', 'proof_sent'))
+
+- toast.error('שגיאה בהעלאת תמונה')
++ toast.error(t('toasts', 'upload_error'))
+
+- toast.error('הזמן הקצוב להעלאה עבר. נסה שוב')
++ toast.error(t('toasts', 'upload_timeout'))
+
+- toast.error('התמונה אבדה, נא לצרף מחדש')
++ toast.error(t('toasts', 'photo_lost'))
+
+- toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה')
++ toast.error(t('toasts', 'format_error'))
+
+- toast.error('שגיאה בעיבוד התמונה. נסה שוב.')
++ toast.error(t('toasts', 'process_error'))
+
+- toast.success('תמונה הועלתה בהצלחה')
++ toast.success(t('toasts', 'photo_uploaded'))
+
+- toast.success('תמונה עם סימון הועלתה בהצלחה')
++ toast.success(t('toasts', 'photo_annotated_uploaded'))
+
+- toast.error('יש להעלות לפחות תמונת תיקון אחת')
++ toast.error(t('toasts', 'upload_at_least_one'))
+
+- toast.error('שגיאה בשמירת התמונה')
++ toast.error(t('toasts', 'save_error'))
+
+- toast.error('בעיית חיבור')
++ toast.error(t('toasts', 'network_error'))
+
+- toast.success('נשמר בהצלחה')
++ toast.success(t('toasts', 'save_success'))
+
 
 ================================================================================
-1. תשתית i18n — frontend/src/i18n/index.js
+  STATUS_CONFIG Proxy — BACKWARD COMPATIBILITY ANALYSIS
 ================================================================================
 
-שינויים:
-  - הוספת import ל-ar.json ו-zh.json
-  - שינוי locales → LOCALES (const) עם 4 שפות: he, en, ar, zh
-  - שינוי currentLocale ל-let (mutable) במקום const
-  - פונקציה חדשה: setLanguage(lang)
-      • מנרמלת region tags: en-US → en, zh-TW → zh
-      • מעדכנת document.documentElement.lang
-      • fallback ל-he אם שפה לא מוכרת
-  - פונקציה חדשה: getLanguage() — מחזירה את השפה הנוכחית
-  - שדרוג t(section, key):
-      • שרשרת fallback: שפה נוכחית → he → key
-      • התראת dev console כש-key חסר בשפה הנוכחית
-        (מבחין בין fallback לעברית לבין חסר לגמרי)
-  - פונקציות חדשות: tStatus(), tPriority() (מעטפות ל-t)
-  - פונקציה חדשה: getLocale() — alias ל-getLanguage
+  MECHANISM:
+    STATUS_CONFIG = new Proxy({}, { get: (_, key) => getStatusConfig(key) })
 
-================================================================================
-2. קבצי שפה — he.json / en.json
-================================================================================
+    The Proxy intercepts every property access and returns:
+      { label: tStatus(key), color: STATUS_COLORS[key]?.color || 'bg-slate-100', icon: ... }
 
-מפתחות חדשים שנוספו (זהים ב-he ו-en):
+    This means STATUS_CONFIG[anyKey] always returns a truthy object,
+    even for keys NOT in STATUS_COLORS (they get fallback color + key as label).
 
-  statuses:
-    + approved, done, cancelled
+  ALL USAGES IN CURRENT CODE:
+  -------------------------------------------------------------------
 
-  taskDetail (סעיף חדש — ~45 מפתחות):
-    location, unit, assignment, company, contractor, not_assigned,
-    assigned_contractor, upload_proof_title, upload_proof_desc,
-    take_photo, from_gallery, uploading, execution_note_placeholder,
-    submit_proof, submitting, photos_selected_one, photos_selected_other,
-    proof_locked_pending, proof_locked_closed, opening_photos,
-    contractor_proofs, view, download, unknown_user, before, after,
-    comparison_title, timeline, defect_opened, updates, no_updates,
-    add_comment_placeholder, created, updated, back_to_my_defects,
-    back_to_dashboard, back_to_defects_list, error_not_found,
-    error_forbidden, error_load, error_not_found_desc,
-    error_forbidden_desc, error_load_desc, retry, preview,
-    image_view_title, image_view_desc, attached_image
+  Line 685:  STATUS_CONFIG[task.status]?.label || task.status
+             ✅ SAFE — .label always exists (tStatus returns translated or key)
+                Optional chaining is redundant but harmless.
 
-  toasts (סעיף חדש — 19 מפתחות):
-    not_found, forbidden, load_error, proof_sent, upload_error,
-    upload_timeout, photo_lost, format_error, process_error,
-    photo_uploaded, photo_annotated_uploaded, upload_at_least_one,
-    save_error, network_error, save_success, wa_language_updated,
-    language_update_error, reminder_prefs_updated, reminder_prefs_error
+  Line 687:  if (STATUS_CONFIG[s]) {
+             ⚠️  BEHAVIOR CHANGE — Previously this would be falsy for unknown
+                statuses not in the object. Now it's ALWAYS truthy because the
+                Proxy returns an object for any key.
 
-  settings (סעיף חדש — 3 מפתחות):
-    wa_language_title, wa_language_desc, saving
+                RISK ASSESSMENT: LOW
+                • `s` comes from `VALID_TRANSITIONS[task.status]` (line 684)
+                • VALID_TRANSITIONS only contains known status keys:
+                  open, assigned, in_progress, waiting_verify,
+                  pending_contractor_proof, pending_manager_approval,
+                  returned_to_contractor, closed, reopened
+                • All of these exist in STATUS_COLORS
+                • No external/user input flows into this check
+                → This guard was already redundant; removing it would be safe
 
-================================================================================
-3. קבצי שפה חדשים — ar.json / zh.json
-================================================================================
+  Line 688:  STATUS_CONFIG[s].label
+             ✅ SAFE — always returns translated label
 
-  - 171 שורות כל אחד
-  - מכילים את כל הסעיפים של he.json בתרגום ערבית/סינית
-  - מסומנים עם _review_status: "ai_generated_needs_native_review"
-  - דורשים בדיקת דובר שפת אם לפני שימוש בפרודקשן
+  Line 743:  STATUS_CONFIG[task.status] || STATUS_CONFIG.open
+             ✅ SAFE — left side always truthy so fallback never triggers,
+                but the result is correct either way (Proxy returns valid config)
 
-================================================================================
-4. App.js — סנכרון שפה לפי תפקיד
-================================================================================
+  Line 1015: STATUS_CONFIG[task.status]?.label || task.status
+             ✅ SAFE — .label always exists
 
-שינויים:
-  - import של setLanguage מ-i18n
-  - useEffect חדש ב-ProtectedRoute:
-      • אם user.role === 'contractor': מפעיל setLanguage(preferred_language)
-      • אם תפקיד אחר (PM/admin): מאלץ setLanguage('he')
-  - מבטיח שמנהלים תמיד רואים ממשק בעברית
+  Line 1532: STATUS_CONFIG[evt.old_status]?.color || 'bg-slate-100'
+             ✅ SAFE — .color comes from STATUS_COLORS with || 'bg-slate-100'
+                fallback already built into getStatusConfig
 
-================================================================================
-5. AuthContext.js — שפה בהתחברות
-================================================================================
+  Line 1533: STATUS_CONFIG[evt.old_status]?.label || evt.old_status
+             ✅ SAFE — .label always exists
 
-שינויים (3 נקודות כניסה):
-  - fetchCurrentUser: אם role=contractor ויש preferred_language → setLanguage
-  - login (סיסמה): אם role=contractor ויש preferred_language → setLanguage
-  - loginWithOtp: אם role=contractor ויש preferred_language → setLanguage
-  - בכל המקרים: setLanguage נקרא *לפני* setUser (מבטיח render ראשון בשפה הנכונה)
+  Line 1536: STATUS_CONFIG[evt.new_status]?.color || 'bg-slate-100'
+             ✅ SAFE — same as 1532
 
-================================================================================
-6. TaskDetailPage.js — תרגום ~45 מחרוזות
-================================================================================
+  Line 1537: STATUS_CONFIG[evt.new_status]?.label || evt.new_status
+             ✅ SAFE — same as 1533
 
-שינויים מבניים:
-  - STATUS_CONFIG ו-PRIORITY_CONFIG שופצו:
-      • הפרדת label מ-color/icon
-      • STATUS_COLORS ו-PRIORITY_COLORS שומרים עיצוב בלבד
-      • getStatusConfig(key) ו-getPriorityConfig(key) מחזירים label מתורגם
-      • STATUS_CONFIG ו-PRIORITY_CONFIG כעת Proxy objects עם get דינמי
-        (תואמות לאחור — כל קוד שמשתמש ב-STATUS_CONFIG[s].label עדיין עובד)
+  Line 1673: STATUS_CONFIG[u.old_status]?.color || 'bg-slate-100'
+             ✅ SAFE
 
-מחרוזות שהוחלפו ב-t():
-  - כפתורי חזרה: "חזרה לליקויים שלי" / "חזרה למרכז ניהול" / "חזרה לרשימת ליקויים"
-  - מצבי שגיאה (404/403/כללי): כותרת + תיאור + כפתור "נסה שוב"
-  - כרטיס מיקום: "מיקום", "דירה"
-  - כרטיס שיוך: "שיוך", "חברה:", "קבלן:", "לא שויך", "קבלן משויך"
-  - אזור העלאת הוכחות: כותרת, תיאור, כפתורי "צלם"/"מגלריה"/"שלח",
-    ספירת תמונות, הערת ביצוע placeholder, מצב "מעלה"/"שולח"
-  - נעילת הוכחות: "ממתין לאישור" / "ליקוי סגור"
-  - אזור תמונות: "תמונות פתיחה", "הוכחות קבלן", "צפייה", "הורדה"
-  - השוואה: "לפני", "אחרי", "השוואה — לפני / אחרי"
-  - ציר זמן: "ציר זמן", "ליקוי נפתח"
-  - עדכונים/תגובות: כותרת, "אין עדכונים", placeholder "הוסף תגובה"
-  - פוטר: "נוצר:", "עודכן:"
-  - מודל תמונה: sr-only title/desc, alt text
-  - Toast messages: כל הודעות ההצלחה/שגיאה (~15 הודעות)
-  - toLocaleString: שימוש ב-getLocale() במקום 'he-IL' hardcoded
+  Line 1674: STATUS_CONFIG[u.old_status]?.label || u.old_status
+             ✅ SAFE
 
-================================================================================
-7. AccountSettingsPage.js — הגדרות שפה
-================================================================================
+  Line 1677: STATUS_CONFIG[u.new_status]?.color || 'bg-slate-100'
+             ✅ SAFE
 
-שינויים:
-  - import של t ו-setLanguage מ-i18n
-  - כותרת "שפת הודעות WhatsApp" → t('settings', 'wa_language_title')
-  - תיאור → t('settings', 'wa_language_desc')
-  - הודעת הצלחה → t('toasts', 'wa_language_updated')
-  - הודעת שגיאה → t('toasts', 'language_update_error')
-  - טקסט "שומר..." → t('settings', 'saving')
-  - שינוי שפה מפעיל setLanguage + reload *רק* לקבלנים
-    (מנהלים — רק שומר preference לשרת, ללא שינוי UI)
+  Line 1678: STATUS_CONFIG[u.new_status]?.label || u.new_status
+             ✅ SAFE
 
-================================================================================
-8. RegisterPage.js — זיהוי שפה אוטומטי
-================================================================================
+  PRIORITY_CONFIG USAGES:
+  -------------------------------------------------------------------
 
-שינויים:
-  - פונקציה חדשה: detectLanguage()
-      • קורא navigator.language
-      • ממפה ar* → ar, zh* → zh, en* → en, אחרת → he
-  - מוסיף preferred_language: detectLanguage() ל-registration payload
-  - קבלן חדש שנרשם יקבל שפה מותאמת אוטומטית
+  Line 744:  PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium
+             ✅ SAFE — left always truthy, result is correct
 
-================================================================================
-9. הגנות ופוליסות
-================================================================================
+  Line 1023: PRIORITY_CONFIG[p]?.label || p
+             ✅ SAFE — p comes from PRIORITIES array: ['low','medium','high','critical']
+                All exist in PRIORITY_COLORS
 
-  - שפת UI משתנה רק לקבלנים — PM/admin תמיד רואים עברית
-  - fallback chain מבטיח שמפתח חסר תמיד מציג עברית (ולא מפתח גולמי)
-  - ar.json / zh.json מסומנים כ-AI generated — דורשים review לפני שימוש
-  - RTL לא משתנה — כל השפות נשארות RTL (אין שינוי dir)
-  - אין שינויי אבטחה, הרשאות, או API
+  Line 1026: PRIORITY_CONFIG[task.priority]?.label || task.priority
+             ✅ SAFE — .label always exists
+
+  SUMMARY:
+  -------------------------------------------------------------------
+  Total usages found: 16 (13 STATUS_CONFIG + 3 PRIORITY_CONFIG)
+  ✅ Fully compatible:  15
+  ⚠️  Semantic change:    1  (line 687 — if (STATUS_CONFIG[s]) always true)
+     Risk: LOW — input is controlled by VALID_TRANSITIONS, never user data.
+     Impact: None in practice. The guard was already only hit with known keys.
+
+  CONCLUSION: Proxy is backward compatible with all existing usages.
+  No functional regressions. The one semantic change (line 687) has
+  zero practical impact because the input list is statically controlled.
 
 ================================================================================
