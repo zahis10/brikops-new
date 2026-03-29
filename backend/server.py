@@ -504,6 +504,8 @@ async def create_indexes():
         await db.daily_project_snapshots.create_index(
             [("created_at", 1)], expireAfterSeconds=15552000
         )
+        await db.invoices.create_index([("org_id", 1), ("period_ym", -1)])
+        await db.billing_payment_requests.create_index([("status", 1), ("created_at", -1)])
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

@@ -169,20 +169,57 @@ async def admin_payment_requests_summary(user: dict = Depends(require_super_admi
 async def admin_list_orgs(user: dict = Depends(require_super_admin)):
     db = get_db()
     orgs = await db.organizations.find({}, {'_id': 0}).to_list(1000)
+
+    org_ids = [o['id'] for o in orgs]
+    subs = await db.subscriptions.find(
+        {'org_id': {'$in': org_ids}}, {'_id': 0}
+    ).to_list(5000)
+    sub_map = {s['org_id']: s for s in subs}
+
+    owner_ids = [o.get('owner_user_id') for o in orgs if o.get('owner_user_id')]
+    owner_map = {}
+    if owner_ids:
+        owners = await db.users.find(
+            {'id': {'$in': list(set(owner_ids))}},
+            {'_id': 0, 'id': 1, 'name': 1, 'email': 1, 'phone_e164': 1}
+        ).to_list(5000)
+        owner_map = {u['id']: u for u in owners}
+
     result = []
     for org in orgs:
-        sub = await get_subscription(org['id'])
-        owner_uid = org.get('owner_user_id')
-        owner = await db.users.find_one({'id': owner_uid}, {'_id': 0, 'name': 1, 'email': 1, 'phone_e164': 1}) if owner_uid else None
+        sub = sub_map.get(org['id'])
         access, reason = _resolve_access(sub)
         result.append({
             **org,
             'subscription': sub,
-            'owner': owner,
+            'owner': owner_map.get(org.get('owner_user_id')),
             'effective_access': access.value,
             'read_only_reason': reason,
         })
     return result
+
+
+@router.get("/admin/billing/invoices-summary")
+async def admin_invoices_summary(user: dict = Depends(require_super_admin)):
+    db = get_db()
+    pipeline = [
+        {'$sort': {'period_ym': -1}},
+        {'$group': {
+            '_id': '$org_id',
+            'period_ym': {'$first': '$period_ym'},
+            'status': {'$first': '$status'},
+            'total_amount': {'$first': '$total_amount'},
+            'paid_at': {'$first': '$paid_at'},
+        }},
+    ]
+    results = await db.invoices.aggregate(pipeline).to_list(5000)
+    return {r['_id']: {
+        'org_id': r['_id'],
+        'period_ym': r.get('period_ym'),
+        'status': r.get('status'),
+        'total_amount': r.get('total_amount'),
+        'paid_at': r.get('paid_at'),
+    } for r in results}
 
 
 @router.get("/admin/orgs/{org_id}/projects")
@@ -262,9 +299,18 @@ async def admin_billing_audit(user: dict = Depends(require_super_admin)):
         {'entity_type': {'$in': ['subscription', 'billing_plan', 'project_billing', 'project']}},
         {'_id': 0}
     ).sort('created_at', -1).to_list(200)
+
+    actor_ids = list(set(ev.get('actor_id') for ev in events if ev.get('actor_id')))
+    actor_map = {}
+    if actor_ids:
+        actors = await db.users.find(
+            {'id': {'$in': actor_ids}},
+            {'_id': 0, 'id': 1, 'name': 1}
+        ).to_list(5000)
+        actor_map = {u['id']: u.get('name', '') for u in actors}
+
     for ev in events:
-        actor = await db.users.find_one({'id': ev.get('actor_id')}, {'_id': 0, 'name': 1})
-        ev['actor_name'] = actor.get('name', '') if actor else ''
+        ev['actor_name'] = actor_map.get(ev.get('actor_id'), '')
     return events
 
 

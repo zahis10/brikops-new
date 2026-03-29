@@ -841,6 +841,10 @@ export const billingService = {
     const response = await axios.get(`${API}/admin/billing/payment-requests-summary`, { headers: getAuthHeader() });
     return response.data;
   },
+  async invoicesSummary() {
+    const response = await axios.get(`${API}/admin/billing/invoices-summary`, { headers: getAuthHeader() });
+    return response.data;
+  },
   async override(data) {
     const response = await axios.post(`${API}/admin/billing/override`, data, { headers: getAuthHeader() });
     return response.data;

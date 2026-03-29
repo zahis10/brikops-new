@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { billingService, stepupService, isStepupError, invoiceService } from '../services/api';
+import { billingService, stepupService, isStepupError } from '../services/api';
 import { toast } from 'sonner';
 import {
   ArrowRight, Building2, Clock, ShieldCheck, ShieldOff,
@@ -93,20 +93,13 @@ const AdminBillingPage = () => {
   const [failedRenewals, setFailedRenewals] = useState({ items: [], unresolved_count: 0 });
   const [resolvingId, setResolvingId] = useState(null);
 
-  const loadOrgInvoices = useCallback(async (orgList, gen) => {
-    const results = {};
-    await Promise.allSettled(
-      orgList.map(async (org) => {
-        try {
-          const res = await invoiceService.list(org.id);
-          const invs = res.invoices || [];
-          if (invs.length > 0) results[org.id] = invs[0];
-        } catch {}
-      })
-    );
-    if (gen === loadGenRef.current) {
-      setOrgInvoices(results);
-    }
+  const loadOrgInvoices = useCallback(async (gen) => {
+    try {
+      const data = await billingService.invoicesSummary();
+      if (gen === loadGenRef.current) {
+        setOrgInvoices(data || {});
+      }
+    } catch {}
   }, []);
 
   const formatLoadError = (err) => {
@@ -147,7 +140,7 @@ const AdminBillingPage = () => {
       setOpenRequests(openReqs);
       setFailedRenewals(failedRen);
       if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
-      if (orgsData.length > 0) loadOrgInvoices(orgsData, gen);
+      if (orgsData.length > 0) loadOrgInvoices(gen);
     } catch (err) {
       if (gen !== loadGenRef.current) return;
       if (isStepupError(err)) {
@@ -547,7 +540,7 @@ const AdminBillingPage = () => {
 
         <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <button
-            onClick={() => { const next = !showOrgs; setShowOrgs(next); if (next && orgs.length > 0) loadOrgInvoices(orgs, loadGenRef.current); }}
+            onClick={() => { const next = !showOrgs; setShowOrgs(next); if (next && orgs.length > 0) loadOrgInvoices(loadGenRef.current); }}
             className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
           >
             <div className="flex items-center gap-2">
