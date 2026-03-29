@@ -3373,30 +3373,6 @@ const ProjectControlPage = () => {
         </div>
       </div>
 
-      {pendingApprovalCount > 0 && !approvalBannerDismissed && (
-        <div className="sticky top-[152px] z-[36] max-w-[1100px] mx-auto px-4 pt-2">
-          <div className="flex items-center gap-2 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 shadow-sm">
-            <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0" />
-            <span className="flex-1 text-sm font-semibold text-orange-800">
-              {pendingApprovalCount} ליקויים ממתינים לאישורך
-            </span>
-            <button
-              onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
-              className="text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-            >
-              צפה
-            </button>
-            <button
-              onClick={() => { sessionStorage.setItem(`approval_banner_${projectId}`, String(pendingApprovalCount)); setApprovalBannerDismissed(true); }}
-              className="p-1 hover:bg-orange-100 rounded-full transition-colors"
-              title="סגור"
-            >
-              <X className="w-4 h-4 text-orange-400" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {activeTab && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
@@ -3424,6 +3400,28 @@ const ProjectControlPage = () => {
       {workMode === 'structure' && !activeTab && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
           <KpiSection stats={stats} onViewDefects={() => handleWorkTab('defects')} qcSummary={qcSummary} qcLoading={qcLoading} onViewQc={() => navigate(`/projects/${projectId}/qc`)} />
+
+          {pendingApprovalCount > 0 && !approvalBannerDismissed && (
+            <div className="flex items-center gap-2 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 shadow-sm">
+              <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0" />
+              <span className="flex-1 text-sm font-semibold text-orange-800">
+                {pendingApprovalCount} ליקויים ממתינים לאישורך
+              </span>
+              <button
+                onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
+                className="text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+              >
+                צפה
+              </button>
+              <button
+                onClick={() => { sessionStorage.setItem(`approval_banner_${projectId}`, String(pendingApprovalCount)); setApprovalBannerDismissed(true); }}
+                className="p-1 hover:bg-orange-100 rounded-full transition-colors"
+                title="סגור"
+              >
+                <X className="w-4 h-4 text-orange-400" />
+              </button>
+            </div>
+          )}
 
           {isOnboarding && (
             <OnboardingChecklist
