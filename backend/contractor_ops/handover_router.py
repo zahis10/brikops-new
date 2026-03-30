@@ -1030,8 +1030,12 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
             if _tenant_prefill.get("handover_date"):
                 protocol_doc["handover_date"] = _tenant_prefill["handover_date"]
             protocol_doc["tenants"] = _prefill_tenants
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(
+            f"Tenant prefill failed for "
+            f"project={project_id} unit={unit_id}: {e}",
+            exc_info=True
+        )
 
     try:
         await db.handover_protocols.insert_one(protocol_doc)
