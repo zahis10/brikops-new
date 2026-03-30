@@ -1008,6 +1008,28 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
                 "floor": _match_floor,
                 "apartment_number": _match_apt,
             })
+        logger.info(
+            f"[PREFILL] project={project_id} "
+            f"unit_id={unit_id} "
+            f"found={'YES' if _tenant_prefill else 'NO'}"
+        )
+        if not _tenant_prefill:
+            count = await db.unit_tenant_data.count_documents(
+                {"project_id": project_id}
+            )
+            logger.info(
+                f"[PREFILL:DEBUG] total unit_tenant_data "
+                f"records for project={project_id}: {count}"
+            )
+            if count > 0:
+                sample = await db.unit_tenant_data.find_one(
+                    {"project_id": project_id},
+                    {"unit_id": 1, "building_name": 1,
+                     "apartment_number": 1, "_id": 0}
+                )
+                logger.info(
+                    f"[PREFILL:DEBUG] sample record: {sample}"
+                )
         if _tenant_prefill and _tenant_prefill.get("tenant", {}).get("name"):
             _t1 = _tenant_prefill["tenant"]
             _prefill_tenants = [{
