@@ -108,3 +108,9 @@ id = "j93L_Qy6er_ALi-5YJSPJ"
 uri = "file://security_report.txt"
 type = "text"
 title = "BrikOps Security Report — 294 Issues"
+
+[[outputs]]
+id = "3cBYpZ9RQYruAA4XvbLBj"
+uri = "file://brikops-context.txt"
+type = "text"
+title = "BrikOps Context — לצ'אט חדש"
