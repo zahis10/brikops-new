@@ -114,3 +114,9 @@ id = "3cBYpZ9RQYruAA4XvbLBj"
 uri = "file://brikops-context.txt"
 type = "text"
 title = "BrikOps Context — לצ'אט חדש"
+
+[[outputs]]
+id = "aKZetj3IBv-ZTxGuRajRA"
+uri = "file://CODEBASE_SUMMARY.md"
+type = "text"
+title = "BrikOps — Codebase Summary"
