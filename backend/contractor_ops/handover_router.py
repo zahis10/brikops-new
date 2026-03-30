@@ -992,21 +992,30 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
     }
 
     try:
-        _match_building = building.get("name", "")
-        _match_floor = str(floor.get("name", ""))
-        _match_apt = str(unit.get("name", unit.get("unit_no", "")))
-        _tenant_prefill = await db.unit_tenant_data.find_one({
-            "project_id": project_id,
-            "building_name": _match_building,
-            "floor": _match_floor,
-            "apartment_number": _match_apt,
-        })
+        _tenant_prefill = None
+        if unit_id:
+            _tenant_prefill = await db.unit_tenant_data.find_one({
+                "project_id": project_id,
+                "unit_id": unit_id,
+            })
+        if not _tenant_prefill:
+            _match_building = building.get("name", "")
+            _match_floor = str(floor.get("name", ""))
+            _match_apt = str(unit.get("name", unit.get("unit_no", "")))
+            _tenant_prefill = await db.unit_tenant_data.find_one({
+                "project_id": project_id,
+                "building_name": _match_building,
+                "floor": _match_floor,
+                "apartment_number": _match_apt,
+            })
         if _tenant_prefill and _tenant_prefill.get("tenant", {}).get("name"):
+            _t1 = _tenant_prefill["tenant"]
             _prefill_tenants = [{
-                "name": _tenant_prefill["tenant"]["name"],
-                "id_number": _tenant_prefill["tenant"].get("id_number", ""),
-                "phone": _tenant_prefill["tenant"].get("phone", ""),
-                "email": _tenant_prefill["tenant"].get("email", ""),
+                "name": _t1["name"],
+                "id_number": _t1.get("id_number", ""),
+                "phone": _t1.get("phone", ""),
+                "phone_2": _t1.get("phone_2", ""),
+                "email": _t1.get("email", ""),
                 "id_photo_url": None,
             }]
             _t2 = _tenant_prefill.get("tenant_2")
@@ -1018,6 +1027,8 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
                     "email": _t2.get("email", ""),
                     "id_photo_url": None,
                 })
+            if _tenant_prefill.get("handover_date"):
+                protocol_doc["handover_date"] = _tenant_prefill["handover_date"]
             protocol_doc["tenants"] = _prefill_tenants
     except Exception:
         pass
