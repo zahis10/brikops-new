@@ -81,10 +81,16 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         pass
     cycle = body.get('cycle', 'monthly')
     renewal = await preview_renewal(org_id, cycle)
-    amount = renewal.get('amount_ils', 0)
+    db = get_db()
+    project_bills = await db.project_billing.find(
+        {'org_id': org_id, 'status': 'active'},
+        {'_id': 0, 'monthly_total': 1}
+    ).to_list(None)
+    amount = sum(pb.get('monthly_total', 0) for pb in project_bills)
+    if cycle == 'yearly':
+        amount = amount * 12
     if not amount or amount <= 0:
         raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
-    db = get_db()
     org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
     org_name = org.get('name', '') if org else ''
     billing_data = org.get('billing', {}) if org else {}
