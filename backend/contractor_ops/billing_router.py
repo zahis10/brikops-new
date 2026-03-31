@@ -1220,6 +1220,7 @@ async def billing_webhook_greeninvoice(request: Request):
 async def billing_webhook_payplus(request: Request):
     import uuid, json
     from datetime import datetime, timezone, timedelta
+    from dateutil.relativedelta import relativedelta
     from contractor_ops.payplus_service import get_transaction, PayPlusError
     db = get_db()
     try:
@@ -1308,7 +1309,23 @@ async def billing_webhook_payplus(request: Request):
     pending_plan_id = sub.get('pending_plan_id', sub.get('plan_id', ''))
     pending_cycle = sub.get('pending_cycle', sub.get('billing_cycle', 'monthly'))
     amount = verified_tx.get('amount', 0) or body.get('transaction', {}).get('amount', 0)
-    paid_until = (datetime.now(timezone.utc) + timedelta(days=365 if pending_cycle == 'yearly' else 30)).isoformat()
+    if pending_cycle == 'yearly':
+        delta = relativedelta(years=1)
+    else:
+        delta = relativedelta(months=1)
+    current_paid = sub.get('paid_until')
+    now_utc = datetime.now(timezone.utc)
+    if current_paid:
+        try:
+            base = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
+        except Exception:
+            base = now_utc
+        if base > now_utc:
+            paid_until = (base + delta).isoformat()
+        else:
+            paid_until = (now_utc + delta).isoformat()
+    else:
+        paid_until = (now_utc + delta).isoformat()
     await db.subscriptions.update_one(
         {'org_id': org_id},
         {
