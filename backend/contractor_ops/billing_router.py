@@ -1218,7 +1218,7 @@ async def billing_webhook_greeninvoice(request: Request):
 
 @router.post("/billing/webhook/payplus")
 async def billing_webhook_payplus(request: Request):
-    import uuid
+    import uuid, json
     from datetime import datetime, timezone, timedelta
     from contractor_ops.payplus_service import get_transaction, PayPlusError
     db = get_db()
@@ -1231,7 +1231,7 @@ async def billing_webhook_payplus(request: Request):
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.payplus_webhook_log.insert_one({
         'id': log_id,
-        'raw_payload': body,
+        'raw_payload': json.dumps(body, default=str),
         'created_at': now_iso,
         'result': 'received',
     })
