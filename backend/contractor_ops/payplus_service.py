@@ -64,7 +64,7 @@ async def create_payment_page(
     frontend = _frontend_base_url()
     payload = {
         "payment_page_uid": PAYPLUS_PAYMENT_PAGE_UID,
-        "charge_method": 1,
+        "charge_method": 0,
         "create_token": True,
         "amount": amount,
         "currency_code": "ILS",
