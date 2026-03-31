@@ -1243,18 +1243,29 @@ async def billing_webhook_payplus(request: Request):
         logger.warning("[PAYPLUS-WH] No transaction_uid — rejecting")
         await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_tx_uid'}})
         return {"status": "ok"}
-    try:
-        tx_data = await get_transaction(transaction_uid)
-        verified_tx = tx_data.get('data', {})
+    from config import PAYPLUS_ENV
+    verified_tx = {}
+    if PAYPLUS_ENV == "production":
+        try:
+            tx_data = await get_transaction(transaction_uid)
+            verified_tx = tx_data.get('data', {})
+            verified_status = verified_tx.get('status_code', '')
+            if verified_status != "000":
+                logger.info("[PAYPLUS-WH] Non-success verified_status=%s tx=%s — skipping", verified_status, transaction_uid)
+                await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'non_success', 'status_code': verified_status}})
+                return {"status": "ok"}
+        except PayPlusError as e:
+            logger.error("[PAYPLUS-WH] Transaction verification failed tx=%s: %s", transaction_uid, e)
+            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'verification_failed', 'error': str(e)}})
+            return {"status": "ok"}
+    else:
+        logger.info("[PAYPLUS-WH] Sandbox mode — skipping transaction verification")
+        verified_tx = body.get('transaction', {})
         verified_status = verified_tx.get('status_code', '')
-    except PayPlusError as e:
-        logger.error("[PAYPLUS-WH] Transaction verification failed tx=%s: %s", transaction_uid, e)
-        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'verification_failed', 'error': str(e)}})
-        return {"status": "ok"}
-    if verified_status != "000":
-        logger.info("[PAYPLUS-WH] Non-success verified_status=%s tx=%s — skipping", verified_status, transaction_uid)
-        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'non_success', 'status_code': verified_status}})
-        return {"status": "ok"}
+        if verified_status != "000":
+            logger.info("[PAYPLUS-WH] Non-success status=%s tx=%s — skipping", verified_status, transaction_uid)
+            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'non_success', 'status_code': verified_status}})
+            return {"status": "ok"}
     verified_page_uid = verified_tx.get('page_request_uid', '')
     lookup_uid = verified_page_uid or page_request_uid
     sub = await db.subscriptions.find_one({'payplus_page_request_uid': lookup_uid}, {'_id': 0})
