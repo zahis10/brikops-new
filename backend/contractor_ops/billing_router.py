@@ -1318,6 +1318,8 @@ async def billing_webhook_payplus(request: Request):
     if current_paid:
         try:
             base = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
+            if base.tzinfo is None:
+                base = base.replace(tzinfo=timezone.utc)
         except Exception:
             base = now_utc
         if base > now_utc:
