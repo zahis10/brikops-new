@@ -39,7 +39,7 @@ def _callback_url() -> str:
     from config import PASSWORD_RESET_BASE_URL
     base = PASSWORD_RESET_BASE_URL.rstrip("/")
     backend_base = base.replace("://app.", "://api.")
-    return f"{backend_base}/api/billing/webhook/payplus"
+    return f"{backend_base}/billing/webhook/payplus"
 
 
 def _frontend_base_url() -> str:
