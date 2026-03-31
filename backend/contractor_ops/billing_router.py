@@ -1317,6 +1317,7 @@ async def billing_webhook_payplus(request: Request):
                 'plan_id': pending_plan_id,
                 'billing_cycle': pending_cycle,
                 'paid_until': paid_until,
+                'auto_renew': True,
                 'last_payment_at': now_iso,
                 'last_payment_amount': amount,
                 'payplus_last_transaction_uid': transaction_uid,
@@ -1332,11 +1333,20 @@ async def billing_webhook_payplus(request: Request):
     )
     logger.info("[PAYPLUS-WH] Subscription activated org=%s plan=%s cycle=%s amount=%s",
                 org_id, pending_plan_id, pending_cycle, amount)
-    try:
-        from contractor_ops.billing import mark_paid
-        await mark_paid(org_id, 'payplus', None, pending_cycle, f"PayPlus tx={transaction_uid} amount={amount}")
-    except Exception as e:
-        logger.error("[PAYPLUS-WH] mark_paid failed for org=%s (subscription already activated): %s", org_id, e)
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'billing',
+        'entity_type': 'organization',
+        'entity_id': org_id,
+        'action': 'billing_mark_paid',
+        'actor_id': 'payplus_webhook',
+        'created_at': now_iso,
+        'payload': {
+            'new_paid_until': paid_until,
+            'cycle': pending_cycle,
+            'paid_note': f"PayPlus tx={transaction_uid} amount={amount}",
+        },
+    })
     try:
         from contractor_ops.invoicing import generate_invoice
         from datetime import date
