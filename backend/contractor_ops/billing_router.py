@@ -1,3 +1,4 @@
+# Collections: subscriptions, billing_plans, organizations, invoices, payplus_webhook_log, gi_webhook_log
 from fastapi import APIRouter, HTTPException, Depends, Request
 
 from contractor_ops.router import get_db, get_current_user, _is_super_admin, logger
@@ -60,12 +61,15 @@ async def billing_org(org_id: str, user: dict = Depends(get_current_user)):
 
 @router.post("/billing/org/{org_id}/checkout")
 async def billing_checkout(org_id: str, request: Request, user: dict = Depends(get_current_user)):
+    import uuid
+    from datetime import datetime, timezone, timedelta
     from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, preview_renewal
-    from config import GI_BASE_URL
+    from config import PAYPLUS_API_KEY, PAYPLUS_SECRET_KEY, PAYPLUS_PAYMENT_PAGE_UID
+    from contractor_ops.payplus_service import create_payment_page, PayPlusError
     if not BILLING_V1_ENABLED:
         raise HTTPException(status_code=404, detail='Not found')
-    if not GI_BASE_URL:
-        raise HTTPException(status_code=501, detail='Credit card payment coming soon')
+    if not all([PAYPLUS_API_KEY, PAYPLUS_SECRET_KEY, PAYPLUS_PAYMENT_PAGE_UID]):
+        raise HTTPException(status_code=501, detail='Payment integration not configured')
     if not _is_super_admin(user):
         billing_role = await check_org_billing_role(user['id'], org_id)
         if not billing_role:
@@ -88,65 +92,73 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
     if not billing_email:
         user_doc = await db.users.find_one({'id': user['id']}, {'_id': 0, 'email': 1})
         billing_email = user_doc.get('email', '') if user_doc else ''
-    from contractor_ops.green_invoice_service import create_payment_form, create_or_get_client, GreenInvoiceError
-    gi_client_id = billing_data.get('gi_client_id', '')
-    if not gi_client_id:
-        try:
-            gi_client_id = await create_or_get_client(
-                name=org_name or 'לקוח BrikOps',
-                email=billing_email,
-                tax_id=org.get('tax_id', '') if org else '',
-            )
-            await db.organizations.update_one(
-                {'id': org_id},
-                {'$set': {'billing.gi_client_id': gi_client_id}}
-            )
-            logger.info("[BILLING-GI] Stored gi_client_id=%s for org=%s", gi_client_id, org_id)
-        except GreenInvoiceError as e:
-            logger.warning("[BILLING-GI] Client creation failed for org %s: %s — proceeding without client_id (webhook will backfill)", org_id, str(e))
-            gi_client_id = ''
-    from config import PASSWORD_RESET_BASE_URL
-    base_url = PASSWORD_RESET_BASE_URL.rstrip('/')
-    success_url = f"{base_url}/billing/org/{org_id}?payment=success"
-    failure_url = f"{base_url}/billing/org/{org_id}?payment=failure"
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+    if sub and sub.get('payplus_page_request_uid') and sub.get('checkout_created_at'):
+        created = sub['checkout_created_at']
+        if isinstance(created, str):
+            try:
+                created = datetime.fromisoformat(created)
+            except Exception:
+                created = None
+        if created and datetime.now(timezone.utc) - created < timedelta(minutes=30):
+            existing_link = sub.get('payplus_payment_link', '')
+            if existing_link:
+                logger.info("[PAYPLUS] Returning existing pending checkout for org=%s", org_id)
+                return {
+                    'payment_page_link': existing_link,
+                    'page_request_uid': sub['payplus_page_request_uid'],
+                    'amount': amount,
+                    'cycle': cycle,
+                }
     cycle_he = 'שנתי' if cycle == 'yearly' else 'חודשי'
-    description = f"מנוי BrikOps — {cycle_he} — {org_name}"
+    plan_name = f"מנוי BrikOps — {cycle_he} — {org_name}"
     try:
-        result = await create_payment_form(
-            client_name=org_name or 'לקוח BrikOps',
-            client_email=billing_email,
-            description=description,
+        pp_result = await create_payment_page(
+            org_id=org_id,
+            org_name=org_name,
+            plan_name=plan_name,
             amount=amount,
-            success_url=success_url,
-            failure_url=failure_url,
-            remarks=f"org_id={org_id} cycle={cycle}",
-            client_id=gi_client_id,
+            customer_email=billing_email,
+            customer_name=org_name or 'לקוח BrikOps',
+            customer_phone='',
         )
-    except GreenInvoiceError as e:
-        logger.error("[BILLING-GI] Payment form creation failed for org %s: %s", org_id, str(e))
+    except PayPlusError as e:
+        logger.error("[PAYPLUS] Payment page creation failed for org %s: %s", org_id, str(e))
         raise HTTPException(status_code=502, detail=f'שגיאה ביצירת טופס תשלום: {str(e)}')
-    payment_url = result.get('url', '')
-    if not payment_url:
-        logger.error("[BILLING-GI] No URL in payment form response for org %s: %s", org_id, result)
-        raise HTTPException(status_code=502, detail='לא התקבל קישור תשלום')
-    import uuid
-    from contractor_ops.billing import _now
+    now_iso = datetime.now(timezone.utc).isoformat()
+    plan_id = renewal.get('plan_id', body.get('plan_id', ''))
+    await db.subscriptions.update_one(
+        {'org_id': org_id},
+        {'$set': {
+            'pending_plan_id': plan_id,
+            'pending_cycle': cycle,
+            'payplus_page_request_uid': pp_result['page_request_uid'],
+            'payplus_payment_link': pp_result['payment_page_link'],
+            'checkout_created_at': now_iso,
+        }},
+        upsert=True,
+    )
     await db.audit_events.insert_one({
         'id': str(uuid.uuid4()),
         'event_type': 'billing',
         'entity_type': 'checkout',
         'entity_id': org_id,
-        'action': 'gi_checkout_created',
+        'action': 'payplus_checkout_created',
         'actor_id': user['id'],
         'payload': {
             'org_id': org_id,
             'cycle': cycle,
             'amount': amount,
-            'payment_url': payment_url,
+            'page_request_uid': pp_result['page_request_uid'],
         },
-        'created_at': _now(),
+        'created_at': now_iso,
     })
-    return {'url': payment_url, 'amount': amount, 'cycle': cycle}
+    return {
+        'payment_page_link': pp_result['payment_page_link'],
+        'page_request_uid': pp_result['page_request_uid'],
+        'amount': amount,
+        'cycle': cycle,
+    }
 
 
 @router.get("/billing/preview-renewal")
@@ -1188,6 +1200,119 @@ async def billing_webhook_greeninvoice(request: Request):
         logger.info("[GI-WEBHOOK] Stored gi_client_id=%s for org=%s from webhook", gi_client_id_from_doc, org_id)
 
     await db.gi_webhook_log.insert_one(log_entry)
+    return {"status": "ok"}
+
+
+@router.post("/billing/webhook/payplus")
+async def billing_webhook_payplus(request: Request):
+    import uuid
+    from datetime import datetime, timezone, timedelta
+    from contractor_ops.payplus_service import get_transaction, PayPlusError
+    db = get_db()
+    try:
+        body = await request.json()
+    except Exception:
+        logger.warning("[PAYPLUS-WH] Failed to parse webhook body")
+        return {"status": "error", "detail": "invalid json"}
+    log_id = str(uuid.uuid4())
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.payplus_webhook_log.insert_one({
+        'id': log_id,
+        'raw_payload': body,
+        'created_at': now_iso,
+        'result': 'received',
+    })
+    transaction_uid = body.get('transaction', {}).get('uid', '') or body.get('transaction_uid', '')
+    page_request_uid = body.get('page_request_uid', '')
+    status_code = body.get('transaction', {}).get('status_code', '') or body.get('status_code', '')
+    logger.info("[PAYPLUS-WH] Received webhook tx=%s page=%s status=%s", transaction_uid, page_request_uid, status_code)
+    if not transaction_uid:
+        logger.warning("[PAYPLUS-WH] No transaction_uid — rejecting")
+        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_tx_uid'}})
+        return {"status": "ok"}
+    try:
+        tx_data = await get_transaction(transaction_uid)
+        verified_tx = tx_data.get('data', {})
+        verified_status = verified_tx.get('status_code', '')
+    except PayPlusError as e:
+        logger.error("[PAYPLUS-WH] Transaction verification failed tx=%s: %s", transaction_uid, e)
+        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'verification_failed', 'error': str(e)}})
+        return {"status": "ok"}
+    if verified_status != "000":
+        logger.info("[PAYPLUS-WH] Non-success verified_status=%s tx=%s — skipping", verified_status, transaction_uid)
+        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'non_success', 'status_code': verified_status}})
+        return {"status": "ok"}
+    verified_page_uid = verified_tx.get('page_request_uid', '')
+    lookup_uid = verified_page_uid or page_request_uid
+    sub = await db.subscriptions.find_one({'payplus_page_request_uid': lookup_uid}, {'_id': 0})
+    if not sub:
+        logger.warning("[PAYPLUS-WH] No subscription found for page_request_uid=%s (verified=%s)", lookup_uid, verified_page_uid)
+        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'no_subscription'}})
+        return {"status": "ok"}
+    org_id = sub.get('org_id', '')
+    if sub.get('payplus_last_transaction_uid') == transaction_uid:
+        logger.info("[PAYPLUS-WH] Duplicate webhook tx=%s org=%s — skipping", transaction_uid, org_id)
+        await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'duplicate'}})
+        return {"status": "ok"}
+    token_uid = verified_tx.get('token_uid', '')
+    card_last4 = verified_tx.get('four_digits', '')
+    card_brand = verified_tx.get('brand_name', '')
+    if token_uid:
+        await db.organizations.update_one(
+            {'id': org_id},
+            {'$set': {
+                'billing.payplus_token_uid': token_uid,
+                'billing.card_last4': card_last4,
+                'billing.card_brand': card_brand,
+            }}
+        )
+        logger.info("[PAYPLUS-WH] Saved token for org=%s last4=%s brand=%s", org_id, card_last4, card_brand)
+    pending_plan_id = sub.get('pending_plan_id', sub.get('plan_id', ''))
+    pending_cycle = sub.get('pending_cycle', sub.get('billing_cycle', 'monthly'))
+    amount = verified_tx.get('amount', 0) or body.get('transaction', {}).get('amount', 0)
+    paid_until = (datetime.now(timezone.utc) + timedelta(days=365 if pending_cycle == 'yearly' else 30)).isoformat()
+    await db.subscriptions.update_one(
+        {'org_id': org_id},
+        {
+            '$set': {
+                'status': 'active',
+                'plan_id': pending_plan_id,
+                'billing_cycle': pending_cycle,
+                'paid_until': paid_until,
+                'last_payment_at': now_iso,
+                'last_payment_amount': amount,
+                'payplus_last_transaction_uid': transaction_uid,
+            },
+            '$unset': {
+                'pending_plan_id': '',
+                'pending_cycle': '',
+                'payplus_page_request_uid': '',
+                'payplus_payment_link': '',
+                'checkout_created_at': '',
+            },
+        }
+    )
+    logger.info("[PAYPLUS-WH] Subscription activated org=%s plan=%s cycle=%s amount=%s",
+                org_id, pending_plan_id, pending_cycle, amount)
+    try:
+        from contractor_ops.billing import mark_paid
+        await mark_paid(org_id, 'payplus', None, pending_cycle, f"PayPlus tx={transaction_uid} amount={amount}")
+    except Exception as e:
+        logger.error("[PAYPLUS-WH] mark_paid failed for org=%s (subscription already activated): %s", org_id, e)
+    try:
+        from contractor_ops.invoicing import generate_invoice
+        from datetime import date
+        period = date.today().strftime('%Y-%m')
+        await generate_invoice(org_id, period, 'payplus_webhook')
+        logger.info("[PAYPLUS-WH] Invoice generated for org=%s period=%s", org_id, period)
+    except Exception as e:
+        logger.warning("[PAYPLUS-WH] Invoice creation failed for org=%s — not critical: %s", org_id, e)
+    await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {
+        'result': 'success',
+        'org_id': org_id,
+        'transaction_uid': transaction_uid,
+        'amount': amount,
+    }})
     return {"status": "ok"}
 
 

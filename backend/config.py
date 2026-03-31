@@ -22,6 +22,7 @@ else:
 _SENSITIVE_KEYS = frozenset({
     'JWT_SECRET', 'AWS_SECRET_ACCESS_KEY', 'AWS_ACCESS_KEY_ID',
     'DATABASE_URL', 'PGPASSWORD', 'SESSION_SECRET', 'EMERGENT_LLM_KEY',
+    'PAYPLUS_API_KEY', 'PAYPLUS_SECRET_KEY',
 })
 
 
@@ -208,6 +209,13 @@ GI_API_KEY_ID = os.environ.get('GI_API_KEY_ID', '')
 GI_API_SECRET = os.environ.get('GI_API_SECRET', '')
 GI_WEBHOOK_SECRET = os.environ.get('GI_WEBHOOK_SECRET', '')
 
+PAYPLUS_API_KEY = os.environ.get('PAYPLUS_API_KEY', '')
+PAYPLUS_SECRET_KEY = os.environ.get('PAYPLUS_SECRET_KEY', '')
+PAYPLUS_PAYMENT_PAGE_UID = os.environ.get('PAYPLUS_PAYMENT_PAGE_UID', '')
+PAYPLUS_TERMINAL_UID = os.environ.get('PAYPLUS_TERMINAL_UID', '')
+PAYPLUS_ENV = os.environ.get('PAYPLUS_ENV', 'sandbox')
+PAYPLUS_CALLBACK_URL = os.environ.get('PAYPLUS_CALLBACK_URL', '')
+
 
 def log_sanitized_startup():
     logger.info("=" * 60)
@@ -260,6 +268,12 @@ def log_sanitized_startup():
     logger.info(f"  GI_BASE_URL:        {GI_BASE_URL or 'NOT SET'}")
     logger.info(f"  GI_API_KEY_ID:      {'SET' if GI_API_KEY_ID else 'NOT SET'}")
     logger.info(f"  GI_API_SECRET:      {'SET' if GI_API_SECRET else 'NOT SET'}")
+    logger.info(f"  PAYPLUS_ENV:        {PAYPLUS_ENV}")
+    logger.info(f"  PAYPLUS_API_KEY:    {'SET (' + str(len(PAYPLUS_API_KEY)) + ' chars)' if PAYPLUS_API_KEY else 'NOT SET'}")
+    logger.info(f"  PAYPLUS_SECRET_KEY: {'SET' if PAYPLUS_SECRET_KEY else 'NOT SET'}")
+    logger.info(f"  PAYPLUS_PAGE_UID:   {'SET' if PAYPLUS_PAYMENT_PAGE_UID else 'NOT SET'}")
+    logger.info(f"  PAYPLUS_TERM_UID:   {'SET' if PAYPLUS_TERMINAL_UID else 'NOT SET'}")
+    logger.info(f"  PAYPLUS_CALLBACK:   {PAYPLUS_CALLBACK_URL or 'NOT SET'}")
     logger.info("=" * 60)
     logger.info("Isolation guard PASSED — all required vars present.")
     logger.info("=" * 60)

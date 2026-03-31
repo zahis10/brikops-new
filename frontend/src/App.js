@@ -24,6 +24,8 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import AccessibilityPage from './pages/AccessibilityPage';
 import WaLoginPage from './pages/WaLoginPage';
 import PendingDeletionPage from './pages/PendingDeletionPage';
+import PaymentSuccessPage from './pages/PaymentSuccessPage';
+import PaymentFailurePage from './pages/PaymentFailurePage';
 
 const JoinRequestsPage = React.lazy(() => import('./pages/JoinRequestsPage'));
 const TaskDetailPage = React.lazy(() => import('./pages/TaskDetailPage'));
@@ -158,6 +160,9 @@ const AppRoutes = () => {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/accessibility" element={<AccessibilityPage />} />
+        <Route path="/billing/payment-success" element={<PaymentSuccessPage />} />
+        <Route path="/billing/payment-failure" element={<PaymentFailurePage />} />
+        <Route path="/billing/payment-cancel" element={<PaymentFailurePage />} />
         <Route
           path="/settings/account"
           element={

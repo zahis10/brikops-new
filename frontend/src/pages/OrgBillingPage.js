@@ -1107,17 +1107,13 @@ export default function OrgBillingPage() {
                 setCheckoutLoading(true);
                 try {
                   const result = await billingService.checkout(orgId, renewalCycle);
-                  if (result.url) {
-                    window.location.href = result.url;
+                  if (result.payment_page_link) {
+                    window.location.href = result.payment_page_link;
                   } else {
                     toast.error('לא התקבל קישור תשלום');
                   }
                 } catch (err) {
-                  if (err.response?.status === 501) {
-                    toast('תשלום באשראי ייפתח בקרוב — בינתיים אפשר לשלוח בקשת תשלום', { icon: '💳' });
-                  } else {
-                    toast.error(err.response?.data?.detail || 'שגיאה ביצירת טופס תשלום');
-                  }
+                  toast.error(err.response?.data?.detail || 'שגיאה ביצירת טופס תשלום');
                 } finally {
                   setCheckoutLoading(false);
                 }
@@ -1127,7 +1123,7 @@ export default function OrgBillingPage() {
               {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
               {checkoutLoading ? 'מעביר לתשלום...' : 'שלם באשראי'}
             </button>
-            <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח של חשבונית ירוקה (Morning)</p>
+            <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
           </div>
 
           <div className="bg-white border border-amber-200 rounded-lg p-4 space-y-4">
