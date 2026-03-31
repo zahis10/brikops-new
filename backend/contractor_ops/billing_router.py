@@ -91,6 +91,13 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         amount = amount * 12
     if not amount or amount <= 0:
         raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
+    # === SANDBOX TEST OVERRIDE — REMOVE BEFORE GO-LIVE ===
+    from config import PAYPLUS_ENV
+    if PAYPLUS_ENV != "production":
+        original_amount = amount
+        amount = 5.0
+        logger.info("[PAYPLUS-TEST] Sandbox amount override: %s → %s", original_amount, amount)
+    # === END SANDBOX OVERRIDE ===
     org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
     org_name = org.get('name', '') if org else ''
     billing_data = org.get('billing', {}) if org else {}
