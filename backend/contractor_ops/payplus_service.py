@@ -70,7 +70,7 @@ async def create_payment_page(
         "currency_code": "ILS",
         "vat_type": 0,
         "description": plan_name,
-        "more_info": f"org_id={org_id}",
+        "more_info": org_id,
         "customer": {
             "customer_name": customer_name or "לקוח BrikOps",
             "email": customer_email,

@@ -1270,6 +1270,20 @@ async def billing_webhook_payplus(request: Request):
     lookup_uid = verified_page_uid or page_request_uid
     sub = await db.subscriptions.find_one({'payplus_page_request_uid': lookup_uid}, {'_id': 0})
     if not sub:
+        wh_org_id = (
+            body.get("more_info", "") or
+            body.get("transaction", {}).get("more_info", "")
+        ).strip()
+        if wh_org_id.startswith("org_id="):
+            wh_org_id = wh_org_id.split("=", 1)[1]
+        if wh_org_id:
+            sub = await db.subscriptions.find_one({
+                "org_id": wh_org_id,
+                "checkout_created_at": {"$exists": True}
+            })
+            if sub:
+                logger.info("[PAYPLUS-WH] Found subscription via more_info org=%s", wh_org_id)
+    if not sub:
         logger.warning("[PAYPLUS-WH] No subscription found for page_request_uid=%s (verified=%s)", lookup_uid, verified_page_uid)
         await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'no_subscription'}})
         return {"status": "ok"}
