@@ -16,6 +16,7 @@ async def billing_me(user: dict = Depends(get_current_user)):
 @router.get("/billing/plans/active")
 async def billing_plans_active(user: dict = Depends(get_current_user)):
     from contractor_ops.billing import BILLING_V1_ENABLED
+    from contractor_ops.billing_plans import list_plans
     if not BILLING_V1_ENABLED:
         raise HTTPException(status_code=404, detail='Not found')
     db = get_db()
@@ -35,10 +36,7 @@ async def billing_plans_active(user: dict = Depends(get_current_user)):
                 )
                 if not org_owned:
                     raise HTTPException(status_code=403, detail='אין הרשאה')
-    plans = await db.billing_plans.find(
-        {'is_active': True},
-        {'_id': 0, 'id': 1, 'name': 1, 'version': 1, 'project_fee_monthly': 1, 'unit_tiers': 1}
-    ).to_list(100)
+    plans = await list_plans()
     return plans
 
 

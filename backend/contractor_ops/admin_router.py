@@ -324,47 +324,6 @@ async def admin_list_plans(user: dict = Depends(require_super_admin)):
     return plans
 
 
-@router.post("/admin/billing/plans")
-async def admin_create_plan(request: Request, user: dict = Depends(require_stepup)):
-    from contractor_ops.billing import BILLING_V1_ENABLED
-    from contractor_ops.billing_plans import create_plan
-    if not BILLING_V1_ENABLED:
-        raise HTTPException(status_code=404, detail='Not found')
-    body = await request.json()
-    try:
-        plan = await create_plan(body, user['id'])
-        return plan
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.put("/admin/billing/plans/{plan_id}")
-async def admin_update_plan(plan_id: str, request: Request, user: dict = Depends(require_stepup)):
-    from contractor_ops.billing import BILLING_V1_ENABLED
-    from contractor_ops.billing_plans import update_plan
-    if not BILLING_V1_ENABLED:
-        raise HTTPException(status_code=404, detail='Not found')
-    body = await request.json()
-    try:
-        plan = await update_plan(plan_id, body, user['id'])
-        return plan
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.patch("/admin/billing/plans/{plan_id}/deactivate")
-async def admin_deactivate_plan(plan_id: str, user: dict = Depends(require_stepup)):
-    from contractor_ops.billing import BILLING_V1_ENABLED
-    from contractor_ops.billing_plans import deactivate_plan
-    if not BILLING_V1_ENABLED:
-        raise HTTPException(status_code=404, detail='Not found')
-    try:
-        result = await deactivate_plan(plan_id, user['id'])
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.get("/admin/billing/migration/dry-run")
 async def admin_migration_dry_run(user: dict = Depends(require_super_admin)):
     from contractor_ops.billing import BILLING_V1_ENABLED, dry_run_org_id_backfill

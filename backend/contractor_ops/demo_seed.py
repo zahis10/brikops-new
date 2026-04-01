@@ -600,33 +600,26 @@ async def ensure_demo_data(db, user_map: dict, org_id: str):
         {'_id': 0, 'id': 1},
     )
     if not existing_billing:
-        from contractor_ops.billing_plans import get_plan, snapshot_pricing
-        plan = await get_plan('plan_pro')
-        if plan:
-            pricing = snapshot_pricing(plan, 30)
-            await db.project_billing.insert_one({
-                'id': _uid(),
-                'project_id': project_id,
-                'org_id': org_id,
-                'plan_id': 'plan_pro',
-                'contracted_units': 30,
-                'observed_units': 30,
-                'tier_code': pricing['tier_code'],
-                'project_fee_snapshot': pricing['project_fee_snapshot'],
-                'tier_fee_snapshot': pricing['tier_fee_snapshot'],
-                'pricing_version': pricing['pricing_version'],
-                'monthly_total': pricing['monthly_total'],
-                'status': 'active',
-                'setup_state': 'ready',
-                'cycle_peak_units': 30,
-                'is_demo': True,
-                'created_at': ts,
-                'updated_at': ts,
-            })
-            counts['billing'] = 1
-            logger.info(f"[DEMO-DATA] Billing: plan_pro, 30 units, {pricing['monthly_total']} ILS/mo")
-        else:
-            logger.warning("[DEMO-DATA] plan_pro not found — skipping billing seed (plans may not be seeded yet)")
+        from contractor_ops.billing_plans import calculate_monthly
+        demo_units = 30
+        monthly = calculate_monthly(demo_units, project_index=1)
+        await db.project_billing.insert_one({
+            'id': _uid(),
+            'project_id': project_id,
+            'org_id': org_id,
+            'plan_id': 'standard',
+            'contracted_units': demo_units,
+            'observed_units': demo_units,
+            'monthly_total': monthly,
+            'status': 'active',
+            'setup_state': 'ready',
+            'cycle_peak_units': demo_units,
+            'is_demo': True,
+            'created_at': ts,
+            'updated_at': ts,
+        })
+        counts['billing'] = 1
+        logger.info(f"[DEMO-DATA] Billing: standard, {demo_units} units, {monthly} ILS/mo")
 
     total_created = sum(counts.values())
     if total_created > 0:

@@ -80,9 +80,21 @@ def _start_of_next_billing_period(billing_cycle: str = 'monthly') -> str:
     return next_start.astimezone(timezone.utc).isoformat()
 
 
+async def _get_project_index(org_id: str, project_id: str) -> int:
+    db = get_db()
+    all_pbs = await db.project_billing.find(
+        {'org_id': org_id, 'status': 'active'}, {'_id': 0, 'project_id': 1, 'created_at': 1}
+    ).to_list(1000)
+    sorted_pbs = sorted(all_pbs, key=lambda p: p.get('created_at', ''))
+    for i, pb in enumerate(sorted_pbs):
+        if pb['project_id'] == project_id:
+            return i + 1
+    return 1
+
+
 async def apply_pending_decreases(org_id: str = None) -> int:
     db = get_db()
-    from contractor_ops.billing_plans import get_plan, snapshot_pricing
+    from contractor_ops.billing_plans import calculate_monthly
     now = _now()
     query = {
         'pending_contracted_units': {'$exists': True, '$ne': None},
@@ -97,17 +109,9 @@ async def apply_pending_decreases(org_id: str = None) -> int:
     for pb in pending_docs:
         new_units = pb['pending_contracted_units']
         plan_id = pb.get('plan_id')
-        plan = await get_plan(plan_id) if plan_id else None
-        pricing_update = {}
-        if plan:
-            pricing = snapshot_pricing(plan, new_units)
-            pricing_update = {
-                'tier_code': pricing['tier_code'],
-                'project_fee_snapshot': pricing['project_fee_snapshot'],
-                'tier_fee_snapshot': pricing['tier_fee_snapshot'],
-                'pricing_version': pricing['pricing_version'],
-                'monthly_total': pricing['monthly_total'],
-            }
+        proj_index = await _get_project_index(pb['org_id'], pb['project_id'])
+        new_monthly = calculate_monthly(new_units, plan_id=plan_id, project_index=proj_index)
+        pricing_update = {'monthly_total': new_monthly}
         await db.project_billing.update_one(
             {'id': pb['id']},
             {
@@ -558,19 +562,22 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
                                   plan_id: Optional[str] = None,
                                   contracted_units: int = 0) -> dict:
     db = get_db()
-    from contractor_ops.billing_plans import get_plan, snapshot_pricing
+    from contractor_ops.billing_plans import calculate_monthly
 
     existing = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0})
     if existing:
         raise ValueError('כבר קיים רשומת חיוב לפרויקט זה')
 
-    pricing = {'project_fee_snapshot': 0, 'tier_fee_snapshot': 0, 'tier_code': 'none',
-               'pricing_version': 0, 'monthly_total': 0}
+    proj_index = 1
     if plan_id:
-        plan = await get_plan(plan_id)
-        if not plan:
-            raise ValueError('תוכנית לא נמצאה')
-        pricing = snapshot_pricing(plan, contracted_units)
+        active_count = await db.project_billing.count_documents(
+            {'org_id': org_id, 'status': 'active'}
+        )
+        proj_index = active_count + 1
+
+    monthly_total = calculate_monthly(
+        contracted_units, plan_id=plan_id, project_index=proj_index
+    ) if plan_id else 0
 
     observed = await compute_observed_units(project_id)
     ts = _now()
@@ -581,11 +588,7 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
         'plan_id': plan_id,
         'contracted_units': contracted_units,
         'observed_units': observed,
-        'tier_code': pricing['tier_code'],
-        'project_fee_snapshot': pricing['project_fee_snapshot'],
-        'tier_fee_snapshot': pricing['tier_fee_snapshot'],
-        'pricing_version': pricing['pricing_version'],
-        'monthly_total': pricing['monthly_total'],
+        'monthly_total': monthly_total,
         'status': 'active',
         'setup_state': 'trial',
         'billing_contact_note': None,
@@ -619,7 +622,7 @@ def validate_setup_transition(current_state: str, new_state: str) -> bool:
 
 async def update_project_billing(project_billing_id: str, updates: dict, actor_id: str) -> dict:
     db = get_db()
-    from contractor_ops.billing_plans import get_plan, snapshot_pricing
+    from contractor_ops.billing_plans import calculate_monthly
 
     existing = await db.project_billing.find_one({'id': project_billing_id}, {'_id': 0})
     if not existing:
@@ -677,18 +680,11 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
 
     new_plan_id = updates.get('plan_id', existing.get('plan_id'))
     if new_plan_id:
-        plan = await get_plan(new_plan_id)
-        if not plan:
-            raise ValueError('תוכנית לא נמצאה')
-        if not plan.get('is_active', True):
-            raise ValueError('תוכנית לא פעילה')
-        pricing = snapshot_pricing(plan, new_contracted_for_pricing)
         set_fields['plan_id'] = new_plan_id
-        set_fields['tier_code'] = pricing['tier_code']
-        set_fields['project_fee_snapshot'] = pricing['project_fee_snapshot']
-        set_fields['tier_fee_snapshot'] = pricing['tier_fee_snapshot']
-        set_fields['pricing_version'] = pricing['pricing_version']
-        set_fields['monthly_total'] = pricing['monthly_total']
+        proj_index = await _get_project_index(existing['org_id'], existing['project_id'])
+        set_fields['monthly_total'] = calculate_monthly(
+            new_contracted_for_pricing, plan_id=new_plan_id, project_index=proj_index
+        )
 
     observed = await compute_observed_units(existing['project_id'])
     set_fields['observed_units'] = observed
@@ -1307,7 +1303,7 @@ async def cancel_payment_request(org_id: str, request_id: str, actor_id: str) ->
 
 async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dict:
     db = get_db()
-    from contractor_ops.billing_plans import get_plan, snapshot_pricing
+    from contractor_ops.billing_plans import calculate_monthly
 
     sub = await get_subscription(org_id)
     total_monthly = 0
@@ -1316,7 +1312,8 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
         project_billings = await db.project_billing.find(
             {'org_id': org_id, 'status': 'active'}, {'_id': 0}
         ).to_list(1000)
-        for pb in project_billings:
+        sorted_pbs = sorted(project_billings, key=lambda p: p.get('created_at', ''))
+        for idx, pb in enumerate(sorted_pbs):
             contracted = pb.get('contracted_units', 0)
             observed = await compute_observed_units(pb['project_id'])
             await _refresh_peak_units(pb, observed)
@@ -1326,12 +1323,9 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
             peak = max(peak, observed, contracted)
             billable = max(contracted, peak)
             plan_id = pb.get('plan_id')
-            plan = await get_plan(plan_id) if plan_id else None
-            if plan:
-                pricing = snapshot_pricing(plan, billable)
-                proj_monthly = pricing['monthly_total']
-            else:
-                proj_monthly = pb.get('monthly_total', 0)
+            proj_monthly = calculate_monthly(
+                billable, plan_id=plan_id, project_index=idx + 1
+            )
             total_monthly += proj_monthly
             proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
             breakdown.append({
@@ -1355,7 +1349,7 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
 
 async def create_payment_request(org_id: str, user_id: str, cycle: str, note: str = '', contact_email: str = '', requested_by_kind: str = 'unknown') -> dict:
     db = get_db()
-    from contractor_ops.billing_plans import get_plan, snapshot_pricing
+    from contractor_ops.billing_plans import calculate_monthly
     now = _now()
 
     await apply_pending_decreases(org_id)
@@ -1385,7 +1379,8 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
         {'org_id': org_id, 'status': 'active'}, {'_id': 0}
     ).to_list(1000)
     if project_billings:
-        for pb in project_billings:
+        sorted_pbs = sorted(project_billings, key=lambda p: p.get('created_at', ''))
+        for idx, pb in enumerate(sorted_pbs):
             contracted = pb.get('contracted_units', 0)
             observed = await compute_observed_units(pb['project_id'])
             await _refresh_peak_units(pb, observed)
@@ -1395,12 +1390,9 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
             peak = max(peak, observed, contracted)
             billable = max(contracted, peak)
             plan_id = pb.get('plan_id')
-            plan = await get_plan(plan_id) if plan_id else None
-            if plan:
-                pricing = snapshot_pricing(plan, billable)
-                proj_monthly = pricing['monthly_total']
-            else:
-                proj_monthly = pb.get('monthly_total', 0)
+            proj_monthly = calculate_monthly(
+                billable, plan_id=plan_id, project_index=idx + 1
+            )
             total_monthly += proj_monthly
             proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
             billing_breakdown.append({
