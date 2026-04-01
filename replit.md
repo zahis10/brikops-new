@@ -31,7 +31,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3).
     -   **Task Workflow Enforcement**: Strict status transitions and role-based permissions.
     -   **Proof Management**: Multi-image proof uploads with client-side compression and validation, including photo annotation capabilities.
-    -   **Billing System**: Centralized billing management with RBAC, PayPlus payment gateway for credit card payments (sandbox-first), Green Invoice for invoice generation, and recurring renewal infrastructure.
+    -   **Billing System**: Simplified license + per-unit pricing (₪900 first project + ₪450 additional + ₪20/unit/month; founder_6m=₪500 flat; manual_override passthrough). PayPlus payment gateway for credit card payments (sandbox-first), Green Invoice for invoice generation, and recurring renewal infrastructure.
     -   **Admin & Member Management**: Tools for super_admin, PM, and owner-level team management.
     -   **QC (Quality Control) System**: Floor-level and unit-level quality control with template versioning, RBAC, stage-based workflow, and an approver system.
     -   **Handover Protocol System**: Unit-level handover protocol management for inspections, including engine-managed forms, status flows, digital signatures, and defect creation.

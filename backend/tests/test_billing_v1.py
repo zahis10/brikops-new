@@ -196,8 +196,7 @@ class TestPlanStructure:
         assert r.status_code == 200
         plans = r.json()
         plan_ids = [p["id"] for p in plans]
-        assert "plan_basic" in plan_ids
-        assert "plan_pro" in plan_ids
+        assert "standard" in plan_ids
 
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
     def test_plan_has_required_fields(self, super_admin):
@@ -207,14 +206,10 @@ class TestPlanStructure:
         for plan in plans:
             assert "id" in plan
             assert "name" in plan
-            assert "project_fee_monthly" in plan
-            assert "unit_tiers" in plan
-            assert "version" in plan
+            assert "license_first" in plan
+            assert "license_additional" in plan
+            assert "price_per_unit" in plan
             assert "is_active" in plan
-            for tier in plan["unit_tiers"]:
-                assert "code" in tier
-                assert "max_units" in tier
-                assert "monthly_fee" in tier
 
 
 class TestProjectBillingData:
@@ -272,39 +267,18 @@ class TestMigrationIdempotency:
 
 class TestTierResolution:
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
-    def test_tier_resolution_via_unit_function(self, db):
-        import asyncio
+    def test_calculate_monthly_pricing(self, db):
         import sys
         sys.path.insert(0, "/home/runner/workspace/backend")
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from contractor_ops.billing_plans import set_plans_db, list_plans, resolve_tier, snapshot_pricing
+        from contractor_ops.billing_plans import calculate_monthly, PROJECT_LICENSE_FIRST, PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT
 
-        async def run():
-            client = AsyncIOMotorClient("mongodb://localhost:27017")
-            mdb = client["contractor_ops"]
-            set_plans_db(mdb)
-            plans = await list_plans()
-            basic = next((p for p in plans if p["id"] == "plan_basic"), None)
-            if not basic:
-                pytest.skip("No basic plan")
-
-            snap_10 = snapshot_pricing(basic, 10)
-            assert snap_10["tier_code"] == "tier_s"
-            assert snap_10["monthly_total"] == basic["project_fee_monthly"] + snap_10["tier_fee_snapshot"]
-
-            snap_50 = snapshot_pricing(basic, 50)
-            assert snap_50["tier_code"] == "tier_s"
-
-            snap_51 = snapshot_pricing(basic, 51)
-            assert snap_51["tier_code"] == "tier_m"
-
-            snap_201 = snapshot_pricing(basic, 201)
-            assert snap_201["tier_code"] == "tier_l"
-
-            snap_0 = snapshot_pricing(basic, 0)
-            assert snap_0["tier_code"] == "tier_s"
-
-        asyncio.run(run())
+        assert calculate_monthly(10) == PROJECT_LICENSE_FIRST + 10 * PRICE_PER_UNIT
+        assert calculate_monthly(50) == PROJECT_LICENSE_FIRST + 50 * PRICE_PER_UNIT
+        assert calculate_monthly(200) == PROJECT_LICENSE_FIRST + 200 * PRICE_PER_UNIT
+        assert calculate_monthly(0) == PROJECT_LICENSE_FIRST
+        assert calculate_monthly(100, project_index=2) == PROJECT_LICENSE_ADDITIONAL + 100 * PRICE_PER_UNIT
+        assert calculate_monthly(100, plan_id="founder_6m") == 500
+        assert calculate_monthly(100, manual_override={"total_monthly": 3000}) == 3000
 
 
 class TestObservedUnits:
@@ -392,40 +366,37 @@ class TestNullablePlanId:
         asyncio.run(run())
 
 
-class TestPlanXL:
+class TestPricingModel:
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
-    def test_plan_xl_exists(self, super_admin):
+    def test_standard_plan_exists(self, super_admin):
         headers, _ = super_admin
         r = httpx.get(f"{BASE}/api/admin/billing/plans", headers=headers)
         assert r.status_code == 200
         plans = r.json()
         plan_ids = [p["id"] for p in plans]
-        assert "plan_xl" in plan_ids
+        assert "standard" in plan_ids
 
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
-    def test_plans_have_4_tiers(self, super_admin):
+    def test_plan_has_pricing_fields(self, super_admin):
         headers, _ = super_admin
         r = httpx.get(f"{BASE}/api/admin/billing/plans", headers=headers)
         plans = r.json()
         for plan in plans:
             if plan["is_active"]:
-                tier_codes = [t["code"] for t in plan["unit_tiers"]]
-                assert "tier_s" in tier_codes
-                assert "tier_m" in tier_codes
-                assert "tier_l" in tier_codes
-                assert "tier_xl" in tier_codes
+                assert "license_first" in plan
+                assert "license_additional" in plan
+                assert "price_per_unit" in plan
 
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
-    def test_tier_xl_boundary(self):
-        import asyncio
+    def test_pricing_formula_consistency(self):
         import sys
         sys.path.insert(0, "/home/runner/workspace/backend")
-        from contractor_ops.billing_plans import DEFAULT_PLANS, resolve_tier
+        from contractor_ops.billing_plans import calculate_monthly, get_pricing_breakdown
 
-        plan = DEFAULT_PLANS[0]
-        assert resolve_tier(plan, 500)["code"] == "tier_l"
-        assert resolve_tier(plan, 501)["code"] == "tier_xl"
-        assert resolve_tier(plan, 1000)["code"] == "tier_xl"
+        for units in [0, 10, 50, 100, 500]:
+            cm = calculate_monthly(units)
+            bd = get_pricing_breakdown(units)
+            assert cm == bd["total_monthly"], f"Mismatch at {units} units: {cm} != {bd['total_monthly']}"
 
 
 class TestWriteEndpointsRBAC:
@@ -456,11 +427,10 @@ class TestWriteEndpointsRBAC:
     def test_patch_plan_updates_pricing(self, super_admin, project_id):
         headers, _ = super_admin
         r = httpx.patch(f"{BASE}/api/billing/project/{project_id}", headers=headers,
-                        json={"plan_id": "plan_pro", "contracted_units": 60})
+                        json={"plan_id": "standard", "contracted_units": 60})
         assert r.status_code == 200
         data = r.json()
-        assert data["plan_id"] == "plan_pro"
-        assert data["tier_code"] == "tier_m"
+        assert data["plan_id"] == "standard"
         assert data["monthly_total"] > 0
 
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
@@ -554,17 +524,17 @@ class TestSetupStateField:
 
 class TestSnapshotImmutability:
     @pytest.mark.skipif(not BILLING_V1, reason="Requires BILLING_V1_ENABLED")
-    def test_plan_update_does_not_change_existing_snapshot(self, super_admin, project_id, db):
+    def test_monthly_total_consistent_after_read(self, super_admin, project_id, db):
         headers, _ = super_admin
         r = httpx.patch(f"{BASE}/api/billing/project/{project_id}", headers=headers,
-                        json={"plan_id": "plan_basic", "contracted_units": 30})
+                        json={"plan_id": "standard", "contracted_units": 30})
         assert r.status_code == 200
-        snapshot_before = r.json()["project_fee_snapshot"]
+        total_before = r.json()["monthly_total"]
 
         r2 = httpx.get(f"{BASE}/api/billing/project/{project_id}", headers=headers)
         assert r2.status_code == 200
         billing = r2.json()["billing"]
-        assert billing["project_fee_snapshot"] == snapshot_before
+        assert billing["monthly_total"] == total_before
 
 
 class TestBillingAuditPhase2:

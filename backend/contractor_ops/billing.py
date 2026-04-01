@@ -85,7 +85,7 @@ async def _get_project_index(org_id: str, project_id: str) -> int:
     all_pbs = await db.project_billing.find(
         {'org_id': org_id, 'status': 'active'}, {'_id': 0, 'project_id': 1, 'created_at': 1}
     ).to_list(1000)
-    sorted_pbs = sorted(all_pbs, key=lambda p: p.get('created_at', ''))
+    sorted_pbs = sorted(all_pbs, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
     for i, pb in enumerate(sorted_pbs):
         if pb['project_id'] == project_id:
             return i + 1
@@ -606,7 +606,7 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
         'payload': {
             'project_id': project_id, 'org_id': org_id,
             'plan_id': plan_id, 'contracted_units': contracted_units,
-            'monthly_total': pricing['monthly_total'],
+            'monthly_total': monthly_total,
         },
         'created_at': ts,
     })
@@ -678,7 +678,10 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
     if 'billing_contact_note' in updates:
         set_fields['billing_contact_note'] = updates['billing_contact_note']
 
+    ALLOWED_PLAN_IDS = {'standard', 'founder_6m'}
     new_plan_id = updates.get('plan_id', existing.get('plan_id'))
+    if new_plan_id and new_plan_id not in ALLOWED_PLAN_IDS:
+        new_plan_id = 'standard'
     if new_plan_id:
         set_fields['plan_id'] = new_plan_id
         proj_index = await _get_project_index(existing['org_id'], existing['project_id'])
@@ -1312,7 +1315,7 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
         project_billings = await db.project_billing.find(
             {'org_id': org_id, 'status': 'active'}, {'_id': 0}
         ).to_list(1000)
-        sorted_pbs = sorted(project_billings, key=lambda p: p.get('created_at', ''))
+        sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
         for idx, pb in enumerate(sorted_pbs):
             contracted = pb.get('contracted_units', 0)
             observed = await compute_observed_units(pb['project_id'])
@@ -1379,7 +1382,7 @@ async def create_payment_request(org_id: str, user_id: str, cycle: str, note: st
         {'org_id': org_id, 'status': 'active'}, {'_id': 0}
     ).to_list(1000)
     if project_billings:
-        sorted_pbs = sorted(project_billings, key=lambda p: p.get('created_at', ''))
+        sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
         for idx, pb in enumerate(sorted_pbs):
             contracted = pb.get('contracted_units', 0)
             observed = await compute_observed_units(pb['project_id'])
