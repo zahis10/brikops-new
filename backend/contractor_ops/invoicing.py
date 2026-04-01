@@ -109,7 +109,7 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
     }
 
 
-async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: float, period_ym: str):
+async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: float, period_ym: str, paid_until: str = ""):
     from config import GI_BASE_URL
     if not GI_BASE_URL or amount <= 0:
         logger.info("[INVOICING:GI] Skipped — GI not configured or amount=0. invoice=%s amount=%s gi_configured=%s", invoice_id, amount, bool(GI_BASE_URL))
@@ -131,14 +131,24 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
             {'id': org_id},
             {'$set': {'billing.gi_client_id': gi_client_id}}
         )
+    if paid_until:
+        try:
+            pu_dt = datetime.fromisoformat(paid_until.replace('Z', '+00:00'))
+            gi_description = f"מנוי חודשי BrikOps — {pu_dt.month:02d}/{pu_dt.year}"
+        except Exception:
+            gi_description = f"מנוי BrikOps — {period_ym}"
+    else:
+        gi_description = f"מנוי BrikOps — {period_ym}"
+    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     gi_doc = await create_document(
         client_name=org_name or 'BrikOps Client',
         client_email=billing_email,
-        description=f"מנוי BrikOps — {period_ym}",
+        description=gi_description,
         amount=amount,
         currency='ILS',
         remarks=f"org_id={org_id} invoice_id={invoice_id}",
         client_id=gi_client_id,
+        payment_date=today_str,
     )
     gi_document_id = gi_doc.get('id', '')
     if gi_document_id:
@@ -150,7 +160,7 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
     return gi_document_id
 
 
-async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict:
+async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_until: str = "") -> dict:
     year, month = validate_period_ym(period_ym)
     db = get_db()
 
@@ -166,7 +176,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
         existing['line_items'] = items
         if not existing.get('gi_document_id'):
             try:
-                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym)
+                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym, paid_until=paid_until)
                 if gi_id:
                     existing['gi_document_id'] = gi_id
             except Exception as e:
@@ -257,7 +267,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
     from config import GI_BASE_URL
     logger.info("[INVOICING:GI] About to attempt GI. invoice=%s amount=%s gi_configured=%s", invoice_id, preview['total_amount'], bool(GI_BASE_URL))
     try:
-        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, preview['total_amount'], period_ym)
+        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, preview['total_amount'], period_ym, paid_until=paid_until)
         if gi_document_id:
             invoice_doc['gi_document_id'] = gi_document_id
     except Exception as e:
