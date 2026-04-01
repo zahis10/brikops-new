@@ -109,6 +109,47 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
     }
 
 
+async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: float, period_ym: str):
+    from config import GI_BASE_URL
+    if not GI_BASE_URL or amount <= 0:
+        logger.info("[INVOICING:GI] Skipped — GI not configured or amount=0. invoice=%s amount=%s gi_configured=%s", invoice_id, amount, bool(GI_BASE_URL))
+        return None
+    logger.info("[INVOICING:GI] Starting GI document creation for invoice %s org=%s amount=%s", invoice_id, org_id, amount)
+    from contractor_ops.green_invoice_service import create_or_get_client, create_document
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
+    org_name = org.get('name', '') if org else ''
+    billing_data = org.get('billing', {}) if org else {}
+    billing_email = billing_data.get('billing_email', '')
+    if not billing_email:
+        owner = await db.users.find_one({'org_id': org_id, 'role': {'$in': ['owner', 'admin']}}, {'_id': 0, 'email': 1})
+        billing_email = owner.get('email', '') if owner else ''
+    tax_id = org.get('tax_id', '') if org else ''
+    gi_client_id = billing_data.get('gi_client_id', '')
+    if not gi_client_id:
+        gi_client_id = await create_or_get_client(org_name or 'BrikOps Client', billing_email, tax_id)
+        await db.organizations.update_one(
+            {'id': org_id},
+            {'$set': {'billing.gi_client_id': gi_client_id}}
+        )
+    gi_doc = await create_document(
+        client_name=org_name or 'BrikOps Client',
+        client_email=billing_email,
+        description=f"מנוי BrikOps — {period_ym}",
+        amount=amount,
+        currency='ILS',
+        remarks=f"org_id={org_id} invoice_id={invoice_id}",
+        client_id=gi_client_id,
+    )
+    gi_document_id = gi_doc.get('id', '')
+    if gi_document_id:
+        await db.invoices.update_one(
+            {'id': invoice_id},
+            {'$set': {'gi_document_id': gi_document_id, 'updated_at': _now()}}
+        )
+    logger.info("[INVOICING:GI] SUCCESS doc_id=%s for invoice %s", gi_document_id or '(none)', invoice_id)
+    return gi_document_id
+
+
 async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict:
     year, month = validate_period_ym(period_ym)
     db = get_db()
@@ -123,6 +164,13 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
             {'_id': 0}
         ).to_list(1000)
         existing['line_items'] = items
+        if not existing.get('gi_document_id'):
+            try:
+                gi_id = await _try_create_gi_document(db, org_id, existing['id'], existing.get('total_amount', 0), period_ym)
+                if gi_id:
+                    existing['gi_document_id'] = gi_id
+            except Exception as e:
+                logger.warning("[INVOICING:GI] Backfill FAILED for existing invoice %s: %s", existing['id'], str(e))
         return existing
 
     preview = await build_invoice_preview(org_id, period_ym)
@@ -207,42 +255,9 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
     invoice_doc['line_items'] = item_docs
 
     try:
-        from config import GI_BASE_URL
-        if GI_BASE_URL and preview['total_amount'] > 0:
-            logger.info("[INVOICING:GI] Starting GI document creation for invoice %s org=%s amount=%s", invoice_id, org_id, preview['total_amount'])
-            from contractor_ops.green_invoice_service import create_or_get_client, create_document
-            org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
-            org_name = org.get('name', '') if org else ''
-            billing_data = org.get('billing', {}) if org else {}
-            billing_email = billing_data.get('billing_email', '')
-            if not billing_email:
-                owner = await db.users.find_one({'org_id': org_id, 'role': {'$in': ['owner', 'admin']}}, {'_id': 0, 'email': 1})
-                billing_email = owner.get('email', '') if owner else ''
-            tax_id = org.get('tax_id', '') if org else ''
-            gi_client_id = billing_data.get('gi_client_id', '')
-            if not gi_client_id:
-                gi_client_id = await create_or_get_client(org_name or 'BrikOps Client', billing_email, tax_id)
-                await db.organizations.update_one(
-                    {'id': org_id},
-                    {'$set': {'billing.gi_client_id': gi_client_id}}
-                )
-            gi_doc = await create_document(
-                client_name=org_name or 'BrikOps Client',
-                client_email=billing_email,
-                description=f"מנוי BrikOps — {period_ym}",
-                amount=preview['total_amount'],
-                currency='ILS',
-                remarks=f"org_id={org_id} invoice_id={invoice_id}",
-                client_id=gi_client_id,
-            )
-            gi_document_id = gi_doc.get('id', '')
-            if gi_document_id:
-                await db.invoices.update_one(
-                    {'id': invoice_id},
-                    {'$set': {'gi_document_id': gi_document_id, 'updated_at': ts}}
-                )
-                invoice_doc['gi_document_id'] = gi_document_id
-            logger.info("[INVOICING:GI] SUCCESS doc_id=%s for invoice %s", gi_document_id or '(none)', invoice_id)
+        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, preview['total_amount'], period_ym)
+        if gi_document_id:
+            invoice_doc['gi_document_id'] = gi_document_id
     except Exception as e:
         logger.warning("[INVOICING:GI] FAILED for invoice %s: %s", invoice_id, str(e))
 
