@@ -918,6 +918,10 @@ export const billingService = {
     const response = await axios.put(`${API}/billing/org/${orgId}/payment-config`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async updateOrgPricing(orgId, data) {
+    const response = await axios.patch(`${API}/admin/billing/org/${orgId}/pricing`, data, { headers: getAuthHeader() });
+    return response.data;
+  },
   async cancelPaymentRequest(orgId, requestId) {
     const response = await axios.post(`${API}/billing/org/${orgId}/payment-requests/${requestId}/cancel`, {}, { headers: getAuthHeader() });
     return response.data;

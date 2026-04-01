@@ -1135,11 +1135,47 @@ async def get_billing_for_project(project_id: str) -> dict:
 
 
 async def recalc_org_total(org_id: str):
+    from contractor_ops.billing_plans import (
+        calculate_monthly, PROJECT_LICENSE_FIRST,
+        PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT,
+    )
     db = get_db()
     project_billings = await db.project_billing.find(
-        {'org_id': org_id, 'status': 'active'}, {'_id': 0, 'monthly_total': 1}
+        {'org_id': org_id, 'status': 'active'},
+        {'_id': 0, 'id': 1, 'project_id': 1, 'plan_id': 1,
+         'contracted_units': 1, 'created_at': 1},
     ).to_list(1000)
-    total = sum(pb.get('monthly_total', 0) for pb in project_billings)
+    sorted_pbs = sorted(
+        project_billings,
+        key=lambda p: (p.get('created_at', ''), p.get('project_id', '')),
+    )
+    total = 0
+    for idx, pb in enumerate(sorted_pbs):
+        plan_id = pb.get('plan_id')
+        units = pb.get('contracted_units', 0)
+        proj_index = idx + 1
+        if not plan_id or units < 1:
+            total += pb.get('monthly_total', 0)
+            continue
+        monthly = calculate_monthly(units, plan_id=plan_id, project_index=proj_index)
+        if plan_id == 'founder_6m':
+            lf = 500 if idx == 0 else 0
+            uf = 0
+            monthly = 500 if idx == 0 else 0
+        else:
+            lf = PROJECT_LICENSE_FIRST if proj_index <= 1 else PROJECT_LICENSE_ADDITIONAL
+            uf = units * PRICE_PER_UNIT
+        await db.project_billing.update_one(
+            {'id': pb['id']},
+            {'$set': {
+                'monthly_total': monthly,
+                'license_fee': lf,
+                'units_fee': uf,
+                'price_per_unit': PRICE_PER_UNIT,
+                'updated_at': _now(),
+            }},
+        )
+        total += monthly
     await db.subscriptions.update_one(
         {'org_id': org_id},
         {'$set': {'total_monthly': total, 'updated_at': _now()}}

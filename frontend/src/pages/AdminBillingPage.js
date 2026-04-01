@@ -92,6 +92,10 @@ const AdminBillingPage = () => {
   const [showAudit, setShowAudit] = useState(true);
   const [failedRenewals, setFailedRenewals] = useState({ items: [], unresolved_count: 0 });
   const [resolvingId, setResolvingId] = useState(null);
+  const [pricingModal, setPricingModal] = useState(null);
+  const [pricingMode, setPricingMode] = useState('standard');
+  const [pricingCustomAmount, setPricingCustomAmount] = useState('');
+  const [pricingSaving, setPricingSaving] = useState(false);
 
   const loadOrgInvoices = useCallback(async (gen) => {
     try {
@@ -653,6 +657,23 @@ const AdminBillingPage = () => {
                           חסימה
                         </Button>
                       )}
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={() => {
+                          const sub = org.subscription || {};
+                          const projects = org.projects || [];
+                          let mode = 'standard';
+                          if (sub.manual_override?.total_monthly) mode = 'custom';
+                          else if (projects.some(p => p.plan_id === 'founder_6m')) mode = 'founder';
+                          setPricingMode(mode);
+                          setPricingCustomAmount(mode === 'custom' ? String(sub.manual_override.total_monthly) : '');
+                          setPricingModal({ orgId: org.id, orgName: org.name });
+                        }}
+                        className="text-xs text-purple-600 border-purple-300 hover:bg-purple-50"
+                      >
+                        <Package className="w-3 h-3 ml-1" />
+                        תמחור
+                      </Button>
                     </div>
                     {orgInvoices[org.id] && (() => {
                       const latestInv = orgInvoices[org.id];
@@ -928,6 +949,70 @@ const AdminBillingPage = () => {
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'אישור'}
               </Button>
               <Button variant="outline" onClick={() => { setActionModal(null); setActionDate(''); setActionNote(''); }}>
+                ביטול
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pricingModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" dir="rtl">
+            <h3 className="text-lg font-bold text-slate-800 mb-1">עדכון תמחור</h3>
+            <p className="text-sm text-slate-500 mb-4">{pricingModal.orgName}</p>
+
+            <div className="mb-3">
+              <label className="block text-sm text-slate-600 mb-1">מצב תמחור</label>
+              <select
+                value={pricingMode}
+                onChange={e => { setPricingMode(e.target.value); if (e.target.value !== 'custom') setPricingCustomAmount(''); }}
+                className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+              >
+                <option value="standard">תמחור רגיל</option>
+                <option value="founder">מנוי מייסדים (₪500)</option>
+                <option value="custom">תמחור מותאם</option>
+              </select>
+            </div>
+
+            {pricingMode === 'custom' && (
+              <div className="mb-3">
+                <label className="block text-sm text-slate-600 mb-1">סכום חודשי (₪)</label>
+                <input
+                  type="number"
+                  value={pricingCustomAmount}
+                  onChange={e => setPricingCustomAmount(e.target.value)}
+                  min="1"
+                  max="99999"
+                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+                  placeholder="הזן סכום..."
+                />
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                onClick={async () => {
+                  setPricingSaving(true);
+                  try {
+                    const payload = { mode: pricingMode };
+                    if (pricingMode === 'custom') payload.custom_amount = Number(pricingCustomAmount);
+                    await billingService.updateOrgPricing(pricingModal.orgId, payload);
+                    toast.success('תמחור עודכן');
+                    setPricingModal(null);
+                    loadData();
+                  } catch (err) {
+                    toast.error(err.response?.data?.detail || 'שגיאה בעדכון תמחור');
+                  } finally {
+                    setPricingSaving(false);
+                  }
+                }}
+                disabled={pricingSaving || (pricingMode === 'custom' && (!pricingCustomAmount || Number(pricingCustomAmount) <= 0))}
+                className="flex-1"
+              >
+                {pricingSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'שמור'}
+              </Button>
+              <Button variant="outline" onClick={() => setPricingModal(null)}>
                 ביטול
               </Button>
             </div>

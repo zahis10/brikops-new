@@ -185,6 +185,14 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
         ).to_list(5000)
         owner_map = {u['id']: u for u in owners}
 
+    all_pbs = await db.project_billing.find(
+        {'org_id': {'$in': org_ids}, 'status': 'active'},
+        {'_id': 0, 'org_id': 1, 'plan_id': 1},
+    ).to_list(5000)
+    pb_map = {}
+    for pb in all_pbs:
+        pb_map.setdefault(pb['org_id'], []).append(pb)
+
     result = []
     for org in orgs:
         sub = sub_map.get(org['id'])
@@ -195,6 +203,7 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
             'owner': owner_map.get(org.get('owner_user_id')),
             'effective_access': access.value,
             'read_only_reason': reason,
+            'projects': pb_map.get(org['id'], []),
         })
     return result
 
@@ -322,6 +331,108 @@ async def admin_list_plans(user: dict = Depends(require_super_admin)):
         raise HTTPException(status_code=404, detail='Not found')
     plans = await list_plans()
     return plans
+
+
+@router.patch("/admin/billing/org/{org_id}/pricing")
+async def admin_update_pricing(org_id: str, request: Request, user: dict = Depends(require_super_admin)):
+    from contractor_ops.billing import BILLING_V1_ENABLED, recalc_org_total
+    from contractor_ops.billing_plans import PRICE_PER_UNIT
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    body = await request.json()
+    mode = body.get('mode')
+    if mode not in ('standard', 'founder', 'custom'):
+        raise HTTPException(status_code=400, detail='mode must be standard, founder, or custom')
+
+    db = get_db()
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail='Subscription not found')
+
+    old_total = sub.get('total_monthly', 0)
+    pbs = await db.project_billing.find(
+        {'org_id': org_id, 'status': 'active'},
+        {'_id': 0, 'plan_id': 1},
+    ).to_list(1000)
+
+    if sub.get('manual_override', {}).get('total_monthly'):
+        old_mode = 'custom'
+    elif any(p.get('plan_id') == 'founder_6m' for p in pbs):
+        old_mode = 'founder'
+    else:
+        old_mode = 'standard'
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    if mode == 'standard':
+        await db.project_billing.update_many(
+            {'org_id': org_id, 'status': 'active'},
+            {'$set': {'plan_id': 'standard', 'updated_at': now}},
+        )
+        await db.subscriptions.update_one(
+            {'org_id': org_id},
+            {'$unset': {'manual_override.total_monthly': ''}, '$set': {'updated_at': now}},
+        )
+        new_total = await recalc_org_total(org_id)
+
+    elif mode == 'founder':
+        all_pbs = await db.project_billing.find(
+            {'org_id': org_id, 'status': 'active'},
+            {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
+        ).to_list(1000)
+        sorted_pbs = sorted(all_pbs, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
+        for idx, pb in enumerate(sorted_pbs):
+            mt = 500 if idx == 0 else 0
+            lf = 500 if idx == 0 else 0
+            await db.project_billing.update_one(
+                {'id': pb['id']},
+                {'$set': {
+                    'plan_id': 'founder_6m',
+                    'monthly_total': mt,
+                    'license_fee': lf,
+                    'units_fee': 0,
+                    'price_per_unit': PRICE_PER_UNIT,
+                    'updated_at': now,
+                }},
+            )
+        await db.subscriptions.update_one(
+            {'org_id': org_id},
+            {'$unset': {'manual_override.total_monthly': ''}, '$set': {'total_monthly': 500, 'updated_at': now}},
+        )
+        new_total = 500
+
+    else:
+        custom_amount = body.get('custom_amount')
+        if not custom_amount or not isinstance(custom_amount, (int, float)) or custom_amount <= 0 or custom_amount >= 100000:
+            raise HTTPException(status_code=400, detail='custom_amount must be > 0 and < 100000')
+        custom_amount = int(custom_amount)
+        await db.subscriptions.update_one(
+            {'org_id': org_id},
+            {'$set': {
+                'manual_override.total_monthly': custom_amount,
+                'total_monthly': custom_amount,
+                'updated_at': now,
+            }},
+        )
+        new_total = custom_amount
+
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'entity_type': 'subscription',
+        'entity_id': org_id,
+        'action': 'billing_pricing_changed',
+        'actor_id': user['id'],
+        'payload': {
+            'org_id': org_id,
+            'old_mode': old_mode,
+            'new_mode': mode,
+            'old_amount': old_total,
+            'new_amount': new_total,
+        },
+        'created_at': now,
+    })
+
+    return {'ok': True, 'mode': mode, 'total_monthly': new_total}
 
 
 @router.get("/admin/billing/migration/dry-run")

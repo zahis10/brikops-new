@@ -120,6 +120,7 @@ export default function OrgBillingPage() {
   const [paymentConfigBit, setPaymentConfigBit] = useState('');
   const [paymentConfigSaving, setPaymentConfigSaving] = useState(false);
   const [paymentConfigExpanded, setPaymentConfigExpanded] = useState(false);
+  const [paymentOptionsExpanded, setPaymentOptionsExpanded] = useState(false);
 
   const [customerMarkPaidLoading, setCustomerMarkPaidLoading] = useState(false);
   const [receiptUploading, setReceiptUploading] = useState(false);
@@ -1126,6 +1127,14 @@ export default function OrgBillingPage() {
             <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
           </div>
 
+          <button
+            onClick={() => setPaymentOptionsExpanded(!paymentOptionsExpanded)}
+            className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-lg px-4 py-3 hover:bg-slate-50 transition-colors"
+          >
+            <span className="text-sm font-medium text-slate-700">אפשרויות תשלום נוספות</span>
+            {paymentOptionsExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+          {paymentOptionsExpanded && (
           <div className="bg-white border border-amber-200 rounded-lg p-4 space-y-4">
             <span className="text-sm font-medium text-slate-700">שלח בקשת תשלום</span>
 
@@ -1302,6 +1311,7 @@ export default function OrgBillingPage() {
               </div>
             )}
           </div>
+          )}
           </>)}
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
