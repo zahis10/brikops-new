@@ -1772,6 +1772,17 @@ export default function OrgBillingPage() {
                       {inv.due_at && <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>}
                       {inv.paid_at && <div>שולם: {new Date(inv.paid_at).toLocaleDateString('he-IL')}</div>}
                     </div>
+                    {inv.gi_download_url && (
+                      <a
+                        href={inv.gi_download_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg text-xs transition-colors"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        צפה בחשבונית
+                      </a>
+                    )}
                     {canMutateInvoices && (inv.status === 'issued' || inv.status === 'past_due') && (
                       <button
                         onClick={() => setInvoiceConfirm(inv.id)}
