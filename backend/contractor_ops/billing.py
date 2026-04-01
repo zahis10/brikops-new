@@ -1154,7 +1154,11 @@ async def recalc_org_total(org_id: str):
         plan_id = pb.get('plan_id')
         units = pb.get('contracted_units', 0)
         proj_index = idx + 1
-        if not plan_id or units < 1:
+        if plan_id == 'founder_6m':
+            lf = 500 if idx == 0 else 0
+            uf = 0
+            monthly = 500 if idx == 0 else 0
+        elif not plan_id or units < 1:
             await db.project_billing.update_one(
                 {'id': pb['id']},
                 {'$set': {
@@ -1166,12 +1170,8 @@ async def recalc_org_total(org_id: str):
                 }},
             )
             continue
-        monthly = calculate_monthly(units, plan_id=plan_id, project_index=proj_index)
-        if plan_id == 'founder_6m':
-            lf = 500 if idx == 0 else 0
-            uf = 0
-            monthly = 500 if idx == 0 else 0
         else:
+            monthly = calculate_monthly(units, plan_id=plan_id, project_index=proj_index)
             lf = PROJECT_LICENSE_FIRST if proj_index <= 1 else PROJECT_LICENSE_ADDITIONAL
             uf = units * PRICE_PER_UNIT
         await db.project_billing.update_one(
