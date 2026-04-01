@@ -202,6 +202,51 @@ async def create_payment_form(
     return result
 
 
+async def create_document(
+    client_name: str,
+    client_email: str,
+    description: str,
+    amount: float,
+    currency: str = "ILS",
+    remarks: str = "",
+    client_id: str = "",
+) -> dict:
+    if client_id:
+        client_block = {"id": client_id}
+    else:
+        client_block = {
+            "name": client_name,
+            "emails": [client_email] if client_email else [],
+            "add": True,
+        }
+    payload = {
+        "type": 305,
+        "lang": "he",
+        "currency": currency,
+        "vatType": 0,
+        "signed": True,
+        "rounding": True,
+        "client": client_block,
+        "income": [
+            {
+                "description": description,
+                "quantity": 1,
+                "price": amount,
+                "currency": currency,
+                "vatType": 0,
+            }
+        ],
+    }
+    if remarks:
+        payload["remarks"] = remarks
+
+    logger.info("[GI] Creating document (type 305): amount=%.2f %s client_id=%s client_name=%s",
+                amount, currency, client_id or "inline", client_name)
+    result = await _request("POST", "/documents", json_body=payload)
+    logger.info("[GI] Document created: doc_id=%s", result.get("id", "<no id>"))
+    return result
+
+
 async def get_document(document_id: str) -> dict:
     logger.info("[GI] Fetching document: %s", document_id)
     return await _request("GET", f"/documents/{document_id}")

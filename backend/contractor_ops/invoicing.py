@@ -206,6 +206,45 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
         doc.pop('_id', None)
     invoice_doc['line_items'] = item_docs
 
+    try:
+        from config import GI_BASE_URL
+        if GI_BASE_URL and preview['total_amount'] > 0:
+            from contractor_ops.green_invoice_service import create_or_get_client, create_document
+            org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
+            org_name = org.get('name', '') if org else ''
+            billing_data = org.get('billing', {}) if org else {}
+            billing_email = billing_data.get('billing_email', '')
+            if not billing_email:
+                owner = await db.users.find_one({'org_id': org_id, 'role': {'$in': ['owner', 'admin']}}, {'_id': 0, 'email': 1})
+                billing_email = owner.get('email', '') if owner else ''
+            tax_id = org.get('tax_id', '') if org else ''
+            gi_client_id = billing_data.get('gi_client_id', '')
+            if not gi_client_id:
+                gi_client_id = await create_or_get_client(org_name or 'BrikOps Client', billing_email, tax_id)
+                await db.organizations.update_one(
+                    {'id': org_id},
+                    {'$set': {'billing.gi_client_id': gi_client_id}}
+                )
+            gi_doc = await create_document(
+                client_name=org_name or 'BrikOps Client',
+                client_email=billing_email,
+                description=f"מנוי BrikOps — {period_ym}",
+                amount=preview['total_amount'],
+                currency='ILS',
+                remarks=f"org_id={org_id} invoice_id={invoice_id}",
+                client_id=gi_client_id,
+            )
+            gi_document_id = gi_doc.get('id', '')
+            if gi_document_id:
+                await db.invoices.update_one(
+                    {'id': invoice_id},
+                    {'$set': {'gi_document_id': gi_document_id, 'updated_at': ts}}
+                )
+                invoice_doc['gi_document_id'] = gi_document_id
+                logger.info("[INVOICING] GI document created: %s for invoice %s", gi_document_id, invoice_id)
+    except Exception as e:
+        logger.warning("[INVOICING] Green Invoice document creation failed for invoice %s — not critical: %s", invoice_id, e)
+
     logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={preview['total_amount']}, paid_until={period_end}")
     return invoice_doc
 
