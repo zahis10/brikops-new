@@ -35,13 +35,6 @@ const SETUP_STATE_COLORS = {
   active: 'bg-green-100 text-green-700',
 };
 
-const TIER_LABELS = {
-  tier_s: 'עד 50 יחידות',
-  tier_m: '51-200 יחידות',
-  tier_l: '201-500 יחידות',
-  tier_xl: '501+ יחידות',
-  none: '—',
-};
 
 const BILLING_STATUS_COLORS = {
   trial: 'bg-blue-100 text-blue-700',
@@ -73,10 +66,6 @@ export function getSetupStateLabel(state) {
 
 export function getSetupStateColor(state) {
   return SETUP_STATE_COLORS[state] || 'bg-slate-100 text-slate-600';
-}
-
-export function getTierLabel(tier) {
-  return TIER_LABELS[tier] || '—';
 }
 
 export function getPlanLabel(planId) {
