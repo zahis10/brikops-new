@@ -414,6 +414,10 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
                 'updated_at': now,
             }},
         )
+        await db.project_billing.update_many(
+            {'org_id': org_id, 'status': 'active'},
+            {'$set': {'plan_id': 'standard', 'updated_at': now}},
+        )
         new_total = custom_amount
 
     await db.audit_events.insert_one({
