@@ -216,6 +216,8 @@ async def create_document(
 ) -> dict:
     if client_id:
         client_block = {"id": client_id}
+        if client_email:
+            client_block["emails"] = [client_email]
     else:
         client_block = {
             "name": client_name,
