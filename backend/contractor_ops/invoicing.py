@@ -154,9 +154,7 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
     gi_document_id = gi_doc.get('id', '')
     gi_download_url = gi_doc.get('url', {}).get('he', '')
     if gi_document_id:
-        update_fields = {'gi_document_id': gi_document_id, 'updated_at': _now()}
-        if gi_download_url:
-            update_fields['gi_download_url'] = gi_download_url
+        update_fields = {'gi_document_id': gi_document_id, 'gi_download_url': gi_download_url, 'updated_at': _now()}
         await db.invoices.update_one(
             {'id': invoice_id},
             {'$set': update_fields}
