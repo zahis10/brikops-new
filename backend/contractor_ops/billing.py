@@ -575,9 +575,20 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
         )
         proj_index = active_count + 1
 
+    from contractor_ops.billing_plans import PROJECT_LICENSE_FIRST, PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT
     monthly_total = calculate_monthly(
         contracted_units, plan_id=plan_id, project_index=proj_index
     ) if plan_id else 0
+
+    if plan_id and plan_id != 'founder_6m':
+        license_fee = PROJECT_LICENSE_FIRST if proj_index <= 1 else PROJECT_LICENSE_ADDITIONAL
+        units_fee = contracted_units * PRICE_PER_UNIT
+    elif plan_id == 'founder_6m':
+        license_fee = 500
+        units_fee = 0
+    else:
+        license_fee = 0
+        units_fee = 0
 
     observed = await compute_observed_units(project_id)
     ts = _now()
@@ -589,6 +600,9 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
         'contracted_units': contracted_units,
         'observed_units': observed,
         'monthly_total': monthly_total,
+        'license_fee': license_fee,
+        'units_fee': units_fee,
+        'price_per_unit': PRICE_PER_UNIT,
         'status': 'active',
         'setup_state': 'trial',
         'billing_contact_note': None,
@@ -683,11 +697,19 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
     if new_plan_id and new_plan_id not in ALLOWED_PLAN_IDS:
         new_plan_id = 'standard'
     if new_plan_id:
+        from contractor_ops.billing_plans import PROJECT_LICENSE_FIRST, PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT
         set_fields['plan_id'] = new_plan_id
         proj_index = await _get_project_index(existing['org_id'], existing['project_id'])
         set_fields['monthly_total'] = calculate_monthly(
             new_contracted_for_pricing, plan_id=new_plan_id, project_index=proj_index
         )
+        if new_plan_id == 'founder_6m':
+            set_fields['license_fee'] = 500
+            set_fields['units_fee'] = 0
+        else:
+            set_fields['license_fee'] = PROJECT_LICENSE_FIRST if proj_index <= 1 else PROJECT_LICENSE_ADDITIONAL
+            set_fields['units_fee'] = new_contracted_for_pricing * PRICE_PER_UNIT
+        set_fields['price_per_unit'] = PRICE_PER_UNIT
 
     observed = await compute_observed_units(existing['project_id'])
     set_fields['observed_units'] = observed

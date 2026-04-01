@@ -1768,9 +1768,12 @@ export default function OrgBillingPage() {
                       </div>
                     )}
                     <div className="text-xs text-slate-500 space-y-1">
+                      {inv.period_ym && <div>תקופה: {inv.period_ym}</div>}
                       {inv.issued_at && <div>הונפק: {new Date(inv.issued_at).toLocaleDateString('he-IL')}</div>}
-                      {inv.due_at && <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>}
                       {inv.paid_at && <div>שולם: {new Date(inv.paid_at).toLocaleDateString('he-IL')}</div>}
+                      {!inv.paid_at && inv.status !== 'paid' && inv.status !== 'issued' && inv.due_at && (
+                        <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>
+                      )}
                     </div>
                     {inv.gi_download_url && (
                       <a
