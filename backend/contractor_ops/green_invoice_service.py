@@ -240,10 +240,12 @@ async def create_document(
     if remarks:
         payload["remarks"] = remarks
 
+    import json as _json
     logger.info("[GI] Creating document (type 305): amount=%.2f %s client_id=%s client_name=%s",
                 amount, currency, client_id or "inline", client_name)
+    logger.info("[GI] Outgoing payload: %s", _json.dumps(payload, ensure_ascii=False))
     result = await _request("POST", "/documents", json_body=payload)
-    logger.info("[GI] Document created: doc_id=%s", result.get("id", "<no id>"))
+    logger.info("[GI] Full response: %s", _json.dumps(result, ensure_ascii=False, default=str))
     return result
 
 
