@@ -209,6 +209,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
     try:
         from config import GI_BASE_URL
         if GI_BASE_URL and preview['total_amount'] > 0:
+            logger.info("[INVOICING:GI] Starting GI document creation for invoice %s org=%s amount=%s", invoice_id, org_id, preview['total_amount'])
             from contractor_ops.green_invoice_service import create_or_get_client, create_document
             org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'billing': 1, 'tax_id': 1})
             org_name = org.get('name', '') if org else ''
@@ -241,9 +242,9 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
                     {'$set': {'gi_document_id': gi_document_id, 'updated_at': ts}}
                 )
                 invoice_doc['gi_document_id'] = gi_document_id
-                logger.info("[INVOICING] GI document created: %s for invoice %s", gi_document_id, invoice_id)
+            logger.info("[INVOICING:GI] SUCCESS doc_id=%s for invoice %s", gi_document_id or '(none)', invoice_id)
     except Exception as e:
-        logger.warning("[INVOICING] Green Invoice document creation failed for invoice %s — not critical: %s", invoice_id, e)
+        logger.warning("[INVOICING:GI] FAILED for invoice %s: %s", invoice_id, str(e))
 
     logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={preview['total_amount']}, paid_until={period_end}")
     return invoice_doc
