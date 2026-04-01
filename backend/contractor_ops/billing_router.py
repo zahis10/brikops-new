@@ -1295,6 +1295,8 @@ async def billing_webhook_payplus(request: Request):
         return {"status": "ok"}
     token_uid = verified_tx.get('token_uid', '')
     card_last4 = verified_tx.get('four_digits', '')
+    if not card_last4 and PAYPLUS_ENV != "production":
+        card_last4 = "1234"
     card_brand = verified_tx.get('brand_name', '')
     if token_uid:
         await db.organizations.update_one(
