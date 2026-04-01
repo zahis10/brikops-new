@@ -1704,7 +1704,7 @@ export default function OrgBillingPage() {
               <span className="text-lg font-bold text-amber-900">{formatCurrency(preview.total_amount)}</span>
             </div>
             <div className="text-xs text-amber-700">
-              תאריך יעד לתשלום: {preview.due_at ? new Date(preview.due_at).toLocaleDateString('he-IL') : '—'}
+              תאריך יעד לתשלום: {sub?.paid_until ? new Date(sub.paid_until).toLocaleDateString('he-IL') : '—'}
             </div>
             <div className="text-xs text-amber-700">
               {preview.line_items?.length || 0} פרויקטים פעילים
