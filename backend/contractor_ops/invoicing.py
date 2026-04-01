@@ -254,6 +254,8 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str) -> dict
         doc.pop('_id', None)
     invoice_doc['line_items'] = item_docs
 
+    from config import GI_BASE_URL
+    logger.info("[INVOICING:GI] About to attempt GI. invoice=%s amount=%s gi_configured=%s", invoice_id, preview['total_amount'], bool(GI_BASE_URL))
     try:
         gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, preview['total_amount'], period_ym)
         if gi_document_id:
