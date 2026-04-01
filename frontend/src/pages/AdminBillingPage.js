@@ -13,7 +13,7 @@ import { Button } from '../components/ui/button';
 
 import {
   getBillingStatusLabel, getBillingStatusColor,
-  getAccessLabel, getTierLabel, getPlanLabel, formatCurrency,
+  getAccessLabel, getPlanLabel, formatCurrency,
   getInvoiceStatusLabel, getInvoiceStatusColor,
 } from '../utils/billingLabels';
 import { getPlanCatalog, getPlanBadge } from '../utils/billingPlanCatalog';
@@ -218,19 +218,6 @@ const AdminBillingPage = () => {
     }
   };
 
-  const handleDeactivatePlan = async (planId) => {
-    try {
-      await billingService.deactivatePlan(planId);
-      toast.success('תוכנית הושבתה');
-      loadPlans();
-    } catch (err) {
-      if (isStepupError(err)) {
-        startStepup(() => handleDeactivatePlan(planId));
-      } else {
-        toast.error('שגיאה בהשבתת תוכנית');
-      }
-    }
-  };
 
   const handleAction = async () => {
     if (!actionNote.trim()) {
@@ -710,17 +697,14 @@ const AdminBillingPage = () => {
                 plans.map(plan => {
                   const cat = getPlanCatalog(plan.id);
                   const badge = getPlanBadge(plan.id);
-                  const isPro = plan.id === 'plan_pro';
                   return (
-                    <div key={plan.id} className={`rounded-xl border p-4 ${!plan.is_active ? 'opacity-50 border-slate-200' : ''} ${isPro && plan.is_active ? 'border-amber-300 border-2 bg-amber-50/30' : 'border-slate-200'}`}>
+                    <div key={plan.id} className={`rounded-xl border p-4 ${!plan.is_active ? 'opacity-50 border-slate-200' : 'border-slate-200'}`}>
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="text-lg font-bold text-slate-800">{getPlanLabel(plan.id)}</h3>
                             {badge && (
-                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                                isPro ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'
-                              }`}>
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600">
                                 {badge}
                               </span>
                             )}
@@ -734,30 +718,13 @@ const AdminBillingPage = () => {
                           ) : (
                             <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">מושבת</span>
                           )}
-                          {plan.is_active && (
-                            <Button size="sm" variant="outline" className="text-xs text-red-600 border-red-300 hover:bg-red-50" onClick={() => handleDeactivatePlan(plan.id)}>
-                              השבת
-                            </Button>
-                          )}
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 mb-2">
-                        <div>עלות חבילה חודשית: <span className="font-medium">{formatCurrency(plan.project_fee_monthly)}</span></div>
-                        <div>גרסה: <span className="font-medium">{plan.version}</span></div>
+                      <div className="grid grid-cols-3 gap-2 text-xs text-slate-600 mb-2">
+                        <div>רישיון ראשון: <span className="font-medium">{formatCurrency(plan.license_first ?? plan.project_fee_monthly)}</span></div>
+                        <div>רישיון נוסף: <span className="font-medium">{formatCurrency(plan.license_additional)}</span></div>
+                        <div>₪/יחידה: <span className="font-medium">{formatCurrency(plan.price_per_unit)}</span></div>
                       </div>
-                      {plan.unit_tiers && (
-                        <div className="mt-1 border-t border-slate-100 pt-2">
-                          <div className="text-xs text-slate-500 mb-1">מדרגות יחידות:</div>
-                          <div className="space-y-0.5">
-                            {plan.unit_tiers.map((t, idx) => (
-                              <div key={t.code} className={`flex items-center justify-between text-xs rounded px-2 py-1.5 ${idx % 2 === 0 ? 'bg-slate-50' : 'bg-white'}`}>
-                                <span className="text-slate-600">{getTierLabel(t.code)}</span>
-                                <span className="font-medium text-slate-800">{formatCurrency(t.monthly_fee)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })

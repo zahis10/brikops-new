@@ -1,31 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { billingService } from '../services/api';
-import { getAllPlanCatalog } from '../utils/billingPlanCatalog';
 import { formatCurrency } from '../utils/billingLabels';
 import { toast } from 'sonner';
 import { Loader2, Check, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
-const CLIENT_TIERS = [
-  { code: 'tier_s', label: 'עד 50 יחידות', max_units: 50, monthly_fee: 900 },
-  { code: 'tier_m', label: '51-200 יחידות', max_units: 200, monthly_fee: 2400 },
-  { code: 'tier_l', label: '201-500 יחידות', max_units: 500, monthly_fee: 4800 },
-  { code: 'tier_xl', label: '501+ יחידות', max_units: null, monthly_fee: 8500 },
-];
-
-function resolveTier(units) {
-  for (const tier of CLIENT_TIERS) {
-    if (tier.max_units === null || units <= tier.max_units) return tier;
-  }
-  return CLIENT_TIERS[CLIENT_TIERS.length - 1];
-}
+const LICENSE_FIRST = 900;
+const LICENSE_ADDITIONAL = 450;
+const PRICE_PER_UNIT = 20;
 
 export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange }) {
-  const plans = getAllPlanCatalog();
   const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [selectedPlanId, setSelectedPlanId] = useState('');
   const [units, setUnits] = useState('');
   const [saving, setSaving] = useState(false);
-  const [serverPlans, setServerPlans] = useState(null);
+  const [serverPricing, setServerPricing] = useState(null);
   const [step, setStep] = useState(1);
   const [result, setResult] = useState(null);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
@@ -35,7 +22,8 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
 
   useEffect(() => {
     billingService.listActivePlans().then(data => {
-      if (data?.plans) setServerPlans(data.plans);
+      const plans = Array.isArray(data) ? data : data?.plans;
+      if (plans?.length > 0) setServerPricing(plans[0]);
     }).catch(() => {});
   }, []);
 
@@ -53,11 +41,9 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
   useEffect(() => {
     if (!selectedProjectId) return;
     const proj = projectList.find(p => p.project_id === selectedProjectId);
-    if (proj?.plan_id) {
-      setSelectedPlanId(proj.plan_id);
+    if (proj?.contracted_units) {
       setUnits(String(proj.contracted_units || ''));
     } else {
-      setSelectedPlanId('plan_pro');
       setUnits('');
     }
   }, [selectedProjectId, projectList]);
@@ -67,43 +53,23 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
   const parsedUnits = parseInt(units) || 0;
 
   const preview = useMemo(() => {
-    if (!selectedPlanId || parsedUnits < 1) return null;
-    const serverPlan = serverPlans?.find(p => p.id === selectedPlanId);
-    let projectFee = 0;
-    let tierFee = 0;
-    let tierLabel = '';
-    if (serverPlan) {
-      projectFee = serverPlan.project_fee_monthly || 0;
-      const tiers = serverPlan.unit_tiers || CLIENT_TIERS;
-      for (const t of tiers) {
-        if (t.max_units === null || parsedUnits <= t.max_units) {
-          tierFee = t.monthly_fee;
-          tierLabel = t.label;
-          break;
-        }
-      }
-      if (!tierLabel && tiers.length > 0) {
-        const last = tiers[tiers.length - 1];
-        tierFee = last.monthly_fee;
-        tierLabel = last.label;
-      }
-    } else {
-      const tier = resolveTier(parsedUnits);
-      projectFee = { plan_basic: 1200, plan_pro: 2000, plan_xl: 3500 }[selectedPlanId] || 0;
-      tierFee = tier.monthly_fee;
-      tierLabel = tier.label;
-    }
-    return { projectFee, tierFee, tierLabel, total: projectFee + tierFee };
-  }, [selectedPlanId, parsedUnits, serverPlans]);
+    if (parsedUnits < 1) return null;
+    const lf = serverPricing?.license_first ?? LICENSE_FIRST;
+    const la = serverPricing?.license_additional ?? LICENSE_ADDITIONAL;
+    const ppu = serverPricing?.price_per_unit ?? PRICE_PER_UNIT;
+    const licenseFee = lf;
+    const unitCost = parsedUnits * ppu;
+    return { licenseFee, unitCost, total: licenseFee + unitCost, pricePerUnit: ppu, licenseAdditional: la };
+  }, [parsedUnits, serverPricing]);
 
   const canProceedToStep2 = !!selectedProjectId;
-  const canProceedToStep3 = !!selectedPlanId && parsedUnits >= 1;
+  const canProceedToStep3 = parsedUnits >= 1;
 
   const handleSubmit = async () => {
-    if (!selectedProjectId || !selectedPlanId || parsedUnits < 1) return;
+    if (!selectedProjectId || parsedUnits < 1) return;
     setSaving(true);
     try {
-      const payload = { plan_id: selectedPlanId, contracted_units: parsedUnits };
+      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
       await billingService.updateProjectBilling(selectedProjectId, payload);
 
       const cycle = renewalCycle || 'monthly';
@@ -152,7 +118,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
               {step > s ? <Check className="w-3.5 h-3.5" /> : s}
             </div>
             <span className={`text-xs font-medium hidden sm:inline ${step === s ? 'text-amber-700' : 'text-slate-400'}`}>
-              {s === 1 ? 'פרויקט' : s === 2 ? 'חבילה' : 'סיכום'}
+              {s === 1 ? 'פרויקט' : s === 2 ? 'יחידות' : 'סיכום'}
             </span>
             {s < 3 && <div className={`w-6 h-0.5 ${step > s ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
           </div>
@@ -165,9 +131,6 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
           {singleProject ? (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between">
               <span className="font-medium text-slate-700">{selectedProject?.project_name || selectedProjectId}</span>
-              {selectedProject?.plan_id && (
-                <span className="text-xs text-slate-500">חבילה נוכחית: {plans.find(p => p.id === selectedProject.plan_id)?.label || selectedProject.plan_id}</span>
-              )}
             </div>
           ) : (
             <div className="relative">
@@ -197,7 +160,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
                     >
                       <span>{p.project_name || p.project_id}</span>
                       <span className="text-xs text-slate-400">
-                        {p.plan_id ? plans.find(pl => pl.id === p.plan_id)?.label || '' : 'ללא חבילה'}
+                        {p.contracted_units ? `${p.contracted_units} יחידות` : 'ללא תמחור'}
                       </span>
                     </button>
                   ))}
@@ -218,44 +181,11 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
       {step === 2 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <label className="block text-sm font-medium text-slate-700">בחר חבילה ויחידות</label>
+            <label className="block text-sm font-medium text-slate-700">הגדר יחידות</label>
             <button onClick={() => setStep(1)} className="text-xs text-amber-600 hover:text-amber-800">← חזרה</button>
           </div>
           <div className="text-xs text-slate-500 bg-slate-50 rounded px-2 py-1">
             פרויקט: <span className="font-medium text-slate-700">{selectedProject?.project_name}</span>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-2">חבילת שירות</label>
-            <div className="grid grid-cols-1 gap-2">
-              {plans.map(plan => {
-                const isSelected = selectedPlanId === plan.id;
-                return (
-                  <button
-                    key={plan.id}
-                    type="button"
-                    onClick={() => setSelectedPlanId(plan.id)}
-                    className={`w-full text-right p-3 rounded-lg border-2 transition-all ${
-                      isSelected
-                        ? 'border-amber-500 bg-amber-50'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-slate-800">{plan.label}</span>
-                        {plan.badge && (
-                          <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-amber-200 text-amber-800">
-                            {plan.badge}
-                          </span>
-                        )}
-                      </div>
-                      {isSelected && <Check className="w-4 h-4 text-amber-600" />}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5">{plan.shortDescription}</p>
-                  </button>
-                );
-              })}
-            </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">כמות יחידות לחיוב</label>
@@ -270,6 +200,24 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
               dir="ltr"
             />
           </div>
+          {preview && (
+            <div className="bg-slate-50 rounded-lg p-3 space-y-2">
+              <div className="text-xs text-slate-500 font-medium">הערכה לפרויקט ראשון</div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">רישיון פרויקט</span>
+                <span className="font-medium text-slate-700">{formatCurrency(preview.licenseFee)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
+                <span className="font-medium text-slate-700">{formatCurrency(preview.unitCost)}</span>
+              </div>
+              <div className="border-t border-slate-200 pt-2 flex justify-between">
+                <span className="text-sm font-medium text-slate-700">סה״כ חודשי (הערכה)</span>
+                <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
+              </div>
+              <div className="text-xs text-slate-400">פרויקט נוסף: רישיון {formatCurrency(preview.licenseAdditional)}</div>
+            </div>
+          )}
           <button
             onClick={() => { if (canProceedToStep3) setStep(3); }}
             disabled={!canProceedToStep3}
@@ -293,10 +241,6 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
               <span className="font-medium text-slate-700">{selectedProject?.project_name}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-slate-500">חבילה</span>
-              <span className="font-medium text-slate-700">{plans.find(p => p.id === selectedPlanId)?.label}</span>
-            </div>
-            <div className="flex justify-between text-sm">
               <span className="text-slate-500">יחידות</span>
               <span className="font-medium text-slate-700">{parsedUnits}</span>
             </div>
@@ -304,12 +248,12 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
               <>
                 <div className="border-t border-slate-200 pt-2 space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">עלות חבילה</span>
-                    <span className="text-slate-700">{formatCurrency(preview.projectFee)}</span>
+                    <span className="text-slate-500">רישיון פרויקט</span>
+                    <span className="text-slate-700">{formatCurrency(preview.licenseFee)}</span>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">מדרגת יחידות ({preview.tierLabel})</span>
-                    <span className="text-slate-700">{formatCurrency(preview.tierFee)}</span>
+                    <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
+                    <span className="text-slate-700">{formatCurrency(preview.unitCost)}</span>
                   </div>
                 </div>
                 <div className="border-t border-slate-200 pt-2 flex justify-between">

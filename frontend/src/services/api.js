@@ -861,18 +861,6 @@ export const billingService = {
     const response = await axios.get(`${API}/billing/plans/active`, { headers: getAuthHeader() });
     return response.data;
   },
-  async createPlan(data) {
-    const response = await axios.post(`${API}/admin/billing/plans`, data, { headers: getAuthHeader() });
-    return response.data;
-  },
-  async updatePlan(planId, data) {
-    const response = await axios.put(`${API}/admin/billing/plans/${planId}`, data, { headers: getAuthHeader() });
-    return response.data;
-  },
-  async deactivatePlan(planId) {
-    const response = await axios.patch(`${API}/admin/billing/plans/${planId}/deactivate`, {}, { headers: getAuthHeader() });
-    return response.data;
-  },
   async migrationDryRun() {
     const response = await axios.get(`${API}/admin/billing/migration/dry-run`, { headers: getAuthHeader() });
     return response.data;

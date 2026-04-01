@@ -3,25 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { billingService } from '../services/api';
 import {
   getBillingStatusLabel, getBillingStatusColor,
-  getAccessLabel, getTierLabel, getPlanLabel, formatCurrency, getObservedUnitsWarning,
+  getAccessLabel, getPlanLabel, formatCurrency, getObservedUnitsWarning,
 } from '../utils/billingLabels';
-import { getPlanBadge } from '../utils/billingPlanCatalog';
 import { getBillingHubUrl } from '../utils/billingHub';
 import { ExternalLink, Info, Clock, Pencil } from 'lucide-react';
 import ProjectBillingEditModal from './ProjectBillingEditModal';
-
-function PlanBadge({ planId }) {
-  const badge = getPlanBadge(planId);
-  if (!badge) return null;
-  const isPro = planId === 'plan_pro';
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-      isPro ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'
-    }`}>
-      {badge}
-    </span>
-  );
-}
 
 export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
   const navigate = useNavigate();
@@ -120,7 +106,6 @@ export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-semibold text-slate-500">חבילת שירות:</span>
                 <span className="font-semibold text-sm text-slate-800">{getPlanLabel(billing.plan_id)}</span>
-                <PlanBadge planId={billing.plan_id} />
               </div>
             </div>
           )}
@@ -128,14 +113,6 @@ export default function ProjectBillingCard({ projectId, userRole, canEdit }) {
           <div className="bg-slate-50 rounded-md p-3 space-y-2">
             <div className="text-xs font-semibold text-slate-500 mb-1">פירוק עלות חודשי לפרויקט</div>
             <div className="space-y-1 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">עלות חבילה</span>
-                <span className="font-medium text-slate-700">{formatCurrency(billing.project_fee_snapshot)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">מדרגת יחידות ({getTierLabel(billing.tier_code)})</span>
-                <span className="font-medium text-slate-700">{formatCurrency(billing.tier_fee_snapshot)}</span>
-              </div>
               <div className="flex justify-between items-center gap-2 text-sm">
                 <span className="text-slate-500">יחידות לחיוב</span>
                 <span className="font-medium text-slate-700">{billing.contracted_units}</span>

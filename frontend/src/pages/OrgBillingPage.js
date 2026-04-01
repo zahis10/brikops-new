@@ -12,7 +12,7 @@ import {
 import {
   getBillingStatusLabel, getBillingStatusColor,
   getAccessLabel, getSetupStateLabel, getSetupStateColor,
-  getTierLabel, getPlanLabel, formatCurrency,
+  getPlanLabel, formatCurrency,
   getInvoiceStatusLabel, getInvoiceStatusColor,
 } from '../utils/billingLabels';
 import { getPlanBadge } from '../utils/billingPlanCatalog';
@@ -1155,7 +1155,7 @@ export default function OrgBillingPage() {
                       {isConfigured ? (
                         <div className="flex items-center gap-3 text-xs text-slate-500">
                           <span className="font-medium text-slate-700">{getPlanLabel(pb.plan_id)}</span>
-                          {badge && <span className={`px-1.5 py-0.5 rounded-full font-medium ${pb.plan_id === 'plan_pro' ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'}`}>{badge}</span>}
+                          {badge && <span className="px-1.5 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600">{badge}</span>}
                           <span>{pb.contracted_units} יחידות</span>
                         </div>
                       ) : (
@@ -1655,18 +1655,15 @@ export default function OrgBillingPage() {
                       <span className="text-xs text-slate-500">חבילה:</span>
                       <span className="text-xs font-medium text-slate-700">{getPlanLabel(pb.plan_id)}</span>
                       {badge && (
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                          pb.plan_id === 'plan_pro' ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'
-                        }`}>
+                        <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600">
                           {badge}
                         </span>
                       )}
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-2 text-xs text-slate-500">
-                    <div>עלות חבילה: <span className="font-medium text-slate-700">{formatCurrency(pb.project_fee_snapshot)}</span></div>
-                    <div>מדרגת יחידות: <span className="font-medium text-slate-700">{formatCurrency(pb.tier_fee_snapshot)}</span></div>
-                    <div>יחידות נוכחיות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+                    <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
+                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 20)}</span></div>
                   </div>
                   {pb.cycle_peak_units > pb.contracted_units && (
                     <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
@@ -1756,12 +1753,11 @@ export default function OrgBillingPage() {
                             </div>
                             <div className="flex items-center gap-3 text-slate-500">
                               <span>חבילה: {getPlanLabel(li.plan_id_snapshot)}</span>
-                              <span>מדרגה: {getTierLabel(li.tier_code_snapshot)}</span>
                               <span>יחידות: {li.contracted_units_snapshot}</span>
                             </div>
                             <div className="flex items-center gap-3 text-slate-400">
-                              <span>עלות חבילה: {formatCurrency(li.project_fee_snapshot)}</span>
-                              <span>עלות מדרגה: {formatCurrency(li.tier_fee_snapshot)}</span>
+                              <span>רישיון: {formatCurrency(li.license_fee_snapshot ?? li.project_fee_snapshot)}</span>
+                              <span>עלות יחידות: {formatCurrency(li.units_fee_snapshot ?? li.tier_fee_snapshot)}</span>
                             </div>
                           </div>
                         ))}

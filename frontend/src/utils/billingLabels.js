@@ -1,4 +1,4 @@
-import { getPlanCatalog } from './billingPlanCatalog';
+import { getPlanCatalog, getLegacyPlanLabel } from './billingPlanCatalog';
 
 const BILLING_STATUS_LABELS = {
   trial: 'ניסיון',
@@ -40,7 +40,7 @@ const TIER_LABELS = {
   tier_m: '51-200 יחידות',
   tier_l: '201-500 יחידות',
   tier_xl: '501+ יחידות',
-  none: 'לא נבחרה חבילה',
+  none: '—',
 };
 
 const BILLING_STATUS_COLORS = {
@@ -82,7 +82,9 @@ export function getTierLabel(tier) {
 export function getPlanLabel(planId) {
   const catalog = getPlanCatalog(planId);
   if (catalog) return catalog.label;
-  return '—';
+  const legacy = getLegacyPlanLabel(planId);
+  if (legacy) return legacy;
+  return planId || '—';
 }
 
 export function formatCurrency(amount) {
