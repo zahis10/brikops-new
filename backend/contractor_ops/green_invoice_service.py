@@ -220,7 +220,6 @@ async def create_document(
             "emails": [client_email] if client_email else [],
             "add": True,
         }
-    price_before_vat = round(amount / 1.18, 2)
     payload = {
         "type": 305,
         "lang": "he",
@@ -233,7 +232,7 @@ async def create_document(
             {
                 "description": description,
                 "quantity": 1,
-                "price": price_before_vat,
+                "price": amount,
                 "currency": currency,
                 "vatType": 1,
             }
