@@ -212,6 +212,7 @@ async def create_document(
     remarks: str = "",
     client_id: str = "",
     payment_date: str = "",
+    card_last4: str = "",
 ) -> dict:
     if client_id:
         client_block = {"id": client_id}
@@ -240,14 +241,15 @@ async def create_document(
         ],
     }
     if payment_date:
-        payload["payment"] = [
-            {
-                "type": 3,
-                "price": amount,
-                "currency": currency,
-                "date": payment_date,
-            }
-        ]
+        payment_entry = {
+            "type": 3,
+            "price": amount,
+            "currency": currency,
+            "date": payment_date,
+        }
+        if card_last4:
+            payment_entry["cardNum"] = card_last4
+        payload["payment"] = [payment_entry]
     if remarks:
         payload["remarks"] = remarks
 
