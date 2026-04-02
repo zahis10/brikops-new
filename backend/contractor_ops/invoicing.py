@@ -264,7 +264,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
         'payload': {
             'org_id': org_id,
             'period_ym': period_ym,
-            'total_amount': preview['total_amount'],
+            'total_amount': final_amount,
             'line_item_count': len(item_docs),
             'subscription_paid_until': period_end,
         },
@@ -277,15 +277,15 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
     invoice_doc['line_items'] = item_docs
 
     from config import GI_BASE_URL
-    logger.info("[INVOICING:GI] About to attempt GI. invoice=%s amount=%s gi_configured=%s", invoice_id, preview['total_amount'], bool(GI_BASE_URL))
+    logger.info("[INVOICING:GI] About to attempt GI. invoice=%s amount=%s gi_configured=%s", invoice_id, final_amount, bool(GI_BASE_URL))
     try:
-        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, preview['total_amount'], period_ym, paid_until=paid_until, card_last4=card_last4)
+        gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, final_amount, period_ym, paid_until=paid_until, card_last4=card_last4)
         if gi_document_id:
             invoice_doc['gi_document_id'] = gi_document_id
     except Exception as e:
         logger.warning("[INVOICING:GI] FAILED for invoice %s: %s", invoice_id, str(e))
 
-    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={preview['total_amount']}, paid_until={period_end}")
+    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={final_amount}, paid_until={period_end}")
     return invoice_doc
 
 
