@@ -1,0 +1,153 @@
+diff --git a/frontend/src/components/ProjectBillingEditModal.js b/frontend/src/components/ProjectBillingEditModal.js
+index edd5708..d62b54a 100644
+--- a/frontend/src/components/ProjectBillingEditModal.js
++++ b/frontend/src/components/ProjectBillingEditModal.js
+@@ -52,7 +52,7 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
+     if (!hasChanges) return;
+     setSaving(true);
+     try {
+-      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
++      const payload = { plan_id: projectBilling.plan_id || 'standard', contracted_units: parsedUnits };
+       const response = await billingService.updateProjectBilling(projectBilling.project_id, payload);
+ 
+       if (response.pending_contracted_units != null) {
+@@ -104,20 +104,38 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
+ 
+           {preview && (
+             <div className="bg-slate-50 rounded-lg p-3 space-y-2">
+-              <div className="text-xs text-slate-500 font-medium">הערכה לפרויקט ראשון — הסכום הסופי ייקבע לאחר שמירה</div>
+-              <div className="flex justify-between text-sm">
+-                <span className="text-slate-500">רישיון פרויקט</span>
+-                <span className="font-medium text-slate-700">{formatCurrency(preview.licenseFee)}</span>
+-              </div>
+-              <div className="flex justify-between text-sm">
+-                <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
+-                <span className="font-medium text-slate-700">{formatCurrency(preview.unitCost)}</span>
+-              </div>
+-              <div className="border-t border-slate-200 pt-2 flex justify-between">
+-                <span className="text-sm font-medium text-slate-700">סה״כ חודשי (הערכה)</span>
+-                <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
+-              </div>
+-              <div className="text-xs text-slate-400">פרויקט נוסף: רישיון {formatCurrency(preview.licenseAdditional)}</div>
++              {projectBilling.plan_id === 'founder_6m' ? (<>
++                <div className="text-xs text-slate-500 font-medium">תמחור תוכנית מייסדים</div>
++                <div className="flex justify-between text-sm">
++                  <span className="text-slate-500">מחיר חודשי</span>
++                  <span className="font-bold text-slate-900">₪500</span>
++                </div>
++                <div className="border-t border-slate-200 pt-2 space-y-1">
++                  <div className="flex justify-between text-sm">
++                    <span className="text-slate-400">מחיר רגיל</span>
++                    <span className="text-slate-400 line-through">{formatCurrency(preview.total)}/חודש</span>
++                  </div>
++                  <div className="flex justify-between text-sm">
++                    <span className="text-emerald-600 font-semibold">חסכת עם תוכנית מייסדים</span>
++                    <span className="text-emerald-600 font-semibold">{formatCurrency(preview.total - 500)}/חודש</span>
++                  </div>
++                </div>
++              </>) : (<>
++                <div className="text-xs text-slate-500 font-medium">הערכה לפרויקט ראשון — הסכום הסופי ייקבע לאחר שמירה</div>
++                <div className="flex justify-between text-sm">
++                  <span className="text-slate-500">רישיון פרויקט</span>
++                  <span className="font-medium text-slate-700">{formatCurrency(preview.licenseFee)}</span>
++                </div>
++                <div className="flex justify-between text-sm">
++                  <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
++                  <span className="font-medium text-slate-700">{formatCurrency(preview.unitCost)}</span>
++                </div>
++                <div className="border-t border-slate-200 pt-2 flex justify-between">
++                  <span className="text-sm font-medium text-slate-700">סה״כ חודשי (הערכה)</span>
++                  <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
++                </div>
++                <div className="text-xs text-slate-400">פרויקט נוסף: רישיון {formatCurrency(preview.licenseAdditional)}</div>
++              </>)}
+             </div>
+           )}
+ 
+diff --git a/frontend/src/components/UpgradeWizard.js b/frontend/src/components/UpgradeWizard.js
+index e914c4f..3783713 100644
+--- a/frontend/src/components/UpgradeWizard.js
++++ b/frontend/src/components/UpgradeWizard.js
+@@ -83,7 +83,27 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+     }
+   };
+ 
+-  const handleSubmit = async () => {
++  const handleStandardSubmit = async () => {
++    if (!selectedProjectId || parsedUnits < 1) return;
++    setSaving(true);
++    try {
++      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
++      await billingService.updateProjectBilling(selectedProjectId, payload);
++
++      const result = await billingService.checkout(orgId, renewalCycle || 'monthly', 'standard');
++      if (result.payment_page_link) {
++        window.location.href = result.payment_page_link;
++      } else {
++        toast.error('לא התקבל קישור תשלום');
++      }
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'שגיאה ביצירת טופס תשלום');
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  const handlePaymentRequest = async () => {
+     if (!selectedProjectId || parsedUnits < 1) return;
+     setSaving(true);
+     try {
+@@ -341,12 +361,12 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+           </div>
+ 
+           <button
+-            onClick={handleSubmit}
++            onClick={handleStandardSubmit}
+             disabled={saving}
+-            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
++            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+           >
+-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+-            שלח בקשת תשלום
++            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
++            {saving ? 'מעביר לתשלום...' : `שלם באשראי — ₪${preview ? preview.total.toLocaleString() : ''}`}
+           </button>
+         </div>
+       )}
+diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
+index 038e57c..e4a8911 100644
+--- a/frontend/src/pages/OrgBillingPage.js
++++ b/frontend/src/pages/OrgBillingPage.js
+@@ -1119,6 +1119,32 @@ export default function OrgBillingPage() {
+           )}
+ 
+           {!(needsUpgrade && data.projects?.length > 0) && (<>
++          {(() => {
++            const isFounderExpiring = sub?.plan_id === 'founder_6m' && sub?.plan_locked_until;
++            const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
++            const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
++            const founderExpiring = daysLeft !== null && daysLeft <= 30;
++            const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
++              const units = pb.contracted_units || 0;
++              const ppu = pb.price_per_unit || 20;
++              const license = idx === 0 ? 900 : 450;
++              return sum + license + (units * ppu);
++            }, 0) || 0;
++            if (!founderExpiring) return null;
++            const formattedDate = lockedDate.toLocaleDateString('he-IL');
++            return (
++              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 space-y-1">
++                <p className="font-semibold">
++                  {daysLeft > 0
++                    ? `תוכנית המייסדים מסתיימת בתאריך ${formattedDate}`
++                    : `תוכנית המייסדים הסתיימה בתאריך ${formattedDate}`}
++                </p>
++                <p>
++                  {`לאחר סיום, המנוי יעבור לתוכנית רגילה בעלות ${projectedStandard.toLocaleString()}₪/חודש`}
++                </p>
++              </div>
++            );
++          })()}
+           <div className="bg-white border border-emerald-200 rounded-lg p-4 space-y-3">
+             <div className="flex items-center justify-between">
+               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>

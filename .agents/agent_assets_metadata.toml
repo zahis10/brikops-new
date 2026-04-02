@@ -126,3 +126,9 @@ id = "r7MU_Jr0qH6pgSnPBl162"
 uri = "file://review_248_frontend.txt"
 type = "text"
 title = "Task #248 — Frontend Diff (380 lines, 5 files)"
+
+[[outputs]]
+id = "dMauyN9NYIsJWotlbNq6X"
+uri = "file://billing_bugs2_diff.txt"
+type = "text"
+title = "Billing Bugs #2 — Full Diff (Task #250)"
