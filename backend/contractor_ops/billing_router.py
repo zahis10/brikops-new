@@ -1529,8 +1529,7 @@ async def billing_webhook_payplus(request: Request):
     })
     try:
         from contractor_ops.invoicing import generate_invoice
-        from datetime import date
-        period = date.today().strftime('%Y-%m')
+        period = paid_until[:7]
         await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4)
         logger.info("[PAYPLUS-WH] Invoice generated for org=%s period=%s", org_id, period)
     except Exception as e:
