@@ -1,380 +1,214 @@
-diff --git a/frontend/src/components/PlanSelector.js b/frontend/src/components/PlanSelector.js
-new file mode 100644
-index 0000000..9b5da6e
---- /dev/null
-+++ b/frontend/src/components/PlanSelector.js
-@@ -0,0 +1,92 @@
-+import React from 'react';
-+import { Check, Crown, Building2 } from 'lucide-react';
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index 8491aed..98286a6 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -665,6 +665,43 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
+     current_contracted = existing.get('contracted_units', 0)
+     unit_change_type = None
+ 
++    org_id = existing.get('org_id')
++    founder_sub = await db.subscriptions.find_one(
++        {'org_id': org_id}, {'_id': 0, 'plan_id': 1}
++    )
++    is_founder = founder_sub and founder_sub.get('plan_id') == 'founder_6m'
 +
-+export default function PlanSelector({ plans, onSelect, currentPlan, loading, selectedPlan }) {
-+  if (!plans) return null;
++    if is_founder and 'contracted_units' in updates:
++        new_units = updates['contracted_units']
++        observed = await compute_observed_units(existing['project_id'])
++        peak = max(existing.get('cycle_peak_units', current_contracted), new_units, observed)
++        await db.project_billing.update_one(
++            {'id': project_billing_id},
++            {'$set': {
++                'contracted_units': new_units,
++                'observed_units': observed,
++                'cycle_peak_units': peak,
++                'updated_at': ts,
++            }}
++        )
++        await db.audit_events.insert_one({
++            'id': str(uuid.uuid4()),
++            'event_type': 'billing',
++            'entity_type': 'project_billing',
++            'entity_id': project_billing_id,
++            'action': 'contracted_units_changed',
++            'actor_id': actor_id,
++            'created_at': ts,
++            'payload': {
++                'project_id': existing['project_id'],
++                'org_id': org_id,
++                'before': {'contracted_units': current_contracted},
++                'after': {'contracted_units': new_units},
++                'note': 'founder plan — pricing unchanged',
++            },
++        })
++        return await db.project_billing.find_one({'id': project_billing_id}, {'_id': 0})
 +
-+  const founder = plans.founder;
-+  const standard = plans.standard;
-+  const founderAvailable = founder?.available;
-+  const founderReason = founder?.reason;
+     if 'contracted_units' in updates:
+         requested_units = updates['contracted_units']
+         if requested_units > current_contracted:
+diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
+index 96b48c3..864c77a 100644
+--- a/backend/contractor_ops/billing_router.py
++++ b/backend/contractor_ops/billing_router.py
+@@ -86,7 +86,23 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
+     )
+ 
+     founder_enabled = await is_founder_enabled()
+-    founder_available = founder_enabled and slots_remaining > 0 and org_project_count <= 1
 +
-+  const reasonText = {
-+    slots_full: 'התוכנית מלאה',
-+    too_many_projects: 'מוגבלת לפרויקט אחד',
-+    disabled: 'התוכנית אינה זמינה',
-+  };
++    sub = await db.subscriptions.find_one(
++        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1, "last_payment_at": 1}
++    )
++    has_payment_history = bool(
++        sub and (
++            sub.get("plan_locked_until") or
++            sub.get("last_payment_at")
++        )
++    )
 +
-+  const isCurrentFounder = currentPlan === 'founder_6m';
-+  const isCurrentStandard = currentPlan === 'standard';
-+
-+  return (
-+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-+      <button
-+        type="button"
-+        disabled={!founderAvailable || isCurrentFounder || loading}
-+        onClick={() => onSelect?.('founder')}
-+        className={`relative text-right rounded-xl border-2 p-4 transition-all ${
-+          selectedPlan === 'founder'
-+            ? 'border-amber-500 bg-amber-50 shadow-md'
-+            : founderAvailable && !isCurrentFounder
-+              ? 'border-slate-200 bg-white hover:border-amber-300 hover:shadow-sm'
-+              : 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
-+        }`}
-+      >
-+        {isCurrentFounder && (
-+          <span className="absolute top-2 left-2 text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-medium">
-+            התוכנית הנוכחית שלך
-+          </span>
-+        )}
-+        <div className="flex items-center gap-2 mb-2">
-+          <Crown className="w-5 h-5 text-amber-500" />
-+          <span className="font-bold text-slate-800">תוכנית מייסדים</span>
-+        </div>
-+        <div className="text-lg font-bold text-slate-900 mb-1">₪500<span className="text-sm font-normal text-slate-500">/חודש × 6 חודשים</span></div>
-+        <div className="text-xs text-slate-500 mb-2">פרויקט אחד, כל הפיצ׳רים</div>
-+        {founder?.slots_remaining != null && (
-+          <div className="text-xs text-amber-700 bg-amber-100 rounded px-2 py-1 inline-block">
-+            נשארו {founder.slots_remaining} מקומות
-+          </div>
-+        )}
-+        {!founderAvailable && founderReason && (
-+          <div className="text-xs text-red-600 mt-1">{reasonText[founderReason] || 'לא זמין'}</div>
-+        )}
-+        {selectedPlan === 'founder' && (
-+          <div className="absolute top-2 left-2">
-+            <Check className="w-5 h-5 text-amber-600" />
-+          </div>
-+        )}
-+      </button>
-+
-+      <button
-+        type="button"
-+        disabled={isCurrentStandard || loading}
-+        onClick={() => onSelect?.('standard')}
-+        className={`relative text-right rounded-xl border-2 p-4 transition-all ${
-+          selectedPlan === 'standard'
-+            ? 'border-emerald-500 bg-emerald-50 shadow-md'
-+            : !isCurrentStandard
-+              ? 'border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm'
-+              : 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
-+        }`}
-+      >
-+        {isCurrentStandard && (
-+          <span className="absolute top-2 left-2 text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full font-medium">
-+            התוכנית הנוכחית שלך
-+          </span>
-+        )}
-+        <div className="flex items-center gap-2 mb-2">
-+          <Building2 className="w-5 h-5 text-emerald-500" />
-+          <span className="font-bold text-slate-800">תוכנית רגילה</span>
-+        </div>
-+        <div className="text-lg font-bold text-slate-900 mb-1">₪900<span className="text-sm font-normal text-slate-500"> רישיון + ₪20/יחידה לחודש</span></div>
-+        <div className="text-xs text-slate-500 mb-2">ללא הגבלת פרויקטים ויחידות</div>
-+        {selectedPlan === 'standard' && (
-+          <div className="absolute top-2 left-2">
-+            <Check className="w-5 h-5 text-emerald-600" />
-+          </div>
-+        )}
-+      </button>
-+    </div>
-+  );
-+}
-diff --git a/frontend/src/components/UpgradeWizard.js b/frontend/src/components/UpgradeWizard.js
-index 5fb3825..827a7be 100644
---- a/frontend/src/components/UpgradeWizard.js
-+++ b/frontend/src/components/UpgradeWizard.js
-@@ -3,12 +3,11 @@ import { billingService } from '../services/api';
- import { formatCurrency } from '../utils/billingLabels';
- import { toast } from 'sonner';
- import { Loader2, Check, ChevronDown, ChevronUp, Info } from 'lucide-react';
++    founder_available = (
++        founder_enabled and
++        slots_remaining > 0 and
++        org_project_count <= 1 and
++        not has_payment_history
++    )
+ 
+     reason = None
+     if not founder_enabled:
+@@ -95,10 +111,8 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
+         reason = "slots_full"
+     elif org_project_count > 1:
+         reason = "too_many_projects"
 -
- const LICENSE_FIRST = 900;
- const LICENSE_ADDITIONAL = 450;
- const PRICE_PER_UNIT = 20;
+-    sub = await db.subscriptions.find_one(
+-        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1}
+-    )
++    elif has_payment_history:
++        reason = "already_subscribed"
+     founder_expiry_warning = False
+     founder_days_remaining = None
+     if sub and sub.get("plan_id") == "founder_6m" and sub.get("plan_locked_until"):
+@@ -169,6 +183,8 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
+             sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
  
--export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange }) {
-+export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange, selectedPlan: externalSelectedPlan }) {
-   const [selectedProjectId, setSelectedProjectId] = useState('');
-   const [units, setUnits] = useState('');
-   const [saving, setSaving] = useState(false);
-@@ -16,6 +15,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
-   const [step, setStep] = useState(1);
-   const [result, setResult] = useState(null);
-   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
-+  const selectedPlan = externalSelectedPlan;
+     if plan == 'founder':
++        if sub and (sub.get('plan_locked_until') or sub.get('last_payment_at')):
++            raise HTTPException(status_code=400, detail='תוכנית מייסדים זמינה רק לארגונים חדשים')
+         if not await is_founder_enabled():
+             raise HTTPException(status_code=400, detail='התוכנית אינה זמינה כרגע')
+         founder_count = await db.subscriptions.count_documents(
+@@ -1455,18 +1471,25 @@ async def billing_webhook_payplus(request: Request):
+     current_paid = sub.get('paid_until')
+     now_utc = datetime.now(timezone.utc)
+     if current_paid:
+-        try:
+-            base = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
+-            if base.tzinfo is None:
+-                base = base.replace(tzinfo=timezone.utc)
+-        except Exception:
+-            base = now_utc
+-        if base > now_utc:
+-            paid_until = (base + delta).isoformat()
++        if isinstance(current_paid, str):
++            try:
++                base_date = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
++            except Exception:
++                base_date = now_utc
++        elif isinstance(current_paid, datetime):
++            base_date = current_paid
+         else:
+-            paid_until = (now_utc + delta).isoformat()
++            base_date = now_utc
++        if hasattr(base_date, 'tzinfo') and base_date.tzinfo is None:
++            base_date = base_date.replace(tzinfo=timezone.utc)
++        base_date = max(base_date, now_utc)
+     else:
+-        paid_until = (now_utc + delta).isoformat()
++        base_date = now_utc
++    paid_until = (base_date + delta).replace(
++        hour=23, minute=59, second=59, microsecond=0
++    ).isoformat()
++    logger.info("[PAYPLUS-WH] paid_until calc: current=%s base=%s new=%s",
++        current_paid, base_date, paid_until)
+     await db.subscriptions.update_one(
+         {'org_id': org_id},
+         {
+diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
+index 929aa0c..48d3707 100644
+--- a/backend/contractor_ops/payplus_service.py
++++ b/backend/contractor_ops/payplus_service.py
+@@ -70,6 +70,7 @@ async def create_payment_page(
+         "currency_code": "ILS",
+         "vat_type": 0,
+         "description": plan_name,
++        "product_name": plan_name,
+         "more_info": org_id,
+         "customer": {
+             "customer_name": customer_name or "לקוח BrikOps",
+diff --git a/frontend/src/components/PlanSelector.js b/frontend/src/components/PlanSelector.js
+index 9b5da6e..787894a 100644
+--- a/frontend/src/components/PlanSelector.js
++++ b/frontend/src/components/PlanSelector.js
+@@ -13,6 +13,7 @@ export default function PlanSelector({ plans, onSelect, currentPlan, loading, se
+     slots_full: 'התוכנית מלאה',
+     too_many_projects: 'מוגבלת לפרויקט אחד',
+     disabled: 'התוכנית אינה זמינה',
++    already_subscribed: 'התוכנית זמינה רק לארגונים חדשים',
+   };
  
-   const projectList = useMemo(() => projects || [], [projects]);
-   const singleProject = projectList.length === 1;
-@@ -65,6 +65,29 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
-   const canProceedToStep2 = !!selectedProjectId;
-   const canProceedToStep3 = parsedUnits >= 1;
- 
-+  const isFounderSelected = selectedPlan === 'founder';
-+
-+  const handleFounderSubmit = async () => {
-+    setSaving(true);
-+    try {
-+      const cycle = renewalCycle || 'monthly';
-+      const paymentResult = await billingService.createPaymentRequest(orgId, cycle, '', '');
-+      setResult(paymentResult);
-+      if (paymentResult.existing_open) {
-+        toast('כבר קיימת בקשת תשלום פתוחה — עדכנו את התמחור', { icon: 'ℹ️' });
-+      } else {
-+        toast.success('בקשת התשלום נשלחה בהצלחה');
-+      }
-+      onPaymentRequested?.(paymentResult);
-+      setStep(4);
-+    } catch (err) {
-+      const detail = err.response?.data?.detail || 'שגיאה בשליחת הבקשה';
-+      toast.error(detail);
-+    } finally {
-+      setSaving(false);
-+    }
-+  };
-+
-   const handleSubmit = async () => {
-     if (!selectedProjectId || parsedUnits < 1) return;
-     setSaving(true);
-@@ -105,6 +128,52 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
-     </div>
-   );
- 
-+  if (isFounderSelected) {
-+    return (
-+      <div className="space-y-4">
-+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
-+          <div className="text-sm font-bold text-slate-800">תוכנית מייסדים</div>
-+          <div className="flex justify-between text-sm">
-+            <span className="text-slate-500">מחיר חודשי</span>
-+            <span className="font-bold text-slate-900">₪500</span>
-+          </div>
-+          <div className="flex justify-between text-sm">
-+            <span className="text-slate-500">תקופת התחייבות</span>
-+            <span className="font-medium text-slate-700">6 חודשים</span>
-+          </div>
-+          <div className="flex justify-between text-sm">
-+            <span className="text-slate-500">פרויקטים</span>
-+            <span className="font-medium text-slate-700">1</span>
-+          </div>
-+        </div>
-+
-+        {step === 4 && result ? (
-+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
-+            <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
-+              <Check className="w-4 h-4" />
-+              <span>בקשת התשלום נשלחה בהצלחה</span>
-+            </div>
-+            <div className="text-xs text-slate-600 space-y-1">
-+              <div>מזהה בקשה: <span className="font-mono">{result.request_id?.slice(0, 8)}...</span></div>
-+              {result.amount_ils != null && (
-+                <div>סכום: <span className="font-bold">₪{result.amount_ils}</span></div>
-+              )}
-+            </div>
-+          </div>
-+        ) : (
-+          <button
-+            onClick={handleFounderSubmit}
-+            disabled={saving}
-+            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
-+          >
-+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-+            שלח בקשת תשלום — תוכנית מייסדים
-+          </button>
-+        )}
-+      </div>
-+    );
-+  }
-+
-   return (
-     <div className="space-y-4">
-       <div className="flex items-center gap-3 mb-2">
-diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
-index 6233942..429f5fd 100644
---- a/frontend/src/pages/AdminBillingPage.js
-+++ b/frontend/src/pages/AdminBillingPage.js
-@@ -96,6 +96,10 @@ const AdminBillingPage = () => {
-   const [pricingMode, setPricingMode] = useState('standard');
-   const [pricingCustomAmount, setPricingCustomAmount] = useState('');
-   const [pricingSaving, setPricingSaving] = useState(false);
-+  const [founderEnabled, setFounderEnabled] = useState(null);
-+  const [founderCount, setFounderCount] = useState(0);
-+  const [founderMaxSlots, setFounderMaxSlots] = useState(30);
-+  const [founderToggling, setFounderToggling] = useState(false);
- 
-   const loadOrgInvoices = useCallback(async (gen) => {
-     try {
-@@ -145,6 +149,11 @@ const AdminBillingPage = () => {
-       setFailedRenewals(failedRen);
-       if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
-       if (orgsData.length > 0) loadOrgInvoices(gen);
-+      billingService.getFounderConfig().then(cfg => {
-+        setFounderEnabled(cfg.enabled);
-+        setFounderCount(cfg.active_founder_count || 0);
-+        setFounderMaxSlots(cfg.max_slots || 30);
-+      }).catch(() => {});
-     } catch (err) {
-       if (gen !== loadGenRef.current) return;
-       if (isStepupError(err)) {
-@@ -417,6 +426,40 @@ const AdminBillingPage = () => {
-           );
-         })()}
- 
-+        {founderEnabled != null && (
-+          <section className="bg-white rounded-xl border border-slate-200 p-4">
-+            <div className="flex items-center justify-between">
-+              <div className="flex items-center gap-3">
-+                <span className="text-sm font-bold text-slate-700">תוכנית מייסדים</span>
-+                <span className="text-xs text-slate-500">{founderCount}/{founderMaxSlots} לקוחות פעילים</span>
-+              </div>
-+              <button
-+                onClick={async () => {
-+                  setFounderToggling(true);
-+                  try {
-+                    const res = await billingService.toggleFounderPlan(!founderEnabled);
-+                    setFounderEnabled(res.enabled);
-+                    setFounderCount(res.active_founder_count || 0);
-+                    toast.success(res.enabled ? 'תוכנית מייסדים פעילה' : 'תוכנית מייסדים כבויה');
-+                  } catch (err) {
-+                    toast.error(err.response?.data?.detail || 'שגיאה');
-+                  } finally {
-+                    setFounderToggling(false);
-+                  }
-+                }}
-+                disabled={founderToggling}
-+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-+                  founderEnabled
-+                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-+                }`}
-+              >
-+                {founderToggling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : founderEnabled ? 'פעיל' : 'כבוי'}
-+              </button>
-+            </div>
-+          </section>
-+        )}
-+
-         {failedRenewals.unresolved_count > 0 && (
-           <section className="bg-red-50 rounded-xl border-2 border-red-300 p-4 space-y-3">
-             <div className="flex items-center gap-2">
+   const isCurrentFounder = currentPlan === 'founder_6m';
 diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-index 70e0452..ef2ccdf 100644
+index ef2ccdf..038e57c 100644
 --- a/frontend/src/pages/OrgBillingPage.js
 +++ b/frontend/src/pages/OrgBillingPage.js
-@@ -6,6 +6,7 @@ import { toast } from 'sonner';
- import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
- import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
- import UpgradeWizard from '../components/UpgradeWizard';
-+import PlanSelector from '../components/PlanSelector';
- import {
-   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
- } from '../components/ui/select';
-@@ -137,6 +138,8 @@ export default function OrgBillingPage() {
-   const [logoDeleting, setLogoDeleting] = useState(false);
-   const logoFileRef = useRef(null);
-   const [checkoutLoading, setCheckoutLoading] = useState(false);
-+  const [selectedPlan, setSelectedPlan] = useState(null);
-+  const [availablePlans, setAvailablePlans] = useState(null);
+@@ -1069,11 +1069,8 @@ export default function OrgBillingPage() {
+         <div ref={renewRef} id="renew" className="bg-white rounded-xl border-2 border-amber-200 p-6 space-y-5 transition-all duration-300" style={{ scrollMarginTop: '1rem' }}>
+           <div className="space-y-1">
+             <h2 className="text-lg font-semibold text-slate-800">
+-              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי מראש'}
++              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי'}
+             </h2>
+-            <p className="text-xs text-slate-500">
+-              בקרוב — חידוש עצמי באשראי. בינתיים אפשר לשלוח בקשת תשלום.
+-            </p>
+           </div>
  
-   const isSA = user?.platform_role === 'super_admin';
-   const isOwner = data?.owner_user_id === user?.id;
-@@ -263,6 +266,7 @@ export default function OrgBillingPage() {
-         console.warn('[OrgBillingPage] billing load failed:', status, detail);
-       })
-       .finally(() => setLoading(false));
-+    billingService.plansAvailable(orgId).then(setAvailablePlans).catch(() => {});
-   }, [orgId]);
- 
-   const handleLogoUpload = async (e) => {
-@@ -1082,6 +1086,25 @@ export default function OrgBillingPage() {
+           {needsUpgrade && (
+@@ -1126,6 +1123,19 @@ export default function OrgBillingPage() {
+             <div className="flex items-center justify-between">
+               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
              </div>
-           )}
- 
-+          {sub?.plan_id === 'founder_6m' && sub?.plan_locked_until && (() => {
-+            const daysLeft = Math.max(0, Math.ceil((new Date(sub.plan_locked_until) - new Date()) / (1000 * 60 * 60 * 24)));
-+            return daysLeft <= 60 ? (
-+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-+                תוכנית מייסדים מסתיימת בעוד {daysLeft} ימים. לאחר מכן תעבור אוטומטית לתוכנית רגילה.
-+              </div>
-+            ) : null;
-+          })()}
-+
-+          {availablePlans && (needsUpgrade || isTrial) && (
-+            <PlanSelector
-+              plans={availablePlans}
-+              onSelect={setSelectedPlan}
-+              currentPlan={sub?.plan_id}
-+              selectedPlan={selectedPlan}
-+              loading={false}
-+            />
-+          )}
-+
-           {needsUpgrade && data.projects?.length > 0 && (
-             <UpgradeWizard
-               orgId={orgId}
-@@ -1094,6 +1117,7 @@ export default function OrgBillingPage() {
-               }}
-               renewalCycle={renewalCycle}
-               onCycleChange={(cycle) => setRenewalCycle(cycle)}
-+              selectedPlan={selectedPlan}
-             />
-           )}
- 
-@@ -1107,7 +1131,7 @@ export default function OrgBillingPage() {
++            {(() => {
++              const totalMonthly = sub?.total_monthly || 0;
++              const currentPaidUntil = sub?.paid_until ? new Date(sub.paid_until) : new Date();
++              const baseDate = currentPaidUntil > new Date() ? currentPaidUntil : new Date();
++              const nextDate = new Date(baseDate);
++              nextDate.setMonth(nextDate.getMonth() + 1);
++              const formatted = nextDate.toLocaleDateString('he-IL');
++              return totalMonthly > 0 ? (
++                <p className="text-sm text-slate-600 text-center">
++                  {`\u200F\u05DC\u05D0\u05D7\u05E8 \u05EA\u05E9\u05DC\u05D5\u05DD ${totalMonthly.toLocaleString()}\u20AA \u05D4\u05DE\u05E0\u05D5\u05D9 \u05D9\u05D4\u05D9\u05D4 \u05D1\u05EA\u05D5\u05E7\u05E3 \u05E2\u05D3 ${formatted}`}
++                </p>
++              ) : null;
++            })()}
+             <button
+               disabled={checkoutLoading}
                onClick={async () => {
-                 setCheckoutLoading(true);
-                 try {
--                  const result = await billingService.checkout(orgId, renewalCycle);
-+                  const result = await billingService.checkout(orgId, renewalCycle, selectedPlan || 'standard');
-                   if (result.payment_page_link) {
-                     window.location.href = result.payment_page_link;
-                   } else {
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index a8d6cac..321992e 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -889,8 +889,26 @@ export const billingService = {
-     const response = await axios.post(`${API}/billing/project/${projectId}/setup-complete`, {}, { headers: getAuthHeader() });
-     return response.data;
-   },
--  async checkout(orgId, cycle = 'monthly') {
--    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle }, { headers: getAuthHeader() });
-+  async checkout(orgId, cycle = 'monthly', plan = 'standard') {
-+    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle, plan }, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async plansAvailable(orgId) {
-+    const response = await axios.get(`${API}/billing/plans-available`, {
-+      params: { org_id: orgId },
-+      headers: getAuthHeader(),
-+    });
-+    return response.data;
-+  },
-+  async getFounderConfig() {
-+    const response = await axios.get(`${API}/admin/config/founder-plan`, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async toggleFounderPlan(enabled) {
-+    const response = await axios.patch(`${API}/admin/config/founder-plan`,
-+      { enabled },
-+      { headers: getAuthHeader() }
-+    );
-     return response.data;
-   },
-   async previewRenewal(orgId, cycle) {
+@@ -1146,7 +1156,7 @@ export default function OrgBillingPage() {
+               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+             >
+               {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+-              {checkoutLoading ? 'מעביר לתשלום...' : 'שלם באשראי'}
++              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.total_monthly || 0).toLocaleString()}`}
+             </button>
+             <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
+           </div>
+@@ -1723,7 +1733,7 @@ export default function OrgBillingPage() {
+       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+         <div className="flex items-center gap-2">
+           <FileText className="w-5 h-5 text-amber-500" />
+-          <h2 className="text-lg font-semibold text-slate-800">חיובים חודשיים</h2>
++          <h2 className="text-lg font-semibold text-slate-800">חשבוניות</h2>
+         </div>
+ 
+         {previewLoading ? (
