@@ -167,7 +167,7 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
     return gi_document_id
 
 
-async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_until: str = "", card_last4: str = "") -> dict:
+async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_until: str = "", card_last4: str = "", override_amount: float = None) -> dict:
     year, month = validate_period_ym(period_ym)
     db = get_db()
 
@@ -192,6 +192,11 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
 
     preview = await build_invoice_preview(org_id, period_ym)
 
+    final_amount = preview['total_amount']
+    if override_amount is not None:
+        logger.info("[INVOICE] Using override amount=%.2f instead of computed=%.2f for org=%s period=%s", override_amount, final_amount, org_id, period_ym)
+        final_amount = override_amount
+
     ts = _now()
     invoice_id = str(uuid.uuid4())
     invoice_doc = {
@@ -199,7 +204,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
         'org_id': org_id,
         'period_ym': period_ym,
         'status': 'issued',
-        'total_amount': preview['total_amount'],
+        'total_amount': final_amount,
         'currency': 'ILS',
         'issued_at': ts,
         'due_at': preview['due_at'],
