@@ -889,8 +889,26 @@ export const billingService = {
     const response = await axios.post(`${API}/billing/project/${projectId}/setup-complete`, {}, { headers: getAuthHeader() });
     return response.data;
   },
-  async checkout(orgId, cycle = 'monthly') {
-    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle }, { headers: getAuthHeader() });
+  async checkout(orgId, cycle = 'monthly', plan = 'standard') {
+    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle, plan }, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async plansAvailable(orgId) {
+    const response = await axios.get(`${API}/billing/plans-available`, {
+      params: { org_id: orgId },
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  },
+  async getFounderConfig() {
+    const response = await axios.get(`${API}/admin/config/founder-plan`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async toggleFounderPlan(enabled) {
+    const response = await axios.patch(`${API}/admin/config/founder-plan`,
+      { enabled },
+      { headers: getAuthHeader() }
+    );
     return response.data;
   },
   async previewRenewal(orgId, cycle) {

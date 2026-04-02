@@ -96,6 +96,10 @@ const AdminBillingPage = () => {
   const [pricingMode, setPricingMode] = useState('standard');
   const [pricingCustomAmount, setPricingCustomAmount] = useState('');
   const [pricingSaving, setPricingSaving] = useState(false);
+  const [founderEnabled, setFounderEnabled] = useState(null);
+  const [founderCount, setFounderCount] = useState(0);
+  const [founderMaxSlots, setFounderMaxSlots] = useState(30);
+  const [founderToggling, setFounderToggling] = useState(false);
 
   const loadOrgInvoices = useCallback(async (gen) => {
     try {
@@ -145,6 +149,11 @@ const AdminBillingPage = () => {
       setFailedRenewals(failedRen);
       if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
       if (orgsData.length > 0) loadOrgInvoices(gen);
+      billingService.getFounderConfig().then(cfg => {
+        setFounderEnabled(cfg.enabled);
+        setFounderCount(cfg.active_founder_count || 0);
+        setFounderMaxSlots(cfg.max_slots || 30);
+      }).catch(() => {});
     } catch (err) {
       if (gen !== loadGenRef.current) return;
       if (isStepupError(err)) {
@@ -416,6 +425,40 @@ const AdminBillingPage = () => {
             </section>
           );
         })()}
+
+        {founderEnabled != null && (
+          <section className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-bold text-slate-700">תוכנית מייסדים</span>
+                <span className="text-xs text-slate-500">{founderCount}/{founderMaxSlots} לקוחות פעילים</span>
+              </div>
+              <button
+                onClick={async () => {
+                  setFounderToggling(true);
+                  try {
+                    const res = await billingService.toggleFounderPlan(!founderEnabled);
+                    setFounderEnabled(res.enabled);
+                    setFounderCount(res.active_founder_count || 0);
+                    toast.success(res.enabled ? 'תוכנית מייסדים פעילה' : 'תוכנית מייסדים כבויה');
+                  } catch (err) {
+                    toast.error(err.response?.data?.detail || 'שגיאה');
+                  } finally {
+                    setFounderToggling(false);
+                  }
+                }}
+                disabled={founderToggling}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                  founderEnabled
+                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                }`}
+              >
+                {founderToggling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : founderEnabled ? 'פעיל' : 'כבוי'}
+              </button>
+            </div>
+          </section>
+        )}
 
         {failedRenewals.unresolved_count > 0 && (
           <section className="bg-red-50 rounded-xl border-2 border-red-300 p-4 space-y-3">

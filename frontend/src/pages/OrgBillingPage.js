@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
 import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
 import UpgradeWizard from '../components/UpgradeWizard';
+import PlanSelector from '../components/PlanSelector';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
@@ -137,6 +138,8 @@ export default function OrgBillingPage() {
   const [logoDeleting, setLogoDeleting] = useState(false);
   const logoFileRef = useRef(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [availablePlans, setAvailablePlans] = useState(null);
 
   const isSA = user?.platform_role === 'super_admin';
   const isOwner = data?.owner_user_id === user?.id;
@@ -263,6 +266,7 @@ export default function OrgBillingPage() {
         console.warn('[OrgBillingPage] billing load failed:', status, detail);
       })
       .finally(() => setLoading(false));
+    billingService.plansAvailable(orgId).then(setAvailablePlans).catch(() => {});
   }, [orgId]);
 
   const handleLogoUpload = async (e) => {
@@ -1082,6 +1086,25 @@ export default function OrgBillingPage() {
             </div>
           )}
 
+          {sub?.plan_id === 'founder_6m' && sub?.plan_locked_until && (() => {
+            const daysLeft = Math.max(0, Math.ceil((new Date(sub.plan_locked_until) - new Date()) / (1000 * 60 * 60 * 24)));
+            return daysLeft <= 60 ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                תוכנית מייסדים מסתיימת בעוד {daysLeft} ימים. לאחר מכן תעבור אוטומטית לתוכנית רגילה.
+              </div>
+            ) : null;
+          })()}
+
+          {availablePlans && (needsUpgrade || isTrial) && (
+            <PlanSelector
+              plans={availablePlans}
+              onSelect={setSelectedPlan}
+              currentPlan={sub?.plan_id}
+              selectedPlan={selectedPlan}
+              loading={false}
+            />
+          )}
+
           {needsUpgrade && data.projects?.length > 0 && (
             <UpgradeWizard
               orgId={orgId}
@@ -1094,6 +1117,7 @@ export default function OrgBillingPage() {
               }}
               renewalCycle={renewalCycle}
               onCycleChange={(cycle) => setRenewalCycle(cycle)}
+              selectedPlan={selectedPlan}
             />
           )}
 
@@ -1107,7 +1131,7 @@ export default function OrgBillingPage() {
               onClick={async () => {
                 setCheckoutLoading(true);
                 try {
-                  const result = await billingService.checkout(orgId, renewalCycle);
+                  const result = await billingService.checkout(orgId, renewalCycle, selectedPlan || 'standard');
                   if (result.payment_page_link) {
                     window.location.href = result.payment_page_link;
                   } else {
