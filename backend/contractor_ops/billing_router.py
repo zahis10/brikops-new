@@ -1370,26 +1370,33 @@ async def billing_webhook_payplus(request: Request):
     from config import PAYPLUS_ENV
     verified_tx = {}
     if PAYPLUS_ENV == "production":
-        # TEMPORARY: verify via page_request_uid match (get_transaction /Check returns 403)
-        # TODO: restore get_transaction() once PayPlus support resolves /Check endpoint access
-        if not page_request_uid:
-            logger.error("[PAYPLUS-WH] No page_request_uid in production webhook tx=%s", transaction_uid)
-            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_page_uid'}})
-            raise HTTPException(status_code=400, detail="Missing page_request_uid")
-        stored = await db.subscriptions.find_one(
-            {"payplus_page_request_uid": page_request_uid},
-            {"_id": 0, "org_id": 1})
-        if not stored:
-            logger.error("[PAYPLUS-WH] Unknown page_request_uid=%s tx=%s", page_request_uid, transaction_uid)
-            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_unknown_page_uid'}})
-            raise HTTPException(status_code=400, detail="Unknown payment page")
-        verified_tx = body.get('transaction', {})
-        verified_status = verified_tx.get('status_code', '')
+        # ⚠️ TEMPORARY: PayPlus /Check returns 403.
+        # Verifying via more_info org_id match instead.
+        # TODO: Contact PayPlus support, restore get_transaction() once /Check works.
+        wh_org_id = (
+            body.get("more_info", "") or
+            body.get("transaction", {}).get("more_info", "")
+        ).strip()
+        if wh_org_id.startswith("org_id="):
+            wh_org_id = wh_org_id.split("=", 1)[1]
+        if not wh_org_id:
+            logger.error("[PAYPLUS-WH] No org_id in more_info tx=%s", transaction_uid)
+            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_org_id'}})
+            raise HTTPException(status_code=500, detail="Missing org identifier")
+        sub = await db.subscriptions.find_one(
+            {"org_id": wh_org_id, "checkout_created_at": {"$exists": True}},
+            {"_id": 0})
+        if not sub:
+            logger.error("[PAYPLUS-WH] No pending checkout org=%s tx=%s", wh_org_id, transaction_uid)
+            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_pending_checkout'}})
+            raise HTTPException(status_code=400, detail="No pending checkout")
+        verified_tx = body.get("transaction", {})
+        verified_status = verified_tx.get("status_code", "")
         if verified_status != "000":
             logger.info("[PAYPLUS-WH] Non-success status=%s tx=%s — skipping", verified_status, transaction_uid)
             await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'non_success', 'status_code': verified_status}})
             return {"status": "ok"}
-        logger.info("[PAYPLUS-WH] Verified via page_request_uid=%s tx=%s", page_request_uid[:8], transaction_uid)
+        logger.info("[PAYPLUS-WH] Verified via more_info org_id=%s tx=%s", wh_org_id, transaction_uid)
     else:
         logger.info("[PAYPLUS-WH] Sandbox mode — skipping transaction verification")
         verified_tx = body.get('transaction', {})
