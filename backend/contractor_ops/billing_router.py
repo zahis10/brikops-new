@@ -205,6 +205,12 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         billing_result = await compute_org_billing_amount(org_id, cycle)
         amount = billing_result['amount_ils']
 
+    override = (sub or {}).get("manual_override", {})
+    override_amount = override.get("total_monthly")
+    if override_amount is not None and override_amount > 0:
+        logger.info("[CHECKOUT] Admin override: computed=%s override=%s org=%s", amount, override_amount, org_id)
+        amount = override_amount
+
     if not amount or amount <= 0:
         raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
     # === SANDBOX TEST OVERRIDE — REMOVE BEFORE GO-LIVE ===
