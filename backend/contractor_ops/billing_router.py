@@ -1373,9 +1373,9 @@ async def billing_webhook_payplus(request: Request):
                 await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'non_success', 'status_code': verified_status}})
                 return {"status": "ok"}
         except PayPlusError as e:
-            logger.error("[PAYPLUS-WH] Transaction verification failed tx=%s: %s", transaction_uid, e)
+            logger.error("[PAYPLUS-WH] Verification failed tx=%s: %s", transaction_uid, e)
             await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'verification_failed', 'error': str(e)}})
-            return {"status": "ok"}
+            raise HTTPException(status_code=500, detail="Payment verification failed")
     else:
         logger.info("[PAYPLUS-WH] Sandbox mode — skipping transaction verification")
         verified_tx = body.get('transaction', {})

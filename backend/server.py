@@ -1020,6 +1020,12 @@ async def startup():
         print(f"FATAL: {e}", file=sys.stderr)
         sys.exit(1)
 
+    from config import PAYPLUS_ENV
+    if APP_MODE == 'prod' and PAYPLUS_ENV == 'sandbox':
+        logger.critical("[FATAL] PAYPLUS_ENV=sandbox in production! Aborting to prevent sandbox charges.")
+        print("FATAL: PAYPLUS_ENV=sandbox in production! Aborting to prevent sandbox charges.", file=sys.stderr)
+        sys.exit(1)
+
     if APP_MODE == 'prod' and ('localhost' in MONGO_URL or '127.0.0.1' in MONGO_URL):
         logger.critical("[FATAL] Production mode is using a LOCAL MongoDB! This is not allowed. Refusing to start.")
         print("FATAL: Production mode is using a LOCAL MongoDB! Refusing to start.", file=sys.stderr)
