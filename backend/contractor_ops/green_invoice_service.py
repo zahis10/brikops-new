@@ -2,6 +2,7 @@ import json
 import time
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -242,16 +243,15 @@ async def create_document(
             }
         ],
     }
-    if payment_date:
-        payment_entry = {
-            "type": 3,
-            "price": amount,
-            "currency": currency,
-            "date": payment_date,
-        }
-        if card_last4:
-            payment_entry["cardNum"] = card_last4
-        payload["payment"] = [payment_entry]
+    pay_date = payment_date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    payment_entry = {
+        "type": 3,
+        "price": amount,
+        "currency": currency,
+        "date": pay_date,
+        "cardNum": card_last4 or "0000",
+    }
+    payload["payment"] = [payment_entry]
     if remarks:
         payload["remarks"] = remarks
 
