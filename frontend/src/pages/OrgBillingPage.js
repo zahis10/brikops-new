@@ -1124,20 +1124,23 @@ export default function OrgBillingPage() {
             const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
             const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
             const founderExpiring = daysLeft !== null && daysLeft <= 30;
-            const projectedStandard = data.projects?.reduce((sum, pb) => {
+            const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
               const units = pb.contracted_units || 0;
-              return sum + 900 + (units * 20);
+              const ppu = pb.price_per_unit || 20;
+              const license = idx === 0 ? 900 : 450;
+              return sum + license + (units * ppu);
             }, 0) || 0;
             if (!founderExpiring) return null;
+            const formattedDate = lockedDate.toLocaleDateString('he-IL');
             return (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 space-y-1">
                 <p className="font-semibold">
                   {daysLeft > 0
-                    ? `\u05EA\u05D5\u05DB\u05E0\u05D9\u05EA \u05D4\u05DE\u05D9\u05D9\u05E1\u05D3\u05D9\u05DD \u05DE\u05E1\u05EA\u05D9\u05D9\u05DE\u05EA \u05D1\u05EA\u05D0\u05E8\u05D9\u05DA ${lockedDate.toLocaleDateString('he-IL')}`
-                    : `\u05EA\u05D5\u05DB\u05E0\u05D9\u05EA \u05D4\u05DE\u05D9\u05D9\u05E1\u05D3\u05D9\u05DD \u05D4\u05E1\u05EA\u05D9\u05D9\u05DE\u05D4`}
+                    ? `תוכנית המייסדים מסתיימת בתאריך ${formattedDate}`
+                    : `תוכנית המייסדים הסתיימה בתאריך ${formattedDate}`}
                 </p>
                 <p>
-                  {`\u05DC\u05D0\u05D7\u05E8 \u05E1\u05D9\u05D5\u05DD, \u05D4\u05DE\u05E0\u05D5\u05D9 \u05D9\u05E2\u05D1\u05D5\u05E8 \u05DC\u05EA\u05D5\u05DB\u05E0\u05D9\u05EA \u05E8\u05D2\u05D9\u05DC\u05D4 \u05D1\u05E2\u05DC\u05D5\u05EA ${projectedStandard.toLocaleString()}\u20AA/\u05D7\u05D5\u05D3\u05E9`}
+                  {`לאחר סיום, המנוי יעבור לתוכנית רגילה בעלות ${projectedStandard.toLocaleString()}₪/חודש`}
                 </p>
               </div>
             );
