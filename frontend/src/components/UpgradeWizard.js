@@ -83,7 +83,27 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
     }
   };
 
-  const handleSubmit = async () => {
+  const handleStandardSubmit = async () => {
+    if (!selectedProjectId || parsedUnits < 1) return;
+    setSaving(true);
+    try {
+      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
+      await billingService.updateProjectBilling(selectedProjectId, payload);
+
+      const result = await billingService.checkout(orgId, renewalCycle || 'monthly', 'standard');
+      if (result.payment_page_link) {
+        window.location.href = result.payment_page_link;
+      } else {
+        toast.error('\u05DC\u05D0 \u05D4\u05EA\u05E7\u05D1\u05DC \u05E7\u05D9\u05E9\u05D5\u05E8 \u05EA\u05E9\u05DC\u05D5\u05DD');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || '\u05E9\u05D2\u05D9\u05D0\u05D4 \u05D1\u05D9\u05E6\u05D9\u05E8\u05EA \u05D8\u05D5\u05E4\u05E1 \u05EA\u05E9\u05DC\u05D5\u05DD');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePaymentRequest = async () => {
     if (!selectedProjectId || parsedUnits < 1) return;
     setSaving(true);
     try {
@@ -95,15 +115,15 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
       setResult(paymentResult);
 
       if (paymentResult.existing_open) {
-        toast('כבר קיימת בקשת תשלום פתוחה — עדכנו את התמחור', { icon: 'ℹ️' });
+        toast('\u05DB\u05D1\u05E8 \u05E7\u05D9\u05D9\u05DE\u05EA \u05D1\u05E7\u05E9\u05EA \u05EA\u05E9\u05DC\u05D5\u05DD \u05E4\u05EA\u05D5\u05D7\u05D4 \u2014 \u05E2\u05D3\u05DB\u05E0\u05D5 \u05D0\u05EA \u05D4\u05EA\u05DE\u05D7\u05D5\u05E8', { icon: '\u2139\uFE0F' });
       } else {
-        toast.success('בקשת התשלום נשלחה בהצלחה');
+        toast.success('\u05D1\u05E7\u05E9\u05EA \u05D4\u05EA\u05E9\u05DC\u05D5\u05DD \u05E0\u05E9\u05DC\u05D7\u05D4 \u05D1\u05D4\u05E6\u05DC\u05D7\u05D4');
       }
 
       onPaymentRequested?.(paymentResult);
       setStep(4);
     } catch (err) {
-      const detail = err.response?.data?.detail || 'שגיאה בשליחת הבקשה';
+      const detail = err.response?.data?.detail || '\u05E9\u05D2\u05D9\u05D0\u05D4 \u05D1\u05E9\u05DC\u05D9\u05D7\u05EA \u05D4\u05D1\u05E7\u05E9\u05D4';
       toast.error(detail);
     } finally {
       setSaving(false);
@@ -341,12 +361,12 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
           </div>
 
           <button
-            onClick={handleSubmit}
+            onClick={handleStandardSubmit}
             disabled={saving}
-            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
           >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            שלח בקשת תשלום
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+            {saving ? '\u05DE\u05E2\u05D1\u05D9\u05E8 \u05DC\u05EA\u05E9\u05DC\u05D5\u05DD...' : `\u05E9\u05DC\u05DD \u05D1\u05D0\u05E9\u05E8\u05D0\u05D9 \u2014 \u20AA${preview ? preview.total.toLocaleString() : ''}`}
           </button>
         </div>
       )}

@@ -52,7 +52,7 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
     if (!hasChanges) return;
     setSaving(true);
     try {
-      const payload = { plan_id: 'standard', contracted_units: parsedUnits };
+      const payload = { plan_id: projectBilling.plan_id || 'standard', contracted_units: parsedUnits };
       const response = await billingService.updateProjectBilling(projectBilling.project_id, payload);
 
       if (response.pending_contracted_units != null) {
@@ -104,20 +104,38 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
 
           {preview && (
             <div className="bg-slate-50 rounded-lg p-3 space-y-2">
-              <div className="text-xs text-slate-500 font-medium">הערכה לפרויקט ראשון — הסכום הסופי ייקבע לאחר שמירה</div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">רישיון פרויקט</span>
-                <span className="font-medium text-slate-700">{formatCurrency(preview.licenseFee)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">{parsedUnits} יחידות × {formatCurrency(preview.pricePerUnit)}</span>
-                <span className="font-medium text-slate-700">{formatCurrency(preview.unitCost)}</span>
-              </div>
-              <div className="border-t border-slate-200 pt-2 flex justify-between">
-                <span className="text-sm font-medium text-slate-700">סה״כ חודשי (הערכה)</span>
-                <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
-              </div>
-              <div className="text-xs text-slate-400">פרויקט נוסף: רישיון {formatCurrency(preview.licenseAdditional)}</div>
+              {projectBilling.plan_id === 'founder_6m' ? (<>
+                <div className="text-xs text-slate-500 font-medium">{'\u05EA\u05DE\u05D7\u05D5\u05E8 \u05EA\u05D5\u05DB\u05E0\u05D9\u05EA \u05DE\u05D9\u05D9\u05E1\u05D3\u05D9\u05DD'}</div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">{'\u05DE\u05D7\u05D9\u05E8 \u05D7\u05D5\u05D3\u05E9\u05D9'}</span>
+                  <span className="font-bold text-slate-900">{'\u20AA500'}</span>
+                </div>
+                <div className="border-t border-slate-200 pt-2 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">{'\u05DE\u05D7\u05D9\u05E8 \u05E8\u05D2\u05D9\u05DC'}</span>
+                    <span className="text-slate-400 line-through">{formatCurrency(preview.total)}{'/\u05D7\u05D5\u05D3\u05E9'}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-emerald-600 font-semibold">{'\u05D7\u05E1\u05DB\u05EA \u05E2\u05DD \u05EA\u05D5\u05DB\u05E0\u05D9\u05EA \u05DE\u05D9\u05D9\u05E1\u05D3\u05D9\u05DD'}</span>
+                    <span className="text-emerald-600 font-semibold">{formatCurrency(preview.total - 500)}{'/\u05D7\u05D5\u05D3\u05E9'}</span>
+                  </div>
+                </div>
+              </>) : (<>
+                <div className="text-xs text-slate-500 font-medium">{'\u05D4\u05E2\u05E8\u05DB\u05D4 \u05DC\u05E4\u05E8\u05D5\u05D9\u05E7\u05D8 \u05E8\u05D0\u05E9\u05D5\u05DF \u2014 \u05D4\u05E1\u05DB\u05D5\u05DD \u05D4\u05E1\u05D5\u05E4\u05D9 \u05D9\u05D9\u05E7\u05D1\u05E2 \u05DC\u05D0\u05D7\u05E8 \u05E9\u05DE\u05D9\u05E8\u05D4'}</div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">{'\u05E8\u05D9\u05E9\u05D9\u05D5\u05DF \u05E4\u05E8\u05D5\u05D9\u05E7\u05D8'}</span>
+                  <span className="font-medium text-slate-700">{formatCurrency(preview.licenseFee)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">{parsedUnits} {'\u05D9\u05D7\u05D9\u05D3\u05D5\u05EA'} × {formatCurrency(preview.pricePerUnit)}</span>
+                  <span className="font-medium text-slate-700">{formatCurrency(preview.unitCost)}</span>
+                </div>
+                <div className="border-t border-slate-200 pt-2 flex justify-between">
+                  <span className="text-sm font-medium text-slate-700">{'\u05E1\u05D4\u05F4\u05DB \u05D7\u05D5\u05D3\u05E9\u05D9 (\u05D4\u05E2\u05E8\u05DB\u05D4)'}</span>
+                  <span className="text-lg font-bold text-slate-900">{formatCurrency(preview.total)}</span>
+                </div>
+                <div className="text-xs text-slate-400">{'\u05E4\u05E8\u05D5\u05D9\u05E7\u05D8 \u05E0\u05D5\u05E1\u05E3: \u05E8\u05D9\u05E9\u05D9\u05D5\u05DF'} {formatCurrency(preview.licenseAdditional)}</div>
+              </>)}
             </div>
           )}
 
