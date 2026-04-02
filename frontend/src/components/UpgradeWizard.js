@@ -334,32 +334,6 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
             )}
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-600">מחזור חיוב:</span>
-            <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-              <button
-                onClick={() => onCycleChange?.('monthly')}
-                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-                  renewalCycle === 'monthly'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                חודשי
-              </button>
-              <button
-                onClick={() => onCycleChange?.('yearly')}
-                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-                  renewalCycle === 'yearly'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                שנתי
-              </button>
-            </div>
-          </div>
-
           <button
             onClick={handleStandardSubmit}
             disabled={saving}
