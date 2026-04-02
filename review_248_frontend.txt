@@ -1,0 +1,380 @@
+diff --git a/frontend/src/components/PlanSelector.js b/frontend/src/components/PlanSelector.js
+new file mode 100644
+index 0000000..9b5da6e
+--- /dev/null
++++ b/frontend/src/components/PlanSelector.js
+@@ -0,0 +1,92 @@
++import React from 'react';
++import { Check, Crown, Building2 } from 'lucide-react';
++
++export default function PlanSelector({ plans, onSelect, currentPlan, loading, selectedPlan }) {
++  if (!plans) return null;
++
++  const founder = plans.founder;
++  const standard = plans.standard;
++  const founderAvailable = founder?.available;
++  const founderReason = founder?.reason;
++
++  const reasonText = {
++    slots_full: 'התוכנית מלאה',
++    too_many_projects: 'מוגבלת לפרויקט אחד',
++    disabled: 'התוכנית אינה זמינה',
++  };
++
++  const isCurrentFounder = currentPlan === 'founder_6m';
++  const isCurrentStandard = currentPlan === 'standard';
++
++  return (
++    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
++      <button
++        type="button"
++        disabled={!founderAvailable || isCurrentFounder || loading}
++        onClick={() => onSelect?.('founder')}
++        className={`relative text-right rounded-xl border-2 p-4 transition-all ${
++          selectedPlan === 'founder'
++            ? 'border-amber-500 bg-amber-50 shadow-md'
++            : founderAvailable && !isCurrentFounder
++              ? 'border-slate-200 bg-white hover:border-amber-300 hover:shadow-sm'
++              : 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
++        }`}
++      >
++        {isCurrentFounder && (
++          <span className="absolute top-2 left-2 text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-medium">
++            התוכנית הנוכחית שלך
++          </span>
++        )}
++        <div className="flex items-center gap-2 mb-2">
++          <Crown className="w-5 h-5 text-amber-500" />
++          <span className="font-bold text-slate-800">תוכנית מייסדים</span>
++        </div>
++        <div className="text-lg font-bold text-slate-900 mb-1">₪500<span className="text-sm font-normal text-slate-500">/חודש × 6 חודשים</span></div>
++        <div className="text-xs text-slate-500 mb-2">פרויקט אחד, כל הפיצ׳רים</div>
++        {founder?.slots_remaining != null && (
++          <div className="text-xs text-amber-700 bg-amber-100 rounded px-2 py-1 inline-block">
++            נשארו {founder.slots_remaining} מקומות
++          </div>
++        )}
++        {!founderAvailable && founderReason && (
++          <div className="text-xs text-red-600 mt-1">{reasonText[founderReason] || 'לא זמין'}</div>
++        )}
++        {selectedPlan === 'founder' && (
++          <div className="absolute top-2 left-2">
++            <Check className="w-5 h-5 text-amber-600" />
++          </div>
++        )}
++      </button>
++
++      <button
++        type="button"
++        disabled={isCurrentStandard || loading}
++        onClick={() => onSelect?.('standard')}
++        className={`relative text-right rounded-xl border-2 p-4 transition-all ${
++          selectedPlan === 'standard'
++            ? 'border-emerald-500 bg-emerald-50 shadow-md'
++            : !isCurrentStandard
++              ? 'border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm'
++              : 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
++        }`}
++      >
++        {isCurrentStandard && (
++          <span className="absolute top-2 left-2 text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full font-medium">
++            התוכנית הנוכחית שלך
++          </span>
++        )}
++        <div className="flex items-center gap-2 mb-2">
++          <Building2 className="w-5 h-5 text-emerald-500" />
++          <span className="font-bold text-slate-800">תוכנית רגילה</span>
++        </div>
++        <div className="text-lg font-bold text-slate-900 mb-1">₪900<span className="text-sm font-normal text-slate-500"> רישיון + ₪20/יחידה לחודש</span></div>
++        <div className="text-xs text-slate-500 mb-2">ללא הגבלת פרויקטים ויחידות</div>
++        {selectedPlan === 'standard' && (
++          <div className="absolute top-2 left-2">
++            <Check className="w-5 h-5 text-emerald-600" />
++          </div>
++        )}
++      </button>
++    </div>
++  );
++}
+diff --git a/frontend/src/components/UpgradeWizard.js b/frontend/src/components/UpgradeWizard.js
+index 5fb3825..827a7be 100644
+--- a/frontend/src/components/UpgradeWizard.js
++++ b/frontend/src/components/UpgradeWizard.js
+@@ -3,12 +3,11 @@ import { billingService } from '../services/api';
+ import { formatCurrency } from '../utils/billingLabels';
+ import { toast } from 'sonner';
+ import { Loader2, Check, ChevronDown, ChevronUp, Info } from 'lucide-react';
+-
+ const LICENSE_FIRST = 900;
+ const LICENSE_ADDITIONAL = 450;
+ const PRICE_PER_UNIT = 20;
+ 
+-export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange }) {
++export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange, selectedPlan: externalSelectedPlan }) {
+   const [selectedProjectId, setSelectedProjectId] = useState('');
+   const [units, setUnits] = useState('');
+   const [saving, setSaving] = useState(false);
+@@ -16,6 +15,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+   const [step, setStep] = useState(1);
+   const [result, setResult] = useState(null);
+   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
++  const selectedPlan = externalSelectedPlan;
+ 
+   const projectList = useMemo(() => projects || [], [projects]);
+   const singleProject = projectList.length === 1;
+@@ -65,6 +65,29 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+   const canProceedToStep2 = !!selectedProjectId;
+   const canProceedToStep3 = parsedUnits >= 1;
+ 
++  const isFounderSelected = selectedPlan === 'founder';
++
++  const handleFounderSubmit = async () => {
++    setSaving(true);
++    try {
++      const cycle = renewalCycle || 'monthly';
++      const paymentResult = await billingService.createPaymentRequest(orgId, cycle, '', '');
++      setResult(paymentResult);
++      if (paymentResult.existing_open) {
++        toast('כבר קיימת בקשת תשלום פתוחה — עדכנו את התמחור', { icon: 'ℹ️' });
++      } else {
++        toast.success('בקשת התשלום נשלחה בהצלחה');
++      }
++      onPaymentRequested?.(paymentResult);
++      setStep(4);
++    } catch (err) {
++      const detail = err.response?.data?.detail || 'שגיאה בשליחת הבקשה';
++      toast.error(detail);
++    } finally {
++      setSaving(false);
++    }
++  };
++
+   const handleSubmit = async () => {
+     if (!selectedProjectId || parsedUnits < 1) return;
+     setSaving(true);
+@@ -105,6 +128,52 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
+     </div>
+   );
+ 
++  if (isFounderSelected) {
++    return (
++      <div className="space-y-4">
++        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
++          <div className="text-sm font-bold text-slate-800">תוכנית מייסדים</div>
++          <div className="flex justify-between text-sm">
++            <span className="text-slate-500">מחיר חודשי</span>
++            <span className="font-bold text-slate-900">₪500</span>
++          </div>
++          <div className="flex justify-between text-sm">
++            <span className="text-slate-500">תקופת התחייבות</span>
++            <span className="font-medium text-slate-700">6 חודשים</span>
++          </div>
++          <div className="flex justify-between text-sm">
++            <span className="text-slate-500">פרויקטים</span>
++            <span className="font-medium text-slate-700">1</span>
++          </div>
++        </div>
++
++        {step === 4 && result ? (
++          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
++            <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
++              <Check className="w-4 h-4" />
++              <span>בקשת התשלום נשלחה בהצלחה</span>
++            </div>
++            <div className="text-xs text-slate-600 space-y-1">
++              <div>מזהה בקשה: <span className="font-mono">{result.request_id?.slice(0, 8)}...</span></div>
++              {result.amount_ils != null && (
++                <div>סכום: <span className="font-bold">₪{result.amount_ils}</span></div>
++              )}
++            </div>
++          </div>
++        ) : (
++          <button
++            onClick={handleFounderSubmit}
++            disabled={saving}
++            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
++          >
++            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
++            שלח בקשת תשלום — תוכנית מייסדים
++          </button>
++        )}
++      </div>
++    );
++  }
++
+   return (
+     <div className="space-y-4">
+       <div className="flex items-center gap-3 mb-2">
+diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
+index 6233942..429f5fd 100644
+--- a/frontend/src/pages/AdminBillingPage.js
++++ b/frontend/src/pages/AdminBillingPage.js
+@@ -96,6 +96,10 @@ const AdminBillingPage = () => {
+   const [pricingMode, setPricingMode] = useState('standard');
+   const [pricingCustomAmount, setPricingCustomAmount] = useState('');
+   const [pricingSaving, setPricingSaving] = useState(false);
++  const [founderEnabled, setFounderEnabled] = useState(null);
++  const [founderCount, setFounderCount] = useState(0);
++  const [founderMaxSlots, setFounderMaxSlots] = useState(30);
++  const [founderToggling, setFounderToggling] = useState(false);
+ 
+   const loadOrgInvoices = useCallback(async (gen) => {
+     try {
+@@ -145,6 +149,11 @@ const AdminBillingPage = () => {
+       setFailedRenewals(failedRen);
+       if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
+       if (orgsData.length > 0) loadOrgInvoices(gen);
++      billingService.getFounderConfig().then(cfg => {
++        setFounderEnabled(cfg.enabled);
++        setFounderCount(cfg.active_founder_count || 0);
++        setFounderMaxSlots(cfg.max_slots || 30);
++      }).catch(() => {});
+     } catch (err) {
+       if (gen !== loadGenRef.current) return;
+       if (isStepupError(err)) {
+@@ -417,6 +426,40 @@ const AdminBillingPage = () => {
+           );
+         })()}
+ 
++        {founderEnabled != null && (
++          <section className="bg-white rounded-xl border border-slate-200 p-4">
++            <div className="flex items-center justify-between">
++              <div className="flex items-center gap-3">
++                <span className="text-sm font-bold text-slate-700">תוכנית מייסדים</span>
++                <span className="text-xs text-slate-500">{founderCount}/{founderMaxSlots} לקוחות פעילים</span>
++              </div>
++              <button
++                onClick={async () => {
++                  setFounderToggling(true);
++                  try {
++                    const res = await billingService.toggleFounderPlan(!founderEnabled);
++                    setFounderEnabled(res.enabled);
++                    setFounderCount(res.active_founder_count || 0);
++                    toast.success(res.enabled ? 'תוכנית מייסדים פעילה' : 'תוכנית מייסדים כבויה');
++                  } catch (err) {
++                    toast.error(err.response?.data?.detail || 'שגיאה');
++                  } finally {
++                    setFounderToggling(false);
++                  }
++                }}
++                disabled={founderToggling}
++                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
++                  founderEnabled
++                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
++                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
++                }`}
++              >
++                {founderToggling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : founderEnabled ? 'פעיל' : 'כבוי'}
++              </button>
++            </div>
++          </section>
++        )}
++
+         {failedRenewals.unresolved_count > 0 && (
+           <section className="bg-red-50 rounded-xl border-2 border-red-300 p-4 space-y-3">
+             <div className="flex items-center gap-2">
+diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
+index 70e0452..ef2ccdf 100644
+--- a/frontend/src/pages/OrgBillingPage.js
++++ b/frontend/src/pages/OrgBillingPage.js
+@@ -6,6 +6,7 @@ import { toast } from 'sonner';
+ import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
+ import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
+ import UpgradeWizard from '../components/UpgradeWizard';
++import PlanSelector from '../components/PlanSelector';
+ import {
+   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+ } from '../components/ui/select';
+@@ -137,6 +138,8 @@ export default function OrgBillingPage() {
+   const [logoDeleting, setLogoDeleting] = useState(false);
+   const logoFileRef = useRef(null);
+   const [checkoutLoading, setCheckoutLoading] = useState(false);
++  const [selectedPlan, setSelectedPlan] = useState(null);
++  const [availablePlans, setAvailablePlans] = useState(null);
+ 
+   const isSA = user?.platform_role === 'super_admin';
+   const isOwner = data?.owner_user_id === user?.id;
+@@ -263,6 +266,7 @@ export default function OrgBillingPage() {
+         console.warn('[OrgBillingPage] billing load failed:', status, detail);
+       })
+       .finally(() => setLoading(false));
++    billingService.plansAvailable(orgId).then(setAvailablePlans).catch(() => {});
+   }, [orgId]);
+ 
+   const handleLogoUpload = async (e) => {
+@@ -1082,6 +1086,25 @@ export default function OrgBillingPage() {
+             </div>
+           )}
+ 
++          {sub?.plan_id === 'founder_6m' && sub?.plan_locked_until && (() => {
++            const daysLeft = Math.max(0, Math.ceil((new Date(sub.plan_locked_until) - new Date()) / (1000 * 60 * 60 * 24)));
++            return daysLeft <= 60 ? (
++              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
++                תוכנית מייסדים מסתיימת בעוד {daysLeft} ימים. לאחר מכן תעבור אוטומטית לתוכנית רגילה.
++              </div>
++            ) : null;
++          })()}
++
++          {availablePlans && (needsUpgrade || isTrial) && (
++            <PlanSelector
++              plans={availablePlans}
++              onSelect={setSelectedPlan}
++              currentPlan={sub?.plan_id}
++              selectedPlan={selectedPlan}
++              loading={false}
++            />
++          )}
++
+           {needsUpgrade && data.projects?.length > 0 && (
+             <UpgradeWizard
+               orgId={orgId}
+@@ -1094,6 +1117,7 @@ export default function OrgBillingPage() {
+               }}
+               renewalCycle={renewalCycle}
+               onCycleChange={(cycle) => setRenewalCycle(cycle)}
++              selectedPlan={selectedPlan}
+             />
+           )}
+ 
+@@ -1107,7 +1131,7 @@ export default function OrgBillingPage() {
+               onClick={async () => {
+                 setCheckoutLoading(true);
+                 try {
+-                  const result = await billingService.checkout(orgId, renewalCycle);
++                  const result = await billingService.checkout(orgId, renewalCycle, selectedPlan || 'standard');
+                   if (result.payment_page_link) {
+                     window.location.href = result.payment_page_link;
+                   } else {
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index a8d6cac..321992e 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -889,8 +889,26 @@ export const billingService = {
+     const response = await axios.post(`${API}/billing/project/${projectId}/setup-complete`, {}, { headers: getAuthHeader() });
+     return response.data;
+   },
+-  async checkout(orgId, cycle = 'monthly') {
+-    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle }, { headers: getAuthHeader() });
++  async checkout(orgId, cycle = 'monthly', plan = 'standard') {
++    const response = await axios.post(`${API}/billing/org/${orgId}/checkout`, { cycle, plan }, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async plansAvailable(orgId) {
++    const response = await axios.get(`${API}/billing/plans-available`, {
++      params: { org_id: orgId },
++      headers: getAuthHeader(),
++    });
++    return response.data;
++  },
++  async getFounderConfig() {
++    const response = await axios.get(`${API}/admin/config/founder-plan`, { headers: getAuthHeader() });
++    return response.data;
++  },
++  async toggleFounderPlan(enabled) {
++    const response = await axios.patch(`${API}/admin/config/founder-plan`,
++      { enabled },
++      { headers: getAuthHeader() }
++    );
+     return response.data;
+   },
+   async previewRenewal(orgId, cycle) {

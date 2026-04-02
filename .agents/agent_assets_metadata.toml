@@ -120,3 +120,9 @@ id = "aKZetj3IBv-ZTxGuRajRA"
 uri = "file://CODEBASE_SUMMARY.md"
 type = "text"
 title = "BrikOps — Codebase Summary"
+
+[[outputs]]
+id = "r7MU_Jr0qH6pgSnPBl162"
+uri = "file://review_248_frontend.txt"
+type = "text"
+title = "Task #248 — Frontend Diff (380 lines, 5 files)"
