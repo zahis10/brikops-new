@@ -216,6 +216,9 @@ PAYPLUS_TERMINAL_UID = os.environ.get('PAYPLUS_TERMINAL_UID', '')
 PAYPLUS_ENV = os.environ.get('PAYPLUS_ENV', 'sandbox')
 PAYPLUS_CALLBACK_URL = os.environ.get('PAYPLUS_CALLBACK_URL', '')
 
+FOUNDER_PLAN_ENABLED = os.environ.get('FOUNDER_PLAN_ENABLED', 'true').lower() == 'true'
+FOUNDER_MAX_SLOTS = int(os.environ.get('FOUNDER_MAX_SLOTS', '30'))
+
 
 def log_sanitized_startup():
     logger.info("=" * 60)

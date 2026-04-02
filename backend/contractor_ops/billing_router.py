@@ -57,12 +57,87 @@ async def billing_org(org_id: str, user: dict = Depends(get_current_user)):
     return result
 
 
+@router.get("/billing/plans-available")
+async def billing_plans_available(request: Request, user: dict = Depends(get_current_user)):
+    from datetime import datetime, timezone
+    from contractor_ops.billing import BILLING_V1_ENABLED, is_founder_enabled, check_org_billing_role, check_org_pm_role
+    from config import FOUNDER_MAX_SLOTS
+    from contractor_ops.billing_plans import PROJECT_LICENSE_FIRST, PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    org_id = request.query_params.get("org_id")
+    if not org_id:
+        org_id = user.get("org_id", "")
+    if org_id and not _is_super_admin(user):
+        billing_role = await check_org_billing_role(user['id'], org_id)
+        if not billing_role:
+            is_pm = await check_org_pm_role(user['id'], org_id)
+            if not is_pm:
+                raise HTTPException(status_code=403, detail='אין הרשאה')
+    db = get_db()
+
+    founder_count = await db.subscriptions.count_documents(
+        {"plan_id": "founder_6m", "status": {"$in": ["active", "past_due"]}}
+    )
+    slots_remaining = max(0, FOUNDER_MAX_SLOTS - founder_count)
+
+    org_project_count = await db.project_billing.count_documents(
+        {"org_id": org_id, "status": "active"}
+    )
+
+    founder_enabled = await is_founder_enabled()
+    founder_available = founder_enabled and slots_remaining > 0 and org_project_count <= 1
+
+    reason = None
+    if not founder_enabled:
+        reason = "disabled"
+    elif slots_remaining <= 0:
+        reason = "slots_full"
+    elif org_project_count > 1:
+        reason = "too_many_projects"
+
+    sub = await db.subscriptions.find_one(
+        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1}
+    )
+    founder_expiry_warning = False
+    founder_days_remaining = None
+    if sub and sub.get("plan_id") == "founder_6m" and sub.get("plan_locked_until"):
+        locked = sub["plan_locked_until"]
+        if isinstance(locked, str):
+            locked = datetime.fromisoformat(locked.replace("Z", "+00:00"))
+        if locked.tzinfo is None:
+            locked = locked.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        days_left = (locked - now_utc).days
+        if days_left < 30:
+            founder_expiry_warning = True
+            founder_days_remaining = max(0, days_left)
+
+    return {
+        "founder": {
+            "available": founder_available,
+            "reason": reason,
+            "slots_remaining": slots_remaining,
+            "price": 500,
+            "duration_months": 6,
+            "max_projects": 1,
+        },
+        "standard": {
+            "license_first": PROJECT_LICENSE_FIRST,
+            "license_additional": PROJECT_LICENSE_ADDITIONAL,
+            "price_per_unit": PRICE_PER_UNIT,
+        },
+        "founder_expiry_warning": founder_expiry_warning,
+        "founder_days_remaining": founder_days_remaining,
+    }
+
+
 @router.post("/billing/org/{org_id}/checkout")
 async def billing_checkout(org_id: str, request: Request, user: dict = Depends(get_current_user)):
     import uuid
     from datetime import datetime, timezone, timedelta
-    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, preview_renewal
-    from config import PAYPLUS_API_KEY, PAYPLUS_SECRET_KEY, PAYPLUS_PAYMENT_PAGE_UID
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, preview_renewal, set_org_plan, is_founder_enabled
+    from config import PAYPLUS_API_KEY, PAYPLUS_SECRET_KEY, PAYPLUS_PAYMENT_PAGE_UID, FOUNDER_MAX_SLOTS
     from contractor_ops.payplus_service import create_payment_page, PayPlusError
     if not BILLING_V1_ENABLED:
         raise HTTPException(status_code=404, detail='Not found')
@@ -78,11 +153,42 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
     except Exception:
         pass
     cycle = body.get('cycle', 'monthly')
-    renewal = await preview_renewal(org_id, cycle)
-    from contractor_ops.billing import compute_org_billing_amount
-    billing_result = await compute_org_billing_amount(org_id, cycle)
-    amount = billing_result['amount_ils']
+    plan = body.get('plan', 'standard')
     db = get_db()
+
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+    if sub and sub.get('plan_id') == 'founder_6m' and sub.get('plan_locked_until'):
+        locked = sub['plan_locked_until']
+        if isinstance(locked, str):
+            locked = datetime.fromisoformat(locked.replace('Z', '+00:00'))
+        if hasattr(locked, 'tzinfo') and locked.tzinfo is None:
+            locked = locked.replace(tzinfo=timezone.utc)
+        if locked < datetime.now(timezone.utc):
+            await set_org_plan(org_id, "standard", "system")
+            logger.info("[PAYPLUS] Auto-expired founder plan for org=%s at checkout", org_id)
+            sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+
+    if plan == 'founder':
+        if not await is_founder_enabled():
+            raise HTTPException(status_code=400, detail='התוכנית אינה זמינה כרגע')
+        founder_count = await db.subscriptions.count_documents(
+            {"plan_id": "founder_6m", "status": {"$in": ["active", "past_due"]}}
+        )
+        if founder_count >= FOUNDER_MAX_SLOTS:
+            raise HTTPException(status_code=409, detail='התוכנית מלאה')
+        active_projects = await db.project_billing.count_documents(
+            {"org_id": org_id, "status": "active"}
+        )
+        if active_projects > 1:
+            raise HTTPException(status_code=400, detail='מוגבלת לפרויקט אחד')
+        pending_plan_id = 'founder_6m'
+        amount = 500
+    else:
+        pending_plan_id = 'standard'
+        from contractor_ops.billing import compute_org_billing_amount
+        billing_result = await compute_org_billing_amount(org_id, cycle)
+        amount = billing_result['amount_ils']
+
     if not amount or amount <= 0:
         raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
     # === SANDBOX TEST OVERRIDE — REMOVE BEFORE GO-LIVE ===
@@ -99,7 +205,6 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
     if not billing_email:
         user_doc = await db.users.find_one({'id': user['id']}, {'_id': 0, 'email': 1})
         billing_email = user_doc.get('email', '') if user_doc else ''
-    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
     if sub and sub.get('payplus_page_request_uid') and sub.get('checkout_created_at'):
         created = sub['checkout_created_at']
         if isinstance(created, str):
@@ -109,7 +214,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
                 created = None
         if created and datetime.now(timezone.utc) - created < timedelta(minutes=30):
             existing_link = sub.get('payplus_payment_link', '')
-            if existing_link:
+            if existing_link and sub.get('pending_plan_id') == pending_plan_id:
                 logger.info("[PAYPLUS] Returning existing pending checkout for org=%s", org_id)
                 return {
                     'payment_page_link': existing_link,
@@ -118,7 +223,8 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
                     'cycle': cycle,
                 }
     cycle_he = 'שנתי' if cycle == 'yearly' else 'חודשי'
-    plan_name = f"מנוי BrikOps — {cycle_he} — {org_name}"
+    plan_label = 'מייסדים' if pending_plan_id == 'founder_6m' else cycle_he
+    plan_name = f"מנוי BrikOps — {plan_label} — {org_name}"
     try:
         pp_result = await create_payment_page(
             org_id=org_id,
@@ -133,11 +239,10 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         logger.error("[PAYPLUS] Payment page creation failed for org %s: %s", org_id, str(e))
         raise HTTPException(status_code=502, detail=f'שגיאה ביצירת טופס תשלום: {str(e)}')
     now_iso = datetime.now(timezone.utc).isoformat()
-    plan_id = renewal.get('plan_id', body.get('plan_id', ''))
     await db.subscriptions.update_one(
         {'org_id': org_id},
         {'$set': {
-            'pending_plan_id': plan_id,
+            'pending_plan_id': pending_plan_id,
             'pending_cycle': cycle,
             'payplus_page_request_uid': pp_result['page_request_uid'],
             'payplus_payment_link': pp_result['payment_page_link'],
@@ -155,6 +260,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         'payload': {
             'org_id': org_id,
             'cycle': cycle,
+            'plan': pending_plan_id,
             'amount': amount,
             'page_request_uid': pp_result['page_request_uid'],
         },
@@ -165,6 +271,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         'page_request_uid': pp_result['page_request_uid'],
         'amount': amount,
         'cycle': cycle,
+        'plan': pending_plan_id,
     }
 
 
@@ -1302,9 +1409,45 @@ async def billing_webhook_payplus(request: Request):
             }}
         )
         logger.info("[PAYPLUS-WH] Saved token for org=%s last4=%s brand=%s", org_id, card_last4, card_brand)
-    pending_plan_id = sub.get('pending_plan_id', sub.get('plan_id', ''))
+    pending_plan_id = sub.get('pending_plan_id', sub.get('plan_id', 'standard'))
     pending_cycle = sub.get('pending_cycle', sub.get('billing_cycle', 'monthly'))
     amount = verified_tx.get('amount', 0) or body.get('transaction', {}).get('amount', 0)
+
+    if pending_plan_id == 'founder_6m':
+        expected_amount = 500
+    else:
+        expected_amount = sub.get('total_monthly', 0)
+    actual_amount = verified_tx.get('amount', 0)
+    if expected_amount and actual_amount:
+        if abs(actual_amount - expected_amount) > 1:
+            logger.warning(
+                "[PAYPLUS-WH] Amount mismatch expected=%s actual=%s org=%s plan=%s",
+                expected_amount, actual_amount, org_id, pending_plan_id)
+            await db.subscriptions.update_one(
+                {"org_id": org_id},
+                {"$set": {"amount_mismatch": {
+                    "expected": expected_amount,
+                    "actual": actual_amount,
+                    "tx": transaction_uid,
+                    "at": now_iso,
+                }}}
+            )
+
+    from contractor_ops.billing import set_org_plan
+    from config import FOUNDER_MAX_SLOTS
+    if pending_plan_id == 'founder_6m':
+        founder_count = await db.subscriptions.count_documents(
+            {"plan_id": "founder_6m", "status": {"$in": ["active", "past_due"]}}
+        )
+        if founder_count >= FOUNDER_MAX_SLOTS:
+            await set_org_plan(org_id, 'standard', 'payplus_webhook')
+            pending_plan_id = 'standard'
+            logger.warning("[PAYPLUS-WH] Founder slots full, fell back to standard org=%s", org_id)
+        else:
+            await set_org_plan(org_id, 'founder_6m', 'payplus_webhook')
+    else:
+        await set_org_plan(org_id, pending_plan_id if pending_plan_id in ('standard', 'founder_6m') else 'standard', 'payplus_webhook')
+
     if pending_cycle == 'yearly':
         delta = relativedelta(years=1)
     else:
@@ -1329,7 +1472,6 @@ async def billing_webhook_payplus(request: Request):
         {
             '$set': {
                 'status': 'active',
-                'plan_id': pending_plan_id,
                 'billing_cycle': pending_cycle,
                 'paid_until': paid_until,
                 'auto_renew': True,

@@ -365,40 +365,14 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
     now = datetime.now(timezone.utc).isoformat()
 
     if mode == 'standard':
-        await db.project_billing.update_many(
-            {'org_id': org_id, 'status': 'active'},
-            {'$set': {'plan_id': 'standard', 'updated_at': now}},
-        )
-        await db.subscriptions.update_one(
-            {'org_id': org_id},
-            {'$unset': {'manual_override.total_monthly': ''}, '$set': {'updated_at': now}},
-        )
-        new_total = await recalc_org_total(org_id)
+        from contractor_ops.billing import set_org_plan
+        await set_org_plan(org_id, 'standard', user['id'])
+        refreshed_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'total_monthly': 1})
+        new_total = refreshed_sub.get('total_monthly', 0) if refreshed_sub else 0
 
     elif mode == 'founder':
-        all_pbs = await db.project_billing.find(
-            {'org_id': org_id, 'status': 'active'},
-            {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
-        ).to_list(1000)
-        sorted_pbs = sorted(all_pbs, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
-        for idx, pb in enumerate(sorted_pbs):
-            mt = 500 if idx == 0 else 0
-            lf = 500 if idx == 0 else 0
-            await db.project_billing.update_one(
-                {'id': pb['id']},
-                {'$set': {
-                    'plan_id': 'founder_6m',
-                    'monthly_total': mt,
-                    'license_fee': lf,
-                    'units_fee': 0,
-                    'price_per_unit': PRICE_PER_UNIT,
-                    'updated_at': now,
-                }},
-            )
-        await db.subscriptions.update_one(
-            {'org_id': org_id},
-            {'$unset': {'manual_override.total_monthly': ''}, '$set': {'total_monthly': 500, 'updated_at': now}},
-        )
+        from contractor_ops.billing import set_org_plan
+        await set_org_plan(org_id, 'founder_6m', user['id'])
         new_total = 500
 
     else:
@@ -450,6 +424,41 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
     })
 
     return {'ok': True, 'mode': mode, 'total_monthly': new_total}
+
+
+@router.patch("/admin/config/founder-plan")
+async def admin_toggle_founder(request: Request, user: dict = Depends(require_super_admin)):
+    body = await request.json()
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled must be boolean")
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    await db.app_config.update_one(
+        {"key": "founder_plan_enabled"},
+        {"$set": {"value": enabled, "updated_at": now}},
+        upsert=True,
+    )
+    founder_count = await db.subscriptions.count_documents(
+        {"plan_id": "founder_6m", "status": {"$in": ["active", "past_due"]}}
+    )
+    return {"ok": True, "enabled": enabled, "active_founder_count": founder_count}
+
+
+@router.get("/admin/config/founder-plan")
+async def admin_get_founder_config(user: dict = Depends(require_super_admin)):
+    from contractor_ops.billing import is_founder_enabled
+    from config import FOUNDER_MAX_SLOTS
+    db = get_db()
+    enabled = await is_founder_enabled()
+    founder_count = await db.subscriptions.count_documents(
+        {"plan_id": "founder_6m", "status": {"$in": ["active", "past_due"]}}
+    )
+    return {
+        "enabled": enabled,
+        "active_founder_count": founder_count,
+        "max_slots": FOUNDER_MAX_SLOTS,
+    }
 
 
 @router.get("/admin/billing/migration/dry-run")

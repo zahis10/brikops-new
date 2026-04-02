@@ -568,6 +568,15 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
     if existing:
         raise ValueError('כבר קיים רשומת חיוב לפרויקט זה')
 
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'plan_id': 1})
+    if sub and sub.get('plan_id') == 'founder_6m':
+        active = await db.project_billing.count_documents(
+            {'org_id': org_id, 'status': 'active'})
+        if active >= 1:
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=400,
+                detail='תוכנית מייסדים מוגבלת לפרויקט אחד. שדרג לתוכנית רגילה להוספת פרויקטים.')
+
     proj_index = 1
     if plan_id:
         active_count = await db.project_billing.count_documents(
@@ -1132,6 +1141,100 @@ async def get_billing_for_project(project_id: str) -> dict:
         } if pb else None,
     }
     return result
+
+
+async def is_founder_enabled():
+    db = get_db()
+    db_val = await db.app_config.find_one({"key": "founder_plan_enabled"})
+    if db_val is not None:
+        return db_val.get("value", True)
+    from config import FOUNDER_PLAN_ENABLED
+    return FOUNDER_PLAN_ENABLED
+
+
+async def set_org_plan(org_id: str, plan: str, actor_id: str):
+    from contractor_ops.billing_plans import PRICE_PER_UNIT
+    db = get_db()
+    now = _now()
+
+    if plan == 'founder_6m':
+        from dateutil.relativedelta import relativedelta
+        locked_until = (datetime.now(timezone.utc) + relativedelta(months=6)).isoformat()
+
+        await db.subscriptions.update_one(
+            {'org_id': org_id},
+            {
+                '$set': {
+                    'plan_id': 'founder_6m',
+                    'total_monthly': 500,
+                    'plan_locked_until': locked_until,
+                    'updated_at': now,
+                },
+                '$unset': {
+                    'manual_override.total_monthly': '',
+                    'pending_plan_id': '',
+                },
+            },
+            upsert=True,
+        )
+
+        all_pbs = await db.project_billing.find(
+            {'org_id': org_id, 'status': 'active'},
+            {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
+        ).to_list(1000)
+        sorted_pbs = sorted(all_pbs, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
+        for idx, pb in enumerate(sorted_pbs):
+            mt = 500 if idx == 0 else 0
+            lf = 500 if idx == 0 else 0
+            await db.project_billing.update_one(
+                {'id': pb['id']},
+                {'$set': {
+                    'plan_id': 'founder_6m',
+                    'monthly_total': mt,
+                    'license_fee': lf,
+                    'units_fee': 0,
+                    'price_per_unit': PRICE_PER_UNIT,
+                    'updated_at': now,
+                }},
+            )
+
+    elif plan == 'standard':
+        await db.subscriptions.update_one(
+            {'org_id': org_id},
+            {
+                '$set': {
+                    'plan_id': 'standard',
+                    'updated_at': now,
+                },
+                '$unset': {
+                    'manual_override.total_monthly': '',
+                    'plan_locked_until': '',
+                    'pending_plan_id': '',
+                },
+            },
+            upsert=True,
+        )
+        await db.project_billing.update_many(
+            {'org_id': org_id, 'status': 'active'},
+            {'$set': {'plan_id': 'standard', 'updated_at': now}},
+        )
+        await recalc_org_total(org_id)
+
+    else:
+        logger.warning("[set_org_plan] Unknown plan '%s' for org=%s", plan, org_id)
+        return
+
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'billing',
+        'entity_type': 'subscription',
+        'entity_id': org_id,
+        'action': 'plan_activated',
+        'actor_id': actor_id,
+        'payload': {'org_id': org_id, 'plan': plan},
+        'created_at': now,
+    })
+    logger.info("[set_org_plan] org=%s plan=%s actor=%s", org_id, plan, actor_id)
 
 
 async def recalc_org_total(org_id: str):

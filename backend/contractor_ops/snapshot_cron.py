@@ -242,9 +242,25 @@ async def cron_daily_snapshots(request: Request):
             logger.warning(f"[SNAPSHOT-CRON] Bulk insert error: {e} — nInserted={created_count}")
 
     logger.info(f"[SNAPSHOT-CRON] date={today} created={created_count} skipped={len(existing_ids)}")
+
+    founder_expired_count = 0
+    try:
+        expired_founders = await db.subscriptions.find(
+            {"plan_id": "founder_6m", "plan_locked_until": {"$lt": now_utc}},
+            {"_id": 0, "org_id": 1}
+        ).to_list(100)
+        for ef in expired_founders:
+            from contractor_ops.billing import set_org_plan
+            await set_org_plan(ef['org_id'], "standard", "system")
+            logger.info("[CRON] Founder expired org=%s", ef['org_id'])
+            founder_expired_count += 1
+    except Exception as e:
+        logger.warning("[CRON] Founder expiry check failed: %s", e)
+
     logger.info(f"[SNAPSHOT] completed in {time.monotonic()-snap_start:.1f}s")
     return {
         "date": today,
         "snapshots_created": created_count,
         "skipped": len(existing_ids),
+        "founder_expired": founder_expired_count,
     }
