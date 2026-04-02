@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { billingService } from '../services/api';
 import { formatCurrency } from '../utils/billingLabels';
 import { toast } from 'sonner';
-import { Loader2, Check, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { Loader2, Check, ChevronDown, ChevronUp, Info, CreditCard } from 'lucide-react';
 const LICENSE_FIRST = 900;
 const LICENSE_ADDITIONAL = 450;
 const PRICE_PER_UNIT = 20;
@@ -70,19 +70,14 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
   const handleFounderSubmit = async () => {
     setSaving(true);
     try {
-      const cycle = renewalCycle || 'monthly';
-      const paymentResult = await billingService.createPaymentRequest(orgId, cycle, '', '');
-      setResult(paymentResult);
-      if (paymentResult.existing_open) {
-        toast('כבר קיימת בקשת תשלום פתוחה — עדכנו את התמחור', { icon: 'ℹ️' });
+      const result = await billingService.checkout(orgId, renewalCycle || 'monthly', 'founder');
+      if (result.payment_page_link) {
+        window.location.href = result.payment_page_link;
       } else {
-        toast.success('בקשת התשלום נשלחה בהצלחה');
+        toast.error('לא התקבל קישור תשלום');
       }
-      onPaymentRequested?.(paymentResult);
-      setStep(4);
     } catch (err) {
-      const detail = err.response?.data?.detail || 'שגיאה בשליחת הבקשה';
-      toast.error(detail);
+      toast.error(err.response?.data?.detail || 'שגיאה ביצירת טופס תשלום');
     } finally {
       setSaving(false);
     }
@@ -147,29 +142,15 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
           </div>
         </div>
 
-        {step === 4 && result ? (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
-            <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
-              <Check className="w-4 h-4" />
-              <span>בקשת התשלום נשלחה בהצלחה</span>
-            </div>
-            <div className="text-xs text-slate-600 space-y-1">
-              <div>מזהה בקשה: <span className="font-mono">{result.request_id?.slice(0, 8)}...</span></div>
-              {result.amount_ils != null && (
-                <div>סכום: <span className="font-bold">₪{result.amount_ils}</span></div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={handleFounderSubmit}
-            disabled={saving}
-            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
-          >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            שלח בקשת תשלום — תוכנית מייסדים
-          </button>
-        )}
+        <button
+          onClick={handleFounderSubmit}
+          disabled={saving}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+          {saving ? 'מעביר לתשלום...' : 'שלם באשראי — תוכנית מייסדים'}
+        </button>
+        <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
       </div>
     );
   }
