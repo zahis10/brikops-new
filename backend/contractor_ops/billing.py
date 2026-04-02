@@ -1050,6 +1050,8 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         'payment_config': payment_config,
         'subscription': {
             'status': effective_sub.get('status'),
+            'plan_id': effective_sub.get('plan_id'),
+            'plan_locked_until': effective_sub.get('plan_locked_until'),
             'trial_end_at': effective_sub.get('trial_end_at'),
             'paid_until': effective_sub.get('paid_until'),
             'billing_email': effective_sub.get('billing_email'),
