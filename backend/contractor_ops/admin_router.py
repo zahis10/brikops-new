@@ -414,10 +414,23 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
                 'updated_at': now,
             }},
         )
-        await db.project_billing.update_many(
+        all_pbs = await db.project_billing.find(
             {'org_id': org_id, 'status': 'active'},
-            {'$set': {'plan_id': 'standard', 'updated_at': now}},
-        )
+            {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
+        ).to_list(1000)
+        sorted_pbs = sorted(all_pbs, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
+        for idx, pb in enumerate(sorted_pbs):
+            mt = custom_amount if idx == 0 else 0
+            await db.project_billing.update_one(
+                {'id': pb['id']},
+                {'$set': {
+                    'plan_id': '',
+                    'monthly_total': mt,
+                    'license_fee': mt,
+                    'units_fee': 0,
+                    'updated_at': now,
+                }},
+            )
         new_total = custom_amount
 
     await db.audit_events.insert_one({
