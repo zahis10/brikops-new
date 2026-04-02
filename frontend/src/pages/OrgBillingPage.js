@@ -1069,11 +1069,8 @@ export default function OrgBillingPage() {
         <div ref={renewRef} id="renew" className="bg-white rounded-xl border-2 border-amber-200 p-6 space-y-5 transition-all duration-300" style={{ scrollMarginTop: '1rem' }}>
           <div className="space-y-1">
             <h2 className="text-lg font-semibold text-slate-800">
-              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי מראש'}
+              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי'}
             </h2>
-            <p className="text-xs text-slate-500">
-              בקרוב — חידוש עצמי באשראי. בינתיים אפשר לשלוח בקשת תשלום.
-            </p>
           </div>
 
           {needsUpgrade && (
@@ -1126,6 +1123,19 @@ export default function OrgBillingPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
             </div>
+            {(() => {
+              const totalMonthly = sub?.total_monthly || 0;
+              const currentPaidUntil = sub?.paid_until ? new Date(sub.paid_until) : new Date();
+              const baseDate = currentPaidUntil > new Date() ? currentPaidUntil : new Date();
+              const nextDate = new Date(baseDate);
+              nextDate.setMonth(nextDate.getMonth() + 1);
+              const formatted = nextDate.toLocaleDateString('he-IL');
+              return totalMonthly > 0 ? (
+                <p className="text-sm text-slate-600 text-center">
+                  {`\u200F\u05DC\u05D0\u05D7\u05E8 \u05EA\u05E9\u05DC\u05D5\u05DD ${totalMonthly.toLocaleString()}\u20AA \u05D4\u05DE\u05E0\u05D5\u05D9 \u05D9\u05D4\u05D9\u05D4 \u05D1\u05EA\u05D5\u05E7\u05E3 \u05E2\u05D3 ${formatted}`}
+                </p>
+              ) : null;
+            })()}
             <button
               disabled={checkoutLoading}
               onClick={async () => {
@@ -1146,7 +1156,7 @@ export default function OrgBillingPage() {
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-              {checkoutLoading ? 'מעביר לתשלום...' : 'שלם באשראי'}
+              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.total_monthly || 0).toLocaleString()}`}
             </button>
             <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
           </div>
@@ -1723,7 +1733,7 @@ export default function OrgBillingPage() {
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
         <div className="flex items-center gap-2">
           <FileText className="w-5 h-5 text-amber-500" />
-          <h2 className="text-lg font-semibold text-slate-800">חיובים חודשיים</h2>
+          <h2 className="text-lg font-semibold text-slate-800">חשבוניות</h2>
         </div>
 
         {previewLoading ? (

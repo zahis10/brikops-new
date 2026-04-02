@@ -13,6 +13,7 @@ export default function PlanSelector({ plans, onSelect, currentPlan, loading, se
     slots_full: 'התוכנית מלאה',
     too_many_projects: 'מוגבלת לפרויקט אחד',
     disabled: 'התוכנית אינה זמינה',
+    already_subscribed: 'התוכנית זמינה רק לארגונים חדשים',
   };
 
   const isCurrentFounder = currentPlan === 'founder_6m';

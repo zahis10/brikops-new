@@ -665,6 +665,43 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
     current_contracted = existing.get('contracted_units', 0)
     unit_change_type = None
 
+    org_id = existing.get('org_id')
+    founder_sub = await db.subscriptions.find_one(
+        {'org_id': org_id}, {'_id': 0, 'plan_id': 1}
+    )
+    is_founder = founder_sub and founder_sub.get('plan_id') == 'founder_6m'
+
+    if is_founder and 'contracted_units' in updates:
+        new_units = updates['contracted_units']
+        observed = await compute_observed_units(existing['project_id'])
+        peak = max(existing.get('cycle_peak_units', current_contracted), new_units, observed)
+        await db.project_billing.update_one(
+            {'id': project_billing_id},
+            {'$set': {
+                'contracted_units': new_units,
+                'observed_units': observed,
+                'cycle_peak_units': peak,
+                'updated_at': ts,
+            }}
+        )
+        await db.audit_events.insert_one({
+            'id': str(uuid.uuid4()),
+            'event_type': 'billing',
+            'entity_type': 'project_billing',
+            'entity_id': project_billing_id,
+            'action': 'contracted_units_changed',
+            'actor_id': actor_id,
+            'created_at': ts,
+            'payload': {
+                'project_id': existing['project_id'],
+                'org_id': org_id,
+                'before': {'contracted_units': current_contracted},
+                'after': {'contracted_units': new_units},
+                'note': 'founder plan — pricing unchanged',
+            },
+        })
+        return await db.project_billing.find_one({'id': project_billing_id}, {'_id': 0})
+
     if 'contracted_units' in updates:
         requested_units = updates['contracted_units']
         if requested_units > current_contracted:

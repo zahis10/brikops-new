@@ -86,7 +86,23 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
     )
 
     founder_enabled = await is_founder_enabled()
-    founder_available = founder_enabled and slots_remaining > 0 and org_project_count <= 1
+
+    sub = await db.subscriptions.find_one(
+        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1, "last_payment_at": 1}
+    )
+    has_payment_history = bool(
+        sub and (
+            sub.get("plan_locked_until") or
+            sub.get("last_payment_at")
+        )
+    )
+
+    founder_available = (
+        founder_enabled and
+        slots_remaining > 0 and
+        org_project_count <= 1 and
+        not has_payment_history
+    )
 
     reason = None
     if not founder_enabled:
@@ -95,10 +111,8 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
         reason = "slots_full"
     elif org_project_count > 1:
         reason = "too_many_projects"
-
-    sub = await db.subscriptions.find_one(
-        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1}
-    )
+    elif has_payment_history:
+        reason = "already_subscribed"
     founder_expiry_warning = False
     founder_days_remaining = None
     if sub and sub.get("plan_id") == "founder_6m" and sub.get("plan_locked_until"):
@@ -169,6 +183,8 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
             sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
 
     if plan == 'founder':
+        if sub and (sub.get('plan_locked_until') or sub.get('last_payment_at')):
+            raise HTTPException(status_code=400, detail='תוכנית מייסדים זמינה רק לארגונים חדשים')
         if not await is_founder_enabled():
             raise HTTPException(status_code=400, detail='התוכנית אינה זמינה כרגע')
         founder_count = await db.subscriptions.count_documents(
@@ -1455,18 +1471,25 @@ async def billing_webhook_payplus(request: Request):
     current_paid = sub.get('paid_until')
     now_utc = datetime.now(timezone.utc)
     if current_paid:
-        try:
-            base = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
-            if base.tzinfo is None:
-                base = base.replace(tzinfo=timezone.utc)
-        except Exception:
-            base = now_utc
-        if base > now_utc:
-            paid_until = (base + delta).isoformat()
+        if isinstance(current_paid, str):
+            try:
+                base_date = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
+            except Exception:
+                base_date = now_utc
+        elif isinstance(current_paid, datetime):
+            base_date = current_paid
         else:
-            paid_until = (now_utc + delta).isoformat()
+            base_date = now_utc
+        if hasattr(base_date, 'tzinfo') and base_date.tzinfo is None:
+            base_date = base_date.replace(tzinfo=timezone.utc)
+        base_date = max(base_date, now_utc)
     else:
-        paid_until = (now_utc + delta).isoformat()
+        base_date = now_utc
+    paid_until = (base_date + delta).replace(
+        hour=23, minute=59, second=59, microsecond=0
+    ).isoformat()
+    logger.info("[PAYPLUS-WH] paid_until calc: current=%s base=%s new=%s",
+        current_paid, base_date, paid_until)
     await db.subscriptions.update_one(
         {'org_id': org_id},
         {
