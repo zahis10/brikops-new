@@ -146,10 +146,13 @@ async def charge_token(
 
 async def get_transaction(transaction_uid: str) -> dict:
     url = f"{_base_url()}/Transactions/{transaction_uid}/Check"
+    payload = {"terminal_uid": PAYPLUS_TERMINAL_UID}
+    headers = _auth_headers()
+    logger.info("[PAYPLUS] Check request: url=%s body_keys=%s", url, list(payload.keys()))
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=_auth_headers(), json={})
+            resp = await client.post(url, headers=headers, json=payload)
     except Exception as e:
         logger.error("[PAYPLUS] get_transaction failed tx=%s: %s", transaction_uid, e)
         raise PayPlusError(f"PayPlus get transaction error: {e}")
