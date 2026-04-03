@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BrikOps</string>
+    <string name="title_activity_main">BrikOps</string>
+    <string name="package_name">com.brikops.app</string>
+    <string name="custom_url_scheme">com.brikops.app</string>
+</resources>
