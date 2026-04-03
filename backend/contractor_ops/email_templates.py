@@ -30,7 +30,7 @@ def wrap_email(body_html: str, signature_type: str = 'default') -> str:
         <table dir="rtl" cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif;">
             <tr>
                 <td style="padding-left: 16px; vertical-align: top;">
-                    <img src="https://app.brikops.com/logo.png" alt="BrikOps" width="150" style="display: block; max-width: 150px; height: auto;">
+                    <img src="https://app.brikops.com/logo-dark.png" alt="BrikOps" width="150" style="display: block; max-width: 150px; height: auto;">
                 </td>
                 <td style="vertical-align: top; padding-top: 2px;">
                     <p style="margin: 0 0 2px 0; font-size: 15px; font-weight: bold; color: #1a1a2e;">{sig['name']}</p>
