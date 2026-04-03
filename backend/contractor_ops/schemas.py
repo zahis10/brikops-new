@@ -123,7 +123,7 @@ class UpdateType(str, Enum):
 class Project(BaseModel):
     id: Optional[str] = None
     name: str
-    code: str
+    code: Optional[str] = None
     description: Optional[str] = None
     status: ProjectStatus = ProjectStatus.active
     client_name: Optional[str] = None
