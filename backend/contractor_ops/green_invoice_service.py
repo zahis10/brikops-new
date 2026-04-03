@@ -225,11 +225,8 @@ async def create_document(
             "emails": [client_email] if client_email else [],
             "add": True,
         }
-    # TEMP TEST - remove after one payment
-    doc_type = 320
-    logger.info("[GI] TEMP: Overriding type to %s for test", doc_type)
     payload = {
-        "type": doc_type,
+        "type": 320,
         "lang": "he",
         "currency": currency,
         "vatType": 0,
@@ -258,7 +255,7 @@ async def create_document(
     if remarks:
         payload["remarks"] = remarks
 
-    logger.info("[GI] Creating document (type 305): amount=%.2f %s client_id=%s client_name=%s",
+    logger.info("[GI] Creating document (type 320): amount=%.2f %s client_id=%s client_name=%s",
                 amount, currency, client_id or "inline", client_name)
     logger.info("[GI] Outgoing payload: %s", json.dumps(payload, ensure_ascii=False))
     result = await _request("POST", "/documents", json_body=payload)
