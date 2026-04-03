@@ -90,8 +90,9 @@ def _send_email(to_email: str, code: str) -> dict:
         <p style="color: #666; font-size: 13px;">תוקף: {STEPUP_TTL_SECONDS // 60} דקות. אל תשתף קוד זה.</p>
     </div>
     '''
+    from contractor_ops.email_templates import wrap_email
     msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
-    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+    msg.attach(MIMEText(wrap_email(html_body, 'default'), 'html', 'utf-8'))
 
     try:
         logger.info(f"[SMTP-CONNECT] host={SMTP_HOST} port={SMTP_PORT} user={SMTP_USER[:4]}*** from={SMTP_FROM}")

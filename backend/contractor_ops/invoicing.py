@@ -238,8 +238,6 @@ async def send_invoice_email(org_id: str, invoice: dict):
             <a href="{gi_download_url}" style="display: inline-block; background: #f57c00; color: #ffffff; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: bold; font-size: 16px;">הורד חשבונית</a>
         </div>
         <p style="color: #666; font-size: 13px;">החשבונית זמינה גם בדף החשבוניות באפליקציה.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
-        <p style="color: #999; font-size: 12px; text-align: center;">BrikOps — ניהול ליקויי בנייה</p>
     </div>
     '''
 
@@ -250,8 +248,9 @@ async def send_invoice_email(org_id: str, invoice: dict):
     msg['To'] = to_email
     msg['Reply-To'] = 'zahi@brikops.com'
     msg['Subject'] = subject
+    from contractor_ops.email_templates import wrap_email
     msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
-    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+    msg.attach(MIMEText(wrap_email(html_body, 'invoice'), 'html', 'utf-8'))
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:

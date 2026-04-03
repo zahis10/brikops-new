@@ -889,8 +889,9 @@ def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str,
         <p style="color: #666; font-size: 13px;">הלקוח חויב בהצלחה אך המנוי לא עודכן. היכנס לפאנל ניהול ולחץ <b>"Resolve"</b> כדי לתקן.</p>
     </div>
     '''
+    from contractor_ops.email_templates import wrap_email
     msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
-    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+    msg.attach(MIMEText(wrap_email(html_body, 'default'), 'html', 'utf-8'))
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:

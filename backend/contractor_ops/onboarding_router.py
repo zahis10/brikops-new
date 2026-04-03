@@ -1515,12 +1515,11 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             </div>
             <p style="color: #666; font-size: 13px;">הקישור תקף ל-{RESET_TOKEN_TTL_MINUTES} דקות.</p>
             <p style="color: #666; font-size: 13px;">אם לא ביקשת איפוס סיסמה, ניתן להתעלם מהודעה זו.</p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
-            <p style="color: #999; font-size: 11px;">צוות BrikOps</p>
         </div>
         '''
+        from contractor_ops.email_templates import wrap_email
         msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
-        msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+        msg.attach(MIMEText(wrap_email(html_body, 'default'), 'html', 'utf-8'))
 
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
