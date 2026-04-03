@@ -2,6 +2,9 @@ import re
 import uuid
 import logging
 import calendar
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
@@ -9,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 INVOICE_DUE_DAYS = 7
 GRACE_DAYS = 7
+
+HEBREW_MONTHS = {
+    1: "ינואר", 2: "פברואר", 3: "מרץ", 4: "אפריל",
+    5: "מאי", 6: "יוני", 7: "יולי", 8: "אוגוסט",
+    9: "ספטמבר", 10: "אוקטובר", 11: "נובמבר", 12: "דצמבר",
+}
 
 VALID_INVOICE_STATUSES = {'draft', 'issued', 'paid', 'past_due', 'void'}
 
@@ -167,6 +176,95 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
     return gi_document_id
 
 
+async def send_invoice_email(org_id: str, invoice: dict):
+    from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+    if not SMTP_USER or not SMTP_PASS:
+        logger.warning("[INVOICE-EMAIL] SMTP not configured — skipping")
+        return
+
+    db = get_db()
+    period_ym = invoice.get('period_ym', '')
+    gi_download_url = invoice.get('gi_download_url', '')
+    total_amount = invoice.get('total_amount', 0)
+
+    if not gi_download_url:
+        logger.info("[INVOICE-EMAIL] No GI URL — skipping email for org=%s", org_id)
+        return
+
+    try:
+        m = _PERIOD_RE.match(period_ym)
+        year = int(m.group(1)) if m else datetime.now(timezone.utc).year
+        month = int(m.group(2)) if m else datetime.now(timezone.utc).month
+    except Exception:
+        year = datetime.now(timezone.utc).year
+        month = datetime.now(timezone.utc).month
+    hebrew_month = HEBREW_MONTHS.get(month, str(month))
+
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1, 'manager_id': 1, 'billing': 1})
+    if not org:
+        logger.warning("[INVOICE-EMAIL] Org not found org=%s", org_id)
+        return
+
+    manager_id = org.get('manager_id', '')
+    owner = None
+    if manager_id:
+        owner = await db.users.find_one({'id': manager_id}, {'_id': 0, 'email': 1, 'name': 1})
+    if not owner:
+        owner = await db.users.find_one({'org_id': org_id, 'role': {'$in': ['owner', 'admin']}}, {'_id': 0, 'email': 1, 'name': 1})
+    if not owner or not owner.get('email'):
+        logger.warning("[INVOICE-EMAIL] No owner email found for org=%s", org_id)
+        return
+
+    to_email = owner['email']
+    owner_name = owner.get('name', '')
+
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'plan_id': 1})
+    plan_id = sub.get('plan_id', 'standard') if sub else 'standard'
+    plan_names = {'standard': 'רישיון פרויקט', 'founder_6m': 'מייסדים'}
+    plan_name = plan_names.get(plan_id, plan_id)
+
+    subject = f"החשבונית שלך מ-BrikOps — {hebrew_month} {year}"
+
+    html_body = f'''
+    <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; background: #ffffff;">
+        <h2 style="color: #1a1a2e; margin-bottom: 24px;">BrikOps</h2>
+        <p>שלום {owner_name},</p>
+        <p>החשבונית שלך עבור חודש {hebrew_month} {year} מוכנה.</p>
+        <div style="background: #f8f9fa; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <p style="margin: 4px 0;"><strong>סכום:</strong> ₪{total_amount:,.0f} (כולל מע״מ)</p>
+            <p style="margin: 4px 0;"><strong>תוכנית:</strong> {plan_name}</p>
+        </div>
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{gi_download_url}" style="display: inline-block; background: #f57c00; color: #ffffff; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: bold; font-size: 16px;">הורד חשבונית</a>
+        </div>
+        <p style="color: #666; font-size: 13px;">החשבונית זמינה גם בדף החשבוניות באפליקציה.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+        <p style="color: #999; font-size: 12px; text-align: center;">BrikOps — ניהול ליקויי בנייה</p>
+    </div>
+    '''
+
+    text_body = f"שלום {owner_name},\nהחשבונית שלך עבור חודש {hebrew_month} {year} מוכנה.\nסכום: ₪{total_amount:,.0f} (כולל מע״מ)\nתוכנית: {plan_name}\nהורד חשבונית: {gi_download_url}"
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = 'BrikOps <invoice@brikops.com>'
+    msg['To'] = to_email
+    msg['Reply-To'] = 'zahi@brikops.com'
+    msg['Subject'] = subject
+    msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail('invoice@brikops.com', to_email, msg.as_string())
+        logger.info("[INVOICE-EMAIL] Sent to %s for org=%s period=%s", to_email, org_id, period_ym)
+    except Exception as e:
+        logger.warning("[INVOICE-EMAIL] SMTP failed for org=%s: %s", org_id, e)
+
+
 async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_until: str = "", card_last4: str = "", override_amount: float = None) -> dict:
     year, month = validate_period_ym(period_ym)
     db = get_db()
@@ -282,8 +380,16 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
         gi_document_id = await _try_create_gi_document(db, org_id, invoice_id, final_amount, period_ym, paid_until=paid_until, card_last4=card_last4)
         if gi_document_id:
             invoice_doc['gi_document_id'] = gi_document_id
+            gi_inv = await db.invoices.find_one({'id': invoice_id}, {'_id': 0, 'gi_download_url': 1})
+            if gi_inv and gi_inv.get('gi_download_url'):
+                invoice_doc['gi_download_url'] = gi_inv['gi_download_url']
     except Exception as e:
         logger.warning("[INVOICING:GI] FAILED for invoice %s: %s", invoice_id, str(e))
+
+    try:
+        await send_invoice_email(org_id, invoice_doc)
+    except Exception as e:
+        logger.warning("[INVOICE-EMAIL] Failed for org=%s: %s", org_id, e)
 
     logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={final_amount}, paid_until={period_end}")
     return invoice_doc
