@@ -951,6 +951,20 @@ async def _deferred_db_init():
     if APP_MODE == 'prod' and (not STEPUP_EMAIL or not SMTP_USER or not SMTP_PASS):
         logger.warning("[STARTUP] WARNING: STEPUP_EMAIL/SMTP_USER/SMTP_PASS not configured — step-up auth will fail!")
 
+    try:
+        from config import GI_BASE_URL
+        if GI_BASE_URL:
+            from contractor_ops.green_invoice_service import _request as gi_request
+            logger.info("[GI-DEBUG] Checking business types...")
+            types_resp = await gi_request("GET", "/businesses/types")
+            logger.info("[GI-DEBUG] types response: %s", types_resp)
+            numbering_resp = await gi_request("GET", "/businesses/numbering")
+            logger.info("[GI-DEBUG] numbering response: %s", numbering_resp)
+        else:
+            logger.info("[GI-DEBUG] GI not configured — skipping business check")
+    except Exception as e:
+        logger.warning("[GI-DEBUG] Business check failed (non-fatal): %s", e)
+
     run_seed = os.environ.get('RUN_SEED', '').lower() == 'true'
     if run_seed and APP_MODE == 'dev':
         logger.warning("[SEED] RUN_SEED=true detected in dev mode — running seed_super_admin_user()")
