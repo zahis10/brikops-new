@@ -1431,11 +1431,6 @@ async def billing_webhook_payplus(request: Request):
         logger.info("[PAYPLUS-WH] Duplicate webhook tx=%s org=%s — skipping", transaction_uid, org_id)
         await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'duplicate'}})
         return {"status": "ok"}
-    logger.info("[PAYPLUS-WH] body keys=%s", list(body.keys()))
-    logger.info("[PAYPLUS-WH] tx keys=%s values=%s", list(verified_tx.keys()), {k: v for k, v in verified_tx.items() if k in ('four_digits', 'credit_card_four_digits', 'last_4_digits', 'number', 'card_number', 'card_four_digits', 'credit_card_number', 'card_num', 'last4')})
-    logger.info("[PAYPLUS-WH] credit_terms=%s", verified_tx.get("credit_terms"))
-    logger.info("[PAYPLUS-WH] number=%s type=%s", verified_tx.get("number"), type(verified_tx.get("number")))
-    logger.info("[PAYPLUS-WH] data=%s", body.get("data"))
     card_info = body.get("data", {}).get("card_information", {})
     card_last4 = card_info.get("four_digits", "") or verified_tx.get('four_digits', '')
     if not card_last4 and PAYPLUS_ENV != "production":

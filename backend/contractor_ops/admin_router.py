@@ -1187,15 +1187,4 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
     return doc
 
 
-@router.get("/debug/gi-config")
-async def debug_gi_config(user: dict = Depends(require_super_admin)):
-    from contractor_ops.green_invoice_service import _request
-    try:
-        types_resp = await _request("GET", "/businesses/types")
-    except Exception as e:
-        types_resp = {"error": str(e)}
-    try:
-        numbering_resp = await _request("GET", "/businesses/numbering")
-    except Exception as e:
-        numbering_resp = {"error": str(e)}
-    return {"types": types_resp, "numbering": numbering_resp}
+
