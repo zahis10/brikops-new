@@ -1436,19 +1436,25 @@ async def billing_webhook_payplus(request: Request):
     logger.info("[PAYPLUS-WH] credit_terms=%s", verified_tx.get("credit_terms"))
     logger.info("[PAYPLUS-WH] number=%s type=%s", verified_tx.get("number"), type(verified_tx.get("number")))
     logger.info("[PAYPLUS-WH] data=%s", body.get("data"))
-    token_uid = verified_tx.get('token_uid', '')
-    card_last4 = verified_tx.get('four_digits', '')
+    card_info = body.get("data", {}).get("card_information", {})
+    card_last4 = card_info.get("four_digits", "") or verified_tx.get('four_digits', '')
     if not card_last4 and PAYPLUS_ENV != "production":
         card_last4 = "1234"
-    card_brand = verified_tx.get('brand_name', '')
+    card_brand = card_info.get("brand_name", "") or verified_tx.get('brand_name', '')
+    card_token = card_info.get("token", "")
+    token_uid = verified_tx.get('token_uid', '') or card_token
+    logger.info("[PAYPLUS-WH] card_info: last4=%s brand=%s token=%s", card_last4, card_brand, bool(card_token))
     if token_uid:
+        update_fields = {
+            'billing.payplus_token_uid': token_uid,
+            'billing.card_last4': card_last4,
+            'billing.card_brand': card_brand,
+        }
+        if card_token:
+            update_fields['billing.payplus_card_token'] = card_token
         await db.organizations.update_one(
             {'id': org_id},
-            {'$set': {
-                'billing.payplus_token_uid': token_uid,
-                'billing.card_last4': card_last4,
-                'billing.card_brand': card_brand,
-            }}
+            {'$set': update_fields}
         )
         logger.info("[PAYPLUS-WH] Saved token for org=%s last4=%s brand=%s", org_id, card_last4, card_brand)
     pending_plan_id = sub.get('pending_plan_id', sub.get('plan_id', 'standard'))
