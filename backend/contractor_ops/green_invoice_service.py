@@ -225,8 +225,11 @@ async def create_document(
             "emails": [client_email] if client_email else [],
             "add": True,
         }
+    # TEMP TEST - remove after one payment
+    doc_type = 320
+    logger.info("[GI] TEMP: Overriding type to %s for test", doc_type)
     payload = {
-        "type": 305,
+        "type": doc_type,
         "lang": "he",
         "currency": currency,
         "vatType": 0,
