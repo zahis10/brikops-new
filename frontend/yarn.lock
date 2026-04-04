@@ -1125,12 +1125,17 @@
     tslib "^2.8.1"
     xml2js "^0.6.2"
 
-"@capacitor/core@^7.6.0", "@capacitor/core@^7.6.1":
+"@capacitor/core@^7.6.0", "@capacitor/core@^7.6.1", "@capacitor/core@>=7.0.0":
   version "7.6.1"
   resolved "https://registry.npmjs.org/@capacitor/core/-/core-7.6.1.tgz"
   integrity sha512-nsNouCMxgYenyemy20sZwZYMtFi93LSZVWm2KqHTYIPIDgwx24+PzwHIdRQBZdK7hpvD5jQEhWuo/QyLLnAyBQ==
   dependencies:
     tslib "^2.1.0"
+
+"@capacitor/status-bar@^7.0.6":
+  version "7.0.6"
+  resolved "https://registry.npmjs.org/@capacitor/status-bar/-/status-bar-7.0.6.tgz"
+  integrity sha512-7AVqj46b26QikImQzWfsJmzG8NUJZBGkrVSuoeTo+SX/YH3hXH0MqwwFgMqMGHfa/BICDgSvTjM9miVFlq0+RQ==
 
 "@craco/craco@^7.1.0":
   version "7.1.0"

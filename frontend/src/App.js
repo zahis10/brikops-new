@@ -11,6 +11,8 @@ import CompleteAccountBanner from './components/CompleteAccountBanner';
 import CompleteAccountModal from './components/CompleteAccountModal';
 import PaywallModal from './components/PaywallModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { Capacitor } from '@capacitor/core';
 import './App.css';
 import './index.css';
 
@@ -455,6 +457,14 @@ const AppRoutes = () => {
 };
 
 function App() {
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      StatusBar.setOverlaysWebView({ overlay: false });
+      StatusBar.setBackgroundColor({ color: '#0F172A' });
+      StatusBar.setStyle({ style: Style.Dark });
+    }
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>
