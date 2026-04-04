@@ -20,7 +20,7 @@ _FONTS_DIR = _BACKEND_DIR / "fonts"
 _BRIKOPS_LOGO_PATH = _BACKEND_DIR / "static" / "logo.png"
 try:
     _BRIKOPS_LOGO_B64 = "data:image/png;base64," + base64.b64encode(_BRIKOPS_LOGO_PATH.read_bytes()).decode()
-except Exception:
+except (OSError, IOError):
     _BRIKOPS_LOGO_B64 = ""
 
 _IMAGE_FETCH_TIMEOUT = 5
