@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from '../components/ui/sheet';
@@ -2979,23 +2979,6 @@ const ProjectControlPage = () => {
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [approvalBannerDismissed, setApprovalBannerDismissed] = useState(false);
 
-  const headerRef = useRef(null);
-  const workTabsRef = useRef(null);
-  const [headerH, setHeaderH] = useState(0);
-  const [workTabsH, setWorkTabsH] = useState(0);
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      if (headerRef.current) setHeaderH(headerRef.current.offsetHeight);
-      if (workTabsRef.current) setWorkTabsH(workTabsRef.current.offsetHeight);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    if (headerRef.current) ro.observe(headerRef.current);
-    if (workTabsRef.current) ro.observe(workTabsRef.current);
-    return () => ro.disconnect();
-  }, []);
-
   const [workMode, setWorkMode] = useState(() => {
     try {
       const urlWorkMode = new URLSearchParams(window.location.search).get('workMode');
@@ -3347,38 +3330,40 @@ const ProjectControlPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-      <header ref={headerRef} className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
-        <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
-          <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
-            <ArrowRight className="w-5 h-5" />
-          </button>
-          <div className="flex-1 min-w-0">
-            <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
+      <div className="sticky top-0 z-50">
+        <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
+          <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+            <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+              <ArrowRight className="w-5 h-5" />
+            </button>
+            <div className="flex-1 min-w-0">
+              <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
+            </div>
+            <NotificationBell />
+            <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
+              <Settings className="w-4 h-4" />
+            </button>
           </div>
-          <NotificationBell />
-          <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
-            <Settings className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
+        </header>
 
-      <div ref={workTabsRef} className="sticky z-40 bg-white border-b border-slate-200" style={{ top: headerH }}>
-        <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
-          {workTabs.map(wt => {
-            const Icon = wt.icon;
-            const isActive = workMode === wt.id;
-            return (
-              <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
-                className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'}`}>
-                <Icon className="w-4 h-4" />
-                {wt.label}
-              </button>
-            );
-          })}
+        <div className="bg-white border-b border-slate-200">
+          <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
+            {workTabs.map(wt => {
+              const Icon = wt.icon;
+              const isActive = workMode === wt.id;
+              return (
+                <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'}`}>
+                  <Icon className="w-4 h-4" />
+                  {wt.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      <div className="sticky z-30 bg-white border-b border-slate-100" style={{ top: headerH + workTabsH }}>
+      <div className="bg-white border-b border-slate-100">
         <div className="max-w-[1100px] mx-auto px-4 py-2 flex gap-2 overflow-x-auto">
           {MGMT_TABS.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
