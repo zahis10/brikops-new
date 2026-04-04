@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from '../components/ui/sheet';
@@ -2984,7 +2984,7 @@ const ProjectControlPage = () => {
   const [headerH, setHeaderH] = useState(0);
   const [workTabsH, setWorkTabsH] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const measure = () => {
       if (headerRef.current) setHeaderH(headerRef.current.offsetHeight);
       if (workTabsRef.current) setWorkTabsH(workTabsRef.current.offsetHeight);
