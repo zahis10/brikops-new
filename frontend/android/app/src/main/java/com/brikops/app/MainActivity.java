@@ -20,7 +20,7 @@ public class MainActivity extends BridgeActivity {
                     insets.left, insets.top,
                     insets.right, insets.bottom
                 );
-                return WindowInsetsCompat.CONSUMED;
+                return windowInsets;
             }
         );
     }
