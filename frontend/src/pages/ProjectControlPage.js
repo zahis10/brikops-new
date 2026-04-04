@@ -2979,6 +2979,23 @@ const ProjectControlPage = () => {
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [approvalBannerDismissed, setApprovalBannerDismissed] = useState(false);
 
+  const headerRef = useRef(null);
+  const workTabsRef = useRef(null);
+  const [headerH, setHeaderH] = useState(0);
+  const [workTabsH, setWorkTabsH] = useState(0);
+
+  useEffect(() => {
+    const measure = () => {
+      if (headerRef.current) setHeaderH(headerRef.current.offsetHeight);
+      if (workTabsRef.current) setWorkTabsH(workTabsRef.current.offsetHeight);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (headerRef.current) ro.observe(headerRef.current);
+    if (workTabsRef.current) ro.observe(workTabsRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   const [workMode, setWorkMode] = useState(() => {
     try {
       const urlWorkMode = new URLSearchParams(window.location.search).get('workMode');
@@ -3330,7 +3347,7 @@ const ProjectControlPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-      <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
+      <header ref={headerRef} className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
           <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
             <ArrowRight className="w-5 h-5" />
@@ -3345,7 +3362,7 @@ const ProjectControlPage = () => {
         </div>
       </header>
 
-      <div className="sticky z-40 bg-white border-b border-slate-200" style={{ top: 58 }}>
+      <div ref={workTabsRef} className="sticky z-40 bg-white border-b border-slate-200" style={{ top: headerH }}>
         <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
           {workTabs.map(wt => {
             const Icon = wt.icon;
@@ -3361,7 +3378,7 @@ const ProjectControlPage = () => {
         </div>
       </div>
 
-      <div className="sticky z-30 bg-white border-b border-slate-100" style={{ top: 105 }}>
+      <div className="sticky z-30 bg-white border-b border-slate-100" style={{ top: headerH + workTabsH }}>
         <div className="max-w-[1100px] mx-auto px-4 py-2 flex gap-2 overflow-x-auto">
           {MGMT_TABS.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
