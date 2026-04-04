@@ -17,6 +17,12 @@ _BACKEND_DIR = Path(__file__).parent.parent
 _TEMPLATES_DIR = _BACKEND_DIR / "templates"
 _FONTS_DIR = _BACKEND_DIR / "fonts"
 
+_BRIKOPS_LOGO_PATH = _BACKEND_DIR / "static" / "logo.png"
+try:
+    _BRIKOPS_LOGO_B64 = "data:image/png;base64," + base64.b64encode(_BRIKOPS_LOGO_PATH.read_bytes()).decode()
+except Exception:
+    _BRIKOPS_LOGO_B64 = ""
+
 _IMAGE_FETCH_TIMEOUT = 5
 _MAX_IMAGE_WIDTH = 300
 _PHOTO_THUMB_WIDTH = 150
@@ -590,6 +596,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
         "unit_number": snapshot.get("unit_number", ""),
         "company_name": snapshot.get("company_name", ""),
         "logo_b64": images.get("logo"),
+        "brikops_logo_b64": _BRIKOPS_LOGO_B64,
         "signed_date": signed_date,
         "generation_date": generation_date,
         "property_rows": property_rows,

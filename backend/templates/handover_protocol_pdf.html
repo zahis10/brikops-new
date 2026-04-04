@@ -514,6 +514,12 @@ tbody tr:nth-child(odd) {
         {% if unit_name %}<span>דירה: {{ unit_name }}</span>{% endif %}
         {% if signed_date %}<span>תאריך: {{ signed_date }}</span>{% endif %}
     </div>
+
+    {% if brikops_logo_b64 %}
+    <div style="margin-top: 24px;">
+        <img src="{{ brikops_logo_b64 }}" style="height: 30px; opacity: 0.85;" alt="BrikOps" />
+    </div>
+    {% endif %}
 </div>
 
 <!-- Stats bar -->
