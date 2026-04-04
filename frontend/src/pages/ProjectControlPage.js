@@ -78,7 +78,7 @@ const SECONDARY_TABS = [
   { id: 'handover-template', label: 'תבנית מסירה', icon: '🔑' },
 ];
 
-const BILLING_TAB = { id: 'billing', label: 'חיוב', icon: '💳' };
+const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: '💳' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   return (
@@ -3097,7 +3097,7 @@ const ProjectControlPage = () => {
   const defectsV2Enabled = !!features?.defects_v2;
 
   const showBillingTab = billingEnabled && (isBillingViewer || user?.platform_role === 'super_admin');
-  const MGMT_TABS = showBillingTab ? [...SECONDARY_TABS, BILLING_TAB] : SECONDARY_TABS;
+  const MGMT_TABS = showBillingTab ? [...SECONDARY_TABS.slice(0, 2), BILLING_TAB, ...SECONDARY_TABS.slice(2)] : SECONDARY_TABS;
   const VALID_TABS = MGMT_TABS.map(t => t.id);
   const rawTab = searchParams.get('tab') || '';
   const activeTab = VALID_TABS.includes(rawTab) ? rawTab : '';
