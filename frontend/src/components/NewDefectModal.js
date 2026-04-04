@@ -480,11 +480,10 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (!unitId) errs.unit_id = 'חובה';
     if (!category) errs.category = 'חובה';
     if (!title.trim()) errs.title = 'חובה';
-    if (!description.trim()) errs.description = 'חובה';
     if (images.length === 0) errs.images = 'נדרשת לפחות תמונה אחת';
     setErrors(errs);
     return Object.keys(errs).length === 0;
-  }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
+  }, [projectId, buildingId, floorId, unitId, category, title, images]);
 
   const doUploadAndAssign = async (taskId) => {
     setUploadError(null);
@@ -861,7 +860,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               placeholder="בחר קטגוריה"
             />
             <div className="space-y-1" dir="rtl">
-              <label className="block text-sm font-medium text-slate-700">כותרת *</label>
+              <label className="block text-sm font-medium text-slate-700">פירוט ליקוי *</label>
               <input
                 type="text"
                 value={title}
@@ -872,15 +871,14 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               {errors.title && <p className="text-xs text-red-500">{errors.title}</p>}
             </div>
             <div className="space-y-1" dir="rtl">
-              <label className="block text-sm font-medium text-slate-700">תיאור *</label>
+              <label className="block text-sm font-medium text-slate-700">תיאור (אופציונלי)</label>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 placeholder="תאר את הליקוי בפירוט"
                 rows={3}
-                className={`w-full px-3 py-2.5 border rounded-lg text-sm resize-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 ${errors.description ? 'border-red-400' : 'border-slate-300'}`}
+                className="w-full px-3 py-2.5 border rounded-lg text-sm resize-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 border-slate-300"
               />
-              {errors.description && <p className="text-xs text-red-500">{errors.description}</p>}
             </div>
             <SelectField
               label="עדיפות"
