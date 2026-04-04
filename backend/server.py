@@ -890,6 +890,67 @@ async def dedup_default_templates():
         logger.info(f"[DEDUP-DEFAULTS] Dedup complete for type={tpl_type}: kept 1, demoted {len(demote_ids)}")
 
 
+async def backfill_legal_requires_both_tenants():
+    migrated_tpl = 0
+    async for tpl in db.qc_templates.find(
+        {"type": "handover", "legal_sections": {"$exists": True}},
+        {"_id": 0, "id": 1, "legal_sections": 1},
+    ):
+        updates = {}
+        for idx, ls in enumerate(tpl.get("legal_sections", [])):
+            if (
+                ls.get("requires_signature")
+                and ls.get("signature_role") == "tenant"
+                and not ls.get("requires_both_tenants")
+            ):
+                updates[f"legal_sections.{idx}.requires_both_tenants"] = True
+        if updates:
+            await db.qc_templates.update_one({"id": tpl["id"]}, {"$set": updates})
+            migrated_tpl += 1
+    if migrated_tpl:
+        logger.info(f"[HANDOVER-FIX] Set requires_both_tenants on legal sections in {migrated_tpl} template(s)")
+
+    migrated_org = 0
+    async for org in db.organizations.find(
+        {"handover_legal_sections": {"$exists": True, "$ne": []}},
+        {"_id": 0, "id": 1, "handover_legal_sections": 1},
+    ):
+        updates = {}
+        for idx, ls in enumerate(org.get("handover_legal_sections", [])):
+            if (
+                ls.get("requires_signature")
+                and ls.get("signature_role") == "tenant"
+                and not ls.get("requires_both_tenants")
+            ):
+                updates[f"handover_legal_sections.{idx}.requires_both_tenants"] = True
+        if updates:
+            await db.organizations.update_one({"id": org["id"]}, {"$set": updates})
+            migrated_org += 1
+    if migrated_org:
+        logger.info(f"[HANDOVER-FIX] Set requires_both_tenants on legal sections in {migrated_org} org(s)")
+
+    migrated_proto = 0
+    async for proto in db.handover_protocols.find(
+        {"legal_sections": {"$exists": True, "$ne": []}},
+        {"_id": 0, "id": 1, "project_id": 1, "legal_sections": 1, "status": 1},
+    ):
+        if proto.get("status") in ("completed", "cancelled"):
+            continue
+        updates = {}
+        for idx, ls in enumerate(proto.get("legal_sections", [])):
+            if (
+                ls.get("requires_signature")
+                and ls.get("signature_role") == "tenant"
+                and not ls.get("requires_both_tenants")
+            ):
+                updates[f"legal_sections.{idx}.requires_both_tenants"] = True
+        if updates:
+            await db.handover_protocols.update_one({"id": proto["id"]}, {"$set": updates})
+            migrated_proto += 1
+    if migrated_proto:
+        logger.info(f"[HANDOVER-FIX] Set requires_both_tenants on legal sections in {migrated_proto} active protocol(s)")
+
+
 async def backfill_project_templates():
     for tpl_type, ver_field, fam_field in [
         ("handover", "handover_template_version_id", "handover_template_family_id"),
@@ -979,6 +1040,7 @@ async def _deferred_db_init():
         await seed_handover_template()
         await fix_empty_handover_template()
         await dedup_default_templates()
+        await backfill_legal_requires_both_tenants()
         await backfill_project_templates()
     except Exception as e:
         logger.warning(f"[STARTUP] Migration/bootstrap failed (non-fatal): {e}")

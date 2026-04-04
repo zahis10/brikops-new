@@ -647,7 +647,8 @@ def _validate_legal_sections(sections):
         if not isinstance(order, int) or order < 1:
             raise HTTPException(status_code=400, detail=f"נסח #{idx + 1}: order חייב להיות מספר שלם >= 1")
         section_id = s.get("id") or str(uuid.uuid4())
-        requires_both_tenants = bool(s.get("requires_both_tenants", False))
+        requires_both_tenants = bool(s.get("requires_both_tenants",
+                                          requires_signature and signature_role == "tenant"))
         if requires_both_tenants and not (requires_signature and signature_role in ("tenant", "tenant_2")):
             requires_both_tenants = False
         validated.append({
