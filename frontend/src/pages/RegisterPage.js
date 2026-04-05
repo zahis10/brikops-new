@@ -148,7 +148,7 @@ const RegisterPage = () => {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
       <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
         <div className="flex flex-col items-center mb-8">
-          <img src="/og-image.png" alt="BrikOps" style={{ height: 64, borderRadius: 12, marginBottom: 16 }} />
+          <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
           <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
             {t('register', 'title')}
           </h1>
