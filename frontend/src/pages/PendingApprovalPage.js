@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { HardHat, Clock, LogOut } from 'lucide-react';
+import { Clock, LogOut } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 
@@ -18,9 +18,7 @@ const PendingApprovalPage = () => {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
       <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl text-center" dir="rtl">
         <div className="flex flex-col items-center">
-          <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mb-6">
-            <HardHat className="w-10 h-10 text-amber-600" />
-          </div>
+          <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 16 }} />
 
           <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mb-4">
             <Clock className="w-6 h-6 text-amber-500" />

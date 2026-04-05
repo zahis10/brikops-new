@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { onboardingService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import {
-  HardHat, Phone, ArrowRight, ArrowLeft, Loader2, Eye, EyeOff,
+  Phone, ArrowRight, ArrowLeft, Loader2, Eye, EyeOff,
   Building2, Users, KeyRound, CheckCircle2, AlertCircle, Mail
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -412,9 +412,7 @@ const OnboardingPage = () => {
 
   const renderHeader = () => (
     <div className="flex flex-col items-center mb-6">
-      <div className="w-14 h-14 bg-amber-500 rounded-xl flex items-center justify-center mb-3 shadow-lg">
-        <HardHat className="w-8 h-8 text-white" />
-      </div>
+      <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
       <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
         BrikOps
       </h1>

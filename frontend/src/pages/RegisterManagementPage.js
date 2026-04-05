@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { onboardingService } from '../services/api';
 import { toast } from 'sonner';
-import { HardHat, Phone, Loader2, Mail, Lock, User, KeyRound, Hash, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { Phone, Loader2, Mail, Lock, User, KeyRound, Hash, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
@@ -161,9 +161,7 @@ const RegisterManagementPage = () => {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
       <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl" dir="rtl">
         <div className="flex flex-col items-center mb-6">
-          <div className="w-16 h-16 bg-amber-500 rounded-xl flex items-center justify-center mb-4 shadow-lg">
-            <HardHat className="w-9 h-9 text-white" />
-          </div>
+          <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
           <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
             הרשמה לצוות ניהול
           </h1>
