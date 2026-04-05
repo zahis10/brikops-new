@@ -59,7 +59,7 @@ const ResetPasswordPage = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
         <div className="w-full max-w-md">
-          <div className="text-center mb-8">
+          <div className="flex flex-col items-center mb-8">
             <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
           </div>
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6 sm:p-8 text-center space-y-4">
@@ -86,7 +86,7 @@ const ResetPasswordPage = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 flex items-center justify-center p-4" dir="rtl">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
+        <div className="flex flex-col items-center mb-8">
           <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
           <p className="text-slate-500 text-sm">איפוס סיסמה</p>
         </div>

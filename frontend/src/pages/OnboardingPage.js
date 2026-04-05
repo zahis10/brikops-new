@@ -413,9 +413,6 @@ const OnboardingPage = () => {
   const renderHeader = () => (
     <div className="flex flex-col items-center mb-6">
       <img src="/logo-orange.png" alt="BrikOps" style={{ height: 48, marginBottom: 8 }} />
-      <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
-        BrikOps
-      </h1>
       <p className="text-slate-500 text-sm mt-1">
         {isInviteFlow ? t('onboarding', 'invite_title') : t('onboarding', 'register_title')}
       </p>

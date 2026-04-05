@@ -152,7 +152,6 @@ const RegisterPage = () => {
           <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
             {t('register', 'title')}
           </h1>
-          <p className="text-slate-500 text-sm mt-1">BrikOps</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" dir="rtl">
