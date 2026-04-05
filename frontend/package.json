@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@capacitor/android": "^7.6.1",
+    "@capacitor/camera": "^8.0.2",
     "@capacitor/cli": "^7.6.1",
     "@capacitor/core": "^7.6.1",
     "@capacitor/status-bar": "^7.0.6",
