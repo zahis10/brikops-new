@@ -1065,7 +1065,7 @@ export default function OrgBillingPage() {
         )}
       </div>
 
-      {!isSuspended && (canManageBilling || isOwner) && !isSA && (
+      {!isSuspended && (canManageBilling || isOwner || isSA) && (
         <div ref={renewRef} id="renew" className="bg-white rounded-xl border-2 border-amber-200 p-6 space-y-5 transition-all duration-300" style={{ scrollMarginTop: '1rem' }}>
           <div className="space-y-1">
             <h2 className="text-lg font-semibold text-slate-800">
@@ -1327,7 +1327,7 @@ export default function OrgBillingPage() {
                 )}
               </div>
             )}
-            {paymentRequestResult && !isSA && (
+            {paymentRequestResult && (
               <div className="border-t border-slate-200 pt-4 space-y-3">
                 {paymentRequestResult._customerMarked ? (
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
