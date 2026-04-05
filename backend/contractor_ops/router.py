@@ -123,7 +123,7 @@ async def _verify_password(password: str, hashed: str) -> bool:
 
 
 def _create_token(user_id: str, role: str, platform_role: str = 'none',
-                   session_version: int = 0, **_kwargs) -> str:
+                   session_version: int = 0) -> str:
     now = datetime.now(timezone.utc)
     is_admin = (platform_role == 'super_admin')
     if is_admin:

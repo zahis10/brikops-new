@@ -79,7 +79,7 @@ async def _verify_password(password, hashed):
     return await loop.run_in_executor(None, _verify_password_sync, password, hashed)
 
 
-def _create_token(user_id, role, platform_role='none', session_version=0, **_kwargs):
+def _create_token(user_id, role, platform_role='none', session_version=0):
     now = datetime.now(timezone.utc)
     is_admin = (platform_role == 'super_admin')
     if is_admin:
