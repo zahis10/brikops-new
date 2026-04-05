@@ -330,11 +330,9 @@ async def verify_magic_link(token: str = Query(...)):
     platform_role = 'super_admin' if sa_check['matched'] else user.get('platform_role', 'none')
     jwt_token = _create_token(
         user_id=user["id"],
-        email=user.get("email", ""),
         role=user.get("role", "viewer"),
         platform_role=platform_role,
         session_version=user.get("session_version", 0),
-        phone_e164=user.get("phone_e164", ""),
     )
 
     base = _get_base_url()

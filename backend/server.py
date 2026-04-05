@@ -43,7 +43,7 @@ _motor_opts = {
 client = AsyncIOMotorClient(MONGO_URL, **_motor_opts)
 db = client[DB_NAME]
 
-_enable_docs = os.environ.get('ENABLE_API_DOCS', 'true').lower() != 'false'
+_enable_docs = os.environ.get('ENABLE_API_DOCS', 'false').lower() == 'true'
 
 app = FastAPI(
     title="BrikOps API",
@@ -109,11 +109,9 @@ def _maybe_renew_token(request: Request, response):
     from datetime import timedelta
     new_token = _create_token(
         user_id=payload.get('user_id', ''),
-        email=payload.get('email', ''),
         role=payload.get('role', ''),
         platform_role=payload.get('platform_role', 'none'),
         session_version=payload.get('sv', 0),
-        phone_e164=payload.get('phone_e164', ''),
     )
     response.headers["X-New-Token"] = new_token
     logger.info(f"[TOKEN-RENEW] user={payload.get('user_id', '?')} remaining={remaining_days:.1f}d")
@@ -1274,3 +1272,18 @@ app.add_middleware(
     allow_headers=['*'],
     expose_headers=['x-request-id', 'x-response-time-ms', 'X-New-Token'],
 )
+
+from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+
+class SecurityHeadersMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)

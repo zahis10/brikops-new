@@ -232,6 +232,8 @@ async def list_projects(user: dict = Depends(get_current_user)):
             proj['my_sub_role'] = mem.get('sub_role', None)
             if mem.get('role') == 'contractor':
                 proj['my_trade_key'] = mem.get('contractor_trade_key')
+            if proj.get('my_role') not in ('project_manager', 'owner'):
+                proj.pop('join_code', None)
             enriched.append(proj)
         return enriched
 
@@ -255,6 +257,8 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user)):
         proj['my_sub_role'] = membership.get('sub_role', None) if membership else None
         if membership and membership.get('role') == 'contractor':
             proj['my_trade_key'] = membership.get('contractor_trade_key')
+        if proj.get('my_role') not in ('project_manager', 'owner'):
+            proj.pop('join_code', None)
     return proj
 
 

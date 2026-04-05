@@ -130,9 +130,8 @@ async def request_account_deletion(request: Request, user: dict = Depends(get_cu
 
     logger.info(f"[DELETION] account_only requested user={user_id} scheduled={scheduled}")
     fresh_token = _create_token(
-        user_id, user.get('email', ''), user.get('role', 'viewer'),
+        user_id, user.get('role', 'viewer'),
         user.get('platform_role', 'none'), session_version=new_sv,
-        phone_e164=user.get('phone_e164', ''),
     )
     return {
         'success': True,
@@ -208,9 +207,8 @@ async def request_full_deletion(request: Request, user: dict = Depends(get_curre
 
     logger.info(f"[DELETION] full_purge requested user={user_id} org={org_id} scheduled={scheduled}")
     fresh_token = _create_token(
-        user_id, user.get('email', ''), user.get('role', 'viewer'),
+        user_id, user.get('role', 'viewer'),
         user.get('platform_role', 'none'), session_version=new_sv,
-        phone_e164=user.get('phone_e164', ''),
     )
     return {
         'success': True,

@@ -122,8 +122,8 @@ async def _verify_password(password: str, hashed: str) -> bool:
     return await loop.run_in_executor(None, _verify_password_sync, password, hashed)
 
 
-def _create_token(user_id: str, email: str, role: str, platform_role: str = 'none',
-                   session_version: int = 0, phone_e164: str = '') -> str:
+def _create_token(user_id: str, role: str, platform_role: str = 'none',
+                   session_version: int = 0, **_kwargs) -> str:
     now = datetime.now(timezone.utc)
     is_admin = (platform_role == 'super_admin')
     if is_admin:
@@ -132,7 +132,6 @@ def _create_token(user_id: str, email: str, role: str, platform_role: str = 'non
         exp = now + timedelta(hours=JWT_EXPIRATION_HOURS)
     payload = {
         'user_id': user_id,
-        'email': email,
         'role': role,
         'platform_role': platform_role or 'none',
         'iss': APP_ID,
@@ -141,8 +140,6 @@ def _create_token(user_id: str, email: str, role: str, platform_role: str = 'non
         'exp': exp,
         'sv': session_version,
     }
-    if phone_e164:
-        payload['phone_e164'] = phone_e164
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 

@@ -79,7 +79,7 @@ async def _verify_password(password, hashed):
     return await loop.run_in_executor(None, _verify_password_sync, password, hashed)
 
 
-def _create_token(user_id, phone_e164, role, platform_role='none', session_version=0):
+def _create_token(user_id, role, platform_role='none', session_version=0, **_kwargs):
     now = datetime.now(timezone.utc)
     is_admin = (platform_role == 'super_admin')
     if is_admin:
@@ -88,7 +88,6 @@ def _create_token(user_id, phone_e164, role, platform_role='none', session_versi
         exp = now + timedelta(hours=JWT_EXPIRATION_HOURS)
     payload = {
         'user_id': user_id,
-        'phone_e164': phone_e164,
         'role': role,
         'platform_role': platform_role or 'none',
         'iss': APP_ID,
@@ -331,7 +330,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             if user.get('platform_role') != platform_role:
                 await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
             sv = user.get('session_version', 0)
-            token = _create_token(user['id'], user['phone_e164'], user['role'],
+            token = _create_token(user['id'], user['role'],
                                   platform_role=platform_role, session_version=sv)
             await db.users.update_one(
                 {'id': user['id']},
@@ -608,7 +607,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
         sa_check = is_super_admin_phone(user.get('phone_e164', ''))
         platform_role = 'super_admin' if sa_check['matched'] else user.get('platform_role', 'none')
-        token = _create_token(user['id'], user['phone_e164'], user['role'], platform_role=platform_role, session_version=user.get('session_version', 0))
+        token = _create_token(user['id'], user['role'], platform_role=platform_role, session_version=user.get('session_version', 0))
         await db.users.update_one(
             {'id': user['id']},
             {
@@ -1085,7 +1084,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
         user = await db.users.find_one({'id': user_id}, {'_id': 0})
         token = _create_token(
-            user_id, phone_e164,
+            user_id,
             user.get('role', 'project_manager'),
             user.get('platform_role', 'none'),
             user.get('session_version', 0),
@@ -1330,7 +1329,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
         user = await db.users.find_one({'id': user_id}, {'_id': 0})
         token = _create_token(
-            user_id, phone_e164,
+            user_id,
             user.get('role', 'viewer'),
             user.get('platform_role', 'none'),
             user.get('session_version', 0),

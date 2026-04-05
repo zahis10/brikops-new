@@ -326,8 +326,8 @@ async def login(credentials: UserLogin):
     if user.get('platform_role') != platform_role:
         await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
     sv = user.get('session_version', 0)
-    token = _create_token(user['id'], user['email'], user['role'], platform_role,
-                          session_version=sv, phone_e164=user.get('phone_e164', ''))
+    token = _create_token(user['id'], user['role'], platform_role,
+                          session_version=sv)
     user_resp = UserResponse(id=user['id'], email=user['email'], name=user['name'],
                           phone=user.get('phone'), role=user['role'],
                           company_id=user.get('company_id'),
@@ -378,8 +378,8 @@ async def dev_login(request: Request):
     if user.get('platform_role') != platform_role:
         await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
     sv = user.get('session_version', 0)
-    token = _create_token(user['id'], user['email'], user['role'], platform_role,
-                          session_version=sv, phone_e164=user.get('phone_e164', ''))
+    token = _create_token(user['id'], user['role'], platform_role,
+                          session_version=sv)
     user_resp = UserResponse(id=user['id'], email=user['email'], name=user['name'],
                           phone=user.get('phone'), role=user['role'],
                           company_id=user.get('company_id'),
