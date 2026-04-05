@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { onboardingService, companyService, projectService } from '../services/api';
 import { toast } from 'sonner';
-import { HardHat, Loader2, Users, Wrench } from 'lucide-react';
+import { Loader2, Users, Wrench } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { t } from '../i18n';
@@ -148,9 +148,7 @@ const RegisterPage = () => {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
       <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-amber-500 rounded-xl flex items-center justify-center mb-4 shadow-lg">
-            <HardHat className="w-9 h-9 text-white" />
-          </div>
+          <img src="/og-image.png" alt="BrikOps" style={{ height: 64, borderRadius: 12, marginBottom: 16 }} />
           <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Rubik, sans-serif' }}>
             {t('register', 'title')}
           </h1>

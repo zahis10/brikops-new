@@ -266,7 +266,7 @@ const LoginPage = () => {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' }}>
       <Card className="w-full max-w-md p-8 bg-white shadow-2xl rounded-2xl relative z-10">
         <div className="flex flex-col items-center mb-8">
-          <img src="/logo-dark.svg" alt="BrikOps" style={{ height: 48, marginBottom: 12 }} />
+          <img src="/og-image.png" alt="BrikOps" style={{ height: 64, borderRadius: 12 }} />
           <p className="text-slate-500 text-sm mt-1">ניהול משימות קבלן</p>
         </div>
 
