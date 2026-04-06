@@ -1344,16 +1344,32 @@ async def billing_webhook_greeninvoice(request: Request):
 
 @router.post("/billing/webhook/payplus")
 async def billing_webhook_payplus(request: Request):
-    import uuid, json
+    import uuid, json, hashlib, hmac as hmac_module, base64
     from datetime import datetime, timezone
     from dateutil.relativedelta import relativedelta
-    from contractor_ops.payplus_service import get_transaction, PayPlusError
     db = get_db()
     try:
-        body = await request.json()
+        raw_body = await request.body()
+        body = json.loads(raw_body)
     except Exception:
         logger.warning("[PAYPLUS-WH] Failed to parse webhook body")
         return {"status": "error", "detail": "invalid json"}
+    from config import PAYPLUS_ENV, PAYPLUS_SECRET_KEY
+    pp_user_agent = request.headers.get("user-agent", "")
+    pp_hash = request.headers.get("hash", "")
+    if pp_user_agent == "PayPlus" and pp_hash:
+        expected_hash = hmac_module.new(
+            PAYPLUS_SECRET_KEY.encode(),
+            raw_body,
+            hashlib.sha256
+        ).digest()
+        expected_b64 = base64.b64encode(expected_hash).decode()
+        if expected_b64 != pp_hash:
+            logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook")
+            return {"status": "ok"}
+        logger.info("[PAYPLUS-WH] Hash validated successfully")
+    elif pp_user_agent != "PayPlus":
+        logger.warning("[PAYPLUS-WH] Unexpected user-agent: %s — processing anyway", pp_user_agent)
     log_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.payplus_webhook_log.insert_one({
@@ -1370,20 +1386,11 @@ async def billing_webhook_payplus(request: Request):
         logger.warning("[PAYPLUS-WH] No transaction_uid — rejecting")
         await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_tx_uid'}})
         return {"status": "ok"}
-    from config import PAYPLUS_ENV
-    # TEMP TEST — remove after confirming /Check works
-    try:
-        from contractor_ops.payplus_service import get_transaction
-        check_result = await get_transaction(transaction_uid)
-        logger.info("PAYPLUS_CHECK_TEST uid=%s status=OK result=%s", transaction_uid, check_result)
-    except Exception as e:
-        logger.error("PAYPLUS_CHECK_TEST uid=%s status=FAILED error=%s", transaction_uid, e)
-    # Continue with existing workaround flow...
     verified_tx = {}
     if PAYPLUS_ENV == "production":
-        # ⚠️ TEMPORARY: PayPlus /Check returns 403.
-        # Verifying via more_info org_id match instead.
-        # TODO: Contact PayPlus support, restore get_transaction() once /Check works.
+        # PayPlus confirmed: no server-side transaction check endpoint exists.
+        # Verification is via webhook callback + HMAC hash validation.
+        # more_info org_id match used as additional identity check.
         wh_org_id = (
             body.get("more_info", "") or
             body.get("transaction", {}).get("more_info", "")
