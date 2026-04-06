@@ -117,7 +117,7 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-emerald-600 font-semibold">חסכת עם תוכנית מייסדים</span>
-                    <span className="text-emerald-600 font-semibold">{formatCurrency(preview.total - 500)}/חודש</span>
+                    <span className="text-emerald-600 font-semibold">{formatCurrency(preview.total - 499)}/חודש</span>
                   </div>
                 </div>
               </>) : (<>
