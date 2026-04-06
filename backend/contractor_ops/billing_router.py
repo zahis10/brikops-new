@@ -763,7 +763,11 @@ async def invoice_generate(org_id: str, period: str, user: dict = Depends(get_cu
         billing_role = await check_org_billing_role(user['id'], org_id)
         if not billing_role or billing_role == 'org_admin':
             raise HTTPException(status_code=403, detail='אין הרשאה להפקת חשבוניות')
-    invoice = await generate_invoice(org_id, period, user['id'])
+    db = get_db()
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
+    mo = (sub or {}).get('manual_override', {})
+    oa = mo.get('total_monthly')
+    invoice = await generate_invoice(org_id, period, user['id'], override_amount=oa if oa and oa > 0 else None)
     return invoice
 
 
@@ -928,14 +932,14 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
 
     all_subs = await db.subscriptions.find(
         {'status': {'$in': ['active', 'past_due']}, 'auto_renew': True},
-        {'_id': 0, 'org_id': 1, 'paid_until': 1, 'status': 1, 'auto_renew': 1}
+        {'_id': 0, 'org_id': 1, 'paid_until': 1, 'status': 1, 'auto_renew': 1, 'manual_override': 1}
     ).to_list(10000)
 
     due_orgs = []
     for sub in all_subs:
         paid_until = _parse_dt(sub.get('paid_until'))
         if paid_until and paid_until < now:
-            due_orgs.append({'org_id': sub['org_id'], 'status': sub.get('status', 'active'), 'paid_until': paid_until})
+            due_orgs.append({'org_id': sub['org_id'], 'status': sub.get('status', 'active'), 'paid_until': paid_until, 'manual_override': sub.get('manual_override') or {}})
 
     results = {'processed': 0, 'charged': 0, 'skipped': 0, 'failed': 0, 'past_due': 0, 'charged_but_mark_paid_failed': 0, 'errors': []}
 
@@ -1045,6 +1049,12 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
             results['failed'] += 1
             results['errors'].append({'org_id': org_id, 'error': f'billing_calc_error: {e}'})
             continue
+
+        override = org_info.get('manual_override', {})
+        override_amount = override.get('total_monthly')
+        if override_amount is not None and override_amount > 0:
+            logger.info("[RENEWALS] Admin override: computed=%s override=%s org=%s", amount, override_amount, org_id)
+            amount = override_amount
 
         if not amount or amount <= 0:
             await db.billing_renewal_attempts.update_one(
