@@ -6,6 +6,7 @@ import re
 
 from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_project_read_access, _audit, _now, _is_super_admin
 from services.object_storage import save_bytes, generate_url
+from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
 
 logger = logging.getLogger("contractor_ops.handover")
 
@@ -738,6 +739,7 @@ async def upload_org_logo(org_id: str, file: UploadFile = File(...), user: dict 
         raise HTTPException(status_code=404, detail="ארגון לא נמצא")
     await _check_org_logo_permission(user, org, org_id, db)
 
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
     MAX_SIZE = 2 * 1024 * 1024
     raw = await file.read()
     if len(raw) == 0:
@@ -1732,6 +1734,7 @@ async def sign_role(
     if signature_type == "canvas":
         if not signature_image:
             raise HTTPException(status_code=400, detail="נדרש קובץ חתימה לסוג canvas")
+        validate_upload(signature_image, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
         image_data = await signature_image.read()
         if not image_data or len(image_data) < 100:
             raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")
@@ -2439,6 +2442,7 @@ async def sign_legal_section(
     if signature_type == "canvas":
         if not signature_image:
             raise HTTPException(status_code=400, detail="נדרש קובץ חתימה לסוג canvas")
+        validate_upload(signature_image, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
         image_data = await signature_image.read()
         if not image_data or len(image_data) < 100:
             raise HTTPException(status_code=400, detail="קובץ חתימה ריק או לא תקין")

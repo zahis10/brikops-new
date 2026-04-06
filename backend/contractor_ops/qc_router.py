@@ -9,6 +9,7 @@ import time
 import httpx
 from contractor_ops.router import get_db, get_current_user, _get_project_role, _is_super_admin, _now, _audit, MANAGEMENT_ROLES, get_notification_engine, get_public_base_url
 from contractor_ops.msg_logger import mask_phone
+from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/qc", tags=["qc"])
@@ -1467,6 +1468,7 @@ async def upload_qc_photo(
     if stage_status in ("pending_review", "approved"):
         raise HTTPException(status_code=403, detail="שלב זה נעול לאחר שליחה לאישור")
 
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
     content_type = file.content_type or ""
     if content_type not in ALLOWED_PHOTO_TYPES:
         raise HTTPException(status_code=400, detail=f"סוג קובץ לא נתמך. נתמכים: JPEG, PNG, WebP")

@@ -22,6 +22,7 @@ from contractor_ops.schemas import (
 from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET, TRADE_MAP
 from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_CODE, NO_IMAGE_MESSAGE
 from contractor_ops.upload_rate_limit import check_upload_rate_limit
+from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
 
 router = APIRouter(prefix="/api")
 
@@ -1132,6 +1133,7 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
         raise HTTPException(status_code=404, detail='Task not found')
     logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
 
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
     file_ct = file.content_type or ''
     if not file_ct.startswith('image/'):
         logger.warning(f"[ATTACH:REJECTED] task={task_id} filename={file.filename} content_type={file_ct} reason=not_image")

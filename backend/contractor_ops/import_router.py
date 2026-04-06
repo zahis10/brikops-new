@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from contractor_ops.router import get_db, get_current_user, _is_super_admin, _audit, _now
 from contractor_ops.phone_utils import clean_phone_for_import, normalize_israeli_phone
+from contractor_ops.upload_safety import validate_upload, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -521,6 +522,7 @@ async def preview_import(
 ):
     await _check_import_access(user, project_id)
 
+    validate_upload(file, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES)
     if file.size and file.size > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="קובץ גדול מדי (מקסימום 5MB)")
 

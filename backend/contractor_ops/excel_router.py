@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_structure_admin, _now, _audit
+from contractor_ops.upload_safety import validate_upload, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES
 
 router = APIRouter(prefix="/api")
 
@@ -31,6 +32,7 @@ async def download_excel_template(project_id: str, user: dict = Depends(get_curr
 async def import_excel(project_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     db = get_db()
     await _check_structure_admin(user, project_id)
+    validate_upload(file, ALLOWED_IMPORT_EXTENSIONS, ALLOWED_IMPORT_TYPES)
     import io, csv
     content = await file.read()
     try:

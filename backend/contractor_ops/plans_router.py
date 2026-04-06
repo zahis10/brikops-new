@@ -12,6 +12,7 @@ from contractor_ops.router import (
 )
 
 from contractor_ops.upload_rate_limit import check_upload_rate_limit
+from contractor_ops.upload_safety import validate_upload, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -168,6 +169,7 @@ async def upload_project_plan(
     if not project:
         raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
 
+    validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
     file_bytes = await file.read()
     file_size = len(file_bytes)
     if file_size > 50 * 1024 * 1024:
@@ -353,6 +355,7 @@ async def upload_plan_version(
     if note and len(note) > 200:
         raise HTTPException(status_code=422, detail='הערה ארוכה מדי (מקסימום 200 תווים)')
 
+    validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
     file_bytes = await file.read()
     file_size_check = len(file_bytes)
     if file_size_check > 50 * 1024 * 1024:
@@ -527,6 +530,7 @@ async def replace_project_plan(
 
     discipline = old_plan['discipline']
 
+    validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
     from services.storage_service import StorageService
     storage = StorageService()
     result = await storage.upload_file_with_details(file, f"project_plan_{project_id}_{discipline}")
@@ -791,6 +795,7 @@ async def upload_unit_plan(
     if not unit:
         raise HTTPException(status_code=404, detail='דירה לא נמצאה בפרויקט זה')
 
+    validate_upload(file, ALLOWED_PLAN_EXTENSIONS, ALLOWED_PLAN_TYPES)
     file_bytes = await file.read()
     file_size = len(file_bytes)
     if file_size > 50 * 1024 * 1024:
