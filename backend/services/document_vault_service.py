@@ -1,4 +1,5 @@
 import os
+import re
 import hashlib
 import uuid
 import logging
@@ -6,7 +7,6 @@ import mimetypes
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url, is_s3_mode
 
 logger = logging.getLogger(__name__)
@@ -291,8 +291,8 @@ class DocumentVaultService:
         clauses = await self.db.document_clauses.find({
             'document_id': {'$in': doc_ids},
             '$or': [
-                {'clause_text': {'$regex': search_term, '$options': 'i'}},
-                {'section_title': {'$regex': search_term, '$options': 'i'}}
+                {'clause_text': {'$regex': re.escape(search_term), '$options': 'i'}},
+                {'section_title': {'$regex': re.escape(search_term), '$options': 'i'}}
             ]
         }, {'_id': 0}).to_list(100)
         

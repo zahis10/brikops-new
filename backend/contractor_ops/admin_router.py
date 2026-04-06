@@ -842,7 +842,7 @@ async def admin_list_qc_templates(
     if type and type in ("qc", "handover"):
         query_filter["type"] = type
     if search.strip():
-        query_filter["name"] = {"$regex": search.strip(), "$options": "i"}
+        query_filter["name"] = {"$regex": re.escape(search.strip()), "$options": "i"}
 
     all_docs = await db.qc_templates.find(query_filter, {"_id": 0}).sort([("family_id", 1), ("version", -1)]).to_list(500)
     families = {}

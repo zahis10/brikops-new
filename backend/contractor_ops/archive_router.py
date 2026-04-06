@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 import uuid
+import re
 import logging
 
 from contractor_ops.router import get_db, get_current_user, require_roles, _now, _audit, _check_project_access, _check_structure_admin
@@ -263,7 +264,7 @@ async def get_archived_entities(project_id: str, entity_type: Optional[str] = No
     if not entity_type or entity_type == 'building':
         q = {'project_id': project_id, 'archived': True}
         if search:
-            q['name'] = {'$regex': search, '$options': 'i'}
+            q['name'] = {'$regex': re.escape(search), '$options': 'i'}
         buildings = await db.buildings.find(q, {'_id': 0}).to_list(1000)
         for b in buildings:
             deps = await _get_dependency_counts(db, 'building', b['id'])
@@ -273,7 +274,7 @@ async def get_archived_entities(project_id: str, entity_type: Optional[str] = No
     if not entity_type or entity_type == 'floor':
         q = {'project_id': project_id, 'archived': True}
         if search:
-            q['name'] = {'$regex': search, '$options': 'i'}
+            q['name'] = {'$regex': re.escape(search), '$options': 'i'}
         floors = await db.floors.find(q, {'_id': 0}).to_list(10000)
         for f in floors:
             deps = await _get_dependency_counts(db, 'floor', f['id'])
@@ -284,8 +285,8 @@ async def get_archived_entities(project_id: str, entity_type: Optional[str] = No
         q = {'project_id': project_id, 'archived': True}
         if search:
             q['$or'] = [
-                {'unit_no': {'$regex': search, '$options': 'i'}},
-                {'display_label': {'$regex': search, '$options': 'i'}},
+                {'unit_no': {'$regex': re.escape(search), '$options': 'i'}},
+                {'display_label': {'$regex': re.escape(search), '$options': 'i'}},
             ]
         units = await db.units.find(q, {'_id': 0}).to_list(100000)
         for u in units:

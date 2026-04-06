@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from contractor_ops.router import get_db, get_current_user
@@ -85,7 +86,7 @@ async def user_activity(
     if role:
         user_filter['role'] = role
     if search:
-        user_filter['name'] = {'$regex': search, '$options': 'i'}
+        user_filter['name'] = {'$regex': re.escape(search), '$options': 'i'}
 
     all_users = await db.users.find(
         user_filter,
