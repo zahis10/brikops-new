@@ -183,6 +183,11 @@ if _gate_raw not in ('off', 'soft', 'enforce'):
     _gate_raw = 'off'
 ENABLE_COMPLETE_ACCOUNT_GATE = _gate_raw
 
+GOOGLE_CLIENT_ID_WEB = os.getenv("GOOGLE_CLIENT_ID_WEB", "")
+GOOGLE_CLIENT_ID_IOS = os.getenv("GOOGLE_CLIENT_ID_IOS", "")
+GOOGLE_CLIENT_ID_ANDROID = os.getenv("GOOGLE_CLIENT_ID_ANDROID", "")
+APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID", "com.brikops.app")
+
 STEPUP_CHANNEL = os.environ.get('STEPUP_CHANNEL', 'email')
 STEPUP_EMAIL = os.environ.get('STEPUP_EMAIL', '')
 STEPUP_TTL_SECONDS = int(os.environ.get('STEPUP_TTL_SECONDS', '300'))

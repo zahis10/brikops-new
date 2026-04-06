@@ -28,6 +28,14 @@ from contractor_ops.schemas import (
     SetPasswordRequest, PhoneLoginRequest, JoinRequestResponse,
     ApproveRequest, RejectRequest, UserResponse, TokenResponse, Track,
 )
+from contractor_ops.social_auth_service import (
+    verify_google_token,
+    verify_apple_token,
+    create_social_session,
+    get_social_session,
+    delete_social_session,
+)
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -1714,5 +1722,338 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         logger.info(f"[RESET-PW] rid={request_id} password_reset user={user_id}")
 
         return {'ok': True, 'message': 'הסיסמה עודכנה בהצלחה.'}
+
+    # ──────────────────────────────────────────────
+    # Social Login — Google + Apple Sign-In
+    # ──────────────────────────────────────────────
+
+    class SocialAuthRequest(BaseModel):
+        provider: str = Field(..., pattern="^(google|apple)$")
+        id_token: str
+        apple_name: Optional[str] = None
+
+    class SocialSendOtpRequest(BaseModel):
+        session_token: str
+        phone: Optional[str] = None
+
+    class SocialVerifyOtpRequest(BaseModel):
+        session_token: str
+        otp_code: str
+
+    def _mask_phone_social(phone: str) -> str:
+        """054-1234567 → 054***4567"""
+        if not phone or len(phone) < 7:
+            return "***"
+        return phone[:3] + "***" + phone[-4:]
+
+    @router.post("/auth/social")
+    async def social_auth(body: SocialAuthRequest, request: Request):
+        client_ip = _resolve_client_ip(request)
+        db = get_db()
+
+        if not await _check_rate_limit_mongo(db, "social_ip", client_ip, max_requests=10, window_seconds=300):
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+        try:
+            if body.provider == "google":
+                social_info = await verify_google_token(body.id_token)
+            elif body.provider == "apple":
+                social_info = await verify_apple_token(body.id_token)
+                if body.apple_name and not social_info.get("name"):
+                    social_info["name"] = body.apple_name
+            else:
+                raise HTTPException(status_code=400, detail="ספק לא נתמך")
+        except ValueError as e:
+            logger.warning(f"[SOCIAL-AUTH] token_verify_failed provider={body.provider} ip={client_ip} error={e}")
+            raise HTTPException(status_code=400, detail=str(e))
+
+        social_id = social_info["sub"]
+        email = social_info.get("email", "")
+        name = social_info.get("name", "")
+        social_id_field = f"{body.provider}_id"
+
+        existing_user = await db.users.find_one({social_id_field: social_id}, {"_id": 0})
+
+        if existing_user:
+            status = existing_user.get("user_status", "active")
+            if status == "pending_deletion":
+                raise HTTPException(
+                    status_code=403,
+                    detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
+                )
+            if status == "suspended":
+                raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
+            if status == "pending_pm_approval":
+                return {"status": "pending_approval", "message": "מחכה לאישור מנהל פרויקט"}
+            if status == "rejected":
+                return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
+
+            if existing_user['role'] == 'project_manager' and ENABLE_AUTO_TRIAL:
+                await ensure_user_org(existing_user['id'], existing_user.get('name', ''))
+
+            sa_check = is_super_admin_phone(existing_user.get('phone_e164', ''))
+            platform_role = 'super_admin' if sa_check['matched'] else 'none'
+            if existing_user.get('platform_role') != platform_role:
+                await db.users.update_one({'id': existing_user['id']}, {'$set': {'platform_role': platform_role}})
+
+            sv = existing_user.get('session_version', 0)
+            token = _create_token(existing_user['id'], existing_user['role'],
+                                  platform_role=platform_role, session_version=sv)
+
+            await db.users.update_one(
+                {'id': existing_user['id']},
+                {'$set': {'last_login_at': _now()}, '$inc': {'login_count': 1}}
+            )
+
+            logger.info(f"[SOCIAL-AUTH] login_success user={existing_user['id']} provider={body.provider}")
+
+            return {
+                "status": "authenticated",
+                "token": token,
+                "user": {
+                    "id": existing_user["id"],
+                    "name": existing_user.get("name", ""),
+                    "phone_e164": existing_user.get("phone_e164", ""),
+                    "role": existing_user["role"],
+                    "email": existing_user.get("email"),
+                    "company_id": existing_user.get("company_id"),
+                    "user_status": existing_user.get("user_status", "active"),
+                    "platform_role": platform_role,
+                },
+            }
+
+        if email:
+            email_user = await db.users.find_one({"email": email.lower()}, {"_id": 0})
+            if email_user:
+                status = email_user.get("user_status", "active")
+                if status == "pending_deletion":
+                    raise HTTPException(
+                        status_code=403,
+                        detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
+                    )
+
+                session_token = await create_social_session(db, {
+                    "provider": body.provider,
+                    "social_id": social_id,
+                    "email": email,
+                    "name": name,
+                    "flow": "link",
+                    "user_id": email_user["id"],
+                })
+
+                logger.info(f"[SOCIAL-AUTH] link_required user={email_user['id']} provider={body.provider}")
+
+                return {
+                    "status": "link_required",
+                    "session_token": session_token,
+                    "phone_masked": _mask_phone_social(email_user.get("phone_e164", "")),
+                    "email": email,
+                }
+
+        session_token = await create_social_session(db, {
+            "provider": body.provider,
+            "social_id": social_id,
+            "email": email,
+            "name": name,
+            "flow": "register",
+        })
+
+        logger.info(f"[SOCIAL-AUTH] registration_required provider={body.provider} email={'yes' if email else 'no'}")
+
+        return {
+            "status": "registration_required",
+            "session_token": session_token,
+            "email": email,
+        }
+
+
+    @router.post("/auth/social/send-otp")
+    async def social_send_otp(body: SocialSendOtpRequest, request: Request):
+        client_ip = _resolve_client_ip(request)
+        db = get_db()
+
+        if not await _check_rate_limit_mongo(db, "social_send_ip", client_ip, max_requests=20, window_seconds=900):
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+        session = await get_social_session(db, body.session_token)
+        if not session:
+            raise HTTPException(status_code=400, detail="הפעולה פגה תוקף, נסה שוב")
+
+        if session["flow"] == "link":
+            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
+            if not user:
+                raise HTTPException(status_code=400, detail="משתמש לא נמצא")
+            phone = user["phone_e164"]
+
+        elif session["flow"] == "register":
+            if not body.phone:
+                raise HTTPException(status_code=400, detail="מספר טלפון חובה")
+
+            try:
+                phone_norm = normalize_israeli_phone(body.phone)
+                phone = phone_norm["phone_e164"]
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+
+            if not await _check_rate_limit_mongo(db, "social_send_phone", phone, max_requests=5, window_seconds=300):
+                raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+            existing = await db.users.find_one({"phone_e164": phone}, {"_id": 0})
+            if existing:
+                status = existing.get("user_status", "active")
+                if status == "pending_deletion":
+                    raise HTTPException(
+                        status_code=403,
+                        detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
+                    )
+
+                await db.social_auth_sessions.update_one(
+                    {"id": body.session_token},
+                    {"$set": {"flow": "link", "user_id": existing["id"], "phone": phone}}
+                )
+                logger.info(f"[SOCIAL-AUTH] register_to_link phone_exists user={existing['id']}")
+            else:
+                await db.social_auth_sessions.update_one(
+                    {"id": body.session_token},
+                    {"$set": {"phone": phone}}
+                )
+        else:
+            raise HTTPException(status_code=400, detail="flow לא חוקי")
+
+        otp = get_otp()
+        result = await otp.request_otp(phone)
+
+        if not result["success"]:
+            error = result.get("error", "")
+            if error == "rate_limited":
+                raise HTTPException(status_code=429, detail=result.get("message", "נא לנסות שוב מאוחר יותר."))
+            if error == "too_many_attempts":
+                raise HTTPException(status_code=429, detail=result.get("message", "חשבון נעול. נסה שוב מאוחר יותר."))
+            raise HTTPException(status_code=400, detail=result.get("message", "שגיאה בשליחת קוד"))
+
+        return {
+            "status": "otp_sent",
+            "phone_masked": _mask_phone_social(phone),
+            "expires_in": result.get("expires_in", 300),
+        }
+
+
+    @router.post("/auth/social/verify-otp")
+    async def social_verify_otp(body: SocialVerifyOtpRequest, request: Request):
+        client_ip = _resolve_client_ip(request)
+        db = get_db()
+
+        if not await _check_rate_limit_mongo(db, "social_verify_ip", client_ip, max_requests=20, window_seconds=900):
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+        session = await get_social_session(db, body.session_token)
+        if not session:
+            raise HTTPException(status_code=400, detail="הפעולה פגה תוקף, נסה שוב")
+
+        if session["flow"] == "link":
+            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
+            if not user:
+                raise HTTPException(status_code=400, detail="משתמש לא נמצא")
+            phone = user["phone_e164"]
+        else:
+            phone = session.get("phone")
+            if not phone:
+                raise HTTPException(status_code=400, detail="מספר טלפון חסר — שלח OTP קודם")
+
+        if not await _check_rate_limit_mongo(db, "social_verify_phone", phone, max_requests=10, window_seconds=300):
+            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+
+        otp = get_otp()
+        result = await otp.verify_otp(phone, body.otp_code)
+
+        if not result["success"]:
+            error = result.get("error", "")
+            if error == "locked":
+                raise HTTPException(status_code=429, detail=result.get("message", "נא לנסות שוב מאוחר יותר."))
+            raise HTTPException(status_code=400, detail="קוד אימות שגוי או שפג תוקפו.")
+
+        social_id_field = f"{session['provider']}_id"
+
+        if session["flow"] == "link":
+            await db.users.update_one(
+                {"id": session["user_id"]},
+                {
+                    "$set": {social_id_field: session["social_id"]},
+                    "$addToSet": {"auth_methods": session["provider"]},
+                }
+            )
+            await db.users.update_one(
+                {"id": session["user_id"]},
+                {"$addToSet": {"auth_methods": "phone"}}
+            )
+
+            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
+
+            logger.info(f"[SOCIAL-AUTH] linked user={user['id']} provider={session['provider']}")
+
+        elif session["flow"] == "register":
+            user_id = str(uuid.uuid4())
+            ts = _now()
+            email = session.get("email", "").lower().strip() if session.get("email") else ""
+            name = session.get("name", "").strip() if session.get("name") else ""
+
+            user_doc = {
+                "id": user_id,
+                "name": name,
+                "phone_e164": phone,
+                "role": "project_manager",
+                "user_status": "active",
+                "platform_role": "none",
+                "created_at": ts,
+                social_id_field: session["social_id"],
+                "auth_methods": ["phone", session["provider"]],
+            }
+            if email:
+                user_doc["email"] = email
+            if ENABLE_COMPLETE_ACCOUNT_GATE != 'off':
+                user_doc["account_complete"] = False
+
+            await db.users.insert_one(user_doc)
+
+            if ENABLE_AUTO_TRIAL:
+                await ensure_user_org(user_id, name)
+
+            user = await db.users.find_one({"id": user_id}, {"_id": 0})
+
+            logger.info(f"[SOCIAL-AUTH] registered user={user_id} provider={session['provider']} phone={_mask_phone_social(phone)}")
+
+        else:
+            raise HTTPException(status_code=400, detail="flow לא חוקי")
+
+        await delete_social_session(db, body.session_token)
+
+        sa_check = is_super_admin_phone(user.get('phone_e164', ''))
+        platform_role = 'super_admin' if sa_check['matched'] else 'none'
+        if user.get('platform_role') != platform_role:
+            await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
+
+        sv = user.get('session_version', 0)
+        token = _create_token(user['id'], user['role'],
+                              platform_role=platform_role, session_version=sv)
+
+        await db.users.update_one(
+            {'id': user['id']},
+            {'$set': {'last_login_at': _now()}, '$inc': {'login_count': 1}}
+        )
+
+        return {
+            "status": "authenticated",
+            "token": token,
+            "user": {
+                "id": user["id"],
+                "name": user.get("name", ""),
+                "phone_e164": user.get("phone_e164", ""),
+                "role": user["role"],
+                "email": user.get("email"),
+                "company_id": user.get("company_id"),
+                "user_status": user.get("user_status", "active"),
+                "platform_role": platform_role,
+            },
+        }
 
     return router

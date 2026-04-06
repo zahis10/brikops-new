@@ -25,7 +25,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
 -   **Database**: MongoDB.
 -   **Router Architecture**: Modularized into sub-routers.
 -   **Key Modules & Features**:
-    -   **Authentication & Onboarding**: Supports multiple login methods including email/password, phone OTP, and WhatsApp Magic Link.
+    -   **Authentication & Onboarding**: Supports multiple login methods including email/password, phone OTP, WhatsApp Magic Link, and Google/Apple Sign-In (social login as secondary auth — phone always mandatory).
     -   **Multi-channel Communication**: Automated notifications via WhatsApp with SMS fallback.
     -   **Security**: JWT tokens, robust OTP flow, webhook signature enforcement, and CORS hardening.
     -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3).
