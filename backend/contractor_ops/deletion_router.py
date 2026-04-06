@@ -505,7 +505,7 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
 
     existing_job = await db.deletion_jobs.find_one({
         'user_id': target_user_id,
-        'status': {'$in': ['collecting', 'db_done', 's3_cleaning']},
+        'status': {'$in': ['collecting', 's3_cleaning', 'db_cleaning']},
     })
     if existing_job:
         raise HTTPException(status_code=409, detail='כבר קיימת משימת מחיקה בביצוע')
@@ -543,37 +543,93 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
         s3_keys = await _collect_s3_keys_for_user(db, target_user_id, org_id)
 
         await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-            'status': 'db_done',
             's3_keys_count': len(s3_keys),
             's3_keys': s3_keys,
-        }})
-
-        await _anonymize_user_db(db, target_user_id)
-
-        if deletion_type == 'full_purge' and org_id:
-            await _anonymize_org_db(db, org_id, project_ids)
-
-        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-            'status': 's3_cleaning',
-        }})
-
-        # TODO: For large orgs, run S3 cleanup asynchronously (background task)
-        # to avoid EB 120s timeout. Return 202 after DB work, clean S3 in background.
-        deleted, failed = await _clean_s3_keys(s3_keys, db=db, job_id=job_id)
-
-        final_status = 'complete' if failed == 0 else 's3_partial'
-        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-            'status': final_status,
-            'completed_at': _now(),
-            's3_deleted': deleted,
-            's3_failed': failed,
         }})
 
         await db.audit_events.insert_one({
             'id': str(uuid.uuid4()),
             'entity_type': 'user',
             'entity_id': target_user_id,
-            'action': 'deletion_executed',
+            'action': 'deletion_started',
+            'actor_id': admin['id'],
+            'payload': {
+                'job_id': job_id,
+                'deletion_type': deletion_type,
+                'org_id': org_id,
+                's3_keys_count': len(s3_keys),
+            },
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        })
+
+        deleted = 0
+        failed = 0
+
+        if s3_keys:
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': 's3_cleaning',
+            }})
+
+            deleted, failed = await _clean_s3_keys(s3_keys, db=db, job_id=job_id)
+
+            if deleted == 0 and failed > 0:
+                await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                    'status': 's3_failed',
+                    'error': f'All {failed} S3 keys failed to delete',
+                    's3_deleted': deleted,
+                    's3_failed': failed,
+                }})
+                logger.error(
+                    f"[DELETION] S3 total failure user={target_user_id} "
+                    f"job={job_id} failed={failed} — skipping DB anonymization"
+                )
+                return {
+                    'success': False,
+                    'job_id': job_id,
+                    'deletion_type': deletion_type,
+                    'status': 's3_failed',
+                    's3_keys': len(s3_keys),
+                    's3_deleted': deleted,
+                    's3_failed': failed,
+                }
+
+            s3_status = 's3_done' if failed == 0 else 's3_partial'
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': s3_status,
+                's3_deleted': deleted,
+                's3_failed': failed,
+            }})
+        else:
+            logger.info("No S3 keys to clean for job=%s", job_id)
+
+        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+            'status': 'db_cleaning',
+        }})
+
+        try:
+            await _anonymize_user_db(db, target_user_id)
+
+            if deletion_type == 'full_purge' and org_id:
+                await _anonymize_org_db(db, org_id, project_ids)
+        except Exception as e:
+            logger.error("DB anonymization failed job=%s: %s", job_id, e)
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': 'db_failed',
+                'error': str(e)[:500],
+            }})
+            raise
+
+        final_status = 'complete' if failed == 0 else 's3_partial'
+        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+            'status': final_status,
+            'completed_at': _now(),
+        }})
+
+        await db.audit_events.insert_one({
+            'id': str(uuid.uuid4()),
+            'entity_type': 'user',
+            'entity_id': target_user_id,
+            'action': 'deletion_completed',
             'actor_id': admin['id'],
             'payload': {
                 'job_id': job_id,
@@ -583,7 +639,7 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
                 's3_deleted': deleted,
                 's3_failed': failed,
             },
-            'created_at': _now(),
+            'created_at': datetime.now(timezone.utc).isoformat(),
         })
 
         logger.info(
@@ -603,10 +659,11 @@ async def execute_deletion(target_user_id: str, admin: dict = Depends(require_st
         }
 
     except Exception as e:
-        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-            'status': 'error',
-            'error': str(e)[:500],
-        }})
+        if not await db.deletion_jobs.find_one({'id': job_id, 'status': {'$in': ['s3_failed', 'db_failed']}}):
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': 'error',
+                'error': str(e)[:500],
+            }})
         logger.error(f"[DELETION] execution failed user={target_user_id} job={job_id} error={e}")
         raise HTTPException(status_code=500, detail=f'שגיאה בביצוע מחיקה: {str(e)[:200]}')
 
@@ -619,36 +676,79 @@ async def resume_deletion_job(job_id: str, admin: dict = Depends(require_stepup)
     if not job:
         raise HTTPException(status_code=404, detail='משימת מחיקה לא נמצאה')
 
-    if job['status'] != 's3_partial':
-        raise HTTPException(status_code=409, detail='ניתן לחדש רק משימות שנכשלו בשלב ניקוי S3')
+    if job['status'] not in ('s3_partial', 's3_failed', 'db_failed'):
+        raise HTTPException(status_code=409, detail='ניתן לחדש רק משימות שנכשלו בשלב ניקוי S3 או DB')
 
-    remaining_keys = job.get('s3_failed_keys', [])
-    if not remaining_keys:
-        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-            'status': 'complete',
-            'completed_at': _now(),
-        }})
-        return {'success': True, 'job_id': job_id, 'status': 'complete', 's3_deleted': 0, 's3_failed': 0}
-
-    await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-        'status': 's3_cleaning',
-    }})
+    prior_status = job['status']
+    target_user_id = job['user_id']
+    org_id = job.get('org_id')
+    deletion_type = job.get('deletion_type', 'account_only')
 
     try:
-        deleted, failed = await _clean_s3_keys(remaining_keys, db=db, job_id=job_id)
+        deleted = job.get('s3_deleted', 0)
+        failed = job.get('s3_failed', 0)
+
+        if prior_status in ('s3_partial', 's3_failed'):
+            remaining_keys = job.get('s3_failed_keys', [])
+            if remaining_keys:
+                await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                    'status': 's3_cleaning',
+                }})
+
+                retry_deleted, retry_failed = await _clean_s3_keys(remaining_keys, db=db, job_id=job_id)
+                deleted = job.get('s3_deleted', 0) + retry_deleted
+                failed = retry_failed
+
+                if retry_deleted == 0 and retry_failed > 0:
+                    await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                        'status': 's3_failed',
+                        's3_deleted': deleted,
+                        's3_failed': failed,
+                    }})
+                    return {
+                        'success': False,
+                        'job_id': job_id,
+                        'status': 's3_failed',
+                        's3_deleted': deleted,
+                        's3_failed': failed,
+                    }
+
+                s3_status = 's3_done' if failed == 0 else 's3_partial'
+                await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                    'status': s3_status,
+                    's3_deleted': deleted,
+                    's3_failed': failed,
+                }})
+
+        needs_db = prior_status in ('s3_failed', 'db_failed')
+        if needs_db:
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': 'db_cleaning',
+            }})
+
+            try:
+                await _anonymize_user_db(db, target_user_id)
+
+                project_ids = job.get('project_ids', [])
+                if deletion_type == 'full_purge' and org_id:
+                    await _anonymize_org_db(db, org_id, project_ids)
+            except Exception as e:
+                logger.error("DB anonymization failed on resume job=%s: %s", job_id, e)
+                await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                    'status': 'db_failed',
+                    'error': str(e)[:500],
+                }})
+                raise
 
         final_status = 'complete' if failed == 0 else 's3_partial'
-        prev_deleted = job.get('s3_deleted', 0)
         await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
             'status': final_status,
-            'completed_at': _now() if final_status == 'complete' else None,
-            's3_deleted': prev_deleted + deleted,
-            's3_failed': failed,
+            'completed_at': _now(),
         }})
 
         logger.info(
-            f"[DELETION] resumed job={job_id} user={job.get('user_id')} "
-            f"remaining={len(remaining_keys)} deleted={deleted} failed={failed} by={admin['id']}"
+            f"[DELETION] resumed job={job_id} user={target_user_id} "
+            f"prior_status={prior_status} deleted={deleted} failed={failed} by={admin['id']}"
         )
 
         return {
@@ -659,10 +759,11 @@ async def resume_deletion_job(job_id: str, admin: dict = Depends(require_stepup)
             's3_failed': failed,
         }
     except Exception as e:
-        await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
-            'status': 'error',
-            'error': str(e)[:500],
-        }})
+        if not await db.deletion_jobs.find_one({'id': job_id, 'status': {'$in': ['s3_failed', 'db_failed']}}):
+            await db.deletion_jobs.update_one({'id': job_id}, {'$set': {
+                'status': 'error',
+                'error': str(e)[:500],
+            }})
         logger.error(f"[DELETION] resume failed job={job_id} error={e}")
         raise HTTPException(status_code=500, detail=f'שגיאה בחידוש מחיקה: {str(e)[:200]}')
 
