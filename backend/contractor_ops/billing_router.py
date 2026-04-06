@@ -762,7 +762,7 @@ async def invoice_generate(org_id: str, period: str, user: dict = Depends(get_cu
     from contractor_ops.billing import get_billable_amount
     try:
         billing_info = await get_billable_amount(org_id, 'monthly')
-        oa = billing_info['amount'] if billing_info['source'] == 'override' else None
+        oa = billing_info['amount']
     except ValueError:
         oa = None
     invoice = await generate_invoice(org_id, period, user['id'], override_amount=oa)
@@ -913,7 +913,7 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
     from datetime import timedelta
     from contractor_ops.billing import (
         BILLING_V1_ENABLED, get_subscription, mark_paid,
-        apply_pending_decreases,
+        get_billable_amount, apply_pending_decreases,
         _now, _now_dt, _parse_dt,
     )
     from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
@@ -1036,7 +1036,6 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
 
         try:
             await apply_pending_decreases(org_id)
-            from contractor_ops.billing import get_billable_amount
             billing_info = await get_billable_amount(org_id, 'monthly')
             amount = billing_info['amount']
         except Exception as e:
