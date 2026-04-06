@@ -198,18 +198,12 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         if active_projects > 1:
             raise HTTPException(status_code=400, detail='מוגבלת לפרויקט אחד')
         pending_plan_id = 'founder_6m'
-        amount = 499
     else:
         pending_plan_id = 'standard'
-        from contractor_ops.billing import compute_org_billing_amount
-        billing_result = await compute_org_billing_amount(org_id, cycle)
-        amount = billing_result['amount_ils']
 
-    override = (sub or {}).get("manual_override", {})
-    override_amount = override.get("total_monthly")
-    if override_amount is not None and override_amount > 0:
-        logger.info("[CHECKOUT] Admin override: computed=%s override=%s org=%s", amount, override_amount, org_id)
-        amount = override_amount
+    from contractor_ops.billing import get_billable_amount
+    billing_info = await get_billable_amount(org_id, cycle)
+    amount = billing_info['amount']
 
     if not amount or amount <= 0:
         raise HTTPException(status_code=400, detail='סכום לתשלום הוא ₪0 — יש לעדכן תמחור פרויקטים')
@@ -765,11 +759,13 @@ async def invoice_generate(org_id: str, period: str, user: dict = Depends(get_cu
         billing_role = await check_org_billing_role(user['id'], org_id)
         if not billing_role or billing_role == 'org_admin':
             raise HTTPException(status_code=403, detail='אין הרשאה להפקת חשבוניות')
-    db = get_db()
-    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
-    mo = (sub or {}).get('manual_override', {})
-    oa = mo.get('total_monthly')
-    invoice = await generate_invoice(org_id, period, user['id'], override_amount=oa if oa and oa > 0 else None)
+    from contractor_ops.billing import get_billable_amount
+    try:
+        billing_info = await get_billable_amount(org_id, 'monthly')
+        oa = billing_info['amount'] if billing_info['source'] == 'override' else None
+    except ValueError:
+        oa = None
+    invoice = await generate_invoice(org_id, period, user['id'], override_amount=oa)
     return invoice
 
 
@@ -917,7 +913,7 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
     from datetime import timedelta
     from contractor_ops.billing import (
         BILLING_V1_ENABLED, get_subscription, mark_paid,
-        compute_org_billing_amount, apply_pending_decreases,
+        apply_pending_decreases,
         _now, _now_dt, _parse_dt,
     )
     from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
@@ -934,14 +930,14 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
 
     all_subs = await db.subscriptions.find(
         {'status': {'$in': ['active', 'past_due']}, 'auto_renew': True},
-        {'_id': 0, 'org_id': 1, 'paid_until': 1, 'status': 1, 'auto_renew': 1, 'manual_override': 1}
+        {'_id': 0, 'org_id': 1, 'paid_until': 1, 'status': 1, 'auto_renew': 1}
     ).to_list(10000)
 
     due_orgs = []
     for sub in all_subs:
         paid_until = _parse_dt(sub.get('paid_until'))
         if paid_until and paid_until < now:
-            due_orgs.append({'org_id': sub['org_id'], 'status': sub.get('status', 'active'), 'paid_until': paid_until, 'manual_override': sub.get('manual_override') or {}})
+            due_orgs.append({'org_id': sub['org_id'], 'status': sub.get('status', 'active'), 'paid_until': paid_until})
 
     results = {'processed': 0, 'charged': 0, 'skipped': 0, 'failed': 0, 'past_due': 0, 'charged_but_mark_paid_failed': 0, 'errors': []}
 
@@ -1040,23 +1036,18 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
 
         try:
             await apply_pending_decreases(org_id)
-            billing_calc = await compute_org_billing_amount(org_id, 'monthly')
-            amount = billing_calc.get('amount_ils', 0)
+            from contractor_ops.billing import get_billable_amount
+            billing_info = await get_billable_amount(org_id, 'monthly')
+            amount = billing_info['amount']
         except Exception as e:
             await db.billing_renewal_attempts.update_one(
                 {'id': attempt_id},
                 {'$set': {'result': 'billing_calc_error', 'error': str(e)}}
             )
-            logger.error("[RENEWALS] compute_org_billing_amount failed for org %s: %s", org_id, str(e))
+            logger.error("[RENEWALS] get_billable_amount failed for org %s: %s", org_id, str(e))
             results['failed'] += 1
             results['errors'].append({'org_id': org_id, 'error': f'billing_calc_error: {e}'})
             continue
-
-        override = org_info.get('manual_override', {})
-        override_amount = override.get('total_monthly')
-        if override_amount is not None and override_amount > 0:
-            logger.info("[RENEWALS] Admin override: computed=%s override=%s org=%s", amount, override_amount, org_id)
-            amount = override_amount
 
         if not amount or amount <= 0:
             await db.billing_renewal_attempts.update_one(
@@ -1469,25 +1460,27 @@ async def billing_webhook_payplus(request: Request):
     pending_cycle = sub.get('pending_cycle', sub.get('billing_cycle', 'monthly'))
     amount = verified_tx.get('amount', 0) or body.get('transaction', {}).get('amount', 0)
 
-    if pending_plan_id == 'founder_6m':
-        expected_amount = 499
-    else:
-        expected_amount = sub.get('total_monthly', 0)
-    actual_amount = verified_tx.get('amount', 0)
-    if expected_amount and actual_amount:
-        if abs(actual_amount - expected_amount) > 1:
+    try:
+        from contractor_ops.billing import get_billable_amount
+        expected_info = await get_billable_amount(org_id, pending_cycle or 'monthly')
+        expected_amount = expected_info['amount']
+        actual_amount = verified_tx.get('amount', 0)
+        if expected_amount and actual_amount and abs(actual_amount - expected_amount) > 1:
             logger.warning(
-                "[PAYPLUS-WH] Amount mismatch expected=%s actual=%s org=%s plan=%s",
-                expected_amount, actual_amount, org_id, pending_plan_id)
+                "BILLING_MISMATCH org=%s cycle=%s charged=%s expected=%s source=%s",
+                org_id, pending_cycle, actual_amount, expected_amount, expected_info['source'])
             await db.subscriptions.update_one(
                 {"org_id": org_id},
                 {"$set": {"amount_mismatch": {
                     "expected": expected_amount,
                     "actual": actual_amount,
+                    "source": expected_info['source'],
                     "tx": transaction_uid,
                     "at": now_iso,
                 }}}
             )
+    except Exception as e:
+        logger.error("BILLING_MISMATCH_CHECK_FAILED org=%s: %s", org_id, e)
 
     from contractor_ops.billing import set_org_plan
     from config import FOUNDER_MAX_SLOTS

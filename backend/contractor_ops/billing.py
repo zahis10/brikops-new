@@ -1559,6 +1559,35 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
     }
 
 
+async def get_billable_amount(org_id: str, cycle: str = 'monthly') -> dict:
+    if cycle not in ('monthly', 'yearly'):
+        raise ValueError(f"Invalid cycle: {cycle}. Expected 'monthly' or 'yearly'")
+
+    db = get_db()
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+
+    if sub is None:
+        logger.warning("BILLING_AMOUNT org=%s — no subscription found", org_id)
+        raise ValueError(f"No subscription found for org {org_id}")
+
+    plan_id = sub.get('plan_id', 'standard')
+
+    override = sub.get('manual_override', {})
+    override_amount = override.get('total_monthly')
+    if override_amount is not None and override_amount > 0:
+        logger.info("BILLING_AMOUNT org=%s cycle=%s amount=%s source=override", org_id, cycle, override_amount)
+        return {'amount': override_amount, 'source': 'override', 'plan_id': plan_id, 'org_id': org_id, 'cycle': cycle}
+
+    if plan_id == 'founder_6m':
+        logger.info("BILLING_AMOUNT org=%s cycle=%s amount=499 source=founder_plan", org_id, cycle)
+        return {'amount': 499, 'source': 'founder_plan', 'plan_id': plan_id, 'org_id': org_id, 'cycle': cycle}
+
+    calc_result = await compute_org_billing_amount(org_id, cycle)
+    amount = calc_result['amount_ils']
+    logger.info("BILLING_AMOUNT org=%s cycle=%s amount=%s source=calculated", org_id, cycle, amount)
+    return {'amount': amount, 'source': 'calculated', 'plan_id': plan_id, 'org_id': org_id, 'cycle': cycle}
+
+
 async def create_payment_request(org_id: str, user_id: str, cycle: str, note: str = '', contact_email: str = '', requested_by_kind: str = 'unknown') -> dict:
     db = get_db()
     from contractor_ops.billing_plans import calculate_monthly
