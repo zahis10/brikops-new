@@ -975,7 +975,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             })
 
         return {
-            'has_account': user is not None,
             'user_status': user.get('user_status') if user else None,
             'has_org': bool(await get_user_org(user['id'])) if user else False,
             'pending_invites': active_invites,
