@@ -236,7 +236,8 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
                 created = None
         if created and datetime.now(timezone.utc) - created < timedelta(minutes=30):
             existing_link = sub.get('payplus_payment_link', '')
-            if existing_link and sub.get('pending_plan_id') == pending_plan_id:
+            cached_amount = sub.get('checkout_amount')
+            if existing_link and sub.get('pending_plan_id') == pending_plan_id and cached_amount == amount:
                 logger.info("[PAYPLUS] Returning existing pending checkout for org=%s", org_id)
                 return {
                     'payment_page_link': existing_link,
@@ -268,6 +269,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
             'pending_cycle': cycle,
             'payplus_page_request_uid': pp_result['page_request_uid'],
             'payplus_payment_link': pp_result['payment_page_link'],
+            'checkout_amount': amount,
             'checkout_created_at': now_iso,
         }},
         upsert=True,
