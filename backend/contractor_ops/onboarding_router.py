@@ -1775,6 +1775,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         existing_user = await db.users.find_one({social_id_field: social_id}, {"_id": 0})
 
         if existing_user:
+            if existing_user.get('role') != 'project_manager':
+                raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
+
             status = existing_user.get("user_status", "active")
             if status == "pending_deletion":
                 raise HTTPException(
@@ -1788,7 +1791,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             if status == "rejected":
                 return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
 
-            if existing_user['role'] == 'project_manager' and ENABLE_AUTO_TRIAL:
+            if ENABLE_AUTO_TRIAL:
                 await ensure_user_org(existing_user['id'], existing_user.get('name', ''))
 
             sa_check = is_super_admin_phone(existing_user.get('phone_e164', ''))
@@ -1825,12 +1828,21 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         if email:
             email_user = await db.users.find_one({"email": email.lower()}, {"_id": 0})
             if email_user:
+                if email_user.get('role') != 'project_manager':
+                    raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
+
                 status = email_user.get("user_status", "active")
                 if status == "pending_deletion":
                     raise HTTPException(
                         status_code=403,
                         detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
                     )
+                if status == "suspended":
+                    raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
+                if status == "pending_pm_approval":
+                    return {"status": "pending_approval", "message": "מחכה לאישור מנהל פרויקט"}
+                if status == "rejected":
+                    return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
 
                 session_token = await create_social_session(db, {
                     "provider": body.provider,
@@ -1900,12 +1912,21 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
             existing = await db.users.find_one({"phone_e164": phone}, {"_id": 0})
             if existing:
+                if existing.get('role') != 'project_manager':
+                    raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
+
                 status = existing.get("user_status", "active")
                 if status == "pending_deletion":
                     raise HTTPException(
                         status_code=403,
                         detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
                     )
+                if status == "suspended":
+                    raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
+                if status == "pending_pm_approval":
+                    raise HTTPException(status_code=403, detail='מחכה לאישור מנהל פרויקט')
+                if status == "rejected":
+                    raise HTTPException(status_code=403, detail='הבקשה נדחתה. פנה למנהל הפרויקט.')
 
                 await db.social_auth_sessions.update_one(
                     {"id": body.session_token},
@@ -1975,6 +1996,26 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         social_id_field = f"{session['provider']}_id"
 
         if session["flow"] == "link":
+            link_user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
+            if not link_user:
+                raise HTTPException(status_code=400, detail="משתמש לא נמצא")
+            if link_user.get('role') != 'project_manager':
+                raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
+            link_status = link_user.get("user_status", "active")
+            if link_status == "pending_deletion":
+                raise HTTPException(
+                    status_code=403,
+                    detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
+                )
+            if link_status == "suspended":
+                raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
+            if link_status == "pending_pm_approval":
+                await delete_social_session(db, body.session_token)
+                return {"status": "pending_approval", "message": "מחכה לאישור מנהל פרויקט"}
+            if link_status == "rejected":
+                await delete_social_session(db, body.session_token)
+                return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
+
             await db.users.update_one(
                 {"id": session["user_id"]},
                 {
