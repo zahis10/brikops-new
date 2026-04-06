@@ -138,3 +138,9 @@ id = "moqFZUgKv_rc2bQ3f5Qaf"
 uri = "file://.local/review.txt"
 type = "text"
 title = "Review #273 — get_billable_amount Full Code Changes"
+
+[[outputs]]
+id = "Uttosn1CSRes5mf7KkA_R"
+uri = "file://review-276b.txt"
+type = "text"
+title = "#276b Social Login Frontend — Full Diff"
