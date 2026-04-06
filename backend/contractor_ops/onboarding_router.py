@@ -2020,12 +2020,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 {"id": session["user_id"]},
                 {
                     "$set": {social_id_field: session["social_id"]},
-                    "$addToSet": {"auth_methods": session["provider"]},
+                    "$addToSet": {"auth_methods": {"$each": [session["provider"], "phone"]}},
                 }
-            )
-            await db.users.update_one(
-                {"id": session["user_id"]},
-                {"$addToSet": {"auth_methods": "phone"}}
             )
 
             user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
@@ -2054,7 +2050,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             if ENABLE_COMPLETE_ACCOUNT_GATE != 'off':
                 user_doc["account_complete"] = False
 
-            await db.users.insert_one(user_doc)
+            try:
+                await db.users.insert_one(user_doc)
+            except DuplicateKeyError:
+                raise HTTPException(status_code=409, detail="אימייל או טלפון כבר רשומים במערכת. נסה להתחבר.")
 
             if ENABLE_AUTO_TRIAL:
                 await ensure_user_org(user_id, name)
