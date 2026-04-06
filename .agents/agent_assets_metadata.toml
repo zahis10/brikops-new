@@ -132,3 +132,9 @@ id = "dMauyN9NYIsJWotlbNq6X"
 uri = "file://billing_bugs2_diff.txt"
 type = "text"
 title = "Billing Bugs #2 — Full Diff (Task #250)"
+
+[[outputs]]
+id = "moqFZUgKv_rc2bQ3f5Qaf"
+uri = "file://.local/review.txt"
+type = "text"
+title = "Review #273 — get_billable_amount Full Code Changes"
