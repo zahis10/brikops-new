@@ -1364,7 +1364,7 @@ async def billing_webhook_payplus(request: Request):
             hashlib.sha256
         ).digest()
         expected_b64 = base64.b64encode(expected_hash).decode()
-        if expected_b64 != pp_hash:
+        if not hmac_module.compare_digest(expected_b64, pp_hash):
             logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook")
             return {"status": "ok"}
         logger.info("[PAYPLUS-WH] Hash validated successfully")
