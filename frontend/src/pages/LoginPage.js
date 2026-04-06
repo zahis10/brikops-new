@@ -56,7 +56,6 @@ const LoginPage = () => {
   const [socialPhone, setSocialPhone] = useState('');
   const [socialOtp, setSocialOtp] = useState('');
   const [socialLoading, setSocialLoading] = useState(false);
-  const [socialProvider, setSocialProvider] = useState('');
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/config/features`)
@@ -329,7 +328,6 @@ const LoginPage = () => {
 
   const handleGoogleSignIn = useCallback(() => {
     setSocialLoading(true);
-    setSocialProvider('google');
 
     if (!window.google?.accounts?.id) {
       toast.error('שירות Google לא זמין כרגע');
@@ -383,7 +381,6 @@ const LoginPage = () => {
 
   const handleAppleSignIn = useCallback(async () => {
     setSocialLoading(true);
-    setSocialProvider('apple');
 
     try {
       if (!window.AppleID) {
@@ -448,11 +445,16 @@ const LoginPage = () => {
       setSocialFlow('otp');
       toast.info('קוד אימות נשלח');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'שגיאה בשליחת קוד');
+      const detail = error.response?.data?.detail;
+      if (typeof detail === 'object' && detail.code === 'pending_deletion') {
+        navigate('/account/pending-deletion');
+        return;
+      }
+      toast.error(typeof detail === 'string' ? detail : 'שגיאה בשליחת קוד');
     } finally {
       setSocialLoading(false);
     }
-  }, [socialPhone, socialSessionToken]);
+  }, [socialPhone, socialSessionToken, navigate]);
 
   const handleSocialVerifyOtp = useCallback(async (e) => {
     e.preventDefault();
@@ -482,7 +484,12 @@ const LoginPage = () => {
         toast.error('תגובה לא צפויה');
       }
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'קוד אימות שגוי');
+      const detail = error.response?.data?.detail;
+      if (typeof detail === 'object' && detail.code === 'pending_deletion') {
+        navigate('/account/pending-deletion');
+        return;
+      }
+      toast.error(typeof detail === 'string' ? detail : 'קוד אימות שגוי');
     } finally {
       setSocialLoading(false);
     }
@@ -494,7 +501,6 @@ const LoginPage = () => {
     setSocialOtp('');
     setSocialPhone('');
     setSocialPhoneMasked('');
-    setSocialProvider('');
   }, []);
 
   return (
