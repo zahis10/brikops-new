@@ -369,11 +369,16 @@ const LoginPage = () => {
         size: 'large',
         width: 300,
       });
-      requestAnimationFrame(() => {
-        const btn = container.querySelector('div[role="button"]');
-        if (btn) btn.click();
-        else setSocialLoading(false);
-      });
+      const btn = container.querySelector('div[role="button"]');
+      if (btn) {
+        btn.click();
+      } else {
+        setTimeout(() => {
+          const retryBtn = container.querySelector('div[role="button"]');
+          if (retryBtn) retryBtn.click();
+          else setSocialLoading(false);
+        }, 50);
+      }
     } else {
       setSocialLoading(false);
     }
