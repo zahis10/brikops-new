@@ -1560,6 +1560,16 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
 
 
 async def get_billable_amount(org_id: str, cycle: str = 'monthly') -> dict:
+    """Single source of truth for how much to charge an org.
+    Returns dict with:
+        'amount': int,          # Amount in ILS (VAT inclusive — total the customer pays)
+        'source': str,          # 'override' | 'founder_plan' | 'calculated'
+        'plan_id': str,
+        'org_id': str,
+        'cycle': str
+    Priority: manual_override > founder_plan (499) > calculated.
+    Raises ValueError if no subscription exists.
+    """
     if cycle not in ('monthly', 'yearly'):
         raise ValueError(f"Invalid cycle: {cycle}. Expected 'monthly' or 'yearly'")
 
