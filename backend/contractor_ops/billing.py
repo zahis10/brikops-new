@@ -1210,7 +1210,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                     'updated_at': now,
                 },
                 '$unset': {
-                    'manual_override.total_monthly': '',
                     'pending_plan_id': '',
                 },
             },
@@ -1246,7 +1245,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                     'updated_at': now,
                 },
                 '$unset': {
-                    'manual_override.total_monthly': '',
                     'plan_locked_until': '',
                     'pending_plan_id': '',
                 },
