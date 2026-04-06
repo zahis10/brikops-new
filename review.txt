@@ -1,214 +1,588 @@
-diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index 8491aed..98286a6 100644
---- a/backend/contractor_ops/billing.py
-+++ b/backend/contractor_ops/billing.py
-@@ -665,6 +665,43 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
-     current_contracted = existing.get('contracted_units', 0)
-     unit_change_type = None
+diff --git a/backend/config.py b/backend/config.py
+index 6761725..49e20b7 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -183,6 +183,11 @@ if _gate_raw not in ('off', 'soft', 'enforce'):
+     _gate_raw = 'off'
+ ENABLE_COMPLETE_ACCOUNT_GATE = _gate_raw
  
-+    org_id = existing.get('org_id')
-+    founder_sub = await db.subscriptions.find_one(
-+        {'org_id': org_id}, {'_id': 0, 'plan_id': 1}
-+    )
-+    is_founder = founder_sub and founder_sub.get('plan_id') == 'founder_6m'
++GOOGLE_CLIENT_ID_WEB = os.getenv("GOOGLE_CLIENT_ID_WEB", "")
++GOOGLE_CLIENT_ID_IOS = os.getenv("GOOGLE_CLIENT_ID_IOS", "")
++GOOGLE_CLIENT_ID_ANDROID = os.getenv("GOOGLE_CLIENT_ID_ANDROID", "")
++APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID", "com.brikops.app")
 +
-+    if is_founder and 'contracted_units' in updates:
-+        new_units = updates['contracted_units']
-+        observed = await compute_observed_units(existing['project_id'])
-+        peak = max(existing.get('cycle_peak_units', current_contracted), new_units, observed)
-+        await db.project_billing.update_one(
-+            {'id': project_billing_id},
-+            {'$set': {
-+                'contracted_units': new_units,
-+                'observed_units': observed,
-+                'cycle_peak_units': peak,
-+                'updated_at': ts,
-+            }}
-+        )
-+        await db.audit_events.insert_one({
-+            'id': str(uuid.uuid4()),
-+            'event_type': 'billing',
-+            'entity_type': 'project_billing',
-+            'entity_id': project_billing_id,
-+            'action': 'contracted_units_changed',
-+            'actor_id': actor_id,
-+            'created_at': ts,
-+            'payload': {
-+                'project_id': existing['project_id'],
-+                'org_id': org_id,
-+                'before': {'contracted_units': current_contracted},
-+                'after': {'contracted_units': new_units},
-+                'note': 'founder plan — pricing unchanged',
-+            },
+ STEPUP_CHANNEL = os.environ.get('STEPUP_CHANNEL', 'email')
+ STEPUP_EMAIL = os.environ.get('STEPUP_EMAIL', '')
+ STEPUP_TTL_SECONDS = int(os.environ.get('STEPUP_TTL_SECONDS', '300'))
+diff --git a/backend/contractor_ops/onboarding_router.py b/backend/contractor_ops/onboarding_router.py
+index cf0331e..0f68049 100644
+--- a/backend/contractor_ops/onboarding_router.py
++++ b/backend/contractor_ops/onboarding_router.py
+@@ -28,6 +28,14 @@ from contractor_ops.schemas import (
+     SetPasswordRequest, PhoneLoginRequest, JoinRequestResponse,
+     ApproveRequest, RejectRequest, UserResponse, TokenResponse, Track,
+ )
++from contractor_ops.social_auth_service import (
++    verify_google_token,
++    verify_apple_token,
++    create_social_session,
++    get_social_session,
++    delete_social_session,
++)
++from pydantic import BaseModel, Field
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -1715,4 +1723,378 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+ 
+         return {'ok': True, 'message': 'הסיסמה עודכנה בהצלחה.'}
+ 
++    # ──────────────────────────────────────────────
++    # Social Login — Google + Apple Sign-In
++    # ──────────────────────────────────────────────
++
++    class SocialAuthRequest(BaseModel):
++        provider: str = Field(..., pattern="^(google|apple)$")
++        id_token: str
++        apple_name: Optional[str] = None
++
++    class SocialSendOtpRequest(BaseModel):
++        session_token: str
++        phone: Optional[str] = None
++
++    class SocialVerifyOtpRequest(BaseModel):
++        session_token: str
++        otp_code: str
++
++    def _mask_phone_social(phone: str) -> str:
++        """054-1234567 → 054***4567"""
++        if not phone or len(phone) < 7:
++            return "***"
++        return phone[:3] + "***" + phone[-4:]
++
++    @router.post("/auth/social")
++    async def social_auth(body: SocialAuthRequest, request: Request):
++        client_ip = _resolve_client_ip(request)
++        db = get_db()
++
++        if not await _check_rate_limit_mongo(db, "social_ip", client_ip, max_requests=10, window_seconds=300):
++            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
++
++        try:
++            if body.provider == "google":
++                social_info = await verify_google_token(body.id_token)
++            elif body.provider == "apple":
++                social_info = await verify_apple_token(body.id_token)
++                if body.apple_name and not social_info.get("name"):
++                    social_info["name"] = body.apple_name
++            else:
++                raise HTTPException(status_code=400, detail="ספק לא נתמך")
++        except ValueError as e:
++            logger.warning(f"[SOCIAL-AUTH] token_verify_failed provider={body.provider} ip={client_ip} error={e}")
++            raise HTTPException(status_code=400, detail=str(e))
++
++        social_id = social_info["sub"]
++        email = social_info.get("email", "")
++        name = social_info.get("name", "")
++        social_id_field = f"{body.provider}_id"
++
++        existing_user = await db.users.find_one({social_id_field: social_id}, {"_id": 0})
++
++        if existing_user:
++            if existing_user.get('role') != 'project_manager':
++                raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
++
++            status = existing_user.get("user_status", "active")
++            if status == "pending_deletion":
++                raise HTTPException(
++                    status_code=403,
++                    detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
++                )
++            if status == "suspended":
++                raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
++            if status == "pending_pm_approval":
++                return {"status": "pending_approval", "message": "מחכה לאישור מנהל פרויקט"}
++            if status == "rejected":
++                return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
++
++            if ENABLE_AUTO_TRIAL:
++                await ensure_user_org(existing_user['id'], existing_user.get('name', ''))
++
++            sa_check = is_super_admin_phone(existing_user.get('phone_e164', ''))
++            platform_role = 'super_admin' if sa_check['matched'] else 'none'
++            if existing_user.get('platform_role') != platform_role:
++                await db.users.update_one({'id': existing_user['id']}, {'$set': {'platform_role': platform_role}})
++
++            sv = existing_user.get('session_version', 0)
++            token = _create_token(existing_user['id'], existing_user['role'],
++                                  platform_role=platform_role, session_version=sv)
++
++            await db.users.update_one(
++                {'id': existing_user['id']},
++                {'$set': {'last_login_at': _now()}, '$inc': {'login_count': 1}}
++            )
++
++            logger.info(f"[SOCIAL-AUTH] login_success user={existing_user['id']} provider={body.provider}")
++
++            return {
++                "status": "authenticated",
++                "token": token,
++                "user": {
++                    "id": existing_user["id"],
++                    "name": existing_user.get("name", ""),
++                    "phone_e164": existing_user.get("phone_e164", ""),
++                    "role": existing_user["role"],
++                    "email": existing_user.get("email"),
++                    "company_id": existing_user.get("company_id"),
++                    "user_status": existing_user.get("user_status", "active"),
++                    "platform_role": platform_role,
++                },
++            }
++
++        if email:
++            email_user = await db.users.find_one({"email": email.lower()}, {"_id": 0})
++            if email_user:
++                if email_user.get('role') != 'project_manager':
++                    raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
++
++                status = email_user.get("user_status", "active")
++                if status == "pending_deletion":
++                    raise HTTPException(
++                        status_code=403,
++                        detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
++                    )
++                if status == "suspended":
++                    raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
++                if status == "pending_pm_approval":
++                    return {"status": "pending_approval", "message": "מחכה לאישור מנהל פרויקט"}
++                if status == "rejected":
++                    return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
++
++                session_token = await create_social_session(db, {
++                    "provider": body.provider,
++                    "social_id": social_id,
++                    "email": email,
++                    "name": name,
++                    "flow": "link",
++                    "user_id": email_user["id"],
++                })
++
++                logger.info(f"[SOCIAL-AUTH] link_required user={email_user['id']} provider={body.provider}")
++
++                return {
++                    "status": "link_required",
++                    "session_token": session_token,
++                    "phone_masked": _mask_phone_social(email_user.get("phone_e164", "")),
++                    "email": email,
++                }
++
++        session_token = await create_social_session(db, {
++            "provider": body.provider,
++            "social_id": social_id,
++            "email": email,
++            "name": name,
++            "flow": "register",
 +        })
-+        return await db.project_billing.find_one({'id': project_billing_id}, {'_id': 0})
 +
-     if 'contracted_units' in updates:
-         requested_units = updates['contracted_units']
-         if requested_units > current_contracted:
-diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index 96b48c3..864c77a 100644
---- a/backend/contractor_ops/billing_router.py
-+++ b/backend/contractor_ops/billing_router.py
-@@ -86,7 +86,23 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
-     )
- 
-     founder_enabled = await is_founder_enabled()
--    founder_available = founder_enabled and slots_remaining > 0 and org_project_count <= 1
++        logger.info(f"[SOCIAL-AUTH] registration_required provider={body.provider} email={'yes' if email else 'no'}")
 +
-+    sub = await db.subscriptions.find_one(
-+        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1, "last_payment_at": 1}
-+    )
-+    has_payment_history = bool(
-+        sub and (
-+            sub.get("plan_locked_until") or
-+            sub.get("last_payment_at")
-+        )
-+    )
++        return {
++            "status": "registration_required",
++            "session_token": session_token,
++            "email": email,
++        }
 +
-+    founder_available = (
-+        founder_enabled and
-+        slots_remaining > 0 and
-+        org_project_count <= 1 and
-+        not has_payment_history
-+    )
- 
-     reason = None
-     if not founder_enabled:
-@@ -95,10 +111,8 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
-         reason = "slots_full"
-     elif org_project_count > 1:
-         reason = "too_many_projects"
--
--    sub = await db.subscriptions.find_one(
--        {"org_id": org_id}, {"_id": 0, "plan_id": 1, "plan_locked_until": 1}
--    )
-+    elif has_payment_history:
-+        reason = "already_subscribed"
-     founder_expiry_warning = False
-     founder_days_remaining = None
-     if sub and sub.get("plan_id") == "founder_6m" and sub.get("plan_locked_until"):
-@@ -169,6 +183,8 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
-             sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
- 
-     if plan == 'founder':
-+        if sub and (sub.get('plan_locked_until') or sub.get('last_payment_at')):
-+            raise HTTPException(status_code=400, detail='תוכנית מייסדים זמינה רק לארגונים חדשים')
-         if not await is_founder_enabled():
-             raise HTTPException(status_code=400, detail='התוכנית אינה זמינה כרגע')
-         founder_count = await db.subscriptions.count_documents(
-@@ -1455,18 +1471,25 @@ async def billing_webhook_payplus(request: Request):
-     current_paid = sub.get('paid_until')
-     now_utc = datetime.now(timezone.utc)
-     if current_paid:
--        try:
--            base = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
--            if base.tzinfo is None:
--                base = base.replace(tzinfo=timezone.utc)
--        except Exception:
--            base = now_utc
--        if base > now_utc:
--            paid_until = (base + delta).isoformat()
-+        if isinstance(current_paid, str):
++
++    @router.post("/auth/social/send-otp")
++    async def social_send_otp(body: SocialSendOtpRequest, request: Request):
++        client_ip = _resolve_client_ip(request)
++        db = get_db()
++
++        if not await _check_rate_limit_mongo(db, "social_send_ip", client_ip, max_requests=20, window_seconds=900):
++            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
++
++        session = await get_social_session(db, body.session_token)
++        if not session:
++            raise HTTPException(status_code=400, detail="הפעולה פגה תוקף, נסה שוב")
++
++        if session["flow"] == "link":
++            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
++            if not user:
++                raise HTTPException(status_code=400, detail="משתמש לא נמצא")
++            phone = user["phone_e164"]
++
++        elif session["flow"] == "register":
++            if not body.phone:
++                raise HTTPException(status_code=400, detail="מספר טלפון חובה")
++
 +            try:
-+                base_date = datetime.fromisoformat(current_paid.replace('Z', '+00:00'))
-+            except Exception:
-+                base_date = now_utc
-+        elif isinstance(current_paid, datetime):
-+            base_date = current_paid
-         else:
--            paid_until = (now_utc + delta).isoformat()
-+            base_date = now_utc
-+        if hasattr(base_date, 'tzinfo') and base_date.tzinfo is None:
-+            base_date = base_date.replace(tzinfo=timezone.utc)
-+        base_date = max(base_date, now_utc)
-     else:
--        paid_until = (now_utc + delta).isoformat()
-+        base_date = now_utc
-+    paid_until = (base_date + delta).replace(
-+        hour=23, minute=59, second=59, microsecond=0
-+    ).isoformat()
-+    logger.info("[PAYPLUS-WH] paid_until calc: current=%s base=%s new=%s",
-+        current_paid, base_date, paid_until)
-     await db.subscriptions.update_one(
-         {'org_id': org_id},
-         {
-diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
-index 929aa0c..48d3707 100644
---- a/backend/contractor_ops/payplus_service.py
-+++ b/backend/contractor_ops/payplus_service.py
-@@ -70,6 +70,7 @@ async def create_payment_page(
-         "currency_code": "ILS",
-         "vat_type": 0,
-         "description": plan_name,
-+        "product_name": plan_name,
-         "more_info": org_id,
-         "customer": {
-             "customer_name": customer_name or "לקוח BrikOps",
-diff --git a/frontend/src/components/PlanSelector.js b/frontend/src/components/PlanSelector.js
-index 9b5da6e..787894a 100644
---- a/frontend/src/components/PlanSelector.js
-+++ b/frontend/src/components/PlanSelector.js
-@@ -13,6 +13,7 @@ export default function PlanSelector({ plans, onSelect, currentPlan, loading, se
-     slots_full: 'התוכנית מלאה',
-     too_many_projects: 'מוגבלת לפרויקט אחד',
-     disabled: 'התוכנית אינה זמינה',
-+    already_subscribed: 'התוכנית זמינה רק לארגונים חדשים',
-   };
- 
-   const isCurrentFounder = currentPlan === 'founder_6m';
-diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-index ef2ccdf..038e57c 100644
---- a/frontend/src/pages/OrgBillingPage.js
-+++ b/frontend/src/pages/OrgBillingPage.js
-@@ -1069,11 +1069,8 @@ export default function OrgBillingPage() {
-         <div ref={renewRef} id="renew" className="bg-white rounded-xl border-2 border-amber-200 p-6 space-y-5 transition-all duration-300" style={{ scrollMarginTop: '1rem' }}>
-           <div className="space-y-1">
-             <h2 className="text-lg font-semibold text-slate-800">
--              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי מראש'}
-+              {(needsUpgrade || isTrial) ? 'שדרוג / חידוש מנוי' : 'חידוש מנוי'}
-             </h2>
--            <p className="text-xs text-slate-500">
--              בקרוב — חידוש עצמי באשראי. בינתיים אפשר לשלוח בקשת תשלום.
--            </p>
-           </div>
- 
-           {needsUpgrade && (
-@@ -1126,6 +1123,19 @@ export default function OrgBillingPage() {
-             <div className="flex items-center justify-between">
-               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
-             </div>
-+            {(() => {
-+              const totalMonthly = sub?.total_monthly || 0;
-+              const currentPaidUntil = sub?.paid_until ? new Date(sub.paid_until) : new Date();
-+              const baseDate = currentPaidUntil > new Date() ? currentPaidUntil : new Date();
-+              const nextDate = new Date(baseDate);
-+              nextDate.setMonth(nextDate.getMonth() + 1);
-+              const formatted = nextDate.toLocaleDateString('he-IL');
-+              return totalMonthly > 0 ? (
-+                <p className="text-sm text-slate-600 text-center">
-+                  {`\u200F\u05DC\u05D0\u05D7\u05E8 \u05EA\u05E9\u05DC\u05D5\u05DD ${totalMonthly.toLocaleString()}\u20AA \u05D4\u05DE\u05E0\u05D5\u05D9 \u05D9\u05D4\u05D9\u05D4 \u05D1\u05EA\u05D5\u05E7\u05E3 \u05E2\u05D3 ${formatted}`}
-+                </p>
-+              ) : null;
-+            })()}
-             <button
-               disabled={checkoutLoading}
-               onClick={async () => {
-@@ -1146,7 +1156,7 @@ export default function OrgBillingPage() {
-               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-             >
-               {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
--              {checkoutLoading ? 'מעביר לתשלום...' : 'שלם באשראי'}
-+              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.total_monthly || 0).toLocaleString()}`}
-             </button>
-             <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
-           </div>
-@@ -1723,7 +1733,7 @@ export default function OrgBillingPage() {
-       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
-         <div className="flex items-center gap-2">
-           <FileText className="w-5 h-5 text-amber-500" />
--          <h2 className="text-lg font-semibold text-slate-800">חיובים חודשיים</h2>
-+          <h2 className="text-lg font-semibold text-slate-800">חשבוניות</h2>
-         </div>
- 
-         {previewLoading ? (
++                phone_norm = normalize_israeli_phone(body.phone)
++                phone = phone_norm["phone_e164"]
++            except ValueError as e:
++                raise HTTPException(status_code=422, detail=str(e))
++
++            if not await _check_rate_limit_mongo(db, "social_send_phone", phone, max_requests=5, window_seconds=300):
++                raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
++
++            existing = await db.users.find_one({"phone_e164": phone}, {"_id": 0})
++            if existing:
++                if existing.get('role') != 'project_manager':
++                    raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
++
++                status = existing.get("user_status", "active")
++                if status == "pending_deletion":
++                    raise HTTPException(
++                        status_code=403,
++                        detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
++                    )
++                if status == "suspended":
++                    raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
++                if status == "pending_pm_approval":
++                    raise HTTPException(status_code=403, detail='מחכה לאישור מנהל פרויקט')
++                if status == "rejected":
++                    raise HTTPException(status_code=403, detail='הבקשה נדחתה. פנה למנהל הפרויקט.')
++
++                await db.social_auth_sessions.update_one(
++                    {"id": body.session_token},
++                    {"$set": {"flow": "link", "user_id": existing["id"], "phone": phone}}
++                )
++                logger.info(f"[SOCIAL-AUTH] register_to_link phone_exists user={existing['id']}")
++            else:
++                await db.social_auth_sessions.update_one(
++                    {"id": body.session_token},
++                    {"$set": {"phone": phone}}
++                )
++        else:
++            raise HTTPException(status_code=400, detail="flow לא חוקי")
++
++        otp = get_otp()
++        result = await otp.request_otp(phone)
++
++        if not result["success"]:
++            error = result.get("error", "")
++            if error == "rate_limited":
++                raise HTTPException(status_code=429, detail=result.get("message", "נא לנסות שוב מאוחר יותר."))
++            if error == "too_many_attempts":
++                raise HTTPException(status_code=429, detail=result.get("message", "חשבון נעול. נסה שוב מאוחר יותר."))
++            raise HTTPException(status_code=400, detail=result.get("message", "שגיאה בשליחת קוד"))
++
++        return {
++            "status": "otp_sent",
++            "phone_masked": _mask_phone_social(phone),
++            "expires_in": result.get("expires_in", 300),
++        }
++
++
++    @router.post("/auth/social/verify-otp")
++    async def social_verify_otp(body: SocialVerifyOtpRequest, request: Request):
++        client_ip = _resolve_client_ip(request)
++        db = get_db()
++
++        if not await _check_rate_limit_mongo(db, "social_verify_ip", client_ip, max_requests=20, window_seconds=900):
++            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
++
++        session = await get_social_session(db, body.session_token)
++        if not session:
++            raise HTTPException(status_code=400, detail="הפעולה פגה תוקף, נסה שוב")
++
++        if session["flow"] == "link":
++            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
++            if not user:
++                raise HTTPException(status_code=400, detail="משתמש לא נמצא")
++            phone = user["phone_e164"]
++        else:
++            phone = session.get("phone")
++            if not phone:
++                raise HTTPException(status_code=400, detail="מספר טלפון חסר — שלח OTP קודם")
++
++        if not await _check_rate_limit_mongo(db, "social_verify_phone", phone, max_requests=10, window_seconds=300):
++            raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
++
++        otp = get_otp()
++        result = await otp.verify_otp(phone, body.otp_code)
++
++        if not result["success"]:
++            error = result.get("error", "")
++            if error == "locked":
++                raise HTTPException(status_code=429, detail=result.get("message", "נא לנסות שוב מאוחר יותר."))
++            raise HTTPException(status_code=400, detail="קוד אימות שגוי או שפג תוקפו.")
++
++        social_id_field = f"{session['provider']}_id"
++
++        if session["flow"] == "link":
++            link_user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
++            if not link_user:
++                raise HTTPException(status_code=400, detail="משתמש לא נמצא")
++            if link_user.get('role') != 'project_manager':
++                raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
++            link_status = link_user.get("user_status", "active")
++            if link_status == "pending_deletion":
++                raise HTTPException(
++                    status_code=403,
++                    detail={'message': 'החשבון שלך בתהליך מחיקה. בטל את המחיקה כדי להמשיך.', 'code': 'pending_deletion'}
++                )
++            if link_status == "suspended":
++                raise HTTPException(status_code=403, detail='חשבון מושהה. פנה למנהל.')
++            if link_status == "pending_pm_approval":
++                await delete_social_session(db, body.session_token)
++                return {"status": "pending_approval", "message": "מחכה לאישור מנהל פרויקט"}
++            if link_status == "rejected":
++                await delete_social_session(db, body.session_token)
++                return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
++
++            await db.users.update_one(
++                {"id": session["user_id"]},
++                {
++                    "$set": {social_id_field: session["social_id"]},
++                    "$addToSet": {"auth_methods": session["provider"]},
++                }
++            )
++            await db.users.update_one(
++                {"id": session["user_id"]},
++                {"$addToSet": {"auth_methods": "phone"}}
++            )
++
++            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
++
++            logger.info(f"[SOCIAL-AUTH] linked user={user['id']} provider={session['provider']}")
++
++        elif session["flow"] == "register":
++            user_id = str(uuid.uuid4())
++            ts = _now()
++            email = session.get("email", "").lower().strip() if session.get("email") else ""
++            name = session.get("name", "").strip() if session.get("name") else ""
++
++            user_doc = {
++                "id": user_id,
++                "name": name,
++                "phone_e164": phone,
++                "role": "project_manager",
++                "user_status": "active",
++                "platform_role": "none",
++                "created_at": ts,
++                social_id_field: session["social_id"],
++                "auth_methods": ["phone", session["provider"]],
++            }
++            if email:
++                user_doc["email"] = email
++            if ENABLE_COMPLETE_ACCOUNT_GATE != 'off':
++                user_doc["account_complete"] = False
++
++            await db.users.insert_one(user_doc)
++
++            if ENABLE_AUTO_TRIAL:
++                await ensure_user_org(user_id, name)
++
++            user = await db.users.find_one({"id": user_id}, {"_id": 0})
++
++            logger.info(f"[SOCIAL-AUTH] registered user={user_id} provider={session['provider']} phone={_mask_phone_social(phone)}")
++
++        else:
++            raise HTTPException(status_code=400, detail="flow לא חוקי")
++
++        await delete_social_session(db, body.session_token)
++
++        sa_check = is_super_admin_phone(user.get('phone_e164', ''))
++        platform_role = 'super_admin' if sa_check['matched'] else 'none'
++        if user.get('platform_role') != platform_role:
++            await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
++
++        sv = user.get('session_version', 0)
++        token = _create_token(user['id'], user['role'],
++                              platform_role=platform_role, session_version=sv)
++
++        await db.users.update_one(
++            {'id': user['id']},
++            {'$set': {'last_login_at': _now()}, '$inc': {'login_count': 1}}
++        )
++
++        return {
++            "status": "authenticated",
++            "token": token,
++            "user": {
++                "id": user["id"],
++                "name": user.get("name", ""),
++                "phone_e164": user.get("phone_e164", ""),
++                "role": user["role"],
++                "email": user.get("email"),
++                "company_id": user.get("company_id"),
++                "user_status": user.get("user_status", "active"),
++                "platform_role": platform_role,
++            },
++        }
++
+     return router
+diff --git a/backend/contractor_ops/social_auth_service.py b/backend/contractor_ops/social_auth_service.py
+new file mode 100644
+index 0000000..a19fd93
+--- /dev/null
++++ b/backend/contractor_ops/social_auth_service.py
+@@ -0,0 +1,154 @@
++"""
++Social authentication service — Google + Apple Sign-In.
++Phone number is ALWAYS mandatory. Social login is a secondary auth method.
++"""
++
++import uuid
++import logging
++from datetime import datetime, timezone, timedelta
++
++import jwt as pyjwt
++from google.oauth2 import id_token as google_id_token
++from google.auth.transport import requests as google_requests
++
++from config import (
++    GOOGLE_CLIENT_ID_WEB,
++    GOOGLE_CLIENT_ID_IOS,
++    GOOGLE_CLIENT_ID_ANDROID,
++    APPLE_BUNDLE_ID,
++)
++
++logger = logging.getLogger(__name__)
++
++SOCIAL_SESSION_TTL = timedelta(minutes=10)
++
++
++async def verify_google_token(id_token_str: str) -> dict:
++    """
++    Verify Google ID token.
++    Returns {sub, email, name, picture}.
++    Accepts tokens from web, iOS, and Android client IDs.
++    Raises ValueError on invalid token.
++    """
++    try:
++        client_ids = [cid for cid in [GOOGLE_CLIENT_ID_WEB, GOOGLE_CLIENT_ID_IOS, GOOGLE_CLIENT_ID_ANDROID] if cid]
++        if not client_ids:
++            logger.error("Google client IDs not configured")
++            raise ValueError("אימות Google נכשל — שירות לא מוגדר")
++
++        for client_id in client_ids:
++            try:
++                idinfo = google_id_token.verify_oauth2_token(
++                    id_token_str,
++                    google_requests.Request(),
++                    client_id
++                )
++                return {
++                    "sub": idinfo["sub"],
++                    "email": idinfo.get("email", ""),
++                    "name": idinfo.get("name", ""),
++                    "picture": idinfo.get("picture", ""),
++                }
++            except ValueError:
++                continue
++
++        raise ValueError("אימות Google נכשל")
++    except ValueError:
++        raise
++    except Exception as e:
++        logger.warning("Google token verification failed: %s", e)
++        raise ValueError("אימות Google נכשל") from e
++
++
++async def verify_apple_token(id_token_str: str) -> dict:
++    """
++    Verify Apple ID token.
++    Returns {sub, email}.
++    Apple uses RS256 JWTs signed with keys from https://appleid.apple.com/auth/keys
++    Note: Apple only sends email on FIRST sign-in. After that, only sub is guaranteed.
++    Raises ValueError on invalid token.
++    """
++    import httpx
++
++    try:
++        async with httpx.AsyncClient(timeout=10.0) as client:
++            resp = await client.get("https://appleid.apple.com/auth/keys")
++            resp.raise_for_status()
++            apple_keys = resp.json()
++
++        header = pyjwt.get_unverified_header(id_token_str)
++        kid = header.get("kid")
++
++        key_data = None
++        for key in apple_keys.get("keys", []):
++            if key["kid"] == kid:
++                key_data = key
++                break
++        if not key_data:
++            logger.warning("Apple signing key kid=%s not found in JWKS", kid)
++            raise ValueError("אימות Apple נכשל")
++
++        from jwt.algorithms import RSAAlgorithm
++        public_key = RSAAlgorithm.from_jwk(key_data)
++
++        decoded = pyjwt.decode(
++            id_token_str,
++            public_key,
++            algorithms=["RS256"],
++            audience=APPLE_BUNDLE_ID,
++            issuer="https://appleid.apple.com",
++        )
++
++        return {
++            "sub": decoded["sub"],
++            "email": decoded.get("email", ""),
++        }
++    except ValueError:
++        raise
++    except Exception as e:
++        logger.warning("Apple token verification failed: %s", e)
++        raise ValueError("אימות Apple נכשל") from e
++
++
++async def create_social_session(db, data: dict) -> str:
++    """
++    Create a temporary session for the social auth flow (linking or registration).
++    Returns session_token (UUID). Stored in social_auth_sessions collection.
++    Manual expiry check — ISO string dates, consistent with BrikOps patterns.
++    """
++    session_token = str(uuid.uuid4())
++    now = datetime.now(timezone.utc)
++
++    await db.social_auth_sessions.insert_one({
++        "id": session_token,
++        "provider": data["provider"],
++        "social_id": data["social_id"],
++        "email": data.get("email", ""),
++        "name": data.get("name", ""),
++        "flow": data["flow"],
++        "user_id": data.get("user_id"),
++        "phone": data.get("phone"),
++        "created_at": now.isoformat(),
++        "expires_at": (now + SOCIAL_SESSION_TTL).isoformat(),
++    })
++
++    return session_token
++
++
++async def get_social_session(db, session_token: str) -> dict | None:
++    """Retrieve and validate a social auth session. Returns None if expired or not found."""
++    session = await db.social_auth_sessions.find_one({"id": session_token}, {"_id": 0})
++    if not session:
++        return None
++
++    now = datetime.now(timezone.utc).isoformat()
++    if session["expires_at"] < now:
++        await db.social_auth_sessions.delete_one({"id": session_token})
++        return None
++
++    return session
++
++
++async def delete_social_session(db, session_token: str):
++    """Delete a social auth session after successful use."""
++    await db.social_auth_sessions.delete_one({"id": session_token})
+diff --git a/backend/server.py b/backend/server.py
+index 68eb05b..32e7519 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -460,6 +460,9 @@ async def create_indexes():
+         await db.users.create_index("password_reset_token", sparse=True)
+         await db.otp_rate_limits.create_index([("kind", 1), ("key", 1)], unique=True)
+         await db.otp_rate_limits.create_index("expires_at", expireAfterSeconds=0)
++        await db.users.create_index("google_id", unique=True, sparse=True)
++        await db.users.create_index("apple_id", unique=True, sparse=True)
++        await db.social_auth_sessions.create_index("id", unique=True)
+         await db.qc_runs.create_index([("floor_id", 1), ("template_id", 1)])
+         await db.qc_runs.create_index([("unit_id", 1), ("template_id", 1)], sparse=True)
+         await db.qc_templates.create_index([("family_id", 1), ("version", 1)], unique=True)
