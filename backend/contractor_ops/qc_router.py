@@ -1471,7 +1471,7 @@ async def upload_qc_photo(
     validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
     content_type = file.content_type or ""
     if content_type not in ALLOWED_PHOTO_TYPES:
-        raise HTTPException(status_code=400, detail=f"סוג קובץ לא נתמך. נתמכים: JPEG, PNG, WebP")
+        raise HTTPException(status_code=400, detail="סוג קובץ לא נתמך. נתמכים: JPEG, PNG, WebP, HEIC")
 
     ext = content_type.split("/")[-1]
     if ext == "jpeg":
