@@ -1371,6 +1371,14 @@ async def billing_webhook_payplus(request: Request):
         await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_tx_uid'}})
         return {"status": "ok"}
     from config import PAYPLUS_ENV
+    # TEMP TEST — remove after confirming /Check works
+    try:
+        from contractor_ops.payplus_service import get_transaction
+        check_result = await get_transaction(transaction_uid)
+        logger.info("PAYPLUS_CHECK_TEST uid=%s status=OK result=%s", transaction_uid, check_result)
+    except Exception as e:
+        logger.error("PAYPLUS_CHECK_TEST uid=%s status=FAILED error=%s", transaction_uid, e)
+    # Continue with existing workaround flow...
     verified_tx = {}
     if PAYPLUS_ENV == "production":
         # ⚠️ TEMPORARY: PayPlus /Check returns 403.
