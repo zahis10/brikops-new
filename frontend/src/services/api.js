@@ -545,6 +545,28 @@ export const onboardingService = {
     const response = await axios.post(`${API}/auth/verify-otp`, { phone_e164, code });
     return response.data;
   },
+  socialAuth: async (provider, idToken, appleName = null) => {
+    const res = await axios.post(`${API}/auth/social`, {
+      provider,
+      id_token: idToken,
+      apple_name: appleName,
+    }, { timeout: 15000 });
+    return res.data;
+  },
+  socialSendOtp: async (sessionToken, phone = null) => {
+    const res = await axios.post(`${API}/auth/social/send-otp`, {
+      session_token: sessionToken,
+      phone: phone || undefined,
+    }, { timeout: 10000 });
+    return res.data;
+  },
+  socialVerifyOtp: async (sessionToken, otpCode) => {
+    const res = await axios.post(`${API}/auth/social/verify-otp`, {
+      session_token: sessionToken,
+      otp_code: otpCode,
+    }, { timeout: 10000 });
+    return res.data;
+  },
   async registerWithPhone(data) {
     const response = await axios.post(`${API}/auth/register-with-phone`, data);
     return response.data;
