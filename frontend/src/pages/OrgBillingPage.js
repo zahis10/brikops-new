@@ -1831,6 +1831,20 @@ export default function OrgBillingPage() {
                             </div>
                           </div>
                         ))}
+                        {(() => {
+                          const sumLI = expandedDetail.line_items.reduce((s, li) => s + (li.monthly_total_snapshot || 0), 0);
+                          return (
+                            <>
+                              <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 8, paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 13 }}>
+                                <span>סה"כ חויב</span>
+                                <span>{formatCurrency(inv.total_amount)}</span>
+                              </div>
+                              {(sumLI - (inv.total_amount || 0)) > 1 && (
+                                <div style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>מחיר מותאם</div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="text-xs text-slate-400 text-center py-2">
