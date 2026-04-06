@@ -593,7 +593,7 @@ async def create_project_billing(project_id: str, org_id: str, actor_id: str,
         license_fee = PROJECT_LICENSE_FIRST if proj_index <= 1 else PROJECT_LICENSE_ADDITIONAL
         units_fee = contracted_units * PRICE_PER_UNIT
     elif plan_id == 'founder_6m':
-        license_fee = 500
+        license_fee = 499
         units_fee = 0
     else:
         license_fee = 0
@@ -750,7 +750,7 @@ async def update_project_billing(project_billing_id: str, updates: dict, actor_i
             new_contracted_for_pricing, plan_id=new_plan_id, project_index=proj_index
         )
         if new_plan_id == 'founder_6m':
-            set_fields['license_fee'] = 500
+            set_fields['license_fee'] = 499
             set_fields['units_fee'] = 0
         else:
             set_fields['license_fee'] = PROJECT_LICENSE_FIRST if proj_index <= 1 else PROJECT_LICENSE_ADDITIONAL
@@ -1205,7 +1205,7 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
             {
                 '$set': {
                     'plan_id': 'founder_6m',
-                    'total_monthly': 500,
+                    'total_monthly': 499,
                     'plan_locked_until': locked_until,
                     'updated_at': now,
                 },
@@ -1223,8 +1223,8 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
         ).to_list(1000)
         sorted_pbs = sorted(all_pbs, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
         for idx, pb in enumerate(sorted_pbs):
-            mt = 500 if idx == 0 else 0
-            lf = 500 if idx == 0 else 0
+            mt = 499 if idx == 0 else 0
+            lf = 499 if idx == 0 else 0
             await db.project_billing.update_one(
                 {'id': pb['id']},
                 {'$set': {
@@ -1297,9 +1297,9 @@ async def recalc_org_total(org_id: str):
         units = pb.get('contracted_units', 0)
         proj_index = idx + 1
         if plan_id == 'founder_6m':
-            lf = 500 if idx == 0 else 0
+            lf = 499 if idx == 0 else 0
             uf = 0
-            monthly = 500 if idx == 0 else 0
+            monthly = 499 if idx == 0 else 0
         elif not plan_id or units < 1:
             await db.project_billing.update_one(
                 {'id': pb['id']},

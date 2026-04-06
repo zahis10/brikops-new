@@ -132,7 +132,7 @@ async def billing_plans_available(request: Request, user: dict = Depends(get_cur
             "available": founder_available,
             "reason": reason,
             "slots_remaining": slots_remaining,
-            "price": 500,
+            "price": 499,
             "duration_months": 6,
             "max_projects": 1,
         },
@@ -198,7 +198,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         if active_projects > 1:
             raise HTTPException(status_code=400, detail='מוגבלת לפרויקט אחד')
         pending_plan_id = 'founder_6m'
-        amount = 500
+        amount = 499
     else:
         pending_plan_id = 'standard'
         from contractor_ops.billing import compute_org_billing_amount
@@ -1458,7 +1458,7 @@ async def billing_webhook_payplus(request: Request):
     amount = verified_tx.get('amount', 0) or body.get('transaction', {}).get('amount', 0)
 
     if pending_plan_id == 'founder_6m':
-        expected_amount = 500
+        expected_amount = 499
     else:
         expected_amount = sub.get('total_monthly', 0)
     actual_amount = verified_tx.get('amount', 0)

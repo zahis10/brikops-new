@@ -21,14 +21,14 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
-PROJECT_LICENSE_FIRST = 900
+PROJECT_LICENSE_FIRST = 899
 PROJECT_LICENSE_ADDITIONAL = 450
 PRICE_PER_UNIT = 20
 
 FOUNDER_PLAN = {
     "plan_id": "founder_6m",
     "name": "מנוי מייסדים",
-    "monthly_price": 500,
+    "monthly_price": 499,
     "locked_months": 6,
 }
 
@@ -42,7 +42,7 @@ def calculate_monthly(
     if manual_override and manual_override.get("total_monthly"):
         return manual_override["total_monthly"]
     if plan_id == "founder_6m":
-        return 500
+        return 499
     license_fee = PROJECT_LICENSE_FIRST if project_index <= 1 \
         else PROJECT_LICENSE_ADDITIONAL
     return license_fee + (units * PRICE_PER_UNIT)
@@ -63,8 +63,8 @@ def get_pricing_breakdown(
     if plan_id == "founder_6m":
         return {
             "plan": "מנוי מייסדים",
-            "total_monthly": 500,
-            "breakdown": "מנוי מייסדים — 500₪/חודש",
+            "total_monthly": 499,
+            "breakdown": "מנוי מייסדים — 499₪/חודש",
         }
     license_fee = PROJECT_LICENSE_FIRST if project_index <= 1 \
         else PROJECT_LICENSE_ADDITIONAL
@@ -88,7 +88,7 @@ def calculate_org_monthly(
     if manual_override and manual_override.get("total_monthly"):
         return manual_override["total_monthly"]
     if plan_id == "founder_6m":
-        return 500
+        return 499
     sorted_projects = sorted(projects, key=lambda p: p.get("created_at", ""))
     total = 0
     for i, proj in enumerate(sorted_projects):
@@ -119,7 +119,7 @@ async def get_plan(plan_id: str):
         return {
             'id': 'founder_6m',
             'name': 'מנוי מייסדים',
-            'monthly_price': 500,
+            'monthly_price': 499,
             'is_active': True,
         }
     return {

@@ -3,7 +3,7 @@ import { billingService } from '../services/api';
 import { formatCurrency } from '../utils/billingLabels';
 import { toast } from 'sonner';
 import { Loader2, Check, ChevronDown, ChevronUp, Info, CreditCard } from 'lucide-react';
-const LICENSE_FIRST = 900;
+const LICENSE_FIRST = 899;
 const LICENSE_ADDITIONAL = 450;
 const PRICE_PER_UNIT = 20;
 
@@ -150,7 +150,7 @@ export default function UpgradeWizard({ orgId, projects, canManageBilling, onPay
           <div className="text-sm font-bold text-slate-800">תוכנית מייסדים</div>
           <div className="flex justify-between text-sm">
             <span className="text-slate-500">מחיר חודשי</span>
-            <span className="font-bold text-slate-900">₪500</span>
+            <span className="font-bold text-slate-900">₪499</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-slate-500">תקופת התחייבות</span>

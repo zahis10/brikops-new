@@ -1127,7 +1127,7 @@ export default function OrgBillingPage() {
             const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
               const units = pb.contracted_units || 0;
               const ppu = pb.price_per_unit || 20;
-              const license = idx === 0 ? 900 : 450;
+              const license = idx === 0 ? 899 : 450;
               return sum + license + (units * ppu);
             }, 0) || 0;
             if (!founderExpiring) return null;

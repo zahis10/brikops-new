@@ -7,7 +7,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from './ui/dialog';
 
-const LICENSE_FIRST = 900;
+const LICENSE_FIRST = 899;
 const LICENSE_ADDITIONAL = 450;
 const PRICE_PER_UNIT = 20;
 
@@ -108,7 +108,7 @@ export default function ProjectBillingEditModal({ open, onClose, projectBilling,
                 <div className="text-xs text-slate-500 font-medium">תמחור תוכנית מייסדים</div>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">מחיר חודשי</span>
-                  <span className="font-bold text-slate-900">₪500</span>
+                  <span className="font-bold text-slate-900">₪499</span>
                 </div>
                 <div className="border-t border-slate-200 pt-2 space-y-1">
                   <div className="flex justify-between text-sm">
