@@ -423,6 +423,7 @@ const LoginPage = () => {
       await handleSocialAuthResult(result);
     } catch (error) {
       if (error.error === 'popup_closed_by_user') {
+        // User cancelled — do nothing
       } else {
         const detail = error.response?.data?.detail;
         if (typeof detail === 'object' && detail.code === 'pending_deletion') {
@@ -955,47 +956,51 @@ const LoginPage = () => {
           </form>
         )}
 
-        <div className="mt-4 text-center">
-          <p className="text-sm text-slate-500">
-            אין לך חשבון?{' '}
-            <button type="button" onClick={() => navigate(ENABLE_REGISTER_MANAGEMENT_REDIRECTS ? '/register-management' : '/onboarding?mode=register')} className="text-amber-600 hover:text-amber-700 font-medium">
-              הרשמה
-            </button>
-          </p>
-        </div>
-
-        <div className="mt-3 text-center">
-          <a href="/accessibility" className="text-xs text-slate-400 hover:text-amber-600 transition-colors">
-            הצהרת נגישות
-          </a>
-        </div>
-
-        {quickLoginEnabled && (
-          <div className="mt-6 pt-5 border-t border-slate-200">
-            <p className="text-xs text-slate-500 font-medium text-center mb-3">כניסה מהירה לדמו</p>
-            <div className="grid grid-cols-2 gap-2">
-              {DEMO_ACCOUNTS.map(account => (
-                <button key={account.email} onClick={() => handleDemoLogin(account)} disabled={loading}
-                  className={`px-2 py-2 rounded-lg text-xs font-medium border transition-all hover:shadow-sm touch-manipulation ${roleColors[account.role]}`}
-                >
-                  {account.label}
+        {!socialFlow && (
+          <>
+            <div className="mt-4 text-center">
+              <p className="text-sm text-slate-500">
+                אין לך חשבון?{' '}
+                <button type="button" onClick={() => navigate(ENABLE_REGISTER_MANAGEMENT_REDIRECTS ? '/register-management' : '/onboarding?mode=register')} className="text-amber-600 hover:text-amber-700 font-medium">
+                  הרשמה
                 </button>
-              ))}
+              </p>
             </div>
-            {appMode === 'dev' && (
-              <div className="mt-3">
-                <button onClick={() => handleDemoLogin(SUPER_ADMIN_ACCOUNT)} disabled={loading}
-                  className={`w-full px-2 py-2 rounded-lg text-xs font-medium border transition-all hover:shadow-sm touch-manipulation ${roleColors.super_admin}`}
-                >
-                  {SUPER_ADMIN_ACCOUNT.label}
-                </button>
+
+            <div className="mt-3 text-center">
+              <a href="/accessibility" className="text-xs text-slate-400 hover:text-amber-600 transition-colors">
+                הצהרת נגישות
+              </a>
+            </div>
+
+            {quickLoginEnabled && (
+              <div className="mt-6 pt-5 border-t border-slate-200">
+                <p className="text-xs text-slate-500 font-medium text-center mb-3">כניסה מהירה לדמו</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {DEMO_ACCOUNTS.map(account => (
+                    <button key={account.email} onClick={() => handleDemoLogin(account)} disabled={loading}
+                      className={`px-2 py-2 rounded-lg text-xs font-medium border transition-all hover:shadow-sm touch-manipulation ${roleColors[account.role]}`}
+                    >
+                      {account.label}
+                    </button>
+                  ))}
+                </div>
+                {appMode === 'dev' && (
+                  <div className="mt-3">
+                    <button onClick={() => handleDemoLogin(SUPER_ADMIN_ACCOUNT)} disabled={loading}
+                      className={`w-full px-2 py-2 rounded-lg text-xs font-medium border transition-all hover:shadow-sm touch-manipulation ${roleColors.super_admin}`}
+                    >
+                      {SUPER_ADMIN_ACCOUNT.label}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
 
-        {gitSha && (
-          <p className="text-center text-[10px] text-slate-300 mt-4">v{gitSha}</p>
+            {gitSha && (
+              <p className="text-center text-[10px] text-slate-300 mt-4">v{gitSha}</p>
+            )}
+          </>
         )}
       </Card>
     </div>
