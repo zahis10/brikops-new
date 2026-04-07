@@ -361,9 +361,10 @@ const MyProjectsPage = () => {
       <CreateProjectDialog
         open={showCreateDialog}
         onClose={() => setShowCreateDialog(false)}
-        onSuccess={(project) => {
-          loadProjects();
+        onSuccess={async (project) => {
           const id = project.id || project._id;
+          localStorage.setItem(LAST_PROJECT_KEY, id);
+          await loadProjects();
           navigate(`/projects/${id}/control`);
         }}
       />
