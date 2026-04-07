@@ -72,6 +72,9 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
               <DialogPrimitive.Title className="text-lg font-bold text-slate-900">
                 צור פרויקט חדש
               </DialogPrimitive.Title>
+              <DialogPrimitive.Description className="sr-only">
+                יצירת פרויקט חדש
+              </DialogPrimitive.Description>
               <DialogPrimitive.Close asChild>
                 <button className="p-1 rounded-lg hover:bg-slate-100 transition-colors">
                   <X className="w-5 h-5 text-slate-400" />
@@ -362,7 +365,7 @@ const MyProjectsPage = () => {
         open={showCreateDialog}
         onClose={() => setShowCreateDialog(false)}
         onSuccess={async (project) => {
-          const id = project.id || project._id;
+          const id = project.id;
           localStorage.setItem(LAST_PROJECT_KEY, id);
           await loadProjects();
           navigate(`/projects/${id}/control`);
