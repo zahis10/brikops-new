@@ -7,11 +7,12 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   Search, Plus, FolderOpen, ArrowLeft, LogOut, HardHat, Loader2, Building2, Phone,
-  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield
+  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield, X
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { navigateToProject } from '../utils/navigation';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 const LAST_PROJECT_KEY = 'lastProjectId';
 
@@ -22,6 +23,97 @@ const STATUS_COLORS = {
   completed: 'bg-blue-100 text-blue-700',
 };
 
+const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      setNameError('שם פרויקט חובה');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const data = { name: name.trim() };
+      if (code.trim()) data.code = code.trim();
+      const result = await projectService.create(data);
+      toast.success('פרויקט נוצר בהצלחה');
+      setName('');
+      setCode('');
+      setNameError('');
+      onClose();
+      onSuccess(result);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה ביצירת פרויקט');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center outline-none pointer-events-none">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 pointer-events-auto" dir="rtl">
+            <div className="flex items-center justify-between mb-5">
+              <DialogPrimitive.Title className="text-lg font-bold text-slate-900">
+                צור פרויקט חדש
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Close asChild>
+                <button className="p-1 rounded-lg hover:bg-slate-100 transition-colors">
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </DialogPrimitive.Close>
+            </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="create-proj-name" className="block text-sm font-medium text-slate-700">
+                  שם הפרויקט <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="create-proj-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setNameError(''); }}
+                  placeholder="לדוגמה: פרויקט רמת השרון"
+                  className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${nameError ? 'border-red-500' : 'border-slate-300'}`}
+                  autoFocus
+                />
+                {nameError && <p className="text-xs text-red-500">{nameError}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="create-proj-code" className="block text-sm font-medium text-slate-700">
+                  קוד פרויקט
+                </label>
+                <input
+                  id="create-proj-code"
+                  type="text"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="לדוגמה: RS-001"
+                  className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={submitting}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white h-11 text-sm font-medium"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
+                צור פרויקט
+              </Button>
+            </form>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+};
+
 const MyProjectsPage = () => {
   const { user, logout } = useAuth();
   const { billing } = useBilling();
@@ -30,6 +122,7 @@ const MyProjectsPage = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [lastProject, setLastProject] = useState(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   const isPM = user?.role === 'project_manager';
   const isSuperAdmin = user?.platform_role === 'super_admin';
@@ -195,7 +288,7 @@ const MyProjectsPage = () => {
               </div>
               {canCreate && (
                 <Button
-                  onClick={() => navigate('/admin')}
+                  onClick={() => setShowCreateDialog(true)}
                   className="bg-amber-500 hover:bg-amber-600 text-white h-10 w-10 p-0 flex-shrink-0"
                   title={t('myProjects', 'newProject')}
                 >
@@ -211,7 +304,7 @@ const MyProjectsPage = () => {
                 <p className="text-sm text-slate-400 mt-2 max-w-xs">{t('myProjects', 'emptyStateHint')}</p>
                 {canCreate && (
                   <Button
-                    onClick={() => navigate('/admin')}
+                    onClick={() => setShowCreateDialog(true)}
                     className="mt-6 bg-amber-500 hover:bg-amber-600 text-white h-12 px-8 text-base font-medium gap-2"
                   >
                     <Plus className="w-5 h-5" />
@@ -256,6 +349,14 @@ const MyProjectsPage = () => {
             )}
       </div>
 
+      <CreateProjectDialog
+        open={showCreateDialog}
+        onClose={() => setShowCreateDialog(false)}
+        onSuccess={(project) => {
+          loadProjects();
+          navigateToProject(project, navigate);
+        }}
+      />
     </div>
   );
 };
