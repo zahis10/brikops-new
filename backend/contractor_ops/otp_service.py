@@ -14,7 +14,7 @@ STUB_CODE = "000000"
 
 class OTPService:
     def __init__(self, db, sms_client=None,
-                 ttl_seconds=600, max_attempts=5, rate_limit_seconds=90,
+                 ttl_seconds=600, max_attempts=3, rate_limit_seconds=90,
                  resend_max_15min=3, resend_max_daily=10,
                  sms_mode='stub', app_mode='dev'):
         self.db = db
