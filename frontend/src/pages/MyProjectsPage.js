@@ -29,6 +29,17 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
   const [nameError, setNameError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const resetFields = () => {
+    setName('');
+    setCode('');
+    setNameError('');
+  };
+
+  const handleClose = () => {
+    resetFields();
+    onClose();
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) {
@@ -41,9 +52,7 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
       if (code.trim()) data.code = code.trim();
       const result = await projectService.create(data);
       toast.success('פרויקט נוצר בהצלחה');
-      setName('');
-      setCode('');
-      setNameError('');
+      resetFields();
       onClose();
       onSuccess(result);
     } catch (err) {
@@ -54,7 +63,7 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
   };
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <DialogPrimitive.Root open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center outline-none pointer-events-none">
@@ -354,7 +363,8 @@ const MyProjectsPage = () => {
         onClose={() => setShowCreateDialog(false)}
         onSuccess={(project) => {
           loadProjects();
-          navigateToProject(project, navigate);
+          const id = project.id || project._id;
+          navigate(`/projects/${id}/control`);
         }}
       />
     </div>
