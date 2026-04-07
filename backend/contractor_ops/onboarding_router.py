@@ -1880,7 +1880,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
 
     @router.post("/auth/social/send-otp")
-    async def social_send_otp(body: SocialSendOtpRequest, request: Request):
+    async def social_send_otp(body: SocialSendOtpRequest, request: Request, background_tasks: BackgroundTasks):
         client_ip = _resolve_client_ip(request)
         db = get_db()
 
@@ -1951,6 +1951,11 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             if error == "too_many_attempts":
                 raise HTTPException(status_code=429, detail=result.get("message", "חשבון נעול. נסה שוב מאוחר יותר."))
             raise HTTPException(status_code=400, detail=result.get("message", "שגיאה בשליחת קוד"))
+
+        plain_code = result.pop('_code', None)
+        rid = result.get('rid', '')
+        if plain_code and not result.get('idempotent'):
+            background_tasks.add_task(otp.deliver_otp_background, phone, plain_code, rid)
 
         return {
             "status": "otp_sent",
