@@ -302,6 +302,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             if error_type == 'locked':
                 logger.warning(f"[OTP-AUDIT] event=otp_lockout_triggered phone={masked} ip={client_ip} attempts={result.get('attempts', 'n/a')}")
                 raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
+            if error_type == 'expired':
+                logger.warning(f"[OTP-AUDIT] event=otp_invalidated phone={masked} ip={client_ip}")
+                raise HTTPException(status_code=400, detail=result.get('message', 'קוד האימות בוטל. נא לבקש קוד חדש.'))
             logger.warning(f"[OTP-AUDIT] event=otp_verify_failed phone={masked} ip={client_ip} reason={error_type}")
             raise HTTPException(status_code=400, detail='קוד אימות שגוי או שפג תוקפו.')
 
@@ -1996,6 +1999,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             error = result.get("error", "")
             if error == "locked":
                 raise HTTPException(status_code=429, detail=result.get("message", "נא לנסות שוב מאוחר יותר."))
+            if error == "expired":
+                raise HTTPException(status_code=400, detail=result.get("message", "קוד האימות בוטל. נא לבקש קוד חדש."))
             raise HTTPException(status_code=400, detail="קוד אימות שגוי או שפג תוקפו.")
 
         social_id_field = f"{session['provider']}_id"
