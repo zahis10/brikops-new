@@ -290,7 +290,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=verify_ip_limit")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
-        if not await _check_rate_limit_mongo(db, "verify_phone", req.phone_e164, max_requests=10, window_seconds=300):
+        if not await _check_rate_limit_mongo(db, "verify_phone", req.phone_e164, max_requests=5, window_seconds=300):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=verify_phone_limit")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
@@ -1986,7 +1986,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             if not phone:
                 raise HTTPException(status_code=400, detail="מספר טלפון חסר — שלח OTP קודם")
 
-        if not await _check_rate_limit_mongo(db, "social_verify_phone", phone, max_requests=10, window_seconds=300):
+        if not await _check_rate_limit_mongo(db, "social_verify_phone", phone, max_requests=5, window_seconds=300):
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
         otp = get_otp()

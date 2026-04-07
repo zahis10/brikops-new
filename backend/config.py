@@ -140,7 +140,7 @@ def is_super_admin_phone(phone_raw: str) -> dict:
 OTP_PROVIDER = os.environ.get('OTP_PROVIDER', 'mock')
 
 OTP_TTL_SECONDS = int(os.environ.get('OTP_TTL_SECONDS', '600'))
-OTP_MAX_ATTEMPTS = int(os.environ.get('OTP_MAX_ATTEMPTS', '5'))
+OTP_MAX_ATTEMPTS = int(os.environ.get('OTP_MAX_ATTEMPTS', '3'))
 OTP_RATE_LIMIT_SECONDS = int(os.environ.get('OTP_RATE_LIMIT_SECONDS', '90'))
 
 SMS_MODE = os.environ.get('SMS_MODE', 'stub' if APP_MODE == 'dev' else 'live')

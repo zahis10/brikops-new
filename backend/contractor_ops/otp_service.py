@@ -285,6 +285,14 @@ class OTPService:
                 'locked_until': otp_doc['locked_until']
             }
 
+        if not otp_doc.get('hashed_code'):
+            await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'invalidated'})
+            return {
+                'success': False,
+                'error': 'expired',
+                'message': 'קוד האימות בוטל. נא לבקש קוד חדש.',
+            }
+
         if otp_doc['expires_at'] < now.isoformat():
             await self.db.otp_codes.delete_one({'phone': phone_e164})
             await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'expired'})
@@ -297,6 +305,7 @@ class OTPService:
             if attempts >= self.max_attempts:
                 locked_until = (now + timedelta(minutes=self.lockout_minutes)).isoformat()
                 update['$set']['locked_until'] = locked_until
+                update['$set']['hashed_code'] = None
                 await self.db.otp_codes.update_one({'phone': phone_e164}, update)
                 await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'locked_max_attempts', 'attempts': attempts})
                 return {
