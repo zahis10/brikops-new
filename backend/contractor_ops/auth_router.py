@@ -346,48 +346,48 @@ async def login(credentials: UserLogin):
     return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}
 
 
-_DEV_LOGIN_ROLE_MAP = {
-    'contractor': 'contractor1@contractor-ops.com',
-    'project_manager': 'pm@contractor-ops.com',
-    'management_team': 'sitemanager@contractor-ops.com',
-    'viewer': 'viewer@contractor-ops.com',
-    'super_admin': 'superadmin@brikops.dev',
-}
+from config import APP_MODE as _APP_MODE_AUTH
 
-@router.post("/auth/dev-login")
-async def dev_login(request: Request):
-    from config import APP_MODE
-    if APP_MODE != 'dev':
-        raise HTTPException(status_code=404, detail='Not found')
-    body = await request.json()
-    role = body.get('role', '')
-    email = _DEV_LOGIN_ROLE_MAP.get(role)
-    if not email:
-        raise HTTPException(status_code=400, detail=f'Unknown role: {role}')
-    db = get_db()
-    user = await db.users.find_one({'email': email}, {'_id': 0})
-    if not user:
-        raise HTTPException(status_code=404, detail=f'Demo user not found for role: {role}')
-    if user['role'] == 'project_manager':
-        await ensure_user_org(user['id'], user.get('name', ''))
-    user_phone_raw = user.get('phone_e164', '')
-    sa_check = is_super_admin_phone(user_phone_raw)
-    platform_role = 'super_admin' if sa_check['matched'] else 'none'
-    sa_reason = f" reason={sa_check['reason']}" if sa_check.get('reason') else ''
-    logger.info(f"[SA_CHECK] user_phone_raw={_mask_phone(user_phone_raw)} norm={_mask_phone(sa_check.get('norm') or '')} matched={sa_check['matched']} list_count={len(SUPER_ADMIN_PHONES)} source={SA_PHONES_SOURCE}{sa_reason}")
-    if user.get('platform_role') != platform_role:
-        await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
-    sv = user.get('session_version', 0)
-    token = _create_token(user['id'], user['role'], platform_role,
-                          session_version=sv)
-    user_resp = UserResponse(id=user['id'], email=user['email'], name=user['name'],
-                          phone=user.get('phone'), role=user['role'],
-                          company_id=user.get('company_id'),
-                          specialties=user.get('specialties'), phone_e164=user.get('phone_e164'),
-                          user_status=user.get('user_status', 'active'),
-                          created_at=user.get('created_at'),
-                          whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True))
-    return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}
+if _APP_MODE_AUTH == 'dev':
+    _DEV_LOGIN_ROLE_MAP = {
+        'contractor': 'contractor1@contractor-ops.com',
+        'project_manager': 'pm@contractor-ops.com',
+        'management_team': 'sitemanager@contractor-ops.com',
+        'viewer': 'viewer@contractor-ops.com',
+        'super_admin': 'superadmin@brikops.dev',
+    }
+
+    @router.post("/auth/dev-login")
+    async def dev_login(request: Request):
+        body = await request.json()
+        role = body.get('role', '')
+        email = _DEV_LOGIN_ROLE_MAP.get(role)
+        if not email:
+            raise HTTPException(status_code=400, detail=f'Unknown role: {role}')
+        db = get_db()
+        user = await db.users.find_one({'email': email}, {'_id': 0})
+        if not user:
+            raise HTTPException(status_code=404, detail=f'Demo user not found for role: {role}')
+        if user['role'] == 'project_manager':
+            await ensure_user_org(user['id'], user.get('name', ''))
+        user_phone_raw = user.get('phone_e164', '')
+        sa_check = is_super_admin_phone(user_phone_raw)
+        platform_role = 'super_admin' if sa_check['matched'] else 'none'
+        sa_reason = f" reason={sa_check['reason']}" if sa_check.get('reason') else ''
+        logger.info(f"[SA_CHECK] user_phone_raw={_mask_phone(user_phone_raw)} norm={_mask_phone(sa_check.get('norm') or '')} matched={sa_check['matched']} list_count={len(SUPER_ADMIN_PHONES)} source={SA_PHONES_SOURCE}{sa_reason}")
+        if user.get('platform_role') != platform_role:
+            await db.users.update_one({'id': user['id']}, {'$set': {'platform_role': platform_role}})
+        sv = user.get('session_version', 0)
+        token = _create_token(user['id'], user['role'], platform_role,
+                              session_version=sv)
+        user_resp = UserResponse(id=user['id'], email=user['email'], name=user['name'],
+                              phone=user.get('phone'), role=user['role'],
+                              company_id=user.get('company_id'),
+                              specialties=user.get('specialties'), phone_e164=user.get('phone_e164'),
+                              user_status=user.get('user_status', 'active'),
+                              created_at=user.get('created_at'),
+                              whatsapp_notifications_enabled=user.get('whatsapp_notifications_enabled', True))
+        return {'token': token, 'user': user_resp.dict(), 'platform_role': platform_role}
 
 
 @router.get("/auth/me", response_model=UserResponse)

@@ -513,42 +513,43 @@ async def create_indexes():
         logger.warning(f"[INDEXES] Index creation warning: {e}")
 
 
-_DEMO_USERS = [
-    {'email': 'pm@contractor-ops.com', 'password': 'pm123', 'name': 'מנהל פרויקט', 'role': 'project_manager', 'phone_e164': '+972500000002'},
-    {'email': 'sitemanager@contractor-ops.com', 'password': 'mgmt123', 'name': 'מנהל עבודה', 'role': 'management_team', 'phone_e164': '+972500000010'},
-    {'email': 'contractor1@contractor-ops.com', 'password': 'cont123', 'name': 'קבלן חשמל', 'role': 'contractor', 'phone_e164': '+972500100000'},
-    {'email': 'viewer@contractor-ops.com', 'password': 'view123', 'name': 'צופה', 'role': 'viewer', 'phone_e164': '+972500000099'},
-    {'email': 'superadmin@brikops.dev', 'password': 'super123', 'name': 'Super Admin', 'role': 'project_manager', 'phone_e164': '+972540000001'},
-]
+if APP_MODE == 'dev' or ENABLE_DEMO_USERS:
+    _DEMO_USERS = [
+        {'email': 'pm@contractor-ops.com', 'password': 'pm123', 'name': 'מנהל פרויקט', 'role': 'project_manager', 'phone_e164': '+972500000002'},
+        {'email': 'sitemanager@contractor-ops.com', 'password': 'mgmt123', 'name': 'מנהל עבודה', 'role': 'management_team', 'phone_e164': '+972500000010'},
+        {'email': 'contractor1@contractor-ops.com', 'password': 'cont123', 'name': 'קבלן חשמל', 'role': 'contractor', 'phone_e164': '+972500100000'},
+        {'email': 'viewer@contractor-ops.com', 'password': 'view123', 'name': 'צופה', 'role': 'viewer', 'phone_e164': '+972500000099'},
+        {'email': 'superadmin@brikops.dev', 'password': 'super123', 'name': 'Super Admin', 'role': 'project_manager', 'phone_e164': '+972540000001'},
+    ]
 
-async def ensure_demo_users():
-    import bcrypt as _bcrypt
-    override_pw = DEMO_DEFAULT_PASSWORD if APP_MODE != 'dev' else None
-    created = 0
-    updated = 0
-    for demo in _DEMO_USERS:
-        pw = override_pw or demo['password']
-        existing = await db.users.find_one({'email': demo['email']}, {'_id': 0, 'id': 1, 'password_hash': 1})
-        if existing:
-            if not existing.get('password_hash') or not existing['password_hash'].startswith('$2'):
+    async def ensure_demo_users():
+        import bcrypt as _bcrypt
+        override_pw = DEMO_DEFAULT_PASSWORD if APP_MODE != 'dev' else None
+        created = 0
+        updated = 0
+        for demo in _DEMO_USERS:
+            pw = override_pw or demo['password']
+            existing = await db.users.find_one({'email': demo['email']}, {'_id': 0, 'id': 1, 'password_hash': 1})
+            if existing:
+                if not existing.get('password_hash') or not existing['password_hash'].startswith('$2'):
+                    pw_hash = _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
+                    await db.users.update_one({'id': existing['id']}, {'$set': {'password_hash': pw_hash}})
+                    updated += 1
+            else:
+                user_id = str(uuid.uuid4())
                 pw_hash = _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
-                await db.users.update_one({'id': existing['id']}, {'$set': {'password_hash': pw_hash}})
-                updated += 1
+                await db.users.insert_one({
+                    'id': user_id, 'email': demo['email'], 'password_hash': pw_hash,
+                    'name': demo['name'], 'role': demo['role'], 'phone_e164': demo['phone_e164'],
+                    'user_status': 'active', 'company_id': None,
+                    'preferred_language': 'he',
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                })
+                created += 1
+        if created or updated:
+            logger.info(f"[DEMO-USERS] Ensured demo users: created={created} updated={updated}")
         else:
-            user_id = str(uuid.uuid4())
-            pw_hash = _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
-            await db.users.insert_one({
-                'id': user_id, 'email': demo['email'], 'password_hash': pw_hash,
-                'name': demo['name'], 'role': demo['role'], 'phone_e164': demo['phone_e164'],
-                'user_status': 'active', 'company_id': None,
-                'preferred_language': 'he',
-                'created_at': datetime.now(timezone.utc).isoformat(),
-            })
-            created += 1
-    if created or updated:
-        logger.info(f"[DEMO-USERS] Ensured demo users: created={created} updated={updated}")
-    else:
-        logger.info("[DEMO-USERS] All demo users already exist")
+            logger.info("[DEMO-USERS] All demo users already exist")
 
 
 async def seed_super_admin_user():

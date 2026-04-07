@@ -11,14 +11,19 @@ import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
 const ENABLE_REGISTER_MANAGEMENT_REDIRECTS =
   process.env.REACT_APP_ENABLE_REGISTER_MANAGEMENT_REDIRECTS === 'true';
 
-const DEMO_ACCOUNTS = [
-  { email: 'pm@contractor-ops.com', password: 'pm123', label: 'מנהל פרויקט', role: 'project_manager' },
-  { email: 'sitemanager@contractor-ops.com', password: 'mgmt123', label: 'צוות ניהולי', role: 'management_team' },
-  { email: 'contractor1@contractor-ops.com', password: 'cont123', label: 'קבלן', role: 'contractor' },
-  { email: 'viewer@contractor-ops.com', password: 'view123', label: 'צופה', role: 'viewer' },
-];
+const SHOW_DEV_LOGIN = process.env.REACT_APP_ENABLE_DEV_LOGIN === 'true';
 
-const SUPER_ADMIN_ACCOUNT = { email: 'superadmin@brikops.dev', password: 'super123', label: 'Super Admin', role: 'super_admin' };
+let DEMO_ACCOUNTS = [];
+let SUPER_ADMIN_ACCOUNT = null;
+if (process.env.REACT_APP_ENABLE_DEV_LOGIN === 'true') {
+  DEMO_ACCOUNTS = [
+    { email: 'pm@contractor-ops.com', password: 'pm123', label: 'מנהל פרויקט', role: 'project_manager' },
+    { email: 'sitemanager@contractor-ops.com', password: 'mgmt123', label: 'צוות ניהולי', role: 'management_team' },
+    { email: 'contractor1@contractor-ops.com', password: 'cont123', label: 'קבלן', role: 'contractor' },
+    { email: 'viewer@contractor-ops.com', password: 'view123', label: 'צופה', role: 'viewer' },
+  ];
+  SUPER_ADMIN_ACCOUNT = { email: 'superadmin@brikops.dev', password: 'super123', label: 'Super Admin', role: 'super_admin' };
+}
 
 const roleColors = {
   project_manager: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -44,9 +49,9 @@ const LoginPage = () => {
   const { login, loginWithOtp } = useAuth();
   const navigate = useNavigate();
 
-  const [appMode, setAppMode] = useState('');
+  const [appMode, setAppMode] = useState(SHOW_DEV_LOGIN ? 'dev' : '');
 
-  const [quickLoginEnabled, setQuickLoginEnabled] = useState(false);
+  const [quickLoginEnabled, setQuickLoginEnabled] = useState(SHOW_DEV_LOGIN);
   const [onboardingEnabled, setOnboardingEnabled] = useState(null);
 
   const googleButtonRef = useRef(null);
@@ -61,12 +66,7 @@ const LoginPage = () => {
     fetch(`${BACKEND_URL}/api/config/features`)
       .then(r => r.json())
       .then(d => {
-        setAppMode(d.feature_flags?.app_mode || '');
-        setQuickLoginEnabled(d.feature_flags?.enable_quick_login === true);
         setOnboardingEnabled(d.feature_flags?.onboarding_v2 === true);
-        if (d.feature_flags?.enable_demo_users === true) {
-          setAuthMethod('email');
-        }
       })
       .catch(() => { setOnboardingEnabled(false); });
   }, []);
@@ -876,7 +876,7 @@ const LoginPage = () => {
               </a>
             </div>
 
-            {quickLoginEnabled && (
+            {SHOW_DEV_LOGIN && quickLoginEnabled && (
               <div className="mt-6 pt-5 border-t border-slate-200">
                 <p className="text-xs text-slate-500 font-medium text-center mb-3">כניסה מהירה לדמו</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -888,7 +888,7 @@ const LoginPage = () => {
                     </button>
                   ))}
                 </div>
-                {appMode === 'dev' && (
+                {appMode === 'dev' && SUPER_ADMIN_ACCOUNT && (
                   <div className="mt-3">
                     <button onClick={() => handleDemoLogin(SUPER_ADMIN_ACCOUNT)} disabled={loading}
                       className={`w-full px-2 py-2 rounded-lg text-xs font-medium border transition-all hover:shadow-sm touch-manipulation ${roleColors.super_admin}`}
