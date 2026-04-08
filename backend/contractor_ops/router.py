@@ -59,7 +59,7 @@ from contractor_ops.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 router = APIRouter(prefix="/api")
 
 
@@ -144,6 +144,8 @@ def _create_token(user_id: str, role: str, platform_role: str = 'none',
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials is None:
+        raise HTTPException(status_code=401, detail='Not authenticated')
     db = get_db()
     try:
         token = credentials.credentials
@@ -182,6 +184,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 
 async def get_current_user_allow_pending_deletion(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials is None:
+        raise HTTPException(status_code=401, detail='Not authenticated')
     db = get_db()
     try:
         token = credentials.credentials
@@ -294,12 +298,12 @@ async def require_super_admin(request: Request, user: dict = Depends(get_current
 
     sa_check = is_super_admin_phone(user_phone)
     if not sa_check['matched']:
-        await _audit_admin_access(user.get('id', ''), route, method, 403, ip, ua, 'not_in_allowlist')
-        raise HTTPException(status_code=403, detail='גישה מוגבלת למנהל מערכת בלבד')
+        await _audit_admin_access(user.get('id', ''), route, method, 404, ip, ua, 'not_in_allowlist')
+        raise HTTPException(status_code=404, detail='Not found')
 
     if not _is_super_admin(user):
-        await _audit_admin_access(user.get('id', ''), route, method, 403, ip, ua, 'missing_platform_role')
-        raise HTTPException(status_code=403, detail='גישה מוגבלת למנהל מערכת בלבד')
+        await _audit_admin_access(user.get('id', ''), route, method, 404, ip, ua, 'missing_platform_role')
+        raise HTTPException(status_code=404, detail='Not found')
 
     await _audit_admin_access(user.get('id', ''), route, method, 200, ip, ua, 'granted')
     return user

@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
 import os
@@ -54,6 +55,12 @@ app = FastAPI(
 )
 
 import time as _time
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    if APP_MODE == 'dev':
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    return JSONResponse(status_code=422, content={"detail": "נתונים לא תקינים"})
 
 _server_start_time = _time.time()
 _SKIP_LOG_PATHS = {'/health', '/ready'}
@@ -210,7 +217,7 @@ async def debug_db_ping(request: Request):
         raise _H(status_code=401, detail='Authentication required')
     if user.get('platform_role') != 'super_admin':
         from fastapi import HTTPException as _H
-        raise _H(status_code=403, detail='Super admin access required')
+        raise _H(status_code=404, detail='Not found')
     import socket
     results = {}
     for i in range(3):
@@ -1285,7 +1292,7 @@ class SecurityHeadersMiddleware(_BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://appleid.cdn-apple.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com https://appleid.cdn-apple.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.brikops.com https://accounts.google.com https://appleid.apple.com; frame-src https://accounts.google.com https://appleid.apple.com; frame-ancestors 'none'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
         return response
