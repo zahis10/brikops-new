@@ -19,7 +19,19 @@ _FONTS_DIR = _BACKEND_DIR / "fonts"
 
 _BRIKOPS_LOGO_PATH = _BACKEND_DIR / "static" / "logo.png"
 try:
-    _BRIKOPS_LOGO_B64 = "data:image/png;base64," + base64.b64encode(_BRIKOPS_LOGO_PATH.read_bytes()).decode()
+    _raw_logo = _BRIKOPS_LOGO_PATH.read_bytes()
+    try:
+        from PIL import Image as _PILImage
+        _pil = _PILImage.open(io.BytesIO(_raw_logo))
+        if _pil.width > 400:
+            _ratio = 400 / _pil.width
+            _pil = _pil.resize((400, int(_pil.height * _ratio)), _PILImage.LANCZOS)
+        _buf = io.BytesIO()
+        _pil.save(_buf, format='PNG', optimize=True)
+        _raw_logo = _buf.getvalue()
+    except Exception:
+        pass
+    _BRIKOPS_LOGO_B64 = "data:image/png;base64," + base64.b64encode(_raw_logo).decode()
 except (OSError, IOError):
     _BRIKOPS_LOGO_B64 = ""
 
@@ -258,7 +270,7 @@ async def generate_handover_pdf(protocol: dict, db) -> bytes:
     html_content = template.render(**context)
 
     if use_weasyprint:
-        pdf_bytes = HTML(string=html_content, base_url=str(_BACKEND_DIR)).write_pdf()
+        pdf_bytes = HTML(string=html_content, base_url=str(_BACKEND_DIR), encoding='utf-8').write_pdf()
     else:
         try:
             from xhtml2pdf import pisa

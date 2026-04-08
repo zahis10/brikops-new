@@ -24,10 +24,11 @@
     margin: 18mm 14mm 22mm 14mm;
 
     @bottom-right {
-        content: "\25A0  נוצר באמצעות BrikOps | brikops.com";
+        content: "■  נוצר באמצעות BrikOps | brikops.com";
         font-family: 'Rubik', sans-serif;
         font-size: 7pt;
         color: #f97316;
+        direction: rtl;
     }
     @bottom-center {
         content: counter(page) " / " counter(pages);
@@ -40,6 +41,7 @@
         font-family: 'Rubik', sans-serif;
         font-size: 7pt;
         color: #94a3b8;
+        direction: rtl;
     }
 }
 
@@ -515,11 +517,13 @@ tbody tr:nth-child(odd) {
         {% if signed_date %}<span>תאריך: {{ signed_date }}</span>{% endif %}
     </div>
 
-    {% if brikops_logo_b64 %}
     <div style="margin-top: 24px;">
+    {% if brikops_logo_b64 %}
         <img src="{{ brikops_logo_b64 }}" style="height: 30px; opacity: 0.85;" alt="BrikOps" />
-    </div>
+    {% else %}
+        <div style="font-size: 10pt; color: rgba(255,255,255,0.6);">BrikOps</div>
     {% endif %}
+    </div>
 </div>
 
 <!-- Stats bar -->
