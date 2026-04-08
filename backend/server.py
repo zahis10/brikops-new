@@ -1281,7 +1281,7 @@ app.add_middleware(
     allow_origins=os.environ.get('CORS_ORIGINS', _cors_default).split(','),
     allow_methods=['*'],
     allow_headers=['*'],
-    expose_headers=['x-request-id', 'x-response-time-ms', 'X-New-Token'],
+    expose_headers=['x-request-id', 'x-response-time-ms'],
 )
 
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware

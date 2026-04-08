@@ -47,16 +47,6 @@ export const AuthProvider = ({ children }) => {
         return hashToken;
       }
     }
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlToken = urlParams.get('_token');
-    if (urlToken) {
-      localStorage.setItem('token', urlToken);
-      _setBrikopsCookie();
-      urlParams.delete('_token');
-      const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
-      window.history.replaceState({}, '', newUrl);
-      return urlToken;
-    }
     return localStorage.getItem('token');
   });
   const [loading, setLoading] = useState(true);
