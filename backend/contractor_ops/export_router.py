@@ -1,5 +1,6 @@
 import io
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -27,6 +28,18 @@ STATUS_LABEL = {
     'returned_to_contractor': 'הוחזר לקבלן',
     'closed': 'סגור',
     'reopened': 'נפתח מחדש',
+}
+
+STATUS_COLORS = {
+    'open': '#EF4444',
+    'assigned': '#F59E0B',
+    'in_progress': '#3B82F6',
+    'waiting_verify': '#8B5CF6',
+    'pending_contractor_proof': '#F59E0B',
+    'pending_manager_approval': '#F59E0B',
+    'returned_to_contractor': '#EF4444',
+    'closed': '#22C55E',
+    'reopened': '#EF4444',
 }
 
 OPEN_STATUSES_APARTMENT = {'open', 'assigned', 'reopened'}
@@ -484,7 +497,7 @@ def _build_image_flowable(img_buf, max_w_cm, max_h_cm, caption_text, style_capti
         draw_h = ih * scale
         img_buf.seek(0)
         rl_img = RLImage(img_buf, width=draw_w, height=draw_h)
-        rl_img.hAlign = 'RIGHT'
+        rl_img.hAlign = 'CENTER'
         caption_para = Paragraph(heb_fn(caption_text), style_caption)
         img_with_caption = Table(
             [[rl_img], [caption_para]],
@@ -501,7 +514,7 @@ def _build_image_flowable(img_buf, max_w_cm, max_h_cm, caption_text, style_capti
             ('LEFTPADDING', (0, 0), (-1, -1), 0),
             ('RIGHTPADDING', (0, 0), (-1, -1), 0),
         ]))
-        img_with_caption.hAlign = 'RIGHT'
+        img_with_caption.hAlign = 'CENTER'
         return img_with_caption
     except Exception as e:
         logger.warning(f'[PDF] Image render failed: {e}')
@@ -538,10 +551,24 @@ def _build_defect_card(task, doc_width, page_height, heb_fn, styles, lookup_maps
     number = task.get('display_number') or task.get('short_ref', '')
     prefix = f'#{number} ' if number else ''
 
-    header_para = Paragraph(heb_fn(f'{prefix}{title_text}'), styles['defect_title'])
+    status_color = colors.HexColor(STATUS_COLORS.get(status, '#64748B'))
+    header_bg = colors.HexColor('#DC2626') if is_blocking else AMBER_LIGHT
+    header_text_color = colors.white if is_blocking else colors.HexColor('#334155')
+
+    style_header_dynamic = styles['defect_title'].__class__(
+        'PDFDefectTitleDynamic',
+        parent=styles['defect_title'],
+        textColor=header_text_color,
+    )
+
+    blocking_badge = ''
+    if is_blocking:
+        blocking_badge = '  ◆ חוסם מסירה'
+
+    header_para = Paragraph(heb_fn(f'{prefix}{title_text}{blocking_badge}'), style_header_dynamic)
     header_tbl = Table([[header_para]], colWidths=[inner_width])
     header_tbl.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), AMBER_LIGHT),
+        ('BACKGROUND', (0, 0), (-1, -1), header_bg),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING', (0, 0), (-1, -1), 3 * mm),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3 * mm),
@@ -551,20 +578,43 @@ def _build_defect_card(task, doc_width, page_height, heb_fn, styles, lookup_maps
     ]))
     card_content.append(header_tbl)
 
+    status_label_text = STATUS_LABEL.get(status, status)
+    status_badge_style = styles['field_value'].__class__(
+        'PDFStatusBadge',
+        parent=styles['field_value'],
+        textColor=colors.white,
+        fontSize=8,
+        leading=11,
+    )
+    status_badge_para = Paragraph(heb_fn(status_label_text), status_badge_style)
+    status_badge_tbl = Table([[status_badge_para]], colWidths=[None])
+    status_badge_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), status_color),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 1.5 * mm),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5 * mm),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3 * mm),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3 * mm),
+        ('ROUNDEDCORNERS', [1.5 * mm, 1.5 * mm, 1.5 * mm, 1.5 * mm]),
+    ]))
+    status_badge_tbl.hAlign = 'RIGHT'
+
     fields = [
         ('תחום', CATEGORY_LABEL.get(task.get('category', ''), task.get('category', ''))),
-        ('סטטוס', STATUS_LABEL.get(status, status)),
         ('בניין', building_map.get(task.get('building_id', ''), '')),
         ('קומה', floor_map.get(task.get('floor_id', ''), '')),
         ('דירה', unit_map.get(task.get('unit_id', ''), '')),
         ('חברה/קבלן', company_map.get(task.get('company_id', ''), '')),
         ('תאריך יצירה', _format_datetime(task.get('created_at'))),
         ('תאריך עדכון', _format_datetime(task.get('updated_at'))),
-        ('חוסם מסירה', 'כן' if is_blocking else 'לא'),
     ]
     desc = task.get('description', '')
     if desc:
         fields.insert(1, ('תיאור', desc))
+
+    card_content.append(Spacer(1, 2 * mm))
+    card_content.append(status_badge_tbl)
 
     field_rows = []
     for label, value in fields:
@@ -621,18 +671,22 @@ def _build_defect_card(task, doc_width, page_height, heb_fn, styles, lookup_maps
 
     card_content.append(Spacer(1, 2 * mm))
 
+    card_style_cmds = [
+        ('BACKGROUND', (0, 0), (-1, -1), WHITE),
+        ('BOX', (0, 0), (-1, -1), 0.75, SLATE_200),
+        ('ROUNDEDCORNERS', [2 * mm, 2 * mm, 2 * mm, 2 * mm]),
+        ('TOPPADDING', (0, 0), (-1, -1), CARD_PAD),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), CARD_PAD),
+        ('LEFTPADDING', (0, 0), (-1, -1), CARD_PAD),
+        ('RIGHTPADDING', (0, 0), (-1, -1), CARD_PAD),
+    ]
+    if is_blocking:
+        card_style_cmds.append(('LINEAFTER', (0, 0), (0, -1), 3, colors.HexColor('#DC2626')))
+
     outer_card = Table(
         [[card_content]],
         colWidths=[doc_width],
-        style=TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), WHITE),
-            ('BOX', (0, 0), (-1, -1), 0.75, SLATE_200),
-            ('ROUNDEDCORNERS', [2 * mm, 2 * mm, 2 * mm, 2 * mm]),
-            ('TOPPADDING', (0, 0), (-1, -1), CARD_PAD),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), CARD_PAD),
-            ('LEFTPADDING', (0, 0), (-1, -1), CARD_PAD),
-            ('RIGHTPADDING', (0, 0), (-1, -1), CARD_PAD),
-        ]),
+        style=TableStyle(card_style_cmds),
     )
 
     card_w, card_h = outer_card.wrap(doc_width, page_height)
@@ -704,8 +758,24 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
     page_height = A4[1] - doc.topMargin - doc.bottomMargin
     elements = []
 
+    BLUE_600 = colors.HexColor('#2563EB')
+    GRAY_100 = colors.HexColor('#F3F4F6')
+    GRAY_300 = colors.HexColor('#D1D5DB')
+
     scope_heb = heb('בניין') if scope_type == 'building' else heb('דירה')
     elements.append(Paragraph(heb('דו״ח ליקויים'), style_title))
+    elements.append(Spacer(1, 2 * mm))
+
+    blue_line = Table([['']], colWidths=[4 * cm], rowHeights=[0.8 * mm])
+    blue_line.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), BLUE_600),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    blue_line.hAlign = 'CENTER'
+    elements.append(blue_line)
     elements.append(Spacer(1, 4 * mm))
 
     info_line = f'{project_name} · {scope_heb}: {scope_label}'
@@ -719,7 +789,58 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
         elements.append(Paragraph(heb(f'סינון: {filters_desc}'), style_filter))
         elements.append(Spacer(1, 2 * mm))
 
-    elements.append(Paragraph(heb(f'סה״כ ליקויים: {len(tasks)}'), style_count))
+    status_counts = Counter(t.get('status', 'open') for t in tasks)
+    blocking_count = sum(1 for t in tasks if t.get('status', 'open') in BLOCKING_STATUSES)
+
+    style_summary_label = ParagraphStyle('PDFSummaryLabel', fontName='Rubik', fontSize=9,
+                                          alignment=TA_RIGHT, textColor=SLATE_500, leading=12)
+    style_summary_value = ParagraphStyle('PDFSummaryValue', fontName='Rubik', fontSize=11,
+                                          alignment=TA_CENTER, textColor=SLATE_700, leading=14)
+
+    summary_cells = []
+    summary_labels = []
+    total_count_para = Paragraph(heb(str(len(tasks))), style_summary_value)
+    total_label_para = Paragraph(heb('סה״כ'), style_summary_label)
+    summary_cells.append(total_count_para)
+    summary_labels.append(total_label_para)
+
+    open_count = status_counts.get('open', 0) + status_counts.get('reopened', 0)
+    if open_count:
+        summary_cells.append(Paragraph(heb(str(open_count)), style_summary_value))
+        summary_labels.append(Paragraph(heb('פתוחים'), style_summary_label))
+
+    in_progress = sum(status_counts.get(s, 0) for s in IN_PROGRESS_STATUSES)
+    if in_progress:
+        summary_cells.append(Paragraph(heb(str(in_progress)), style_summary_value))
+        summary_labels.append(Paragraph(heb('בביצוע'), style_summary_label))
+
+    closed_count = status_counts.get('closed', 0)
+    if closed_count:
+        summary_cells.append(Paragraph(heb(str(closed_count)), style_summary_value))
+        summary_labels.append(Paragraph(heb('סגורים'), style_summary_label))
+
+    if blocking_count:
+        style_blocking_val = ParagraphStyle('PDFBlockingVal', fontName='Rubik', fontSize=11,
+                                             alignment=TA_CENTER, textColor=colors.HexColor('#DC2626'), leading=14)
+        summary_cells.append(Paragraph(heb(str(blocking_count)), style_blocking_val))
+        summary_labels.append(Paragraph(heb('חוסמים'), style_summary_label))
+
+    num_cols = len(summary_cells)
+    col_w = doc.width / num_cols if num_cols else doc.width
+    summary_tbl = Table([summary_cells, summary_labels], colWidths=[col_w] * num_cols)
+    summary_tbl.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BACKGROUND', (0, 0), (-1, -1), GRAY_100),
+        ('BOX', (0, 0), (-1, -1), 0.5, GRAY_300),
+        ('ROUNDEDCORNERS', [2 * mm, 2 * mm, 2 * mm, 2 * mm]),
+        ('TOPPADDING', (0, 0), (-1, 0), 3 * mm),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 1 * mm),
+        ('TOPPADDING', (0, 1), (-1, 1), 0),
+        ('BOTTOMPADDING', (0, 1), (-1, 1), 3 * mm),
+        ('INNERGRID', (0, 0), (-1, -1), 0.5, GRAY_300),
+    ]))
+    elements.append(summary_tbl)
     elements.append(Spacer(1, 6 * mm))
 
     lookup_maps = (user_map, company_map, floor_map, unit_map, building_map)
@@ -745,7 +866,17 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
         if idx < len(tasks) - 1:
             elements.append(Spacer(1, 5 * mm))
 
-    doc.build(elements)
+    def _add_page_number(canvas_obj, doc_obj):
+        from reportlab.lib.units import cm
+        page_num = canvas_obj.getPageNumber()
+        canvas_obj.saveState()
+        canvas_obj.setFont('Rubik', 8)
+        canvas_obj.setFillColor(colors.HexColor('#94A3B8'))
+        canvas_obj.drawCentredString(doc_obj.pagesize[0] / 2, 1 * cm,
+                                      heb(f'{page_num} עמוד'))
+        canvas_obj.restoreState()
+
+    doc.build(elements, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
     output.seek(0)
     return output
 
