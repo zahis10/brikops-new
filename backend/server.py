@@ -147,15 +147,15 @@ async def global_rate_limit_middleware(request: Request, call_next):
 
     user_id = _extract_jwt_payload(request).get('user_id')
 
-    allowed = False
+    allowed = True
     try:
         if user_id:
             allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=120, window_seconds=60)
         else:
             allowed = await _check_rate_limit_global(db, "global_ip", client_ip, max_requests=30, window_seconds=60)
     except Exception:
-        logger.error(f"[RATE-LIMIT] DB error, denying request path={path}")
-        allowed = False
+        logger.error(f"[RATE-LIMIT] DB error, allowing request through (fail open) path={path}")
+        allowed = True
 
     if not allowed:
         logger.warning(f"[RATE-LIMIT] kind={'user' if user_id else 'ip'} key={user_id or client_ip} path={path}")
