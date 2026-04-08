@@ -90,6 +90,83 @@ def _is_attach_upload(request: Request) -> bool:
     return (len(parts) == 4 and parts[0] == 'api' and parts[1] == 'tasks'
             and parts[3] == 'attachments')
 
+from datetime import timedelta as _timedelta
+
+async def _check_rate_limit_global(rate_db, kind: str, key: str, max_requests: int, window_seconds: int) -> bool:
+    from pymongo import ReturnDocument
+    from pymongo.errors import DuplicateKeyError
+
+    now = datetime.now(timezone.utc)
+    new_expires = now + _timedelta(seconds=window_seconds)
+
+    pipeline = [
+        {"$set": {
+            "count": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - _timedelta(seconds=1)]}, now]},
+                "then": 1,
+                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
+            }},
+            "window_start": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - _timedelta(seconds=1)]}, now]},
+                "then": now,
+                "else": {"$ifNull": ["$window_start", now]},
+            }},
+            "expires_at": {"$cond": {
+                "if": {"$lte": [{"$ifNull": ["$expires_at", now - _timedelta(seconds=1)]}, now]},
+                "then": new_expires,
+                "else": {"$ifNull": ["$expires_at", new_expires]},
+            }},
+            "updated_at": now,
+        }},
+    ]
+
+    for attempt in range(2):
+        try:
+            result = await rate_db.otp_rate_limits.find_one_and_update(
+                {"kind": kind, "key": key},
+                pipeline,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            return result["count"] <= max_requests
+        except DuplicateKeyError:
+            if attempt == 0:
+                continue
+            return False
+    return False
+
+@app.middleware("http")
+async def global_rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in ('/health', '/ready'):
+        return await call_next(request)
+
+    client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '127.0.0.1')
+    if ',' in client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+
+    user_id = _extract_jwt_payload(request).get('user_id')
+
+    allowed = False
+    try:
+        if user_id:
+            allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=120, window_seconds=60)
+        else:
+            allowed = await _check_rate_limit_global(db, "global_ip", client_ip, max_requests=30, window_seconds=60)
+    except Exception:
+        logger.error(f"[RATE-LIMIT] DB error, denying request path={path}")
+        allowed = False
+
+    if not allowed:
+        logger.warning(f"[RATE-LIMIT] kind={'user' if user_id else 'ip'} key={user_id or client_ip} path={path}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "נא לנסות שוב מאוחר יותר."},
+            headers={"Retry-After": "60"},
+        )
+
+    return await call_next(request)
+
 _RENEWAL_SKIP_PREFIXES = ('/api/auth/', '/api/otp/', '/api/onboarding/', '/health', '/ready')
 
 def _maybe_renew_token(request: Request, response):
@@ -188,81 +265,6 @@ async def timing_middleware(request: Request, call_next):
             logger.info(log_line)
 
     return response
-
-from datetime import timedelta as _timedelta
-
-async def _check_rate_limit_global(rate_db, kind: str, key: str, max_requests: int, window_seconds: int) -> bool:
-    from pymongo import ReturnDocument
-    from pymongo.errors import DuplicateKeyError
-
-    now = datetime.now(timezone.utc)
-    new_expires = now + _timedelta(seconds=window_seconds)
-
-    pipeline = [
-        {"$set": {
-            "count": {"$cond": {
-                "if": {"$lte": [{"$ifNull": ["$expires_at", now - _timedelta(seconds=1)]}, now]},
-                "then": 1,
-                "else": {"$add": [{"$ifNull": ["$count", 0]}, 1]},
-            }},
-            "window_start": {"$cond": {
-                "if": {"$lte": [{"$ifNull": ["$expires_at", now - _timedelta(seconds=1)]}, now]},
-                "then": now,
-                "else": {"$ifNull": ["$window_start", now]},
-            }},
-            "expires_at": {"$cond": {
-                "if": {"$lte": [{"$ifNull": ["$expires_at", now - _timedelta(seconds=1)]}, now]},
-                "then": new_expires,
-                "else": {"$ifNull": ["$expires_at", new_expires]},
-            }},
-            "updated_at": now,
-        }},
-    ]
-
-    for attempt in range(2):
-        try:
-            result = await rate_db.otp_rate_limits.find_one_and_update(
-                {"kind": kind, "key": key},
-                pipeline,
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-            )
-            return result["count"] <= max_requests
-        except DuplicateKeyError:
-            if attempt == 0:
-                continue
-            return True
-    return True
-
-@app.middleware("http")
-async def global_rate_limit_middleware(request: Request, call_next):
-    path = request.url.path
-    if path in ('/health', '/ready'):
-        return await call_next(request)
-
-    client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '127.0.0.1')
-    if ',' in client_ip:
-        client_ip = client_ip.split(',')[0].strip()
-
-    user_id = _extract_jwt_payload(request).get('user_id')
-
-    try:
-        if user_id:
-            allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=120, window_seconds=60)
-        else:
-            allowed = await _check_rate_limit_global(db, "global_ip", client_ip, max_requests=30, window_seconds=60)
-    except Exception:
-        allowed = True
-
-    if not allowed:
-        logger.warning(f"[RATE-LIMIT] kind={'user' if user_id else 'ip'} key={user_id or client_ip} path={path}")
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "נא לנסות שוב מאוחר יותר."},
-            headers={"Retry-After": "60"},
-        )
-
-    return await call_next(request)
 
 @app.get("/health")
 async def health_check():
