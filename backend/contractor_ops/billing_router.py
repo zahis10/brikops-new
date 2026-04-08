@@ -1575,13 +1575,16 @@ async def billing_webhook_payplus(request: Request):
         },
     })
     try:
-        from contractor_ops.invoicing import generate_invoice
+        from contractor_ops.invoicing import generate_invoice, mark_invoice_paid
         period = paid_until[:7]
         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
-        await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
+        invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
+        if invoice and invoice.get('id') and invoice.get('status') != 'paid':
+            await mark_invoice_paid(org_id, invoice['id'], 'payplus_webhook')
+            logger.info(f"[PAYPLUS-WH] Invoice {invoice['id']} marked as paid for org {org_id}")
         logger.info("[PAYPLUS-WH] Invoice generated for org=%s period=%s", org_id, period)
     except Exception as e:
-        logger.warning("[PAYPLUS-WH] Invoice creation failed for org=%s — not critical: %s", org_id, e)
+        logger.warning(f"[PAYPLUS-WH] Invoice creation/marking failed: {e}")
     await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {
         'result': 'success',
         'org_id': org_id,
