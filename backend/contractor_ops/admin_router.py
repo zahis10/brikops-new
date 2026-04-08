@@ -211,7 +211,10 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
 @router.get("/admin/billing/invoices-summary")
 async def admin_invoices_summary(user: dict = Depends(require_super_admin)):
     db = get_db()
-    pipeline = [
+    now = datetime.now(timezone.utc)
+    current_ym = now.strftime('%Y-%m')
+
+    pipeline_latest = [
         {'$sort': {'org_id': 1, 'period_ym': -1}},
         {'$group': {
             '_id': '$org_id',
@@ -221,14 +224,35 @@ async def admin_invoices_summary(user: dict = Depends(require_super_admin)):
             'paid_at': {'$first': '$paid_at'},
         }},
     ]
-    results = await db.invoices.aggregate(pipeline).to_list(5000)
-    return {r['_id']: {
+    latest_results = await db.invoices.aggregate(pipeline_latest).to_list(5000)
+    latest_map = {r['_id']: {
         'org_id': r['_id'],
         'period_ym': r.get('period_ym'),
         'status': r.get('status'),
         'total_amount': r.get('total_amount'),
         'paid_at': r.get('paid_at'),
-    } for r in results}
+    } for r in latest_results}
+
+    pipeline_paid = [
+        {'$match': {
+            'status': 'paid',
+            'paid_at': {'$regex': f'^{current_ym}'},
+        }},
+        {'$group': {
+            '_id': None,
+            'total': {'$sum': '$total_amount'},
+            'count': {'$sum': 1},
+        }},
+    ]
+    paid_results = await db.invoices.aggregate(pipeline_paid).to_list(1)
+    paid_this_month = paid_results[0]['total'] if paid_results else 0
+    paid_count = paid_results[0]['count'] if paid_results else 0
+
+    return {
+        'by_org': latest_map,
+        'paid_this_month': paid_this_month,
+        'paid_this_month_count': paid_count,
+    }
 
 
 @router.get("/admin/orgs/{org_id}/projects")

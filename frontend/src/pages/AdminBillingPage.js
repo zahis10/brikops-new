@@ -87,6 +87,7 @@ const AdminBillingPage = () => {
   const [showOrgs, setShowOrgs] = useState(false);
   const [applyingMigration, setApplyingMigration] = useState(false);
   const [orgInvoices, setOrgInvoices] = useState({});
+  const [paidThisMonth, setPaidThisMonth] = useState(0);
   const [openRequests, setOpenRequests] = useState({ open_count: 0, requests: [] });
   const [openRequestsExpanded, setOpenRequestsExpanded] = useState(false);
   const [showAudit, setShowAudit] = useState(true);
@@ -105,7 +106,8 @@ const AdminBillingPage = () => {
     try {
       const data = await billingService.invoicesSummary();
       if (gen === loadGenRef.current) {
-        setOrgInvoices(data || {});
+        setOrgInvoices(data?.by_org || {});
+        setPaidThisMonth(data?.paid_this_month || 0);
       }
     } catch {}
   }, []);
@@ -390,19 +392,9 @@ const AdminBillingPage = () => {
       <section className="max-w-4xl mx-auto px-4 py-6 space-y-6">
         {(() => {
           const activeOrgs = orgs.filter(o => o.effective_access === 'full_access').length;
-          const totalMonthly = orgs.reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
-          const nowUtc = new Date();
-          const utcYear = nowUtc.getUTCFullYear();
-          const utcMonth = nowUtc.getUTCMonth();
-          let paidThisMonth = 0;
-          Object.values(orgInvoices).forEach(inv => {
-            if (inv && inv.status === 'paid' && inv.paid_at) {
-              const d = new Date(inv.paid_at);
-              if (d.getUTCFullYear() === utcYear && d.getUTCMonth() === utcMonth) {
-                paidThisMonth += (inv.total_amount || 0);
-              }
-            }
-          });
+          const totalMonthly = orgs
+            .filter(o => o.effective_access === 'full_access' && o.subscription?.status === 'active')
+            .reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
           return (
             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-blue-50 rounded-xl border border-blue-100 border-r-[3px] border-r-blue-400 p-3">
@@ -420,7 +412,7 @@ const AdminBillingPage = () => {
               <div className="bg-emerald-50 rounded-xl border border-emerald-100 border-r-[3px] border-r-emerald-400 p-3">
                 <div className="text-xs text-emerald-600 font-medium mb-1">שולם החודש</div>
                 <div className={`text-2xl font-bold ${paidThisMonth > 0 ? 'text-emerald-700' : 'text-red-500'}`}>{formatCurrency(paidThisMonth)}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">(לפי חשבונית אחרונה)</div>
+                <div className="text-[10px] text-slate-400 mt-0.5">(כל התשלומים החודש)</div>
               </div>
             </section>
           );
