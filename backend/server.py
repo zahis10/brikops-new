@@ -138,7 +138,7 @@ async def _check_rate_limit_global(rate_db, kind: str, key: str, max_requests: i
 @app.middleware("http")
 async def global_rate_limit_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ('/health', '/ready'):
+    if path in ('/health', '/ready') or not path.startswith('/api/'):
         return await call_next(request)
 
     client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '127.0.0.1')
