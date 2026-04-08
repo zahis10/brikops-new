@@ -772,7 +772,7 @@ const ApartmentDashboardPage = () => {
         filters={{ ...filters, search: searchQuery }}
         meta={{
           projectName: unitData?.project_name,
-          unitLabel: unitData ? formatUnitLabel(unitData) : '',
+          unitLabel: effectiveLabel || '',
         }}
       />
 

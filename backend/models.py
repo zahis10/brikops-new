@@ -12,6 +12,17 @@ CATEGORIES = [
     {"value": "tiling", "label": "ריצוף", "display_order": 7},
     {"value": "frames_shelter", "label": 'מסגרות-ממ"ד', "display_order": 8},
     {"value": "parking", "label": "חניון", "display_order": 9},
+    {"value": "hvac", "label": "מיזוג אוויר", "display_order": 10},
+    {"value": "carpentry", "label": "נגרות", "display_order": 11},
+    {"value": "flooring", "label": "ריצוף", "display_order": 12},
+    {"value": "bathroom_cabinets", "label": "ארונות אמבטיה", "display_order": 13},
+    {"value": "general", "label": "כללי", "display_order": 14},
+    {"value": "doors", "label": "דלתות", "display_order": 15},
+    {"value": "finishes", "label": "גמרים", "display_order": 16},
+    {"value": "metalwork", "label": "מסגרות", "display_order": 17},
+    {"value": "painting", "label": "צביעה", "display_order": 18},
+    {"value": "structural", "label": "שלד", "display_order": 19},
+    {"value": "windows", "label": "חלונות", "display_order": 20},
 ]
 
 UNIT_LABELS = [
