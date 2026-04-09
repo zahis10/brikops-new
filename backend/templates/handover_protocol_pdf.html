@@ -720,10 +720,10 @@ tbody tr:nth-child(odd) {
 {% endif %}
 
 <!-- ==================== METER READINGS ==================== -->
-{% if meter_water_reading or meter_electricity_reading %}
+{% if meter_water_reading is not none or meter_electricity_reading is not none %}
 <div class="section-title">קריאות מונים</div>
 <div style="display: table; width: 100%; table-layout: fixed; margin-bottom: 12px;">
-    {% if meter_water_reading %}
+    {% if meter_water_reading is not none %}
     <div style="display: table-cell; vertical-align: top; padding: 0 4px 0 0;">
         <div style="border: 1px solid #e2e8f0; border-top: 3px solid #0ea5e9; border-radius: 6px; padding: 12px; background: #f0f9ff; page-break-inside: avoid;">
             <div style="font-size: 10pt; font-weight: bold; color: #0369a1; margin-bottom: 6px;">💧 מים</div>
@@ -734,7 +734,7 @@ tbody tr:nth-child(odd) {
         </div>
     </div>
     {% endif %}
-    {% if meter_electricity_reading %}
+    {% if meter_electricity_reading is not none %}
     <div style="display: table-cell; vertical-align: top; padding: 0 0 0 4px;">
         <div style="border: 1px solid #e2e8f0; border-top: 3px solid #f59e0b; border-radius: 6px; padding: 12px; background: #fffbeb; page-break-inside: avoid;">
             <div style="font-size: 10pt; font-weight: bold; color: #b45309; margin-bottom: 6px;">⚡ חשמל</div>

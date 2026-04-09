@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
-import { Loader2, Camera, X } from 'lucide-react';
+import { Loader2, Camera } from 'lucide-react';
 
 const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId, protocolId, onChange, onPhotoUploaded }) => {
   const fileRef = useRef(null);
