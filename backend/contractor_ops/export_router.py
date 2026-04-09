@@ -1016,6 +1016,11 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
         encoded_filename = quote(filename)
         disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}"
         logger.info(f"[EXPORT-PDF] user={user.get('id')} scope={req.scope} tasks={len(filtered)} filename={filename}")
+        if req.scope == 'project':
+            await _audit('project', req.project_id, 'data_export', user.get('id'), {
+                'format': export_format,
+                'task_count': len(filtered),
+            })
         return StreamingResponse(
             pdf_bytes,
             media_type='application/pdf',
