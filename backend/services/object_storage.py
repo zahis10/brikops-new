@@ -50,7 +50,7 @@ def _get_s3():
                 config=cfg,
             )
         _s3_client_created_at = now
-        logger.info(f"[STORAGE:S3] client created/refreshed (explicit_creds={'yes' if key_id else 'no'})")
+        logger.info(f"[STORAGE:S3] client created/refreshed (explicit_creds={'yes' if (key_id and secret) else 'no'})")
     return _s3_client
 
 
