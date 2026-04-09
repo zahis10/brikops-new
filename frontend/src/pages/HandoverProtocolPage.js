@@ -613,6 +613,7 @@ const HandoverProtocolPage = () => {
                 <textarea
                   value={tenantNotesText}
                   onChange={(e) => { setTenantNotesText(e.target.value); setTenantNotesDirty(true); }}
+                  onBlur={() => { if (tenantNotesDirty && !isLocked) handleSaveTenantNotes(); }}
                   disabled={isLocked}
                   placeholder="הערות חופשיות של הדייר לגבי הנכס..."
                   rows={4}
