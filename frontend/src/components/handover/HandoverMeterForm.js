@@ -3,6 +3,7 @@ import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
 import { Loader2, Camera } from 'lucide-react';
+import { compressImage } from '../../utils/imageCompress';
 
 const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId, protocolId, onChange, onPhotoUploaded }) => {
   const fileRef = useRef(null);
@@ -14,7 +15,8 @@ const MeterCard = ({ type, label, icon, borderColor, meters, isSigned, projectId
     if (!file || isSigned) return;
     try {
       setUploading(true);
-      const result = await handoverService.uploadMeterPhoto(projectId, protocolId, type, file);
+      const compressed = await compressImage(file);
+      const result = await handoverService.uploadMeterPhoto(projectId, protocolId, type, compressed);
       onPhotoUploaded?.(type, result);
       toast.success('תמונה הועלתה');
     } catch (err) {
