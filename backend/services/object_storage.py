@@ -22,20 +22,35 @@ _LOCAL_UPLOADS_ROOT = Path(__file__).parent.parent / "uploads"
 _LOCAL_UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
 
 _s3_client = None
+_s3_client_created_at = 0
+_S3_CLIENT_MAX_AGE = 3000
 
 
 def _get_s3():
-    global _s3_client
-    if _s3_client is None:
+    global _s3_client, _s3_client_created_at
+    now = time.monotonic()
+    if _s3_client is None or (now - _s3_client_created_at) > _S3_CLIENT_MAX_AGE:
         import boto3
         from botocore.config import Config
-        _s3_client = boto3.client(
-            "s3",
-            region_name=_S3_REGION,
-            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-            config=Config(signature_version='s3v4', s3={'addressing_style': 'virtual'}),
-        )
+        cfg = Config(signature_version='s3v4', s3={'addressing_style': 'virtual'})
+        key_id = os.environ.get("AWS_ACCESS_KEY_ID")
+        secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        if key_id and secret:
+            _s3_client = boto3.client(
+                "s3",
+                region_name=_S3_REGION,
+                aws_access_key_id=key_id,
+                aws_secret_access_key=secret,
+                config=cfg,
+            )
+        else:
+            _s3_client = boto3.client(
+                "s3",
+                region_name=_S3_REGION,
+                config=cfg,
+            )
+        _s3_client_created_at = now
+        logger.info(f"[STORAGE:S3] client created/refreshed (explicit_creds={'yes' if key_id else 'no'})")
     return _s3_client
 
 
@@ -167,8 +182,7 @@ def log_backend():
             raise RuntimeError(msg)
         has_key = bool(os.environ.get("AWS_ACCESS_KEY_ID"))
         has_secret = bool(os.environ.get("AWS_SECRET_ACCESS_KEY"))
-        logger.info(f"[STORAGE] backend=s3 bucket={_S3_BUCKET} region={_S3_REGION} presign_expires={_PRESIGN_EXPIRES}s credentials={'OK' if has_key and has_secret else 'MISSING'}")
-        if not has_key or not has_secret:
-            logger.warning("[STORAGE:WARN] AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set — S3 uploads will fail unless using IAM role")
+        cred_mode = "explicit" if (has_key and has_secret) else "IAM-role"
+        logger.info(f"[STORAGE] backend=s3 bucket={_S3_BUCKET} region={_S3_REGION} presign_expires={_PRESIGN_EXPIRES}s credentials={cred_mode} client_refresh={_S3_CLIENT_MAX_AGE}s")
     else:
         logger.info(f"[STORAGE] backend=local dir={_LOCAL_UPLOADS_ROOT}")
