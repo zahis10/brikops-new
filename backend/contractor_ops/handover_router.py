@@ -1115,6 +1115,15 @@ async def get_protocol(project_id: str, protocol_id: str, user: dict = Depends(g
     await _check_handover_access(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
 
+    meters = protocol.get("meters") or {}
+    for mt in ("water", "electricity"):
+        md = meters.get(mt)
+        if md and md.get("photo_url"):
+            try:
+                md["display_url"] = generate_url(md["photo_url"])
+            except Exception:
+                md["display_url"] = None
+
     version_id = protocol.get("template_version_id")
     if version_id:
         db = get_db()
@@ -1180,6 +1189,16 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
 
     await db.handover_protocols.update_one({"id": protocol_id, "project_id": project_id}, {"$set": update_fields})
     updated = await db.handover_protocols.find_one({"id": protocol_id, "project_id": project_id}, {"_id": 0})
+
+    u_meters = updated.get("meters") or {}
+    for mt in ("water", "electricity"):
+        md = u_meters.get(mt)
+        if md and md.get("photo_url"):
+            try:
+                md["display_url"] = generate_url(md["photo_url"])
+            except Exception:
+                md["display_url"] = None
+
     return updated
 
 
@@ -2387,6 +2406,48 @@ async def update_legal_section_body(
     logger.info(f"[HANDOVER] Protocol={protocol_id} legal section={section_id} body edited by user={user['id']}")
     updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
     return updated
+
+
+@router.post("/projects/{project_id}/handover/protocols/{protocol_id}/meter-photo/{meter_type}")
+async def upload_meter_photo(
+    project_id: str, protocol_id: str, meter_type: str,
+    file: UploadFile = File(...), user: dict = Depends(get_current_user),
+):
+    from services.object_storage import save_bytes as _save_bytes, generate_url as _gen_url
+    import asyncio
+
+    if meter_type not in ("water", "electricity"):
+        raise HTTPException(status_code=400, detail="סוג מונה לא תקין")
+
+    await _check_handover_management(user, project_id)
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
+    MAX_SIZE = 5 * 1024 * 1024
+    raw = await file.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="קובץ ריק")
+    if len(raw) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="גודל הקובץ חורג מ-5MB")
+
+    ext = (file.filename or "photo.jpg").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp"):
+        ext = "jpg"
+    ct = file.content_type or "image/jpeg"
+
+    key = f"handover/{project_id}/{protocol_id}/meter_{meter_type}.{ext}"
+    stored_ref = await asyncio.to_thread(_save_bytes, raw, key, ct)
+
+    db = get_db()
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        {"$set": {f"meters.{meter_type}.photo_url": stored_ref, "updated_at": _now()}}
+    )
+    logger.info(f"[HANDOVER] Protocol={protocol_id} meter_photo={meter_type} uploaded by user={user['id']}")
+
+    url = await asyncio.to_thread(_gen_url, stored_ref)
+    return {"photo_url": stored_ref, "display_url": url}
 
 
 @router.put("/projects/{project_id}/handover/protocols/{protocol_id}/tenant-notes")

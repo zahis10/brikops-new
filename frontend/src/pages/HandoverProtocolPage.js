@@ -9,7 +9,7 @@ import {
   ArrowRight, Loader2, ChevronDown, ChevronUp, ShieldCheck,
   Home, Users, Gauge, Package, FileText, Scale, PenLine,
   AlertTriangle, Lock, ArrowLeft, CheckCircle2, Bug, Clock,
-  Circle, ChevronLeft, FileDown, Share2
+  Circle, ChevronLeft, FileDown, Share2, MessageSquare
 } from 'lucide-react';
 import HandoverPropertyForm from '../components/handover/HandoverPropertyForm';
 import HandoverTenantForm from '../components/handover/HandoverTenantForm';
@@ -92,6 +92,10 @@ const HandoverProtocolPage = () => {
   const [shareLoading, setShareLoading] = useState(false);
   const [legalOpen, setLegalOpen] = useState(true);
   const [signaturesOpen, setSignaturesOpen] = useState(true);
+  const [tenantNotesOpen, setTenantNotesOpen] = useState(false);
+  const [tenantNotesText, setTenantNotesText] = useState('');
+  const [tenantNotesSaving, setTenantNotesSaving] = useState(false);
+  const [tenantNotesDirty, setTenantNotesDirty] = useState(false);
   const signatureRef = useRef(null);
   const pdfBlobRef = useRef(null);
 
@@ -109,6 +113,13 @@ const HandoverProtocolPage = () => {
   }, [projectId, protocolId]);
 
   useEffect(() => { loadProtocol(); }, [loadProtocol]);
+
+  useEffect(() => {
+    if (protocol) {
+      setTenantNotesText(protocol.tenant_notes || '');
+      setTenantNotesDirty(false);
+    }
+  }, [protocol]);
 
   useEffect(() => {
     const fetchRole = async () => {
@@ -147,6 +158,21 @@ const HandoverProtocolPage = () => {
       loadProtocol();
     }
   }, [loadProtocol, projectId, protocolId]);
+
+  const handleSaveTenantNotes = useCallback(async () => {
+    if (tenantNotesSaving) return;
+    try {
+      setTenantNotesSaving(true);
+      await handoverService.updateTenantNotes(projectId, protocolId, tenantNotesText);
+      setTenantNotesDirty(false);
+      toast.success('הערות הדייר נשמרו');
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה בשמירת הערות');
+    } finally {
+      setTenantNotesSaving(false);
+    }
+  }, [tenantNotesText, tenantNotesSaving, projectId, protocolId]);
 
   if (loading) {
     return (
@@ -569,6 +595,45 @@ const HandoverProtocolPage = () => {
               )}
             </div>
           )}
+
+          <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+            <button
+              onClick={() => setTenantNotesOpen(!tenantNotesOpen)}
+              className="w-full p-3 flex items-center gap-3 text-right hover:bg-slate-50 transition-colors"
+            >
+              <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0">
+                <MessageSquare className="w-4 h-4 text-amber-600" />
+              </div>
+              <span className="flex-1 text-sm font-bold text-slate-700">הערות הדייר</span>
+              {tenantNotesText && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">יש הערות</span>}
+              {tenantNotesOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </button>
+            {tenantNotesOpen && (
+              <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-2">
+                <textarea
+                  value={tenantNotesText}
+                  onChange={(e) => { setTenantNotesText(e.target.value); setTenantNotesDirty(true); }}
+                  disabled={isLocked}
+                  placeholder="הערות חופשיות של הדייר לגבי הנכס..."
+                  rows={4}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none
+                    focus:outline-none focus:ring-2 focus:ring-amber-300
+                    disabled:bg-slate-50 disabled:text-slate-500"
+                />
+                {!isLocked && tenantNotesDirty && (
+                  <button
+                    onClick={handleSaveTenantNotes}
+                    disabled={tenantNotesSaving}
+                    className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 text-white rounded-lg
+                      text-sm font-medium hover:bg-amber-600 active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {tenantNotesSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    {tenantNotesSaving ? 'שומר...' : 'שמור הערות'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
             <button

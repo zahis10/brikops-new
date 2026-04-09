@@ -1438,6 +1438,22 @@ export const handoverService = {
     );
     return response.data;
   },
+  async uploadMeterPhoto(projectId, protocolId, meterType, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.post(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/meter-photo/${meterType}`,
+      formData, { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+  async updateTenantNotes(projectId, protocolId, tenantNotes) {
+    const response = await axios.put(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/tenant-notes`,
+      { tenant_notes: tenantNotes }, { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
   async getPdfBlob(projectId, protocolId) {
     const response = await axios.get(
       `${API}/projects/${projectId}/handover/protocols/${protocolId}/pdf`,
