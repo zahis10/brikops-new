@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>אבטחה — BrikOps</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background: #f9fafb; color: #1e293b; line-height: 1.8; }
+    .container { max-width: 720px; margin: 0 auto; padding: 40px 24px; }
+    h1 { font-size: 1.75rem; color: #0f172a; margin-bottom: 8px; }
+    .updated { font-size: 0.875rem; color: #64748b; margin-bottom: 32px; }
+    h2 { font-size: 1.25rem; color: #0f172a; margin-top: 28px; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+    p, li { font-size: 1rem; color: #334155; margin-bottom: 12px; }
+    ul { padding-right: 24px; margin-bottom: 16px; }
+    a { color: #d97706; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .logo { font-size: 1.1rem; font-weight: 700; color: #d97706; margin-bottom: 24px; display: block; }
+    .badge { display: inline-block; background: #d4edda; color: #155724; font-size: 0.8rem; font-weight: 600; padding: 2px 10px; border-radius: 12px; margin-right: 8px; vertical-align: middle; }
+    .security-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+    .security-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+    .security-card h3 { font-size: 0.95rem; color: #0f172a; margin-bottom: 6px; }
+    .security-card p { font-size: 0.9rem; color: #64748b; margin-bottom: 0; }
+    @media (max-width: 600px) { .security-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="logo">BrikOps</span>
+    <h1>אבטחה ופרטיות <span class="badge">מעודכן</span></h1>
+    <p class="updated">עדכון אחרון: אפריל 2026</p>
+
+    <p>ב-BrikOps אנו מתייחסים לאבטחת המידע שלכם ברצינות המרבית. עמוד זה מפרט את אמצעי האבטחה, ההצפנה והגנת הפרטיות שאנו מיישמים כדי לשמור על הנתונים שלכם.</p>
+
+    <h2>תשתית ואחסון</h2>
+    <div class="security-grid">
+      <div class="security-card">
+        <h3>☁️ שרתי ענן</h3>
+        <p>AWS Frankfurt (eu-central-1) — אחסון בתוך האיחוד האירופי בהתאם לדרישות GDPR.</p>
+      </div>
+      <div class="security-card">
+        <h3>🗄️ מסד נתונים</h3>
+        <p>MongoDB Atlas EU — מוצפן במנוחה (AES-256) ובתעבורה (TLS 1.2+).</p>
+      </div>
+      <div class="security-card">
+        <h3>📁 אחסון קבצים</h3>
+        <p>Amazon S3 עם Versioning מופעל — כל קובץ נשמר עם גרסאות קודמות.</p>
+      </div>
+      <div class="security-card">
+        <h3>🌐 CDN ואבטחת רשת</h3>
+        <p>Cloudflare — הגנה מפני DDoS, WAF, ו-DNS מאובטח.</p>
+      </div>
+    </div>
+
+    <h2>הצפנה</h2>
+    <ul>
+      <li><strong>בתעבורה:</strong> כל התקשורת מוצפנת באמצעות HTTPS/TLS 1.2 ומעלה. אין תקשורת לא מוצפנת.</li>
+      <li><strong>במנוחה:</strong> נתוני מסד הנתונים מוצפנים ב-AES-256. קבצים ב-S3 מוצפנים בצד השרת (SSE-S3).</li>
+      <li><strong>סיסמאות:</strong> אין — אנו משתמשים באימות OTP בלבד (קוד חד-פעמי בSMS). אין סיסמאות שנשמרות במערכת.</li>
+    </ul>
+
+    <h2>אימות והרשאות</h2>
+    <ul>
+      <li><strong>OTP (קוד חד-פעמי):</strong> כניסה באמצעות קוד SMS — ללא סיסמאות.</li>
+      <li><strong>Google / Apple Sign-In:</strong> אימות חיצוני מאובטח כערוץ כניסה נוסף.</li>
+      <li><strong>JWT Tokens:</strong> טוקנים חתומים עם תוקף מוגבל — מתחדשים אוטומטית.</li>
+      <li><strong>Session Revocation:</strong> ניתן לנתק את כל ההתחברויות הפעילות מהגדרות החשבון.</li>
+      <li><strong>RBAC:</strong> בקרת גישה מבוססת תפקידים — owner, project_manager, viewer, contractor. כל משתמש רואה רק את המידע הרלוונטי אליו.</li>
+    </ul>
+
+    <h2>Security Headers</h2>
+    <ul>
+      <li><strong>HSTS:</strong> Strict-Transport-Security מופעל — הדפדפן תמיד יתחבר ב-HTTPS.</li>
+      <li><strong>CSP:</strong> Content-Security-Policy מוגדר — חסימת הזרקת קוד זדוני.</li>
+      <li><strong>X-Frame-Options:</strong> DENY — מניעת הטמעה ב-iframe (הגנה מפני Clickjacking).</li>
+      <li><strong>X-Content-Type-Options:</strong> nosniff — מניעת MIME sniffing.</li>
+    </ul>
+
+    <h2>Rate Limiting והגנת API</h2>
+    <ul>
+      <li><strong>Rate limiting גלובלי:</strong> הגבלת בקשות ברמת IP למניעת התקפות brute-force.</li>
+      <li><strong>Rate limiting per-endpoint:</strong> הגבלות ספציפיות על endpoints רגישים (OTP, כניסה, יצירת חשבון).</li>
+      <li><strong>HMAC Validation:</strong> כל webhook נכנס (WhatsApp, PayPlus) מאומת באמצעות חתימת HMAC.</li>
+    </ul>
+
+    <h2>גיבויים והתאוששות</h2>
+    <ul>
+      <li><strong>גיבוי יומי:</strong> גיבוי אוטומטי מלא של מסד הנתונים מדי יום.</li>
+      <li><strong>שמירה:</strong> 30 יום של גיבויים זמינים.</li>
+      <li><strong>Point-in-Time Recovery:</strong> ניתן לשחזר את המערכת לכל נקודת זמן ב-30 הימים האחרונים.</li>
+      <li><strong>S3 Versioning:</strong> קבצים שנמחקו ניתנים לשחזור מגרסאות קודמות.</li>
+      <li><strong>Cross-region:</strong> גיבוי S3 משוכפל לאזור נוסף באירופה.</li>
+    </ul>
+
+    <h2>בדיקות אבטחה</h2>
+    <ul>
+      <li><strong>בדיקת חדירה:</strong> בוצעה באפריל 2026. כל הממצאים תוקנו.</li>
+      <li><strong>סקירת קוד:</strong> סקירה שוטפת של קוד חדש לפני העלאה לפרודקשן.</li>
+      <li><strong>תלויות:</strong> סריקה תקופתית של ספריות צד שלישי לפרצות ידועות.</li>
+    </ul>
+
+    <h2>פרטיות ומחיקת נתונים</h2>
+    <ul>
+      <li><strong>GDPR:</strong> המערכת פועלת בהתאם לעקרונות GDPR — איסוף מידע מינימלי, שקיפות, זכות מחיקה.</li>
+      <li><strong>מחיקת חשבון:</strong> self-service מתוך האפליקציה. תקופת חסד של 7 ימים לביטול.</li>
+      <li><strong>שמירת נתונים:</strong> 30 יום למידע אישי לאחר מחיקה. 7 שנים לרשומות ביקורת, חיוב ופרוטוקולי בנייה בהתאם לחוק.</li>
+      <li><strong>אין מכירת מידע:</strong> איננו מוכרים, משתפים או מעבירים מידע אישי לצדדים שלישיים לצורכי פרסום.</li>
+    </ul>
+
+    <h2>ספקי שירות צד שלישי</h2>
+    <p>כל ספקי השירות שלנו פועלים בהתאם לתקני אבטחה מחמירים:</p>
+    <ul>
+      <li><strong>AWS:</strong> SOC 2, ISO 27001, GDPR compliant</li>
+      <li><strong>MongoDB Atlas:</strong> SOC 2, ISO 27001, HIPAA eligible</li>
+      <li><strong>Cloudflare:</strong> SOC 2, ISO 27001, PCI DSS</li>
+      <li><strong>Twilio:</strong> SOC 2, ISO 27001, GDPR compliant</li>
+      <li><strong>PayPlus:</strong> PCI DSS Level 1</li>
+    </ul>
+
+    <h2>דיווח על פרצות</h2>
+    <p>אם גיליתם פרצת אבטחה או חשד לחשיפת מידע, אנא דווחו לנו מיד:</p>
+    <p>דוא"ל: <a href="mailto:support@brikops.com">support@brikops.com</a></p>
+    <p>אנו מתחייבים להגיב לדיווחי אבטחה תוך 24 שעות.</p>
+
+    <h2>יצירת קשר</h2>
+    <p>לשאלות בנושא אבטחה ופרטיות:</p>
+    <p>דוא"ל: <a href="mailto:support@brikops.com">support@brikops.com</a></p>
+    <p>צחי שמי<br>עוסק מורשה מס' 203004767<br>יא' הספורטאים 26, באר שבע, ישראל</p>
+
+    <p style="margin-top: 32px; font-size: 0.85rem; color: #94a3b8;">ראו גם: <a href="/legal/terms">תנאי שימוש</a> | <a href="/legal/privacy">מדיניות פרטיות</a> | <a href="/legal/data-deletion">מחיקת נתונים</a></p>
+  </div>
+</body>
+</html>
