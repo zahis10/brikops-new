@@ -313,7 +313,7 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
 
         image_links = task.get('_resolved_image_links') or []
         image_count = task.get('attachments_count', 0) or len(image_links)
-        links_text = '\n'.join(image_links) if image_links else ''
+        links_text = ', '.join(f'תמונה {i+1}' for i in range(len(image_links))) if image_links else ''
 
         unit_spare = spare_tiles_map.get(task.get('unit_id', ''))
         spare_cols = _spare_tiles_columns(unit_spare)
@@ -346,13 +346,14 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
             link_cell = ws.cell(row=row_idx, column=15)
             link_font = Font(name='Arial', size=10, color='0563C1', underline='single')
             if len(image_links) == 1:
+                link_cell.value = 'תמונה 1'
                 link_cell.hyperlink = image_links[0]
                 link_cell.font = link_font
             else:
                 img_start_col = len(headers) + 1
                 for img_idx, img_url in enumerate(image_links):
                     col = img_start_col + img_idx
-                    c = ws.cell(row=row_idx, column=col, value=img_url)
+                    c = ws.cell(row=row_idx, column=col, value=f'תמונה {img_idx + 1}')
                     c.hyperlink = img_url
                     c.font = link_font
                     c.alignment = cell_align
@@ -370,11 +371,38 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
                         hdr.alignment = header_align
                         hdr.border = thin_border
 
-    col_widths = [12, 15, 12, 10, 10, 14, 25, 30, 14, 18, 16, 16, 12, 10, 40, 14, 14, 14, 14, 14, 20, 25]
+    col_widths = [12, 15, 12, 10, 10, 14, 25, 30, 14, 18, 16, 16, 12, 10, 14, 14, 14, 14, 14, 14, 20, 25]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(tasks) + 1}"
+
+    import os
+    from openpyxl.drawing.image import Image as XlImage
+    from PIL import Image as PILImage
+
+    footer_row = len(tasks) + 4
+    ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=8)
+    footer_cell = ws.cell(row=footer_row, column=1, value='נוצר באמצעות BrikOps | brikops.com')
+    footer_cell.font = Font(name='Arial', size=9, color='888888', italic=True)
+    footer_cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'logo.png')
+    if os.path.exists(logo_path):
+        try:
+            pil = PILImage.open(logo_path)
+            if pil.width > 200:
+                ratio = 200 / pil.width
+                pil = pil.resize((200, int(pil.height * ratio)), PILImage.LANCZOS)
+            buf = io.BytesIO()
+            pil.save(buf, format='PNG')
+            buf.seek(0)
+            img = XlImage(buf)
+            img.width = 80
+            img.height = 30
+            ws.add_image(img, f'A{footer_row - 1}')
+        except Exception:
+            pass
 
     output = io.BytesIO()
     wb.save(output)
