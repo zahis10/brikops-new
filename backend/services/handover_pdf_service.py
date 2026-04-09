@@ -270,7 +270,7 @@ async def generate_handover_pdf(protocol: dict, db) -> bytes:
     html_content = template.render(**context)
 
     if use_weasyprint:
-        pdf_bytes = HTML(string=html_content, base_url=str(_BACKEND_DIR), encoding='utf-8').write_pdf()
+        pdf_bytes = HTML(string=html_content, base_url=str(_BACKEND_DIR)).write_pdf()
     else:
         try:
             from xhtml2pdf import pisa
