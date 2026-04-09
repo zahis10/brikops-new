@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-from contractor_ops.router import get_db, get_current_user, _check_project_read_access
+from contractor_ops.router import get_db, get_current_user, _check_project_read_access, _get_project_role, _audit
 from models import CATEGORIES
 from services.object_storage import generate_url
 
@@ -71,6 +71,7 @@ class ExportRequest(BaseModel):
     scope: str
     unit_id: Optional[str] = None
     building_id: Optional[str] = None
+    project_id: Optional[str] = None
     filters: ExportFilters = ExportFilters()
     format: Optional[str] = 'excel'
 
@@ -958,8 +959,27 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
         scope_label = building.get('name', '')
         filename_scope = f"building_{scope_label}"
 
+    elif req.scope == 'project':
+        if not req.project_id:
+            raise HTTPException(status_code=400, detail='project_id required for project scope')
+        project = await db.projects.find_one({'id': req.project_id, 'archived': {'$ne': True}}, {'_id': 0})
+        if not project:
+            raise HTTPException(status_code=404, detail='Project not found')
+        await _check_project_read_access(user, req.project_id)
+
+        role = await _get_project_role(user, req.project_id)
+        if role != 'project_manager' and user.get('platform_role') != 'super_admin':
+            raise HTTPException(status_code=403, detail='אין הרשאה לייצוא נתונים')
+
+        tasks = await db.tasks.find(
+            {'project_id': req.project_id, 'archived': {'$ne': True}},
+            {'_id': 0}
+        ).to_list(100000)
+        scope_label = project.get('name', '')
+        filename_scope = f"project_{scope_label}"
+
     else:
-        raise HTTPException(status_code=400, detail='Invalid scope. Use "unit" or "building".')
+        raise HTTPException(status_code=400, detail='Invalid scope. Use "unit", "building", or "project".')
 
     project_name = project.get('name', '') if project else ''
 
@@ -1014,6 +1034,12 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
     disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}"
 
     logger.info(f"[EXPORT] user={user.get('id')} scope={req.scope} tasks={len(filtered)} filename={filename}")
+
+    if req.scope == 'project':
+        await _audit('project', req.project_id, 'data_export', user.get('id'), {
+            'format': export_format,
+            'task_count': len(filtered),
+        })
 
     return StreamingResponse(
         excel_bytes,

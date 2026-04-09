@@ -16,6 +16,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import { qcFloorStatusLabel } from '../utils/qcLabels';
 import QCApproversTab from '../components/QCApproversTab';
 import ProjectBillingCard from '../components/ProjectBillingCard';
+import ProjectDataExportTab from '../components/ProjectDataExportTab';
 import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
@@ -73,6 +74,7 @@ const KIND_COLORS = {
 const SECONDARY_TABS = [
   { id: 'team', label: 'צוות', icon: '👥' },
   { id: 'companies', label: 'קבלנים וחברות', icon: '🏢' },
+  { id: 'data-export', label: 'ייצוא נתונים', icon: '📦' },
   { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
   { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: '📝' },
   { id: 'handover-template', label: 'תבנית מסירה', icon: '🔑' },
@@ -3097,7 +3099,13 @@ const ProjectControlPage = () => {
   const defectsV2Enabled = !!features?.defects_v2;
 
   const showBillingTab = billingEnabled && (isBillingViewer || user?.platform_role === 'super_admin');
-  const MGMT_TABS = showBillingTab ? [...SECONDARY_TABS.slice(0, 2), BILLING_TAB, ...SECONDARY_TABS.slice(2)] : SECONDARY_TABS;
+  const MGMT_TABS = (() => {
+    let tabs = showBillingTab ? [...SECONDARY_TABS.slice(0, 2), BILLING_TAB, ...SECONDARY_TABS.slice(2)] : SECONDARY_TABS;
+    if (myRole !== 'project_manager' && user?.platform_role !== 'super_admin') {
+      tabs = tabs.filter(t => t.id !== 'data-export');
+    }
+    return tabs;
+  })();
   const VALID_TABS = MGMT_TABS.map(t => t.id);
   const rawTab = searchParams.get('tab') || '';
   const activeTab = VALID_TABS.includes(rawTab) ? rawTab : '';
@@ -3380,6 +3388,10 @@ const ProjectControlPage = () => {
           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
 
           {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
+
+          {activeTab === 'data-export' && (
+            <ProjectDataExportTab projectId={projectId} projectName={project?.name || ''} />
+          )}
 
           {activeTab === 'settings' && (
             <QCApproversTab projectId={projectId} canManageApprovers={['owner', 'admin', 'project_manager'].includes(myRole) || user?.platform_role === 'super_admin'} />

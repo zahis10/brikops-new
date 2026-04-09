@@ -1511,10 +1511,10 @@ export const g4ImportService = {
 };
 
 export const exportService = {
-  async exportDefects({ scope, unit_id, building_id, filters, format = 'excel' }) {
+  async exportDefects({ scope, unit_id, building_id, project_id, filters, format = 'excel' }) {
     const response = await axios.post(
       `${API}/defects/export`,
-      { scope, unit_id, building_id, filters, format },
+      { scope, unit_id, building_id, project_id, filters, format },
       { headers: getAuthHeader(), responseType: 'blob' }
     );
     const disposition = response.headers['content-disposition'] || '';
