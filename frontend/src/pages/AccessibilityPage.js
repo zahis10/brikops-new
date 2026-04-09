@@ -60,6 +60,13 @@ const AccessibilityPage = () => {
           </section>
 
           <section>
+            <h2 className="text-lg font-semibold text-slate-900 mb-3">רכז נגישות</h2>
+            <p className="text-sm leading-relaxed text-slate-700">
+              רכז הנגישות של BrikOps: צחי שמי
+            </p>
+          </section>
+
+          <section>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">פנייה בנושא נגישות</h2>
             <p className="text-sm leading-relaxed text-slate-700">
               נתקלתם בבעיית נגישות? נשמח לשמוע ולטפל. ניתן לפנות אלינו:
@@ -78,11 +85,11 @@ const AccessibilityPage = () => {
               <li>
                 טלפון:{' '}
                 <a
-                  href="tel:+972-3-000-0000"
+                  href="tel:+972-54-4828662"
                   className="text-amber-600 hover:text-amber-700 underline font-medium"
                   dir="ltr"
                 >
-                  03-000-0000
+                  054-4828662
                 </a>
               </li>
             </ul>
@@ -91,7 +98,7 @@ const AccessibilityPage = () => {
           <section>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">תאריך סקירת נגישות אחרונה</h2>
             <p className="text-sm leading-relaxed text-slate-700">
-              מרץ 2026
+              אפריל 2026
             </p>
           </section>
 
@@ -113,7 +120,7 @@ const AccessibilityPage = () => {
 
           <div className="border-t border-slate-200 pt-4 mt-6">
             <p className="text-xs text-slate-400">
-              הצהרה זו עודכנה לאחרונה: מרץ 2026
+              הצהרה זו עודכנה לאחרונה: אפריל 2026
             </p>
           </div>
         </div>
