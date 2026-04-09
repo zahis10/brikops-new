@@ -410,7 +410,7 @@ async def _check_legal_edit_permission(user: dict, project_id: str):
     if not membership:
         raise HTTPException(status_code=403, detail="אין לך גישה לפרויקט זה")
     if membership.get("role") not in {"owner", "project_manager"}:
-        raise HTTPException(status_code=403, detail="רק מנהל פרויקט יכול לערוך נסח משפטי")
+        raise HTTPException(status_code=403, detail="אין הרשאה לערוך נסח משפטי")
 
 
 async def _get_protocol_or_404(protocol_id: str, project_id: str):
@@ -2403,7 +2403,7 @@ async def update_tenant_notes(
 
     db = get_db()
     await db.handover_protocols.update_one(
-        {"id": protocol_id, "project_id": project_id},
+        {"id": protocol_id, "project_id": project_id, "locked": {"$ne": True}},
         {"$set": {"tenant_notes": notes, "updated_at": _now()}}
     )
     logger.info(f"[HANDOVER] Protocol={protocol_id} tenant_notes updated by user={user['id']}")
