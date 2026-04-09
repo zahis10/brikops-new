@@ -967,7 +967,7 @@ async def export_defects(req: ExportRequest, user: dict = Depends(get_current_us
             raise HTTPException(status_code=404, detail='Project not found')
 
         role = await _get_project_role(user, req.project_id)
-        if role not in ('project_manager', 'owner') and user.get('platform_role') != 'super_admin':
+        if role != 'project_manager' and user.get('platform_role') != 'super_admin':
             raise HTTPException(status_code=403, detail='אין הרשאה לייצוא נתונים')
 
         tasks = await db.tasks.find(

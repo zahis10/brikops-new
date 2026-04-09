@@ -3101,7 +3101,7 @@ const ProjectControlPage = () => {
   const showBillingTab = billingEnabled && (isBillingViewer || user?.platform_role === 'super_admin');
   const MGMT_TABS = (() => {
     let tabs = showBillingTab ? [...SECONDARY_TABS.slice(0, 2), BILLING_TAB, ...SECONDARY_TABS.slice(2)] : SECONDARY_TABS;
-    if (!['project_manager', 'owner'].includes(myRole) && user?.platform_role !== 'super_admin') {
+    if (myRole !== 'project_manager' && user?.platform_role !== 'super_admin') {
       tabs = tabs.filter(t => t.id !== 'data-export');
     }
     return tabs;
