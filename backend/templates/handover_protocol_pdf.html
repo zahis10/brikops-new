@@ -517,6 +517,15 @@ tbody tr:nth-child(odd) {
         {% if signed_date %}<span>תאריך: {{ signed_date }}</span>{% endif %}
     </div>
 
+    {% if tenants %}
+    <div style="margin-top: 14px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; padding: 10px 16px; display: inline-block;">
+        <div style="font-size: 8pt; color: rgba(255,255,255,0.6); margin-bottom: 4px;">דיירים</div>
+        {% for tenant in tenants %}
+        <span style="font-size: 9pt; color: #fff;">{{ tenant.name or '' }}{% if tenant.id_number %} ({{ tenant.id_number }}){% endif %}{% if tenant.phone %} · {{ tenant.phone }}{% endif %}</span>{% if not loop.last %}<span style="color: rgba(255,255,255,0.4);"> &nbsp;|&nbsp; </span>{% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <div style="margin-top: 24px;">
     {% if brikops_logo_b64 %}
         <img src="{{ brikops_logo_b64 }}" style="height: 30px; opacity: 0.85;" alt="BrikOps" />
@@ -710,6 +719,35 @@ tbody tr:nth-child(odd) {
 </table>
 {% endif %}
 
+<!-- ==================== METER READINGS ==================== -->
+{% if meter_water_reading or meter_electricity_reading %}
+<div class="section-title">קריאות מונים</div>
+<div style="display: table; width: 100%; table-layout: fixed; margin-bottom: 12px;">
+    {% if meter_water_reading %}
+    <div style="display: table-cell; vertical-align: top; padding: 0 4px 0 0;">
+        <div style="border: 1px solid #e2e8f0; border-top: 3px solid #0ea5e9; border-radius: 6px; padding: 12px; background: #f0f9ff; page-break-inside: avoid;">
+            <div style="font-size: 10pt; font-weight: bold; color: #0369a1; margin-bottom: 6px;">💧 מים</div>
+            <div style="font-size: 14pt; font-weight: bold; color: #1e293b;">{{ meter_water_reading }}</div>
+            {% if meter_water_photo_b64 %}
+            <div style="margin-top: 8px;"><img src="{{ meter_water_photo_b64 }}" style="max-width: 160px; max-height: 120px; border-radius: 6px; border: 1px solid #e2e8f0;" alt="מונה מים"></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+    {% if meter_electricity_reading %}
+    <div style="display: table-cell; vertical-align: top; padding: 0 0 0 4px;">
+        <div style="border: 1px solid #e2e8f0; border-top: 3px solid #f59e0b; border-radius: 6px; padding: 12px; background: #fffbeb; page-break-inside: avoid;">
+            <div style="font-size: 10pt; font-weight: bold; color: #b45309; margin-bottom: 6px;">⚡ חשמל</div>
+            <div style="font-size: 14pt; font-weight: bold; color: #1e293b;">{{ meter_electricity_reading }}</div>
+            {% if meter_electricity_photo_b64 %}
+            <div style="margin-top: 8px;"><img src="{{ meter_electricity_photo_b64 }}" style="max-width: 160px; max-height: 120px; border-radius: 6px; border: 1px solid #e2e8f0;" alt="מונה חשמל"></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 <!-- ==================== LEGAL SECTIONS ==================== -->
 {% if legal_sections %}
 <div class="page-break"></div>
@@ -738,6 +776,14 @@ tbody tr:nth-child(odd) {
     {% endif %}
 </div>
 {% endfor %}
+{% endif %}
+
+<!-- ==================== TENANT NOTES ==================== -->
+{% if tenant_notes %}
+<div class="section-title">הערות הדייר</div>
+<div style="background-color: #fffbeb; border: 1px solid #f59e0b; border-right: 4px solid #f59e0b; border-radius: 6px; padding: 14px 16px; margin-bottom: 12px; page-break-inside: avoid;">
+    <div style="font-size: 10pt; color: #92400e; white-space: pre-wrap; line-height: 1.6;">{{ tenant_notes }}</div>
+</div>
 {% endif %}
 
 <!-- ==================== DEFECT SUMMARY (before signatures) ==================== -->
