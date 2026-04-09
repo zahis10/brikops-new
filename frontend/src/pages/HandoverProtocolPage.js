@@ -96,6 +96,7 @@ const HandoverProtocolPage = () => {
   const [tenantNotesText, setTenantNotesText] = useState('');
   const [tenantNotesSaving, setTenantNotesSaving] = useState(false);
   const [tenantNotesDirty, setTenantNotesDirty] = useState(false);
+  const tenantNotesSavingRef = useRef(false);
   const signatureRef = useRef(null);
   const pdfBlobRef = useRef(null);
 
@@ -160,7 +161,8 @@ const HandoverProtocolPage = () => {
   }, [loadProtocol, projectId, protocolId]);
 
   const handleSaveTenantNotes = useCallback(async () => {
-    if (tenantNotesSaving) return;
+    if (tenantNotesSavingRef.current) return;
+    tenantNotesSavingRef.current = true;
     try {
       setTenantNotesSaving(true);
       await handoverService.updateTenantNotes(projectId, protocolId, tenantNotesText);
@@ -171,8 +173,9 @@ const HandoverProtocolPage = () => {
       toast.error('שגיאה בשמירת הערות');
     } finally {
       setTenantNotesSaving(false);
+      tenantNotesSavingRef.current = false;
     }
-  }, [tenantNotesText, tenantNotesSaving, projectId, protocolId]);
+  }, [tenantNotesText, projectId, protocolId]);
 
   if (loading) {
     return (
