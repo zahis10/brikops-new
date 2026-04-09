@@ -377,6 +377,16 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     item_photo_map[item_key].append(key_name)
                     photo_counter += 1
 
+    meters = protocol.get("meters") or {}
+    meter_photo_keys = {}
+    for meter_type in ("water", "electricity"):
+        meter_data = meters.get(meter_type) or {}
+        photo_url = meter_data.get("photo_url")
+        if photo_url:
+            key_name = f"meter_{meter_type}_photo"
+            image_keys.append((key_name, photo_url))
+            meter_photo_keys[meter_type] = key_name
+
     legal_sections_raw = protocol.get("legal_sections", [])
     legal_section_image_keys = {}
     for ls_idx, ls in enumerate(legal_sections_raw):
@@ -626,5 +636,10 @@ async def _build_template_context(protocol: dict, db) -> dict:
         "stats_ok": global_ok,
         "stats_fail": global_fail,
         "stats_partial": global_partial,
+        "tenant_notes": protocol.get("tenant_notes", ""),
+        "meter_water_reading": (meters.get("water") or {}).get("reading"),
+        "meter_water_photo_b64": images.get(meter_photo_keys.get("water")),
+        "meter_electricity_reading": (meters.get("electricity") or {}).get("reading"),
+        "meter_electricity_photo_b64": images.get(meter_photo_keys.get("electricity")),
         "fonts_dir": fonts_dir_str,
     }

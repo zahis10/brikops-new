@@ -400,6 +400,19 @@ async def _check_handover_management(user: dict, project_id: str):
         raise HTTPException(status_code=403, detail="אין הרשאה לפעולה זו")
 
 
+async def _check_legal_edit_permission(user: dict, project_id: str):
+    if _is_super_admin(user):
+        return
+    db = get_db()
+    membership = await db.project_memberships.find_one(
+        {"user_id": user["id"], "project_id": project_id}
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="אין לך גישה לפרויקט זה")
+    if membership.get("role") not in {"owner", "project_manager"}:
+        raise HTTPException(status_code=403, detail="רק מנהל פרויקט יכול לערוך נסח משפטי")
+
+
 async def _get_protocol_or_404(protocol_id: str, project_id: str):
     db = get_db()
     protocol = await db.handover_protocols.find_one(
@@ -991,6 +1004,7 @@ async def create_protocol(project_id: str, request: Request, user: dict = Depend
         "created_by": user["id"],
         "created_at": ts,
         "updated_at": ts,
+        "tenant_notes": "",
         "signed_at": None,
     }
 
@@ -2323,7 +2337,7 @@ async def update_legal_section_body(
     project_id: str, protocol_id: str, section_id: str,
     request: Request, user: dict = Depends(get_current_user),
 ):
-    await _check_handover_management(user, project_id)
+    await _check_legal_edit_permission(user, project_id)
     protocol = await _get_protocol_or_404(protocol_id, project_id)
     _check_not_locked(protocol)
 
@@ -2373,6 +2387,27 @@ async def update_legal_section_body(
     logger.info(f"[HANDOVER] Protocol={protocol_id} legal section={section_id} body edited by user={user['id']}")
     updated = await db.handover_protocols.find_one({"id": protocol_id}, {"_id": 0})
     return updated
+
+
+@router.put("/projects/{project_id}/handover/protocols/{protocol_id}/tenant-notes")
+async def update_tenant_notes(
+    project_id: str, protocol_id: str,
+    request: Request, user: dict = Depends(get_current_user),
+):
+    await _check_handover_management(user, project_id)
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    body = await request.json()
+    notes = (body.get("tenant_notes") or "").strip()
+
+    db = get_db()
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        {"$set": {"tenant_notes": notes, "updated_at": _now()}}
+    )
+    logger.info(f"[HANDOVER] Protocol={protocol_id} tenant_notes updated by user={user['id']}")
+    return {"ok": True}
 
 
 @router.put("/projects/{project_id}/handover/protocols/{protocol_id}/legal-sections/{section_id}/sign")
