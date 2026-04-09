@@ -345,27 +345,21 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
         if image_links:
             link_cell = ws.cell(row=row_idx, column=15)
             link_font = Font(name='Arial', size=10, color='0563C1', underline='single')
-            if len(image_links) == 1:
-                link_cell.value = 'תמונה 1'
-                link_cell.hyperlink = image_links[0]
-                link_cell.font = link_font
-            else:
+            link_cell.value = 'תמונה 1'
+            link_cell.hyperlink = image_links[0]
+            link_cell.font = link_font
+            if len(image_links) > 1:
                 img_start_col = len(headers) + 1
-                for img_idx, img_url in enumerate(image_links):
-                    col = img_start_col + img_idx
-                    c = ws.cell(row=row_idx, column=col, value=f'תמונה {img_idx + 1}')
+                for extra_idx, img_url in enumerate(image_links[1:]):
+                    col = img_start_col + extra_idx
+                    label = f'תמונה {extra_idx + 2}'
+                    c = ws.cell(row=row_idx, column=col, value=label)
                     c.hyperlink = img_url
                     c.font = link_font
                     c.alignment = cell_align
                     c.border = thin_border
-                    if img_idx == 0:
-                        if row_idx == 2:
-                            ws.cell(row=1, column=col, value='קישורי תמונות').font = header_font
-                            ws.cell(row=1, column=col).fill = header_fill
-                            ws.cell(row=1, column=col).alignment = header_align
-                            ws.cell(row=1, column=col).border = thin_border
-                    elif row_idx == 2 or not ws.cell(row=1, column=col).value:
-                        hdr = ws.cell(row=1, column=col, value=f'תמונה {img_idx + 1}')
+                    if row_idx == 2 or not ws.cell(row=1, column=col).value:
+                        hdr = ws.cell(row=1, column=col, value=label)
                         hdr.font = header_font
                         hdr.fill = header_fill
                         hdr.alignment = header_align
@@ -401,8 +395,8 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
             img.width = 80
             img.height = 30
             ws.add_image(img, f'A{footer_row - 1}')
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[EXCEL] Failed to embed logo: {e}")
 
     output = io.BytesIO()
     wb.save(output)
