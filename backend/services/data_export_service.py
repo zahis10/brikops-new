@@ -185,7 +185,10 @@ async def run_export_job(job_id: str):
 
 
 async def _update_job(db, job_id, **fields):
-    await db.export_jobs.update_one({'id': job_id}, {'$set': fields})
+    update = {'$set': fields}
+    if fields.get('status') in ('done', 'error'):
+        update['$unset'] = {'_active_lock': ''}
+    await db.export_jobs.update_one({'id': job_id}, update)
 
 
 async def _export_project_structure(db, project_id):
@@ -337,10 +340,12 @@ def _download_photo(stored_ref):
     from services.object_storage import is_s3_mode, _get_s3, _S3_BUCKET, _LOCAL_UPLOADS_ROOT
     try:
         if stored_ref.startswith('s3://'):
-            if is_s3_mode():
+            try:
                 key = stored_ref[5:]
                 resp = _get_s3().get_object(Bucket=_S3_BUCKET, Key=key)
                 return resp['Body'].read()
+            except Exception:
+                pass
         elif stored_ref.startswith('/api/uploads/'):
             rel = stored_ref[len('/api/uploads/'):]
             if not rel or '..' in rel or rel.startswith('/'):

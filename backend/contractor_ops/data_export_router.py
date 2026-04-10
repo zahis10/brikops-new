@@ -29,13 +29,6 @@ async def start_project_export(
     if not project:
         raise HTTPException(status_code=404, detail='Project not found')
 
-    active = await db.export_jobs.find_one({
-        'project_id': project_id,
-        'status': {'$in': ['pending', 'processing']},
-    })
-    if active:
-        raise HTTPException(status_code=409, detail='ייצוא כבר בתהליך')
-
     one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
     recent = await db.export_jobs.find_one({
         'project_id': project_id,
@@ -46,6 +39,7 @@ async def start_project_export(
         raise HTTPException(status_code=429, detail='ניתן לייצא פעם בשעה')
 
     import uuid
+    from pymongo.errors import DuplicateKeyError
     job_id = str(uuid.uuid4())
     job = {
         'id': job_id,
@@ -61,17 +55,13 @@ async def start_project_export(
         'stats': {},
         'created_at': datetime.now(timezone.utc),
         'completed_at': None,
+        '_active_lock': True,
     }
 
-    lock = await db.export_jobs.find_one_and_update(
-        {'project_id': project_id, 'status': {'$in': ['pending', 'processing']}},
-        {'$setOnInsert': job},
-        upsert=False,
-    )
-    if lock:
+    try:
+        await db.export_jobs.insert_one(job)
+    except DuplicateKeyError:
         raise HTTPException(status_code=409, detail='ייצוא כבר בתהליך')
-
-    await db.export_jobs.insert_one(job)
 
     from services.data_export_service import run_export_job
     background_tasks.add_task(run_export_job, job['id'])

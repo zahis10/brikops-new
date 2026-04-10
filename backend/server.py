@@ -596,6 +596,11 @@ async def create_indexes():
         await db.invoices.create_index([("org_id", 1), ("created_at", -1)])
         await db.billing_payment_requests.create_index([("status", 1), ("created_at", -1)])
         await db.export_jobs.create_index([("project_id", 1), ("status", 1)])
+        await db.export_jobs.create_index(
+            [("project_id", 1), ("_active_lock", 1)],
+            unique=True, sparse=True,
+            name="export_jobs_active_lock",
+        )
         await db.export_jobs.create_index([("project_id", 1), ("completed_at", -1)])
         await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=604800)
         logger.info("[INDEXES] All MongoDB indexes created successfully")
