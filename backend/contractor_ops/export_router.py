@@ -456,7 +456,7 @@ async def _generate_full_excel(project_id: str, project_name: str):
             ws.column_dimensions[get_column_letter(i)].width = w
 
     def _set_autofilter(ws, num_cols, num_rows):
-        ws.auto_filter.ref = f"A1:{get_column_letter(num_cols)}{num_rows + 1}"
+        ws.auto_filter.ref = f"A1:{get_column_letter(num_cols)}{max(num_rows + 1, 2)}"
 
     buildings = await db.buildings.find(
         {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
