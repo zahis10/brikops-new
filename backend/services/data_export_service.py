@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -11,9 +12,58 @@ MAX_PHOTOS = 5000
 PHOTO_BATCH_SIZE = 10
 
 
+def _build_zip_sync(tmp_path, data, photo_refs, stats, project_name, progress_cb):
+    with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('project.json',
+                    json.dumps(data['project'], ensure_ascii=False, indent=2, default=str))
+        zf.writestr('defects.json',
+                    json.dumps(data['defects'], ensure_ascii=False, indent=2, default=str))
+        zf.writestr('handover_protocols.json',
+                    json.dumps(data['protocols'], ensure_ascii=False, indent=2, default=str))
+        zf.writestr('qc_runs.json',
+                    json.dumps(data['qc_runs'], ensure_ascii=False, indent=2, default=str))
+        zf.writestr('team.json',
+                    json.dumps(data['team'], ensure_ascii=False, indent=2, default=str))
+        zf.writestr('companies.json',
+                    json.dumps(data['companies'], ensure_ascii=False, indent=2, default=str))
+        zf.writestr('README.txt', _readme(stats, project_name))
+
+        photo_count = min(len(photo_refs), MAX_PHOTOS)
+        downloaded = 0
+        failed = 0
+
+        for i in range(0, photo_count, PHOTO_BATCH_SIZE):
+            batch = photo_refs[i:i + PHOTO_BATCH_SIZE]
+            for filename, stored_ref in batch:
+                photo_bytes = _download_photo(stored_ref)
+                if photo_bytes:
+                    zf.writestr(f'photos/{filename}', photo_bytes)
+                    downloaded += 1
+                else:
+                    failed += 1
+
+            if progress_cb:
+                pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
+                progress_cb(min(pct, 90), downloaded, photo_count)
+
+    return downloaded, failed
+
+
+def _upload_zip_sync(tmp_path, s3_key, zip_size):
+    from services.object_storage import save_bytes, is_s3_mode, _get_s3, _S3_BUCKET
+    if zip_size > 500 * 1024 * 1024 and is_s3_mode():
+        logger.warning(f"[DATA_EXPORT] Large ZIP {zip_size / 1024 / 1024:.0f}MB — streaming upload")
+        s3 = _get_s3()
+        s3.upload_file(tmp_path, _S3_BUCKET, s3_key,
+                       ExtraArgs={'ContentType': 'application/zip'})
+        return f"s3://{s3_key}"
+    else:
+        with open(tmp_path, 'rb') as f:
+            return save_bytes(f.read(), s3_key, 'application/zip')
+
+
 async def run_export_job(job_id: str):
     from contractor_ops.router import get_db, _audit
-    from services.object_storage import save_bytes, is_s3_mode, _get_s3, _S3_BUCKET
 
     db = get_db()
     job = await db.export_jobs.find_one({'id': job_id})
@@ -70,38 +120,25 @@ async def run_export_job(job_id: str):
         tmp_path = tmp_file.name
         tmp_file.close()
 
-        with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr('project.json',
-                        json.dumps(project_data, ensure_ascii=False, indent=2, default=str))
-            zf.writestr('defects.json',
-                        json.dumps(defects, ensure_ascii=False, indent=2, default=str))
-            zf.writestr('handover_protocols.json',
-                        json.dumps(protocols, ensure_ascii=False, indent=2, default=str))
-            zf.writestr('qc_runs.json',
-                        json.dumps(qc_runs, ensure_ascii=False, indent=2, default=str))
-            zf.writestr('team.json',
-                        json.dumps(team, ensure_ascii=False, indent=2, default=str))
-            zf.writestr('companies.json',
-                        json.dumps(companies, ensure_ascii=False, indent=2, default=str))
-            zf.writestr('README.txt', _readme(stats, project_name))
+        data = {
+            'project': project_data, 'defects': defects,
+            'protocols': protocols, 'qc_runs': qc_runs,
+            'team': team, 'companies': companies,
+        }
 
-            photo_count = min(len(photo_refs), MAX_PHOTOS)
-            downloaded = 0
-            failed = 0
+        progress_updates = []
 
-            for i in range(0, photo_count, PHOTO_BATCH_SIZE):
-                batch = photo_refs[i:i + PHOTO_BATCH_SIZE]
-                for filename, stored_ref in batch:
-                    photo_bytes = _download_photo(stored_ref)
-                    if photo_bytes:
-                        zf.writestr(f'photos/{filename}', photo_bytes)
-                        downloaded += 1
-                    else:
-                        failed += 1
+        def _on_progress(pct, dl, total):
+            progress_updates.append((pct, dl, total))
 
-                pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
-                await _update_job(db, job_id, progress=min(pct, 90),
-                                  progress_label=f'מוריד תמונות ({downloaded}/{photo_count})...')
+        downloaded, failed = await asyncio.to_thread(
+            _build_zip_sync, tmp_path, data, photo_refs, stats,
+            project_name, _on_progress,
+        )
+
+        for pct, dl, total in progress_updates:
+            await _update_job(db, job_id, progress=pct,
+                              progress_label=f'מוריד תמונות ({dl}/{total})...')
 
         await _update_job(db, job_id, progress=95, progress_label='מעלה קובץ...')
 
@@ -110,15 +147,9 @@ async def run_export_job(job_id: str):
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         s3_key = f"exports/{project_id}/{today}_{safe_name}.zip"
 
-        if zip_size > 500 * 1024 * 1024 and is_s3_mode():
-            logger.warning(f"[DATA_EXPORT] Large ZIP {zip_size / 1024 / 1024:.0f}MB — streaming upload")
-            s3 = _get_s3()
-            s3.upload_file(tmp_path, _S3_BUCKET, s3_key,
-                           ExtraArgs={'ContentType': 'application/zip'})
-            file_url = f"s3://{s3_key}"
-        else:
-            with open(tmp_path, 'rb') as f:
-                file_url = save_bytes(f.read(), s3_key, 'application/zip')
+        file_url = await asyncio.to_thread(
+            _upload_zip_sync, tmp_path, s3_key, zip_size,
+        )
 
         os.unlink(tmp_path)
         tmp_path = None
@@ -228,6 +259,8 @@ async def _export_qc_runs(db, project_id):
     return runs
 
 
+_TEAM_FIELDS = {'user_id', 'role', 'sub_role', 'project_id', 'joined_at', 'status'}
+
 async def _export_team(db, project_id):
     memberships = await db.project_memberships.find(
         {'project_id': project_id}, {'_id': 0}
@@ -242,9 +275,12 @@ async def _export_team(db, project_id):
         ).to_list(1000)
         users = {u['id']: u.get('name', '') for u in user_docs}
 
+    result = []
     for m in memberships:
-        m['user_name'] = users.get(m.get('user_id'), '')
-    return memberships
+        safe = {k: m[k] for k in _TEAM_FIELDS if k in m}
+        safe['user_name'] = users.get(m.get('user_id'), '')
+        result.append(safe)
+    return result
 
 
 async def _export_companies(db, project_id):
