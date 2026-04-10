@@ -602,7 +602,7 @@ async def create_indexes():
             name="export_jobs_active_lock",
         )
         await db.export_jobs.create_index([("project_id", 1), ("completed_at", -1)])
-        await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=604800)
+        await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=172800)
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

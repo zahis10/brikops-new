@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-MAX_PHOTOS = 5000
+DEFAULT_MAX_PHOTOS = 10000
 PHOTO_BATCH_SIZE = 10
 
 
@@ -92,23 +92,29 @@ async def run_export_job(job_id: str):
         await _update_job(db, job_id, progress=55, progress_label='מזהה תמונות...')
         photo_refs = _collect_photo_refs(defects, protocols, qc_runs)
 
+        max_photos = None if job.get('is_admin') else DEFAULT_MAX_PHOTOS
+        photos_total = len(photo_refs)
+        photo_count = photos_total if max_photos is None else min(photos_total, max_photos)
+
         stats = {
             'defects': len(defects),
             'handover_protocols': len(protocols),
             'qc_runs': len(qc_runs),
             'team_members': len(team),
             'companies': len(companies),
-            'photos': len(photo_refs),
+            'photos': photos_total,
+            'photos_total': photos_total,
+            'photos_to_export': photo_count,
         }
 
         photo_map = {}
-        for filename, original_ref in photo_refs[:MAX_PHOTOS]:
+        for filename, original_ref in photo_refs[:photo_count]:
             photo_map[original_ref] = f"photos/{filename}"
 
         _rewrite_photo_refs(defects, protocols, qc_runs, photo_map)
 
         await _update_job(db, job_id, progress=60,
-                          progress_label=f'בונה ZIP ({len(photo_refs)} תמונות)...',
+                          progress_label=f'בונה ZIP ({photo_count} תמונות)...',
                           stats=stats)
 
         tmp_file = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
@@ -125,7 +131,6 @@ async def run_export_job(job_id: str):
             _write_json_to_zip, tmp_path, data, stats, project_name
         )
 
-        photo_count = min(len(photo_refs), MAX_PHOTOS)
         downloaded = 0
         failed = 0
 
@@ -165,6 +170,7 @@ async def run_export_job(job_id: str):
 
         stats['photos_downloaded'] = downloaded
         stats['photos_failed'] = failed
+        stats['photos_skipped'] = photos_total - photo_count
         stats['file_size_mb'] = round(zip_size / (1024 * 1024), 1)
 
         await _update_job(db, job_id, status='done', progress=100,

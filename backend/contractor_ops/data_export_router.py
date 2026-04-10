@@ -53,6 +53,7 @@ async def start_project_export(
         'file_size': None,
         'error': None,
         'stats': {},
+        'is_admin': user.get('platform_role') == 'super_admin',
         'created_at': datetime.now(timezone.utc),
         'updated_at': datetime.now(timezone.utc),
         'completed_at': None,
@@ -116,6 +117,32 @@ async def get_latest_export(
         'stats': job.get('stats', {}),
         'download_url': generate_url(job['file_url']),
     }
+
+
+@router.get("/projects/{project_id}/export/preview")
+async def preview_project_export(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    role = await _get_project_role(user, project_id)
+    if role != 'project_manager' and user.get('platform_role') != 'super_admin':
+        raise HTTPException(status_code=403, detail='אין הרשאה')
+
+    is_admin = user.get('platform_role') == 'super_admin'
+    max_photos = None if is_admin else 10000
+
+    counts = {
+        'defects': await db.tasks.count_documents({'project_id': project_id, 'archived': {'$ne': True}}),
+        'handover_protocols': await db.handover_protocols.count_documents({'project_id': project_id}),
+        'qc_runs': await db.qc_runs.count_documents({'project_id': project_id}),
+        'team_members': await db.project_memberships.count_documents({'project_id': project_id}),
+        'companies': await db.project_companies.count_documents({'project_id': project_id, 'deletedAt': {'$exists': False}}),
+        'max_photos': max_photos,
+        'is_admin': is_admin,
+    }
+
+    return counts
 
 
 @router.get("/projects/{project_id}/export/{job_id}")
