@@ -405,6 +405,312 @@ def _generate_excel(tasks, project_name, user_map, company_map, floor_map, unit_
     return output
 
 
+ROLE_LABEL = {
+    'project_manager': 'מנהל פרויקט',
+    'contractor': 'קבלן',
+    'inspector': 'מפקח',
+    'viewer': 'צופה',
+    'owner': 'בעלים',
+    'admin': 'מנהל',
+}
+
+
+async def _generate_full_excel(project_id: str, project_name: str):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    db = get_db()
+    wb = Workbook()
+
+    header_font = Font(name='Arial', bold=True, size=11, color='FFFFFF')
+    header_fill = PatternFill(start_color='F59E0B', end_color='F59E0B', fill_type='solid')
+    header_align = Alignment(horizontal='right', vertical='center', wrap_text=True)
+    cell_font = Font(name='Arial', size=10)
+    cell_align = Alignment(horizontal='right', vertical='top', wrap_text=True)
+    link_font = Font(name='Arial', size=10, color='0563C1', underline='single')
+    thin_border = Border(
+        left=Side(style='thin', color='D1D5DB'),
+        right=Side(style='thin', color='D1D5DB'),
+        top=Side(style='thin', color='D1D5DB'),
+        bottom=Side(style='thin', color='D1D5DB'),
+    )
+
+    def _apply_headers(ws, headers):
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+            cell.border = thin_border
+
+    def _write_row(ws, row_idx, values):
+        for col_idx, value in enumerate(values, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.font = cell_font
+            cell.alignment = cell_align
+            cell.border = thin_border
+
+    def _set_widths(ws, widths):
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    def _set_autofilter(ws, num_cols, num_rows):
+        ws.auto_filter.ref = f"A1:{get_column_letter(num_cols)}{num_rows + 1}"
+
+    buildings = await db.buildings.find(
+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
+    ).to_list(1000)
+    building_map = {b['id']: b.get('name', '') for b in buildings}
+
+    floors = await db.floors.find(
+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
+    ).to_list(10000)
+    floor_map = {f['id']: f.get('display_label') or f.get('name', '') for f in floors}
+
+    units = await db.units.find(
+        {'project_id': project_id, 'archived': {'$ne': True}},
+        {'_id': 0, 'id': 1, 'unit_no': 1, 'display_label': 1, 'status': 1,
+         'building_id': 1, 'floor_id': 1, 'spare_tiles': 1}
+    ).to_list(100000)
+    unit_map = {u['id']: u.get('display_label') or u.get('unit_no', '') for u in units}
+    spare_tiles_map = {u['id']: u.get('spare_tiles') for u in units if 'spare_tiles' in u}
+
+    proj_companies = await db.project_companies.find(
+        {'project_id': project_id, 'deletedAt': {'$exists': False}}, {'_id': 0}
+    ).to_list(1000)
+    company_map = {c['id']: c.get('name', '') for c in proj_companies}
+
+    memberships = await db.project_memberships.find(
+        {'project_id': project_id}, {'_id': 0}
+    ).to_list(1000)
+    member_user_ids = [m['user_id'] for m in memberships if m.get('user_id')]
+    user_name_map = {}
+    if member_user_ids:
+        user_docs = await db.users.find(
+            {'id': {'$in': member_user_ids}}, {'_id': 0, 'id': 1, 'name': 1}
+        ).to_list(1000)
+        user_name_map = {u['id']: u.get('name', '') for u in user_docs}
+
+    tasks = await db.tasks.find(
+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
+    ).to_list(100000)
+    tasks.sort(key=lambda t: t.get('created_at', ''), reverse=True)
+
+    task_user_ids = set()
+    task_company_ids = set()
+    for t in tasks:
+        if t.get('assignee_id'):
+            task_user_ids.add(t['assignee_id'])
+        if t.get('created_by'):
+            task_user_ids.add(t['created_by'])
+        if t.get('company_id'):
+            task_company_ids.add(t['company_id'])
+    extra_user_ids = task_user_ids - set(user_name_map.keys())
+    if extra_user_ids:
+        extra_users = await db.users.find(
+            {'id': {'$in': list(extra_user_ids)}}, {'_id': 0, 'id': 1, 'name': 1}
+        ).to_list(1000)
+        for u in extra_users:
+            user_name_map[u['id']] = u.get('name', '')
+    extra_company_ids = task_company_ids - set(company_map.keys())
+    if extra_company_ids:
+        extra_companies = await db.companies.find(
+            {'id': {'$in': list(extra_company_ids)}}, {'_id': 0, 'id': 1, 'name': 1}
+        ).to_list(1000)
+        for c in extra_companies:
+            company_map[c['id']] = c.get('name', '')
+
+    for t in tasks:
+        t['_resolved_image_links'] = await _resolve_image_links(db, t)
+
+    ws1 = wb.active
+    ws1.title = 'ליקויים'
+    ws1.sheet_view.rightToLeft = True
+    defect_headers = [
+        'מספר ליקוי', 'פרויקט', 'בניין', 'קומה', 'דירה', 'תחום',
+        'כותרת', 'תיאור', 'סטטוס', 'חברה/קבלן', 'תאריך יצירה',
+        'תאריך עדכון', 'חוסם מסירה', 'מספר תמונות', 'קישורי תמונות',
+        'ספייר: ריצוף יבש', 'ספייר: ריצוף מרפסות', 'ספייר: חיפוי אמבטיות',
+        'ספייר: ריצוף אמבטיות', 'ספייר: חיפוי מטבח', 'ספייר: סוגים נוספים', 'ספייר: הערות',
+    ]
+    _apply_headers(ws1, defect_headers)
+    for row_idx, task in enumerate(tasks, 2):
+        status = task.get('status', 'open')
+        image_links = task.get('_resolved_image_links') or []
+        image_count = task.get('attachments_count', 0) or len(image_links)
+        links_text = ', '.join(f'תמונה {i+1}' for i in range(len(image_links))) if image_links else ''
+        unit_spare = spare_tiles_map.get(task.get('unit_id', ''))
+        spare_cols = _spare_tiles_columns(unit_spare)
+        row_data = [
+            task.get('display_number') or task.get('short_ref', ''),
+            project_name,
+            building_map.get(task.get('building_id', ''), ''),
+            floor_map.get(task.get('floor_id', ''), ''),
+            unit_map.get(task.get('unit_id', ''), ''),
+            CATEGORY_LABEL.get(task.get('category', ''), task.get('category', '')),
+            task.get('title', ''),
+            task.get('description', ''),
+            STATUS_LABEL.get(status, status),
+            company_map.get(task.get('company_id', ''), ''),
+            _format_datetime(task.get('created_at')),
+            _format_datetime(task.get('updated_at')),
+            'כן' if status in BLOCKING_STATUSES else 'לא',
+            image_count,
+            links_text,
+        ] + spare_cols
+        _write_row(ws1, row_idx, row_data)
+        if image_links:
+            link_cell = ws1.cell(row=row_idx, column=15)
+            link_cell.value = 'תמונה 1'
+            link_cell.hyperlink = image_links[0]
+            link_cell.font = link_font
+            if len(image_links) > 1:
+                img_start_col = len(defect_headers) + 1
+                for extra_idx, img_url in enumerate(image_links[1:]):
+                    col = img_start_col + extra_idx
+                    label = f'תמונה {extra_idx + 2}'
+                    c = ws1.cell(row=row_idx, column=col, value=label)
+                    c.hyperlink = img_url
+                    c.font = link_font
+                    c.alignment = cell_align
+                    c.border = thin_border
+                    if row_idx == 2 or not ws1.cell(row=1, column=col).value:
+                        hdr = ws1.cell(row=1, column=col, value=label)
+                        hdr.font = header_font
+                        hdr.fill = header_fill
+                        hdr.alignment = header_align
+                        hdr.border = thin_border
+    _set_widths(ws1, [12, 15, 12, 10, 10, 14, 25, 30, 14, 18, 16, 16, 12, 10, 14, 14, 14, 14, 14, 14, 20, 25])
+    _set_autofilter(ws1, len(defect_headers), len(tasks))
+
+    protocols = await db.handover_protocols.find(
+        {'project_id': project_id}, {'_id': 0}
+    ).to_list(10000)
+    ws2 = wb.create_sheet('פרוטוקולי מסירה')
+    ws2.sheet_view.rightToLeft = True
+    proto_headers = [
+        'מספר פרוטוקול', 'בניין', 'דירה', 'סטטוס', 'תאריך',
+        'תאריך חתימה', 'סוג', 'ממצאים', 'ממצאים פתוחים', 'הערות',
+    ]
+    _apply_headers(ws2, proto_headers)
+    for row_idx, p in enumerate(protocols, 2):
+        items_count = 0
+        open_count = 0
+        for sec in (p.get('sections') or []):
+            for item in (sec.get('items') or []):
+                items_count += 1
+                if item.get('status') != 'ok':
+                    open_count += 1
+        _write_row(ws2, row_idx, [
+            p.get('display_number') or str(p.get('id', ''))[:8],
+            building_map.get(p.get('building_id', ''), ''),
+            unit_map.get(p.get('unit_id', ''), ''),
+            p.get('status', ''),
+            _format_datetime(p.get('created_at')),
+            _format_datetime(p.get('signed_at')),
+            p.get('protocol_type', ''),
+            items_count,
+            open_count,
+            p.get('notes', ''),
+        ])
+    _set_widths(ws2, [14, 12, 10, 12, 16, 16, 12, 10, 12, 30])
+    _set_autofilter(ws2, len(proto_headers), len(protocols))
+
+    qc_runs = await db.qc_runs.find(
+        {'project_id': project_id}, {'_id': 0}
+    ).to_list(10000)
+    run_ids = [r['id'] for r in qc_runs]
+    qc_items_by_run = {}
+    for i in range(0, len(run_ids), 500):
+        batch = run_ids[i:i + 500]
+        batch_items = await db.qc_items.find(
+            {'run_id': {'$in': batch}}, {'_id': 0}
+        ).to_list(500000)
+        for item in batch_items:
+            qc_items_by_run.setdefault(item['run_id'], []).append(item)
+    ws3 = wb.create_sheet('בקרת ביצוע')
+    ws3.sheet_view.rightToLeft = True
+    qc_headers = [
+        'שם ריצה', 'בניין', 'קומה', 'דירה', 'תאריך',
+        'סטטוס', 'פריטים', 'עבר', 'נכשל', 'הערות',
+    ]
+    _apply_headers(ws3, qc_headers)
+    for row_idx, run in enumerate(qc_runs, 2):
+        items = qc_items_by_run.get(run['id'], [])
+        passed = sum(1 for it in items if it.get('result') == 'pass')
+        failed = sum(1 for it in items if it.get('result') == 'fail')
+        _write_row(ws3, row_idx, [
+            run.get('name') or run.get('template_name', ''),
+            building_map.get(run.get('building_id', ''), ''),
+            floor_map.get(run.get('floor_id', ''), ''),
+            unit_map.get(run.get('unit_id', ''), ''),
+            _format_datetime(run.get('created_at')),
+            run.get('status', ''),
+            len(items),
+            passed,
+            failed,
+            run.get('notes', ''),
+        ])
+    _set_widths(ws3, [20, 12, 10, 10, 16, 12, 10, 10, 10, 30])
+    _set_autofilter(ws3, len(qc_headers), len(qc_runs))
+
+    ws4 = wb.create_sheet('מבנה פרויקט')
+    ws4.sheet_view.rightToLeft = True
+    struct_headers = ['בניין', 'קומה', 'דירה', 'סטטוס דירה']
+    _apply_headers(ws4, struct_headers)
+    floor_by_id = {f['id']: f for f in floors}
+    building_by_id = {b['id']: b for b in buildings}
+    struct_row = 2
+    for unit in units:
+        b = building_by_id.get(unit.get('building_id', ''))
+        f = floor_by_id.get(unit.get('floor_id', ''))
+        _write_row(ws4, struct_row, [
+            b.get('name', '') if b else '',
+            f.get('display_label') or f.get('name', '') if f else '',
+            unit.get('display_label') or unit.get('unit_no', ''),
+            unit.get('status', ''),
+        ])
+        struct_row += 1
+    _set_widths(ws4, [15, 12, 12, 14])
+    _set_autofilter(ws4, len(struct_headers), len(units))
+
+    ws5 = wb.create_sheet('צוות')
+    ws5.sheet_view.rightToLeft = True
+    team_headers = ['שם', 'תפקיד', 'תת-תפקיד', 'תאריך הצטרפות', 'סטטוס']
+    _apply_headers(ws5, team_headers)
+    for row_idx, m in enumerate(memberships, 2):
+        _write_row(ws5, row_idx, [
+            user_name_map.get(m.get('user_id', ''), ''),
+            ROLE_LABEL.get(m.get('role', ''), m.get('role', '')),
+            m.get('sub_role', ''),
+            _format_datetime(m.get('joined_at')),
+            m.get('status', ''),
+        ])
+    _set_widths(ws5, [20, 16, 16, 16, 12])
+    _set_autofilter(ws5, len(team_headers), len(memberships))
+
+    ws6 = wb.create_sheet('חברות וקבלנים')
+    ws6.sheet_view.rightToLeft = True
+    company_headers = ['שם חברה', 'איש קשר', 'טלפון', 'תחום', 'הערות']
+    _apply_headers(ws6, company_headers)
+    for row_idx, c in enumerate(proj_companies, 2):
+        _write_row(ws6, row_idx, [
+            c.get('name', ''),
+            c.get('contact_name', ''),
+            c.get('contact_phone') or c.get('phone', ''),
+            c.get('trade') or c.get('specialty', ''),
+            c.get('notes', ''),
+        ])
+    _set_widths(ws6, [20, 18, 14, 16, 30])
+    _set_autofilter(ws6, len(company_headers), len(proj_companies))
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
 MAX_IMAGES_PER_DEFECT = 2
 PDF_IMAGE_MAX_WIDTH_CM = 12
 PDF_IMAGE_MAX_HEIGHT_CM = 7
@@ -922,6 +1228,42 @@ def _build_filters_description(filters: ExportFilters):
     if filters.unit and filters.unit != 'all':
         parts.append('דירה: מסוננת')
     return ' · '.join(parts) if parts else None
+
+
+@router.post("/projects/{project_id}/export/excel")
+async def export_full_excel(project_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id, 'archived': {'$ne': True}}, {'_id': 0})
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+
+    role = await _get_project_role(user, project_id)
+    if role != 'project_manager' and user.get('platform_role') != 'super_admin':
+        raise HTTPException(status_code=403, detail='אין הרשאה לייצוא נתונים')
+
+    project_name = project.get('name', '')
+    try:
+        excel_bytes = await _generate_full_excel(project_id, project_name)
+    except Exception as e:
+        logger.error(f"[FULL-EXCEL] Generation failed for project {project_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail='שגיאה ביצירת קובץ Excel')
+
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    from urllib.parse import quote
+    safe_name = project_name.replace(' ', '_').replace('/', '_')
+    filename = f"full_export_{safe_name}_{today}.xlsx"
+    ascii_filename = f"full_export_{today}.xlsx"
+    encoded_filename = quote(filename)
+    disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}"
+
+    logger.info(f"[FULL-EXCEL] user={user.get('id')} project={project_id} filename={filename}")
+    await _audit('project', project_id, 'full_excel_export', user.get('id'), {})
+
+    return StreamingResponse(
+        excel_bytes,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': disposition}
+    )
 
 
 @router.post("/defects/export")

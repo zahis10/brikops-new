@@ -1533,6 +1533,16 @@ export const exportService = {
   },
 };
 
+export const fullExcelExportService = {
+  async exportFullExcel(projectId) {
+    const response = await axios.post(
+      `${API}/projects/${projectId}/export/excel`, {},
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response;
+  },
+};
+
 export const dataExportService = {
   async startExport(projectId) {
     const response = await axios.post(

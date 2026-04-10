@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Loader2, FileSpreadsheet, Archive, CheckCircle, AlertCircle } from 'lucide-react';
-import { exportService, dataExportService } from '../services/api';
+import { Download, Loader2, FileSpreadsheet, Archive, CheckCircle, AlertCircle, Table2 } from 'lucide-react';
+import { exportService, dataExportService, fullExcelExportService } from '../services/api';
 import { toast } from 'sonner';
 
 const ProjectDataExportTab = ({ projectId, projectName }) => {
   const [excelExporting, setExcelExporting] = useState(false);
+  const [fullExcelExporting, setFullExcelExporting] = useState(false);
 
   const [exportJob, setExportJob] = useState(null);
   const [latestExport, setLatestExport] = useState(null);
@@ -28,6 +29,29 @@ const ProjectDataExportTab = ({ projectId, projectName }) => {
       toast.error(err?.response?.status === 403 ? 'אין הרשאה' : 'שגיאה בייצוא');
     } finally {
       setExcelExporting(false);
+    }
+  };
+
+  const handleFullExcelExport = async () => {
+    setFullExcelExporting(true);
+    try {
+      const response = await fullExcelExportService.exportFullExcel(projectId);
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `full_export_${projectName || 'project'}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('הקובץ הורד בהצלחה');
+    } catch (err) {
+      toast.error(err?.response?.status === 403 ? 'אין הרשאה' : 'שגיאה בייצוא');
+    } finally {
+      setFullExcelExporting(false);
     }
   };
 
@@ -95,6 +119,26 @@ const ProjectDataExportTab = ({ projectId, projectName }) => {
               {excelExporting
                 ? <><Loader2 className="w-4 h-4 animate-spin" /><span>מייצא...</span></>
                 : <><Download className="w-4 h-4" /><span>הורד Excel</span></>}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
+            <Table2 className="w-5 h-5 text-blue-600" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-bold text-slate-800 mb-1">ייצוא Excel מלא (כל הנתונים)</h3>
+            <p className="text-sm text-slate-500 mb-3">
+              כל נתוני הפרויקט בקובץ Excel אחד: ליקויים, פרוטוקולי מסירה, בקרת ביצוע, מבנה, צוות וחברות — ב-6 גיליונות.
+            </p>
+            <button onClick={handleFullExcelExport} disabled={fullExcelExporting}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors">
+              {fullExcelExporting
+                ? <><Loader2 className="w-4 h-4 animate-spin" /><span>מייצא...</span></>
+                : <><Download className="w-4 h-4" /><span>הורד Excel מלא</span></>}
             </button>
           </div>
         </div>
