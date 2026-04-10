@@ -436,6 +436,9 @@ app.include_router(excel_router)
 from contractor_ops.export_router import router as export_router
 app.include_router(export_router)
 
+from contractor_ops.data_export_router import router as data_export_router
+app.include_router(data_export_router)
+
 from contractor_ops.plans_router import router as plans_router
 app.include_router(plans_router)
 
@@ -592,6 +595,9 @@ async def create_indexes():
         await db.invoices.create_index([("org_id", 1), ("period_ym", -1)])
         await db.invoices.create_index([("org_id", 1), ("created_at", -1)])
         await db.billing_payment_requests.create_index([("status", 1), ("created_at", -1)])
+        await db.export_jobs.create_index([("project_id", 1), ("status", 1)])
+        await db.export_jobs.create_index([("project_id", 1), ("completed_at", -1)])
+        await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=604800)
         logger.info("[INDEXES] All MongoDB indexes created successfully")
     except Exception as e:
         logger.warning(f"[INDEXES] Index creation warning: {e}")

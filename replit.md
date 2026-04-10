@@ -45,6 +45,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
     -   **Spare Tiles Multi-Type**: Units support multiple tile types via an array field.
     -   **Login Redirect Cookie**: `brikops_logged_in` cookie used for landing page redirects.
     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
+    -   **Full Project Data Export (ZIP)**: Background job exports all project data (defects, handover protocols, QC, team, companies) as JSON with photos into a downloadable ZIP. S3 storage, presigned URLs, progress polling, rate limiting (1/hour), 5000 photo cap. Router: `data_export_router.py`, Service: `data_export_service.py`, Frontend: `ProjectDataExportTab.js`.
     -   **Defects V2**: Parallel building-level and apartment-level defect views with Excel and PDF exports.
     -   **Handover PDF Export**: Generates PDF of signed handover protocols.
     -   **Contractor i18n System**: Multi-language support for contractor-facing UI.

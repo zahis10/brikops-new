@@ -1533,6 +1533,30 @@ export const exportService = {
   },
 };
 
+export const dataExportService = {
+  async startExport(projectId) {
+    const response = await axios.post(
+      `${API}/projects/${projectId}/export`, {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getStatus(projectId, jobId) {
+    const response = await axios.get(
+      `${API}/projects/${projectId}/export/${jobId}`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getLatest(projectId) {
+    const response = await axios.get(
+      `${API}/projects/${projectId}/export/latest`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+};
+
 export const adminAnalyticsService = {
   async getUserActivity(params) {
     const response = await axios.get(`${API}/admin/analytics/user-activity`, {
