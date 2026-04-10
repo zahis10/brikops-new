@@ -1533,7 +1533,7 @@ export const exportService = {
   },
 };
 
-export const fullExcelExportService = {
+export const dataExportService = {
   async exportFullExcel(projectId) {
     const response = await axios.post(
       `${API}/projects/${projectId}/export/excel`, {},
@@ -1541,9 +1541,6 @@ export const fullExcelExportService = {
     );
     return response;
   },
-};
-
-export const dataExportService = {
   async startExport(projectId) {
     const response = await axios.post(
       `${API}/projects/${projectId}/export`, {},

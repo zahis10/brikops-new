@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Loader2, FileSpreadsheet, Archive, CheckCircle, AlertCircle, Table2 } from 'lucide-react';
-import { exportService, dataExportService, fullExcelExportService } from '../services/api';
+import { Download, Loader2, FileSpreadsheet, Archive, CheckCircle, AlertCircle } from 'lucide-react';
+import { exportService, dataExportService } from '../services/api';
 import { toast } from 'sonner';
 
 const ProjectDataExportTab = ({ projectId, projectName }) => {
@@ -35,7 +35,7 @@ const ProjectDataExportTab = ({ projectId, projectName }) => {
   const handleFullExcelExport = async () => {
     setFullExcelExporting(true);
     try {
-      const response = await fullExcelExportService.exportFullExcel(projectId);
+      const response = await dataExportService.exportFullExcel(projectId);
       const blob = new Blob([response.data], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
@@ -127,7 +127,7 @@ const ProjectDataExportTab = ({ projectId, projectName }) => {
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-            <Table2 className="w-5 h-5 text-blue-600" />
+            <FileSpreadsheet className="w-5 h-5 text-blue-600" />
           </div>
           <div className="flex-1">
             <h3 className="font-bold text-slate-800 mb-1">ייצוא Excel מלא (כל הנתונים)</h3>

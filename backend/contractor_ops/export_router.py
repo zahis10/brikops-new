@@ -590,32 +590,44 @@ async def _generate_full_excel(project_id: str, project_name: str):
     ws2 = wb.create_sheet('פרוטוקולי מסירה')
     ws2.sheet_view.rightToLeft = True
     proto_headers = [
-        'מספר פרוטוקול', 'בניין', 'דירה', 'סטטוס', 'תאריך',
-        'תאריך חתימה', 'סוג', 'ממצאים', 'ממצאים פתוחים', 'הערות',
+        'מספר פרוטוקול', 'בניין', 'דירה', 'סטטוס פרוטוקול', 'תאריך',
+        'תאריך חתימה', 'סוג', 'שם מדור', 'פריט', 'סטטוס פריט',
+        'ממצא', 'הערות פרוטוקול',
     ]
     _apply_headers(ws2, proto_headers)
-    for row_idx, p in enumerate(protocols, 2):
-        items_count = 0
-        open_count = 0
-        for sec in (p.get('sections') or []):
+    proto_row = 2
+    for p in protocols:
+        proto_num = p.get('display_number') or str(p.get('id', ''))[:8]
+        proto_building = building_map.get(p.get('building_id', ''), '')
+        proto_unit = unit_map.get(p.get('unit_id', ''), '')
+        proto_status = p.get('status', '')
+        proto_date = _format_datetime(p.get('created_at'))
+        proto_signed = _format_datetime(p.get('signed_at'))
+        proto_type = p.get('protocol_type', '')
+        proto_notes = p.get('notes', '')
+        sections = p.get('sections') or []
+        has_items = False
+        for sec in sections:
+            sec_name = sec.get('name') or sec.get('title', '')
             for item in (sec.get('items') or []):
-                items_count += 1
-                if item.get('status') != 'ok':
-                    open_count += 1
-        _write_row(ws2, row_idx, [
-            p.get('display_number') or str(p.get('id', ''))[:8],
-            building_map.get(p.get('building_id', ''), ''),
-            unit_map.get(p.get('unit_id', ''), ''),
-            p.get('status', ''),
-            _format_datetime(p.get('created_at')),
-            _format_datetime(p.get('signed_at')),
-            p.get('protocol_type', ''),
-            items_count,
-            open_count,
-            p.get('notes', ''),
-        ])
-    _set_widths(ws2, [14, 12, 10, 12, 16, 16, 12, 10, 12, 30])
-    _set_autofilter(ws2, len(proto_headers), len(protocols))
+                has_items = True
+                item_name = item.get('name') or item.get('title') or item.get('label', '')
+                item_status = item.get('status', '')
+                finding = item.get('finding') or item.get('note') or item.get('description', '')
+                _write_row(ws2, proto_row, [
+                    proto_num, proto_building, proto_unit, proto_status,
+                    proto_date, proto_signed, proto_type, sec_name,
+                    item_name, item_status, finding, proto_notes,
+                ])
+                proto_row += 1
+        if not has_items:
+            _write_row(ws2, proto_row, [
+                proto_num, proto_building, proto_unit, proto_status,
+                proto_date, proto_signed, proto_type, '', '', '', '', proto_notes,
+            ])
+            proto_row += 1
+    _set_widths(ws2, [14, 12, 10, 14, 16, 16, 12, 16, 20, 12, 30, 25])
+    _set_autofilter(ws2, len(proto_headers), proto_row - 1)
 
     qc_runs = await db.qc_runs.find(
         {'project_id': project_id}, {'_id': 0}
@@ -632,28 +644,39 @@ async def _generate_full_excel(project_id: str, project_name: str):
     ws3 = wb.create_sheet('בקרת ביצוע')
     ws3.sheet_view.rightToLeft = True
     qc_headers = [
-        'שם ריצה', 'בניין', 'קומה', 'דירה', 'תאריך',
-        'סטטוס', 'פריטים', 'עבר', 'נכשל', 'הערות',
+        'שם ריצה', 'בניין', 'קומה', 'דירה', 'תאריך ריצה',
+        'סטטוס ריצה', 'שם פריט', 'תוצאה', 'הערות פריט', 'הערות ריצה',
     ]
     _apply_headers(ws3, qc_headers)
-    for row_idx, run in enumerate(qc_runs, 2):
+    qc_row = 2
+    for run in qc_runs:
+        run_name = run.get('name') or run.get('template_name', '')
+        run_building = building_map.get(run.get('building_id', ''), '')
+        run_floor = floor_map.get(run.get('floor_id', ''), '')
+        run_unit = unit_map.get(run.get('unit_id', ''), '')
+        run_date = _format_datetime(run.get('created_at'))
+        run_status = run.get('status', '')
+        run_notes = run.get('notes', '')
         items = qc_items_by_run.get(run['id'], [])
-        passed = sum(1 for it in items if it.get('result') == 'pass')
-        failed = sum(1 for it in items if it.get('result') == 'fail')
-        _write_row(ws3, row_idx, [
-            run.get('name') or run.get('template_name', ''),
-            building_map.get(run.get('building_id', ''), ''),
-            floor_map.get(run.get('floor_id', ''), ''),
-            unit_map.get(run.get('unit_id', ''), ''),
-            _format_datetime(run.get('created_at')),
-            run.get('status', ''),
-            len(items),
-            passed,
-            failed,
-            run.get('notes', ''),
-        ])
-    _set_widths(ws3, [20, 12, 10, 10, 16, 12, 10, 10, 10, 30])
-    _set_autofilter(ws3, len(qc_headers), len(qc_runs))
+        if items:
+            for it in items:
+                _write_row(ws3, qc_row, [
+                    run_name, run_building, run_floor, run_unit, run_date,
+                    run_status,
+                    it.get('name') or it.get('title') or it.get('label', ''),
+                    it.get('result', ''),
+                    it.get('notes') or it.get('note', ''),
+                    run_notes,
+                ])
+                qc_row += 1
+        else:
+            _write_row(ws3, qc_row, [
+                run_name, run_building, run_floor, run_unit, run_date,
+                run_status, '', '', '', run_notes,
+            ])
+            qc_row += 1
+    _set_widths(ws3, [20, 12, 10, 10, 16, 12, 20, 10, 30, 25])
+    _set_autofilter(ws3, len(qc_headers), qc_row - 1)
 
     ws4 = wb.create_sheet('מבנה פרויקט')
     ws4.sheet_view.rightToLeft = True
