@@ -12,7 +12,7 @@ PHOTO_BATCH_SIZE = 10
 
 
 async def run_export_job(job_id: str):
-    from contractor_ops.router import get_db, _now, _audit
+    from contractor_ops.router import get_db, _audit
     from services.object_storage import save_bytes, is_s3_mode, _get_s3, _S3_BUCKET
 
     db = get_db()
@@ -130,7 +130,7 @@ async def run_export_job(job_id: str):
         await _update_job(db, job_id, status='done', progress=100,
                           progress_label='הייצוא הושלם',
                           file_url=file_url, file_size=zip_size,
-                          completed_at=_now(), stats=stats)
+                          completed_at=datetime.now(timezone.utc), stats=stats)
 
         await _audit('project', project_id, 'full_data_export', job['user_id'], {
             'job_id': job_id, 'stats': stats,

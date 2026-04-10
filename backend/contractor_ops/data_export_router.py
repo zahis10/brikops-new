@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 
-from contractor_ops.router import get_db, get_current_user, _get_project_role, _now
+from contractor_ops.router import get_db, get_current_user, _get_project_role
 
 from services.object_storage import generate_url
 
@@ -36,7 +36,7 @@ async def start_project_export(
     if active:
         raise HTTPException(status_code=409, detail='ייצוא כבר בתהליך')
 
-    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
     recent = await db.export_jobs.find_one({
         'project_id': project_id,
         'status': 'done',
@@ -59,7 +59,7 @@ async def start_project_export(
         'file_size': None,
         'error': None,
         'stats': {},
-        'created_at': _now(),
+        'created_at': datetime.now(timezone.utc),
         'completed_at': None,
     }
 
