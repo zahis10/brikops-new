@@ -1,82 +1,47 @@
 diff --git a/backend/contractor_ops/data_export_router.py b/backend/contractor_ops/data_export_router.py
-new file mode 100644
-index 0000000..11b9867
---- /dev/null
+index 11b9867..130174d 100644
+--- a/backend/contractor_ops/data_export_router.py
 +++ b/backend/contractor_ops/data_export_router.py
-@@ -0,0 +1,131 @@
-+import logging
-+from datetime import datetime, timezone, timedelta
-+
-+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-+
-+from contractor_ops.router import get_db, get_current_user, _get_project_role
-+
-+from services.object_storage import generate_url
-+
-+logger = logging.getLogger(__name__)
-+router = APIRouter(prefix="/api")
-+
-+
-+@router.post("/projects/{project_id}/export")
-+async def start_project_export(
-+    project_id: str,
-+    background_tasks: BackgroundTasks,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+
-+    role = await _get_project_role(user, project_id)
-+    if role != 'project_manager' and user.get('platform_role') != 'super_admin':
-+        raise HTTPException(status_code=403, detail='אין הרשאה לייצוא נתונים')
-+
-+    project = await db.projects.find_one(
-+        {'id': project_id, 'archived': {'$ne': True}}, {'_id': 0, 'id': 1}
-+    )
-+    if not project:
-+        raise HTTPException(status_code=404, detail='Project not found')
-+
-+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-+    recent = await db.export_jobs.find_one({
+@@ -53,11 +53,33 @@ async def start_project_export(
+         'file_size': None,
+         'error': None,
+         'stats': {},
++        'is_admin': user.get('platform_role') == 'super_admin',
+         'created_at': datetime.now(timezone.utc),
++        'updated_at': datetime.now(timezone.utc),
+         'completed_at': None,
+         '_active_lock': True,
+     }
+ 
++    thirty_min_ago = datetime.now(timezone.utc) - timedelta(minutes=30)
++    stuck = await db.export_jobs.find_one({
 +        'project_id': project_id,
-+        'status': 'done',
-+        'completed_at': {'$gte': one_hour_ago},
-+    })
-+    if recent:
-+        raise HTTPException(status_code=429, detail='ניתן לייצא פעם בשעה')
-+
-+    import uuid
-+    from pymongo.errors import DuplicateKeyError
-+    job_id = str(uuid.uuid4())
-+    job = {
-+        'id': job_id,
-+        'project_id': project_id,
-+        'user_id': user['id'],
-+        'status': 'pending',
-+        'progress': 0,
-+        'progress_label': '',
-+        'format': 'full_zip',
-+        'file_url': None,
-+        'file_size': None,
-+        'error': None,
-+        'stats': {},
-+        'created_at': datetime.now(timezone.utc),
-+        'completed_at': None,
 +        '_active_lock': True,
-+    }
++        'status': {'$in': ['pending', 'processing']},
++        '$or': [
++            {'updated_at': {'$lt': thirty_min_ago}},
++            {'updated_at': {'$exists': False}, 'created_at': {'$lt': thirty_min_ago}},
++        ],
++    })
++    if stuck:
++        logger.warning(f"[DATA_EXPORT] Cleaning stuck job {stuck['id']} "
++                       f"(last update {stuck.get('updated_at', stuck.get('created_at'))})")
++        await db.export_jobs.update_one(
++            {'id': stuck['id']},
++            {'$set': {'status': 'error', 'error': 'ייצוא נתקע ובוטל אוטומטית',
++                      'updated_at': datetime.now(timezone.utc)},
++             '$unset': {'_active_lock': ''}}
++        )
 +
-+    try:
-+        await db.export_jobs.insert_one(job)
-+    except DuplicateKeyError:
-+        raise HTTPException(status_code=409, detail='ייצוא כבר בתהליך')
-+
-+    from services.data_export_service import run_export_job
-+    background_tasks.add_task(run_export_job, job['id'])
-+
-+    return {'job_id': job['id'], 'status': 'pending'}
-+
-+
-+@router.get("/projects/{project_id}/export/latest")
-+async def get_latest_export(
+     try:
+         await db.export_jobs.insert_one(job)
+     except DuplicateKeyError:
+@@ -97,6 +119,32 @@ async def get_latest_export(
+     }
+ 
+ 
++@router.get("/projects/{project_id}/export/preview")
++async def preview_project_export(
 +    project_id: str,
 +    user: dict = Depends(get_current_user),
 +):
@@ -85,801 +50,182 @@ index 0000000..11b9867
 +    if role != 'project_manager' and user.get('platform_role') != 'super_admin':
 +        raise HTTPException(status_code=403, detail='אין הרשאה')
 +
-+    job = await db.export_jobs.find_one(
-+        {'project_id': project_id, 'status': 'done'},
-+        {'_id': 0},
-+        sort=[('completed_at', -1)],
-+    )
-+    if not job:
-+        return {'exists': False}
++    is_admin = user.get('platform_role') == 'super_admin'
++    max_photos = None if is_admin else 10000
 +
-+    return {
-+        'exists': True,
-+        'job_id': job['id'],
-+        'completed_at': job.get('completed_at'),
-+        'file_size': job.get('file_size'),
-+        'stats': job.get('stats', {}),
-+        'download_url': generate_url(job['file_url']),
++    counts = {
++        'defects': await db.tasks.count_documents({'project_id': project_id, 'archived': {'$ne': True}}),
++        'handover_protocols': await db.handover_protocols.count_documents({'project_id': project_id}),
++        'qc_runs': await db.qc_runs.count_documents({'project_id': project_id}),
++        'team_members': await db.project_memberships.count_documents({'project_id': project_id}),
++        'companies': await db.project_companies.count_documents({'project_id': project_id, 'deletedAt': {'$exists': False}}),
++        'max_photos': max_photos,
++        'is_admin': is_admin,
 +    }
 +
++    return counts
 +
-+@router.get("/projects/{project_id}/export/{job_id}")
-+async def get_export_status(
-+    project_id: str,
-+    job_id: str,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    role = await _get_project_role(user, project_id)
-+    if role != 'project_manager' and user.get('platform_role') != 'super_admin':
-+        raise HTTPException(status_code=403, detail='אין הרשאה')
 +
-+    job = await db.export_jobs.find_one(
-+        {'id': job_id, 'project_id': project_id}, {'_id': 0}
-+    )
-+    if not job:
-+        raise HTTPException(status_code=404, detail='Export job not found')
-+
-+    result = {
-+        'job_id': job['id'],
-+        'status': job['status'],
-+        'progress': job.get('progress', 0),
-+        'progress_label': job.get('progress_label', ''),
-+        'stats': job.get('stats', {}),
-+    }
-+    if job['status'] == 'done':
-+        result['download_url'] = generate_url(job['file_url'])
-+        result['file_size'] = job.get('file_size')
-+        result['completed_at'] = job.get('completed_at')
-+    elif job['status'] == 'error':
-+        result['error'] = job.get('error', 'שגיאה לא צפויה')
-+
-+    return result
+ @router.get("/projects/{project_id}/export/{job_id}")
+ async def get_export_status(
+     project_id: str,
 diff --git a/backend/server.py b/backend/server.py
-index 4c2bc4e..c4c3629 100644
+index c4c3629..f11d31b 100644
 --- a/backend/server.py
 +++ b/backend/server.py
-@@ -436,6 +436,9 @@ app.include_router(excel_router)
- from contractor_ops.export_router import router as export_router
- app.include_router(export_router)
- 
-+from contractor_ops.data_export_router import router as data_export_router
-+app.include_router(data_export_router)
-+
- from contractor_ops.plans_router import router as plans_router
- app.include_router(plans_router)
- 
-@@ -592,6 +595,14 @@ async def create_indexes():
-         await db.invoices.create_index([("org_id", 1), ("period_ym", -1)])
-         await db.invoices.create_index([("org_id", 1), ("created_at", -1)])
-         await db.billing_payment_requests.create_index([("status", 1), ("created_at", -1)])
-+        await db.export_jobs.create_index([("project_id", 1), ("status", 1)])
-+        await db.export_jobs.create_index(
-+            [("project_id", 1), ("_active_lock", 1)],
-+            unique=True, sparse=True,
-+            name="export_jobs_active_lock",
-+        )
-+        await db.export_jobs.create_index([("project_id", 1), ("completed_at", -1)])
-+        await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=604800)
+@@ -602,7 +602,7 @@ async def create_indexes():
+             name="export_jobs_active_lock",
+         )
+         await db.export_jobs.create_index([("project_id", 1), ("completed_at", -1)])
+-        await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=604800)
++        await db.export_jobs.create_index([("created_at", 1)], expireAfterSeconds=172800)
          logger.info("[INDEXES] All MongoDB indexes created successfully")
      except Exception as e:
          logger.warning(f"[INDEXES] Index creation warning: {e}")
 diff --git a/backend/services/data_export_service.py b/backend/services/data_export_service.py
-new file mode 100644
-index 0000000..978a37f
---- /dev/null
+index 978a37f..0b287db 100644
+--- a/backend/services/data_export_service.py
 +++ b/backend/services/data_export_service.py
-@@ -0,0 +1,434 @@
-+import asyncio
-+import json
-+import logging
-+import os
-+import tempfile
-+import zipfile
-+from datetime import datetime, timezone
+@@ -8,11 +8,11 @@ from datetime import datetime, timezone
+ 
+ logger = logging.getLogger(__name__)
+ 
+-MAX_PHOTOS = 5000
++DEFAULT_MAX_PHOTOS = 10000
+ PHOTO_BATCH_SIZE = 10
+ 
+ 
+-def _build_zip_sync(tmp_path, data, photo_refs, stats, project_name, progress_cb):
++def _write_json_to_zip(tmp_path, data, stats, project_name):
+     with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+         zf.writestr('project.json',
+                     json.dumps(data['project'], ensure_ascii=False, indent=2, default=str))
+@@ -28,25 +28,20 @@ def _build_zip_sync(tmp_path, data, photo_refs, stats, project_name, progress_cb
+                     json.dumps(data['companies'], ensure_ascii=False, indent=2, default=str))
+         zf.writestr('README.txt', _readme(stats, project_name))
+ 
+-        photo_count = min(len(photo_refs), MAX_PHOTOS)
+-        downloaded = 0
+-        failed = 0
+ 
+-        for i in range(0, photo_count, PHOTO_BATCH_SIZE):
+-            batch = photo_refs[i:i + PHOTO_BATCH_SIZE]
+-            for filename, stored_ref in batch:
+-                photo_bytes = _download_photo(stored_ref)
+-                if photo_bytes:
+-                    zf.writestr(f'photos/{filename}', photo_bytes)
+-                    downloaded += 1
+-                else:
+-                    failed += 1
++def _download_photo_batch(batch):
++    results = []
++    for filename, stored_ref in batch:
++        photo_bytes = _download_photo(stored_ref)
++        results.append((filename, photo_bytes))
++    return results
+ 
+-            if progress_cb:
+-                pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
+-                progress_cb(min(pct, 90), downloaded, photo_count)
+ 
+-    return downloaded, failed
++def _append_photos_to_zip(tmp_path, batch_results):
++    with zipfile.ZipFile(tmp_path, 'a', zipfile.ZIP_DEFLATED) as zf:
++        for filename, photo_bytes in batch_results:
++            if photo_bytes:
++                zf.writestr(f'photos/{filename}', photo_bytes)
+ 
+ 
+ def _upload_zip_sync(tmp_path, s3_key, zip_size):
+@@ -97,23 +92,29 @@ async def run_export_job(job_id: str):
+         await _update_job(db, job_id, progress=55, progress_label='מזהה תמונות...')
+         photo_refs = _collect_photo_refs(defects, protocols, qc_runs)
+ 
++        max_photos = None if job.get('is_admin') else DEFAULT_MAX_PHOTOS
++        photos_total = len(photo_refs)
++        photo_count = photos_total if max_photos is None else min(photos_total, max_photos)
 +
-+logger = logging.getLogger(__name__)
-+
-+MAX_PHOTOS = 5000
-+PHOTO_BATCH_SIZE = 10
-+
-+
-+def _build_zip_sync(tmp_path, data, photo_refs, stats, project_name, progress_cb):
-+    with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-+        zf.writestr('project.json',
-+                    json.dumps(data['project'], ensure_ascii=False, indent=2, default=str))
-+        zf.writestr('defects.json',
-+                    json.dumps(data['defects'], ensure_ascii=False, indent=2, default=str))
-+        zf.writestr('handover_protocols.json',
-+                    json.dumps(data['protocols'], ensure_ascii=False, indent=2, default=str))
-+        zf.writestr('qc_runs.json',
-+                    json.dumps(data['qc_runs'], ensure_ascii=False, indent=2, default=str))
-+        zf.writestr('team.json',
-+                    json.dumps(data['team'], ensure_ascii=False, indent=2, default=str))
-+        zf.writestr('companies.json',
-+                    json.dumps(data['companies'], ensure_ascii=False, indent=2, default=str))
-+        zf.writestr('README.txt', _readme(stats, project_name))
-+
-+        photo_count = min(len(photo_refs), MAX_PHOTOS)
+         stats = {
+             'defects': len(defects),
+             'handover_protocols': len(protocols),
+             'qc_runs': len(qc_runs),
+             'team_members': len(team),
+             'companies': len(companies),
+-            'photos': len(photo_refs),
++            'photos': photos_total,
++            'photos_total': photos_total,
++            'photos_to_export': photo_count,
+         }
+ 
+         photo_map = {}
+-        for filename, original_ref in photo_refs[:MAX_PHOTOS]:
++        for filename, original_ref in photo_refs[:photo_count]:
+             photo_map[original_ref] = f"photos/{filename}"
+ 
+         _rewrite_photo_refs(defects, protocols, qc_runs, photo_map)
+ 
+         await _update_job(db, job_id, progress=60,
+-                          progress_label=f'בונה ZIP ({len(photo_refs)} תמונות)...',
++                          progress_label=f'בונה ZIP ({photo_count} תמונות)...',
+                           stats=stats)
+ 
+         tmp_file = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+@@ -126,19 +127,32 @@ async def run_export_job(job_id: str):
+             'team': team, 'companies': companies,
+         }
+ 
+-        progress_updates = []
++        await asyncio.to_thread(
++            _write_json_to_zip, tmp_path, data, stats, project_name
++        )
+ 
+-        def _on_progress(pct, dl, total):
+-            progress_updates.append((pct, dl, total))
 +        downloaded = 0
 +        failed = 0
-+
+ 
+-        downloaded, failed = await asyncio.to_thread(
+-            _build_zip_sync, tmp_path, data, photo_refs, stats,
+-            project_name, _on_progress,
+-        )
 +        for i in range(0, photo_count, PHOTO_BATCH_SIZE):
 +            batch = photo_refs[i:i + PHOTO_BATCH_SIZE]
-+            for filename, stored_ref in batch:
-+                photo_bytes = _download_photo(stored_ref)
++            batch_results = await asyncio.to_thread(
++                _download_photo_batch, batch
++            )
++
++            await asyncio.to_thread(
++                _append_photos_to_zip, tmp_path, batch_results
++            )
++
++            for filename, photo_bytes in batch_results:
 +                if photo_bytes:
-+                    zf.writestr(f'photos/{filename}', photo_bytes)
 +                    downloaded += 1
 +                else:
 +                    failed += 1
-+
-+            if progress_cb:
-+                pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
-+                progress_cb(min(pct, 90), downloaded, photo_count)
-+
-+    return downloaded, failed
-+
-+
-+def _upload_zip_sync(tmp_path, s3_key, zip_size):
-+    from services.object_storage import save_bytes, is_s3_mode, _get_s3, _S3_BUCKET
-+    if zip_size > 500 * 1024 * 1024 and is_s3_mode():
-+        logger.warning(f"[DATA_EXPORT] Large ZIP {zip_size / 1024 / 1024:.0f}MB — streaming upload")
-+        s3 = _get_s3()
-+        s3.upload_file(tmp_path, _S3_BUCKET, s3_key,
-+                       ExtraArgs={'ContentType': 'application/zip'})
-+        return f"s3://{s3_key}"
-+    else:
-+        with open(tmp_path, 'rb') as f:
-+            return save_bytes(f.read(), s3_key, 'application/zip')
-+
-+
-+async def run_export_job(job_id: str):
-+    from contractor_ops.router import get_db, _audit
-+
-+    db = get_db()
-+    job = await db.export_jobs.find_one({'id': job_id})
-+    if not job:
-+        return
-+
-+    project_id = job['project_id']
-+    tmp_path = None
-+
-+    try:
-+        await _update_job(db, job_id, status='processing', progress=0,
-+                          progress_label='מתחיל ייצוא...')
-+
-+        await _update_job(db, job_id, progress=5, progress_label='מייצא מבנה פרויקט...')
-+        project_data = await _export_project_structure(db, project_id)
-+        project_name = project_data.get('name', 'export')
-+
-+        await _update_job(db, job_id, progress=15, progress_label='מייצא ליקויים...')
-+        defects = await _export_defects(db, project_id)
-+
-+        await _update_job(db, job_id, progress=30, progress_label='מייצא פרוטוקולי מסירה...')
-+        protocols = await _export_handover_protocols(db, project_id)
-+
-+        await _update_job(db, job_id, progress=42, progress_label='מייצא בקרת ביצוע...')
-+        qc_runs = await _export_qc_runs(db, project_id)
-+
-+        await _update_job(db, job_id, progress=50, progress_label='מייצא צוות וחברות...')
-+        team = await _export_team(db, project_id)
-+        companies = await _export_companies(db, project_id)
-+
-+        await _update_job(db, job_id, progress=55, progress_label='מזהה תמונות...')
-+        photo_refs = _collect_photo_refs(defects, protocols, qc_runs)
-+
-+        stats = {
-+            'defects': len(defects),
-+            'handover_protocols': len(protocols),
-+            'qc_runs': len(qc_runs),
-+            'team_members': len(team),
-+            'companies': len(companies),
-+            'photos': len(photo_refs),
-+        }
-+
-+        photo_map = {}
-+        for filename, original_ref in photo_refs[:MAX_PHOTOS]:
-+            photo_map[original_ref] = f"photos/{filename}"
-+
-+        _rewrite_photo_refs(defects, protocols, qc_runs, photo_map)
-+
-+        await _update_job(db, job_id, progress=60,
-+                          progress_label=f'בונה ZIP ({len(photo_refs)} תמונות)...',
-+                          stats=stats)
-+
-+        tmp_file = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-+        tmp_path = tmp_file.name
-+        tmp_file.close()
-+
-+        data = {
-+            'project': project_data, 'defects': defects,
-+            'protocols': protocols, 'qc_runs': qc_runs,
-+            'team': team, 'companies': companies,
-+        }
-+
-+        progress_updates = []
-+
-+        def _on_progress(pct, dl, total):
-+            progress_updates.append((pct, dl, total))
-+
-+        downloaded, failed = await asyncio.to_thread(
-+            _build_zip_sync, tmp_path, data, photo_refs, stats,
-+            project_name, _on_progress,
-+        )
-+
-+        for pct, dl, total in progress_updates:
-+            await _update_job(db, job_id, progress=pct,
-+                              progress_label=f'מוריד תמונות ({dl}/{total})...')
-+
-+        await _update_job(db, job_id, progress=95, progress_label='מעלה קובץ...')
-+
-+        zip_size = os.path.getsize(tmp_path)
-+        safe_name = project_name.replace(' ', '_').replace('/', '_')
-+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-+        s3_key = f"exports/{project_id}/{today}_{safe_name}.zip"
-+
-+        file_url = await asyncio.to_thread(
-+            _upload_zip_sync, tmp_path, s3_key, zip_size,
-+        )
-+
-+        os.unlink(tmp_path)
-+        tmp_path = None
-+
-+        stats['photos_downloaded'] = downloaded
-+        stats['photos_failed'] = failed
-+        stats['file_size_mb'] = round(zip_size / (1024 * 1024), 1)
-+
-+        await _update_job(db, job_id, status='done', progress=100,
-+                          progress_label='הייצוא הושלם',
-+                          file_url=file_url, file_size=zip_size,
-+                          completed_at=datetime.now(timezone.utc), stats=stats)
-+
-+        await _audit('project', project_id, 'full_data_export', job['user_id'], {
-+            'job_id': job_id, 'stats': stats,
-+        })
-+
-+        logger.info(f"[DATA_EXPORT] project={project_id} job={job_id} "
-+                     f"defects={stats['defects']} protocols={stats['handover_protocols']} "
-+                     f"qc={stats['qc_runs']} photos={downloaded}/{failed} "
-+                     f"size={stats['file_size_mb']}MB")
-+
-+    except Exception as e:
-+        logger.error(f"[DATA_EXPORT:ERROR] job={job_id} error={e}", exc_info=True)
-+        await _update_job(db, job_id, status='error',
-+                          error=f'שגיאה בייצוא: {str(e)[:200]}')
-+    finally:
-+        if tmp_path:
-+            try:
-+                os.unlink(tmp_path)
-+            except OSError:
-+                pass
-+
-+
-+async def _update_job(db, job_id, **fields):
-+    update = {'$set': fields}
-+    if fields.get('status') in ('done', 'error'):
-+        update['$unset'] = {'_active_lock': ''}
-+    await db.export_jobs.update_one({'id': job_id}, update)
-+
-+
-+async def _export_project_structure(db, project_id):
-+    project = await db.projects.find_one(
-+        {'id': project_id},
-+        {'_id': 0, 'join_code': 0},
-+    )
-+    project['buildings'] = await db.buildings.find(
-+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
-+    ).to_list(1000)
-+    project['floors'] = await db.floors.find(
-+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
-+    ).to_list(10000)
-+    project['units'] = await db.units.find(
-+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
-+    ).to_list(100000)
-+    return project
-+
-+
-+async def _export_defects(db, project_id):
-+    tasks = await db.tasks.find(
-+        {'project_id': project_id, 'archived': {'$ne': True}}, {'_id': 0}
-+    ).to_list(100000)
-+
-+    task_ids = [t['id'] for t in tasks]
-+    updates_by_task = {}
-+
-+    for i in range(0, len(task_ids), 500):
-+        batch = task_ids[i:i + 500]
-+        batch_updates = await db.task_updates.find(
-+            {'task_id': {'$in': batch}, 'deletedAt': {'$exists': False}}, {'_id': 0}
-+        ).to_list(500000)
-+        for u in batch_updates:
-+            updates_by_task.setdefault(u['task_id'], []).append(u)
-+
-+    for t in tasks:
-+        t['updates'] = updates_by_task.get(t['id'], [])
-+    return tasks
-+
-+
-+async def _export_handover_protocols(db, project_id):
-+    protocols = await db.handover_protocols.find(
-+        {'project_id': project_id}, {'_id': 0}
-+    ).to_list(10000)
-+
-+    for p in protocols:
-+        for tenant in (p.get('tenants') or []):
-+            if 'id_number' in tenant:
-+                tenant['id_number'] = '***'
-+    return protocols
-+
-+
-+async def _export_qc_runs(db, project_id):
-+    runs = await db.qc_runs.find(
-+        {'project_id': project_id}, {'_id': 0}
-+    ).to_list(10000)
-+
-+    run_ids = [r['id'] for r in runs]
-+    items_by_run = {}
-+
-+    for i in range(0, len(run_ids), 500):
-+        batch = run_ids[i:i + 500]
-+        batch_items = await db.qc_items.find(
-+            {'run_id': {'$in': batch}}, {'_id': 0}
-+        ).to_list(500000)
-+        for item in batch_items:
-+            items_by_run.setdefault(item['run_id'], []).append(item)
-+
-+    for r in runs:
-+        r['items'] = items_by_run.get(r['id'], [])
-+    return runs
-+
-+
-+_TEAM_FIELDS = {'user_id', 'role', 'sub_role', 'project_id', 'joined_at', 'status'}
-+
-+async def _export_team(db, project_id):
-+    memberships = await db.project_memberships.find(
-+        {'project_id': project_id}, {'_id': 0}
-+    ).to_list(1000)
-+
-+    user_ids = [m['user_id'] for m in memberships if m.get('user_id')]
-+    users = {}
-+    if user_ids:
-+        user_docs = await db.users.find(
-+            {'id': {'$in': user_ids}},
-+            {'_id': 0, 'id': 1, 'name': 1},
-+        ).to_list(1000)
-+        users = {u['id']: u.get('name', '') for u in user_docs}
-+
-+    result = []
-+    for m in memberships:
-+        safe = {k: m[k] for k in _TEAM_FIELDS if k in m}
-+        safe['user_name'] = users.get(m.get('user_id'), '')
-+        result.append(safe)
-+    return result
-+
-+
-+async def _export_companies(db, project_id):
-+    return await db.project_companies.find(
-+        {'project_id': project_id, 'deletedAt': {'$exists': False}}, {'_id': 0}
-+    ).to_list(1000)
-+
-+
-+def _collect_photo_refs(defects, protocols, qc_runs):
-+    refs = []
-+    seen = set()
-+    counter = [0]
-+
-+    def _add(url, prefix):
-+        if not url or not isinstance(url, str) or url in seen:
-+            return
-+        seen.add(url)
-+        counter[0] += 1
-+        ext = os.path.splitext(url.split('?')[0])[1] or '.jpg'
-+        refs.append((f"{prefix}_{counter[0]:05d}{ext}", url))
-+
-+    for task in defects:
-+        tag = str(task.get('display_number') or task.get('short_ref') or task['id'][:8])
-+        for url in (task.get('proof_urls') or []):
-+            _add(url, f"defect_{tag}")
-+        for upd in (task.get('updates') or []):
-+            if upd.get('update_type') == 'attachment':
-+                _add(upd.get('attachment_url'), f"defect_{tag}")
-+
-+    for p in protocols:
-+        tag = str(p.get('display_number') or p['id'][:8])
-+        for sec in (p.get('sections') or []):
-+            for item in (sec.get('items') or []):
-+                for photo_url in (item.get('photos') or []):
-+                    _add(photo_url, f"handover_{tag}")
-+        meters = p.get('meters') or {}
-+        for mt in ('water', 'electricity'):
-+            m = meters.get(mt) or {}
-+            _add(m.get('photo_url'), f"handover_{tag}_meter")
-+        for tenant in (p.get('tenants') or []):
-+            _add(tenant.get('id_photo_url'), f"handover_{tag}_tenant")
-+
-+    for run in qc_runs:
-+        tag = run['id'][:8]
-+        for item in (run.get('items') or []):
-+            for photo in (item.get('photos') or []):
-+                url = photo.get('url') if isinstance(photo, dict) else photo
-+                _add(url, f"qc_{tag}")
-+
-+    return refs
-+
-+
-+def _download_photo(stored_ref):
-+    from services.object_storage import is_s3_mode, _get_s3, _S3_BUCKET, _LOCAL_UPLOADS_ROOT
-+    try:
-+        if stored_ref.startswith('s3://'):
-+            try:
-+                key = stored_ref[5:]
-+                resp = _get_s3().get_object(Bucket=_S3_BUCKET, Key=key)
-+                return resp['Body'].read()
-+            except Exception:
-+                pass
-+        elif stored_ref.startswith('/api/uploads/'):
-+            rel = stored_ref[len('/api/uploads/'):]
-+            if not rel or '..' in rel or rel.startswith('/'):
-+                logger.warning(f"[DATA_EXPORT] rejected suspicious path: {stored_ref[:80]}")
-+                return None
-+            base = _LOCAL_UPLOADS_ROOT.resolve()
-+            path = (base / rel).resolve()
-+            try:
-+                path.relative_to(base)
-+            except ValueError:
-+                logger.warning(f"[DATA_EXPORT] path traversal blocked: {stored_ref[:80]}")
-+                return None
-+            if path.exists():
-+                return path.read_bytes()
-+    except Exception as e:
-+        logger.warning(f"[DATA_EXPORT] photo download failed: {stored_ref[:80]} — {e}")
-+    return None
-+
-+
-+def _rewrite_photo_refs(defects, protocols, qc_runs, photo_map):
-+    def _rw(url):
-+        return photo_map.get(url, url) if url else url
-+
-+    for task in defects:
-+        task['proof_urls'] = [_rw(u) for u in (task.get('proof_urls') or [])]
-+        for upd in (task.get('updates') or []):
-+            if upd.get('attachment_url'):
-+                upd['attachment_url'] = _rw(upd['attachment_url'])
-+
-+    for p in protocols:
-+        for sec in (p.get('sections') or []):
-+            for item in (sec.get('items') or []):
-+                item['photos'] = [_rw(u) for u in (item.get('photos') or [])]
-+        meters = p.get('meters') or {}
-+        for mt in ('water', 'electricity'):
-+            m = meters.get(mt)
-+            if m and m.get('photo_url'):
-+                m['photo_url'] = _rw(m['photo_url'])
-+        for tenant in (p.get('tenants') or []):
-+            if tenant.get('id_photo_url'):
-+                tenant['id_photo_url'] = _rw(tenant['id_photo_url'])
-+
-+    for run in qc_runs:
-+        for item in (run.get('items') or []):
-+            new_photos = []
-+            for photo in (item.get('photos') or []):
-+                if isinstance(photo, dict) and photo.get('url'):
-+                    photo['url'] = _rw(photo['url'])
-+                    new_photos.append(photo)
-+                elif isinstance(photo, str):
-+                    new_photos.append(_rw(photo))
-+                else:
-+                    new_photos.append(photo)
-+            item['photos'] = new_photos
-+
-+
-+def _readme(stats, project_name):
-+    return f"""BrikOps — ייצוא נתוני פרויקט
-+==============================
-+פרויקט: {project_name}
-+תאריך ייצוא: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
-+
-+תכולה:
-+- project.json    — מבנה הפרויקט (בניינים, קומות, דירות)
-+- defects.json    — כל הליקויים כולל הערות, סטטוסים ותמונות
-+- handover_protocols.json — פרוטוקולי מסירה כולל ממצאים וחתימות
-+- qc_runs.json    — ריצות בקרת ביצוע כולל פריטי בדיקה
-+- team.json       — חברי צוות ותפקידים
-+- companies.json  — חברות וקבלנים
-+- photos/         — כל התמונות (ליקויים, מסירות, בקרת ביצוע)
-+
-+סטטיסטיקה:
-+- ליקויים: {stats.get('defects', 0)}
-+- פרוטוקולי מסירה: {stats.get('handover_protocols', 0)}
-+- ריצות QC: {stats.get('qc_runs', 0)}
-+- חברי צוות: {stats.get('team_members', 0)}
-+- חברות: {stats.get('companies', 0)}
-+- תמונות: {stats.get('photos', 0)}
-+
-+הערות:
-+- כל התאריכים ב-UTC בפורמט ISO 8601
-+- כל המזהים הם UUID
-+- נתיבי תמונות ב-JSON מפנים לתיקיית photos/
-+- מספרי ת.ז. של דיירים מוסתרים לפרטיות
-+- הקובץ נוצר על ידי BrikOps (https://brikops.com)
-+"""
-diff --git a/frontend/src/components/ProjectDataExportTab.js b/frontend/src/components/ProjectDataExportTab.js
-index 2797e29..015a430 100644
---- a/frontend/src/components/ProjectDataExportTab.js
-+++ b/frontend/src/components/ProjectDataExportTab.js
-@@ -1,77 +1,171 @@
--import React, { useState } from 'react';
--import { Download, Loader2, FileSpreadsheet, CheckCircle } from 'lucide-react';
--import { exportService } from '../services/api';
-+import React, { useState, useEffect, useRef } from 'react';
-+import { Download, Loader2, FileSpreadsheet, Archive, CheckCircle, AlertCircle } from 'lucide-react';
-+import { exportService, dataExportService } from '../services/api';
- import { toast } from 'sonner';
  
- const ProjectDataExportTab = ({ projectId, projectName }) => {
--  const [exporting, setExporting] = useState(false);
-+  const [excelExporting, setExcelExporting] = useState(false);
+-        for pct, dl, total in progress_updates:
+-            await _update_job(db, job_id, progress=pct,
+-                              progress_label=f'מוריד תמונות ({dl}/{total})...')
++            pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
++            await _update_job(db, job_id, progress=min(pct, 90),
++                              progress_label=f'מוריד תמונות ({downloaded}/{photo_count})...')
  
--  const handleExport = async () => {
--    setExporting(true);
-+  const [exportJob, setExportJob] = useState(null);
-+  const [latestExport, setLatestExport] = useState(null);
-+  const pollRef = useRef(null);
-+
-+  useEffect(() => {
-+    dataExportService.getLatest(projectId)
-+      .then(data => { if (data?.exists) setLatestExport(data); })
-+      .catch(() => {});
-+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-+  }, [projectId]);
-+
-+  const handleExcelExport = async () => {
-+    setExcelExporting(true);
-     try {
-       await exportService.exportDefects({
--        scope: 'project',
--        project_id: projectId,
--        filters: {},
--        format: 'excel',
-+        scope: 'project', project_id: projectId, filters: {}, format: 'excel',
-       });
-       toast.success('הקובץ הורד בהצלחה');
-     } catch (err) {
--      console.error('Project export failed:', err);
--      if (err?.response?.status === 403) {
--        toast.error('אין הרשאה לייצוא נתונים');
--      } else {
--        toast.error('שגיאה בייצוא. נסה שוב.');
--      }
-+      toast.error(err?.response?.status === 403 ? 'אין הרשאה' : 'שגיאה בייצוא');
-     } finally {
--      setExporting(false);
-+      setExcelExporting(false);
-     }
-   };
+         await _update_job(db, job_id, progress=95, progress_label='מעלה קובץ...')
  
-+  const handleFullExport = async () => {
-+    try {
-+      const result = await dataExportService.startExport(projectId);
-+      setExportJob({ job_id: result.job_id, status: 'pending', progress: 0, progress_label: 'מתחיל...' });
-+      startPolling(result.job_id);
-+    } catch (err) {
-+      const status = err?.response?.status;
-+      if (status === 409) toast.error('ייצוא כבר בתהליך');
-+      else if (status === 429) toast.error('ניתן לייצא פעם בשעה');
-+      else if (status === 403) toast.error('אין הרשאה לייצוא נתונים');
-+      else toast.error('שגיאה בהתחלת ייצוא');
-+    }
-+  };
-+
-+  const startPolling = (jobId) => {
-+    pollRef.current = setInterval(async () => {
-+      try {
-+        const data = await dataExportService.getStatus(projectId, jobId);
-+        setExportJob(data);
-+        if (data.status === 'done') {
-+          clearInterval(pollRef.current);
-+          pollRef.current = null;
-+          toast.success('הייצוא הושלם!');
-+          if (data.download_url) window.open(data.download_url, '_blank');
-+          setLatestExport({ ...data, exists: true, completed_at: data.completed_at });
-+        } else if (data.status === 'error') {
-+          clearInterval(pollRef.current);
-+          pollRef.current = null;
-+          toast.error(data.error || 'שגיאה בייצוא');
-+        }
-+      } catch {
-+        clearInterval(pollRef.current);
-+        pollRef.current = null;
-+      }
-+    }, 2000);
-+  };
-+
-+  const isRunning = exportJob && ['pending', 'processing'].includes(exportJob.status);
-+  const isDone = exportJob?.status === 'done';
-+  const isError = exportJob?.status === 'error';
-+
-+  const formatSize = (bytes) => {
-+    if (!bytes) return '';
-+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-+  };
-+
-   return (
--    <div className="bg-white rounded-xl border border-slate-200 p-6" dir="rtl">
--      <div className="flex items-start gap-4">
--        <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center shrink-0">
--          <FileSpreadsheet className="w-6 h-6 text-amber-600" />
-+    <div className="space-y-4" dir="rtl">
-+      <div className="bg-white rounded-xl border border-slate-200 p-5">
-+        <div className="flex items-start gap-3">
-+          <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center shrink-0">
-+            <FileSpreadsheet className="w-5 h-5 text-green-600" />
-+          </div>
-+          <div className="flex-1">
-+            <h3 className="font-bold text-slate-800 mb-1">ייצוא אקסל (ליקויים בלבד)</h3>
-+            <p className="text-sm text-slate-500 mb-3">
-+              כל הליקויים בפרויקט בקובץ Excel — כולל סטטוסים, קבלנים וקישורי תמונות.
-+            </p>
-+            <button onClick={handleExcelExport} disabled={excelExporting}
-+              className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-green-300 text-white text-sm font-medium rounded-lg transition-colors">
-+              {excelExporting
-+                ? <><Loader2 className="w-4 h-4 animate-spin" /><span>מייצא...</span></>
-+                : <><Download className="w-4 h-4" /><span>הורד Excel</span></>}
-+            </button>
-+          </div>
-         </div>
--        <div className="flex-1">
--          <h3 className="text-lg font-bold text-slate-800 mb-1">ייצוא נתוני פרויקט</h3>
--          <p className="text-sm text-slate-500 mb-4">
--            ייצוא כל הליקויים בפרויקט לקובץ Excel — כולל בניינים, קומות, דירות, סטטוסים, קבלנים וקישורי תמונות.
--          </p>
--
--          <div className="bg-slate-50 rounded-lg p-4 mb-4">
--            <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
--              <CheckCircle className="w-4 h-4 text-green-500" />
--              <span>כל הליקויים מכל הבניינים והדירות</span>
--            </div>
--            <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
--              <CheckCircle className="w-4 h-4 text-green-500" />
--              <span>קישורים לתמונות (פתיחה בדפדפן)</span>
--            </div>
--            <div className="flex items-center gap-2 text-sm text-slate-600">
--              <CheckCircle className="w-4 h-4 text-green-500" />
--              <span>פורמט Excel — ניתן לפתוח ב-Google Sheets או Microsoft Excel</span>
--            </div>
-+      </div>
-+
-+      <div className="bg-white rounded-xl border border-slate-200 p-5">
-+        <div className="flex items-start gap-3">
-+          <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center shrink-0">
-+            <Archive className="w-5 h-5 text-amber-600" />
-           </div>
-+          <div className="flex-1">
-+            <h3 className="font-bold text-slate-800 mb-1">ייצוא מלא (ZIP)</h3>
-+            <p className="text-sm text-slate-500 mb-3">
-+              כל נתוני הפרויקט: ליקויים, פרוטוקולי מסירה, בקרת ביצוע, מבנה, צוות, חברות — כולל כל התמונות.
-+            </p>
-+
-+            {isRunning && (
-+              <div className="mb-3">
-+                <div className="flex items-center justify-between text-sm mb-1">
-+                  <span className="text-slate-600">{exportJob.progress_label}</span>
-+                  <span className="text-slate-400">{exportJob.progress}%</span>
-+                </div>
-+                <div className="w-full bg-slate-100 rounded-full h-2">
-+                  <div className="bg-amber-500 h-2 rounded-full transition-all duration-500"
-+                    style={{ width: `${exportJob.progress}%` }} />
-+                </div>
-+              </div>
-+            )}
+@@ -156,6 +170,7 @@ async def run_export_job(job_id: str):
  
--          <button
--            onClick={handleExport}
--            disabled={exporting}
--            className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-medium rounded-lg transition-colors"
--          >
--            {exporting ? (
--              <>
--                <Loader2 className="w-4 h-4 animate-spin" />
--                <span>מייצא...</span>
--              </>
--            ) : (
--              <>
--                <Download className="w-4 h-4" />
--                <span>ייצוא לקובץ Excel</span>
--              </>
-+            {isDone && exportJob.stats && (
-+              <div className="bg-green-50 rounded-lg p-3 mb-3 text-sm text-green-800">
-+                <div className="flex items-center gap-2 font-medium mb-1">
-+                  <CheckCircle className="w-4 h-4" />
-+                  <span>הייצוא הושלם — {formatSize(exportJob.file_size)}</span>
-+                </div>
-+                <div className="text-green-600">
-+                  {exportJob.stats.defects} ליקויים · {exportJob.stats.handover_protocols} מסירות · {exportJob.stats.qc_runs} בקרות ביצוע · {exportJob.stats.photos_downloaded || 0} תמונות
-+                </div>
-+                {exportJob.download_url && (
-+                  <a href={exportJob.download_url} target="_blank" rel="noopener noreferrer"
-+                    className="inline-flex items-center gap-1 mt-2 text-green-700 hover:text-green-900 underline">
-+                    <Download className="w-3 h-3" /> הורד שוב
-+                  </a>
-+                )}
-+              </div>
-             )}
--          </button>
-+
-+            {isError && (
-+              <div className="bg-red-50 rounded-lg p-3 mb-3 text-sm text-red-700 flex items-center gap-2">
-+                <AlertCircle className="w-4 h-4 shrink-0" />
-+                <span>{exportJob.error || 'שגיאה בייצוא'}</span>
-+              </div>
-+            )}
-+
-+            <button onClick={handleFullExport} disabled={isRunning}
-+              className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-medium rounded-lg transition-colors">
-+              {isRunning
-+                ? <><Loader2 className="w-4 h-4 animate-spin" /><span>מייצא...</span></>
-+                : <><Archive className="w-4 h-4" /><span>ייצוא מלא</span></>}
-+            </button>
-+
-+            {latestExport?.exists && !exportJob && (
-+              <div className="mt-3 text-xs text-slate-400">
-+                ייצוא אחרון: {new Date(latestExport.completed_at).toLocaleDateString('he-IL')} — {formatSize(latestExport.file_size)}
-+                {latestExport.download_url && (
-+                  <a href={latestExport.download_url} target="_blank" rel="noopener noreferrer"
-+                    className="mr-2 text-amber-500 hover:text-amber-700 underline">הורד</a>
-+                )}
-+              </div>
-+            )}
-+          </div>
-         </div>
-       </div>
-     </div>
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index edcfdd5..53ab040 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -1533,6 +1533,30 @@ export const exportService = {
-   },
- };
+         stats['photos_downloaded'] = downloaded
+         stats['photos_failed'] = failed
++        stats['photos_skipped'] = photos_total - photo_count
+         stats['file_size_mb'] = round(zip_size / (1024 * 1024), 1)
  
-+export const dataExportService = {
-+  async startExport(projectId) {
-+    const response = await axios.post(
-+      `${API}/projects/${projectId}/export`, {},
-+      { headers: getAuthHeader() }
-+    );
-+    return response.data;
-+  },
-+  async getStatus(projectId, jobId) {
-+    const response = await axios.get(
-+      `${API}/projects/${projectId}/export/${jobId}`,
-+      { headers: getAuthHeader() }
-+    );
-+    return response.data;
-+  },
-+  async getLatest(projectId) {
-+    const response = await axios.get(
-+      `${API}/projects/${projectId}/export/latest`,
-+      { headers: getAuthHeader() }
-+    );
-+    return response.data;
-+  },
-+};
-+
- export const adminAnalyticsService = {
-   async getUserActivity(params) {
-     const response = await axios.get(`${API}/admin/analytics/user-activity`, {
-diff --git a/replit.md b/replit.md
-index 07541d4..eaf7bb1 100644
---- a/replit.md
-+++ b/replit.md
-@@ -45,6 +45,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
-     -   **Spare Tiles Multi-Type**: Units support multiple tile types via an array field.
-     -   **Login Redirect Cookie**: `brikops_logged_in` cookie used for landing page redirects.
-     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
-+    -   **Full Project Data Export (ZIP)**: Background job exports all project data (defects, handover protocols, QC, team, companies) as JSON with photos into a downloadable ZIP. S3 storage, presigned URLs, progress polling, rate limiting (1/hour), 5000 photo cap. Router: `data_export_router.py`, Service: `data_export_service.py`, Frontend: `ProjectDataExportTab.js`.
-     -   **Defects V2**: Parallel building-level and apartment-level defect views with Excel and PDF exports.
-     -   **Handover PDF Export**: Generates PDF of signed handover protocols.
-     -   **Contractor i18n System**: Multi-language support for contractor-facing UI.
+         await _update_job(db, job_id, status='done', progress=100,
+@@ -185,6 +200,7 @@ async def run_export_job(job_id: str):
+ 
+ 
+ async def _update_job(db, job_id, **fields):
++    fields['updated_at'] = datetime.now(timezone.utc)
+     update = {'$set': fields}
+     if fields.get('status') in ('done', 'error'):
+         update['$unset'] = {'_active_lock': ''}
