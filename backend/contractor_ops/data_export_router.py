@@ -54,9 +54,30 @@ async def start_project_export(
         'error': None,
         'stats': {},
         'created_at': datetime.now(timezone.utc),
+        'updated_at': datetime.now(timezone.utc),
         'completed_at': None,
         '_active_lock': True,
     }
+
+    thirty_min_ago = datetime.now(timezone.utc) - timedelta(minutes=30)
+    stuck = await db.export_jobs.find_one({
+        'project_id': project_id,
+        '_active_lock': True,
+        'status': {'$in': ['pending', 'processing']},
+        '$or': [
+            {'updated_at': {'$lt': thirty_min_ago}},
+            {'updated_at': {'$exists': False}, 'created_at': {'$lt': thirty_min_ago}},
+        ],
+    })
+    if stuck:
+        logger.warning(f"[DATA_EXPORT] Cleaning stuck job {stuck['id']} "
+                       f"(last update {stuck.get('updated_at', stuck.get('created_at'))})")
+        await db.export_jobs.update_one(
+            {'id': stuck['id']},
+            {'$set': {'status': 'error', 'error': 'ייצוא נתקע ובוטל אוטומטית',
+                      'updated_at': datetime.now(timezone.utc)},
+             '$unset': {'_active_lock': ''}}
+        )
 
     try:
         await db.export_jobs.insert_one(job)

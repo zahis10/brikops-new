@@ -12,7 +12,7 @@ MAX_PHOTOS = 5000
 PHOTO_BATCH_SIZE = 10
 
 
-def _build_zip_sync(tmp_path, data, photo_refs, stats, project_name, progress_cb):
+def _write_json_to_zip(tmp_path, data, stats, project_name):
     with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('project.json',
                     json.dumps(data['project'], ensure_ascii=False, indent=2, default=str))
@@ -28,25 +28,20 @@ def _build_zip_sync(tmp_path, data, photo_refs, stats, project_name, progress_cb
                     json.dumps(data['companies'], ensure_ascii=False, indent=2, default=str))
         zf.writestr('README.txt', _readme(stats, project_name))
 
-        photo_count = min(len(photo_refs), MAX_PHOTOS)
-        downloaded = 0
-        failed = 0
 
-        for i in range(0, photo_count, PHOTO_BATCH_SIZE):
-            batch = photo_refs[i:i + PHOTO_BATCH_SIZE]
-            for filename, stored_ref in batch:
-                photo_bytes = _download_photo(stored_ref)
-                if photo_bytes:
-                    zf.writestr(f'photos/{filename}', photo_bytes)
-                    downloaded += 1
-                else:
-                    failed += 1
+def _download_photo_batch(batch):
+    results = []
+    for filename, stored_ref in batch:
+        photo_bytes = _download_photo(stored_ref)
+        results.append((filename, photo_bytes))
+    return results
 
-            if progress_cb:
-                pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
-                progress_cb(min(pct, 90), downloaded, photo_count)
 
-    return downloaded, failed
+def _append_photos_to_zip(tmp_path, batch_results):
+    with zipfile.ZipFile(tmp_path, 'a', zipfile.ZIP_DEFLATED) as zf:
+        for filename, photo_bytes in batch_results:
+            if photo_bytes:
+                zf.writestr(f'photos/{filename}', photo_bytes)
 
 
 def _upload_zip_sync(tmp_path, s3_key, zip_size):
@@ -126,19 +121,33 @@ async def run_export_job(job_id: str):
             'team': team, 'companies': companies,
         }
 
-        progress_updates = []
-
-        def _on_progress(pct, dl, total):
-            progress_updates.append((pct, dl, total))
-
-        downloaded, failed = await asyncio.to_thread(
-            _build_zip_sync, tmp_path, data, photo_refs, stats,
-            project_name, _on_progress,
+        await asyncio.to_thread(
+            _write_json_to_zip, tmp_path, data, stats, project_name
         )
 
-        for pct, dl, total in progress_updates:
-            await _update_job(db, job_id, progress=pct,
-                              progress_label=f'מוריד תמונות ({dl}/{total})...')
+        photo_count = min(len(photo_refs), MAX_PHOTOS)
+        downloaded = 0
+        failed = 0
+
+        for i in range(0, photo_count, PHOTO_BATCH_SIZE):
+            batch = photo_refs[i:i + PHOTO_BATCH_SIZE]
+            batch_results = await asyncio.to_thread(
+                _download_photo_batch, batch
+            )
+
+            await asyncio.to_thread(
+                _append_photos_to_zip, tmp_path, batch_results
+            )
+
+            for filename, photo_bytes in batch_results:
+                if photo_bytes:
+                    downloaded += 1
+                else:
+                    failed += 1
+
+            pct = 60 + int(((i + len(batch)) / max(photo_count, 1)) * 30)
+            await _update_job(db, job_id, progress=min(pct, 90),
+                              progress_label=f'מוריד תמונות ({downloaded}/{photo_count})...')
 
         await _update_job(db, job_id, progress=95, progress_label='מעלה קובץ...')
 
@@ -185,6 +194,7 @@ async def run_export_job(job_id: str):
 
 
 async def _update_job(db, job_id, **fields):
+    fields['updated_at'] = datetime.now(timezone.utc)
     update = {'$set': fields}
     if fields.get('status') in ('done', 'error'):
         update['$unset'] = {'_active_lock': ''}
