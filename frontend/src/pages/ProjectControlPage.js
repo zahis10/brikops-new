@@ -73,15 +73,15 @@ const KIND_COLORS = {
 };
 
 const SECONDARY_TABS = [
-  { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200' },
-  { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-50 border-violet-200' },
-  { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
-  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, color: 'text-cyan-600', bg: 'bg-cyan-50 border-cyan-200' },
-  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' },
-  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
+  { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-100 border border-blue-200' },
+  { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-100 border border-violet-200' },
+  { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-100 border border-emerald-200' },
+  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, color: 'text-cyan-600', bg: 'bg-cyan-100 border border-cyan-200' },
+  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, color: 'text-orange-600', bg: 'bg-orange-100 border border-orange-200' },
+  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, color: 'text-amber-600', bg: 'bg-amber-100 border border-amber-200' },
 ];
 
-const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, color: 'text-green-600', bg: 'bg-green-50 border-green-200' };
+const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, color: 'text-green-600', bg: 'bg-green-100 border border-green-200' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   return (
