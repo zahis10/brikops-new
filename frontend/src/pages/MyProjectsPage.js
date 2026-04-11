@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
   Search, Plus, FolderOpen, ArrowLeft, LogOut, HardHat, Loader2, Building2, Phone,
-  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield, X
+  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield, X, ChevronLeft
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -353,6 +353,7 @@ const MyProjectsPage = () => {
                             <p className="text-xs text-slate-400 mt-0.5 truncate">{t('myProjects', 'address')}: {project.address}</p>
                           )}
                         </div>
+                        <ChevronLeft className="w-5 h-5 text-slate-400 flex-shrink-0 self-center" />
                       </div>
                     </Card>
                   );

@@ -628,7 +628,8 @@ const LoginPage = () => {
                   id="password" type={showPassword ? 'text' : 'password'} value={password}
                   onChange={(e) => { setPassword(e.target.value); setErrors(prev => { const n = {...prev}; delete n.password; return n; }); }}
                   placeholder="לפחות 8 תווים"
-                  className={`w-full h-11 px-3 py-2 pl-10 text-right text-slate-900 bg-white border rounded-lg transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 ${errors.password ? 'border-red-500' : 'border-slate-300 hover:border-slate-400'}`}
+                  dir="ltr"
+                  className={`w-full h-11 px-3 py-2 pl-10 text-left text-slate-900 bg-white border rounded-lg transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 ${errors.password ? 'border-red-500' : 'border-slate-300 hover:border-slate-400'}`}
                 />
                 <button type="button" onClick={() => setShowPassword(p => !p)}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation"

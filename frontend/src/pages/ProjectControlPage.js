@@ -3372,14 +3372,17 @@ const ProjectControlPage = () => {
       </div>
 
       <div className="bg-white border-b border-slate-100">
-        <div className="max-w-[1100px] mx-auto px-4 py-2 flex gap-2 overflow-x-auto">
-          {MGMT_TABS.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-              {tab.icon && <span className="text-sm">{tab.icon}</span>}
-              {tab.label}
-            </button>
-          ))}
+        <div className="relative max-w-[1100px] mx-auto">
+          <div className="px-4 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
+            {MGMT_TABS.map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+                {tab.icon && <span className="text-sm">{tab.icon}</span>}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-white to-transparent pointer-events-none md:hidden" />
         </div>
       </div>
 

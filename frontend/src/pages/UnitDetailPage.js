@@ -268,7 +268,7 @@ const UnitDetailPage = () => {
                 <button
                   key={task.id}
                   onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: `/projects/${projectId}/units/${unitId}` } })}
-                  className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right hover:shadow-md transition-shadow active:bg-slate-50"
+                  className="w-full bg-white rounded-xl border border-slate-200 p-3.5 text-right cursor-pointer hover:shadow-md transition-shadow active:bg-slate-50"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
