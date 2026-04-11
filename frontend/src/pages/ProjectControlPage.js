@@ -73,15 +73,15 @@ const KIND_COLORS = {
 };
 
 const SECONDARY_TABS = [
-  { id: 'team', label: 'צוות', icon: Users },
-  { id: 'companies', label: 'קבלנים וחברות', icon: Building2 },
-  { id: 'data-export', label: 'ייצוא נתונים', icon: Package },
-  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck },
-  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen },
-  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound },
+  { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200' },
+  { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-50 border-violet-200' },
+  { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
+  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, color: 'text-cyan-600', bg: 'bg-cyan-50 border-cyan-200' },
+  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' },
+  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
 ];
 
-const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard };
+const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, color: 'text-green-600', bg: 'bg-green-50 border-green-200' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   return (
@@ -3376,11 +3376,16 @@ const ProjectControlPage = () => {
         <div className="relative max-w-[1100px] mx-auto">
           <div className="px-4 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
             {MGMT_TABS.map(tab => {
-              const TabIcon = tab.icon;
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
               return (
-              <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-                {TabIcon && <TabIcon className="w-4 h-4" />}
+              <button key={tab.id} onClick={() => setActiveTab(isActive ? '' : tab.id)}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
+                  isActive
+                    ? 'bg-amber-500 text-white shadow-sm'
+                    : `${tab.bg} text-slate-600 hover:shadow-sm`
+                }`}>
+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : tab.color}`} />
                 {tab.label}
               </button>
               );
