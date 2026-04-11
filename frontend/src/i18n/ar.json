@@ -147,7 +147,7 @@
   },
   "myProjects": {
     "title": "مشاريعي",
-    "searchPlaceholder": "البحث عن مشروع...",
+    "searchPlaceholder": "البحث حسب الاسم، الرمز أو العنوان...",
     "emptyState": "ليس لديك مشاريع بعد",
     "emptyStateHint": "تواصل مع مدير النظام للحصول على صلاحية الوصول",
     "lastProject": "متابعة آخر مشروع",

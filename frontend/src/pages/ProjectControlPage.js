@@ -21,7 +21,8 @@ import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
-  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature, Clock, ListTodo
+  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature, Clock, ListTodo,
+  FilePen, KeyRound, Package
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -72,15 +73,15 @@ const KIND_COLORS = {
 };
 
 const SECONDARY_TABS = [
-  { id: 'team', label: 'צוות', icon: '👥' },
-  { id: 'companies', label: 'קבלנים וחברות', icon: '🏢' },
-  { id: 'data-export', label: 'ייצוא נתונים', icon: '📦' },
-  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
-  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: '📝' },
-  { id: 'handover-template', label: 'תבנית מסירה', icon: '🔑' },
+  { id: 'team', label: 'צוות', icon: Users },
+  { id: 'companies', label: 'קבלנים וחברות', icon: Building2 },
+  { id: 'data-export', label: 'ייצוא נתונים', icon: Package },
+  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck },
+  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen },
+  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound },
 ];
 
-const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: '💳' };
+const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   return (
@@ -3377,7 +3378,7 @@ const ProjectControlPage = () => {
             {MGMT_TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-                {tab.icon && <span className="text-sm">{tab.icon}</span>}
+                {tab.icon && (() => { const TabIcon = tab.icon; return <TabIcon className="w-4 h-4" />; })()}
                 {tab.label}
               </button>
             ))}

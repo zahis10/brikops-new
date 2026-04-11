@@ -368,7 +368,7 @@ const ProjectTasksPage = () => {
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="חיפוש ליקויים..."
+            placeholder="חפש לפי תיאור, קטגוריה או קבלן..."
             value={searchInput}
             onChange={e => handleSearchChange(e.target.value)}
             className="w-full h-10 pr-9 pl-3 text-sm text-right bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50"

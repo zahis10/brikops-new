@@ -147,7 +147,7 @@
   },
   "myProjects": {
     "title": "我的项目",
-    "searchPlaceholder": "搜索项目...",
+    "searchPlaceholder": "按名称、代码或地址搜索...",
     "emptyState": "您还没有任何项目",
     "emptyStateHint": "请联系系统管理员获取项目访问权限",
     "lastProject": "继续上次项目",

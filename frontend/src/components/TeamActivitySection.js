@@ -69,10 +69,10 @@ const ScoreInfoTooltip = () => {
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
-        className="p-0.5 rounded-full hover:bg-slate-200/60 transition-colors"
+        className="p-2 rounded-full hover:bg-slate-200/60 transition-colors"
         aria-label="הסבר ציון"
       >
-        <Info className="w-3.5 h-3.5 text-slate-400" />
+        <Info className="w-4 h-4 text-slate-400" />
       </button>
       {open && (
         <div className="absolute z-50 top-full mt-1 start-0 w-52 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-right">

@@ -338,7 +338,7 @@ const BuildingDefectsPage = () => {
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="חיפוש דירה..."
+                placeholder="חפש לפי מספר דירה..."
                 className="w-full pr-9 pl-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
               />
             </div>

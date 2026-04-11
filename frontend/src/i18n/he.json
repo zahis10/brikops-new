@@ -164,7 +164,7 @@
   },
   "myProjects": {
     "title": "הפרויקטים שלי",
-    "searchPlaceholder": "חיפוש פרויקט...",
+    "searchPlaceholder": "חפש לפי שם, קוד או כתובת...",
     "emptyState": "אין לך פרויקטים עדיין",
     "emptyStateHint": "פנה למנהל המערכת כדי לקבל גישה לפרויקט",
     "lastProject": "המשך לפרויקט האחרון",
