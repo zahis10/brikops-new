@@ -31,6 +31,7 @@ import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
 import { MoreVertical } from 'lucide-react';
+import HamburgerMenu from '../components/HamburgerMenu';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -2952,7 +2953,7 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
 
 const ProjectControlPage = () => {
   const { projectId } = useParams();
-  const { user, features } = useAuth();
+  const { user, features, logout } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -3352,6 +3353,12 @@ const ProjectControlPage = () => {
             <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
               <Settings className="w-4 h-4" />
             </button>
+            <HamburgerMenu
+              onSelectTab={(tabId) => setActiveTab(tabId)}
+              showBilling={showBillingTab}
+              onNavigate={(path) => navigate(path)}
+              onLogout={() => { logout(); navigate('/login'); }}
+            />
           </div>
         </header>
 
