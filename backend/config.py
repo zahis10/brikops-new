@@ -209,6 +209,7 @@ SMTP_REPLY_TO = os.environ.get('SMTP_REPLY_TO', 'support@brikops.com')
 
 RESET_TOKEN_TTL_MINUTES = int(os.environ.get('RESET_TOKEN_TTL_MINUTES', '60'))
 PASSWORD_RESET_BASE_URL = os.environ.get('PASSWORD_RESET_BASE_URL', 'https://app.brikops.com')
+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'https://app.brikops.com')
 
 GI_BASE_URL = os.environ.get('GI_BASE_URL', '')
 GI_API_KEY_ID = os.environ.get('GI_API_KEY_ID', '')
