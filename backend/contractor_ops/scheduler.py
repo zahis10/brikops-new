@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -12,11 +12,10 @@ scheduler = AsyncIOScheduler()
 
 
 async def _acquire_daily_lock() -> bool:
-    from server import db
     today = datetime.now(IL_TZ).strftime("%Y-%m-%d")
-    result = await db.scheduler_locks.update_one(
+    result = await reminder_service._db.scheduler_locks.update_one(
         {"_id": f"daily_reminders_{today}"},
-        {"$setOnInsert": {"created_at": datetime.utcnow()}},
+        {"$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True,
     )
     return result.upserted_id is not None
