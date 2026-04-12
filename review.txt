@@ -1,100 +1,72 @@
-diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index ba82bdc..b0103c0 100644
---- a/backend/contractor_ops/billing_router.py
-+++ b/backend/contractor_ops/billing_router.py
-@@ -907,8 +907,8 @@ def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str,
-         logger.error("[RENEWAL-ALERT] Failed to send alert email: %s", str(e))
+#324 — Fix manual_override.total_monthly getting overwritten after payment
+========================================================================
+
+File: backend/contractor_ops/billing.py
+1 file changed, 22 insertions(+), 0 deletions(-)
+
+========================================================================
+FULL DIFF
+========================================================================
+
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index af2ed94..449a2e5 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -1216,6 +1216,14 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
+             upsert=True,
+         )
  
- 
--@router.post("/billing/run-renewals")
--async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
-+async def billing_run_renewals_internal() -> dict:
-+    """Core renewal logic — called by both super_admin endpoint and cron."""
-     import uuid
-     from datetime import timedelta
-     from contractor_ops.billing import (
-@@ -918,11 +918,6 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
++        sub_check = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
++        mo_amount = (sub_check or {}).get('manual_override', {}).get('total_monthly')
++        if mo_amount and mo_amount > 0:
++            await db.subscriptions.update_one(
++                {'org_id': org_id},
++                {'$set': {'total_monthly': mo_amount}}
++            )
++
+         all_pbs = await db.project_billing.find(
+             {'org_id': org_id, 'status': 'active'},
+             {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
+@@ -1280,6 +1288,20 @@ async def recalc_org_total(org_id: str):
+         PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT,
      )
-     from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
- 
--    if not BILLING_V1_ENABLED:
--        raise HTTPException(status_code=404, detail='Not found')
--    if not _is_super_admin(user):
--        raise HTTPException(status_code=403, detail='Super admin only')
--
      db = get_db()
-     now = _now_dt()
-     now_iso = _now()
-@@ -1070,6 +1065,31 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
- 
-             try:
-                 await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal doc={doc_id} amount={amount}")
-+                try:
-+                    from contractor_ops.invoicing import generate_invoice
-+                    paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
-+                    inv_card_last4 = billing_data.get('card_last4', '')
-+                    invoice = await generate_invoice(
-+                        org_id,
-+                        period_ym,
-+                        'system_renewal',
-+                        paid_until=paid_until_val,
-+                        card_last4=inv_card_last4,
-+                        override_amount=amount,
-+                    )
-+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f", org_id, invoice.get('id', ''), amount)
-+                except Exception as inv_err:
-+                    logger.error("[RENEWALS] Invoice generation FAILED org=%s amount=%.2f error=%s", org_id, amount, str(inv_err))
-+                    try:
-+                        _send_billing_alert_email(
-+                            org_name=org_name,
-+                            amount=amount,
-+                            gi_document_id=doc_id,
-+                            error_message=f"Invoice generation failed: {inv_err}",
-+                            timestamp=now_iso,
-+                        )
-+                    except Exception:
-+                        pass
-                 await db.billing_renewal_attempts.update_one(
-                     {'id': attempt_id},
-                     {'$set': {'result': 'success', 'gi_document_id': doc_id, 'amount': amount}}
-@@ -1124,6 +1144,16 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
-     return results
- 
- 
-+@router.post("/billing/run-renewals")
-+async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
-+    from contractor_ops.billing import BILLING_V1_ENABLED
-+    if not BILLING_V1_ENABLED:
-+        raise HTTPException(status_code=404, detail='Not found')
-+    if not _is_super_admin(user):
-+        raise HTTPException(status_code=403, detail='Super admin only')
-+    return await billing_run_renewals_internal()
 +
++    sub = await db.subscriptions.find_one(
++        {'org_id': org_id},
++        {'_id': 0, 'manual_override': 1}
++    )
++    override_amount = (sub or {}).get('manual_override', {}).get('total_monthly')
++    if override_amount is not None and override_amount > 0:
++        await db.subscriptions.update_one(
++            {'org_id': org_id},
++            {'$set': {'total_monthly': override_amount, 'updated_at': _now()}}
++        )
++        logger.info("[recalc_org_total] org=%s using manual_override=%s, skipping recalc", org_id, override_amount)
++        return override_amount
 +
- _webhook_call_times: list = []
- WEBHOOK_RATE_LIMIT_MAX = 30
- WEBHOOK_RATE_LIMIT_WINDOW = 60
-diff --git a/backend/contractor_ops/reminder_router.py b/backend/contractor_ops/reminder_router.py
-index 29df182..d55fae9 100644
---- a/backend/contractor_ops/reminder_router.py
-+++ b/backend/contractor_ops/reminder_router.py
-@@ -169,4 +169,19 @@ def create_reminder_router(require_roles, get_current_user):
- 
-         return response
- 
-+    @cron_router.post("/internal/cron/daily-renewals")
-+    async def cron_daily_renewals(request: Request):
-+        cron_secret = request.headers.get("X-Cron-Secret", "")
-+        if not CRON_SECRET or cron_secret != CRON_SECRET:
-+            logger.warning("[CRON] Invalid or missing X-Cron-Secret for daily-renewals")
-+            raise HTTPException(status_code=403, detail="Forbidden")
-+
-+        from contractor_ops.billing import BILLING_V1_ENABLED
-+        if not BILLING_V1_ENABLED:
-+            return {"skipped": "billing_disabled"}
-+
-+        from contractor_ops.billing_router import billing_run_renewals_internal
-+        result = await billing_run_renewals_internal()
-+        return result
-+
-     return router, cron_router
+     project_billings = await db.project_billing.find(
+         {'org_id': org_id, 'status': 'active'},
+         {'_id': 0, 'id': 1, 'project_id': 1, 'plan_id': 1,
+
+========================================================================
+SUMMARY
+========================================================================
+
+Fix 1 — set_org_plan('founder_6m') (line 1222):
+  After hardcoding total_monthly: 499, checks if manual_override.total_monthly
+  exists. If so, overwrites total_monthly back to the override value.
+
+Fix 2 — recalc_org_total() (line 1288):
+  At the START of the function, before calculating from projects, checks if
+  manual_override.total_monthly exists and > 0. If so, sets total_monthly
+  to the override value and returns early — skipping the full recalculation.
+
+What was NOT changed:
+  - get_billable_amount() — already correct (checks override first)
+  - Admin set-pricing endpoint
+  - PayPlus webhook handler
+  - Checkout / mark_paid()
+  - generate_invoice()
+  - run-renewals / cron endpoint
+  - Frontend (not needed — root cause was backend only)
