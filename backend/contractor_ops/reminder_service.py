@@ -173,14 +173,17 @@ async def _check_cooldown(project_id: str, reminder_type: str = "contractor_remi
     return last is not None
 
 
-def _build_location_string(task: dict) -> str:
+def _build_location_string(task: dict, building_map: dict, floor_map: dict, unit_map: dict) -> str:
     parts = []
-    if task.get("building_name"):
-        parts.append(task["building_name"])
-    if task.get("floor"):
-        parts.append(f"קומה {task['floor']}")
-    if task.get("apartment"):
-        parts.append(f"דירה {task['apartment']}")
+    bld_name = building_map.get(task.get("building_id", ""), "")
+    if bld_name:
+        parts.append(bld_name)
+    floor_name = floor_map.get(task.get("floor_id", ""), "")
+    if floor_name:
+        parts.append(f"קומה {floor_name}")
+    unit_name = unit_map.get(task.get("unit_id", ""), "")
+    if unit_name:
+        parts.append(f"דירה {unit_name}")
     return " / ".join(parts) if parts else "לא צוין"
 
 
@@ -208,7 +211,7 @@ async def send_contractor_reminder(
         "project_id": project_id,
         "company_id": company_id,
         **open_filter,
-    }, {"_id": 0, "id": 1, "title": 1, "building_name": 1, "floor": 1, "apartment": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
+    }, {"_id": 0, "id": 1, "title": 1, "building_id": 1, "floor_id": 1, "unit_id": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
 
     if not tasks:
         return {"status": "skipped", "reason": "no_open_defects"}
@@ -253,6 +256,25 @@ async def send_contractor_reminder(
     results = []
     MAX_MESSAGES_PER_BATCH = 5
 
+    building_ids = list(set(t.get("building_id") for t in tasks if t.get("building_id")))
+    floor_ids = list(set(t.get("floor_id") for t in tasks if t.get("floor_id")))
+    unit_ids = list(set(t.get("unit_id") for t in tasks if t.get("unit_id")))
+
+    building_map = {}
+    if building_ids:
+        bldgs = await _db.buildings.find({"id": {"$in": building_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
+        building_map = {b["id"]: b.get("name", "") for b in bldgs}
+
+    floor_map = {}
+    if floor_ids:
+        floors = await _db.floors.find({"id": {"$in": floor_ids}}, {"_id": 0, "id": 1, "name": 1, "number": 1}).to_list(200)
+        floor_map = {f["id"]: (f.get("name") or str(f.get("number", ""))) for f in floors}
+
+    unit_map = {}
+    if unit_ids:
+        units = await _db.units.find({"id": {"$in": unit_ids}}, {"_id": 0, "id": 1, "display_label": 1, "name": 1, "unit_no": 1, "number": 1}).to_list(200)
+        unit_map = {u["id"]: (u.get("display_label") or u.get("name") or u.get("unit_no") or str(u.get("number", ""))) for u in units}
+
     for r in recipients:
         user = r["user"]
         phone = r["phone"]
@@ -269,7 +291,7 @@ async def send_contractor_reminder(
         sent_count = 0
         for task in tasks[:MAX_MESSAGES_PER_BATCH]:
             task_id = task.get("id", "")
-            location = _build_location_string(task)
+            location = _build_location_string(task, building_map, floor_map, unit_map)
             finding = task.get("title", "ליקוי")
             wait_days = _calc_wait_days(task)
 
