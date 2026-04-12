@@ -1196,6 +1196,14 @@ async def startup():
         print("FATAL: RUN_SEED=true is FORBIDDEN in production! Refusing to start.", file=sys.stderr)
         sys.exit(1)
 
+    from config import ENABLE_REMINDER_SCHEDULER
+    if ENABLE_REMINDER_SCHEDULER:
+        from contractor_ops.scheduler import start_scheduler
+        start_scheduler()
+        logger.info("[STARTUP] Reminder scheduler started")
+    else:
+        logger.info("[STARTUP] Reminder scheduler DISABLED by config")
+
     asyncio.create_task(_deferred_db_init())
 
     logger.info("[STARTUP] Server accepting connections — DB init running in background.")
@@ -1203,6 +1211,8 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    from contractor_ops.scheduler import stop_scheduler
+    stop_scheduler()
     client.close()
     from contractor_ops.sms_service import _shared_sms_httpx
     if _shared_sms_httpx and not _shared_sms_httpx.is_closed:
