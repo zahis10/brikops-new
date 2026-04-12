@@ -917,6 +917,7 @@ async def billing_run_renewals_internal() -> dict:
         _now, _now_dt, _parse_dt,
     )
     from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
+    from contractor_ops.invoicing import generate_invoice
 
     db = get_db()
     now = _now_dt()
@@ -1066,7 +1067,6 @@ async def billing_run_renewals_internal() -> dict:
             try:
                 await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal doc={doc_id} amount={amount}")
                 try:
-                    from contractor_ops.invoicing import generate_invoice
                     paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
                     inv_card_last4 = billing_data.get('card_last4', '')
                     invoice = await generate_invoice(
