@@ -1062,7 +1062,7 @@ async def billing_run_renewals_internal() -> dict:
             )
             transaction_uid = charge_result.get('transaction_uid', '')
             status_code = charge_result.get('status_code', '')
-            if status_code != '000':
+            if status_code != '000' or not transaction_uid:
                 raise PayPlusError(f"PayPlus charge declined: status_code={status_code} tx={transaction_uid}")
 
             try:
