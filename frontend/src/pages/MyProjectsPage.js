@@ -197,7 +197,6 @@ const MyProjectsPage = () => {
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
             <HardHat className="w-5 h-5 text-white" />
           </div>
@@ -227,6 +226,7 @@ const MyProjectsPage = () => {
               </>
             )}
             <NotificationBell />
+            <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           </div>
         </div>
       </header>

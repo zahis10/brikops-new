@@ -21,8 +21,8 @@ import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
-  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature, Clock, ListTodo,
-  FilePen, KeyRound, Package
+  Zap, Check, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
+  Package
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -77,12 +77,7 @@ const SECONDARY_TABS = [
   { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-100 border border-blue-200' },
   { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-100 border border-violet-200' },
   { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-100 border border-emerald-200' },
-  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, color: 'text-cyan-600', bg: 'bg-cyan-100 border border-cyan-200' },
-  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, color: 'text-orange-600', bg: 'bg-orange-100 border border-orange-200' },
-  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, color: 'text-amber-600', bg: 'bg-amber-100 border border-amber-200' },
 ];
-
-const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, color: 'text-green-600', bg: 'bg-green-100 border border-green-200' };
 
 const BottomSheetModal = ({ open, onClose, title, children }) => {
   return (
@@ -3102,13 +3097,13 @@ const ProjectControlPage = () => {
 
   const showBillingTab = billingEnabled && (isBillingViewer || user?.platform_role === 'super_admin');
   const MGMT_TABS = (() => {
-    let tabs = showBillingTab ? [...SECONDARY_TABS.slice(0, 2), BILLING_TAB, ...SECONDARY_TABS.slice(2)] : SECONDARY_TABS;
+    let tabs = [...SECONDARY_TABS];
     if (myRole !== 'project_manager' && user?.platform_role !== 'super_admin') {
       tabs = tabs.filter(t => t.id !== 'data-export');
     }
     return tabs;
   })();
-  const VALID_TABS = MGMT_TABS.map(t => t.id);
+  const VALID_TABS = [...MGMT_TABS.map(t => t.id), 'settings', 'qc-template', 'handover-template', ...(showBillingTab ? ['billing'] : [])];
   const rawTab = searchParams.get('tab') || '';
   const activeTab = VALID_TABS.includes(rawTab) ? rawTab : '';
   const setActiveTab = (tab) => { setSearchParams(prev => { const next = new URLSearchParams(prev); if (tab) next.set('tab', tab); else next.delete('tab'); return next; }, { replace: true }); };
@@ -3343,12 +3338,6 @@ const ProjectControlPage = () => {
       <div className="sticky top-0 z-50">
         <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
-            <HamburgerMenu
-              onSelectTab={(tabId) => setActiveTab(tabId)}
-              showBilling={showBillingTab}
-              onNavigate={(path) => navigate(path)}
-              onLogout={() => { logout(); navigate('/login'); }}
-            />
             <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
               <ArrowRight className="w-5 h-5" />
             </button>
@@ -3356,6 +3345,12 @@ const ProjectControlPage = () => {
               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
             </div>
             <NotificationBell />
+            <HamburgerMenu
+              onSelectTab={(tabId) => setActiveTab(tabId)}
+              showBilling={showBillingTab}
+              onNavigate={(path) => navigate(path)}
+              onLogout={() => { logout(); navigate('/login'); }}
+            />
           </div>
         </header>
 

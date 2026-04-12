@@ -243,7 +243,6 @@ export default function ProjectDashboardPage() {
     <div className="min-h-0 bg-slate-50 pb-24" dir="rtl">
       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
-          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
             <ArrowRight className="w-5 h-5" />
           </button>
@@ -262,6 +261,7 @@ export default function ProjectDashboardPage() {
             </div>
           </div>
           <NotificationBell />
+          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           {isPmOrOwner && (
             <button
               onClick={handleSendDigest}
