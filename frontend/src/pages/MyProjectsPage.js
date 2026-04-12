@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+import HamburgerMenu from '../components/HamburgerMenu';
+import NotificationBell from '../components/NotificationBell';
 import { navigateToProject } from '../utils/navigation';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
@@ -195,6 +197,7 @@ const MyProjectsPage = () => {
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
             <HardHat className="w-5 h-5 text-white" />
           </div>
@@ -223,27 +226,7 @@ const MyProjectsPage = () => {
                 </button>
               </>
             )}
-            <button
-              onClick={() => navigate('/settings/account')}
-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              title="הגדרות חשבון"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => navigate('/settings/account#phone')}
-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              title="שינוי מספר טלפון"
-            >
-              <Phone className="w-4 h-4" />
-            </button>
-            <button
-              onClick={logout}
-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              title="התנתק"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+            <NotificationBell />
           </div>
         </div>
       </header>

@@ -3343,6 +3343,12 @@ const ProjectControlPage = () => {
       <div className="sticky top-0 z-50">
         <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+            <HamburgerMenu
+              onSelectTab={(tabId) => setActiveTab(tabId)}
+              showBilling={showBillingTab}
+              onNavigate={(path) => navigate(path)}
+              onLogout={() => { logout(); navigate('/login'); }}
+            />
             <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
               <ArrowRight className="w-5 h-5" />
             </button>
@@ -3350,15 +3356,6 @@ const ProjectControlPage = () => {
               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
             </div>
             <NotificationBell />
-            <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
-              <Settings className="w-4 h-4" />
-            </button>
-            <HamburgerMenu
-              onSelectTab={(tabId) => setActiveTab(tabId)}
-              showBilling={showBillingTab}
-              onNavigate={(path) => navigate(path)}
-              onLogout={() => { logout(); navigate('/login'); }}
-            />
           </div>
         </header>
 

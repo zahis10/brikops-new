@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { projectService, qcService } from '../services/api';
+import HamburgerMenu from '../components/HamburgerMenu';
+import NotificationBell from '../components/NotificationBell';
 
 import {
   ArrowRight, Loader2, ClipboardCheck, Building2, Search,
@@ -18,6 +21,7 @@ const getFloorBadge = (qcData) => {
 export default function QCFloorSelectionPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [hierarchy, setHierarchy] = useState([]);
@@ -162,10 +166,11 @@ export default function QCFloorSelectionPage() {
     <div className="bg-slate-800 text-white sticky top-0 z-30">
       <div className="max-w-2xl mx-auto px-4 py-3">
         <div className="flex items-center gap-3">
+          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
             <ArrowRight className="w-5 h-5" />
           </button>
-          <div className="min-w-0">
+          <div className="flex-1 min-w-0">
             <h1 className="text-base font-bold flex items-center gap-2">
               <ClipboardCheck className="w-4 h-4 text-amber-400" />
               בקרת ביצוע
@@ -174,6 +179,7 @@ export default function QCFloorSelectionPage() {
               <p className="text-[11px] text-slate-400 truncate">{projectName}</p>
             )}
           </div>
+          <NotificationBell />
         </div>
       </div>
     </div>

@@ -15,7 +15,7 @@ const MENU_ITEMS = [
   { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
 ];
 
-export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, onLogout }) {
+export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, onLogout, slim = false }) {
   const [open, setOpen] = useState(false);
 
   const handleItem = (item) => {
@@ -30,6 +30,7 @@ export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, on
   };
 
   const visibleItems = MENU_ITEMS.filter(item => {
+    if (slim && (item.type === 'tab' || item.id === 'divider-1')) return false;
     if (item.billingOnly && !showBilling) return false;
     return true;
   });

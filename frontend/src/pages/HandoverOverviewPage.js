@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
-import UserDrawer from '../components/UserDrawer';
+import HamburgerMenu from '../components/HamburgerMenu';
 import G4ImportModal from '../components/handover/G4ImportModal';
 
 const STATUS_COLORS = {
@@ -40,7 +40,7 @@ const STAT_CARDS = [
 export default function HandoverOverviewPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -228,13 +228,13 @@ export default function HandoverOverviewPage() {
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
       <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
           <button onClick={() => navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
             <ChevronRight className="w-4 h-4" />
           </button>
           <ProjectSwitcher currentProjectId={projectId} />
           <div className="flex-1" />
           <NotificationBell />
-          <UserDrawer user={user} />
         </div>
       </header>
 
