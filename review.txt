@@ -1,73 +1,129 @@
-diff --git a/backend/contractor_ops/reminder_service.py b/backend/contractor_ops/reminder_service.py
-index b7343fa..c125240 100644
---- a/backend/contractor_ops/reminder_service.py
-+++ b/backend/contractor_ops/reminder_service.py
-@@ -173,14 +173,17 @@ async def _check_cooldown(project_id: str, reminder_type: str = "contractor_remi
-     return last is not None
- 
- 
--def _build_location_string(task: dict) -> str:
-+def _build_location_string(task: dict, building_map: dict, floor_map: dict, unit_map: dict) -> str:
-     parts = []
--    if task.get("building_name"):
--        parts.append(task["building_name"])
--    if task.get("floor"):
--        parts.append(f"קומה {task['floor']}")
--    if task.get("apartment"):
--        parts.append(f"דירה {task['apartment']}")
-+    bld_name = building_map.get(task.get("building_id", ""), "")
-+    if bld_name:
-+        parts.append(bld_name)
-+    floor_name = floor_map.get(task.get("floor_id", ""), "")
-+    if floor_name:
-+        parts.append(f"קומה {floor_name}")
-+    unit_name = unit_map.get(task.get("unit_id", ""), "")
-+    if unit_name:
-+        parts.append(f"דירה {unit_name}")
-     return " / ".join(parts) if parts else "לא צוין"
- 
- 
-@@ -208,7 +211,7 @@ async def send_contractor_reminder(
-         "project_id": project_id,
-         "company_id": company_id,
-         **open_filter,
--    }, {"_id": 0, "id": 1, "title": 1, "building_name": 1, "floor": 1, "apartment": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
-+    }, {"_id": 0, "id": 1, "title": 1, "building_id": 1, "floor_id": 1, "unit_id": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
- 
-     if not tasks:
-         return {"status": "skipped", "reason": "no_open_defects"}
-@@ -253,6 +256,25 @@ async def send_contractor_reminder(
-     results = []
-     MAX_MESSAGES_PER_BATCH = 5
- 
-+    building_ids = list(set(t.get("building_id") for t in tasks if t.get("building_id")))
-+    floor_ids = list(set(t.get("floor_id") for t in tasks if t.get("floor_id")))
-+    unit_ids = list(set(t.get("unit_id") for t in tasks if t.get("unit_id")))
+diff --git a/frontend/src/components/HamburgerMenu.js b/frontend/src/components/HamburgerMenu.js
+new file mode 100644
+index 0000000..9c56ecd
+--- /dev/null
++++ b/frontend/src/components/HamburgerMenu.js
+@@ -0,0 +1,89 @@
++import React, { useState } from 'react';
++import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
++import * as SheetPrimitive from '@radix-ui/react-dialog';
++import { Menu, KeyRound, FilePen, ClipboardCheck, CreditCard, Settings, Globe, LogOut, X } from 'lucide-react';
 +
-+    building_map = {}
-+    if building_ids:
-+        bldgs = await _db.buildings.find({"id": {"$in": building_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
-+        building_map = {b["id"]: b.get("name", "") for b in bldgs}
++const MENU_ITEMS = [
++  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, type: 'tab' },
++  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, type: 'tab' },
++  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, type: 'tab' },
++  { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, type: 'tab', billingOnly: true },
++  { id: 'divider-1', type: 'divider' },
++  { id: 'account-settings', label: 'הגדרות חשבון', icon: Settings, type: 'navigate', path: '/settings/account' },
++  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account' },
++  { id: 'divider-2', type: 'divider' },
++  { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
++];
 +
-+    floor_map = {}
-+    if floor_ids:
-+        floors = await _db.floors.find({"id": {"$in": floor_ids}}, {"_id": 0, "id": 1, "name": 1, "number": 1}).to_list(200)
-+        floor_map = {f["id"]: (f.get("name") or str(f.get("number", ""))) for f in floors}
++export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, onLogout }) {
++  const [open, setOpen] = useState(false);
 +
-+    unit_map = {}
-+    if unit_ids:
-+        units = await _db.units.find({"id": {"$in": unit_ids}}, {"_id": 0, "id": 1, "display_label": 1, "name": 1, "unit_no": 1, "number": 1}).to_list(200)
-+        unit_map = {u["id"]: (u.get("display_label") or u.get("name") or u.get("unit_no") or str(u.get("number", ""))) for u in units}
++  const handleItem = (item) => {
++    setOpen(false);
++    if (item.type === 'tab') {
++      onSelectTab(item.id);
++    } else if (item.type === 'navigate') {
++      onNavigate(item.path);
++    } else if (item.action === 'logout') {
++      onLogout();
++    }
++  };
 +
-     for r in recipients:
-         user = r["user"]
-         phone = r["phone"]
-@@ -269,7 +291,7 @@ async def send_contractor_reminder(
-         sent_count = 0
-         for task in tasks[:MAX_MESSAGES_PER_BATCH]:
-             task_id = task.get("id", "")
--            location = _build_location_string(task)
-+            location = _build_location_string(task, building_map, floor_map, unit_map)
-             finding = task.get("title", "ליקוי")
-             wait_days = _calc_wait_days(task)
++  const visibleItems = MENU_ITEMS.filter(item => {
++    if (item.billingOnly && !showBilling) return false;
++    return true;
++  });
++
++  return (
++    <>
++      <button
++        onClick={() => setOpen(true)}
++        className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
++        title="תפריט"
++      >
++        <Menu className="w-4 h-4" />
++      </button>
++
++      <Sheet open={open} onOpenChange={setOpen}>
++        <SheetPortal>
++          <SheetOverlay className="fixed inset-0 z-[9998] bg-black/40" />
++          <SheetPrimitive.Content
++            className="fixed top-0 right-0 z-[9999] h-full w-72 max-w-[85vw] bg-white shadow-xl flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right data-[state=closed]:duration-300 data-[state=open]:duration-300"
++            dir="rtl"
++          >
++            <SheetTitle className="sr-only">תפריט</SheetTitle>
++            <SheetDescription className="sr-only">תפריט ניווט</SheetDescription>
++
++            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
++              <span className="text-base font-semibold text-slate-800">תפריט</span>
++              <SheetClose className="p-1 rounded-md hover:bg-slate-100">
++                <X className="w-5 h-5 text-slate-500" />
++              </SheetClose>
++            </div>
++
++            <nav className="flex-1 overflow-y-auto py-2">
++              {visibleItems.map(item => {
++                if (item.type === 'divider') {
++                  return <div key={item.id} className="my-2 mx-4 border-t border-slate-200" />;
++                }
++                const Icon = item.icon;
++                return (
++                  <button
++                    key={item.id}
++                    onClick={() => handleItem(item)}
++                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors hover:bg-slate-50 active:bg-slate-100 ${
++                      item.action === 'logout' ? 'text-red-600' : 'text-slate-700'
++                    }`}
++                  >
++                    <Icon className="w-5 h-5 shrink-0" />
++                    <span>{item.label}</span>
++                  </button>
++                );
++              })}
++            </nav>
++          </SheetPrimitive.Content>
++        </SheetPortal>
++      </Sheet>
++    </>
++  );
++}
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index 77d7d28..be7a12d 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -31,6 +31,7 @@ import ProjectSwitcher from '../components/ProjectSwitcher';
+ import NotificationBell from '../components/NotificationBell';
+ import UserDrawer from '../components/UserDrawer';
+ import { MoreVertical } from 'lucide-react';
++import HamburgerMenu from '../components/HamburgerMenu';
+ 
+ const normalizeList = (data) => {
+   if (Array.isArray(data)) return data;
+@@ -2952,7 +2953,7 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
+ 
+ const ProjectControlPage = () => {
+   const { projectId } = useParams();
+-  const { user, features } = useAuth();
++  const { user, features, logout } = useAuth();
+   const navigate = useNavigate();
+   const [searchParams, setSearchParams] = useSearchParams();
+ 
+@@ -3352,6 +3353,12 @@ const ProjectControlPage = () => {
+             <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
+               <Settings className="w-4 h-4" />
+             </button>
++            <HamburgerMenu
++              onSelectTab={(tabId) => setActiveTab(tabId)}
++              showBilling={showBillingTab}
++              onNavigate={(path) => navigate(path)}
++              onLogout={() => { logout(); navigate('/login'); }}
++            />
+           </div>
+         </header>
  
