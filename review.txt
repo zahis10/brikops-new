@@ -1,596 +1,73 @@
-diff --git a/backend/config.py b/backend/config.py
-index baf3348..5997492 100644
---- a/backend/config.py
-+++ b/backend/config.py
-@@ -64,6 +64,7 @@ JWT_CLOCK_SKEW_SECONDS = 60
- JWT_RENEWAL_THRESHOLD_DAYS = 15
- 
- WHATSAPP_ENABLED = os.environ.get('WHATSAPP_ENABLED', 'false').lower() == 'true'
-+ENABLE_REMINDER_SCHEDULER = os.environ.get('ENABLE_REMINDER_SCHEDULER', 'true').lower() == 'true'
- WA_INVITE_ENABLED = os.environ.get('WA_INVITE_ENABLED', 'false').lower() == 'true'
- WHATSAPP_PROVIDER = os.environ.get('WHATSAPP_PROVIDER', 'meta')
- WA_ACCESS_TOKEN = os.environ.get('WA_ACCESS_TOKEN', '')
-diff --git a/backend/contractor_ops/scheduler.py b/backend/contractor_ops/scheduler.py
-new file mode 100644
-index 0000000..74dd6d9
---- /dev/null
-+++ b/backend/contractor_ops/scheduler.py
-@@ -0,0 +1,78 @@
-+import logging
-+from datetime import datetime, timezone
-+from apscheduler.schedulers.asyncio import AsyncIOScheduler
-+from apscheduler.triggers.cron import CronTrigger
-+
-+from contractor_ops.utils.timezone import IL_TZ
-+from contractor_ops import reminder_service
-+
-+logger = logging.getLogger(__name__)
-+
-+scheduler = AsyncIOScheduler()
-+
-+
-+async def _acquire_daily_lock() -> bool:
-+    today = datetime.now(IL_TZ).strftime("%Y-%m-%d")
-+    result = await reminder_service._db.scheduler_locks.update_one(
-+        {"_id": f"daily_reminders_{today}"},
-+        {"$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
-+        upsert=True,
-+    )
-+    return result.upserted_id is not None
-+
-+
-+async def _daily_reminders_job():
-+    logger.info("[SCHEDULER] Starting daily reminders job")
-+
-+    acquired = await _acquire_daily_lock()
-+    if not acquired:
-+        logger.info("[SCHEDULER] Skipping — another worker already ran today's job")
-+        return
-+
-+    shabbat = reminder_service.is_shabbat()
-+    if shabbat:
-+        logger.info(f"[SCHEDULER] Skipping: {shabbat}")
-+        return
-+
-+    try:
-+        digest_result = await reminder_service.send_all_pm_digests()
-+        logger.info(
-+            f"[SCHEDULER] PM digests: sent={digest_result['sent']} "
-+            f"skipped={digest_result['skipped']} failed={digest_result['failed']}"
-+        )
-+    except Exception as e:
-+        logger.error(f"[SCHEDULER] PM digest error: {e}")
-+
-+    try:
-+        contractor_result = await reminder_service.send_all_contractor_reminders()
-+        logger.info(
-+            f"[SCHEDULER] Contractor reminders: sent={contractor_result['sent']} "
-+            f"skipped={contractor_result['skipped']} failed={contractor_result['failed']}"
-+        )
-+    except Exception as e:
-+        logger.error(f"[SCHEDULER] Contractor reminder error: {e}")
-+
-+    logger.info("[SCHEDULER] Daily reminders job complete")
-+
-+
-+def start_scheduler():
-+    scheduler.add_job(
-+        _daily_reminders_job,
-+        trigger=CronTrigger(
-+            day_of_week="sun,mon,tue,wed,thu",
-+            hour=8,
-+            minute=0,
-+            timezone=IL_TZ,
-+        ),
-+        id="daily_reminders",
-+        name="Daily WhatsApp Reminders",
-+        replace_existing=True,
-+    )
-+    scheduler.start()
-+    logger.info("[SCHEDULER] APScheduler started — daily reminders at 08:00 IL (Sun-Thu)")
-+
-+
-+def stop_scheduler():
-+    if scheduler.running:
-+        scheduler.shutdown(wait=False)
-+        logger.info("[SCHEDULER] APScheduler stopped")
-diff --git a/backend/requirements.txt b/backend/requirements.txt
-index fd88d16..8974e74 100644
---- a/backend/requirements.txt
-+++ b/backend/requirements.txt
-@@ -1,5 +1,6 @@
- aiohappyeyeballs==2.6.1
- aiohttp==3.13.3
-+APScheduler>=3.10,<4.0
- aiosignal==1.4.0
- annotated-types==0.7.0
- anyio==4.12.1
-diff --git a/backend/server.py b/backend/server.py
-index f11d31b..5dc50ab 100644
---- a/backend/server.py
-+++ b/backend/server.py
-@@ -1196,6 +1196,14 @@ async def startup():
-         print("FATAL: RUN_SEED=true is FORBIDDEN in production! Refusing to start.", file=sys.stderr)
-         sys.exit(1)
- 
-+    from config import ENABLE_REMINDER_SCHEDULER
-+    if ENABLE_REMINDER_SCHEDULER:
-+        from contractor_ops.scheduler import start_scheduler
-+        start_scheduler()
-+        logger.info("[STARTUP] Reminder scheduler started")
-+    else:
-+        logger.info("[STARTUP] Reminder scheduler DISABLED by config")
-+
-     asyncio.create_task(_deferred_db_init())
- 
-     logger.info("[STARTUP] Server accepting connections — DB init running in background.")
-@@ -1203,6 +1211,8 @@ async def startup():
- 
- @app.on_event("shutdown")
- async def shutdown():
-+    from contractor_ops.scheduler import stop_scheduler
-+    stop_scheduler()
-     client.close()
-     from contractor_ops.sms_service import _shared_sms_httpx
-     if _shared_sms_httpx and not _shared_sms_httpx.is_closed:
-diff --git a/frontend/src/components/TeamActivitySection.js b/frontend/src/components/TeamActivitySection.js
-index 8414db2..28f47ff 100644
---- a/frontend/src/components/TeamActivitySection.js
-+++ b/frontend/src/components/TeamActivitySection.js
-@@ -69,10 +69,10 @@ const ScoreInfoTooltip = () => {
-       <button
-         type="button"
-         onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
--        className="p-0.5 rounded-full hover:bg-slate-200/60 transition-colors"
-+        className="p-2 rounded-full hover:bg-slate-200/60 transition-colors"
-         aria-label="הסבר ציון"
-       >
--        <Info className="w-3.5 h-3.5 text-slate-400" />
-+        <Info className="w-4 h-4 text-slate-400" />
-       </button>
-       {open && (
-         <div className="absolute z-50 top-full mt-1 start-0 w-52 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-right">
-diff --git a/frontend/src/i18n/ar.json b/frontend/src/i18n/ar.json
-index bd1e626..3eadbeb 100644
---- a/frontend/src/i18n/ar.json
-+++ b/frontend/src/i18n/ar.json
-@@ -147,7 +147,7 @@
-   },
-   "myProjects": {
-     "title": "مشاريعي",
--    "searchPlaceholder": "البحث عن مشروع...",
-+    "searchPlaceholder": "البحث حسب الاسم، الرمز أو العنوان...",
-     "emptyState": "ليس لديك مشاريع بعد",
-     "emptyStateHint": "تواصل مع مدير النظام للحصول على صلاحية الوصول",
-     "lastProject": "متابعة آخر مشروع",
-diff --git a/frontend/src/i18n/en.json b/frontend/src/i18n/en.json
-index 9208ce7..1c8ec9a 100644
---- a/frontend/src/i18n/en.json
-+++ b/frontend/src/i18n/en.json
-@@ -146,7 +146,7 @@
-   },
-   "myProjects": {
-     "title": "My Projects",
--    "searchPlaceholder": "Search project...",
-+    "searchPlaceholder": "Search by name, code or address...",
-     "emptyState": "You don't have any projects yet",
-     "emptyStateHint": "Contact your system administrator to get access to a project",
-     "lastProject": "Continue to last project",
-diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
-index a35bf3a..c3895cd 100644
---- a/frontend/src/i18n/he.json
-+++ b/frontend/src/i18n/he.json
-@@ -164,7 +164,7 @@
-   },
-   "myProjects": {
-     "title": "הפרויקטים שלי",
--    "searchPlaceholder": "חיפוש פרויקט...",
-+    "searchPlaceholder": "חפש לפי שם, קוד או כתובת...",
-     "emptyState": "אין לך פרויקטים עדיין",
-     "emptyStateHint": "פנה למנהל המערכת כדי לקבל גישה לפרויקט",
-     "lastProject": "המשך לפרויקט האחרון",
-diff --git a/frontend/src/i18n/zh.json b/frontend/src/i18n/zh.json
-index 1e2dfbd..45d8c27 100644
---- a/frontend/src/i18n/zh.json
-+++ b/frontend/src/i18n/zh.json
-@@ -147,7 +147,7 @@
-   },
-   "myProjects": {
-     "title": "我的项目",
--    "searchPlaceholder": "搜索项目...",
-+    "searchPlaceholder": "按名称、代码或地址搜索...",
-     "emptyState": "您还没有任何项目",
-     "emptyStateHint": "请联系系统管理员获取项目访问权限",
-     "lastProject": "继续上次项目",
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index f847f49..55f99cb 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -610,7 +610,7 @@ const ApartmentDashboardPage = () => {
-               type="text"
-               value={searchQuery}
-               onChange={e => setSearchQuery(e.target.value)}
--              placeholder="חיפוש ליקוי..."
-+              placeholder="חפש לפי תיאור, קטגוריה או קבלן..."
-               className="w-full pr-9 pl-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
-             />
-           </div>
-diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
-index 635d24c..b9fae39 100644
---- a/frontend/src/pages/BuildingDefectsPage.js
-+++ b/frontend/src/pages/BuildingDefectsPage.js
-@@ -338,7 +338,7 @@ const BuildingDefectsPage = () => {
-                 type="text"
-                 value={searchQuery}
-                 onChange={e => setSearchQuery(e.target.value)}
--                placeholder="חיפוש דירה..."
-+                placeholder="חפש לפי מספר דירה..."
-                 className="w-full pr-9 pl-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
-               />
-             </div>
-diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-index c5adc73..f1645cd 100644
---- a/frontend/src/pages/LoginPage.js
-+++ b/frontend/src/pages/LoginPage.js
-@@ -628,8 +628,7 @@ const LoginPage = () => {
-                   id="password" type={showPassword ? 'text' : 'password'} value={password}
-                   onChange={(e) => { setPassword(e.target.value); setErrors(prev => { const n = {...prev}; delete n.password; return n; }); }}
-                   placeholder="לפחות 8 תווים"
--                  dir="ltr"
--                  className={`w-full h-11 px-3 py-2 pl-10 text-left text-slate-900 bg-white border rounded-lg transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 ${errors.password ? 'border-red-500' : 'border-slate-300 hover:border-slate-400'}`}
-+                  className={`w-full h-11 px-3 py-2 pl-10 text-right text-slate-900 bg-white border rounded-lg transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 ${errors.password ? 'border-red-500' : 'border-slate-300 hover:border-slate-400'}`}
-                 />
-                 <button type="button" onClick={() => setShowPassword(p => !p)}
-                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 touch-manipulation"
-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index e18c995..77d7d28 100644
---- a/frontend/src/pages/ProjectControlPage.js
-+++ b/frontend/src/pages/ProjectControlPage.js
-@@ -21,7 +21,8 @@ import {
-   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
-   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
-   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
--  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature, Clock, ListTodo
-+  Zap, Check, Archive, Undo2, ClipboardCheck, CreditCard, FileSignature, Clock, ListTodo,
-+  FilePen, KeyRound, Package
- } from 'lucide-react';
- import { Button } from '../components/ui/button';
- import { Card } from '../components/ui/card';
-@@ -72,15 +73,15 @@ const KIND_COLORS = {
- };
- 
- const SECONDARY_TABS = [
--  { id: 'team', label: 'צוות', icon: '👥' },
--  { id: 'companies', label: 'קבלנים וחברות', icon: '🏢' },
--  { id: 'data-export', label: 'ייצוא נתונים', icon: '📦' },
--  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: '📋' },
--  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: '📝' },
--  { id: 'handover-template', label: 'תבנית מסירה', icon: '🔑' },
-+  { id: 'team', label: 'צוות', icon: Users, color: 'text-blue-600', bg: 'bg-blue-100 border border-blue-200' },
-+  { id: 'companies', label: 'קבלנים וחברות', icon: Building2, color: 'text-violet-600', bg: 'bg-violet-100 border border-violet-200' },
-+  { id: 'data-export', label: 'ייצוא נתונים', icon: Package, color: 'text-emerald-600', bg: 'bg-emerald-100 border border-emerald-200' },
-+  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, color: 'text-cyan-600', bg: 'bg-cyan-100 border border-cyan-200' },
-+  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, color: 'text-orange-600', bg: 'bg-orange-100 border border-orange-200' },
-+  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, color: 'text-amber-600', bg: 'bg-amber-100 border border-amber-200' },
- ];
- 
--const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: '💳' };
-+const BILLING_TAB = { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, color: 'text-green-600', bg: 'bg-green-100 border border-green-200' };
- 
- const BottomSheetModal = ({ open, onClose, title, children }) => {
-   return (
-@@ -3361,7 +3362,7 @@ const ProjectControlPage = () => {
-               const isActive = workMode === wt.id;
-               return (
-                 <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
--                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'}`}>
-+                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
-                   <Icon className="w-4 h-4" />
-                   {wt.label}
-                 </button>
-@@ -3374,13 +3375,21 @@ const ProjectControlPage = () => {
-       <div className="bg-white border-b border-slate-100">
-         <div className="relative max-w-[1100px] mx-auto">
-           <div className="px-4 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
--            {MGMT_TABS.map(tab => (
--              <button key={tab.id} onClick={() => setActiveTab(activeTab === tab.id ? '' : tab.id)}
--                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
--                {tab.icon && <span className="text-sm">{tab.icon}</span>}
-+            {MGMT_TABS.map(tab => {
-+              const Icon = tab.icon;
-+              const isActive = activeTab === tab.id;
-+              return (
-+              <button key={tab.id} onClick={() => setActiveTab(isActive ? '' : tab.id)}
-+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
-+                  isActive
-+                    ? 'bg-amber-500 text-white shadow-sm'
-+                    : `${tab.bg} text-slate-600 hover:shadow-sm`
-+                }`}>
-+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : tab.color}`} />
-                 {tab.label}
-               </button>
--            ))}
-+              );
-+            })}
-           </div>
-           <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-white to-transparent pointer-events-none md:hidden" />
-         </div>
-diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
-index 855652c..27c5a79 100644
---- a/frontend/src/pages/ProjectTasksPage.js
-+++ b/frontend/src/pages/ProjectTasksPage.js
-@@ -368,7 +368,7 @@ const ProjectTasksPage = () => {
-           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-           <input
-             type="text"
--            placeholder="חיפוש ליקויים..."
-+            placeholder="חפש לפי תיאור, קטגוריה או קבלן..."
-             value={searchInput}
-             onChange={e => handleSearchChange(e.target.value)}
-             className="w-full h-10 pr-9 pl-3 text-sm text-right bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-diff --git a/backend/config.py b/backend/config.py
-index 5997492..a17b4cb 100644
---- a/backend/config.py
-+++ b/backend/config.py
-@@ -209,6 +209,7 @@ SMTP_REPLY_TO = os.environ.get('SMTP_REPLY_TO', 'support@brikops.com')
- 
- RESET_TOKEN_TTL_MINUTES = int(os.environ.get('RESET_TOKEN_TTL_MINUTES', '60'))
- PASSWORD_RESET_BASE_URL = os.environ.get('PASSWORD_RESET_BASE_URL', 'https://app.brikops.com')
-+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'https://app.brikops.com')
- 
- GI_BASE_URL = os.environ.get('GI_BASE_URL', '')
- GI_API_KEY_ID = os.environ.get('GI_API_KEY_ID', '')
 diff --git a/backend/contractor_ops/reminder_service.py b/backend/contractor_ops/reminder_service.py
-index e1972f6..b7343fa 100644
+index b7343fa..c125240 100644
 --- a/backend/contractor_ops/reminder_service.py
 +++ b/backend/contractor_ops/reminder_service.py
-@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
- OVERDUE_THRESHOLD_DAYS = 7
- COOLDOWN_HOURS = 48
- SEND_PACING_SECONDS = 0.1
--DEFECT_LIST_MAX_CHARS = 1024
- DEFAULT_WORKDAYS = [0, 1, 2, 3, 4]
- PYTHON_TO_ISRAEL_WEEKDAY = {6: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
- 
-@@ -95,7 +94,7 @@ async def _resolve_phone_for_company(company_id: str) -> Optional[str]:
-     return None
- 
- 
--async def _send_wa_template(to_phone: str, template_name: str, body_params: list) -> dict:
-+async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None) -> dict:
-     if not _wa_enabled:
-         logger.info(f"[REMINDER:DRY-RUN] template={template_name} to={mask_phone(to_phone)}")
-         return {"success": True, "dry_run": True, "provider_message_id": f"dry_{uuid.uuid4().hex[:12]}"}
-@@ -109,6 +108,18 @@ async def _send_wa_template(to_phone: str, template_name: str, body_params: list
-             param["parameter_name"] = p["parameter_name"]
-         params.append(param)
- 
-+    components = [
-+        {"type": "body", "parameters": params}
-+    ]
-+    if button_params:
-+        for bp in button_params:
-+            components.append({
-+                "type": "button",
-+                "sub_type": "url",
-+                "index": bp["index"],
-+                "parameters": [{"type": "text", "text": bp["text"]}]
-+            })
-+
-     body = {
-         "messaging_product": "whatsapp",
-         "to": to_digits,
-@@ -116,9 +127,7 @@ async def _send_wa_template(to_phone: str, template_name: str, body_params: list
-         "template": {
-             "name": template_name,
-             "language": {"code": "he"},
--            "components": [
--                {"type": "body", "parameters": params}
--            ]
-+            "components": components
-         }
-     }
- 
-@@ -164,14 +173,27 @@ async def _check_cooldown(project_id: str, reminder_type: str = "contractor_remi
+@@ -173,14 +173,17 @@ async def _check_cooldown(project_id: str, reminder_type: str = "contractor_remi
      return last is not None
  
  
--def _build_defect_list(tasks: list) -> str:
--    lines = []
--    for i, t in enumerate(tasks[:3], 1):
--        lines.append(f"{i}. {t.get('title', 'ליקוי')}")
--    text = "\n".join(lines)
--    if len(text) > DEFECT_LIST_MAX_CHARS:
--        text = text[:DEFECT_LIST_MAX_CHARS - 3] + "..."
--    return text
-+def _build_location_string(task: dict) -> str:
-+    parts = []
-+    if task.get("building_name"):
-+        parts.append(task["building_name"])
-+    if task.get("floor"):
-+        parts.append(f"קומה {task['floor']}")
-+    if task.get("apartment"):
-+        parts.append(f"דירה {task['apartment']}")
-+    return " / ".join(parts) if parts else "לא צוין"
-+
-+
-+def _calc_wait_days(task: dict) -> int:
-+    created = task.get("created_at", "")
-+    if not created:
-+        return 0
-+    try:
-+        created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-+        delta = datetime.now(timezone.utc) - created_dt
-+        return max(delta.days, 1)
-+    except (ValueError, TypeError):
-+        return 0
+-def _build_location_string(task: dict) -> str:
++def _build_location_string(task: dict, building_map: dict, floor_map: dict, unit_map: dict) -> str:
+     parts = []
+-    if task.get("building_name"):
+-        parts.append(task["building_name"])
+-    if task.get("floor"):
+-        parts.append(f"קומה {task['floor']}")
+-    if task.get("apartment"):
+-        parts.append(f"דירה {task['apartment']}")
++    bld_name = building_map.get(task.get("building_id", ""), "")
++    if bld_name:
++        parts.append(bld_name)
++    floor_name = floor_map.get(task.get("floor_id", ""), "")
++    if floor_name:
++        parts.append(f"קומה {floor_name}")
++    unit_name = unit_map.get(task.get("unit_id", ""), "")
++    if unit_name:
++        parts.append(f"דירה {unit_name}")
+     return " / ".join(parts) if parts else "לא צוין"
  
  
- async def send_contractor_reminder(
-@@ -186,7 +208,7 @@ async def send_contractor_reminder(
+@@ -208,7 +211,7 @@ async def send_contractor_reminder(
          "project_id": project_id,
          "company_id": company_id,
          **open_filter,
--    }, {"_id": 0}).to_list(100)
-+    }, {"_id": 0, "id": 1, "title": 1, "building_name": 1, "floor": 1, "apartment": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
+-    }, {"_id": 0, "id": 1, "title": 1, "building_name": 1, "floor": 1, "apartment": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
++    }, {"_id": 0, "id": 1, "title": 1, "building_id": 1, "floor_id": 1, "unit_id": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
  
      if not tasks:
          return {"status": "skipped", "reason": "no_open_defects"}
-@@ -228,8 +250,8 @@ async def send_contractor_reminder(
-         if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
-             return {"status": "skipped", "reason": "cooldown", "company_id": company_id}
- 
--    defect_list = _build_defect_list(tasks)
+@@ -253,6 +256,25 @@ async def send_contractor_reminder(
      results = []
-+    MAX_MESSAGES_PER_BATCH = 5
+     MAX_MESSAGES_PER_BATCH = 5
  
++    building_ids = list(set(t.get("building_id") for t in tasks if t.get("building_id")))
++    floor_ids = list(set(t.get("floor_id") for t in tasks if t.get("floor_id")))
++    unit_ids = list(set(t.get("unit_id") for t in tasks if t.get("unit_id")))
++
++    building_map = {}
++    if building_ids:
++        bldgs = await _db.buildings.find({"id": {"$in": building_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
++        building_map = {b["id"]: b.get("name", "") for b in bldgs}
++
++    floor_map = {}
++    if floor_ids:
++        floors = await _db.floors.find({"id": {"$in": floor_ids}}, {"_id": 0, "id": 1, "name": 1, "number": 1}).to_list(200)
++        floor_map = {f["id"]: (f.get("name") or str(f.get("number", ""))) for f in floors}
++
++    unit_map = {}
++    if unit_ids:
++        units = await _db.units.find({"id": {"$in": unit_ids}}, {"_id": 0, "id": 1, "display_label": 1, "name": 1, "unit_no": 1, "number": 1}).to_list(200)
++        unit_map = {u["id"]: (u.get("display_label") or u.get("name") or u.get("unit_no") or str(u.get("number", ""))) for u in units}
++
      for r in recipients:
          user = r["user"]
-@@ -244,37 +266,50 @@ async def send_contractor_reminder(
-                 results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
-                 continue
+         phone = r["phone"]
+@@ -269,7 +291,7 @@ async def send_contractor_reminder(
+         sent_count = 0
+         for task in tasks[:MAX_MESSAGES_PER_BATCH]:
+             task_id = task.get("id", "")
+-            location = _build_location_string(task)
++            location = _build_location_string(task, building_map, floor_map, unit_map)
+             finding = task.get("title", "ליקוי")
+             wait_days = _calc_wait_days(task)
  
--        log_entry = {
--            "type": "contractor_reminder",
--            "company_id": company_id,
--            "recipient_user_id": user_id,
--            "recipient_phone": phone,
--            "project_id": project_id,
--            "org_id": org_id,
--            "message_template": WA_REMINDER_TEMPLATE_HE,
--            "defect_count": len(tasks),
--            "triggered_by": triggered_by,
--        }
-+        sent_count = 0
-+        for task in tasks[:MAX_MESSAGES_PER_BATCH]:
-+            task_id = task.get("id", "")
-+            location = _build_location_string(task)
-+            finding = task.get("title", "ליקוי")
-+            wait_days = _calc_wait_days(task)
-+
-+            log_entry = {
-+                "type": "contractor_reminder",
-+                "company_id": company_id,
-+                "recipient_user_id": user_id,
-+                "recipient_phone": phone,
-+                "project_id": project_id,
-+                "org_id": org_id,
-+                "task_id": task_id,
-+                "message_template": WA_REMINDER_TEMPLATE_HE,
-+                "triggered_by": triggered_by,
-+            }
- 
--        try:
--            body_params = [
--                {"parameter_name": "contractor_name", "text": user_name},
--                {"parameter_name": "project_name", "text": project.get("name", "")},
--                {"parameter_name": "defect_count", "text": str(len(tasks))},
--                {"parameter_name": "defect_list", "text": defect_list},
--            ]
--            wa_result = await _send_wa_template(phone, WA_REMINDER_TEMPLATE_HE, body_params)
--            log_entry["status"] = "sent"
--            log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
--            results.append({"user_id": user_id, "status": "sent", "wa_message_id": log_entry["wa_message_id"]})
--        except Exception as e:
--            log_entry["status"] = "failed"
--            log_entry["error_detail"] = str(e)[:500]
--            results.append({"user_id": user_id, "status": "failed", "error": str(e)[:200]})
--            logger.error(f"[REMINDER] Failed to send contractor reminder to {mask_phone(phone)}: {e}")
-+            try:
-+                body_params = [
-+                    {"parameter_name": "project_name", "text": project.get("name", "")},
-+                    {"parameter_name": "location", "text": location},
-+                    {"parameter_name": "finding_description", "text": finding},
-+                    {"parameter_name": "wait_days", "text": str(wait_days)},
-+                ]
-+                button_params = [
-+                    {"index": 0, "text": f"{task_id}?src=wa"}
-+                ]
-+                wa_result = await _send_wa_template(phone, WA_REMINDER_TEMPLATE_HE, body_params, button_params=button_params)
-+                log_entry["status"] = "sent"
-+                log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
-+                sent_count += 1
-+            except Exception as e:
-+                log_entry["status"] = "failed"
-+                log_entry["error_detail"] = str(e)[:500]
-+                results.append({"user_id": user_id, "task_id": task_id, "status": "failed", "error": str(e)[:200]})
-+                logger.error(f"[REMINDER] Failed to send contractor reminder to {mask_phone(phone)} for task {task_id}: {e}")
- 
--        await _log_reminder(log_entry)
--        await asyncio.sleep(SEND_PACING_SECONDS)
-+            await _log_reminder(log_entry)
-+            await asyncio.sleep(SEND_PACING_SECONDS)
-+
-+        if sent_count > 0:
-+            results.append({"user_id": user_id, "status": "sent", "messages_sent": sent_count})
- 
-     return {"status": "completed", "results": results, "defect_count": len(tasks)}
- 
-@@ -301,18 +336,20 @@ async def send_pm_digest(
-         "created_at": {"$lte": overdue_cutoff},
-     })
- 
--    new_today = await _db.tasks.count_documents({
-+    awaiting_approval = await _db.tasks.count_documents({
-         "project_id": project_id,
--        "created_at": {"$gte": today_start},
-+        "status": "pending_manager_approval",
-     })
- 
--    closed_today = await _db.tasks.count_documents({
-+    not_responded_cutoff = (now - timedelta(hours=48)).isoformat()
-+    contractors_not_responded = await _db.tasks.count_documents({
-         "project_id": project_id,
--        "status": {"$in": list(TERMINAL_TASK_STATUSES)},
--        "updated_at": {"$gte": today_start},
-+        "status": "open",
-+        "company_id": {"$exists": True, "$nin": [None, ""]},
-+        "created_at": {"$lte": not_responded_cutoff},
-     })
- 
--    if open_count == 0 and new_today == 0 and closed_today == 0:
-+    if open_count == 0 and awaiting_approval == 0:
-         return {"status": "skipped", "reason": "no_meaningful_data"}
- 
-     pm_memberships = await _db.project_memberships.find({
-@@ -361,13 +398,17 @@ async def send_pm_digest(
- 
-         try:
-             body_params = [
-+                {"parameter_name": "pm_name", "text": user.get("name", "מנהל")},
-                 {"parameter_name": "project_name", "text": project.get("name", "")},
-                 {"parameter_name": "open_count", "text": str(open_count)},
-                 {"parameter_name": "overdue_count", "text": str(overdue_count)},
--                {"parameter_name": "new_today", "text": str(new_today)},
--                {"parameter_name": "closed_today", "text": str(closed_today)},
-+                {"parameter_name": "awaiting_approval", "text": str(awaiting_approval)},
-+                {"parameter_name": "contractors_not_responded", "text": str(contractors_not_responded)},
-+            ]
-+            button_params = [
-+                {"index": 0, "text": project_id}
-             ]
--            wa_result = await _send_wa_template(phone, WA_DIGEST_TEMPLATE_HE, body_params)
-+            wa_result = await _send_wa_template(phone, WA_DIGEST_TEMPLATE_HE, body_params, button_params=button_params)
-             log_entry["status"] = "sent"
-             log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
-             results.append({"user_id": user_id, "status": "sent"})
-@@ -386,8 +427,8 @@ async def send_pm_digest(
-         "stats": {
-             "open": open_count,
-             "overdue": overdue_count,
--            "new_today": new_today,
--            "closed_today": closed_today,
-+            "awaiting_approval": awaiting_approval,
-+            "contractors_not_responded": contractors_not_responded,
-         },
-     }
- 
-@@ -415,7 +456,7 @@ async def send_all_contractor_reminders() -> dict:
-                     if status == "completed":
-                         for r in result.get("results", []):
-                             if r.get("status") == "sent":
--                                summary["sent"] += 1
-+                                summary["sent"] += r.get("messages_sent", 1)
-                             elif r.get("status") == "skipped":
-                                 summary["skipped"] += 1
-                             elif r.get("status") == "failed":
