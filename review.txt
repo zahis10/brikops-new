@@ -1,129 +1,237 @@
 diff --git a/frontend/src/components/HamburgerMenu.js b/frontend/src/components/HamburgerMenu.js
-new file mode 100644
-index 0000000..9c56ecd
---- /dev/null
+index 9c56ecd..46c1d68 100644
+--- a/frontend/src/components/HamburgerMenu.js
 +++ b/frontend/src/components/HamburgerMenu.js
-@@ -0,0 +1,89 @@
-+import React, { useState } from 'react';
-+import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
-+import * as SheetPrimitive from '@radix-ui/react-dialog';
-+import { Menu, KeyRound, FilePen, ClipboardCheck, CreditCard, Settings, Globe, LogOut, X } from 'lucide-react';
-+
-+const MENU_ITEMS = [
-+  { id: 'handover-template', label: 'תבנית מסירה', icon: KeyRound, type: 'tab' },
-+  { id: 'qc-template', label: 'תבנית בקרת ביצוע', icon: FilePen, type: 'tab' },
-+  { id: 'settings', label: 'מאשרי בקרת ביצוע', icon: ClipboardCheck, type: 'tab' },
-+  { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, type: 'tab', billingOnly: true },
-+  { id: 'divider-1', type: 'divider' },
-+  { id: 'account-settings', label: 'הגדרות חשבון', icon: Settings, type: 'navigate', path: '/settings/account' },
-+  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account' },
-+  { id: 'divider-2', type: 'divider' },
-+  { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
-+];
-+
-+export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, onLogout }) {
-+  const [open, setOpen] = useState(false);
-+
-+  const handleItem = (item) => {
-+    setOpen(false);
-+    if (item.type === 'tab') {
-+      onSelectTab(item.id);
-+    } else if (item.type === 'navigate') {
-+      onNavigate(item.path);
-+    } else if (item.action === 'logout') {
-+      onLogout();
-+    }
-+  };
-+
-+  const visibleItems = MENU_ITEMS.filter(item => {
-+    if (item.billingOnly && !showBilling) return false;
-+    return true;
-+  });
-+
-+  return (
-+    <>
-+      <button
-+        onClick={() => setOpen(true)}
-+        className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
-+        title="תפריט"
-+      >
-+        <Menu className="w-4 h-4" />
-+      </button>
-+
-+      <Sheet open={open} onOpenChange={setOpen}>
-+        <SheetPortal>
-+          <SheetOverlay className="fixed inset-0 z-[9998] bg-black/40" />
-+          <SheetPrimitive.Content
-+            className="fixed top-0 right-0 z-[9999] h-full w-72 max-w-[85vw] bg-white shadow-xl flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right data-[state=closed]:duration-300 data-[state=open]:duration-300"
-+            dir="rtl"
-+          >
-+            <SheetTitle className="sr-only">תפריט</SheetTitle>
-+            <SheetDescription className="sr-only">תפריט ניווט</SheetDescription>
-+
-+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-+              <span className="text-base font-semibold text-slate-800">תפריט</span>
-+              <SheetClose className="p-1 rounded-md hover:bg-slate-100">
-+                <X className="w-5 h-5 text-slate-500" />
-+              </SheetClose>
-+            </div>
-+
-+            <nav className="flex-1 overflow-y-auto py-2">
-+              {visibleItems.map(item => {
-+                if (item.type === 'divider') {
-+                  return <div key={item.id} className="my-2 mx-4 border-t border-slate-200" />;
-+                }
-+                const Icon = item.icon;
-+                return (
-+                  <button
-+                    key={item.id}
-+                    onClick={() => handleItem(item)}
-+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors hover:bg-slate-50 active:bg-slate-100 ${
-+                      item.action === 'logout' ? 'text-red-600' : 'text-slate-700'
-+                    }`}
-+                  >
-+                    <Icon className="w-5 h-5 shrink-0" />
-+                    <span>{item.label}</span>
-+                  </button>
-+                );
-+              })}
-+            </nav>
-+          </SheetPrimitive.Content>
-+        </SheetPortal>
-+      </Sheet>
-+    </>
-+  );
-+}
+@@ -15,7 +15,7 @@ const MENU_ITEMS = [
+   { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
+ ];
+ 
+-export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, onLogout }) {
++export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, onLogout, slim = false }) {
+   const [open, setOpen] = useState(false);
+ 
+   const handleItem = (item) => {
+@@ -30,6 +30,7 @@ export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, on
+   };
+ 
+   const visibleItems = MENU_ITEMS.filter(item => {
++    if (slim && (item.type === 'tab' || item.id === 'divider-1')) return false;
+     if (item.billingOnly && !showBilling) return false;
+     return true;
+   });
+diff --git a/frontend/src/pages/HandoverOverviewPage.js b/frontend/src/pages/HandoverOverviewPage.js
+index fc390ed..0681d5c 100644
+--- a/frontend/src/pages/HandoverOverviewPage.js
++++ b/frontend/src/pages/HandoverOverviewPage.js
+@@ -8,7 +8,7 @@ import {
+ } from 'lucide-react';
+ import ProjectSwitcher from '../components/ProjectSwitcher';
+ import NotificationBell from '../components/NotificationBell';
+-import UserDrawer from '../components/UserDrawer';
++import HamburgerMenu from '../components/HamburgerMenu';
+ import G4ImportModal from '../components/handover/G4ImportModal';
+ 
+ const STATUS_COLORS = {
+@@ -40,7 +40,7 @@ const STAT_CARDS = [
+ export default function HandoverOverviewPage() {
+   const { projectId } = useParams();
+   const navigate = useNavigate();
+-  const { user } = useAuth();
++  const { user, logout } = useAuth();
+ 
+   const [data, setData] = useState(null);
+   const [loading, setLoading] = useState(true);
+@@ -228,13 +228,13 @@ export default function HandoverOverviewPage() {
+     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+       <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
++          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
+           <button onClick={() => navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
+             <ChevronRight className="w-4 h-4" />
+           </button>
+           <ProjectSwitcher currentProjectId={projectId} />
+           <div className="flex-1" />
+           <NotificationBell />
+-          <UserDrawer user={user} />
+         </div>
+       </header>
+ 
+diff --git a/frontend/src/pages/MyProjectsPage.js b/frontend/src/pages/MyProjectsPage.js
+index ceb3e69..8b41598 100644
+--- a/frontend/src/pages/MyProjectsPage.js
++++ b/frontend/src/pages/MyProjectsPage.js
+@@ -6,11 +6,13 @@ import { projectService } from '../services/api';
+ import { toast } from 'sonner';
+ import { t } from '../i18n';
+ import {
+-  Search, Plus, FolderOpen, ArrowLeft, LogOut, HardHat, Loader2, Building2, Phone,
+-  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield, X, ChevronLeft
++  Search, Plus, FolderOpen, ArrowLeft, HardHat, Loader2, Building2,
++  Users, CreditCard, BarChart3, ClipboardList, Shield, X, ChevronLeft
+ } from 'lucide-react';
+ import { Button } from '../components/ui/button';
+ import { Card } from '../components/ui/card';
++import HamburgerMenu from '../components/HamburgerMenu';
++import NotificationBell from '../components/NotificationBell';
+ import { navigateToProject } from '../utils/navigation';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ 
+@@ -195,6 +197,7 @@ const MyProjectsPage = () => {
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+       <header className="bg-slate-800 text-white shadow-lg sticky top-0 z-50">
+         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
++          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
+           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
+             <HardHat className="w-5 h-5 text-white" />
+           </div>
+@@ -223,27 +226,7 @@ const MyProjectsPage = () => {
+                 </button>
+               </>
+             )}
+-            <button
+-              onClick={() => navigate('/settings/account')}
+-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+-              title="הגדרות חשבון"
+-            >
+-              <Settings className="w-4 h-4" />
+-            </button>
+-            <button
+-              onClick={() => navigate('/settings/account#phone')}
+-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+-              title="שינוי מספר טלפון"
+-            >
+-              <Phone className="w-4 h-4" />
+-            </button>
+-            <button
+-              onClick={logout}
+-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+-              title="התנתק"
+-            >
+-              <LogOut className="w-5 h-5" />
+-            </button>
++            <NotificationBell />
+           </div>
+         </div>
+       </header>
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 77d7d28..be7a12d 100644
+index be7a12d..1f72cf5 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -31,6 +31,7 @@ import ProjectSwitcher from '../components/ProjectSwitcher';
- import NotificationBell from '../components/NotificationBell';
- import UserDrawer from '../components/UserDrawer';
- import { MoreVertical } from 'lucide-react';
-+import HamburgerMenu from '../components/HamburgerMenu';
- 
- const normalizeList = (data) => {
-   if (Array.isArray(data)) return data;
-@@ -2952,7 +2953,7 @@ const HandoverTemplateTab = ({ projectId, isSuperAdmin }) => {
- 
- const ProjectControlPage = () => {
-   const { projectId } = useParams();
--  const { user, features } = useAuth();
-+  const { user, features, logout } = useAuth();
-   const navigate = useNavigate();
-   const [searchParams, setSearchParams] = useSearchParams();
- 
-@@ -3352,6 +3353,12 @@ const ProjectControlPage = () => {
-             <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
-               <Settings className="w-4 h-4" />
-             </button>
+@@ -3343,6 +3343,12 @@ const ProjectControlPage = () => {
+       <div className="sticky top-0 z-50">
+         <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
+           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
 +            <HamburgerMenu
 +              onSelectTab={(tabId) => setActiveTab(tabId)}
 +              showBilling={showBillingTab}
 +              onNavigate={(path) => navigate(path)}
 +              onLogout={() => { logout(); navigate('/login'); }}
 +            />
+             <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+               <ArrowRight className="w-5 h-5" />
+             </button>
+@@ -3350,15 +3356,6 @@ const ProjectControlPage = () => {
+               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
+             </div>
+             <NotificationBell />
+-            <button onClick={() => navigate('/settings/account')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
+-              <Settings className="w-4 h-4" />
+-            </button>
+-            <HamburgerMenu
+-              onSelectTab={(tabId) => setActiveTab(tabId)}
+-              showBilling={showBillingTab}
+-              onNavigate={(path) => navigate(path)}
+-              onLogout={() => { logout(); navigate('/login'); }}
+-            />
            </div>
          </header>
  
+diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
+index 2f1598a..03f8ae8 100644
+--- a/frontend/src/pages/ProjectDashboardPage.js
++++ b/frontend/src/pages/ProjectDashboardPage.js
+@@ -5,12 +5,13 @@ import { qcFloorStatusLabel } from '../utils/qcLabels';
+ import { useAuth } from '../contexts/AuthContext';
+ import ProjectSwitcher from '../components/ProjectSwitcher';
+ import NotificationBell from '../components/NotificationBell';
++import HamburgerMenu from '../components/HamburgerMenu';
+ import { tRole } from '../i18n';
+ import { toast } from 'sonner';
+ import {
+   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
+   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
+-  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings,
++  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck,
+   Construction, FileSignature, Send, MessageSquare
+ } from 'lucide-react';
+ 
+@@ -111,7 +112,7 @@ const getBarTextColor = (index, total) => {
+ export default function ProjectDashboardPage() {
+   const { projectId } = useParams();
+   const navigate = useNavigate();
+-  const { user } = useAuth();
++  const { user, logout } = useAuth();
+   const [data, setData] = useState(null);
+   const [project, setProject] = useState(null);
+   const [loading, setLoading] = useState(true);
+@@ -242,6 +243,7 @@ export default function ProjectDashboardPage() {
+     <div className="min-h-0 bg-slate-50 pb-24" dir="rtl">
+       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
++          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
+           <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
+             <ArrowRight className="w-5 h-5" />
+           </button>
+@@ -260,9 +262,6 @@ export default function ProjectDashboardPage() {
+             </div>
+           </div>
+           <NotificationBell />
+-          <button onClick={() => navigate('/settings/account')} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="הגדרות חשבון">
+-            <Settings className="w-4 h-4" />
+-          </button>
+           {isPmOrOwner && (
+             <button
+               onClick={handleSendDigest}
+diff --git a/frontend/src/pages/QCFloorSelectionPage.js b/frontend/src/pages/QCFloorSelectionPage.js
+index 546635b..cb7b39f 100644
+--- a/frontend/src/pages/QCFloorSelectionPage.js
++++ b/frontend/src/pages/QCFloorSelectionPage.js
+@@ -1,6 +1,9 @@
+ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+ import { useParams, useNavigate } from 'react-router-dom';
++import { useAuth } from '../contexts/AuthContext';
+ import { projectService, qcService } from '../services/api';
++import HamburgerMenu from '../components/HamburgerMenu';
++import NotificationBell from '../components/NotificationBell';
+ 
+ import {
+   ArrowRight, Loader2, ClipboardCheck, Building2, Search,
+@@ -18,6 +21,7 @@ const getFloorBadge = (qcData) => {
+ export default function QCFloorSelectionPage() {
+   const { projectId } = useParams();
+   const navigate = useNavigate();
++  const { logout } = useAuth();
+ 
+   const [loading, setLoading] = useState(true);
+   const [hierarchy, setHierarchy] = useState([]);
+@@ -162,10 +166,11 @@ export default function QCFloorSelectionPage() {
+     <div className="bg-slate-800 text-white sticky top-0 z-30">
+       <div className="max-w-2xl mx-auto px-4 py-3">
+         <div className="flex items-center gap-3">
++          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
+           <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
+             <ArrowRight className="w-5 h-5" />
+           </button>
+-          <div className="min-w-0">
++          <div className="flex-1 min-w-0">
+             <h1 className="text-base font-bold flex items-center gap-2">
+               <ClipboardCheck className="w-4 h-4 text-amber-400" />
+               בקרת ביצוע
+@@ -174,6 +179,7 @@ export default function QCFloorSelectionPage() {
+               <p className="text-[11px] text-slate-400 truncate">{projectName}</p>
+             )}
+           </div>
++          <NotificationBell />
+         </div>
+       </div>
+     </div>
