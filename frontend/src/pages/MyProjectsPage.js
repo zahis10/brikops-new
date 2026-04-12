@@ -6,8 +6,8 @@ import { projectService } from '../services/api';
 import { toast } from 'sonner';
 import { t } from '../i18n';
 import {
-  Search, Plus, FolderOpen, ArrowLeft, LogOut, HardHat, Loader2, Building2, Phone,
-  Users, CreditCard, Settings, BarChart3, ClipboardList, Shield, X, ChevronLeft
+  Search, Plus, FolderOpen, ArrowLeft, HardHat, Loader2, Building2,
+  Users, CreditCard, BarChart3, ClipboardList, Shield, X, ChevronLeft
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';

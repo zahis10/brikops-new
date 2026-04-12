@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
-  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck, Settings,
+  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck,
   Construction, FileSignature, Send, MessageSquare
 } from 'lucide-react';
 
