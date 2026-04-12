@@ -1216,6 +1216,14 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
             upsert=True,
         )
 
+        sub_check = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
+        mo_amount = (sub_check or {}).get('manual_override', {}).get('total_monthly')
+        if mo_amount and mo_amount > 0:
+            await db.subscriptions.update_one(
+                {'org_id': org_id},
+                {'$set': {'total_monthly': mo_amount}}
+            )
+
         all_pbs = await db.project_billing.find(
             {'org_id': org_id, 'status': 'active'},
             {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
@@ -1280,6 +1288,20 @@ async def recalc_org_total(org_id: str):
         PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT,
     )
     db = get_db()
+
+    sub = await db.subscriptions.find_one(
+        {'org_id': org_id},
+        {'_id': 0, 'manual_override': 1}
+    )
+    override_amount = (sub or {}).get('manual_override', {}).get('total_monthly')
+    if override_amount is not None and override_amount > 0:
+        await db.subscriptions.update_one(
+            {'org_id': org_id},
+            {'$set': {'total_monthly': override_amount, 'updated_at': _now()}}
+        )
+        logger.info("[recalc_org_total] org=%s using manual_override=%s, skipping recalc", org_id, override_amount)
+        return override_amount
+
     project_billings = await db.project_billing.find(
         {'org_id': org_id, 'status': 'active'},
         {'_id': 0, 'id': 1, 'project_id': 1, 'plan_id': 1,
