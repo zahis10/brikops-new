@@ -907,8 +907,8 @@ def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str,
         logger.error("[RENEWAL-ALERT] Failed to send alert email: %s", str(e))
 
 
-@router.post("/billing/run-renewals")
-async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
+async def billing_run_renewals_internal() -> dict:
+    """Core renewal logic — called by both super_admin endpoint and cron."""
     import uuid
     from datetime import timedelta
     from contractor_ops.billing import (
@@ -917,11 +917,6 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
         _now, _now_dt, _parse_dt,
     )
     from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
-
-    if not BILLING_V1_ENABLED:
-        raise HTTPException(status_code=404, detail='Not found')
-    if not _is_super_admin(user):
-        raise HTTPException(status_code=403, detail='Super admin only')
 
     db = get_db()
     now = _now_dt()
@@ -1070,6 +1065,31 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
 
             try:
                 await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal doc={doc_id} amount={amount}")
+                try:
+                    from contractor_ops.invoicing import generate_invoice
+                    paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
+                    inv_card_last4 = billing_data.get('card_last4', '')
+                    invoice = await generate_invoice(
+                        org_id,
+                        period_ym,
+                        'system_renewal',
+                        paid_until=paid_until_val,
+                        card_last4=inv_card_last4,
+                        override_amount=amount,
+                    )
+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f", org_id, invoice.get('id', ''), amount)
+                except Exception as inv_err:
+                    logger.error("[RENEWALS] Invoice generation FAILED org=%s amount=%.2f error=%s", org_id, amount, str(inv_err))
+                    try:
+                        _send_billing_alert_email(
+                            org_name=org_name,
+                            amount=amount,
+                            gi_document_id=doc_id,
+                            error_message=f"Invoice generation failed: {inv_err}",
+                            timestamp=now_iso,
+                        )
+                    except Exception:
+                        pass
                 await db.billing_renewal_attempts.update_one(
                     {'id': attempt_id},
                     {'$set': {'result': 'success', 'gi_document_id': doc_id, 'amount': amount}}
@@ -1122,6 +1142,16 @@ async def billing_run_renewals(request: Request, user: dict = Depends(get_curren
 
     logger.info("[RENEWALS] Run complete: %s", results)
     return results
+
+
+@router.post("/billing/run-renewals")
+async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+    if not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail='Super admin only')
+    return await billing_run_renewals_internal()
 
 
 _webhook_call_times: list = []

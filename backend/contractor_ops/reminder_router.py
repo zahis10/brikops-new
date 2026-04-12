@@ -169,4 +169,19 @@ def create_reminder_router(require_roles, get_current_user):
 
         return response
 
+    @cron_router.post("/internal/cron/daily-renewals")
+    async def cron_daily_renewals(request: Request):
+        cron_secret = request.headers.get("X-Cron-Secret", "")
+        if not CRON_SECRET or cron_secret != CRON_SECRET:
+            logger.warning("[CRON] Invalid or missing X-Cron-Secret for daily-renewals")
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        from contractor_ops.billing import BILLING_V1_ENABLED
+        if not BILLING_V1_ENABLED:
+            return {"skipped": "billing_disabled"}
+
+        from contractor_ops.billing_router import billing_run_renewals_internal
+        result = await billing_run_renewals_internal()
+        return result
+
     return router, cron_router
