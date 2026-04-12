@@ -3362,7 +3362,7 @@ const ProjectControlPage = () => {
               const isActive = workMode === wt.id;
               return (
                 <button key={wt.id} onClick={() => handleWorkTab(wt.id)}
-                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-400 hover:bg-slate-50'}`}>
+                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all touch-manipulation ${isActive ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}>
                   <Icon className="w-4 h-4" />
                   {wt.label}
                 </button>
