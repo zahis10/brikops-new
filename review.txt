@@ -1,72 +1,187 @@
-#324 — Fix manual_override.total_monthly getting overwritten after payment
+#325 — Fix run-renewals to charge via PayPlus (not Green Invoice)
 ========================================================================
 
-File: backend/contractor_ops/billing.py
-1 file changed, 22 insertions(+), 0 deletions(-)
+File: backend/contractor_ops/billing_router.py
+1 file changed, 27 insertions(+), 26 deletions(-)
 
 ========================================================================
 FULL DIFF
 ========================================================================
 
-diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index af2ed94..449a2e5 100644
---- a/backend/contractor_ops/billing.py
-+++ b/backend/contractor_ops/billing.py
-@@ -1216,6 +1216,14 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
-             upsert=True,
-         )
- 
-+        sub_check = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
-+        mo_amount = (sub_check or {}).get('manual_override', {}).get('total_monthly')
-+        if mo_amount and mo_amount > 0:
-+            await db.subscriptions.update_one(
-+                {'org_id': org_id},
-+                {'$set': {'total_monthly': mo_amount}}
-+            )
-+
-         all_pbs = await db.project_billing.find(
-             {'org_id': org_id, 'status': 'active'},
-             {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
-@@ -1280,6 +1288,20 @@ async def recalc_org_total(org_id: str):
-         PROJECT_LICENSE_ADDITIONAL, PRICE_PER_UNIT,
+diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
+index bbfa72c..bad56ed 100644
+--- a/backend/contractor_ops/billing_router.py
++++ b/backend/contractor_ops/billing_router.py
+@@ -916,7 +916,7 @@ async def billing_run_renewals_internal() -> dict:
+         get_billable_amount, apply_pending_decreases,
+         _now, _now_dt, _parse_dt,
      )
+-    from contractor_ops.green_invoice_service import charge_saved_card, GreenInvoiceError
++    from contractor_ops.payplus_service import charge_token, PayPlusError
+     from contractor_ops.invoicing import generate_invoice
+ 
      db = get_db()
-+
-+    sub = await db.subscriptions.find_one(
-+        {'org_id': org_id},
-+        {'_id': 0, 'manual_override': 1}
-+    )
-+    override_amount = (sub or {}).get('manual_override', {}).get('total_monthly')
-+    if override_amount is not None and override_amount > 0:
-+        await db.subscriptions.update_one(
-+            {'org_id': org_id},
-+            {'$set': {'total_monthly': override_amount, 'updated_at': _now()}}
-+        )
-+        logger.info("[recalc_org_total] org=%s using manual_override=%s, skipping recalc", org_id, override_amount)
-+        return override_amount
-+
-     project_billings = await db.project_billing.find(
-         {'org_id': org_id, 'status': 'active'},
-         {'_id': 0, 'id': 1, 'project_id': 1, 'plan_id': 1,
+@@ -1005,8 +1005,7 @@ async def billing_run_renewals_internal() -> dict:
+             continue
+ 
+         billing_data = org.get('billing', {})
+-        card_token = billing_data.get('gi_card_token', '')
+-        client_id = billing_data.get('gi_client_id', '')
++        card_token = billing_data.get('payplus_token_uid', '')
+         org_name = org.get('name', '')
+ 
+         attempt_id = str(uuid.uuid4())
+@@ -1023,7 +1022,7 @@ async def billing_run_renewals_internal() -> dict:
+         if not card_token:
+             await db.billing_renewal_attempts.update_one(
+                 {'id': attempt_id},
+-                {'$set': {'result': 'no_card_token', 'error': 'No saved card token'}}
++                {'$set': {'result': 'no_card_token', 'error': 'No saved PayPlus token (payplus_token_uid)'}}
+             )
+             logger.warning("[RENEWALS] Org %s has no card token, skipping charge", org_id)
+             results['failed'] += 1
+@@ -1054,18 +1053,20 @@ async def billing_run_renewals_internal() -> dict:
+             continue
+ 
+         try:
+-            description = f"מנוי BrikOps — חודשי — {org_name}"
+-            charge_result = await charge_saved_card(
+-                client_id=client_id,
+-                card_token=card_token,
+-                description=description,
++            plan_name = f"מנוי BrikOps — חודשי — {org_name}"
++            charge_result = await charge_token(
++                token_uid=card_token,
+                 amount=amount,
+-                remarks=f"org_id={org_id} cycle=monthly renewal=auto period={period_ym}",
++                org_id=org_id,
++                plan_name=plan_name,
+             )
+-            doc_id = charge_result.get('id', '')
++            transaction_uid = charge_result.get('transaction_uid', '')
++            status_code = charge_result.get('status_code', '')
++            if status_code != '000' or not transaction_uid:
++                raise PayPlusError(f"PayPlus charge declined: status_code={status_code} tx={transaction_uid}")
+ 
+             try:
+-                await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal doc={doc_id} amount={amount}")
++                await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal tx={transaction_uid} amount={amount}")
+                 try:
+                     paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
+                     inv_card_last4 = billing_data.get('card_last4', '')
+@@ -1084,7 +1085,7 @@ async def billing_run_renewals_internal() -> dict:
+                         _send_billing_alert_email(
+                             org_name=org_name,
+                             amount=amount,
+-                            gi_document_id=doc_id,
++                            gi_document_id=transaction_uid,
+                             error_message=f"Invoice generation failed: {inv_err}",
+                             timestamp=now_iso,
+                         )
+@@ -1092,39 +1093,39 @@ async def billing_run_renewals_internal() -> dict:
+                         pass
+                 await db.billing_renewal_attempts.update_one(
+                     {'id': attempt_id},
+-                    {'$set': {'result': 'success', 'gi_document_id': doc_id, 'amount': amount}}
++                    {'$set': {'result': 'success', 'payplus_transaction_uid': transaction_uid, 'amount': amount}}
+                 )
+-                logger.info("[RENEWALS] Charged org=%s amount=%.2f doc=%s", org_id, amount, doc_id)
++                logger.info("[RENEWALS] Charged org=%s amount=%.2f tx=%s", org_id, amount, transaction_uid)
+                 results['charged'] += 1
+             except Exception as mp_err:
+                 await db.billing_renewal_attempts.update_one(
+                     {'id': attempt_id},
+                     {'$set': {
+                         'result': 'charged_but_mark_paid_failed',
+-                        'gi_document_id': doc_id,
++                        'payplus_transaction_uid': transaction_uid,
+                         'amount': amount,
+                         'error': str(mp_err),
+                     }}
+                 )
+-                logger.error("[RENEWALS] Charge succeeded (doc=%s) but mark_paid failed for org %s: %s",
+-                             doc_id, org_id, str(mp_err))
++                logger.error("[RENEWALS] Charge succeeded (tx=%s) but mark_paid failed for org %s: %s",
++                             transaction_uid, org_id, str(mp_err))
+                 results['charged_but_mark_paid_failed'] += 1
+-                results['errors'].append({'org_id': org_id, 'error': f'mark_paid_failed: {mp_err}', 'gi_document_id': doc_id})
++                results['errors'].append({'org_id': org_id, 'error': f'mark_paid_failed: {mp_err}', 'payplus_transaction_uid': transaction_uid})
+                 try:
+                     _send_billing_alert_email(
+                         org_name=org_name,
+                         amount=amount,
+-                        gi_document_id=doc_id,
++                        gi_document_id=transaction_uid,
+                         error_message=str(mp_err),
+                         timestamp=now_iso,
+                     )
+                 except Exception:
+                     pass
+ 
+-        except GreenInvoiceError as e:
++        except PayPlusError as e:
+             await db.billing_renewal_attempts.update_one(
+                 {'id': attempt_id},
+-                {'$set': {'result': 'charge_failed', 'error': str(e), 'error_code': e.error_code}}
++                {'$set': {'result': 'charge_failed', 'error': str(e)}}
+             )
+             logger.error("[RENEWALS] Charge failed for org %s (attempt %d): %s",
+                          org_id, attempt_count + 1, str(e))
+@@ -1642,7 +1643,7 @@ async def billing_failed_renewals(request: Request, user: dict = Depends(get_cur
+             'id': doc.get('id'),
+             'org_id': doc.get('org_id'),
+             'org_name': org.get('name', '') if org else '',
+-            'gi_document_id': doc.get('gi_document_id', ''),
++            'gi_document_id': doc.get('payplus_transaction_uid', '') or doc.get('gi_document_id', ''),
+             'amount': doc.get('amount', 0),
+             'error': doc.get('error', ''),
+             'period_ym': doc.get('period_ym', ''),
+@@ -1686,10 +1687,10 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
+ 
+     resolved_attempt_id = attempt['id']
+     org_id = attempt['org_id']
+-    doc_id = attempt.get('gi_document_id', '')
++    doc_id = attempt.get('payplus_transaction_uid', '') or attempt.get('gi_document_id', '')
+     amount = attempt.get('amount', 0)
+ 
+-    result = await mark_paid(org_id, 'system_renewal_resolve', None, 'monthly', f"Resolved failed renewal doc={doc_id} amount={amount}")
++    result = await mark_paid(org_id, 'system_renewal_resolve', None, 'monthly', f"Resolved failed renewal tx={doc_id} amount={amount}")
+ 
+     await db.billing_renewal_attempts.update_one(
+         {'id': resolved_attempt_id},
 
 ========================================================================
 SUMMARY
 ========================================================================
 
-Fix 1 — set_org_plan('founder_6m') (line 1222):
-  After hardcoding total_monthly: 499, checks if manual_override.total_monthly
-  exists. If so, overwrites total_monthly back to the override value.
+Fix 1 — Import (line 919):
+  charge_saved_card/GreenInvoiceError → charge_token/PayPlusError
 
-Fix 2 — recalc_org_total() (line 1288):
-  At the START of the function, before calculating from projects, checks if
-  manual_override.total_monthly exists and > 0. If so, sets total_monthly
-  to the override value and returns early — skipping the full recalculation.
+Fix 2 — Token lookup (line 1008):
+  gi_card_token + gi_client_id → payplus_token_uid (removed client_id)
+
+Fix 3 — Charge call (lines 1056-1069):
+  charge_saved_card() → charge_token() with PayPlus params.
+  Added status_code == "000" + non-empty transaction_uid validation
+  to prevent mark_paid on declined charges.
+
+Fix 4 — All references (lines 1072-1113):
+  doc_id → transaction_uid throughout.
+  gi_document_id → payplus_transaction_uid in DB writes.
+
+Fix 5 — Error handling (line 1128):
+  GreenInvoiceError → PayPlusError (removed error_code — PayPlusError
+  doesn't have it).
+
+Fix 6 — Failed-renewals endpoints (lines 1649, 1693):
+  Now reads payplus_transaction_uid with fallback to gi_document_id
+  for backward compatibility with historical records.
 
 What was NOT changed:
-  - get_billable_amount() — already correct (checks override first)
-  - Admin set-pricing endpoint
-  - PayPlus webhook handler
-  - Checkout / mark_paid()
-  - generate_invoice()
-  - run-renewals / cron endpoint
-  - Frontend (not needed — root cause was backend only)
+  - charge_token() in payplus_service.py — already correct
+  - generate_invoice() — stays as-is from #323
+  - mark_paid() logic
+  - GI webhook handler (still uses GreenInvoiceError/doc_id)
+  - Initial checkout flow
+  - Cron endpoint (just calls billing_run_renewals_internal)
+  - Retry logic (3 attempts, 7-day grace)
