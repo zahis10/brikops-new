@@ -174,7 +174,7 @@ const AdminPage = () => {
     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
             <ArrowRight className="w-5 h-5" />
           </button>
           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center">
