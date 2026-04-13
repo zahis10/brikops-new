@@ -159,11 +159,9 @@ async def charge_token(
             or data.get("transaction_uid")
             or ""
         )
-        status = (
-            transaction.get("status_code")
-            or data.get("status_code")
-            or ""
-        )
+        status = transaction.get("status_code")
+        if status is None:
+            status = data.get("status_code", "")
     else:
         tx_uid = data.get("transaction_uid", "")
         status = data.get("status_code", "")
