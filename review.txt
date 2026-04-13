@@ -1,94 +1,69 @@
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index ec47244..0a948f5 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -1924,7 +1924,6 @@ async def mark_paid(org_id: str, actor_id: str, request_id: str = None, cycle: s
+     update_fields = {
+         'status': new_status,
+         'paid_until': new_paid_until_iso,
+-        'auto_renew': False,
+         'next_charge_at': None,
+         'updated_at': now,
+     }
 diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index cc1b5f8..500573c 100644
+index 500573c..124fcf9 100644
 --- a/backend/contractor_ops/billing_router.py
 +++ b/backend/contractor_ops/billing_router.py
-@@ -912,7 +912,7 @@ def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str,
- async def billing_run_renewals_internal() -> dict:
-     """Core renewal logic — called by both super_admin endpoint and cron."""
-     import uuid
--    from datetime import timedelta
-+    from datetime import datetime, timedelta, timezone
-     from contractor_ops.billing import (
-         BILLING_V1_ENABLED, get_subscription, mark_paid,
-         get_billable_amount, apply_pending_decreases,
-@@ -1092,7 +1092,31 @@ async def billing_run_renewals_internal() -> dict:
+@@ -1081,26 +1081,32 @@ async def billing_run_renewals_internal() -> dict:
+ 
+             try:
+                 await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal tx={transaction_uid} amount={amount}")
++                await db.subscriptions.update_one(
++                    {'org_id': org_id},
++                    {'$set': {'auto_renew': True}}
++                )
+                 try:
+-                    paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
++                    updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
++                    new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
++                    invoice_period = new_paid_until[:7] if new_paid_until else period_ym
+                     inv_card_last4 = billing_data.get('card_last4', '')
+                     invoice = await generate_invoice(
+                         org_id,
+-                        period_ym,
++                        invoice_period,
+                         'system_renewal',
+-                        paid_until=paid_until_val,
++                        paid_until=new_paid_until,
                          card_last4=inv_card_last4,
                          override_amount=amount,
                      )
--                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f", org_id, invoice.get('id', ''), amount)
-+                    invoice_id = invoice.get('id', '')
-+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f gi_doc=%s gi_url=%s",
-+                                org_id, invoice_id, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
-+                    if invoice_id and not invoice.get('gi_document_id'):
-+                        try:
-+                            from contractor_ops.invoicing import _try_create_gi_document
-+                            gi_doc_id = await _try_create_gi_document(
-+                                db, org_id, invoice_id, amount, period_ym,
-+                                paid_until=paid_until_val,
-+                                card_last4=inv_card_last4,
-+                            )
-+                            if gi_doc_id:
-+                                logger.info("[RENEWALS] GI document created: %s for org=%s", gi_doc_id, org_id)
-+                        except Exception as gi_err:
-+                            logger.warning("[RENEWALS] GI document creation failed for org=%s: %s", org_id, str(gi_err))
-+                    if invoice_id and invoice.get('status') != 'paid':
-+                        try:
-+                            ts_now = datetime.now(timezone.utc).isoformat()
-+                            await db.invoices.update_one(
-+                                {'id': invoice_id},
-+                                {'$set': {'status': 'paid', 'paid_at': ts_now, 'updated_at': ts_now}}
-+                            )
-+                            logger.info("[RENEWALS] Invoice %s marked paid for org=%s", invoice_id, org_id)
-+                        except Exception as mp_inv_err:
-+                            logger.warning("[RENEWALS] Invoice paid update failed for org=%s invoice=%s: %s", org_id, invoice_id, str(mp_inv_err))
-                 except Exception as inv_err:
-                     logger.error("[RENEWALS] Invoice generation FAILED org=%s amount=%.2f error=%s", org_id, amount, str(inv_err))
-                     try:
-@@ -1454,9 +1478,9 @@ async def billing_webhook_payplus(request: Request):
-         if wh_org_id.startswith("org_id="):
-             wh_org_id = wh_org_id.split("=", 1)[1]
-         if not wh_org_id:
--            logger.error("[PAYPLUS-WH] No org_id in more_info tx=%s", transaction_uid)
--            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_org_id'}})
--            raise HTTPException(status_code=500, detail="Missing org identifier")
-+            logger.warning("[PAYPLUS-WH] No org_id in more_info tx=%s (token charge, skipping)", transaction_uid)
-+            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'skipped_no_org_id'}})
-+            return {"status": "ok", "detail": "no_org_id_in_more_info"}
-         sub = await db.subscriptions.find_one(
-             {"org_id": wh_org_id, "checkout_created_at": {"$exists": True}},
-             {"_id": 0})
+                     invoice_id = invoice.get('id', '')
+-                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f gi_doc=%s gi_url=%s",
+-                                org_id, invoice_id, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
++                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
++                                org_id, invoice_id, invoice_period, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
+                     if invoice_id and not invoice.get('gi_document_id'):
+                         try:
+                             from contractor_ops.invoicing import _try_create_gi_document
+                             gi_doc_id = await _try_create_gi_document(
+-                                db, org_id, invoice_id, amount, period_ym,
+-                                paid_until=paid_until_val,
++                                db, org_id, invoice_id, amount, invoice_period,
++                                paid_until=new_paid_until,
+                                 card_last4=inv_card_last4,
+                             )
+                             if gi_doc_id:
 diff --git a/backend/contractor_ops/invoicing.py b/backend/contractor_ops/invoicing.py
-index 6a598d1..1b220cd 100644
+index 1b220cd..17c9d35 100644
 --- a/backend/contractor_ops/invoicing.py
 +++ b/backend/contractor_ops/invoicing.py
-@@ -164,15 +164,28 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
+@@ -164,8 +164,6 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
          payment_date=today_str,
          card_last4=card_last4,
      )
-+    logger.info("[INVOICING:GI] Raw GI response keys: %s", list(gi_doc.keys()))
-+    logger.info("[INVOICING:GI] GI url field: %s", gi_doc.get('url'))
+-    logger.info("[INVOICING:GI] Raw GI response keys: %s", list(gi_doc.keys()))
+-    logger.info("[INVOICING:GI] GI url field: %s", gi_doc.get('url'))
      gi_document_id = gi_doc.get('id', '')
--    gi_download_url = gi_doc.get('url', {}).get('he', '')
-+    url_field = gi_doc.get('url', {})
-+    if isinstance(url_field, dict):
-+        gi_download_url = url_field.get('he', '') or url_field.get('origin', '') or url_field.get('en', '')
-+    elif isinstance(url_field, str) and url_field:
-+        gi_download_url = url_field
-+    else:
-+        gi_download_url = gi_doc.get('download_url', '') or gi_doc.get('shareUrl', '')
-+    if not gi_download_url and gi_document_id:
-+        from config import GI_BASE_URL
-+        base = (GI_BASE_URL or "https://api.greeninvoice.co.il/api/v1").replace("/api/v1", "")
-+        gi_download_url = f"{base}/api/v1/documents/{gi_document_id}/download"
-+        logger.warning("[INVOICING:GI] No URL in response, using fallback URL for doc=%s", gi_document_id)
-     if gi_document_id:
-         update_fields = {'gi_document_id': gi_document_id, 'gi_download_url': gi_download_url, 'updated_at': _now()}
-         await db.invoices.update_one(
-             {'id': invoice_id},
-             {'$set': update_fields}
-         )
--    logger.info("[INVOICING:GI] SUCCESS doc_id=%s for invoice %s", gi_document_id or '(none)', invoice_id)
-+    logger.info("[INVOICING:GI] SUCCESS doc_id=%s url=%s for invoice %s", gi_document_id or '(none)', bool(gi_download_url), invoice_id)
-     return gi_document_id
- 
- 
+     url_field = gi_doc.get('url', {})
+     if isinstance(url_field, dict):
