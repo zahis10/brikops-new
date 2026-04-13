@@ -352,17 +352,6 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
     if item_docs:
         await db.invoice_line_items.insert_many(item_docs)
 
-    period_end = (_end_of_month_utc(year, month) + timedelta(days=7)).isoformat()
-    await db.subscriptions.update_one(
-        {'org_id': org_id},
-        {'$set': {
-            'status': 'active',
-            'paid_until': period_end,
-            'updated_at': ts,
-        }},
-        upsert=True,
-    )
-
     await db.audit_events.insert_one({
         'id': str(uuid.uuid4()),
         'entity_type': 'invoice',
@@ -374,7 +363,6 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
             'period_ym': period_ym,
             'total_amount': final_amount,
             'line_item_count': len(item_docs),
-            'subscription_paid_until': period_end,
         },
         'created_at': ts,
     })
@@ -401,7 +389,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
     except Exception as e:
         logger.warning("[INVOICE-EMAIL] Failed for org=%s: %s", org_id, e)
 
-    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={final_amount}, paid_until={period_end}")
+    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={final_amount}")
     return invoice_doc
 
 
