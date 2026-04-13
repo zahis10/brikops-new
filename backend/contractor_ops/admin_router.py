@@ -389,22 +389,22 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
     now = datetime.now(timezone.utc).isoformat()
 
     if mode == 'standard':
-        from contractor_ops.billing import set_org_plan
-        await set_org_plan(org_id, 'standard', user['id'])
         await db.subscriptions.update_one(
             {'org_id': org_id},
             {'$unset': {'manual_override': ''}},
         )
+        from contractor_ops.billing import set_org_plan
+        await set_org_plan(org_id, 'standard', user['id'])
         refreshed_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'total_monthly': 1})
         new_total = refreshed_sub.get('total_monthly', 0) if refreshed_sub else 0
 
     elif mode == 'founder':
-        from contractor_ops.billing import set_org_plan
-        await set_org_plan(org_id, 'founder_6m', user['id'])
         await db.subscriptions.update_one(
             {'org_id': org_id},
             {'$unset': {'manual_override': ''}},
         )
+        from contractor_ops.billing import set_org_plan
+        await set_org_plan(org_id, 'founder_6m', user['id'])
         new_total = 499
 
     else:
