@@ -1216,7 +1216,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                 },
                 '$unset': {
                     'pending_plan_id': '',
-                    'manual_override': '',
                 },
             },
             upsert=True,
@@ -1253,7 +1252,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                 '$unset': {
                     'plan_locked_until': '',
                     'pending_plan_id': '',
-                    'manual_override': '',
                 },
             },
             upsert=True,
