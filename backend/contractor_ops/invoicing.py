@@ -167,14 +167,24 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
     logger.info("[INVOICING:GI] Raw GI response keys: %s", list(gi_doc.keys()))
     logger.info("[INVOICING:GI] GI url field: %s", gi_doc.get('url'))
     gi_document_id = gi_doc.get('id', '')
-    gi_download_url = gi_doc.get('url', {}).get('he', '')
+    url_field = gi_doc.get('url', {})
+    if isinstance(url_field, dict):
+        gi_download_url = url_field.get('he', '') or url_field.get('origin', '') or url_field.get('en', '')
+    elif isinstance(url_field, str) and url_field:
+        gi_download_url = url_field
+    else:
+        gi_download_url = gi_doc.get('download_url', '') or gi_doc.get('shareUrl', '')
+    if not gi_download_url and gi_document_id:
+        from config import GI_BASE_URL
+        gi_download_url = f"https://www.greeninvoice.co.il/api/v1/documents/{gi_document_id}/download"
+        logger.warning("[INVOICING:GI] No URL in response, using fallback URL for doc=%s", gi_document_id)
     if gi_document_id:
         update_fields = {'gi_document_id': gi_document_id, 'gi_download_url': gi_download_url, 'updated_at': _now()}
         await db.invoices.update_one(
             {'id': invoice_id},
             {'$set': update_fields}
         )
-    logger.info("[INVOICING:GI] SUCCESS doc_id=%s for invoice %s", gi_document_id or '(none)', invoice_id)
+    logger.info("[INVOICING:GI] SUCCESS doc_id=%s url=%s for invoice %s", gi_document_id or '(none)', bool(gi_download_url), invoice_id)
     return gi_document_id
 
 

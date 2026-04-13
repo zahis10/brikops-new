@@ -1092,7 +1092,28 @@ async def billing_run_renewals_internal() -> dict:
                         card_last4=inv_card_last4,
                         override_amount=amount,
                     )
-                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f", org_id, invoice.get('id', ''), amount)
+                    invoice_id = invoice.get('id', '')
+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f gi_doc=%s gi_url=%s",
+                                org_id, invoice_id, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
+                    if invoice_id and not invoice.get('gi_document_id'):
+                        try:
+                            from contractor_ops.invoicing import _try_create_gi_document
+                            gi_doc_id = await _try_create_gi_document(
+                                db, org_id, invoice_id, amount, period_ym,
+                                paid_until=paid_until_val,
+                                card_last4=inv_card_last4,
+                            )
+                            if gi_doc_id:
+                                logger.info("[RENEWALS] GI document created: %s for org=%s", gi_doc_id, org_id)
+                        except Exception as gi_err:
+                            logger.warning("[RENEWALS] GI document creation failed for org=%s: %s", org_id, str(gi_err))
+                    if invoice_id and invoice.get('status') != 'paid':
+                        try:
+                            from contractor_ops.invoicing import mark_invoice_paid
+                            await mark_invoice_paid(org_id, invoice_id, 'system_renewal')
+                            logger.info("[RENEWALS] Invoice %s marked paid for org=%s", invoice_id, org_id)
+                        except Exception as mp_inv_err:
+                            logger.warning("[RENEWALS] mark_invoice_paid failed for org=%s invoice=%s: %s", org_id, invoice_id, str(mp_inv_err))
                 except Exception as inv_err:
                     logger.error("[RENEWALS] Invoice generation FAILED org=%s amount=%.2f error=%s", org_id, amount, str(inv_err))
                     try:
