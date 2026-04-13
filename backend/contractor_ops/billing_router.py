@@ -1454,9 +1454,9 @@ async def billing_webhook_payplus(request: Request):
         if wh_org_id.startswith("org_id="):
             wh_org_id = wh_org_id.split("=", 1)[1]
         if not wh_org_id:
-            logger.error("[PAYPLUS-WH] No org_id in more_info tx=%s", transaction_uid)
-            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_org_id'}})
-            raise HTTPException(status_code=500, detail="Missing org identifier")
+            logger.warning("[PAYPLUS-WH] No org_id in more_info tx=%s (token charge, skipping)", transaction_uid)
+            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'skipped_no_org_id'}})
+            return {"status": "ok", "detail": "no_org_id_in_more_info"}
         sub = await db.subscriptions.find_one(
             {"org_id": wh_org_id, "checkout_created_at": {"$exists": True}},
             {"_id": 0})
