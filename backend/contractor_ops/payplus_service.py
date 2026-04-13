@@ -151,15 +151,17 @@ async def charge_token(
         desc = data.get("results", {}).get("description", "Unknown error")
         raise PayPlusError(f"PayPlus charge failed: {desc}")
 
-    transaction = data.get("data", {})
-    if isinstance(transaction, dict):
-        tx_uid = (
-            transaction.get("transaction_uid")
-            or transaction.get("number")
-            or data.get("transaction_uid")
-            or ""
-        )
-        status = transaction.get("status_code")
+    outer = data.get("data", {})
+    inner_tx = outer.get("transaction", {}) if isinstance(outer, dict) else {}
+
+    if isinstance(inner_tx, dict) and inner_tx:
+        tx_uid = inner_tx.get("uid") or inner_tx.get("transaction_uid") or inner_tx.get("number") or ""
+        status = inner_tx.get("status_code")
+        if status is None:
+            status = outer.get("status_code", "")
+    elif isinstance(outer, dict):
+        tx_uid = outer.get("transaction_uid") or outer.get("uid") or outer.get("number") or ""
+        status = outer.get("status_code")
         if status is None:
             status = data.get("status_code", "")
     else:
