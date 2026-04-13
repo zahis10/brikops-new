@@ -1,41 +1,83 @@
-diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index 124fcf9..e8162a1 100644
---- a/backend/contractor_ops/billing_router.py
-+++ b/backend/contractor_ops/billing_router.py
-@@ -1088,11 +1088,10 @@ async def billing_run_renewals_internal() -> dict:
-                 try:
-                     updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
-                     new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
--                    invoice_period = new_paid_until[:7] if new_paid_until else period_ym
-                     inv_card_last4 = billing_data.get('card_last4', '')
-                     invoice = await generate_invoice(
-                         org_id,
--                        invoice_period,
-+                        period_ym,
-                         'system_renewal',
-                         paid_until=new_paid_until,
-                         card_last4=inv_card_last4,
-@@ -1100,12 +1099,12 @@ async def billing_run_renewals_internal() -> dict:
-                     )
-                     invoice_id = invoice.get('id', '')
-                     logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
--                                org_id, invoice_id, invoice_period, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
-+                                org_id, invoice_id, period_ym, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
-                     if invoice_id and not invoice.get('gi_document_id'):
-                         try:
-                             from contractor_ops.invoicing import _try_create_gi_document
-                             gi_doc_id = await _try_create_gi_document(
--                                db, org_id, invoice_id, amount, invoice_period,
-+                                db, org_id, invoice_id, amount, period_ym,
-                                 paid_until=new_paid_until,
-                                 card_last4=inv_card_last4,
-                             )
-@@ -1669,7 +1668,7 @@ async def billing_webhook_payplus(request: Request):
-     })
-     try:
-         from contractor_ops.invoicing import generate_invoice, mark_invoice_paid
--        period = paid_until[:7]
-+        period = datetime.now(timezone.utc).strftime("%Y-%m")
-         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
-         invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
-         if invoice and invoice.get('id') and invoice.get('status') != 'paid':
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index 88efb23..8a7d5f6 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -391,13 +391,21 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
+     if mode == 'standard':
+         from contractor_ops.billing import set_org_plan
+         await set_org_plan(org_id, 'standard', user['id'])
++        await db.subscriptions.update_one(
++            {'org_id': org_id},
++            {'$unset': {'manual_override': ''}},
++        )
+         refreshed_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'total_monthly': 1})
+         new_total = refreshed_sub.get('total_monthly', 0) if refreshed_sub else 0
+ 
+     elif mode == 'founder':
+         from contractor_ops.billing import set_org_plan
+         await set_org_plan(org_id, 'founder_6m', user['id'])
+-        new_total = 500
++        await db.subscriptions.update_one(
++            {'org_id': org_id},
++            {'$unset': {'manual_override': ''}},
++        )
++        new_total = 499
+ 
+     else:
+         custom_amount = body.get('custom_amount')
+@@ -406,11 +414,17 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
+         custom_amount = int(custom_amount)
+         await db.subscriptions.update_one(
+             {'org_id': org_id},
+-            {'$set': {
+-                'manual_override.total_monthly': custom_amount,
+-                'total_monthly': custom_amount,
+-                'updated_at': now,
+-            }},
++            {
++                '$set': {
++                    'manual_override.total_monthly': custom_amount,
++                    'total_monthly': custom_amount,
++                    'plan_id': 'custom',
++                    'updated_at': now,
++                },
++                '$unset': {
++                    'plan_locked_until': '',
++                },
++            },
+         )
+         all_pbs = await db.project_billing.find(
+             {'org_id': org_id, 'status': 'active'},
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index 0a948f5..3ef0bba 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -1216,19 +1216,12 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
+                 },
+                 '$unset': {
+                     'pending_plan_id': '',
++                    'manual_override': '',
+                 },
+             },
+             upsert=True,
+         )
+ 
+-        sub_check = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
+-        mo_amount = (sub_check or {}).get('manual_override', {}).get('total_monthly')
+-        if mo_amount and mo_amount > 0:
+-            await db.subscriptions.update_one(
+-                {'org_id': org_id},
+-                {'$set': {'total_monthly': mo_amount}}
+-            )
+-
+         all_pbs = await db.project_billing.find(
+             {'org_id': org_id, 'status': 'active'},
+             {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
+@@ -1260,6 +1253,7 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
+                 '$unset': {
+                     'plan_locked_until': '',
+                     'pending_plan_id': '',
++                    'manual_override': '',
+                 },
+             },
+             upsert=True,
