@@ -1859,9 +1859,9 @@ export default function OrgBillingPage() {
                         <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>
                       )}
                     </div>
-                    {inv.gi_download_url && (
+                    {(inv.gi_download_url || inv.gi_document_id) && (
                       <a
-                        href={inv.gi_download_url}
+                        href={inv.gi_download_url || `https://www.greeninvoice.co.il/api/v1/documents/${inv.gi_document_id}/download`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg text-xs transition-colors"

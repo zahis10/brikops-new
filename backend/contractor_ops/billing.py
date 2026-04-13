@@ -965,10 +965,15 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         {'org_id': org_id}, {'_id': 0}
     ).to_list(1000)
 
-    total_monthly = sum(
-        pb.get('monthly_total', 0) for pb in project_billings
-        if pb.get('status') == 'active'
-    )
+    mo = (effective_sub or {}).get('manual_override') or {}
+    mo_total = mo.get('total_monthly')
+    if mo_total and mo_total > 0:
+        total_monthly = mo_total
+    else:
+        total_monthly = sum(
+            pb.get('monthly_total', 0) for pb in project_billings
+            if pb.get('status') == 'active'
+        )
 
     projects = []
     billed_project_ids = set()
