@@ -1088,11 +1088,10 @@ async def billing_run_renewals_internal() -> dict:
                 try:
                     updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
                     new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
-                    invoice_period = new_paid_until[:7] if new_paid_until else period_ym
                     inv_card_last4 = billing_data.get('card_last4', '')
                     invoice = await generate_invoice(
                         org_id,
-                        invoice_period,
+                        period_ym,
                         'system_renewal',
                         paid_until=new_paid_until,
                         card_last4=inv_card_last4,
@@ -1100,12 +1099,12 @@ async def billing_run_renewals_internal() -> dict:
                     )
                     invoice_id = invoice.get('id', '')
                     logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
-                                org_id, invoice_id, invoice_period, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
+                                org_id, invoice_id, period_ym, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
                     if invoice_id and not invoice.get('gi_document_id'):
                         try:
                             from contractor_ops.invoicing import _try_create_gi_document
                             gi_doc_id = await _try_create_gi_document(
-                                db, org_id, invoice_id, amount, invoice_period,
+                                db, org_id, invoice_id, amount, period_ym,
                                 paid_until=new_paid_until,
                                 card_last4=inv_card_last4,
                             )
@@ -1669,7 +1668,7 @@ async def billing_webhook_payplus(request: Request):
     })
     try:
         from contractor_ops.invoicing import generate_invoice, mark_invoice_paid
-        period = paid_until[:7]
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
         invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
         if invoice and invoice.get('id') and invoice.get('status') != 'paid':

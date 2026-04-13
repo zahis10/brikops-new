@@ -1,69 +1,41 @@
-diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index ec47244..0a948f5 100644
---- a/backend/contractor_ops/billing.py
-+++ b/backend/contractor_ops/billing.py
-@@ -1924,7 +1924,6 @@ async def mark_paid(org_id: str, actor_id: str, request_id: str = None, cycle: s
-     update_fields = {
-         'status': new_status,
-         'paid_until': new_paid_until_iso,
--        'auto_renew': False,
-         'next_charge_at': None,
-         'updated_at': now,
-     }
 diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index 500573c..124fcf9 100644
+index 124fcf9..e8162a1 100644
 --- a/backend/contractor_ops/billing_router.py
 +++ b/backend/contractor_ops/billing_router.py
-@@ -1081,26 +1081,32 @@ async def billing_run_renewals_internal() -> dict:
- 
-             try:
-                 await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal tx={transaction_uid} amount={amount}")
-+                await db.subscriptions.update_one(
-+                    {'org_id': org_id},
-+                    {'$set': {'auto_renew': True}}
-+                )
+@@ -1088,11 +1088,10 @@ async def billing_run_renewals_internal() -> dict:
                  try:
--                    paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
-+                    updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
-+                    new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
-+                    invoice_period = new_paid_until[:7] if new_paid_until else period_ym
+                     updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
+                     new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
+-                    invoice_period = new_paid_until[:7] if new_paid_until else period_ym
                      inv_card_last4 = billing_data.get('card_last4', '')
                      invoice = await generate_invoice(
                          org_id,
--                        period_ym,
-+                        invoice_period,
+-                        invoice_period,
++                        period_ym,
                          'system_renewal',
--                        paid_until=paid_until_val,
-+                        paid_until=new_paid_until,
+                         paid_until=new_paid_until,
                          card_last4=inv_card_last4,
-                         override_amount=amount,
+@@ -1100,12 +1099,12 @@ async def billing_run_renewals_internal() -> dict:
                      )
                      invoice_id = invoice.get('id', '')
--                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f gi_doc=%s gi_url=%s",
--                                org_id, invoice_id, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
-+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
-+                                org_id, invoice_id, invoice_period, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
+                     logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
+-                                org_id, invoice_id, invoice_period, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
++                                org_id, invoice_id, period_ym, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
                      if invoice_id and not invoice.get('gi_document_id'):
                          try:
                              from contractor_ops.invoicing import _try_create_gi_document
                              gi_doc_id = await _try_create_gi_document(
--                                db, org_id, invoice_id, amount, period_ym,
--                                paid_until=paid_until_val,
-+                                db, org_id, invoice_id, amount, invoice_period,
-+                                paid_until=new_paid_until,
+-                                db, org_id, invoice_id, amount, invoice_period,
++                                db, org_id, invoice_id, amount, period_ym,
+                                 paid_until=new_paid_until,
                                  card_last4=inv_card_last4,
                              )
-                             if gi_doc_id:
-diff --git a/backend/contractor_ops/invoicing.py b/backend/contractor_ops/invoicing.py
-index 1b220cd..17c9d35 100644
---- a/backend/contractor_ops/invoicing.py
-+++ b/backend/contractor_ops/invoicing.py
-@@ -164,8 +164,6 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
-         payment_date=today_str,
-         card_last4=card_last4,
-     )
--    logger.info("[INVOICING:GI] Raw GI response keys: %s", list(gi_doc.keys()))
--    logger.info("[INVOICING:GI] GI url field: %s", gi_doc.get('url'))
-     gi_document_id = gi_doc.get('id', '')
-     url_field = gi_doc.get('url', {})
-     if isinstance(url_field, dict):
+@@ -1669,7 +1668,7 @@ async def billing_webhook_payplus(request: Request):
+     })
+     try:
+         from contractor_ops.invoicing import generate_invoice, mark_invoice_paid
+-        period = paid_until[:7]
++        period = datetime.now(timezone.utc).strftime("%Y-%m")
+         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
+         invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
+         if invoice and invoice.get('id') and invoice.get('status') != 'paid':
