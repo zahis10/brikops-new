@@ -405,7 +405,7 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
             {'org_id': org_id},
             {'$unset': {'manual_override': ''}},
         )
-        new_total = 500
+        new_total = 499
 
     else:
         custom_amount = body.get('custom_amount')
