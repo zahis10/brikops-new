@@ -912,7 +912,7 @@ def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str,
 async def billing_run_renewals_internal() -> dict:
     """Core renewal logic — called by both super_admin endpoint and cron."""
     import uuid
-    from datetime import timedelta
+    from datetime import datetime, timedelta, timezone
     from contractor_ops.billing import (
         BILLING_V1_ENABLED, get_subscription, mark_paid,
         get_billable_amount, apply_pending_decreases,
@@ -1109,11 +1109,14 @@ async def billing_run_renewals_internal() -> dict:
                             logger.warning("[RENEWALS] GI document creation failed for org=%s: %s", org_id, str(gi_err))
                     if invoice_id and invoice.get('status') != 'paid':
                         try:
-                            from contractor_ops.invoicing import mark_invoice_paid
-                            await mark_invoice_paid(org_id, invoice_id, 'system_renewal')
+                            ts_now = datetime.now(timezone.utc).isoformat()
+                            await db.invoices.update_one(
+                                {'id': invoice_id},
+                                {'$set': {'status': 'paid', 'paid_at': ts_now, 'updated_at': ts_now}}
+                            )
                             logger.info("[RENEWALS] Invoice %s marked paid for org=%s", invoice_id, org_id)
                         except Exception as mp_inv_err:
-                            logger.warning("[RENEWALS] mark_invoice_paid failed for org=%s invoice=%s: %s", org_id, invoice_id, str(mp_inv_err))
+                            logger.warning("[RENEWALS] Invoice paid update failed for org=%s invoice=%s: %s", org_id, invoice_id, str(mp_inv_err))
                 except Exception as inv_err:
                     logger.error("[RENEWALS] Invoice generation FAILED org=%s amount=%.2f error=%s", org_id, amount, str(inv_err))
                     try:
