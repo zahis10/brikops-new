@@ -1,387 +1,94 @@
+diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
+index cc1b5f8..500573c 100644
+--- a/backend/contractor_ops/billing_router.py
++++ b/backend/contractor_ops/billing_router.py
+@@ -912,7 +912,7 @@ def _send_billing_alert_email(org_name: str, amount: float, gi_document_id: str,
+ async def billing_run_renewals_internal() -> dict:
+     """Core renewal logic — called by both super_admin endpoint and cron."""
+     import uuid
+-    from datetime import timedelta
++    from datetime import datetime, timedelta, timezone
+     from contractor_ops.billing import (
+         BILLING_V1_ENABLED, get_subscription, mark_paid,
+         get_billable_amount, apply_pending_decreases,
+@@ -1092,7 +1092,31 @@ async def billing_run_renewals_internal() -> dict:
+                         card_last4=inv_card_last4,
+                         override_amount=amount,
+                     )
+-                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f", org_id, invoice.get('id', ''), amount)
++                    invoice_id = invoice.get('id', '')
++                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f gi_doc=%s gi_url=%s",
++                                org_id, invoice_id, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
++                    if invoice_id and not invoice.get('gi_document_id'):
++                        try:
++                            from contractor_ops.invoicing import _try_create_gi_document
++                            gi_doc_id = await _try_create_gi_document(
++                                db, org_id, invoice_id, amount, period_ym,
++                                paid_until=paid_until_val,
++                                card_last4=inv_card_last4,
++                            )
++                            if gi_doc_id:
++                                logger.info("[RENEWALS] GI document created: %s for org=%s", gi_doc_id, org_id)
++                        except Exception as gi_err:
++                            logger.warning("[RENEWALS] GI document creation failed for org=%s: %s", org_id, str(gi_err))
++                    if invoice_id and invoice.get('status') != 'paid':
++                        try:
++                            ts_now = datetime.now(timezone.utc).isoformat()
++                            await db.invoices.update_one(
++                                {'id': invoice_id},
++                                {'$set': {'status': 'paid', 'paid_at': ts_now, 'updated_at': ts_now}}
++                            )
++                            logger.info("[RENEWALS] Invoice %s marked paid for org=%s", invoice_id, org_id)
++                        except Exception as mp_inv_err:
++                            logger.warning("[RENEWALS] Invoice paid update failed for org=%s invoice=%s: %s", org_id, invoice_id, str(mp_inv_err))
+                 except Exception as inv_err:
+                     logger.error("[RENEWALS] Invoice generation FAILED org=%s amount=%.2f error=%s", org_id, amount, str(inv_err))
+                     try:
+@@ -1454,9 +1478,9 @@ async def billing_webhook_payplus(request: Request):
+         if wh_org_id.startswith("org_id="):
+             wh_org_id = wh_org_id.split("=", 1)[1]
+         if not wh_org_id:
+-            logger.error("[PAYPLUS-WH] No org_id in more_info tx=%s", transaction_uid)
+-            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'rejected_no_org_id'}})
+-            raise HTTPException(status_code=500, detail="Missing org identifier")
++            logger.warning("[PAYPLUS-WH] No org_id in more_info tx=%s (token charge, skipping)", transaction_uid)
++            await db.payplus_webhook_log.update_one({'id': log_id}, {'$set': {'result': 'skipped_no_org_id'}})
++            return {"status": "ok", "detail": "no_org_id_in_more_info"}
+         sub = await db.subscriptions.find_one(
+             {"org_id": wh_org_id, "checkout_created_at": {"$exists": True}},
+             {"_id": 0})
 diff --git a/backend/contractor_ops/invoicing.py b/backend/contractor_ops/invoicing.py
-index 77a6fc0..1b220cd 100644
+index 6a598d1..1b220cd 100644
 --- a/backend/contractor_ops/invoicing.py
 +++ b/backend/contractor_ops/invoicing.py
-@@ -176,7 +176,8 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
-         gi_download_url = gi_doc.get('download_url', '') or gi_doc.get('shareUrl', '')
-     if not gi_download_url and gi_document_id:
-         from config import GI_BASE_URL
--        gi_download_url = f"https://www.greeninvoice.co.il/api/v1/documents/{gi_document_id}/download"
+@@ -164,15 +164,28 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
+         payment_date=today_str,
+         card_last4=card_last4,
+     )
++    logger.info("[INVOICING:GI] Raw GI response keys: %s", list(gi_doc.keys()))
++    logger.info("[INVOICING:GI] GI url field: %s", gi_doc.get('url'))
+     gi_document_id = gi_doc.get('id', '')
+-    gi_download_url = gi_doc.get('url', {}).get('he', '')
++    url_field = gi_doc.get('url', {})
++    if isinstance(url_field, dict):
++        gi_download_url = url_field.get('he', '') or url_field.get('origin', '') or url_field.get('en', '')
++    elif isinstance(url_field, str) and url_field:
++        gi_download_url = url_field
++    else:
++        gi_download_url = gi_doc.get('download_url', '') or gi_doc.get('shareUrl', '')
++    if not gi_download_url and gi_document_id:
++        from config import GI_BASE_URL
 +        base = (GI_BASE_URL or "https://api.greeninvoice.co.il/api/v1").replace("/api/v1", "")
 +        gi_download_url = f"{base}/api/v1/documents/{gi_document_id}/download"
-         logger.warning("[INVOICING:GI] No URL in response, using fallback URL for doc=%s", gi_document_id)
++        logger.warning("[INVOICING:GI] No URL in response, using fallback URL for doc=%s", gi_document_id)
      if gi_document_id:
          update_fields = {'gi_document_id': gi_document_id, 'gi_download_url': gi_download_url, 'updated_at': _now()}
-diff --git a/review.txt b/review.txt
-index 6d5f3c1..e69de29 100644
---- a/review.txt
-+++ b/review.txt
-@@ -1,368 +0,0 @@
--diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
--index 0e1ded0..5f71b82 100644
----- a/backend/contractor_ops/payplus_service.py
--+++ b/backend/contractor_ops/payplus_service.py
--@@ -151,15 +151,17 @@ async def charge_token(
--         desc = data.get("results", {}).get("description", "Unknown error")
--         raise PayPlusError(f"PayPlus charge failed: {desc}")
-- 
---    transaction = data.get("data", {})
---    if isinstance(transaction, dict):
---        tx_uid = (
---            transaction.get("transaction_uid")
---            or transaction.get("number")
---            or data.get("transaction_uid")
---            or ""
---        )
---        status = transaction.get("status_code")
--+    outer = data.get("data", {})
--+    inner_tx = outer.get("transaction", {}) if isinstance(outer, dict) else {}
--+
--+    if isinstance(inner_tx, dict) and inner_tx:
--+        tx_uid = inner_tx.get("uid") or inner_tx.get("transaction_uid") or inner_tx.get("number") or ""
--+        status = inner_tx.get("status_code")
--+        if status is None:
--+            status = outer.get("status_code", "")
--+    elif isinstance(outer, dict):
--+        tx_uid = outer.get("transaction_uid") or outer.get("uid") or outer.get("number") or ""
--+        status = outer.get("status_code")
--         if status is None:
--             status = data.get("status_code", "")
--     else:
--diff --git a/review.txt b/review.txt
--index 7798772..e69de29 100644
----- a/review.txt
--+++ b/review.txt
--@@ -1,332 +0,0 @@
---diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
---index b704cb6..0e1ded0 100644
------ a/backend/contractor_ops/payplus_service.py
---+++ b/backend/contractor_ops/payplus_service.py
---@@ -159,11 +159,9 @@ async def charge_token(
---             or data.get("transaction_uid")
---             or ""
---         )
----        status = (
----            transaction.get("status_code")
----            or data.get("status_code")
----            or ""
----        )
---+        status = transaction.get("status_code")
---+        if status is None:
---+            status = data.get("status_code", "")
---     else:
---         tx_uid = data.get("transaction_uid", "")
---         status = data.get("status_code", "")
---diff --git a/review.txt b/review.txt
---index 3ba9bd6..e69de29 100644
------ a/review.txt
---+++ b/review.txt
---@@ -1,308 +0,0 @@
----diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
----index d0fc0c0..cc1b5f8 100644
------- a/backend/contractor_ops/billing_router.py
----+++ b/backend/contractor_ops/billing_router.py
----@@ -3,8 +3,10 @@ from fastapi import APIRouter, HTTPException, Depends, Request
---- 
---- from contractor_ops.router import get_db, get_current_user, _is_super_admin, logger
---- from contractor_ops.billing import get_billing_info
----+from config import CRON_SECRET
---- 
---- router = APIRouter(prefix="/api")
----+cron_router = APIRouter(tags=["cron"])
---- 
---- 
---- @router.get("/billing/me")
----@@ -1157,6 +1159,18 @@ async def billing_run_renewals_internal() -> dict:
----     return results
---- 
---- 
----+@cron_router.post("/internal/cron/daily-renewals")
----+async def cron_daily_renewals(request: Request):
----+    cron_secret = request.headers.get("X-Cron-Secret", "")
----+    if not CRON_SECRET or cron_secret != CRON_SECRET:
----+        logger.warning("[RENEWAL-CRON] Invalid or missing X-Cron-Secret")
----+        raise HTTPException(status_code=403, detail="Forbidden")
----+    from contractor_ops.billing import BILLING_V1_ENABLED
----+    if not BILLING_V1_ENABLED:
----+        raise HTTPException(status_code=404, detail="Not found")
----+    return await billing_run_renewals_internal()
----+
----+
---- @router.post("/billing/run-renewals")
---- async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
----     from contractor_ops.billing import BILLING_V1_ENABLED
----@@ -1434,10 +1448,9 @@ async def billing_webhook_payplus(request: Request):
----         # PayPlus confirmed: no server-side transaction check endpoint exists.
----         # Verification is via webhook callback + HMAC hash validation.
----         # more_info org_id match used as additional identity check.
-----        wh_org_id = (
-----            body.get("more_info", "") or
-----            body.get("transaction", {}).get("more_info", "")
-----        ).strip()
----+        _mi_root = body.get("more_info")
----+        _mi_tx = body.get("transaction", {}).get("more_info")
----+        wh_org_id = (_mi_root or _mi_tx or "").strip()
----         if wh_org_id.startswith("org_id="):
----             wh_org_id = wh_org_id.split("=", 1)[1]
----         if not wh_org_id:
----@@ -1470,10 +1483,9 @@ async def billing_webhook_payplus(request: Request):
----     lookup_uid = verified_page_uid or page_request_uid
----     sub = await db.subscriptions.find_one({'payplus_page_request_uid': lookup_uid}, {'_id': 0})
----     if not sub:
-----        wh_org_id = (
-----            body.get("more_info", "") or
-----            body.get("transaction", {}).get("more_info", "")
-----        ).strip()
----+        _mi_root = body.get("more_info")
----+        _mi_tx = body.get("transaction", {}).get("more_info")
----+        wh_org_id = (_mi_root or _mi_tx or "").strip()
----         if wh_org_id.startswith("org_id="):
----             wh_org_id = wh_org_id.split("=", 1)[1]
----         if wh_org_id:
----diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
----index f4fd3c6..b704cb6 100644
------- a/backend/contractor_ops/payplus_service.py
----+++ b/backend/contractor_ops/payplus_service.py
----@@ -152,10 +152,24 @@ async def charge_token(
----         raise PayPlusError(f"PayPlus charge failed: {desc}")
---- 
----     transaction = data.get("data", {})
-----    return {
-----        "transaction_uid": transaction.get("transaction_uid", ""),
-----        "status_code": transaction.get("status_code", ""),
-----    }
----+    if isinstance(transaction, dict):
----+        tx_uid = (
----+            transaction.get("transaction_uid")
----+            or transaction.get("number")
----+            or data.get("transaction_uid")
----+            or ""
----+        )
----+        status = (
----+            transaction.get("status_code")
----+            or data.get("status_code")
----+            or ""
----+        )
----+    else:
----+        tx_uid = data.get("transaction_uid", "")
----+        status = data.get("status_code", "")
----+
----+    logger.info("[PAYPLUS] Token charge parsed org=%s tx=%s status=%s", org_id, tx_uid, status)
----+    return {"transaction_uid": str(tx_uid), "status_code": str(status)}
---- 
---- 
---- async def refund_transaction(transaction_uid: str, amount: float) -> dict:
----diff --git a/backend/server.py b/backend/server.py
----index 5dc50ab..4d7838a 100644
------- a/backend/server.py
----+++ b/backend/server.py
----@@ -477,8 +477,9 @@ app.include_router(tasks_router)
---- from contractor_ops.admin_router import router as admin_router
---- app.include_router(admin_router)
---- 
-----from contractor_ops.billing_router import router as billing_router
----+from contractor_ops.billing_router import router as billing_router, cron_router as billing_cron_router
---- app.include_router(billing_router)
----+app.include_router(billing_cron_router)
---- 
---- from contractor_ops.deletion_router import router as deletion_router, set_deletion_otp_service
---- set_deletion_otp_service(otp_service)
----diff --git a/review.txt b/review.txt
----index 912f1e6..b53d2cd 100644
------- a/review.txt
----+++ b/review.txt
----@@ -1,40 +1,155 @@
-----diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-----index 449a2e5..ec47244 100644
-------- a/backend/contractor_ops/billing.py
-----+++ b/backend/contractor_ops/billing.py
-----@@ -965,10 +965,15 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
-----         {'org_id': org_id}, {'_id': 0}
-----     ).to_list(1000)
----- 
------    total_monthly = sum(
------        pb.get('monthly_total', 0) for pb in project_billings
------        if pb.get('status') == 'active'
------    )
-----+    mo = (effective_sub or {}).get('manual_override') or {}
-----+    mo_total = mo.get('total_monthly')
-----+    if mo_total and mo_total > 0:
-----+        total_monthly = mo_total
-----+    else:
-----+        total_monthly = sum(
-----+            pb.get('monthly_total', 0) for pb in project_billings
-----+            if pb.get('status') == 'active'
----+diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
----+index d0fc0c0..cc1b5f8 100644
----+--- a/backend/contractor_ops/billing_router.py
----++++ b/backend/contractor_ops/billing_router.py
----+@@ -3,8 +3,10 @@ from fastapi import APIRouter, HTTPException, Depends, Request
----+ 
----+ from contractor_ops.router import get_db, get_current_user, _is_super_admin, logger
----+ from contractor_ops.billing import get_billing_info
----++from config import CRON_SECRET
----+ 
----+ router = APIRouter(prefix="/api")
----++cron_router = APIRouter(tags=["cron"])
----+ 
----+ 
----+ @router.get("/billing/me")
----+@@ -1157,6 +1159,18 @@ async def billing_run_renewals_internal() -> dict:
----+     return results
----+ 
----+ 
----++@cron_router.post("/internal/cron/daily-renewals")
----++async def cron_daily_renewals(request: Request):
----++    cron_secret = request.headers.get("X-Cron-Secret", "")
----++    if not CRON_SECRET or cron_secret != CRON_SECRET:
----++        logger.warning("[RENEWAL-CRON] Invalid or missing X-Cron-Secret")
----++        raise HTTPException(status_code=403, detail="Forbidden")
----++    from contractor_ops.billing import BILLING_V1_ENABLED
----++    if not BILLING_V1_ENABLED:
----++        raise HTTPException(status_code=404, detail="Not found")
----++    return await billing_run_renewals_internal()
----++
----++
----+ @router.post("/billing/run-renewals")
----+ async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
----+     from contractor_ops.billing import BILLING_V1_ENABLED
----+@@ -1434,10 +1448,9 @@ async def billing_webhook_payplus(request: Request):
----+         # PayPlus confirmed: no server-side transaction check endpoint exists.
----+         # Verification is via webhook callback + HMAC hash validation.
----+         # more_info org_id match used as additional identity check.
----+-        wh_org_id = (
----+-            body.get("more_info", "") or
----+-            body.get("transaction", {}).get("more_info", "")
----+-        ).strip()
----++        _mi_root = body.get("more_info")
----++        _mi_tx = body.get("transaction", {}).get("more_info")
----++        wh_org_id = (_mi_root or _mi_tx or "").strip()
----+         if wh_org_id.startswith("org_id="):
----+             wh_org_id = wh_org_id.split("=", 1)[1]
----+         if not wh_org_id:
----+@@ -1470,10 +1483,9 @@ async def billing_webhook_payplus(request: Request):
----+     lookup_uid = verified_page_uid or page_request_uid
----+     sub = await db.subscriptions.find_one({'payplus_page_request_uid': lookup_uid}, {'_id': 0})
----+     if not sub:
----+-        wh_org_id = (
----+-            body.get("more_info", "") or
----+-            body.get("transaction", {}).get("more_info", "")
----+-        ).strip()
----++        _mi_root = body.get("more_info")
----++        _mi_tx = body.get("transaction", {}).get("more_info")
----++        wh_org_id = (_mi_root or _mi_tx or "").strip()
----+         if wh_org_id.startswith("org_id="):
----+             wh_org_id = wh_org_id.split("=", 1)[1]
----+         if wh_org_id:
----+diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
----+index f4fd3c6..b704cb6 100644
----+--- a/backend/contractor_ops/payplus_service.py
----++++ b/backend/contractor_ops/payplus_service.py
----+@@ -152,10 +152,24 @@ async def charge_token(
----+         raise PayPlusError(f"PayPlus charge failed: {desc}")
----+ 
----+     transaction = data.get("data", {})
----+-    return {
----+-        "transaction_uid": transaction.get("transaction_uid", ""),
----+-        "status_code": transaction.get("status_code", ""),
----+-    }
----++    if isinstance(transaction, dict):
----++        tx_uid = (
----++            transaction.get("transaction_uid")
----++            or transaction.get("number")
----++            or data.get("transaction_uid")
----++            or ""
----++        )
----++        status = (
----++            transaction.get("status_code")
----++            or data.get("status_code")
----++            or ""
---- +        )
----++    else:
----++        tx_uid = data.get("transaction_uid", "")
----++        status = data.get("status_code", "")
----++
----++    logger.info("[PAYPLUS] Token charge parsed org=%s tx=%s status=%s", org_id, tx_uid, status)
----++    return {"transaction_uid": str(tx_uid), "status_code": str(status)}
----+ 
----+ 
----+ async def refund_transaction(transaction_uid: str, amount: float) -> dict:
----+diff --git a/backend/server.py b/backend/server.py
----+index 5dc50ab..4d7838a 100644
----+--- a/backend/server.py
----++++ b/backend/server.py
----+@@ -477,8 +477,9 @@ app.include_router(tasks_router)
----+ from contractor_ops.admin_router import router as admin_router
----+ app.include_router(admin_router)
----+ 
----+-from contractor_ops.billing_router import router as billing_router
----++from contractor_ops.billing_router import router as billing_router, cron_router as billing_cron_router
----+ app.include_router(billing_router)
----++app.include_router(billing_cron_router)
----  
-----     projects = []
-----     billed_project_ids = set()
-----diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-----index f1d94b5..154bdd8 100644
-------- a/frontend/src/pages/OrgBillingPage.js
-----+++ b/frontend/src/pages/OrgBillingPage.js
-----@@ -1859,9 +1859,9 @@ export default function OrgBillingPage() {
-----                         <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>
-----                       )}
-----                     </div>
------                    {inv.gi_download_url && (
-----+                    {(inv.gi_download_url || inv.gi_document_id) && (
-----                       <a
------                        href={inv.gi_download_url}
-----+                        href={inv.gi_download_url || `https://www.greeninvoice.co.il/api/v1/documents/${inv.gi_document_id}/download`}
-----                         target="_blank"
-----                         rel="noopener noreferrer"
-----                         className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg text-xs transition-colors"
----+ from contractor_ops.deletion_router import router as deletion_router, set_deletion_otp_service
----+ set_deletion_otp_service(otp_service)
----+diff --git a/review.txt b/review.txt
----+index 912f1e6..0722a52 100644
----+--- a/review.txt
----++++ b/review.txt
----+@@ -1,40 +0,0 @@
----+-diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
----+-index 449a2e5..ec47244 100644
----+---- a/backend/contractor_ops/billing.py
----+-+++ b/backend/contractor_ops/billing.py
----+-@@ -965,10 +965,15 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
----+-         {'org_id': org_id}, {'_id': 0}
----+-     ).to_list(1000)
----+- 
----+--    total_monthly = sum(
----+--        pb.get('monthly_total', 0) for pb in project_billings
----+--        if pb.get('status') == 'active'
----+--    )
----+-+    mo = (effective_sub or {}).get('manual_override') or {}
----+-+    mo_total = mo.get('total_monthly')
----+-+    if mo_total and mo_total > 0:
----+-+        total_monthly = mo_total
----+-+    else:
----+-+        total_monthly = sum(
----+-+            pb.get('monthly_total', 0) for pb in project_billings
----+-+            if pb.get('status') == 'active'
----+-+        )
----+- 
----+-     projects = []
----+-     billed_project_ids = set()
----+-diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
----+-index f1d94b5..154bdd8 100644
----+---- a/frontend/src/pages/OrgBillingPage.js
----+-+++ b/frontend/src/pages/OrgBillingPage.js
----+-@@ -1859,9 +1859,9 @@ export default function OrgBillingPage() {
----+-                         <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>
----+-                       )}
----+-                     </div>
----+--                    {inv.gi_download_url && (
----+-+                    {(inv.gi_download_url || inv.gi_document_id) && (
----+-                       <a
----+--                        href={inv.gi_download_url}
----+-+                        href={inv.gi_download_url || `https://www.greeninvoice.co.il/api/v1/documents/${inv.gi_document_id}/download`}
----+-                         target="_blank"
----+-                         rel="noopener noreferrer"
----+-                         className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg text-xs transition-colors"
+         await db.invoices.update_one(
+             {'id': invoice_id},
+             {'$set': update_fields}
+         )
+-    logger.info("[INVOICING:GI] SUCCESS doc_id=%s for invoice %s", gi_document_id or '(none)', invoice_id)
++    logger.info("[INVOICING:GI] SUCCESS doc_id=%s url=%s for invoice %s", gi_document_id or '(none)', bool(gi_download_url), invoice_id)
+     return gi_document_id
+ 
+ 

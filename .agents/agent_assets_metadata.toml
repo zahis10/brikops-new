@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Task #332 — Full Diff"
+title = "#332 — Diff: invoicing.py + billing_router.py"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
