@@ -1115,6 +1115,8 @@ export default function OrgBillingPage() {
               renewalCycle={renewalCycle}
               onCycleChange={(cycle) => setRenewalCycle(cycle)}
               selectedPlan={selectedPlan}
+              billableAmount={sub?.billable_amount}
+              billableSource={sub?.billable_source}
             />
           )}
 
