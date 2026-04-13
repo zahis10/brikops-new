@@ -1,187 +1,40 @@
-#326 — Fix charge_token: wrong PayPlus endpoint
-========================================================================
-
-3 files changed, 49 insertions(+), 14 deletions(-)
-
-  backend/config.py                         |  1 +
-  backend/contractor_ops/billing_router.py  | 24 ++++++++++++++++++--
-  backend/contractor_ops/payplus_service.py | 38 +++++++++++++++++++----------
-
-========================================================================
-FULL DIFF
-========================================================================
-
-diff --git a/backend/config.py b/backend/config.py
-index a17b4cb..963dfcd 100644
---- a/backend/config.py
-+++ b/backend/config.py
-@@ -220,6 +220,7 @@ PAYPLUS_API_KEY = os.environ.get('PAYPLUS_API_KEY', '')
- PAYPLUS_SECRET_KEY = os.environ.get('PAYPLUS_SECRET_KEY', '')
- PAYPLUS_PAYMENT_PAGE_UID = os.environ.get('PAYPLUS_PAYMENT_PAGE_UID', '')
- PAYPLUS_TERMINAL_UID = os.environ.get('PAYPLUS_TERMINAL_UID', '')
-+PAYPLUS_CASHIER_UID = os.environ.get('PAYPLUS_CASHIER_UID', '')
- PAYPLUS_ENV = os.environ.get('PAYPLUS_ENV', 'sandbox')
- PAYPLUS_CALLBACK_URL = os.environ.get('PAYPLUS_CALLBACK_URL', '')
-
-diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index bad56ed..d0fc0c0 100644
---- a/backend/contractor_ops/billing_router.py
-+++ b/backend/contractor_ops/billing_router.py
-@@ -1006,6 +1006,7 @@
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index 449a2e5..ec47244 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -965,10 +965,15 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
+         {'org_id': org_id}, {'_id': 0}
+     ).to_list(1000)
  
-         billing_data = org.get('billing', {})
-         card_token = billing_data.get('payplus_token_uid', '')
-+        customer_uid = billing_data.get('payplus_customer_uid', '')
-         org_name = org.get('name', '')
+-    total_monthly = sum(
+-        pb.get('monthly_total', 0) for pb in project_billings
+-        if pb.get('status') == 'active'
+-    )
++    mo = (effective_sub or {}).get('manual_override') or {}
++    mo_total = mo.get('total_monthly')
++    if mo_total and mo_total > 0:
++        total_monthly = mo_total
++    else:
++        total_monthly = sum(
++            pb.get('monthly_total', 0) for pb in project_billings
++            if pb.get('status') == 'active'
++        )
  
-@@ -1029,6 +1030,16 @@
-             results['errors'].append({'org_id': org_id, 'error': 'no_card_token'})
-             continue
- 
-+        if not customer_uid:
-+            await db.billing_renewal_attempts.update_one(
-+                {'id': attempt_id},
-+                {'$set': {'result': 'no_customer_uid', 'error': 'No PayPlus customer_uid'}}
-+            )
-+            logger.warning("[RENEWALS] Org %s no customer_uid, skipping", org_id)
-+            results['failed'] += 1
-+            results['errors'].append({'org_id': org_id, 'error': 'no_customer_uid'})
-+            continue
-+
-         try:
-             await apply_pending_decreases(org_id)
-
-@@ -1055,7 +1066,8 @@
-         try:
-             plan_name = f"מנוי BrikOps — חודשי — {org_name}"
-             charge_result = await charge_token(
--                token_uid=card_token,
-+                token=card_token,
-+                customer_uid=customer_uid,
-                 amount=amount,
-                 org_id=org_id,
-                 plan_name=plan_name,
-
-@@ -1487,7 +1499,13 @@ (webhook handler)
-     token_uid = verified_tx.get('token_uid', '') or card_token
--    logger.info("[PAYPLUS-WH] card_info: last4=%s brand=%s token=%s", ...)
-+    customer_uid = (
-+        verified_tx.get('customer_uid', '') or
-+        body.get("data", {}).get("customer_uid", "") or
-+        body.get("customer_uid", "")
-+    )
-+    logger.info("[PAYPLUS-WH] card_info: last4=%s brand=%s token=%s customer_uid=%s", ...)
-     if token_uid:
-         update_fields = {
-             'billing.payplus_token_uid': token_uid,
-@@ -1496,6 +1514,8 @@
-         }
-         if card_token:
-             update_fields['billing.payplus_card_token'] = card_token
-+        if customer_uid:
-+            update_fields['billing.payplus_customer_uid'] = customer_uid
-
-diff --git a/backend/contractor_ops/payplus_service.py b/backend/contractor_ops/payplus_service.py
-index 8cef3a8..f4fd3c6 100644
---- a/backend/contractor_ops/payplus_service.py
-+++ b/backend/contractor_ops/payplus_service.py
-@@ -7,6 +7,7 @@ from config import (
-     PAYPLUS_SECRET_KEY,
-     PAYPLUS_PAYMENT_PAGE_UID,
-     PAYPLUS_TERMINAL_UID,
-+    PAYPLUS_CASHIER_UID,
-     PAYPLUS_ENV,
-     PAYPLUS_CALLBACK_URL,
- )
-
-@@ -108,36 +109,49 @@
-
- async def charge_token(
--    token_uid: str,
-+    token: str,
-+    customer_uid: str,
-     amount: float,
-     org_id: str,
-     plan_name: str,
- ) -> dict:
--    url = f"{_base_url()}/Transactions/ChargeByToken"
-+    url = f"{_base_url()}/Transactions/Charge"
-     payload = {
-         "terminal_uid": PAYPLUS_TERMINAL_UID,
--        "token_uid": token_uid,
-+        "cashier_uid": PAYPLUS_CASHIER_UID,
-         "amount": amount,
-         "currency_code": "ILS",
--        "vat_type": 0,
--        "more_info": f"org_id={org_id} plan={plan_name}",
-+        "credit_terms": 1,
-+        "use_token": True,
-+        "token": token,
-+        "customer_uid": customer_uid,
-+        "more_info_1": f"org_id={org_id}",
-+        "more_info_2": f"plan={plan_name}",
-     }
--
-+    logger.info("[PAYPLUS] charge_token org=%s amount=%.2f", org_id, amount)
-     try:
-         async with httpx.AsyncClient(timeout=30) as client:
-             resp = await client.post(url, json=payload, headers=_auth_headers())
--            data = resp.json()
-     except Exception as e:
--        logger.error("[PAYPLUS] charge_token failed for org=%s: %s", org_id, e)
-+        logger.error("[PAYPLUS] charge_token network error org=%s: %s", org_id, e)
-         raise PayPlusError(f"PayPlus charge error: {e}")
- 
-+    logger.info("[PAYPLUS] charge_token response org=%s status=%s body=%s",
-+                org_id, resp.status_code, resp.text[:500])
-+    try:
-+        data = resp.json()
-+    except Exception:
-+        raise PayPlusError(f"PayPlus non-JSON response (status={resp.status_code})")
-+
-     if resp.status_code != 200:
--        logger.error("[PAYPLUS] charge_token bad response org=%s status=%s body=%s", ...)
--        raise PayPlusError(f"PayPlus charge error: {data}")
-+        raise PayPlusError(f"PayPlus charge error (HTTP {resp.status_code}): {data}")
-+
-+    result_status = data.get("results", {}).get("status", "")
-+    if result_status != "success":
-+        desc = data.get("results", {}).get("description", "Unknown error")
-+        raise PayPlusError(f"PayPlus charge failed: {desc}")
- 
-     transaction = data.get("data", {})
--    logger.info("[PAYPLUS] Token charge for org=%s tx=%s status=%s", ...)
-     return {
-         "transaction_uid": transaction.get("transaction_uid", ""),
-         "status_code": transaction.get("status_code", ""),
-     }
-
-========================================================================
-SUMMARY
-========================================================================
-
-Fix 1 — config.py (line 226):
-  Added PAYPLUS_CASHIER_UID env var (required by PayPlus /Transactions/Charge)
-
-Fix 2 — payplus_service.py charge_token() (lines 114-161):
-  - Endpoint: /Transactions/ChargeByToken → /Transactions/Charge
-  - Params: token_uid → token + customer_uid
-  - Payload: added use_token:true, cashier_uid, credit_terms:1
-  - Better error handling: logs raw response, checks results.status,
-    handles non-JSON responses
-
-Fix 3 — billing_router.py webhook (lines 1493-1514):
-  - Extracts customer_uid from verified_tx / body.data / body root
-  - Saves as billing.payplus_customer_uid alongside token
-
-Fix 4 — billing_router.py renewals (lines 1012, 1036-1044, 1062-1063):
-  - Reads customer_uid from billing data
-  - Passes token + customer_uid to charge_token()
-  - Adds no_customer_uid check (skips orgs without it)
-
-Deployment prerequisite:
-  Set PAYPLUS_CASHIER_UID=9098a21f-5935-4443-82df-bd70fc744eac in EB env
-
-Note — existing customers:
-  Customers who paid before this deploy won't have customer_uid saved.
-  They need one new payment to trigger the webhook. This is expected.
+     projects = []
+     billed_project_ids = set()
+diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
+index f1d94b5..154bdd8 100644
+--- a/frontend/src/pages/OrgBillingPage.js
++++ b/frontend/src/pages/OrgBillingPage.js
+@@ -1859,9 +1859,9 @@ export default function OrgBillingPage() {
+                         <div>תאריך יעד: {new Date(inv.due_at).toLocaleDateString('he-IL')}</div>
+                       )}
+                     </div>
+-                    {inv.gi_download_url && (
++                    {(inv.gi_download_url || inv.gi_document_id) && (
+                       <a
+-                        href={inv.gi_download_url}
++                        href={inv.gi_download_url || `https://www.greeninvoice.co.il/api/v1/documents/${inv.gi_document_id}/download`}
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg text-xs transition-colors"
