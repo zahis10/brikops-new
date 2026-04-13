@@ -1150,7 +1150,7 @@ export default function OrgBillingPage() {
               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
             </div>
             {(() => {
-              const totalMonthly = sub?.total_monthly || 0;
+              const totalMonthly = sub?.billable_amount ?? sub?.total_monthly ?? 0;
               const currentPaidUntil = sub?.paid_until ? new Date(sub.paid_until) : new Date();
               const baseDate = currentPaidUntil > new Date() ? currentPaidUntil : new Date();
               const nextDate = new Date(baseDate);
@@ -1162,6 +1162,12 @@ export default function OrgBillingPage() {
                 </p>
               ) : null;
             })()}
+            {sub?.billable_source === 'override' && (
+              <p className="text-xs text-amber-600 text-center">💰 תמחור מותאם אישית</p>
+            )}
+            {sub?.billable_source === 'founder_plan' && (
+              <p className="text-xs text-emerald-600 text-center">🌟 תוכנית מייסדים</p>
+            )}
             <button
               disabled={checkoutLoading}
               onClick={async () => {
@@ -1182,7 +1188,7 @@ export default function OrgBillingPage() {
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.total_monthly || 0).toLocaleString()}`}
+              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.billable_amount ?? sub?.total_monthly ?? 0).toLocaleString()}`}
             </button>
             <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
           </div>

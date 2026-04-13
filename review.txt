@@ -1,76 +1,63 @@
-diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
-index 8a7d5f6..3fac903 100644
---- a/backend/contractor_ops/admin_router.py
-+++ b/backend/contractor_ops/admin_router.py
-@@ -389,22 +389,22 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
-     now = datetime.now(timezone.utc).isoformat()
- 
-     if mode == 'standard':
--        from contractor_ops.billing import set_org_plan
--        await set_org_plan(org_id, 'standard', user['id'])
-         await db.subscriptions.update_one(
-             {'org_id': org_id},
-             {'$unset': {'manual_override': ''}},
-         )
-+        from contractor_ops.billing import set_org_plan
-+        await set_org_plan(org_id, 'standard', user['id'])
-         refreshed_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'total_monthly': 1})
-         new_total = refreshed_sub.get('total_monthly', 0) if refreshed_sub else 0
- 
-     elif mode == 'founder':
--        from contractor_ops.billing import set_org_plan
--        await set_org_plan(org_id, 'founder_6m', user['id'])
-         await db.subscriptions.update_one(
-             {'org_id': org_id},
-             {'$unset': {'manual_override': ''}},
-         )
-+        from contractor_ops.billing import set_org_plan
-+        await set_org_plan(org_id, 'founder_6m', user['id'])
-         new_total = 499
- 
-     else:
 diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index 3ef0bba..ca89024 100644
+index ca89024..498aac0 100644
 --- a/backend/contractor_ops/billing.py
 +++ b/backend/contractor_ops/billing.py
-@@ -1216,7 +1216,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
-                 },
-                 '$unset': {
-                     'pending_plan_id': '',
--                    'manual_override': '',
-                 },
-             },
-             upsert=True,
-@@ -1253,7 +1252,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
-                 '$unset': {
-                     'plan_locked_until': '',
-                     'pending_plan_id': '',
--                    'manual_override': '',
-                 },
-             },
-             upsert=True,
-diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index e8162a1..caccd08 100644
---- a/backend/contractor_ops/billing_router.py
-+++ b/backend/contractor_ops/billing_router.py
-@@ -1667,13 +1667,17 @@ async def billing_webhook_payplus(request: Request):
-         },
-     })
-     try:
--        from contractor_ops.invoicing import generate_invoice, mark_invoice_paid
-+        from contractor_ops.invoicing import generate_invoice
-         period = datetime.now(timezone.utc).strftime("%Y-%m")
-         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
-         invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
-         if invoice and invoice.get('id') and invoice.get('status') != 'paid':
--            await mark_invoice_paid(org_id, invoice['id'], 'payplus_webhook')
--            logger.info(f"[PAYPLUS-WH] Invoice {invoice['id']} marked as paid for org {org_id}")
-+            ts_now = datetime.now(timezone.utc).isoformat()
-+            await db.invoices.update_one(
-+                {'id': invoice['id']},
-+                {'$set': {'status': 'paid', 'paid_at': ts_now, 'updated_at': ts_now}}
-+            )
-+            logger.info("[PAYPLUS-WH] Invoice %s marked as paid for org %s", invoice['id'], org_id)
-         logger.info("[PAYPLUS-WH] Invoice generated for org=%s period=%s", org_id, period)
-     except Exception as e:
-         logger.warning(f"[PAYPLUS-WH] Invoice creation/marking failed: {e}")
+@@ -975,6 +975,14 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
+             if pb.get('status') == 'active'
+         )
+ 
++    try:
++        billing_info = await get_billable_amount(org_id, 'monthly')
++        billable_amount = billing_info['amount']
++        billable_source = billing_info['source']
++    except Exception:
++        billable_amount = total_monthly
++        billable_source = 'calculated'
++
+     projects = []
+     billed_project_ids = set()
+     for pb in project_billings:
+@@ -1061,6 +1069,8 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
+             'paid_until': effective_sub.get('paid_until'),
+             'billing_email': effective_sub.get('billing_email'),
+             'total_monthly': total_monthly,
++            'billable_amount': billable_amount,
++            'billable_source': billable_source,
+             'effective_access': access.value,
+             'read_only_reason': reason,
+             'subscription_status': snapshot['subscription_status'],
+diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
+index 154bdd8..70730a2 100644
+--- a/frontend/src/pages/OrgBillingPage.js
++++ b/frontend/src/pages/OrgBillingPage.js
+@@ -1150,7 +1150,7 @@ export default function OrgBillingPage() {
+               <span className="text-sm font-medium text-slate-700">תשלום באשראי</span>
+             </div>
+             {(() => {
+-              const totalMonthly = sub?.total_monthly || 0;
++              const totalMonthly = sub?.billable_amount ?? sub?.total_monthly ?? 0;
+               const currentPaidUntil = sub?.paid_until ? new Date(sub.paid_until) : new Date();
+               const baseDate = currentPaidUntil > new Date() ? currentPaidUntil : new Date();
+               const nextDate = new Date(baseDate);
+@@ -1162,6 +1162,12 @@ export default function OrgBillingPage() {
+                 </p>
+               ) : null;
+             })()}
++            {sub?.billable_source === 'override' && (
++              <p className="text-xs text-amber-600 text-center">💰 תמחור מותאם אישית</p>
++            )}
++            {sub?.billable_source === 'founder_plan' && (
++              <p className="text-xs text-emerald-600 text-center">🌟 תוכנית מייסדים</p>
++            )}
+             <button
+               disabled={checkoutLoading}
+               onClick={async () => {
+@@ -1182,7 +1188,7 @@ export default function OrgBillingPage() {
+               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+             >
+               {checkoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+-              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.total_monthly || 0).toLocaleString()}`}
++              {checkoutLoading ? 'מעביר לתשלום...' : `שלם באשראי — \u20AA${(sub?.billable_amount ?? sub?.total_monthly ?? 0).toLocaleString()}`}
+             </button>
+             <p className="text-xs text-slate-400 text-center">תועבר לדף תשלום מאובטח</p>
+           </div>

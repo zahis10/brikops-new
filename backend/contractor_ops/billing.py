@@ -975,6 +975,14 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
             if pb.get('status') == 'active'
         )
 
+    try:
+        billing_info = await get_billable_amount(org_id, 'monthly')
+        billable_amount = billing_info['amount']
+        billable_source = billing_info['source']
+    except Exception:
+        billable_amount = total_monthly
+        billable_source = 'calculated'
+
     projects = []
     billed_project_ids = set()
     for pb in project_billings:
@@ -1061,6 +1069,8 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
             'paid_until': effective_sub.get('paid_until'),
             'billing_email': effective_sub.get('billing_email'),
             'total_monthly': total_monthly,
+            'billable_amount': billable_amount,
+            'billable_source': billable_source,
             'effective_access': access.value,
             'read_only_reason': reason,
             'subscription_status': snapshot['subscription_status'],
