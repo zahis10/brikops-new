@@ -1081,26 +1081,32 @@ async def billing_run_renewals_internal() -> dict:
 
             try:
                 await mark_paid(org_id, 'system_renewal', None, 'monthly', f"Auto-renewal tx={transaction_uid} amount={amount}")
+                await db.subscriptions.update_one(
+                    {'org_id': org_id},
+                    {'$set': {'auto_renew': True}}
+                )
                 try:
-                    paid_until_val = paid_until_dt.isoformat() if paid_until_dt else ''
+                    updated_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'paid_until': 1})
+                    new_paid_until = updated_sub.get('paid_until', '') if updated_sub else ''
+                    invoice_period = new_paid_until[:7] if new_paid_until else period_ym
                     inv_card_last4 = billing_data.get('card_last4', '')
                     invoice = await generate_invoice(
                         org_id,
-                        period_ym,
+                        invoice_period,
                         'system_renewal',
-                        paid_until=paid_until_val,
+                        paid_until=new_paid_until,
                         card_last4=inv_card_last4,
                         override_amount=amount,
                     )
                     invoice_id = invoice.get('id', '')
-                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s amount=%.2f gi_doc=%s gi_url=%s",
-                                org_id, invoice_id, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
+                    logger.info("[RENEWALS] Invoice generated org=%s invoice_id=%s period=%s amount=%.2f gi_doc=%s gi_url=%s",
+                                org_id, invoice_id, invoice_period, amount, bool(invoice.get('gi_document_id')), bool(invoice.get('gi_download_url')))
                     if invoice_id and not invoice.get('gi_document_id'):
                         try:
                             from contractor_ops.invoicing import _try_create_gi_document
                             gi_doc_id = await _try_create_gi_document(
-                                db, org_id, invoice_id, amount, period_ym,
-                                paid_until=paid_until_val,
+                                db, org_id, invoice_id, amount, invoice_period,
+                                paid_until=new_paid_until,
                                 card_last4=inv_card_last4,
                             )
                             if gi_doc_id:

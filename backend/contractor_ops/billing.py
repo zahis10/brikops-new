@@ -1924,7 +1924,6 @@ async def mark_paid(org_id: str, actor_id: str, request_id: str = None, cycle: s
     update_fields = {
         'status': new_status,
         'paid_until': new_paid_until_iso,
-        'auto_renew': False,
         'next_charge_at': None,
         'updated_at': now,
     }

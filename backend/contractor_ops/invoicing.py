@@ -164,8 +164,6 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
         payment_date=today_str,
         card_last4=card_last4,
     )
-    logger.info("[INVOICING:GI] Raw GI response keys: %s", list(gi_doc.keys()))
-    logger.info("[INVOICING:GI] GI url field: %s", gi_doc.get('url'))
     gi_document_id = gi_doc.get('id', '')
     url_field = gi_doc.get('url', {})
     if isinstance(url_field, dict):
