@@ -176,7 +176,8 @@ async def _try_create_gi_document(db, org_id: str, invoice_id: str, amount: floa
         gi_download_url = gi_doc.get('download_url', '') or gi_doc.get('shareUrl', '')
     if not gi_download_url and gi_document_id:
         from config import GI_BASE_URL
-        gi_download_url = f"https://www.greeninvoice.co.il/api/v1/documents/{gi_document_id}/download"
+        base = (GI_BASE_URL or "https://api.greeninvoice.co.il/api/v1").replace("/api/v1", "")
+        gi_download_url = f"{base}/api/v1/documents/{gi_document_id}/download"
         logger.warning("[INVOICING:GI] No URL in response, using fallback URL for doc=%s", gi_document_id)
     if gi_document_id:
         update_fields = {'gi_document_id': gi_document_id, 'gi_download_url': gi_download_url, 'updated_at': _now()}
