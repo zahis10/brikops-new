@@ -1,83 +1,51 @@
 diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
-index 88efb23..8a7d5f6 100644
+index 8a7d5f6..3fac903 100644
 --- a/backend/contractor_ops/admin_router.py
 +++ b/backend/contractor_ops/admin_router.py
-@@ -391,13 +391,21 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
+@@ -389,22 +389,22 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
+     now = datetime.now(timezone.utc).isoformat()
+ 
      if mode == 'standard':
-         from contractor_ops.billing import set_org_plan
-         await set_org_plan(org_id, 'standard', user['id'])
-+        await db.subscriptions.update_one(
-+            {'org_id': org_id},
-+            {'$unset': {'manual_override': ''}},
-+        )
+-        from contractor_ops.billing import set_org_plan
+-        await set_org_plan(org_id, 'standard', user['id'])
+         await db.subscriptions.update_one(
+             {'org_id': org_id},
+             {'$unset': {'manual_override': ''}},
+         )
++        from contractor_ops.billing import set_org_plan
++        await set_org_plan(org_id, 'standard', user['id'])
          refreshed_sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'total_monthly': 1})
          new_total = refreshed_sub.get('total_monthly', 0) if refreshed_sub else 0
  
      elif mode == 'founder':
-         from contractor_ops.billing import set_org_plan
-         await set_org_plan(org_id, 'founder_6m', user['id'])
--        new_total = 500
-+        await db.subscriptions.update_one(
-+            {'org_id': org_id},
-+            {'$unset': {'manual_override': ''}},
-+        )
-+        new_total = 499
- 
-     else:
-         custom_amount = body.get('custom_amount')
-@@ -406,11 +414,17 @@ async def admin_update_pricing(org_id: str, request: Request, user: dict = Depen
-         custom_amount = int(custom_amount)
+-        from contractor_ops.billing import set_org_plan
+-        await set_org_plan(org_id, 'founder_6m', user['id'])
          await db.subscriptions.update_one(
              {'org_id': org_id},
--            {'$set': {
--                'manual_override.total_monthly': custom_amount,
--                'total_monthly': custom_amount,
--                'updated_at': now,
--            }},
-+            {
-+                '$set': {
-+                    'manual_override.total_monthly': custom_amount,
-+                    'total_monthly': custom_amount,
-+                    'plan_id': 'custom',
-+                    'updated_at': now,
-+                },
-+                '$unset': {
-+                    'plan_locked_until': '',
-+                },
-+            },
+             {'$unset': {'manual_override': ''}},
          )
-         all_pbs = await db.project_billing.find(
-             {'org_id': org_id, 'status': 'active'},
++        from contractor_ops.billing import set_org_plan
++        await set_org_plan(org_id, 'founder_6m', user['id'])
+         new_total = 499
+ 
+     else:
 diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index 0a948f5..3ef0bba 100644
+index 3ef0bba..ca89024 100644
 --- a/backend/contractor_ops/billing.py
 +++ b/backend/contractor_ops/billing.py
-@@ -1216,19 +1216,12 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
+@@ -1216,7 +1216,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                  },
                  '$unset': {
                      'pending_plan_id': '',
-+                    'manual_override': '',
+-                    'manual_override': '',
                  },
              },
              upsert=True,
-         )
- 
--        sub_check = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
--        mo_amount = (sub_check or {}).get('manual_override', {}).get('total_monthly')
--        if mo_amount and mo_amount > 0:
--            await db.subscriptions.update_one(
--                {'org_id': org_id},
--                {'$set': {'total_monthly': mo_amount}}
--            )
--
-         all_pbs = await db.project_billing.find(
-             {'org_id': org_id, 'status': 'active'},
-             {'_id': 0, 'id': 1, 'created_at': 1, 'project_id': 1},
-@@ -1260,6 +1253,7 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
+@@ -1253,7 +1252,6 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                  '$unset': {
                      'plan_locked_until': '',
                      'pending_plan_id': '',
-+                    'manual_override': '',
+-                    'manual_override': '',
                  },
              },
              upsert=True,
