@@ -3,8 +3,10 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 
 from contractor_ops.router import get_db, get_current_user, _is_super_admin, logger
 from contractor_ops.billing import get_billing_info
+from config import CRON_SECRET
 
 router = APIRouter(prefix="/api")
+cron_router = APIRouter(tags=["cron"])
 
 
 @router.get("/billing/me")
@@ -1157,6 +1159,18 @@ async def billing_run_renewals_internal() -> dict:
     return results
 
 
+@cron_router.post("/internal/cron/daily-renewals")
+async def cron_daily_renewals(request: Request):
+    cron_secret = request.headers.get("X-Cron-Secret", "")
+    if not CRON_SECRET or cron_secret != CRON_SECRET:
+        logger.warning("[RENEWAL-CRON] Invalid or missing X-Cron-Secret")
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from contractor_ops.billing import BILLING_V1_ENABLED
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    return await billing_run_renewals_internal()
+
+
 @router.post("/billing/run-renewals")
 async def billing_run_renewals(request: Request, user: dict = Depends(get_current_user)):
     from contractor_ops.billing import BILLING_V1_ENABLED
@@ -1434,10 +1448,9 @@ async def billing_webhook_payplus(request: Request):
         # PayPlus confirmed: no server-side transaction check endpoint exists.
         # Verification is via webhook callback + HMAC hash validation.
         # more_info org_id match used as additional identity check.
-        wh_org_id = (
-            body.get("more_info", "") or
-            body.get("transaction", {}).get("more_info", "")
-        ).strip()
+        _mi_root = body.get("more_info")
+        _mi_tx = body.get("transaction", {}).get("more_info")
+        wh_org_id = (_mi_root or _mi_tx or "").strip()
         if wh_org_id.startswith("org_id="):
             wh_org_id = wh_org_id.split("=", 1)[1]
         if not wh_org_id:
@@ -1470,10 +1483,9 @@ async def billing_webhook_payplus(request: Request):
     lookup_uid = verified_page_uid or page_request_uid
     sub = await db.subscriptions.find_one({'payplus_page_request_uid': lookup_uid}, {'_id': 0})
     if not sub:
-        wh_org_id = (
-            body.get("more_info", "") or
-            body.get("transaction", {}).get("more_info", "")
-        ).strip()
+        _mi_root = body.get("more_info")
+        _mi_tx = body.get("transaction", {}).get("more_info")
+        wh_org_id = (_mi_root or _mi_tx or "").strip()
         if wh_org_id.startswith("org_id="):
             wh_org_id = wh_org_id.split("=", 1)[1]
         if wh_org_id:

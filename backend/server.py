@@ -477,8 +477,9 @@ app.include_router(tasks_router)
 from contractor_ops.admin_router import router as admin_router
 app.include_router(admin_router)
 
-from contractor_ops.billing_router import router as billing_router
+from contractor_ops.billing_router import router as billing_router, cron_router as billing_cron_router
 app.include_router(billing_router)
+app.include_router(billing_cron_router)
 
 from contractor_ops.deletion_router import router as deletion_router, set_deletion_otp_service
 set_deletion_otp_service(otp_service)

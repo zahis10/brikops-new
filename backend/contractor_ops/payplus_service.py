@@ -152,10 +152,24 @@ async def charge_token(
         raise PayPlusError(f"PayPlus charge failed: {desc}")
 
     transaction = data.get("data", {})
-    return {
-        "transaction_uid": transaction.get("transaction_uid", ""),
-        "status_code": transaction.get("status_code", ""),
-    }
+    if isinstance(transaction, dict):
+        tx_uid = (
+            transaction.get("transaction_uid")
+            or transaction.get("number")
+            or data.get("transaction_uid")
+            or ""
+        )
+        status = (
+            transaction.get("status_code")
+            or data.get("status_code")
+            or ""
+        )
+    else:
+        tx_uid = data.get("transaction_uid", "")
+        status = data.get("status_code", "")
+
+    logger.info("[PAYPLUS] Token charge parsed org=%s tx=%s status=%s", org_id, tx_uid, status)
+    return {"transaction_uid": str(tx_uid), "status_code": str(status)}
 
 
 async def refund_transaction(transaction_uid: str, amount: float) -> dict:
