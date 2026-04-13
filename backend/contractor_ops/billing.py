@@ -1216,18 +1216,11 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                 },
                 '$unset': {
                     'pending_plan_id': '',
+                    'manual_override': '',
                 },
             },
             upsert=True,
         )
-
-        sub_check = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0, 'manual_override': 1})
-        mo_amount = (sub_check or {}).get('manual_override', {}).get('total_monthly')
-        if mo_amount and mo_amount > 0:
-            await db.subscriptions.update_one(
-                {'org_id': org_id},
-                {'$set': {'total_monthly': mo_amount}}
-            )
 
         all_pbs = await db.project_billing.find(
             {'org_id': org_id, 'status': 'active'},
@@ -1260,6 +1253,7 @@ async def set_org_plan(org_id: str, plan: str, actor_id: str):
                 '$unset': {
                     'plan_locked_until': '',
                     'pending_plan_id': '',
+                    'manual_override': '',
                 },
             },
             upsert=True,
