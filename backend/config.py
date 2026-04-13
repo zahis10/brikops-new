@@ -220,6 +220,7 @@ PAYPLUS_API_KEY = os.environ.get('PAYPLUS_API_KEY', '')
 PAYPLUS_SECRET_KEY = os.environ.get('PAYPLUS_SECRET_KEY', '')
 PAYPLUS_PAYMENT_PAGE_UID = os.environ.get('PAYPLUS_PAYMENT_PAGE_UID', '')
 PAYPLUS_TERMINAL_UID = os.environ.get('PAYPLUS_TERMINAL_UID', '')
+PAYPLUS_CASHIER_UID = os.environ.get('PAYPLUS_CASHIER_UID', '')
 PAYPLUS_ENV = os.environ.get('PAYPLUS_ENV', 'sandbox')
 PAYPLUS_CALLBACK_URL = os.environ.get('PAYPLUS_CALLBACK_URL', '')
 

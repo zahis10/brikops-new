@@ -7,6 +7,7 @@ from config import (
     PAYPLUS_SECRET_KEY,
     PAYPLUS_PAYMENT_PAGE_UID,
     PAYPLUS_TERMINAL_UID,
+    PAYPLUS_CASHIER_UID,
     PAYPLUS_ENV,
     PAYPLUS_CALLBACK_URL,
 )
@@ -108,36 +109,49 @@ async def create_payment_page(
 
 
 async def charge_token(
-    token_uid: str,
+    token: str,
+    customer_uid: str,
     amount: float,
     org_id: str,
     plan_name: str,
 ) -> dict:
-    url = f"{_base_url()}/Transactions/ChargeByToken"
+    url = f"{_base_url()}/Transactions/Charge"
     payload = {
         "terminal_uid": PAYPLUS_TERMINAL_UID,
-        "token_uid": token_uid,
+        "cashier_uid": PAYPLUS_CASHIER_UID,
         "amount": amount,
         "currency_code": "ILS",
-        "vat_type": 0,
-        "more_info": f"org_id={org_id} plan={plan_name}",
+        "credit_terms": 1,
+        "use_token": True,
+        "token": token,
+        "customer_uid": customer_uid,
+        "more_info_1": f"org_id={org_id}",
+        "more_info_2": f"plan={plan_name}",
     }
-
+    logger.info("[PAYPLUS] charge_token org=%s amount=%.2f", org_id, amount)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, json=payload, headers=_auth_headers())
-            data = resp.json()
     except Exception as e:
-        logger.error("[PAYPLUS] charge_token failed for org=%s: %s", org_id, e)
+        logger.error("[PAYPLUS] charge_token network error org=%s: %s", org_id, e)
         raise PayPlusError(f"PayPlus charge error: {e}")
 
+    logger.info("[PAYPLUS] charge_token response org=%s status=%s body=%s",
+                org_id, resp.status_code, resp.text[:500])
+    try:
+        data = resp.json()
+    except Exception:
+        raise PayPlusError(f"PayPlus non-JSON response (status={resp.status_code})")
+
     if resp.status_code != 200:
-        logger.error("[PAYPLUS] charge_token bad response org=%s status=%s body=%s", org_id, resp.status_code, data)
-        raise PayPlusError(f"PayPlus charge error: {data}")
+        raise PayPlusError(f"PayPlus charge error (HTTP {resp.status_code}): {data}")
+
+    result_status = data.get("results", {}).get("status", "")
+    if result_status != "success":
+        desc = data.get("results", {}).get("description", "Unknown error")
+        raise PayPlusError(f"PayPlus charge failed: {desc}")
 
     transaction = data.get("data", {})
-    logger.info("[PAYPLUS] Token charge for org=%s tx=%s status=%s",
-                org_id, transaction.get("transaction_uid", ""), transaction.get("status_code", ""))
     return {
         "transaction_uid": transaction.get("transaction_uid", ""),
         "status_code": transaction.get("status_code", ""),

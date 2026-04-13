@@ -1006,6 +1006,7 @@ async def billing_run_renewals_internal() -> dict:
 
         billing_data = org.get('billing', {})
         card_token = billing_data.get('payplus_token_uid', '')
+        customer_uid = billing_data.get('payplus_customer_uid', '')
         org_name = org.get('name', '')
 
         attempt_id = str(uuid.uuid4())
@@ -1027,6 +1028,16 @@ async def billing_run_renewals_internal() -> dict:
             logger.warning("[RENEWALS] Org %s has no card token, skipping charge", org_id)
             results['failed'] += 1
             results['errors'].append({'org_id': org_id, 'error': 'no_card_token'})
+            continue
+
+        if not customer_uid:
+            await db.billing_renewal_attempts.update_one(
+                {'id': attempt_id},
+                {'$set': {'result': 'no_customer_uid', 'error': 'No PayPlus customer_uid'}}
+            )
+            logger.warning("[RENEWALS] Org %s no customer_uid, skipping", org_id)
+            results['failed'] += 1
+            results['errors'].append({'org_id': org_id, 'error': 'no_customer_uid'})
             continue
 
         try:
@@ -1055,7 +1066,8 @@ async def billing_run_renewals_internal() -> dict:
         try:
             plan_name = f"מנוי BrikOps — חודשי — {org_name}"
             charge_result = await charge_token(
-                token_uid=card_token,
+                token=card_token,
+                customer_uid=customer_uid,
                 amount=amount,
                 org_id=org_id,
                 plan_name=plan_name,
@@ -1487,7 +1499,13 @@ async def billing_webhook_payplus(request: Request):
     card_brand = card_info.get("brand_name", "") or verified_tx.get('brand_name', '')
     card_token = card_info.get("token", "")
     token_uid = verified_tx.get('token_uid', '') or card_token
-    logger.info("[PAYPLUS-WH] card_info: last4=%s brand=%s token=%s", card_last4, card_brand, bool(card_token))
+    customer_uid = (
+        verified_tx.get('customer_uid', '') or
+        body.get("data", {}).get("customer_uid", "") or
+        body.get("customer_uid", "")
+    )
+    logger.info("[PAYPLUS-WH] card_info: last4=%s brand=%s token=%s customer_uid=%s",
+                card_last4, card_brand, bool(card_token), bool(customer_uid))
     if token_uid:
         update_fields = {
             'billing.payplus_token_uid': token_uid,
@@ -1496,6 +1514,8 @@ async def billing_webhook_payplus(request: Request):
         }
         if card_token:
             update_fields['billing.payplus_card_token'] = card_token
+        if customer_uid:
+            update_fields['billing.payplus_customer_uid'] = customer_uid
         await db.organizations.update_one(
             {'id': org_id},
             {'$set': update_fields}
