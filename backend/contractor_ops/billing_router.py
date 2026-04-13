@@ -1667,13 +1667,17 @@ async def billing_webhook_payplus(request: Request):
         },
     })
     try:
-        from contractor_ops.invoicing import generate_invoice, mark_invoice_paid
+        from contractor_ops.invoicing import generate_invoice
         period = datetime.now(timezone.utc).strftime("%Y-%m")
         paid_amount = float(verified_tx.get("amount", 0) or body.get("transaction", {}).get("amount", 0) or 0)
         invoice = await generate_invoice(org_id, period, 'payplus_webhook', paid_until=paid_until, card_last4=card_last4, override_amount=paid_amount if paid_amount > 0 else None)
         if invoice and invoice.get('id') and invoice.get('status') != 'paid':
-            await mark_invoice_paid(org_id, invoice['id'], 'payplus_webhook')
-            logger.info(f"[PAYPLUS-WH] Invoice {invoice['id']} marked as paid for org {org_id}")
+            ts_now = datetime.now(timezone.utc).isoformat()
+            await db.invoices.update_one(
+                {'id': invoice['id']},
+                {'$set': {'status': 'paid', 'paid_at': ts_now, 'updated_at': ts_now}}
+            )
+            logger.info("[PAYPLUS-WH] Invoice %s marked as paid for org %s", invoice['id'], org_id)
         logger.info("[PAYPLUS-WH] Invoice generated for org=%s period=%s", org_id, period)
     except Exception as e:
         logger.warning(f"[PAYPLUS-WH] Invoice creation/marking failed: {e}")
