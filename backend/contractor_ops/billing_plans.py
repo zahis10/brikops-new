@@ -21,9 +21,9 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
-PROJECT_LICENSE_FIRST = 899
+PROJECT_LICENSE_FIRST = 450
 PROJECT_LICENSE_ADDITIONAL = 450
-PRICE_PER_UNIT = 20
+PRICE_PER_UNIT = 15
 
 FOUNDER_PLAN = {
     "plan_id": "founder_6m",

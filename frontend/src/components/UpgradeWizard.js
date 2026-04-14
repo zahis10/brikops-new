@@ -3,9 +3,9 @@ import { billingService } from '../services/api';
 import { formatCurrency } from '../utils/billingLabels';
 import { toast } from 'sonner';
 import { Loader2, Check, ChevronDown, ChevronUp, Info, CreditCard } from 'lucide-react';
-const LICENSE_FIRST = 899;
+const LICENSE_FIRST = 450;
 const LICENSE_ADDITIONAL = 450;
-const PRICE_PER_UNIT = 20;
+const PRICE_PER_UNIT = 15;
 
 export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange, selectedPlan: externalSelectedPlan, billableAmount, billableSource }) {
   const [selectedProjectId, setSelectedProjectId] = useState('');

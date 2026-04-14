@@ -107,7 +107,7 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
             'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
             'license_fee_snapshot': pb.get('license_fee', 0),
             'units_fee_snapshot': pb.get('units_fee', 0),
-            'price_per_unit': pb.get('price_per_unit', 20),
+            'price_per_unit': pb.get('price_per_unit', 15),
             'units_count': pb.get('contracted_units', 0),
             'monthly_total_snapshot': mt,
         })

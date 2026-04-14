@@ -7,9 +7,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from './ui/dialog';
 
-const LICENSE_FIRST = 899;
+const LICENSE_FIRST = 450;
 const LICENSE_ADDITIONAL = 450;
-const PRICE_PER_UNIT = 20;
+const PRICE_PER_UNIT = 15;
 
 export default function ProjectBillingEditModal({ open, onClose, projectBilling, onSaved }) {
   const [units, setUnits] = useState('');

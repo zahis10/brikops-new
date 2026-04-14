@@ -1001,7 +1001,7 @@ export default function OrgBillingPage() {
             </div>
             <div className="bg-slate-50 rounded-lg p-3">
               <div className="text-slate-500 mb-1">סה״כ חודשי</div>
-              <div className="font-bold text-lg text-slate-900">{formatCurrency(sub.total_monthly)}</div>
+              <div className="font-bold text-lg text-slate-900">{formatCurrency(sub.billable_amount ?? sub.total_monthly ?? 0)}</div>
             </div>
             {sub.billing_cycle && (
               <div className="bg-slate-50 rounded-lg p-3">
@@ -1128,8 +1128,8 @@ export default function OrgBillingPage() {
             const founderExpiring = daysLeft !== null && daysLeft <= 30;
             const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
               const units = pb.contracted_units || 0;
-              const ppu = pb.price_per_unit || 20;
-              const license = idx === 0 ? 899 : 450;
+              const ppu = pb.price_per_unit || 15;
+              const license = 450;
               return sum + license + (units * ppu);
             }, 0) || 0;
             if (!founderExpiring) return null;
@@ -1741,7 +1741,7 @@ export default function OrgBillingPage() {
                   )}
                   <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                     <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
-                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 20)}</span></div>
+                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 15)}</span></div>
                   </div>
                   {pb.cycle_peak_units > pb.contracted_units && (
                     <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
