@@ -1,39 +1,142 @@
-diff --git a/backend/contractor_ops/invoicing.py b/backend/contractor_ops/invoicing.py
-index 17c9d35..0b6be33 100644
---- a/backend/contractor_ops/invoicing.py
-+++ b/backend/contractor_ops/invoicing.py
-@@ -352,17 +352,6 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
-     if item_docs:
-         await db.invoice_line_items.insert_many(item_docs)
+============================================================
+  Task #336 — Fix 6 Navigation Bugs
+  Back Buttons + QC Timeline + Overdue
+  Full Diff — All Changed Files
+============================================================
+
+diff --git a/backend/contractor_ops/stats_router.py b/backend/contractor_ops/stats_router.py
+index 3733f54..ef44e6c 100644
+--- a/backend/contractor_ops/stats_router.py
++++ b/backend/contractor_ops/stats_router.py
+@@ -48,7 +48,7 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
+     open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed']}})
+     critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed']}})
+     now_str = now.strftime('%Y-%m-%d')
+-    overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed']}})
++    overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed', 'approved']}})
+     building_defects_agg = await db.tasks.aggregate([
+         {'$match': {'project_id': project_id, 'building_id': {'$ne': None}}},
+         {'$group': {
+
+diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
+index 06c6114..115cbaf 100644
+--- a/backend/contractor_ops/tasks_router.py
++++ b/backend/contractor_ops/tasks_router.py
+@@ -223,8 +223,8 @@ async def list_tasks(
+         query['company_id'] = company_id
+     if overdue:
+         from datetime import datetime, timezone
+-        now_iso = datetime.now(timezone.utc).isoformat()
+-        query['due_date'] = {'$lt': now_iso, '$exists': True, '$ne': None}
++        today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
++        query['due_date'] = {'$lt': today_str, '$exists': True, '$ne': None}
+         if 'status' not in query:
+             query['status'] = {'$nin': ['closed', 'approved']}
+     if q:
+
+diff --git a/frontend/src/pages/FloorDetailPage.js b/frontend/src/pages/FloorDetailPage.js
+index 1ad8756..cd198d5 100644
+--- a/frontend/src/pages/FloorDetailPage.js
++++ b/frontend/src/pages/FloorDetailPage.js
+@@ -164,7 +164,7 @@ export default function FloorDetailPage() {
+       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+         <div className="text-center">
+           <p className="text-red-500 mb-3">{error}</p>
+-          <button onClick={() => { if (window.history.length > 2) { navigate(-1); } else { navigate(`/projects/${projectId}/qc`); } }} className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm">חזרה לבקרת ביצוע</button>
++          <button onClick={() => navigate(`/projects/${projectId}/qc`)} className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm">חזרה לבקרת ביצוע</button>
+         </div>
+       </div>
+     );
+@@ -219,7 +219,7 @@ export default function FloorDetailPage() {
+         <div className="max-w-2xl mx-auto px-4 py-3">
+           <div className="flex items-center justify-between">
+             <div className="flex items-center gap-3">
+-              <button onClick={() => { if (window.history.length > 2) { navigate(-1); } else { navigate(`/projects/${projectId}/qc`); } }} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
++              <button onClick={() => navigate(buildingId ? `/projects/${projectId}/buildings/${buildingId}/qc` : `/projects/${projectId}/qc`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
+                 <ArrowRight className="w-5 h-5" />
+               </button>
+               <div>
+
+diff --git a/frontend/src/pages/HandoverTabPage.js b/frontend/src/pages/HandoverTabPage.js
+index 8ca61f5..bfd8adc 100644
+--- a/frontend/src/pages/HandoverTabPage.js
++++ b/frontend/src/pages/HandoverTabPage.js
+@@ -200,7 +200,7 @@ const HandoverTabPage = () => {
+         <div className="max-w-lg mx-auto px-4 py-3">
+           <div className="flex items-center gap-3">
+             <button
+-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
++              onClick={() => navigate(`/projects/${projectId}/handover`)}
+               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+             >
+               <ArrowRight className="w-5 h-5" />
+
+diff --git a/frontend/src/pages/ProjectDashboardPage.js b/frontend/src/pages/ProjectDashboardPage.js
+index 1270102..171385e 100644
+--- a/frontend/src/pages/ProjectDashboardPage.js
++++ b/frontend/src/pages/ProjectDashboardPage.js
+@@ -243,7 +243,7 @@ export default function ProjectDashboardPage() {
+     <div className="min-h-0 bg-slate-50 pb-24" dir="rtl">
+       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
+         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
+-          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate(`/projects/${projectId}/control`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
++          <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-3 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה">
+             <ArrowRight className="w-5 h-5" />
+           </button>
+           <div className="flex-1 min-w-0">
+
+diff --git a/frontend/src/pages/StageDetailPage.js b/frontend/src/pages/StageDetailPage.js
+index 5ee0d6e..cce1c75 100644
+--- a/frontend/src/pages/StageDetailPage.js
++++ b/frontend/src/pages/StageDetailPage.js
+@@ -928,7 +928,7 @@ export default function StageDetailPage() {
+       await qcService.approveStage(runId, stageId, {});
+       toast.success('השלב אושר בהצלחה');
+       await load();
+-      loadTimeline();
++      await loadTimeline();
+     } catch (err) {
+       const detail = err.response?.data?.detail;
+       const msg = typeof detail === 'object' ? detail.message : detail;
+@@ -950,7 +950,7 @@ export default function StageDetailPage() {
+       setShowRejectModal(false);
+       setRejectReason('');
+       await load();
+-      loadTimeline();
++      await loadTimeline();
+     } catch (err) {
+       toast.error(err.response?.data?.detail || 'שגיאה בדחיית השלב');
+     } finally {
+@@ -970,7 +970,7 @@ export default function StageDetailPage() {
+       setShowReopenModal(false);
+       setReopenReason('');
+       await load();
+-      loadTimeline();
++      await loadTimeline();
+     } catch (err) {
+       const detail = err.response?.data?.detail;
+       toast.error(typeof detail === 'string' ? detail : 'שגיאה בפתיחה מחדש של השלב');
+@@ -1381,7 +1381,7 @@ export default function StageDetailPage() {
+       await qcService.submitStage(runId, stageId);
+       toast.success('השלב הוגש לאישור בהצלחה');
+       await load();
+-      loadTimeline();
++      await loadTimeline();
+     } catch (err) {
+       const detail = err.response?.data?.detail;
+       if (typeof detail === 'object' && detail.error_code === 'QC_REJECTED_ITEMS_PENDING') {
+@@ -1528,13 +1528,7 @@ export default function StageDetailPage() {
+   }, [stage, scrollToItem]);
  
--    period_end = (_end_of_month_utc(year, month) + timedelta(days=7)).isoformat()
--    await db.subscriptions.update_one(
--        {'org_id': org_id},
--        {'$set': {
--            'status': 'active',
--            'paid_until': period_end,
--            'updated_at': ts,
--        }},
--        upsert=True,
--    )
--
-     await db.audit_events.insert_one({
-         'id': str(uuid.uuid4()),
-         'entity_type': 'invoice',
-@@ -374,7 +363,6 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
-             'period_ym': period_ym,
-             'total_amount': final_amount,
-             'line_item_count': len(item_docs),
--            'subscription_paid_until': period_end,
-         },
-         'created_at': ts,
-     })
-@@ -401,7 +389,7 @@ async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_un
-     except Exception as e:
-         logger.warning("[INVOICE-EMAIL] Failed for org=%s: %s", org_id, e)
+   const goBack = () => {
+-    if (window.history.length > 2) {
+-      navigate(-1);
+-    } else if (returnToPath) {
+-      navigate(returnToPath);
+-    } else {
+-      navigate(`/projects/${projectId}/floors/${floorId}`);
+-    }
++    navigate(`/projects/${projectId}/floors/${floorId}`);
+   };
  
--    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={final_amount}, paid_until={period_end}")
-+    logger.info(f"[INVOICING] Generated invoice {invoice_id} for org {org_id} period {period_ym}, total={final_amount}")
-     return invoice_doc
- 
- 
+   if (loading) {
