@@ -1225,4 +1225,63 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
     return doc
 
 
+@router.post("/admin/projects/{project_id}/set-total-units")
+async def admin_set_project_total_units(
+    project_id: str,
+    request: Request,
+    user: dict = Depends(require_super_admin),
+):
+    body = await request.json()
+    total_units = body.get('total_units')
+    reason = body.get('reason', '')
+
+    if total_units is None or not isinstance(total_units, int) or total_units < 0:
+        raise HTTPException(status_code=400, detail='total_units חייב להיות מספר שלם חיובי')
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+
+    project = await db.projects.find_one(
+        {'id': project_id},
+        {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1, 'total_units': 1}
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+
+    previous = project.get('total_units')
+
+    await db.projects.update_one(
+        {'id': project_id},
+        {'$set': {'total_units': total_units, 'updated_at': now}}
+    )
+
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'billing',
+        'entity_type': 'project',
+        'entity_id': project_id,
+        'action': 'total_units_changed',
+        'actor_id': user['id'],
+        'created_at': now,
+        'payload': {
+            'project_id': project_id,
+            'project_name': project.get('name'),
+            'org_id': project.get('org_id'),
+            'previous': previous,
+            'new': total_units,
+            'reason': reason,
+        },
+    })
+
+    logger.info(
+        "[BILLING] Admin set total_units: project=%s org=%s %s -> %s (actor=%s reason=%s)",
+        project_id, project.get('org_id'), previous, total_units, user['id'], reason
+    )
+
+    return {
+        'ok': True,
+        'project_id': project_id,
+        'previous_total_units': previous,
+        'new_total_units': total_units,
+    }
 

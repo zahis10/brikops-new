@@ -1553,24 +1553,37 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
         ).to_list(1000)
         sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
         for idx, pb in enumerate(sorted_pbs):
-            contracted = pb.get('contracted_units', 0)
-            observed = await compute_observed_units(pb['project_id'])
-            await _refresh_peak_units(pb, observed)
-            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
-            contracted = pb.get('contracted_units', 0)
-            peak = pb.get('cycle_peak_units', contracted)
-            peak = max(peak, observed, contracted)
-            billable = max(contracted, peak)
+            proj = await db.projects.find_one(
+                {'id': pb['project_id']},
+                {'_id': 0, 'name': 1, 'total_units': 1}
+            )
+            total_units_declared = proj.get('total_units') if proj else None
+
+            if total_units_declared is not None and total_units_declared > 0:
+                billable = total_units_declared
+                contracted = total_units_declared
+                observed = await compute_observed_units(pb['project_id'])
+                peak = total_units_declared
+            else:
+                contracted = pb.get('contracted_units', 0)
+                observed = await compute_observed_units(pb['project_id'])
+                await _refresh_peak_units(pb, observed)
+                pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
+                contracted = pb.get('contracted_units', 0)
+                peak = pb.get('cycle_peak_units', contracted)
+                peak = max(peak, observed, contracted)
+                billable = max(contracted, peak)
+
             plan_id = pb.get('plan_id')
             proj_monthly = calculate_monthly(
                 billable, plan_id=plan_id, project_index=idx + 1
             )
             total_monthly += proj_monthly
-            proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
             breakdown.append({
                 'project_id': pb.get('project_id'),
                 'project_name': proj.get('name', '') if proj else '',
                 'plan_id': plan_id,
+                'total_units_declared': total_units_declared,
                 'contracted_units': contracted,
                 'observed_units': observed,
                 'cycle_peak_units': peak,
