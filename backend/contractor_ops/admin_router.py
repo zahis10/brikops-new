@@ -1235,8 +1235,8 @@ async def admin_set_project_total_units(
     total_units = body.get('total_units')
     reason = body.get('reason', '')
 
-    if total_units is None or not isinstance(total_units, int) or total_units < 0:
-        raise HTTPException(status_code=400, detail='total_units חייב להיות מספר שלם חיובי')
+    if total_units is None or isinstance(total_units, bool) or not isinstance(total_units, int) or total_units < 0:
+        raise HTTPException(status_code=400, detail='total_units חייב להיות מספר שלם לא-שלילי')
 
     db = get_db()
     now = datetime.now(timezone.utc).isoformat()
