@@ -83,7 +83,7 @@ async def _compute_building_resequence(db, building_id: str):
 
 @router.post("/projects", response_model=Project)
 async def create_project(project: Project, user: dict = Depends(require_roles('project_manager'))):
-    if project.total_units is None or project.total_units < 1:
+    if project.total_units is None or not isinstance(project.total_units, int) or project.total_units < 1:
         raise HTTPException(status_code=400, detail='חובה להזין את כמות יחידות הדיור בפרויקט (מההיתר)')
     db = get_db()
     if not _is_super_admin(user):
