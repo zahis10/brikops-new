@@ -1,46 +1,168 @@
-============================================================
-  #340a — get_billing_for_org respects project.total_units
-  for display — Full Diff
-============================================================
-
-File: backend/contractor_ops/billing.py
-Function: get_billing_for_org() — project list builder (~line 986)
-
+diff --git a/backend/contractor_ops/admin_dashboard.py b/backend/contractor_ops/admin_dashboard.py
+index 1593ed7..fd91fce 100644
+--- a/backend/contractor_ops/admin_dashboard.py
++++ b/backend/contractor_ops/admin_dashboard.py
+@@ -81,11 +81,17 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
+     ).to_list(5000)
+     sub_map = {s['org_id']: s for s in subs}
+ 
+-    billing_agg = await db.project_billing.aggregate([
+-        {'$match': {'org_id': {'$in': org_ids}, 'status': 'active'}},
+-        {'$group': {'_id': '$org_id', 'total': {'$sum': '$monthly_total'}}}
+-    ]).to_list(5000)
+-    monthly_cost_map = {r['_id']: r['total'] for r in billing_agg}
++    from contractor_ops.billing import get_billable_amount
++    monthly_cost_map = {}
++    for oid in org_ids:
++        try:
++            billing_info = await get_billable_amount(oid, 'monthly')
++            monthly_cost_map[oid] = billing_info['amount']
++        except Exception:
++            pbs = await db.project_billing.find(
++                {'org_id': oid, 'status': 'active'}, {'_id': 0, 'monthly_total': 1}
++            ).to_list(5000)
++            monthly_cost_map[oid] = sum(pb.get('monthly_total', 0) for pb in pbs)
+ 
+     memberships = await db.organization_memberships.find(
+         {'org_id': {'$in': org_ids}}, {'_id': 0, 'org_id': 1, 'user_id': 1}
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index 961b253..804c5a1 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -193,10 +193,18 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
+     for pb in all_pbs:
+         pb_map.setdefault(pb['org_id'], []).append(pb)
+ 
++    from contractor_ops.billing import get_billable_amount
+     result = []
+     for org in orgs:
+         sub = sub_map.get(org['id'])
+         access, reason = _resolve_access(sub)
++        if sub:
++            try:
++                billing_info = await get_billable_amount(org['id'], 'monthly')
++                sub['billable_amount'] = billing_info['amount']
++                sub['billable_source'] = billing_info['source']
++            except Exception:
++                pass
+         result.append({
+             **org,
+             'subscription': sub,
 diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index 6d078aa..d580ac0 100644
+index d580ac0..e8ba9a0 100644
 --- a/backend/contractor_ops/billing.py
 +++ b/backend/contractor_ops/billing.py
-@@ -985,12 +985,30 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
+@@ -1155,9 +1155,42 @@ async def _refresh_peak_units(pb: dict, observed: int) -> bool:
+     return False
  
-     projects = []
-     billed_project_ids = set()
-+    from contractor_ops.billing_plans import calculate_monthly
-     for pb in project_billings:
--        proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'id': 1, 'name': 1})
--        projects.append({
-+        proj = await db.projects.find_one(
-+            {'id': pb['project_id']},
-+            {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1}
-+        )
-+        total_units_declared = proj.get('total_units') if proj else None
-+
-+        project_data = {
-             **pb,
-             'project_name': proj.get('name', '') if proj else '',
--        })
-+            'total_units_declared': total_units_declared,
-+        }
-+
-+        if total_units_declared is not None and total_units_declared > 0:
-+            plan_id = pb.get('plan_id')
-+            computed_monthly = calculate_monthly(total_units_declared, plan_id=plan_id, project_index=1)
-+            project_data['contracted_units'] = total_units_declared
-+            project_data['monthly_total'] = computed_monthly
-+            project_data['cycle_peak_units'] = total_units_declared
-+            project_data['pending_contracted_units'] = None
-+            project_data['pending_effective_from'] = None
-+
-+        projects.append(project_data)
-         billed_project_ids.add(pb['project_id'])
  
-     all_org_projects = await db.projects.find(
++def _build_project_billing_dict(pb: dict, observed: int, project: dict) -> dict:
++    total_units = project.get('total_units')
++    d = {
++        'id': pb['id'],
++        'plan_id': pb.get('plan_id'),
++        'contracted_units': pb.get('contracted_units', 0),
++        'observed_units': observed,
++        'cycle_peak_units': pb.get('cycle_peak_units', pb.get('contracted_units', 0)),
++        'tier_code': pb.get('tier_code', 'none'),
++        'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
++        'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
++        'pricing_version': pb.get('pricing_version', 0),
++        'monthly_total': pb.get('monthly_total', 0),
++        'status': pb.get('status', 'active'),
++        'setup_state': pb.get('setup_state', 'trial'),
++        'billing_contact_note': pb.get('billing_contact_note'),
++        'pending_contracted_units': pb.get('pending_contracted_units'),
++        'pending_effective_from': pb.get('pending_effective_from'),
++        'total_units_declared': None,
++    }
++    if total_units is not None and total_units > 0:
++        from contractor_ops.billing_plans import calculate_monthly
++        plan_id = pb.get('plan_id')
++        computed_monthly = calculate_monthly(total_units, plan_id=plan_id, project_index=1)
++        d['contracted_units'] = total_units
++        d['cycle_peak_units'] = total_units
++        d['monthly_total'] = computed_monthly
++        d['pending_contracted_units'] = None
++        d['pending_effective_from'] = None
++        d['total_units_declared'] = total_units
++    return d
++
++
+ async def get_billing_for_project(project_id: str) -> dict:
+     db = get_db()
+-    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1})
++    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1, 'total_units': 1})
+     if not project:
+         return {'error': 'פרויקט לא נמצא'}
+ 
+@@ -1194,23 +1227,7 @@ async def get_billing_for_project(project_id: str) -> dict:
+         'read_only_reason': reason,
+         'paid_until': sub.get('paid_until') if sub and computed_status == 'active' else None,
+         'trial_end_at': sub.get('trial_end_at') if sub and computed_status == 'trial' else None,
+-        'billing': {
+-            'id': pb['id'],
+-            'plan_id': pb.get('plan_id'),
+-            'contracted_units': pb.get('contracted_units', 0),
+-            'observed_units': observed,
+-            'cycle_peak_units': pb.get('cycle_peak_units', pb.get('contracted_units', 0)),
+-            'tier_code': pb.get('tier_code', 'none'),
+-            'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
+-            'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
+-            'pricing_version': pb.get('pricing_version', 0),
+-            'monthly_total': pb.get('monthly_total', 0),
+-            'status': pb.get('status', 'active'),
+-            'setup_state': pb.get('setup_state', 'trial'),
+-            'billing_contact_note': pb.get('billing_contact_note'),
+-            'pending_contracted_units': pb.get('pending_contracted_units'),
+-            'pending_effective_from': pb.get('pending_effective_from'),
+-        } if pb else None,
++        'billing': _build_project_billing_dict(pb, observed, project) if pb else None,
+     }
+     return result
+ 
+diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
+index 882f23d..a45520f 100644
+--- a/frontend/src/pages/AdminBillingPage.js
++++ b/frontend/src/pages/AdminBillingPage.js
+@@ -394,7 +394,7 @@ const AdminBillingPage = () => {
+           const activeOrgs = orgs.filter(o => o.effective_access === 'full_access').length;
+           const totalMonthly = orgs
+             .filter(o => o.effective_access === 'full_access' && o.subscription?.status === 'active')
+-            .reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
++            .reduce((sum, o) => sum + (o.subscription?.billable_amount ?? o.subscription?.total_monthly ?? 0), 0);
+           return (
+             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+               <div className="bg-blue-50 rounded-xl border border-blue-100 border-r-[3px] border-r-blue-400 p-3">
+diff --git a/frontend/src/pages/AdminOrgsPage.js b/frontend/src/pages/AdminOrgsPage.js
+index ca2a666..b957482 100644
+--- a/frontend/src/pages/AdminOrgsPage.js
++++ b/frontend/src/pages/AdminOrgsPage.js
+@@ -578,10 +578,10 @@ const AdminOrgsPage = () => {
+                                     <span className="font-medium">{formatDate(sub.manual_override.comped_until)}</span>
+                                   </div>
+                                 )}
+-                                {sub.total_monthly > 0 && (
++                                {(sub.billable_amount ?? sub.total_monthly ?? 0) > 0 && (
+                                   <div>
+                                     <span className="text-slate-400">עלות חודשית: </span>
+-                                    <span className="font-medium">{formatCurrency(sub.total_monthly)}</span>
++                                    <span className="font-medium">{formatCurrency(sub.billable_amount ?? sub.total_monthly ?? 0)}</span>
+                                   </div>
+                                 )}
+                               </div>
+diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
+index b20b4e7..591f555 100644
+--- a/frontend/src/pages/OrgBillingPage.js
++++ b/frontend/src/pages/OrgBillingPage.js
+@@ -1126,8 +1126,8 @@ export default function OrgBillingPage() {
+             const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
+             const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
+             const founderExpiring = daysLeft !== null && daysLeft <= 30;
+-            const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
+-              const units = pb.contracted_units || 0;
++            const projectedStandard = data.projects?.reduce((sum, pb) => {
++              const units = (pb.total_units_declared != null && pb.total_units_declared > 0) ? pb.total_units_declared : (pb.contracted_units || 0);
+               const ppu = pb.price_per_unit || 15;
+               const license = 450;
+               return sum + license + (units * ppu);
