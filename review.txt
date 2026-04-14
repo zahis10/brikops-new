@@ -1,130 +1,124 @@
 ============================================================
-  Task #337 — Update pricing: 450₪ license + 15₪/unit
-  (replaces 899+20) — Full Diff, All Files
+  Task #338 — Backend Foundation: project.total_units
+  as billing source — Full Diff, All Files
 ============================================================
 
-diff --git a/backend/contractor_ops/billing_plans.py b/backend/contractor_ops/billing_plans.py
-index 514e0d3..6278c47 100644
---- a/backend/contractor_ops/billing_plans.py
-+++ b/backend/contractor_ops/billing_plans.py
-@@ -21,9 +21,9 @@ def _now():
-     return datetime.now(timezone.utc).isoformat()
+diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
+index 498aac0..6d078aa 100644
+--- a/backend/contractor_ops/billing.py
++++ b/backend/contractor_ops/billing.py
+@@ -1553,24 +1553,37 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
+         ).to_list(1000)
+         sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
+         for idx, pb in enumerate(sorted_pbs):
+-            contracted = pb.get('contracted_units', 0)
+-            observed = await compute_observed_units(pb['project_id'])
+-            await _refresh_peak_units(pb, observed)
+-            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
+-            contracted = pb.get('contracted_units', 0)
+-            peak = pb.get('cycle_peak_units', contracted)
+-            peak = max(peak, observed, contracted)
+-            billable = max(contracted, peak)
++            proj = await db.projects.find_one(
++                {'id': pb['project_id']},
++                {'_id': 0, 'name': 1, 'total_units': 1}
++            )
++            total_units_declared = proj.get('total_units') if proj else None
++
++            if total_units_declared is not None and total_units_declared > 0:
++                billable = total_units_declared
++                contracted = total_units_declared
++                observed = await compute_observed_units(pb['project_id'])
++                peak = total_units_declared
++            else:
++                contracted = pb.get('contracted_units', 0)
++                observed = await compute_observed_units(pb['project_id'])
++                await _refresh_peak_units(pb, observed)
++                pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
++                contracted = pb.get('contracted_units', 0)
++                peak = pb.get('cycle_peak_units', contracted)
++                peak = max(peak, observed, contracted)
++                billable = max(contracted, peak)
++
+             plan_id = pb.get('plan_id')
+             proj_monthly = calculate_monthly(
+                 billable, plan_id=plan_id, project_index=idx + 1
+             )
+             total_monthly += proj_monthly
+-            proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
+             breakdown.append({
+                 'project_id': pb.get('project_id'),
+                 'project_name': proj.get('name', '') if proj else '',
+                 'plan_id': plan_id,
++                'total_units_declared': total_units_declared,
+                 'contracted_units': contracted,
+                 'observed_units': observed,
+                 'cycle_peak_units': peak,
+
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index 3fac903..961b253 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -1225,4 +1225,63 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
+     return doc
  
  
--PROJECT_LICENSE_FIRST = 899
-+PROJECT_LICENSE_FIRST = 450
- PROJECT_LICENSE_ADDITIONAL = 450
--PRICE_PER_UNIT = 20
-+PRICE_PER_UNIT = 15
- 
- FOUNDER_PLAN = {
-     "plan_id": "founder_6m",
-
-diff --git a/backend/contractor_ops/invoicing.py b/backend/contractor_ops/invoicing.py
-index 0b6be33..2a89ff1 100644
---- a/backend/contractor_ops/invoicing.py
-+++ b/backend/contractor_ops/invoicing.py
-@@ -107,7 +107,7 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
-             'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
-             'license_fee_snapshot': pb.get('license_fee', 0),
-             'units_fee_snapshot': pb.get('units_fee', 0),
--            'price_per_unit': pb.get('price_per_unit', 20),
-+            'price_per_unit': pb.get('price_per_unit', 15),
-             'units_count': pb.get('contracted_units', 0),
-             'monthly_total_snapshot': mt,
-         })
-
-diff --git a/frontend/src/components/PlanSelector.js b/frontend/src/components/PlanSelector.js
-index 46e3f22..5948f83 100644
---- a/frontend/src/components/PlanSelector.js
-+++ b/frontend/src/components/PlanSelector.js
-@@ -80,7 +80,7 @@ export default function PlanSelector({ plans, onSelect, currentPlan, loading, se
-           <Building2 className="w-5 h-5 text-emerald-500" />
-           <span className="font-bold text-slate-800">תוכנית רגילה</span>
-         </div>
--        <div className="text-lg font-bold text-slate-900 mb-1">₪899<span className="text-sm font-normal text-slate-500"> רישיון + ₪20/יחידה לחודש</span></div>
-+        <div className="text-lg font-bold text-slate-900 mb-1">₪450<span className="text-sm font-normal text-slate-500"> רישיון + ₪15/יחידה לחודש</span></div>
-         <div className="text-xs text-slate-500 mb-2">ללא הגבלת פרויקטים ויחידות</div>
-         {selectedPlan === 'standard' && (
-           <div className="absolute top-2 left-2">
-
-diff --git a/frontend/src/components/ProjectBillingEditModal.js b/frontend/src/components/ProjectBillingEditModal.js
-index f389ccd..8c60834 100644
---- a/frontend/src/components/ProjectBillingEditModal.js
-+++ b/frontend/src/components/ProjectBillingEditModal.js
-@@ -7,9 +7,9 @@ import {
-   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
- } from './ui/dialog';
- 
--const LICENSE_FIRST = 899;
-+const LICENSE_FIRST = 450;
- const LICENSE_ADDITIONAL = 450;
--const PRICE_PER_UNIT = 20;
-+const PRICE_PER_UNIT = 15;
- 
- export default function ProjectBillingEditModal({ open, onClose, projectBilling, onSaved }) {
-   const [units, setUnits] = useState('');
-
-diff --git a/frontend/src/components/UpgradeWizard.js b/frontend/src/components/UpgradeWizard.js
-index 664463c..3fb14c4 100644
---- a/frontend/src/components/UpgradeWizard.js
-+++ b/frontend/src/components/UpgradeWizard.js
-@@ -3,9 +3,9 @@ import { billingService } from '../services/api';
- import { formatCurrency } from '../utils/billingLabels';
- import { toast } from 'sonner';
- import { Loader2, Check, ChevronDown, ChevronUp, Info, CreditCard } from 'lucide-react';
--const LICENSE_FIRST = 899;
-+const LICENSE_FIRST = 450;
- const LICENSE_ADDITIONAL = 450;
--const PRICE_PER_UNIT = 20;
-+const PRICE_PER_UNIT = 15;
- 
- export default function UpgradeWizard({ orgId, projects, canManageBilling, onPaymentRequested, renewalCycle, onCycleChange, selectedPlan: externalSelectedPlan, billableAmount, billableSource }) {
-   const [selectedProjectId, setSelectedProjectId] = useState('');
-
-diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-index 886b0d8..b20b4e7 100644
---- a/frontend/src/pages/OrgBillingPage.js
-+++ b/frontend/src/pages/OrgBillingPage.js
-@@ -1001,7 +1001,7 @@ export default function OrgBillingPage() {
-             <div className="bg-slate-50 rounded-lg p-3">
-               <div className="text-slate-500 mb-1">סה״כ חודשי</div>
--              <div className="font-bold text-lg text-slate-900">{formatCurrency(sub.total_monthly)}</div>
-+              <div className="font-bold text-lg text-slate-900">{formatCurrency(sub.billable_amount ?? sub.total_monthly ?? 0)}</div>
-             </div>
-             {sub.billing_cycle && (
-               <div className="bg-slate-50 rounded-lg p-3">
-@@ -1128,8 +1128,8 @@ export default function OrgBillingPage() {
-             const founderExpiring = daysLeft !== null && daysLeft <= 30;
-             const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
-               const units = pb.contracted_units || 0;
--              const ppu = pb.price_per_unit || 20;
--              const license = idx === 0 ? 899 : 450;
-+              const ppu = pb.price_per_unit || 15;
-+              const license = 450;
-               return sum + license + (units * ppu);
-             }, 0) || 0;
-             if (!founderExpiring) return null;
-@@ -1741,7 +1741,7 @@ export default function OrgBillingPage() {
-                   )}
-                   <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
-                     <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
--                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 20)}</span></div>
-+                    <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 15)}</span></div>
-                   </div>
-                   {pb.cycle_peak_units > pb.contracted_units && (
-                     <div className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1" title="החיוב נקבע לפי השיא החודשי כדי למנוע שינויים תכופים">
-
-diff --git a/replit.md b/replit.md
-index 614fb19..9fa3434 100644
---- a/replit.md
-+++ b/replit.md
-@@ -31,7 +31,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
-     -   **File Storage**: Abstracted dual storage backend (local filesystem or AWS S3).
-     -   **Task Workflow Enforcement**: Strict status transitions and role-based permissions.
-     -   **Proof Management**: Multi-image proof uploads with client-side compression and validation, including photo annotation capabilities.
--    -   **Billing System**: Simplified license + per-unit pricing (₪900 first project + ₪450 additional + ₪20/unit/month; founder_6m=₪500 flat; manual_override passthrough). PayPlus payment gateway for credit card payments (sandbox-first), Green Invoice for invoice generation, and recurring renewal infrastructure. Plan selection: Founder (₪500/mo × 6, 1 project, 30 slots max) vs Standard. `set_org_plan()` shared function for plan activation. Webhook amount verification (non-blocking). Founder expiry via daily cron + checkout auto-switch. Admin founder toggle via `app_config` collection.
-+    -   **Billing System**: Simplified license + per-unit pricing (₪450 per project + ₪15/unit/month; founder_6m=₪499 flat; manual_override passthrough). PayPlus payment gateway for credit card payments (sandbox-first), Green Invoice for invoice generation, and recurring renewal infrastructure. Plan selection: Founder (₪499/mo × 6, 1 project, 30 slots max) vs Standard. `set_org_plan()` shared function for plan activation. Webhook amount verification (non-blocking). Founder expiry via daily cron + checkout auto-switch. Admin founder toggle via `app_config` collection.
-     -   **Admin & Member Management**: Tools for super_admin, PM, and owner-level team management.
-     -   **QC (Quality Control) System**: Floor-level and unit-level quality control with template versioning, RBAC, stage-based workflow, and an approver system.
-     -   **Handover Protocol System**: Unit-level handover protocol management for inspections, including engine-managed forms, status flows, digital signatures, and defect creation.
++@router.post("/admin/projects/{project_id}/set-total-units")
++async def admin_set_project_total_units(
++    project_id: str,
++    request: Request,
++    user: dict = Depends(require_super_admin),
++):
++    body = await request.json()
++    total_units = body.get('total_units')
++    reason = body.get('reason', '')
++
++    if total_units is None or isinstance(total_units, bool) or not isinstance(total_units, int) or total_units < 0:
++        raise HTTPException(status_code=400, detail='total_units חייב להיות מספר שלם לא-שלילי')
++
++    db = get_db()
++    now = datetime.now(timezone.utc).isoformat()
++
++    project = await db.projects.find_one(
++        {'id': project_id},
++        {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1, 'total_units': 1}
++    )
++    if not project:
++        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
++
++    previous = project.get('total_units')
++
++    await db.projects.update_one(
++        {'id': project_id},
++        {'$set': {'total_units': total_units, 'updated_at': now}}
++    )
++
++    await db.audit_events.insert_one({
++        'id': str(uuid.uuid4()),
++        'event_type': 'billing',
++        'entity_type': 'project',
++        'entity_id': project_id,
++        'action': 'total_units_changed',
++        'actor_id': user['id'],
++        'created_at': now,
++        'payload': {
++            'project_id': project_id,
++            'project_name': project.get('name'),
++            'org_id': project.get('org_id'),
++            'previous': previous,
++            'new': total_units,
++            'reason': reason,
++        },
++    })
++
++    logger.info(
++        "[BILLING] Admin set total_units: project=%s org=%s %s -> %s (actor=%s reason=%s)",
++        project_id, project.get('org_id'), previous, total_units, user['id'], reason
++    )
++
++    return {
++        'ok': True,
++        'project_id': project_id,
++        'previous_total_units': previous,
++        'new_total_units': total_units,
++    }
