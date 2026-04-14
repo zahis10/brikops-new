@@ -394,7 +394,7 @@ const AdminBillingPage = () => {
           const activeOrgs = orgs.filter(o => o.effective_access === 'full_access').length;
           const totalMonthly = orgs
             .filter(o => o.effective_access === 'full_access' && o.subscription?.status === 'active')
-            .reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
+            .reduce((sum, o) => sum + (o.subscription?.billable_amount ?? o.subscription?.total_monthly ?? 0), 0);
           return (
             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-blue-50 rounded-xl border border-blue-100 border-r-[3px] border-r-blue-400 p-3">

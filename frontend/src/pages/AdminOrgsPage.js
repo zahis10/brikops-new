@@ -578,10 +578,10 @@ const AdminOrgsPage = () => {
                                     <span className="font-medium">{formatDate(sub.manual_override.comped_until)}</span>
                                   </div>
                                 )}
-                                {sub.total_monthly > 0 && (
+                                {(sub.billable_amount ?? sub.total_monthly ?? 0) > 0 && (
                                   <div>
                                     <span className="text-slate-400">עלות חודשית: </span>
-                                    <span className="font-medium">{formatCurrency(sub.total_monthly)}</span>
+                                    <span className="font-medium">{formatCurrency(sub.billable_amount ?? sub.total_monthly ?? 0)}</span>
                                   </div>
                                 )}
                               </div>

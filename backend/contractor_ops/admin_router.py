@@ -193,10 +193,18 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
     for pb in all_pbs:
         pb_map.setdefault(pb['org_id'], []).append(pb)
 
+    from contractor_ops.billing import get_billable_amount
     result = []
     for org in orgs:
         sub = sub_map.get(org['id'])
         access, reason = _resolve_access(sub)
+        if sub:
+            try:
+                billing_info = await get_billable_amount(org['id'], 'monthly')
+                sub['billable_amount'] = billing_info['amount']
+                sub['billable_source'] = billing_info['source']
+            except Exception:
+                pass
         result.append({
             **org,
             'subscription': sub,

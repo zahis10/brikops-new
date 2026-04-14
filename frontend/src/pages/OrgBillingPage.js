@@ -1126,8 +1126,8 @@ export default function OrgBillingPage() {
             const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
             const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
             const founderExpiring = daysLeft !== null && daysLeft <= 30;
-            const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
-              const units = pb.contracted_units || 0;
+            const projectedStandard = data.projects?.reduce((sum, pb) => {
+              const units = (pb.total_units_declared != null && pb.total_units_declared > 0) ? pb.total_units_declared : (pb.contracted_units || 0);
               const ppu = pb.price_per_unit || 15;
               const license = 450;
               return sum + license + (units * ppu);

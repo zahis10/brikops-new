@@ -81,11 +81,17 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     ).to_list(5000)
     sub_map = {s['org_id']: s for s in subs}
 
-    billing_agg = await db.project_billing.aggregate([
-        {'$match': {'org_id': {'$in': org_ids}, 'status': 'active'}},
-        {'$group': {'_id': '$org_id', 'total': {'$sum': '$monthly_total'}}}
-    ]).to_list(5000)
-    monthly_cost_map = {r['_id']: r['total'] for r in billing_agg}
+    from contractor_ops.billing import get_billable_amount
+    monthly_cost_map = {}
+    for oid in org_ids:
+        try:
+            billing_info = await get_billable_amount(oid, 'monthly')
+            monthly_cost_map[oid] = billing_info['amount']
+        except Exception:
+            pbs = await db.project_billing.find(
+                {'org_id': oid, 'status': 'active'}, {'_id': 0, 'monthly_total': 1}
+            ).to_list(100)
+            monthly_cost_map[oid] = sum(pb.get('monthly_total', 0) for pb in pbs)
 
     memberships = await db.organization_memberships.find(
         {'org_id': {'$in': org_ids}}, {'_id': 0, 'org_id': 1, 'user_id': 1}

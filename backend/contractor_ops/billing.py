@@ -1155,9 +1155,41 @@ async def _refresh_peak_units(pb: dict, observed: int) -> bool:
     return False
 
 
+def _build_project_billing_dict(pb: dict, observed: int, project: dict) -> dict:
+    total_units = project.get('total_units')
+    d = {
+        'id': pb['id'],
+        'plan_id': pb.get('plan_id'),
+        'contracted_units': pb.get('contracted_units', 0),
+        'observed_units': observed,
+        'cycle_peak_units': pb.get('cycle_peak_units', pb.get('contracted_units', 0)),
+        'tier_code': pb.get('tier_code', 'none'),
+        'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
+        'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
+        'pricing_version': pb.get('pricing_version', 0),
+        'monthly_total': pb.get('monthly_total', 0),
+        'status': pb.get('status', 'active'),
+        'setup_state': pb.get('setup_state', 'trial'),
+        'billing_contact_note': pb.get('billing_contact_note'),
+        'pending_contracted_units': pb.get('pending_contracted_units'),
+        'pending_effective_from': pb.get('pending_effective_from'),
+    }
+    if total_units is not None and total_units > 0:
+        from contractor_ops.billing_plans import calculate_monthly
+        plan_id = pb.get('plan_id')
+        computed_monthly = calculate_monthly(total_units, plan_id=plan_id, project_index=1)
+        d['contracted_units'] = total_units
+        d['cycle_peak_units'] = total_units
+        d['monthly_total'] = computed_monthly
+        d['pending_contracted_units'] = None
+        d['pending_effective_from'] = None
+        d['total_units_declared'] = total_units
+    return d
+
+
 async def get_billing_for_project(project_id: str) -> dict:
     db = get_db()
-    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1})
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1, 'total_units': 1})
     if not project:
         return {'error': 'פרויקט לא נמצא'}
 
@@ -1194,23 +1226,7 @@ async def get_billing_for_project(project_id: str) -> dict:
         'read_only_reason': reason,
         'paid_until': sub.get('paid_until') if sub and computed_status == 'active' else None,
         'trial_end_at': sub.get('trial_end_at') if sub and computed_status == 'trial' else None,
-        'billing': {
-            'id': pb['id'],
-            'plan_id': pb.get('plan_id'),
-            'contracted_units': pb.get('contracted_units', 0),
-            'observed_units': observed,
-            'cycle_peak_units': pb.get('cycle_peak_units', pb.get('contracted_units', 0)),
-            'tier_code': pb.get('tier_code', 'none'),
-            'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
-            'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
-            'pricing_version': pb.get('pricing_version', 0),
-            'monthly_total': pb.get('monthly_total', 0),
-            'status': pb.get('status', 'active'),
-            'setup_state': pb.get('setup_state', 'trial'),
-            'billing_contact_note': pb.get('billing_contact_note'),
-            'pending_contracted_units': pb.get('pending_contracted_units'),
-            'pending_effective_from': pb.get('pending_effective_from'),
-        } if pb else None,
+        'billing': _build_project_billing_dict(pb, observed, project) if pb else None,
     }
     return result
 
