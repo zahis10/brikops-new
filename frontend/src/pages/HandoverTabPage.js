@@ -200,7 +200,7 @@ const HandoverTabPage = () => {
         <div className="max-w-lg mx-auto px-4 py-3">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
+              onClick={() => navigate(`/projects/${projectId}/handover`)}
               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
             >
               <ArrowRight className="w-5 h-5" />

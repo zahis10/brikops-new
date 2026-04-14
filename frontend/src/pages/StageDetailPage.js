@@ -928,7 +928,7 @@ export default function StageDetailPage() {
       await qcService.approveStage(runId, stageId, {});
       toast.success('השלב אושר בהצלחה');
       await load();
-      loadTimeline();
+      await loadTimeline();
     } catch (err) {
       const detail = err.response?.data?.detail;
       const msg = typeof detail === 'object' ? detail.message : detail;
@@ -950,7 +950,7 @@ export default function StageDetailPage() {
       setShowRejectModal(false);
       setRejectReason('');
       await load();
-      loadTimeline();
+      await loadTimeline();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה בדחיית השלב');
     } finally {
@@ -970,7 +970,7 @@ export default function StageDetailPage() {
       setShowReopenModal(false);
       setReopenReason('');
       await load();
-      loadTimeline();
+      await loadTimeline();
     } catch (err) {
       const detail = err.response?.data?.detail;
       toast.error(typeof detail === 'string' ? detail : 'שגיאה בפתיחה מחדש של השלב');
@@ -1381,7 +1381,7 @@ export default function StageDetailPage() {
       await qcService.submitStage(runId, stageId);
       toast.success('השלב הוגש לאישור בהצלחה');
       await load();
-      loadTimeline();
+      await loadTimeline();
     } catch (err) {
       const detail = err.response?.data?.detail;
       if (typeof detail === 'object' && detail.error_code === 'QC_REJECTED_ITEMS_PENDING') {
@@ -1528,13 +1528,7 @@ export default function StageDetailPage() {
   }, [stage, scrollToItem]);
 
   const goBack = () => {
-    if (window.history.length > 2) {
-      navigate(-1);
-    } else if (returnToPath) {
-      navigate(returnToPath);
-    } else {
-      navigate(`/projects/${projectId}/floors/${floorId}`);
-    }
+    navigate(`/projects/${projectId}/floors/${floorId}`);
   };
 
   if (loading) {

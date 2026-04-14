@@ -223,8 +223,8 @@ async def list_tasks(
         query['company_id'] = company_id
     if overdue:
         from datetime import datetime, timezone
-        now_iso = datetime.now(timezone.utc).isoformat()
-        query['due_date'] = {'$lt': now_iso, '$exists': True, '$ne': None}
+        today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        query['due_date'] = {'$lt': today_str, '$exists': True, '$ne': None}
         if 'status' not in query:
             query['status'] = {'$nin': ['closed', 'approved']}
     if q:

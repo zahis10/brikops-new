@@ -48,7 +48,7 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
     open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed']}})
     critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed']}})
     now_str = now.strftime('%Y-%m-%d')
-    overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed']}})
+    overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed', 'approved']}})
     building_defects_agg = await db.tasks.aggregate([
         {'$match': {'project_id': project_id, 'building_id': {'$ne': None}}},
         {'$group': {
