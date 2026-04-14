@@ -1,124 +1,46 @@
 ============================================================
-  Task #338 — Backend Foundation: project.total_units
-  as billing source — Full Diff, All Files
+  #340a — get_billing_for_org respects project.total_units
+  for display — Full Diff
 ============================================================
 
+File: backend/contractor_ops/billing.py
+Function: get_billing_for_org() — project list builder (~line 986)
+
 diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index 498aac0..6d078aa 100644
+index 6d078aa..d580ac0 100644
 --- a/backend/contractor_ops/billing.py
 +++ b/backend/contractor_ops/billing.py
-@@ -1553,24 +1553,37 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
-         ).to_list(1000)
-         sorted_pbs = sorted(project_billings, key=lambda p: (p.get('created_at', ''), p.get('project_id', '')))
-         for idx, pb in enumerate(sorted_pbs):
--            contracted = pb.get('contracted_units', 0)
--            observed = await compute_observed_units(pb['project_id'])
--            await _refresh_peak_units(pb, observed)
--            pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
--            contracted = pb.get('contracted_units', 0)
--            peak = pb.get('cycle_peak_units', contracted)
--            peak = max(peak, observed, contracted)
--            billable = max(contracted, peak)
-+            proj = await db.projects.find_one(
-+                {'id': pb['project_id']},
-+                {'_id': 0, 'name': 1, 'total_units': 1}
-+            )
-+            total_units_declared = proj.get('total_units') if proj else None
-+
-+            if total_units_declared is not None and total_units_declared > 0:
-+                billable = total_units_declared
-+                contracted = total_units_declared
-+                observed = await compute_observed_units(pb['project_id'])
-+                peak = total_units_declared
-+            else:
-+                contracted = pb.get('contracted_units', 0)
-+                observed = await compute_observed_units(pb['project_id'])
-+                await _refresh_peak_units(pb, observed)
-+                pb = await db.project_billing.find_one({'id': pb['id']}, {'_id': 0}) or pb
-+                contracted = pb.get('contracted_units', 0)
-+                peak = pb.get('cycle_peak_units', contracted)
-+                peak = max(peak, observed, contracted)
-+                billable = max(contracted, peak)
-+
-             plan_id = pb.get('plan_id')
-             proj_monthly = calculate_monthly(
-                 billable, plan_id=plan_id, project_index=idx + 1
-             )
-             total_monthly += proj_monthly
--            proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'name': 1})
-             breakdown.append({
-                 'project_id': pb.get('project_id'),
-                 'project_name': proj.get('name', '') if proj else '',
-                 'plan_id': plan_id,
-+                'total_units_declared': total_units_declared,
-                 'contracted_units': contracted,
-                 'observed_units': observed,
-                 'cycle_peak_units': peak,
-
-diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
-index 3fac903..961b253 100644
---- a/backend/contractor_ops/admin_router.py
-+++ b/backend/contractor_ops/admin_router.py
-@@ -1225,4 +1225,63 @@ async def admin_clone_qc_template(template_id: str, request: Request, user: dict
-     return doc
+@@ -985,12 +985,30 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
  
+     projects = []
+     billed_project_ids = set()
++    from contractor_ops.billing_plans import calculate_monthly
+     for pb in project_billings:
+-        proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'id': 1, 'name': 1})
+-        projects.append({
++        proj = await db.projects.find_one(
++            {'id': pb['project_id']},
++            {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1}
++        )
++        total_units_declared = proj.get('total_units') if proj else None
++
++        project_data = {
+             **pb,
+             'project_name': proj.get('name', '') if proj else '',
+-        })
++            'total_units_declared': total_units_declared,
++        }
++
++        if total_units_declared is not None and total_units_declared > 0:
++            plan_id = pb.get('plan_id')
++            computed_monthly = calculate_monthly(total_units_declared, plan_id=plan_id, project_index=1)
++            project_data['contracted_units'] = total_units_declared
++            project_data['monthly_total'] = computed_monthly
++            project_data['cycle_peak_units'] = total_units_declared
++            project_data['pending_contracted_units'] = None
++            project_data['pending_effective_from'] = None
++
++        projects.append(project_data)
+         billed_project_ids.add(pb['project_id'])
  
-+@router.post("/admin/projects/{project_id}/set-total-units")
-+async def admin_set_project_total_units(
-+    project_id: str,
-+    request: Request,
-+    user: dict = Depends(require_super_admin),
-+):
-+    body = await request.json()
-+    total_units = body.get('total_units')
-+    reason = body.get('reason', '')
-+
-+    if total_units is None or isinstance(total_units, bool) or not isinstance(total_units, int) or total_units < 0:
-+        raise HTTPException(status_code=400, detail='total_units חייב להיות מספר שלם לא-שלילי')
-+
-+    db = get_db()
-+    now = datetime.now(timezone.utc).isoformat()
-+
-+    project = await db.projects.find_one(
-+        {'id': project_id},
-+        {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1, 'total_units': 1}
-+    )
-+    if not project:
-+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
-+
-+    previous = project.get('total_units')
-+
-+    await db.projects.update_one(
-+        {'id': project_id},
-+        {'$set': {'total_units': total_units, 'updated_at': now}}
-+    )
-+
-+    await db.audit_events.insert_one({
-+        'id': str(uuid.uuid4()),
-+        'event_type': 'billing',
-+        'entity_type': 'project',
-+        'entity_id': project_id,
-+        'action': 'total_units_changed',
-+        'actor_id': user['id'],
-+        'created_at': now,
-+        'payload': {
-+            'project_id': project_id,
-+            'project_name': project.get('name'),
-+            'org_id': project.get('org_id'),
-+            'previous': previous,
-+            'new': total_units,
-+            'reason': reason,
-+        },
-+    })
-+
-+    logger.info(
-+        "[BILLING] Admin set total_units: project=%s org=%s %s -> %s (actor=%s reason=%s)",
-+        project_id, project.get('org_id'), previous, total_units, user['id'], reason
-+    )
-+
-+    return {
-+        'ok': True,
-+        'project_id': project_id,
-+        'previous_total_units': previous,
-+        'new_total_units': total_units,
-+    }
+     all_org_projects = await db.projects.find(

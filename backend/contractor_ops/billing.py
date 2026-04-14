@@ -985,12 +985,30 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
 
     projects = []
     billed_project_ids = set()
+    from contractor_ops.billing_plans import calculate_monthly
     for pb in project_billings:
-        proj = await db.projects.find_one({'id': pb['project_id']}, {'_id': 0, 'id': 1, 'name': 1})
-        projects.append({
+        proj = await db.projects.find_one(
+            {'id': pb['project_id']},
+            {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1}
+        )
+        total_units_declared = proj.get('total_units') if proj else None
+
+        project_data = {
             **pb,
             'project_name': proj.get('name', '') if proj else '',
-        })
+            'total_units_declared': total_units_declared,
+        }
+
+        if total_units_declared is not None and total_units_declared > 0:
+            plan_id = pb.get('plan_id')
+            computed_monthly = calculate_monthly(total_units_declared, plan_id=plan_id, project_index=1)
+            project_data['contracted_units'] = total_units_declared
+            project_data['monthly_total'] = computed_monthly
+            project_data['cycle_peak_units'] = total_units_declared
+            project_data['pending_contracted_units'] = None
+            project_data['pending_effective_from'] = None
+
+        projects.append(project_data)
         billed_project_ids.add(pb['project_id'])
 
     all_org_projects = await db.projects.find(
