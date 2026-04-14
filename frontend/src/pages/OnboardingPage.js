@@ -34,6 +34,8 @@ const OnboardingPage = () => {
   const [email, setEmail] = useState('');
   const [orgName, setOrgName] = useState('');
   const [projectName, setProjectName] = useState('');
+  const [totalUnits, setTotalUnits] = useState('');
+  const [unitsError, setUnitsError] = useState('');
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -518,6 +520,13 @@ const OnboardingPage = () => {
       toast.error(t('onboarding', 'err_project_required'));
       return;
     }
+    const unitsNum = parseInt(totalUnits, 10);
+    if (!totalUnits || isNaN(unitsNum) || unitsNum < 1) {
+      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
+      toast.error('חובה להזין כמות יחידות דיור (לפחות 1)');
+      return;
+    }
+    setUnitsError('');
     const pwErr = validatePassword(password);
     if (pwErr) {
       setPasswordError(pwErr);
@@ -533,6 +542,7 @@ const OnboardingPage = () => {
         email: email.trim().toLowerCase(),
         org_name: orgName.trim(),
         project_name: projectName.trim(),
+        total_units: parseInt(totalUnits, 10),
         password,
       });
       if (result.success && result.token) {
@@ -551,7 +561,7 @@ const OnboardingPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [phoneE164, fullName, email, orgName, projectName, password, validatePassword, loginWithOtp, navigate]);
+  }, [phoneE164, fullName, email, orgName, projectName, totalUnits, password, validatePassword, loginWithOtp, navigate]);
 
   const handleAcceptInvite = useCallback(async (e) => {
     e.preventDefault();
@@ -1368,6 +1378,23 @@ const OnboardingPage = () => {
                 />
                 <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               </div>
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="onb-totalunits" className="block text-sm font-medium text-slate-700">
+                כמות יחידות דיור <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="onb-totalunits"
+                type="number"
+                min="1"
+                step="1"
+                value={totalUnits}
+                onChange={(e) => { setTotalUnits(e.target.value); setUnitsError(''); }}
+                placeholder="למשל: 120"
+                className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
+              />
+              {unitsError && <p className="text-xs text-red-500 mt-1">{unitsError}</p>}
+              <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה. אם אין לך עדיין — השג את המספר לפני יצירת הפרויקט.</p>
             </div>
           </>
         )}

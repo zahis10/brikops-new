@@ -126,6 +126,7 @@ class Project(BaseModel):
     code: Optional[str] = None
     description: Optional[str] = None
     status: ProjectStatus = ProjectStatus.active
+    total_units: Optional[int] = None
     client_name: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None

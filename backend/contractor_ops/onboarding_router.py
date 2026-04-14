@@ -1000,6 +1000,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         org_name = body.get('org_name', '').strip()
         password = body.get('password', '')
         project_name = body.get('project_name', '').strip()
+        total_units = body.get('total_units')
         email_raw = body.get('email', '').strip().lower() if body.get('email') else ''
 
         if not phone:
@@ -1013,6 +1014,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             raise HTTPException(status_code=400, detail='כתובת אימייל לא תקינה')
         if not org_name or len(org_name) < 2:
             raise HTTPException(status_code=400, detail='שם ארגון נדרש (לפחות 2 תווים)')
+        if total_units is None or not isinstance(total_units, int) or total_units < 1:
+            raise HTTPException(status_code=400, detail='חובה להזין את כמות יחידות הדיור בפרויקט (מההיתר)')
         if not password or len(password) < 8:
             raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 8 תווים)')
         import re as _re
@@ -1123,6 +1126,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'created_by': user_id,
             'org_id': org['id'],
             'join_code': join_code,
+            'total_units': total_units,
             'created_at': project_ts,
             'updated_at': project_ts,
         })

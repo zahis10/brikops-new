@@ -28,13 +28,17 @@ const STATUS_COLORS = {
 const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [totalUnits, setTotalUnits] = useState('');
   const [nameError, setNameError] = useState('');
+  const [unitsError, setUnitsError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const resetFields = () => {
     setName('');
     setCode('');
+    setTotalUnits('');
     setNameError('');
+    setUnitsError('');
   };
 
   const handleClose = () => {
@@ -44,13 +48,20 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    let hasError = false;
     if (!name.trim()) {
       setNameError('שם פרויקט חובה');
-      return;
+      hasError = true;
     }
+    const unitsNum = parseInt(totalUnits, 10);
+    if (!totalUnits.trim() || isNaN(unitsNum) || unitsNum < 1) {
+      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
+      hasError = true;
+    }
+    if (hasError) return;
     setSubmitting(true);
     try {
-      const data = { name: name.trim() };
+      const data = { name: name.trim(), total_units: unitsNum };
       if (code.trim()) data.code = code.trim();
       const result = await projectService.create(data);
       toast.success('פרויקט נוצר בהצלחה');
@@ -111,6 +122,23 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
                   placeholder="לדוגמה: RS-001"
                   className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="create-proj-units" className="block text-sm font-medium text-slate-700">
+                  כמות יחידות דיור <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="create-proj-units"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={totalUnits}
+                  onChange={(e) => { setTotalUnits(e.target.value); setUnitsError(''); }}
+                  placeholder="למשל: 120"
+                  className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
+                />
+                {unitsError && <p className="text-xs text-red-500">{unitsError}</p>}
+                <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה ויקבע את מחיר המנוי החודשי.</p>
               </div>
               <Button
                 type="submit"

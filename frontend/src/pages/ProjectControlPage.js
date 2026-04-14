@@ -3343,6 +3343,12 @@ const ProjectControlPage = () => {
             </button>
             <div className="flex-1 min-w-0">
               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
+              {project?.total_units != null && (
+                <div className="flex items-center gap-1 text-xs text-white/70 mt-0.5 mr-1">
+                  <span>יחידות דיור:</span>
+                  <span className="font-medium text-white/90">{project.total_units}</span>
+                </div>
+              )}
             </div>
             <NotificationBell />
             <HamburgerMenu
