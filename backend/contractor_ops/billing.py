@@ -1173,6 +1173,7 @@ def _build_project_billing_dict(pb: dict, observed: int, project: dict) -> dict:
         'billing_contact_note': pb.get('billing_contact_note'),
         'pending_contracted_units': pb.get('pending_contracted_units'),
         'pending_effective_from': pb.get('pending_effective_from'),
+        'total_units_declared': None,
     }
     if total_units is not None and total_units > 0:
         from contractor_ops.billing_plans import calculate_monthly

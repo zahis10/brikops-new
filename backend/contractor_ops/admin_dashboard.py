@@ -90,7 +90,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         except Exception:
             pbs = await db.project_billing.find(
                 {'org_id': oid, 'status': 'active'}, {'_id': 0, 'monthly_total': 1}
-            ).to_list(100)
+            ).to_list(5000)
             monthly_cost_map[oid] = sum(pb.get('monthly_total', 0) for pb in pbs)
 
     memberships = await db.organization_memberships.find(
