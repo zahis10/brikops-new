@@ -1012,18 +1012,27 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
         billed_project_ids.add(pb['project_id'])
 
     all_org_projects = await db.projects.find(
-        {'org_id': org_id}, {'_id': 0, 'id': 1, 'name': 1}
+        {'org_id': org_id}, {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1}
     ).to_list(1000)
     for proj in all_org_projects:
         if proj['id'] not in billed_project_ids:
+            total_units_declared = proj.get('total_units')
+            contracted_units = 0
+            monthly_total = 0
+            if total_units_declared is not None and total_units_declared > 0:
+                from contractor_ops.billing_plans import calculate_monthly
+                contracted_units = total_units_declared
+                monthly_total = calculate_monthly(total_units_declared, plan_id='standard', project_index=1)
+
             projects.append({
                 'project_id': proj['id'],
                 'org_id': org_id,
                 'project_name': proj.get('name', ''),
                 'plan_id': None,
-                'contracted_units': 0,
+                'contracted_units': contracted_units,
                 'status': None,
-                'monthly_total': 0,
+                'monthly_total': monthly_total,
+                'total_units_declared': total_units_declared,
             })
 
     org_members = await db.organization_memberships.find(
