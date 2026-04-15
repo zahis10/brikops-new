@@ -68,7 +68,7 @@ const QuotaRequestCard = ({ request, onAction }) => {
     try {
       await billingService.approveQuotaRequest(request.id, {});
       toast.success('הבקשה אושרה');
-      onAction();
+      await onAction();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה באישור');
     } finally {
@@ -83,7 +83,7 @@ const QuotaRequestCard = ({ request, onAction }) => {
         rejection_reason: rejectReason.trim(),
       });
       toast.success('הבקשה נדחתה');
-      onAction();
+      await onAction();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה בדחייה');
     } finally {
@@ -235,7 +235,6 @@ const AdminBillingPage = () => {
     }
   }, []);
 
-  useEffect(() => { loadQuotaRequests(); }, [loadQuotaRequests]);
 
   const loadOrgInvoices = useCallback(async (gen) => {
     try {
