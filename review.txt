@@ -1,216 +1,518 @@
-diff --git a/backend/contractor_ops/onboarding_router.py b/backend/contractor_ops/onboarding_router.py
-index 0333c43..2592e9e 100644
---- a/backend/contractor_ops/onboarding_router.py
-+++ b/backend/contractor_ops/onboarding_router.py
-@@ -1000,6 +1000,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
-         org_name = body.get('org_name', '').strip()
-         password = body.get('password', '')
-         project_name = body.get('project_name', '').strip()
-+        total_units = body.get('total_units')
-         email_raw = body.get('email', '').strip().lower() if body.get('email') else ''
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index 804c5a1..7fa4ff0 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -1293,3 +1293,138 @@ async def admin_set_project_total_units(
+         'new_total_units': total_units,
+     }
  
-         if not phone:
-@@ -1013,6 +1014,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
-             raise HTTPException(status_code=400, detail='כתובת אימייל לא תקינה')
-         if not org_name or len(org_name) < 2:
-             raise HTTPException(status_code=400, detail='שם ארגון נדרש (לפחות 2 תווים)')
-+        if total_units is None or not isinstance(total_units, int) or total_units < 1:
-+            raise HTTPException(status_code=400, detail='חובה להזין את כמות יחידות הדיור בפרויקט (מההיתר)')
-         if not password or len(password) < 8:
-             raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 8 תווים)')
-         import re as _re
-@@ -1123,6 +1126,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
-             'created_by': user_id,
-             'org_id': org['id'],
-             'join_code': join_code,
-+            'total_units': total_units,
-             'created_at': project_ts,
-             'updated_at': project_ts,
-         })
++
++@router.get("/admin/quota-requests")
++async def admin_list_quota_requests(
++    user: dict = Depends(require_super_admin),
++    status: Optional[str] = Query('pending'),
++):
++    db = get_db()
++    query = {}
++    if status and status != 'all':
++        query['status'] = status
++    requests = await db.unit_quota_requests.find(query, {'_id': 0}).sort('created_at', -1).to_list(500)
++    return {'requests': requests, 'count': len(requests)}
++
++
++@router.post("/admin/quota-requests/{request_id}/approve")
++async def admin_approve_quota_request(
++    request_id: str,
++    request: Request,
++    user: dict = Depends(require_super_admin),
++):
++    body = await request.json() if request.headers.get('content-length') else {}
++    admin_note = body.get('admin_note', '')
++
++    db = get_db()
++    now = datetime.now(timezone.utc).isoformat()
++
++    req = await db.unit_quota_requests.find_one({'id': request_id}, {'_id': 0})
++    if not req:
++        raise HTTPException(status_code=404, detail='בקשה לא נמצאה')
++    if req.get('status') != 'pending':
++        raise HTTPException(status_code=400, detail=f'בקשה כבר במצב {req.get("status")}')
++
++    project_id = req['project_id']
++    new_total = req['requested_total_units']
++
++    project = await db.projects.find_one(
++        {'id': project_id},
++        {'_id': 0, 'total_units': 1, 'name': 1, 'org_id': 1}
++    )
++    if not project:
++        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
++
++    previous_total = project.get('total_units', 0)
++
++    await db.projects.update_one(
++        {'id': project_id},
++        {'$set': {'total_units': new_total, 'updated_at': now}}
++    )
++
++    await db.unit_quota_requests.update_one(
++        {'id': request_id},
++        {'$set': {
++            'status': 'approved',
++            'resolved_at': now,
++            'resolved_by_user_id': user['id'],
++            'admin_note': admin_note,
++            'updated_at': now,
++        }}
++    )
++
++    await db.audit_events.insert_one({
++        'id': str(uuid.uuid4()),
++        'event_type': 'billing',
++        'entity_type': 'project',
++        'entity_id': project_id,
++        'action': 'total_units_changed',
++        'actor_id': user['id'],
++        'created_at': now,
++        'payload': {
++            'project_id': project_id,
++            'project_name': project.get('name'),
++            'org_id': project.get('org_id'),
++            'previous': previous_total,
++            'new': new_total,
++            'reason': f'Approved quota request {request_id}',
++            'quota_request_id': request_id,
++        },
++    })
++
++    logger.info(
++        "[BILLING] Approved quota request: project=%s %s -> %s (actor=%s request=%s)",
++        project_id, previous_total, new_total, user['id'], request_id
++    )
++
++    return {
++        'ok': True,
++        'project_id': project_id,
++        'previous_total_units': previous_total,
++        'new_total_units': new_total,
++        'request_id': request_id,
++    }
++
++
++@router.post("/admin/quota-requests/{request_id}/reject")
++async def admin_reject_quota_request(
++    request_id: str,
++    request: Request,
++    user: dict = Depends(require_super_admin),
++):
++    body = await request.json() if request.headers.get('content-length') else {}
++    admin_note = body.get('admin_note', '')
++    rejection_reason = body.get('rejection_reason', '')
++
++    db = get_db()
++    now = datetime.now(timezone.utc).isoformat()
++
++    req = await db.unit_quota_requests.find_one({'id': request_id}, {'_id': 0})
++    if not req:
++        raise HTTPException(status_code=404, detail='בקשה לא נמצאה')
++    if req.get('status') != 'pending':
++        raise HTTPException(status_code=400, detail=f'בקשה כבר במצב {req.get("status")}')
++
++    await db.unit_quota_requests.update_one(
++        {'id': request_id},
++        {'$set': {
++            'status': 'rejected',
++            'resolved_at': now,
++            'resolved_by_user_id': user['id'],
++            'admin_note': admin_note,
++            'rejection_reason': rejection_reason,
++            'updated_at': now,
++        }}
++    )
++
++    logger.info(
++        "[QUOTA-REQUEST] Rejected request=%s project=%s (actor=%s reason=%s)",
++        request_id, req.get('project_id'), user['id'], rejection_reason
++    )
++
++    return {
++        'ok': True,
++        'request_id': request_id,
++        'status': 'rejected',
++    }
++
+diff --git a/backend/contractor_ops/archive_router.py b/backend/contractor_ops/archive_router.py
+index 4075646..cf0ebe2 100644
+--- a/backend/contractor_ops/archive_router.py
++++ b/backend/contractor_ops/archive_router.py
+@@ -140,6 +140,14 @@ async def restore_building(building_id: str, user: dict = Depends(get_current_us
+         raise HTTPException(status_code=404, detail='בניין לא נמצא בארכיון')
+     await _check_structure_admin(user, building['project_id'])
+ 
++    from contractor_ops.projects_router import _check_unit_quota
++    restore_count = await db.units.count_documents({
++        'building_id': building_id,
++        'archived_reason': f'cascade:building:{building_id}'
++    })
++    if restore_count > 0:
++        await _check_unit_quota(db, building['project_id'], restore_count, user)
++
+     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
+     await db.buildings.update_one({'id': building_id}, {'$unset': unset_fields})
+     await db.floors.update_many(
+@@ -168,6 +176,14 @@ async def restore_floor(floor_id: str, user: dict = Depends(get_current_user)):
+     if parent_building and parent_building.get('archived'):
+         raise HTTPException(status_code=409, detail='לא ניתן לשחזר קומה כשהבניין מאורכב. שחזר את הבניין קודם.')
+ 
++    from contractor_ops.projects_router import _check_unit_quota
++    restore_count = await db.units.count_documents({
++        'floor_id': floor_id,
++        'archived_reason': f'cascade:floor:{floor_id}'
++    })
++    if restore_count > 0:
++        await _check_unit_quota(db, floor['project_id'], restore_count, user)
++
+     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
+     await db.floors.update_one({'id': floor_id}, {'$unset': unset_fields})
+     await db.units.update_many(
+@@ -194,6 +210,9 @@ async def restore_unit(unit_id: str, user: dict = Depends(get_current_user)):
+     if parent_floor and parent_floor.get('archived'):
+         raise HTTPException(status_code=409, detail='לא ניתן לשחזר דירה כשהקומה מאורכבת. שחזר את הקומה קודם.')
+ 
++    from contractor_ops.projects_router import _check_unit_quota
++    await _check_unit_quota(db, unit['project_id'], 1, user)
++
+     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
+     await db.units.update_one({'id': unit_id}, {'$unset': unset_fields})
+ 
+diff --git a/backend/contractor_ops/excel_router.py b/backend/contractor_ops/excel_router.py
+index 25ada78..a73a46e 100644
+--- a/backend/contractor_ops/excel_router.py
++++ b/backend/contractor_ops/excel_router.py
+@@ -40,10 +40,41 @@ async def import_excel(project_id: str, file: UploadFile = File(...), user: dict
+     except:
+         text = content.decode('utf-8')
+     reader = csv.DictReader(io.StringIO(text))
++
++    rows_list = list(reader)
++    new_units_count = 0
++    seen_in_file = set()
++    for row in rows_list:
++        bname = row.get('building_name', '').strip()
++        floor_num_str = row.get('floor_number', '').strip()
++        unit_no = row.get('unit_no', '').strip()
++        if not bname or not floor_num_str or not unit_no:
++            continue
++        try:
++            floor_num = int(floor_num_str)
++        except ValueError:
++            continue
++        dedup_key = (bname, floor_num, unit_no)
++        if dedup_key in seen_in_file:
++            continue
++        seen_in_file.add(dedup_key)
++        building = await db.buildings.find_one({'project_id': project_id, 'name': bname})
++        if building:
++            floor = await db.floors.find_one({'building_id': building['id'], 'floor_number': floor_num})
++            if floor:
++                existing_unit = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no})
++                if existing_unit:
++                    continue
++        new_units_count += 1
++
++    if new_units_count > 0:
++        from contractor_ops.projects_router import _check_unit_quota
++        await _check_unit_quota(db, project_id, new_units_count, user)
++
+     results = {'created': [], 'skipped': [], 'errors': []}
+     row_num = 0
+     ts = _now()
+-    for row in reader:
++    for row in rows_list:
+         row_num += 1
+         bname = row.get('building_name', '').strip()
+         bcode = row.get('building_code', '').strip()
 diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index 1736057..183e4ef 100644
+index 183e4ef..4641aa7 100644
 --- a/backend/contractor_ops/projects_router.py
 +++ b/backend/contractor_ops/projects_router.py
-@@ -83,6 +83,8 @@ async def _compute_building_resequence(db, building_id: str):
+@@ -18,6 +18,97 @@ from contractor_ops.schemas import (
+ router = APIRouter(prefix="/api")
  
- @router.post("/projects", response_model=Project)
- async def create_project(project: Project, user: dict = Depends(require_roles('project_manager'))):
-+    if project.total_units is None or not isinstance(project.total_units, int) or project.total_units < 1:
-+        raise HTTPException(status_code=400, detail='חובה להזין את כמות יחידות הדיור בפרויקט (מההיתר)')
-     db = get_db()
-     if not _is_super_admin(user):
-         org = await get_user_org(user['id'])
-@@ -114,6 +116,7 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
-         'end_date': project.end_date, 'created_by': user['id'],
-         'org_id': org['id'] if org else None,
-         'join_code': join_code,
-+        'total_units': project.total_units,
-         'created_at': ts, 'updated_at': ts,
-     }
-     await db.projects.insert_one(doc)
-diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
-index 49381cd..0c73e38 100644
---- a/backend/contractor_ops/schemas.py
-+++ b/backend/contractor_ops/schemas.py
-@@ -126,6 +126,7 @@ class Project(BaseModel):
-     code: Optional[str] = None
-     description: Optional[str] = None
-     status: ProjectStatus = ProjectStatus.active
-+    total_units: Optional[int] = None
-     client_name: Optional[str] = None
-     start_date: Optional[str] = None
-     end_date: Optional[str] = None
-diff --git a/frontend/src/pages/MyProjectsPage.js b/frontend/src/pages/MyProjectsPage.js
-index f78027a..f9e69b5 100644
---- a/frontend/src/pages/MyProjectsPage.js
-+++ b/frontend/src/pages/MyProjectsPage.js
-@@ -28,13 +28,17 @@ const STATUS_COLORS = {
- const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
-   const [name, setName] = useState('');
-   const [code, setCode] = useState('');
-+  const [totalUnits, setTotalUnits] = useState('');
-   const [nameError, setNameError] = useState('');
-+  const [unitsError, setUnitsError] = useState('');
-   const [submitting, setSubmitting] = useState(false);
  
-   const resetFields = () => {
-     setName('');
-     setCode('');
-+    setTotalUnits('');
-     setNameError('');
-+    setUnitsError('');
-   };
- 
-   const handleClose = () => {
-@@ -44,13 +48,20 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
- 
-   const handleSubmit = async (e) => {
-     e.preventDefault();
-+    let hasError = false;
-     if (!name.trim()) {
-       setNameError('שם פרויקט חובה');
--      return;
-+      hasError = true;
-     }
-+    const unitsNum = parseInt(totalUnits, 10);
-+    if (!totalUnits.trim() || isNaN(unitsNum) || unitsNum < 1) {
-+      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
-+      hasError = true;
++async def _create_or_update_quota_request(
++    db,
++    project_id: str,
++    org_id: str,
++    requester_user: dict,
++    requested_total_units: int,
++    direction: str,
++) -> dict:
++    now = _now()
++    existing = await db.unit_quota_requests.find_one(
++        {'project_id': project_id, 'status': 'pending'},
++        {'_id': 0}
++    )
++
++    if existing:
++        if direction == 'increase' and requested_total_units > existing.get('requested_total_units', 0):
++            await db.unit_quota_requests.update_one(
++                {'id': existing['id']},
++                {'$set': {
++                    'requested_total_units': requested_total_units,
++                    'updated_at': now,
++                }}
++            )
++            existing['requested_total_units'] = requested_total_units
++        return existing
++
++    project = await db.projects.find_one(
++        {'id': project_id},
++        {'_id': 0, 'name': 1, 'total_units': 1}
++    )
++    request_doc = {
++        'id': str(uuid.uuid4()),
++        'project_id': project_id,
++        'project_name_snapshot': project.get('name', '') if project else '',
++        'org_id': org_id,
++        'requester_user_id': requester_user['id'],
++        'requester_user_name': requester_user.get('full_name', '') or requester_user.get('email', ''),
++        'current_total_units': project.get('total_units', 0) if project else 0,
++        'requested_total_units': requested_total_units,
++        'direction': direction,
++        'reason': '',
++        'status': 'pending',
++        'created_at': now,
++        'updated_at': now,
++        'resolved_at': None,
++        'resolved_by_user_id': None,
++        'admin_note': '',
 +    }
-+    if (hasError) return;
-     setSubmitting(true);
-     try {
--      const data = { name: name.trim() };
-+      const data = { name: name.trim(), total_units: unitsNum };
-       if (code.trim()) data.code = code.trim();
-       const result = await projectService.create(data);
-       toast.success('פרויקט נוצר בהצלחה');
-@@ -112,6 +123,23 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
-                   className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
-                 />
-               </div>
-+              <div className="space-y-1.5">
-+                <label htmlFor="create-proj-units" className="block text-sm font-medium text-slate-700">
-+                  כמות יחידות דיור <span className="text-red-500">*</span>
-+                </label>
-+                <input
-+                  id="create-proj-units"
-+                  type="number"
-+                  min="1"
-+                  step="1"
-+                  value={totalUnits}
-+                  onChange={(e) => { setTotalUnits(e.target.value); setUnitsError(''); }}
-+                  placeholder="למשל: 120"
-+                  className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
-+                />
-+                {unitsError && <p className="text-xs text-red-500">{unitsError}</p>}
-+                <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה ויקבע את מחיר המנוי החודשי.</p>
-+              </div>
-               <Button
-                 type="submit"
-                 disabled={submitting}
-diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
-index 221b448..a7ebbdc 100644
---- a/frontend/src/pages/OnboardingPage.js
-+++ b/frontend/src/pages/OnboardingPage.js
-@@ -34,6 +34,8 @@ const OnboardingPage = () => {
-   const [email, setEmail] = useState('');
-   const [orgName, setOrgName] = useState('');
-   const [projectName, setProjectName] = useState('');
-+  const [totalUnits, setTotalUnits] = useState('');
-+  const [unitsError, setUnitsError] = useState('');
-   const [password, setPassword] = useState('');
-   const [passwordError, setPasswordError] = useState('');
-   const [showPassword, setShowPassword] = useState(false);
-@@ -518,6 +520,13 @@ const OnboardingPage = () => {
-       toast.error(t('onboarding', 'err_project_required'));
-       return;
-     }
-+    const unitsNum = parseInt(totalUnits, 10);
-+    if (!totalUnits || isNaN(unitsNum) || unitsNum < 1) {
-+      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
-+      toast.error('חובה להזין כמות יחידות דיור (לפחות 1)');
-+      return;
-+    }
-+    setUnitsError('');
-     const pwErr = validatePassword(password);
-     if (pwErr) {
-       setPasswordError(pwErr);
-@@ -533,6 +542,7 @@ const OnboardingPage = () => {
-         email: email.trim().toLowerCase(),
-         org_name: orgName.trim(),
-         project_name: projectName.trim(),
-+        total_units: parseInt(totalUnits, 10),
-         password,
-       });
-       if (result.success && result.token) {
-@@ -551,7 +561,7 @@ const OnboardingPage = () => {
-     } finally {
-       setLoading(false);
-     }
--  }, [phoneE164, fullName, email, orgName, projectName, password, validatePassword, loginWithOtp, navigate]);
-+  }, [phoneE164, fullName, email, orgName, projectName, totalUnits, password, validatePassword, loginWithOtp, navigate]);
++    await db.unit_quota_requests.insert_one(request_doc)
++    logger.info(
++        "[QUOTA-REQUEST] Created pending request id=%s project=%s requester=%s requested=%s direction=%s",
++        request_doc['id'], project_id, requester_user['id'], requested_total_units, direction
++    )
++    return request_doc
++
++
++async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> None:
++    project = await db.projects.find_one(
++        {'id': project_id},
++        {'_id': 0, 'total_units': 1, 'org_id': 1, 'name': 1}
++    )
++    if not project:
++        return
++    total_units = project.get('total_units')
++    if total_units is None or total_units < 1:
++        return
++
++    current_count = await db.units.count_documents({
++        'project_id': project_id,
++        'archived': {'$ne': True}
++    })
++    if current_count + num_to_add > total_units:
++        requested_total = current_count + num_to_add
++        try:
++            await _create_or_update_quota_request(
++                db,
++                project_id=project_id,
++                org_id=project.get('org_id', ''),
++                requester_user=requester_user,
++                requested_total_units=requested_total,
++                direction='increase',
++            )
++        except Exception as e:
++            logger.error("[QUOTA-REQUEST] Failed to create request: %s", e)
++
++        raise HTTPException(
++            status_code=400,
++            detail=f'חרגת מהכמות המוצהרת של הדירות ({total_units}). בקשתך להגדלה נשלחה לאישור — תקבל הודעה כשתאושר.'
++        )
++
++
+ def _natural_sort_key(name: str):
+     parts = re.split(r'(\d+)', name or '')
+     result = []
+@@ -352,6 +443,7 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
+     unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
+     created_units = []
+     if unit_count > 0:
++        await _check_unit_quota(db, building['project_id'], unit_count, user)
+         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
+         max_numeric = 0
+         for u in all_units:
+@@ -421,6 +513,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
+     unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
  
-   const handleAcceptInvite = useCallback(async (e) => {
-     e.preventDefault();
-@@ -1369,6 +1379,23 @@ const OnboardingPage = () => {
-                 <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-               </div>
-             </div>
-+            <div className="space-y-2">
-+              <label htmlFor="onb-totalunits" className="block text-sm font-medium text-slate-700">
-+                כמות יחידות דיור <span className="text-red-500">*</span>
-+              </label>
-+              <input
-+                id="onb-totalunits"
-+                type="number"
-+                min="1"
-+                step="1"
-+                value={totalUnits}
-+                onChange={(e) => { setTotalUnits(e.target.value); setUnitsError(''); }}
-+                placeholder="למשל: 120"
-+                className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
-+              />
-+              {unitsError && <p className="text-xs text-red-500 mt-1">{unitsError}</p>}
-+              <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה. אם אין לך עדיין — השג את המספר לפני יצירת הפרויקט.</p>
-+            </div>
-           </>
-         )}
+     if unit_count > 0:
++        await _check_unit_quota(db, project_id, unit_count, user)
+         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
+         max_numeric = 0
+         for u in all_units:
+@@ -471,6 +564,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
  
+     if not unit.unit_no:
+         raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
++    await _check_unit_quota(db, project_id, 1, user)
+     existing = await db.units.find_one({
+         'project_id': project_id, 'building_id': building_id,
+         'floor_id': floor_id, 'unit_no': unit.unit_no,
+@@ -731,6 +825,22 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
+                     would_create += 1
+         return {'dry_run': True, 'would_create': would_create, 'would_skip': would_skip, 'message': f'תצוגה מקדימה: {would_create} דירות חדשות, {would_skip} דילוגים'}
+ 
++    would_create_total = 0
++    pre_count_counter = global_counter
++    for floor in target_floors:
++        for unit_idx in range(body.units_per_floor):
++            if body.unit_prefix:
++                unit_num = body.unit_start_number + unit_idx
++                unit_no = f'{body.unit_prefix}{str(unit_num).zfill(body.unit_number_padding) if body.unit_number_padding > 0 else str(unit_num)}'
++            else:
++                pre_count_counter += 1
++                unit_no = str(pre_count_counter)
++            existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
++            if not existing:
++                would_create_total += 1
++    if would_create_total > 0:
++        await _check_unit_quota(db, body.project_id, would_create_total, user)
++
+     batch_id = body.batch_id or str(uuid.uuid4())[:12]
+     created = []
+     skipped = 0
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index fbcd3bc..68fc521 100644
+index 68fc521..d1b4c42 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -3343,6 +3343,12 @@ const ProjectControlPage = () => {
+@@ -1485,7 +1485,7 @@ const QC_BADGE_COLORS = {
+   submitted: 'bg-slate-100 text-slate-600',
+ };
+ 
+-const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure }) => {
++const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure, project }) => {
+   const navigate = useNavigate();
+   const [expandedBuildings, setExpandedBuildings] = useState({});
+   const [expandedFloors, setExpandedFloors] = useState({});
+@@ -1500,6 +1500,10 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+   const [archived, setArchived] = useState(null);
+   const [archiveLoading, setArchiveLoading] = useState(false);
+   const [restoring, setRestoring] = useState({});
++
++  const totalProjectUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
++  const projectTotalCap = project?.total_units;
++  const atUnitCap = projectTotalCap != null && projectTotalCap > 0 && totalProjectUnits >= projectTotalCap;
+   const [archiveSearch, setArchiveSearch] = useState('');
+   const [expandedArchiveBuildings, setExpandedArchiveBuildings] = useState({});
+   const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
+@@ -1977,6 +1981,12 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+ 
+   return (
+     <div className="space-y-2">
++      {atUnitCap && (
++        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
++          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
++          <span>{totalProjectUnits}/{projectTotalCap} דירות — הגעת למגבלה המוצהרת</span>
++        </div>
++      )}
+       {canMutateStructure && (
+         <div className="flex justify-end mb-1">
+           <Button onClick={() => setShowArchive(true)} variant="ghost" className="text-xs text-slate-400 hover:text-slate-600">
+@@ -2141,10 +2151,12 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                         <input
+                           type="number"
+                           min="0"
+-                          value={newUnitCount}
+-                          onChange={e => setNewUnitCount(e.target.value)}
++                          value={atUnitCap ? '0' : newUnitCount}
++                          onChange={e => { if (!atUnitCap) setNewUnitCount(e.target.value); }}
+                           placeholder="0"
+-                          className="w-full text-sm border border-amber-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center"
++                          disabled={atUnitCap}
++                          title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : ''}
++                          className={`w-full text-sm border rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center ${atUnitCap ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-amber-200'}`}
+                           onKeyDown={e => e.key === 'Enter' && handleAddFloor(building.id)}
+                         />
+                       </div>
+@@ -2201,9 +2213,9 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                         })()}
+                         {canMutateStructure && (
+                           <button
+-                            onClick={(e) => { e.stopPropagation(); setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
+-                            className="p-2 ml-1 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"
+-                            title="הוסף דירה"
++                            onClick={(e) => { e.stopPropagation(); if (atUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); return; } setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
++                            className={`p-2 ml-1 rounded-md transition-colors ${atUnitCap ? 'text-slate-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-50'}`}
++                            title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : 'הוסף דירה'}
+                           >
+                             <Plus className="w-3.5 h-3.5" />
+                           </button>
+@@ -2989,6 +3001,8 @@ const ProjectControlPage = () => {
+   const [showFab, setShowFab] = useState(false);
+   const isSuperAdmin = user?.platform_role === 'super_admin';
+   const canMutateStructure = isSuperAdmin || isOrgOwner || canManageBilling;
++  const fabTotalUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
++  const fabAtUnitCap = project?.total_units != null && project.total_units > 0 && fabTotalUnits >= project.total_units;
+ 
+   const FILTERED_PAGE_SIZE = 50;
+   const DEFECT_STATUS_CONFIG = {
+@@ -3343,12 +3357,16 @@ const ProjectControlPage = () => {
              </button>
              <div className="flex-1 min-w-0">
                <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
-+              {project?.total_units != null && (
-+                <div className="flex items-center gap-1 text-xs text-white/70 mt-0.5 mr-1">
-+                  <span>יחידות דיור:</span>
-+                  <span className="font-medium text-white/90">{project.total_units}</span>
-+                </div>
-+              )}
+-              {project?.total_units != null && (
+-                <div className="flex items-center gap-1 text-xs text-white/70 mt-0.5 mr-1">
+-                  <span>יחידות דיור:</span>
+-                  <span className="font-medium text-white/90">{project.total_units}</span>
+-                </div>
+-              )}
++              {project?.total_units != null && project.total_units > 0 && (() => {
++                const activeUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
++                const atCap = activeUnits >= project.total_units;
++                return (
++                  <div className={`flex items-center gap-1 text-xs mt-0.5 mr-1 ${atCap ? 'text-red-300' : 'text-white/70'}`}>
++                    <span>יחידות דיור:</span>
++                    <span className={`font-medium ${atCap ? 'text-red-300' : 'text-white/90'}`}>{activeUnits} / {project.total_units}</span>
++                  </div>
++                );
++              })()}
              </div>
              <NotificationBell />
              <HamburgerMenu
+@@ -3469,7 +3487,7 @@ const ProjectControlPage = () => {
+             />
+           )}
+ 
+-          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} />
++          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} project={project} />
+         </div>
+       )}
+ 
+@@ -3683,11 +3701,11 @@ const ProjectControlPage = () => {
+           <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+             <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
+           </button>
+-          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+-            <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
++          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowBulkUnits(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
++            <DoorOpen className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-green-500'}`} />הוסף דירות
+           </button>
+-          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+-            <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
++          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowExcelImport(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
++            <Upload className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-slate-500'}`} />יבוא אקסל
+           </button>
+         </div>
+       )}
+diff --git a/replit.md b/replit.md
+index 9fa3434..78bad7e 100644
+--- a/replit.md
++++ b/replit.md
+@@ -45,6 +45,7 @@ BrikOps is a full-stack application with a clear separation between frontend and
+     -   **Spare Tiles Multi-Type**: Units support multiple tile types via an array field.
+     -   **Login Redirect Cookie**: `brikops_logged_in` cookie used for landing page redirects.
+     -   **Archive/Restore System**: Soft-delete functionality for hierarchy elements.
++    -   **Unit Quota Enforcement**: `project.total_units` acts as an absolute cap on active units. All 7 creation/restore paths (create_unit, create_floor with auto-units, bulk_create_units, excel import, restore_unit/floor/building) enforce the cap. Exceeding triggers auto-creation of `unit_quota_request` for admin approval. Admin can approve (updates `total_units`) or reject. Frontend shows X/N counter and disables add buttons at cap. Legacy projects (no `total_units`) are unaffected. No super_admin bypass — must update `total_units` via admin endpoint first.
+     -   **Full Project Data Export (ZIP)**: Background job exports all project data (defects, handover protocols, QC, team, companies) as JSON with photos into a downloadable ZIP. S3 storage, presigned URLs, progress polling, rate limiting (1/hour), 5000 photo cap. Router: `data_export_router.py`, Service: `data_export_service.py`, Frontend: `ProjectDataExportTab.js`.
+     -   **Full Project Excel Export (Multi-Sheet)**: Single Excel file with 6 sheets (ליקויים, פרוטוקולי מסירה, בקרת ביצוע, מבנה פרויקט, צוות, חברות וקבלנים). Immediate StreamingResponse download, no background job. PM/super_admin only. Audit event: `full_excel_export`. Endpoint: `POST /api/projects/{id}/export/excel`. Blue card in `ProjectDataExportTab.js`.
+     -   **Defects V2**: Parallel building-level and apartment-level defect views with Excel and PDF exports.
