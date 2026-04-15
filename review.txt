@@ -1,104 +1,57 @@
-diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-index 591f555..7b80a8b 100644
---- a/frontend/src/pages/OrgBillingPage.js
-+++ b/frontend/src/pages/OrgBillingPage.js
-@@ -1739,6 +1739,27 @@ export default function OrgBillingPage() {
-                       )}
-                     </div>
-                   )}
-+                  {pb.total_units_declared != null && pb.total_units_declared > 0 && (
-+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 my-2 space-y-1 text-xs">
-+                      <div className="font-medium text-slate-700 mb-1">איך המחיר מחושב:</div>
-+                      <div className="flex items-center justify-between">
-+                        <span className="text-slate-500">הצהרת יחידות:</span>
-+                        <span className="font-medium">{pb.total_units_declared} יחידות</span>
-+                      </div>
-+                      <div className="flex items-center justify-between">
-+                        <span className="text-slate-500">רישיון פרויקט:</span>
-+                        <span className="font-medium">450₪</span>
-+                      </div>
-+                      <div className="flex items-center justify-between">
-+                        <span className="text-slate-500">{pb.total_units_declared} יחידות × 15₪:</span>
-+                        <span className="font-medium">{pb.total_units_declared * 15}₪</span>
-+                      </div>
-+                      <div className="flex items-center justify-between border-t border-slate-200 pt-1">
-+                        <span className="font-semibold text-slate-800">סה"כ חודשי:</span>
-+                        <span className="font-bold text-slate-900">{(450 + pb.total_units_declared * 15).toLocaleString()}₪</span>
-+                      </div>
-+                    </div>
-+                  )}
-                   <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
-                     <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
-                     <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 15)}</span></div>
-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index d1b4c42..add3fd1 100644
---- a/frontend/src/pages/ProjectControlPage.js
-+++ b/frontend/src/pages/ProjectControlPage.js
-@@ -321,7 +321,7 @@ const AddBuildingForm = ({ projectId, onClose, onSuccess }) => {
-   );
- };
+diff --git a/backend/contractor_ops/invoicing.py b/backend/contractor_ops/invoicing.py
+index 2a89ff1..94c12f7 100644
+--- a/backend/contractor_ops/invoicing.py
++++ b/backend/contractor_ops/invoicing.py
+@@ -84,31 +84,44 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
+     ).to_list(1000)
  
--const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
-+const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuccess }) => {
-   const [step, setStep] = useState(1);
-   const [buildingName, setBuildingName] = useState('');
-   const [buildingCode, setBuildingCode] = useState('');
-@@ -346,6 +346,9 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
-   }
-   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
-   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
-+  const projectCap = project?.total_units;
-+  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
-+  const remaining = projectCap != null && projectCap > 0 ? Math.max(0, projectCap - currentUnitCount) : null;
+     project_ids = [pb['project_id'] for pb in active_pbs]
+-    projects = {}
++    projects_map = {}
+     if project_ids:
+         proj_docs = await db.projects.find(
+             {'id': {'$in': project_ids}},
+-            {'_id': 0, 'id': 1, 'name': 1}
++            {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1}
+         ).to_list(1000)
+-        projects = {p['id']: p.get('name', '') for p in proj_docs}
++        projects_map = {p['id']: {'name': p.get('name', ''), 'total_units': p.get('total_units')} for p in proj_docs}
  
-   const handleUnitsChange = (setter) => (val) => {
-     const raw = String(val).replace(/[^0-9]/g, '');
-@@ -433,6 +436,10 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
-   const handleBack = () => setStep(s => Math.max(s - 1, 1));
++    from contractor_ops.billing_plans import calculate_monthly, PRICE_PER_UNIT
+     line_items = []
+     total = 0
+     for pb in active_pbs:
+-        mt = pb.get('monthly_total', 0)
++        proj_info = projects_map.get(pb['project_id'], {})
++        total_units_declared = proj_info.get('total_units')
++
++        if total_units_declared is not None and total_units_declared > 0:
++            plan_id = pb.get('plan_id')
++            mt = calculate_monthly(total_units_declared, plan_id=plan_id, project_index=1)
++            units_for_display = total_units_declared
++            price_per_unit_for_display = PRICE_PER_UNIT
++        else:
++            mt = pb.get('monthly_total', 0)
++            units_for_display = pb.get('contracted_units', 0)
++            price_per_unit_for_display = pb.get('price_per_unit', 15)
++
+         total += mt
+         line_items.append({
+             'project_id': pb['project_id'],
+-            'project_name_snapshot': projects.get(pb['project_id'], ''),
++            'project_name_snapshot': proj_info.get('name', ''),
+             'plan_id_snapshot': pb.get('plan_id'),
+             'tier_code_snapshot': pb.get('tier_code', 'none'),
+-            'contracted_units_snapshot': pb.get('contracted_units', 0),
++            'contracted_units_snapshot': units_for_display,
+             'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
+             'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
+             'license_fee_snapshot': pb.get('license_fee', 0),
+             'units_fee_snapshot': pb.get('units_fee', 0),
+-            'price_per_unit': pb.get('price_per_unit', 15),
+-            'units_count': pb.get('contracted_units', 0),
++            'price_per_unit': price_per_unit_for_display,
++            'units_count': units_for_display,
+             'monthly_total_snapshot': mt,
+         })
  
-   const handleGenerate = async () => {
-+    if (wouldExceed) {
-+      toast.error(`חריגה מכמות הדירות המוצהרת (${projectCap}). אי אפשר להקים.`);
-+      return;
-+    }
-     setSubmitting(true);
-     try {
-       const batchId = `qs-${Date.now().toString(36)}`;
-@@ -664,6 +671,19 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
-                   )}
-                 </div>
-               </div>
-+              {wouldExceed && (
-+                <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4">
-+                  <div className="flex items-start gap-2">
-+                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-+                    <div className="space-y-1">
-+                      <div className="font-semibold text-red-800">חריגה מהכמות המוצהרת — לא ניתן להקים</div>
-+                      <div className="text-sm text-red-700">הפרויקט הוצהר ל-{projectCap} יחידות דיור. יש {currentUnitCount} דירות פעילות. ניסית להוסיף {totalUnits} דירות.</div>
-+                      <div className="text-sm text-red-700">נותרו <strong>{remaining}</strong> דירות זמינות להוספה.</div>
-+                      <div className="text-sm text-red-700 mt-2">חזור אחורה והתאם את כמות הדירות, או צור קשר עם התמיכה להגדלת הכמות המוצהרת.</div>
-+                    </div>
-+                  </div>
-+                </div>
-+              )}
-             </div>
-           )}
- 
-@@ -678,7 +698,7 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
-                 הבא
-               </Button>
-             ) : (
--              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm">
-+              <Button onClick={handleGenerate} disabled={submitting || wouldExceed} className={`flex-1 bg-green-500 hover:bg-green-600 text-white text-sm ${wouldExceed ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
-               </Button>
-             )}
-@@ -3715,7 +3735,7 @@ const ProjectControlPage = () => {
-         </button>
-       )}
- 
--      {showQuickSetup && <QuickSetupWizard projectId={projectId} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
-+      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
-       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
-       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
-       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}

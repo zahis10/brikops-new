@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "#340D Full Diff — Pricing clarity + Quick Setup preflight"
+title = "#340E Full Diff — Invoice preview respects project.total_units"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
