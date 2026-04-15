@@ -1739,6 +1739,27 @@ export default function OrgBillingPage() {
                       )}
                     </div>
                   )}
+                  {pb.total_units_declared != null && pb.total_units_declared > 0 && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 my-2 space-y-1 text-xs">
+                      <div className="font-medium text-slate-700 mb-1">איך המחיר מחושב:</div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">הצהרת יחידות:</span>
+                        <span className="font-medium">{pb.total_units_declared} יחידות</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">רישיון פרויקט:</span>
+                        <span className="font-medium">450₪</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">{pb.total_units_declared} יחידות × 15₪:</span>
+                        <span className="font-medium">{pb.total_units_declared * 15}₪</span>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-slate-200 pt-1">
+                        <span className="font-semibold text-slate-800">סה"כ חודשי:</span>
+                        <span className="font-bold text-slate-900">{(450 + pb.total_units_declared * 15).toLocaleString()}₪</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                     <div>יחידות: <span className="font-medium text-slate-700">{pb.contracted_units}</span></div>
                     <div>₪/יחידה: <span className="font-medium text-slate-700">{formatCurrency(pb.price_per_unit ?? 15)}</span></div>

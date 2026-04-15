@@ -321,7 +321,7 @@ const AddBuildingForm = ({ projectId, onClose, onSuccess }) => {
   );
 };
 
-const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
+const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuccess }) => {
   const [step, setStep] = useState(1);
   const [buildingName, setBuildingName] = useState('');
   const [buildingCode, setBuildingCode] = useState('');
@@ -346,6 +346,9 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
   }
   const totalUnits = floorsList.reduce((sum, f) => sum + f.units, 0);
   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
+  const projectCap = project?.total_units;
+  const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
+  const remaining = projectCap != null && projectCap > 0 ? Math.max(0, projectCap - currentUnitCount) : null;
 
   const handleUnitsChange = (setter) => (val) => {
     const raw = String(val).replace(/[^0-9]/g, '');
@@ -433,6 +436,10 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
   const handleBack = () => setStep(s => Math.max(s - 1, 1));
 
   const handleGenerate = async () => {
+    if (wouldExceed) {
+      toast.error(`חריגה מכמות הדירות המוצהרת (${projectCap}). אי אפשר להקים.`);
+      return;
+    }
     setSubmitting(true);
     try {
       const batchId = `qs-${Date.now().toString(36)}`;
@@ -664,6 +671,19 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
                   )}
                 </div>
               </div>
+              {wouldExceed && (
+                <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="font-semibold text-red-800">חריגה מהכמות המוצהרת — לא ניתן להקים</div>
+                      <div className="text-sm text-red-700">הפרויקט הוצהר ל-{projectCap} יחידות דיור. יש {currentUnitCount} דירות פעילות. ניסית להוסיף {totalUnits} דירות.</div>
+                      <div className="text-sm text-red-700">נותרו <strong>{remaining}</strong> דירות זמינות להוספה.</div>
+                      <div className="text-sm text-red-700 mt-2">חזור אחורה והתאם את כמות הדירות, או צור קשר עם התמיכה להגדלת הכמות המוצהרת.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -678,7 +698,7 @@ const QuickSetupWizard = ({ projectId, onClose, onSuccess }) => {
                 הבא
               </Button>
             ) : (
-              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm">
+              <Button onClick={handleGenerate} disabled={submitting || wouldExceed} className={`flex-1 bg-green-500 hover:bg-green-600 text-white text-sm ${wouldExceed ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
               </Button>
             )}
@@ -3715,7 +3735,7 @@ const ProjectControlPage = () => {
         </button>
       )}
 
-      {showQuickSetup && <QuickSetupWizard projectId={projectId} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
+      {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
