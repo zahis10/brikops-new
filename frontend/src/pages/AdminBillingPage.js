@@ -56,6 +56,124 @@ const getInitials = (name) => {
   return parts[0][0];
 };
 
+const QuotaRequestCard = ({ request, onAction }) => {
+  const [processing, setProcessing] = useState(false);
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const handleApprove = async () => {
+    const confirmMsg = `לאשר הגדלה מ-${request.current_total_units} ל-${request.requested_total_units} יחידות?`;
+    if (!window.confirm(confirmMsg)) return;
+    setProcessing(true);
+    try {
+      await billingService.approveQuotaRequest(request.id, {});
+      toast.success('הבקשה אושרה');
+      onAction();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה באישור');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setProcessing(true);
+    try {
+      await billingService.rejectQuotaRequest(request.id, {
+        rejection_reason: rejectReason.trim(),
+      });
+      toast.success('הבקשה נדחתה');
+      onAction();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בדחייה');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const dateStr = request.created_at
+    ? new Date(request.created_at).toLocaleDateString('he-IL', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
+    : '—';
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="font-semibold text-slate-800">
+            {request.project_name_snapshot || request.project_id}
+          </div>
+          <div className="text-xs text-slate-500">
+            מבקש: <span className="font-medium text-slate-700">{request.requester_user_name || '—'}</span>
+          </div>
+          <div className="text-sm">
+            <span className="text-slate-500">כמות:</span>{' '}
+            <span className="font-medium">{request.current_total_units}</span>
+            <span className="text-slate-400 mx-2">→</span>
+            <span className="font-bold text-blue-700">{request.requested_total_units}</span>
+            <span className="text-slate-500 mr-1">יחידות</span>
+          </div>
+          {request.reason && (
+            <div className="text-xs text-slate-600 italic bg-slate-50 rounded px-2 py-1 mt-1">
+              סיבה: {request.reason}
+            </div>
+          )}
+          <div className="text-xs text-slate-400">
+            נוצרה: {dateStr}
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 flex-shrink-0">
+          <Button
+            onClick={handleApprove}
+            disabled={processing}
+            className="bg-green-500 hover:bg-green-600 text-white text-xs px-4 py-1.5"
+          >
+            אשר
+          </Button>
+          <Button
+            onClick={() => setShowRejectForm(!showRejectForm)}
+            variant="outline"
+            disabled={processing}
+            className="text-red-600 border-red-300 text-xs px-4 py-1.5"
+          >
+            דחה
+          </Button>
+        </div>
+      </div>
+
+      {showRejectForm && (
+        <div className="border-t border-slate-200 mt-3 pt-3 space-y-2">
+          <textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="סיבת דחייה (אופציונלי, יוצג למבקש)"
+            rows={2}
+            className="w-full border border-slate-300 rounded p-2 text-sm"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={handleReject}
+              disabled={processing}
+              className="bg-red-500 hover:bg-red-600 text-white text-xs"
+            >
+              אשר דחייה
+            </Button>
+            <Button
+              onClick={() => { setShowRejectForm(false); setRejectReason(''); }}
+              variant="outline"
+              className="text-xs"
+            >
+              ביטול
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminBillingPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -101,6 +219,23 @@ const AdminBillingPage = () => {
   const [founderCount, setFounderCount] = useState(0);
   const [founderMaxSlots, setFounderMaxSlots] = useState(30);
   const [founderToggling, setFounderToggling] = useState(false);
+  const [pendingQuotaRequests, setPendingQuotaRequests] = useState([]);
+  const [loadingQuotaRequests, setLoadingQuotaRequests] = useState(false);
+
+  const loadQuotaRequests = useCallback(async () => {
+    setLoadingQuotaRequests(true);
+    try {
+      const res = await billingService.listQuotaRequests('pending');
+      setPendingQuotaRequests(res.requests || []);
+    } catch (err) {
+      toast.error('שגיאה בטעינת בקשות quota');
+      setPendingQuotaRequests([]);
+    } finally {
+      setLoadingQuotaRequests(false);
+    }
+  }, []);
+
+  useEffect(() => { loadQuotaRequests(); }, [loadQuotaRequests]);
 
   const loadOrgInvoices = useCallback(async (gen) => {
     try {
@@ -151,6 +286,7 @@ const AdminBillingPage = () => {
       setFailedRenewals(failedRen);
       if (openReqs.open_count > 0) setOpenRequestsExpanded(true);
       if (orgsData.length > 0) loadOrgInvoices(gen);
+      loadQuotaRequests();
       billingService.getFounderConfig().then(cfg => {
         setFounderEnabled(cfg.enabled);
         setFounderCount(cfg.active_founder_count || 0);
@@ -175,7 +311,7 @@ const AdminBillingPage = () => {
       }
       loadingRef.current = false;
     }
-  }, [loadOrgInvoices]);
+  }, [loadOrgInvoices, loadQuotaRequests]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -560,6 +696,39 @@ const AdminBillingPage = () => {
                   );
                 })
               )}
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-bold text-slate-800">
+              בקשות quota ממתינות ({pendingQuotaRequests.length})
+            </h2>
+            <button
+              onClick={loadQuotaRequests}
+              className="text-xs text-slate-500 hover:text-slate-700"
+              disabled={loadingQuotaRequests}
+            >
+              {loadingQuotaRequests ? 'טוען...' : 'רענן'}
+            </button>
+          </div>
+
+          {loadingQuotaRequests ? (
+            <div className="text-sm text-slate-500 py-4 text-center">טוען...</div>
+          ) : pendingQuotaRequests.length === 0 ? (
+            <div className="text-sm text-slate-500 bg-slate-50 rounded-lg p-4 text-center">
+              אין בקשות ממתינות
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {pendingQuotaRequests.map(req => (
+                <QuotaRequestCard
+                  key={req.id}
+                  request={req}
+                  onAction={loadQuotaRequests}
+                />
+              ))}
             </div>
           )}
         </section>

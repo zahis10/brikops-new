@@ -992,6 +992,18 @@ export const billingService = {
     const response = await axios.post(`${API}/billing/resolve-failed-renewal`, { attempt_id: attemptId }, { headers: getAuthHeader() });
     return response.data;
   },
+  async listQuotaRequests(status = 'pending') {
+    const response = await axios.get(`${API}/admin/quota-requests?status=${status}`, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async approveQuotaRequest(requestId, body = {}) {
+    const response = await axios.post(`${API}/admin/quota-requests/${requestId}/approve`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
+  async rejectQuotaRequest(requestId, body = {}) {
+    const response = await axios.post(`${API}/admin/quota-requests/${requestId}/reject`, body, { headers: getAuthHeader() });
+    return response.data;
+  },
 };
 
 export const invoiceService = {
