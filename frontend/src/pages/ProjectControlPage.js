@@ -21,7 +21,7 @@ import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
-  Zap, Check, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
+  Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
   Package
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -1505,7 +1505,7 @@ const QC_BADGE_COLORS = {
   submitted: 'bg-slate-100 text-slate-600',
 };
 
-const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure, project }) => {
+const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure, project, pendingQuotaRequest, recentQuotaUpdates, onOpenQuotaRequestModal, onDismissQuotaUpdate }) => {
   const navigate = useNavigate();
   const [expandedBuildings, setExpandedBuildings] = useState({});
   const [expandedFloors, setExpandedFloors] = useState({});
@@ -2001,10 +2001,89 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
 
   return (
     <div className="space-y-2">
+      {recentQuotaUpdates && recentQuotaUpdates.map(update => (
+        <div
+          key={update.id}
+          className={`rounded-lg p-3 flex items-start justify-between gap-3 text-sm ${
+            update.status === 'approved'
+              ? 'bg-green-50 border border-green-200 text-green-800'
+              : 'bg-red-50 border border-red-200 text-red-800'
+          }`}
+        >
+          <div className="flex items-start gap-2 flex-1 min-w-0">
+            {update.status === 'approved' ? (
+              <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+            ) : (
+              <XCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-1">
+              {update.status === 'approved' ? (
+                <>
+                  <div className="font-semibold">
+                    בקשתך התקבלה, ניתן להוסיף/להפחית כמות דירות
+                  </div>
+                  <div className="text-xs">
+                    כמות הדירות בפרויקט עודכנה ל-{update.requested_total_units} יחידות.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-semibold">
+                    הבקשה שלך נדחתה
+                  </div>
+                  {update.rejection_reason && (
+                    <div className="text-xs italic">
+                      סיבה: {update.rejection_reason}
+                    </div>
+                  )}
+                  <div className="text-xs">
+                    אפשר להגיש בקשה חדשה עם סיבה מעודכנת.
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => onDismissQuotaUpdate(update.id)}
+            className="flex-shrink-0 p-1 hover:bg-white/30 rounded"
+            title="סגור הודעה"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+
       {atUnitCap && (
-        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
-          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-          <span>{totalProjectUnits}/{projectTotalCap} דירות — הגעת למגבלה המוצהרת</span>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2 text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+            <span className="text-amber-800 font-medium">
+              {totalProjectUnits}/{projectTotalCap} דירות — הגעת למגבלה המוצהרת
+            </span>
+          </div>
+
+          {pendingQuotaRequest ? (
+            <div className="bg-blue-50 border border-blue-200 rounded p-2 text-xs space-y-1">
+              <div className="font-medium text-blue-800 flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                בקשה ממתינה לאישור: הגדלה ל-{pendingQuotaRequest.requested_total_units} דירות
+              </div>
+              <div className="text-slate-500">
+                נשלחה ב-{new Date(pendingQuotaRequest.created_at).toLocaleDateString('he-IL')}.
+                אדמין יבדוק ויאשר בקרוב.
+              </div>
+              {pendingQuotaRequest.reason && (
+                <div className="text-slate-600 italic">סיבה שניתנה: {pendingQuotaRequest.reason}</div>
+              )}
+            </div>
+          ) : onOpenQuotaRequestModal && (
+            <button
+              onClick={onOpenQuotaRequestModal}
+              className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-md font-medium"
+            >
+              בקש הגדלת כמות יחידות
+            </button>
+          )}
         </div>
       )}
       {canMutateStructure && (
@@ -3007,6 +3086,72 @@ const ProjectControlPage = () => {
   const [qcLoading, setQcLoading] = useState(false);
   const [memberCount, setMemberCount] = useState(null);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [pendingQuotaRequest, setPendingQuotaRequest] = useState(null);
+  const [recentQuotaUpdates, setRecentQuotaUpdates] = useState([]);
+  const [showQuotaRequestModal, setShowQuotaRequestModal] = useState(false);
+  const [quotaRequestAmount, setQuotaRequestAmount] = useState('');
+  const [quotaRequestReason, setQuotaRequestReason] = useState('');
+  const [submittingQuotaRequest, setSubmittingQuotaRequest] = useState(false);
+
+  const loadPendingQuotaRequest = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await billingService.getPendingQuotaRequest(projectId);
+      setPendingQuotaRequest(res.request || null);
+    } catch (err) {
+      setPendingQuotaRequest(null);
+    }
+  }, [projectId]);
+
+  const loadRecentQuotaUpdates = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await billingService.getRecentQuotaUpdates(projectId);
+      const dismissed = JSON.parse(localStorage.getItem('dismissed_quota_updates') || '[]');
+      const filtered = (res.requests || []).filter(r => !dismissed.includes(r.id));
+      setRecentQuotaUpdates(filtered);
+    } catch (err) {
+      setRecentQuotaUpdates([]);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    loadPendingQuotaRequest();
+    loadRecentQuotaUpdates();
+  }, [loadPendingQuotaRequest, loadRecentQuotaUpdates]);
+
+  const dismissQuotaUpdate = (requestId) => {
+    const dismissed = JSON.parse(localStorage.getItem('dismissed_quota_updates') || '[]');
+    if (!dismissed.includes(requestId)) {
+      dismissed.push(requestId);
+      localStorage.setItem('dismissed_quota_updates', JSON.stringify(dismissed));
+    }
+    setRecentQuotaUpdates(prev => prev.filter(r => r.id !== requestId));
+  };
+
+  const handleSubmitQuotaRequest = async () => {
+    const amount = parseInt(quotaRequestAmount, 10);
+    if (!amount || amount <= (project?.total_units || 0)) {
+      toast.error('יש להזין מספר גדול מהכמות הנוכחית');
+      return;
+    }
+    setSubmittingQuotaRequest(true);
+    try {
+      await billingService.createQuotaRequest(projectId, {
+        requested_total_units: amount,
+        reason: quotaRequestReason.trim(),
+      });
+      toast.success('הבקשה נשלחה לאישור');
+      setShowQuotaRequestModal(false);
+      setQuotaRequestAmount('');
+      setQuotaRequestReason('');
+      await loadPendingQuotaRequest();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בשליחת בקשה');
+    } finally {
+      setSubmittingQuotaRequest(false);
+    }
+  };
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [approvalBannerDismissed, setApprovalBannerDismissed] = useState(false);
 
@@ -3507,7 +3652,7 @@ const ProjectControlPage = () => {
             />
           )}
 
-          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} project={project} />
+          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} project={project} pendingQuotaRequest={pendingQuotaRequest} recentQuotaUpdates={recentQuotaUpdates} onOpenQuotaRequestModal={() => setShowQuotaRequestModal(true)} onDismissQuotaUpdate={dismissQuotaUpdate} />
         </div>
       )}
 
@@ -3740,6 +3885,75 @@ const ProjectControlPage = () => {
       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
       {showExcelImport && <ExcelImportModal projectId={projectId} onClose={() => setShowExcelImport(false)} onSuccess={handleRefresh} />}
+
+      {showQuotaRequestModal && (
+        <DialogPrimitive.Root open onOpenChange={(v) => { if (!v) setShowQuotaRequestModal(false); }}>
+          <DialogPrimitive.Portal>
+            <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
+            <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" dir="rtl">
+                <DialogPrimitive.Title className="text-lg font-bold text-slate-900 mb-2">
+                  בקשת הגדלת כמות יחידות
+                </DialogPrimitive.Title>
+                <DialogPrimitive.Description className="text-sm text-slate-600 mb-4">
+                  הכמות הנוכחית: {project?.total_units || 0} יחידות. לאיזה מספר תרצה להגדיל?
+                </DialogPrimitive.Description>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      כמות חדשה <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={(project?.total_units || 0) + 1}
+                      value={quotaRequestAmount}
+                      onChange={(e) => setQuotaRequestAmount(e.target.value)}
+                      placeholder={`למשל: ${(project?.total_units || 0) + 50}`}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      סיבה (אופציונלי)
+                    </label>
+                    <textarea
+                      value={quotaRequestReason}
+                      onChange={(e) => setQuotaRequestReason(e.target.value)}
+                      placeholder="למשל: היתר בנייה עודכן, שינויי תכנון"
+                      rows={3}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 mt-5">
+                  <Button
+                    onClick={handleSubmitQuotaRequest}
+                    disabled={
+                      submittingQuotaRequest ||
+                      !quotaRequestAmount ||
+                      parseInt(quotaRequestAmount, 10) <= (project?.total_units || 0)
+                    }
+                    className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
+                  >
+                    {submittingQuotaRequest ? 'שולח...' : 'שלח בקשה'}
+                  </Button>
+                  <Button
+                    onClick={() => { setShowQuotaRequestModal(false); setQuotaRequestAmount(''); setQuotaRequestReason(''); }}
+                    variant="outline"
+                    className="flex-1"
+                    disabled={submittingQuotaRequest}
+                  >
+                    ביטול
+                  </Button>
+                </div>
+              </div>
+            </DialogPrimitive.Content>
+          </DialogPrimitive.Portal>
+        </DialogPrimitive.Root>
+      )}
     </div>
   );
 };

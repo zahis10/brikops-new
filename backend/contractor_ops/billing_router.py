@@ -1770,3 +1770,121 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
     logger.info("[RESOLVE-RENEWAL] Resolved attempt=%s org=%s doc=%s by=%s",
                 resolved_attempt_id, org_id, doc_id, user.get('email', ''))
     return {"status": "resolved", "mark_paid_result": result}
+
+
+@router.get("/billing/project/{project_id}/pending-quota-request")
+async def get_pending_quota_request(project_id: str, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+
+    if not _is_super_admin(user):
+        membership = await db.project_memberships.find_one(
+            {'user_id': user['id'], 'project_id': project_id}, {'_id': 0, 'role': 1}
+        )
+        if not membership:
+            billing_role = await check_org_billing_role(user['id'], project['org_id'])
+            if not billing_role:
+                raise HTTPException(status_code=403, detail='אין הרשאה')
+
+    req = await db.unit_quota_requests.find_one(
+        {'project_id': project_id, 'status': 'pending'},
+        {'_id': 0}
+    )
+    return {'request': req}
+
+
+@router.post("/billing/project/{project_id}/request-quota")
+async def request_quota_increase(
+    project_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, _now
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+
+    body = await request.json()
+    requested_total = body.get('requested_total_units')
+    reason = body.get('reason', '').strip() if body.get('reason') else ''
+
+    if not isinstance(requested_total, int) or isinstance(requested_total, bool) or requested_total < 1:
+        raise HTTPException(status_code=400, detail='כמות לא תקינה')
+
+    db = get_db()
+    project = await db.projects.find_one(
+        {'id': project_id},
+        {'_id': 0, 'org_id': 1, 'total_units': 1, 'name': 1}
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+
+    if not _is_super_admin(user):
+        billing_role = await check_org_billing_role(user['id'], project['org_id'])
+        if billing_role not in ('org_admin', 'billing_admin', 'owner'):
+            raise HTTPException(status_code=403, detail='אין הרשאה לבקש שינוי quota')
+
+    current_total = project.get('total_units', 0)
+    if requested_total <= current_total:
+        raise HTTPException(
+            status_code=400,
+            detail=f'הכמות המבוקשת חייבת להיות גדולה מהנוכחית ({current_total})'
+        )
+
+    from contractor_ops.projects_router import _create_or_update_quota_request
+    req = await _create_or_update_quota_request(
+        db,
+        project_id=project_id,
+        org_id=project['org_id'],
+        requester_user=user,
+        requested_total_units=requested_total,
+        direction='increase',
+    )
+
+    if reason:
+        await db.unit_quota_requests.update_one(
+            {'id': req['id']},
+            {'$set': {'reason': reason, 'updated_at': _now()}}
+        )
+
+    return {'ok': True, 'request_id': req['id']}
+
+
+@router.get("/billing/project/{project_id}/recent-quota-updates")
+async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_current_user)):
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+
+    db = get_db()
+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+
+    if not _is_super_admin(user):
+        membership = await db.project_memberships.find_one(
+            {'user_id': user['id'], 'project_id': project_id}, {'_id': 0}
+        )
+        if not membership:
+            billing_role = await check_org_billing_role(user['id'], project['org_id'])
+            if not billing_role:
+                raise HTTPException(status_code=403, detail='אין הרשאה')
+
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+
+    requests = await db.unit_quota_requests.find(
+        {
+            'project_id': project_id,
+            'status': {'$in': ['approved', 'rejected']},
+            'resolved_at': {'$gte': cutoff},
+        },
+        {'_id': 0}
+    ).sort('resolved_at', -1).to_list(10)
+
+    return {'requests': requests}
