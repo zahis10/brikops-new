@@ -18,6 +18,97 @@ from contractor_ops.schemas import (
 router = APIRouter(prefix="/api")
 
 
+async def _create_or_update_quota_request(
+    db,
+    project_id: str,
+    org_id: str,
+    requester_user: dict,
+    requested_total_units: int,
+    direction: str,
+) -> dict:
+    now = _now()
+    existing = await db.unit_quota_requests.find_one(
+        {'project_id': project_id, 'status': 'pending'},
+        {'_id': 0}
+    )
+
+    if existing:
+        if direction == 'increase' and requested_total_units > existing.get('requested_total_units', 0):
+            await db.unit_quota_requests.update_one(
+                {'id': existing['id']},
+                {'$set': {
+                    'requested_total_units': requested_total_units,
+                    'updated_at': now,
+                }}
+            )
+            existing['requested_total_units'] = requested_total_units
+        return existing
+
+    project = await db.projects.find_one(
+        {'id': project_id},
+        {'_id': 0, 'name': 1, 'total_units': 1}
+    )
+    request_doc = {
+        'id': str(uuid.uuid4()),
+        'project_id': project_id,
+        'project_name_snapshot': project.get('name', '') if project else '',
+        'org_id': org_id,
+        'requester_user_id': requester_user['id'],
+        'requester_user_name': requester_user.get('full_name', '') or requester_user.get('email', ''),
+        'current_total_units': project.get('total_units', 0) if project else 0,
+        'requested_total_units': requested_total_units,
+        'direction': direction,
+        'reason': '',
+        'status': 'pending',
+        'created_at': now,
+        'updated_at': now,
+        'resolved_at': None,
+        'resolved_by_user_id': None,
+        'admin_note': '',
+    }
+    await db.unit_quota_requests.insert_one(request_doc)
+    logger.info(
+        "[QUOTA-REQUEST] Created pending request id=%s project=%s requester=%s requested=%s direction=%s",
+        request_doc['id'], project_id, requester_user['id'], requested_total_units, direction
+    )
+    return request_doc
+
+
+async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> None:
+    project = await db.projects.find_one(
+        {'id': project_id},
+        {'_id': 0, 'total_units': 1, 'org_id': 1, 'name': 1}
+    )
+    if not project:
+        return
+    total_units = project.get('total_units')
+    if total_units is None or total_units < 1:
+        return
+
+    current_count = await db.units.count_documents({
+        'project_id': project_id,
+        'archived': {'$ne': True}
+    })
+    if current_count + num_to_add > total_units:
+        requested_total = current_count + num_to_add
+        try:
+            await _create_or_update_quota_request(
+                db,
+                project_id=project_id,
+                org_id=project.get('org_id', ''),
+                requester_user=requester_user,
+                requested_total_units=requested_total,
+                direction='increase',
+            )
+        except Exception as e:
+            logger.error("[QUOTA-REQUEST] Failed to create request: %s", e)
+
+        raise HTTPException(
+            status_code=400,
+            detail=f'חרגת מהכמות המוצהרת של הדירות ({total_units}). בקשתך להגדלה נשלחה לאישור — תקבל הודעה כשתאושר.'
+        )
+
+
 def _natural_sort_key(name: str):
     parts = re.split(r'(\d+)', name or '')
     result = []
@@ -352,6 +443,7 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
     unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
     created_units = []
     if unit_count > 0:
+        await _check_unit_quota(db, building['project_id'], unit_count, user)
         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
         max_numeric = 0
         for u in all_units:
@@ -421,6 +513,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
     unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
 
     if unit_count > 0:
+        await _check_unit_quota(db, project_id, unit_count, user)
         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
         max_numeric = 0
         for u in all_units:
@@ -471,6 +564,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
 
     if not unit.unit_no:
         raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
+    await _check_unit_quota(db, project_id, 1, user)
     existing = await db.units.find_one({
         'project_id': project_id, 'building_id': building_id,
         'floor_id': floor_id, 'unit_no': unit.unit_no,
@@ -730,6 +824,22 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
                 else:
                     would_create += 1
         return {'dry_run': True, 'would_create': would_create, 'would_skip': would_skip, 'message': f'תצוגה מקדימה: {would_create} דירות חדשות, {would_skip} דילוגים'}
+
+    would_create_total = 0
+    pre_count_counter = global_counter
+    for floor in target_floors:
+        for unit_idx in range(body.units_per_floor):
+            if body.unit_prefix:
+                unit_num = body.unit_start_number + unit_idx
+                unit_no = f'{body.unit_prefix}{str(unit_num).zfill(body.unit_number_padding) if body.unit_number_padding > 0 else str(unit_num)}'
+            else:
+                pre_count_counter += 1
+                unit_no = str(pre_count_counter)
+            existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
+            if not existing:
+                would_create_total += 1
+    if would_create_total > 0:
+        await _check_unit_quota(db, body.project_id, would_create_total, user)
 
     batch_id = body.batch_id or str(uuid.uuid4())[:12]
     created = []

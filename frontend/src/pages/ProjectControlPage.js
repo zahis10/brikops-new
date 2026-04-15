@@ -1485,7 +1485,7 @@ const QC_BADGE_COLORS = {
   submitted: 'bg-slate-100 text-slate-600',
 };
 
-const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure }) => {
+const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure, project }) => {
   const navigate = useNavigate();
   const [expandedBuildings, setExpandedBuildings] = useState({});
   const [expandedFloors, setExpandedFloors] = useState({});
@@ -1500,6 +1500,10 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
   const [archived, setArchived] = useState(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [restoring, setRestoring] = useState({});
+
+  const totalProjectUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
+  const projectTotalCap = project?.total_units;
+  const atUnitCap = projectTotalCap != null && projectTotalCap > 0 && totalProjectUnits >= projectTotalCap;
   const [archiveSearch, setArchiveSearch] = useState('');
   const [expandedArchiveBuildings, setExpandedArchiveBuildings] = useState({});
   const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
@@ -1977,6 +1981,12 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
 
   return (
     <div className="space-y-2">
+      {atUnitCap && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+          <span>{totalProjectUnits}/{projectTotalCap} דירות — הגעת למגבלה המוצהרת</span>
+        </div>
+      )}
       {canMutateStructure && (
         <div className="flex justify-end mb-1">
           <Button onClick={() => setShowArchive(true)} variant="ghost" className="text-xs text-slate-400 hover:text-slate-600">
@@ -2141,10 +2151,12 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                         <input
                           type="number"
                           min="0"
-                          value={newUnitCount}
-                          onChange={e => setNewUnitCount(e.target.value)}
+                          value={atUnitCap ? '0' : newUnitCount}
+                          onChange={e => { if (!atUnitCap) setNewUnitCount(e.target.value); }}
                           placeholder="0"
-                          className="w-full text-sm border border-amber-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center"
+                          disabled={atUnitCap}
+                          title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : ''}
+                          className={`w-full text-sm border rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center ${atUnitCap ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-amber-200'}`}
                           onKeyDown={e => e.key === 'Enter' && handleAddFloor(building.id)}
                         />
                       </div>
@@ -2201,9 +2213,9 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                         })()}
                         {canMutateStructure && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
-                            className="p-2 ml-1 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"
-                            title="הוסף דירה"
+                            onClick={(e) => { e.stopPropagation(); if (atUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); return; } setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
+                            className={`p-2 ml-1 rounded-md transition-colors ${atUnitCap ? 'text-slate-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-50'}`}
+                            title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : 'הוסף דירה'}
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
@@ -2989,6 +3001,8 @@ const ProjectControlPage = () => {
   const [showFab, setShowFab] = useState(false);
   const isSuperAdmin = user?.platform_role === 'super_admin';
   const canMutateStructure = isSuperAdmin || isOrgOwner || canManageBilling;
+  const fabTotalUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
+  const fabAtUnitCap = project?.total_units != null && project.total_units > 0 && fabTotalUnits >= project.total_units;
 
   const FILTERED_PAGE_SIZE = 50;
   const DEFECT_STATUS_CONFIG = {
@@ -3343,12 +3357,16 @@ const ProjectControlPage = () => {
             </button>
             <div className="flex-1 min-w-0">
               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
-              {project?.total_units != null && (
-                <div className="flex items-center gap-1 text-xs text-white/70 mt-0.5 mr-1">
-                  <span>יחידות דיור:</span>
-                  <span className="font-medium text-white/90">{project.total_units}</span>
-                </div>
-              )}
+              {project?.total_units != null && project.total_units > 0 && (() => {
+                const activeUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
+                const atCap = activeUnits >= project.total_units;
+                return (
+                  <div className={`flex items-center gap-1 text-xs mt-0.5 mr-1 ${atCap ? 'text-red-300' : 'text-white/70'}`}>
+                    <span>יחידות דיור:</span>
+                    <span className={`font-medium ${atCap ? 'text-red-300' : 'text-white/90'}`}>{activeUnits} / {project.total_units}</span>
+                  </div>
+                );
+              })()}
             </div>
             <NotificationBell />
             <HamburgerMenu
@@ -3469,7 +3487,7 @@ const ProjectControlPage = () => {
             />
           )}
 
-          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} />
+          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} project={project} />
         </div>
       )}
 
@@ -3683,11 +3701,11 @@ const ProjectControlPage = () => {
           <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
             <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
           </button>
-          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
-            <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
+          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowBulkUnits(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
+            <DoorOpen className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-green-500'}`} />הוסף דירות
           </button>
-          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
-            <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
+          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowExcelImport(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
+            <Upload className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-slate-500'}`} />יבוא אקסל
           </button>
         </div>
       )}

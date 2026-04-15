@@ -140,6 +140,14 @@ async def restore_building(building_id: str, user: dict = Depends(get_current_us
         raise HTTPException(status_code=404, detail='בניין לא נמצא בארכיון')
     await _check_structure_admin(user, building['project_id'])
 
+    from contractor_ops.projects_router import _check_unit_quota
+    restore_count = await db.units.count_documents({
+        'building_id': building_id,
+        'archived_reason': f'cascade:building:{building_id}'
+    })
+    if restore_count > 0:
+        await _check_unit_quota(db, building['project_id'], restore_count, user)
+
     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
     await db.buildings.update_one({'id': building_id}, {'$unset': unset_fields})
     await db.floors.update_many(
@@ -168,6 +176,14 @@ async def restore_floor(floor_id: str, user: dict = Depends(get_current_user)):
     if parent_building and parent_building.get('archived'):
         raise HTTPException(status_code=409, detail='לא ניתן לשחזר קומה כשהבניין מאורכב. שחזר את הבניין קודם.')
 
+    from contractor_ops.projects_router import _check_unit_quota
+    restore_count = await db.units.count_documents({
+        'floor_id': floor_id,
+        'archived_reason': f'cascade:floor:{floor_id}'
+    })
+    if restore_count > 0:
+        await _check_unit_quota(db, floor['project_id'], restore_count, user)
+
     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
     await db.floors.update_one({'id': floor_id}, {'$unset': unset_fields})
     await db.units.update_many(
@@ -193,6 +209,9 @@ async def restore_unit(unit_id: str, user: dict = Depends(get_current_user)):
     parent_floor = await db.floors.find_one({'id': unit['floor_id']}, {'_id': 0})
     if parent_floor and parent_floor.get('archived'):
         raise HTTPException(status_code=409, detail='לא ניתן לשחזר דירה כשהקומה מאורכבת. שחזר את הקומה קודם.')
+
+    from contractor_ops.projects_router import _check_unit_quota
+    await _check_unit_quota(db, unit['project_id'], 1, user)
 
     unset_fields = {'archived': '', 'archived_at': '', 'archived_by': '', 'archived_reason': ''}
     await db.units.update_one({'id': unit_id}, {'$unset': unset_fields})

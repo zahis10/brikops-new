@@ -1293,3 +1293,138 @@ async def admin_set_project_total_units(
         'new_total_units': total_units,
     }
 
+
+@router.get("/admin/quota-requests")
+async def admin_list_quota_requests(
+    user: dict = Depends(require_super_admin),
+    status: Optional[str] = Query('pending'),
+):
+    db = get_db()
+    query = {}
+    if status and status != 'all':
+        query['status'] = status
+    requests = await db.unit_quota_requests.find(query, {'_id': 0}).sort('created_at', -1).to_list(500)
+    return {'requests': requests, 'count': len(requests)}
+
+
+@router.post("/admin/quota-requests/{request_id}/approve")
+async def admin_approve_quota_request(
+    request_id: str,
+    request: Request,
+    user: dict = Depends(require_super_admin),
+):
+    body = await request.json() if request.headers.get('content-length') else {}
+    admin_note = body.get('admin_note', '')
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+
+    req = await db.unit_quota_requests.find_one({'id': request_id}, {'_id': 0})
+    if not req:
+        raise HTTPException(status_code=404, detail='בקשה לא נמצאה')
+    if req.get('status') != 'pending':
+        raise HTTPException(status_code=400, detail=f'בקשה כבר במצב {req.get("status")}')
+
+    project_id = req['project_id']
+    new_total = req['requested_total_units']
+
+    project = await db.projects.find_one(
+        {'id': project_id},
+        {'_id': 0, 'total_units': 1, 'name': 1, 'org_id': 1}
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
+
+    previous_total = project.get('total_units', 0)
+
+    await db.projects.update_one(
+        {'id': project_id},
+        {'$set': {'total_units': new_total, 'updated_at': now}}
+    )
+
+    await db.unit_quota_requests.update_one(
+        {'id': request_id},
+        {'$set': {
+            'status': 'approved',
+            'resolved_at': now,
+            'resolved_by_user_id': user['id'],
+            'admin_note': admin_note,
+            'updated_at': now,
+        }}
+    )
+
+    await db.audit_events.insert_one({
+        'id': str(uuid.uuid4()),
+        'event_type': 'billing',
+        'entity_type': 'project',
+        'entity_id': project_id,
+        'action': 'total_units_changed',
+        'actor_id': user['id'],
+        'created_at': now,
+        'payload': {
+            'project_id': project_id,
+            'project_name': project.get('name'),
+            'org_id': project.get('org_id'),
+            'previous': previous_total,
+            'new': new_total,
+            'reason': f'Approved quota request {request_id}',
+            'quota_request_id': request_id,
+        },
+    })
+
+    logger.info(
+        "[BILLING] Approved quota request: project=%s %s -> %s (actor=%s request=%s)",
+        project_id, previous_total, new_total, user['id'], request_id
+    )
+
+    return {
+        'ok': True,
+        'project_id': project_id,
+        'previous_total_units': previous_total,
+        'new_total_units': new_total,
+        'request_id': request_id,
+    }
+
+
+@router.post("/admin/quota-requests/{request_id}/reject")
+async def admin_reject_quota_request(
+    request_id: str,
+    request: Request,
+    user: dict = Depends(require_super_admin),
+):
+    body = await request.json() if request.headers.get('content-length') else {}
+    admin_note = body.get('admin_note', '')
+    rejection_reason = body.get('rejection_reason', '')
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+
+    req = await db.unit_quota_requests.find_one({'id': request_id}, {'_id': 0})
+    if not req:
+        raise HTTPException(status_code=404, detail='בקשה לא נמצאה')
+    if req.get('status') != 'pending':
+        raise HTTPException(status_code=400, detail=f'בקשה כבר במצב {req.get("status")}')
+
+    await db.unit_quota_requests.update_one(
+        {'id': request_id},
+        {'$set': {
+            'status': 'rejected',
+            'resolved_at': now,
+            'resolved_by_user_id': user['id'],
+            'admin_note': admin_note,
+            'rejection_reason': rejection_reason,
+            'updated_at': now,
+        }}
+    )
+
+    logger.info(
+        "[QUOTA-REQUEST] Rejected request=%s project=%s (actor=%s reason=%s)",
+        request_id, req.get('project_id'), user['id'], rejection_reason
+    )
+
+    return {
+        'ok': True,
+        'request_id': request_id,
+        'status': 'rejected',
+    }
+

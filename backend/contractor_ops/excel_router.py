@@ -40,10 +40,41 @@ async def import_excel(project_id: str, file: UploadFile = File(...), user: dict
     except:
         text = content.decode('utf-8')
     reader = csv.DictReader(io.StringIO(text))
+
+    rows_list = list(reader)
+    new_units_count = 0
+    seen_in_file = set()
+    for row in rows_list:
+        bname = row.get('building_name', '').strip()
+        floor_num_str = row.get('floor_number', '').strip()
+        unit_no = row.get('unit_no', '').strip()
+        if not bname or not floor_num_str or not unit_no:
+            continue
+        try:
+            floor_num = int(floor_num_str)
+        except ValueError:
+            continue
+        dedup_key = (bname, floor_num, unit_no)
+        if dedup_key in seen_in_file:
+            continue
+        seen_in_file.add(dedup_key)
+        building = await db.buildings.find_one({'project_id': project_id, 'name': bname})
+        if building:
+            floor = await db.floors.find_one({'building_id': building['id'], 'floor_number': floor_num})
+            if floor:
+                existing_unit = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no})
+                if existing_unit:
+                    continue
+        new_units_count += 1
+
+    if new_units_count > 0:
+        from contractor_ops.projects_router import _check_unit_quota
+        await _check_unit_quota(db, project_id, new_units_count, user)
+
     results = {'created': [], 'skipped': [], 'errors': []}
     row_num = 0
     ts = _now()
-    for row in reader:
+    for row in rows_list:
         row_num += 1
         bname = row.get('building_name', '').strip()
         bcode = row.get('building_code', '').strip()
