@@ -1,168 +1,216 @@
-diff --git a/backend/contractor_ops/admin_dashboard.py b/backend/contractor_ops/admin_dashboard.py
-index 1593ed7..fd91fce 100644
---- a/backend/contractor_ops/admin_dashboard.py
-+++ b/backend/contractor_ops/admin_dashboard.py
-@@ -81,11 +81,17 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
-     ).to_list(5000)
-     sub_map = {s['org_id']: s for s in subs}
+diff --git a/backend/contractor_ops/onboarding_router.py b/backend/contractor_ops/onboarding_router.py
+index 0333c43..2592e9e 100644
+--- a/backend/contractor_ops/onboarding_router.py
++++ b/backend/contractor_ops/onboarding_router.py
+@@ -1000,6 +1000,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+         org_name = body.get('org_name', '').strip()
+         password = body.get('password', '')
+         project_name = body.get('project_name', '').strip()
++        total_units = body.get('total_units')
+         email_raw = body.get('email', '').strip().lower() if body.get('email') else ''
  
--    billing_agg = await db.project_billing.aggregate([
--        {'$match': {'org_id': {'$in': org_ids}, 'status': 'active'}},
--        {'$group': {'_id': '$org_id', 'total': {'$sum': '$monthly_total'}}}
--    ]).to_list(5000)
--    monthly_cost_map = {r['_id']: r['total'] for r in billing_agg}
-+    from contractor_ops.billing import get_billable_amount
-+    monthly_cost_map = {}
-+    for oid in org_ids:
-+        try:
-+            billing_info = await get_billable_amount(oid, 'monthly')
-+            monthly_cost_map[oid] = billing_info['amount']
-+        except Exception:
-+            pbs = await db.project_billing.find(
-+                {'org_id': oid, 'status': 'active'}, {'_id': 0, 'monthly_total': 1}
-+            ).to_list(5000)
-+            monthly_cost_map[oid] = sum(pb.get('monthly_total', 0) for pb in pbs)
+         if not phone:
+@@ -1013,6 +1014,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+             raise HTTPException(status_code=400, detail='כתובת אימייל לא תקינה')
+         if not org_name or len(org_name) < 2:
+             raise HTTPException(status_code=400, detail='שם ארגון נדרש (לפחות 2 תווים)')
++        if total_units is None or not isinstance(total_units, int) or total_units < 1:
++            raise HTTPException(status_code=400, detail='חובה להזין את כמות יחידות הדיור בפרויקט (מההיתר)')
+         if not password or len(password) < 8:
+             raise HTTPException(status_code=400, detail='סיסמה נדרשת (לפחות 8 תווים)')
+         import re as _re
+@@ -1123,6 +1126,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+             'created_by': user_id,
+             'org_id': org['id'],
+             'join_code': join_code,
++            'total_units': total_units,
+             'created_at': project_ts,
+             'updated_at': project_ts,
+         })
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index 1736057..183e4ef 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -83,6 +83,8 @@ async def _compute_building_resequence(db, building_id: str):
  
-     memberships = await db.organization_memberships.find(
-         {'org_id': {'$in': org_ids}}, {'_id': 0, 'org_id': 1, 'user_id': 1}
-diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
-index 961b253..804c5a1 100644
---- a/backend/contractor_ops/admin_router.py
-+++ b/backend/contractor_ops/admin_router.py
-@@ -193,10 +193,18 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
-     for pb in all_pbs:
-         pb_map.setdefault(pb['org_id'], []).append(pb)
- 
-+    from contractor_ops.billing import get_billable_amount
-     result = []
-     for org in orgs:
-         sub = sub_map.get(org['id'])
-         access, reason = _resolve_access(sub)
-+        if sub:
-+            try:
-+                billing_info = await get_billable_amount(org['id'], 'monthly')
-+                sub['billable_amount'] = billing_info['amount']
-+                sub['billable_source'] = billing_info['source']
-+            except Exception:
-+                pass
-         result.append({
-             **org,
-             'subscription': sub,
-diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index d580ac0..e8ba9a0 100644
---- a/backend/contractor_ops/billing.py
-+++ b/backend/contractor_ops/billing.py
-@@ -1155,9 +1155,42 @@ async def _refresh_peak_units(pb: dict, observed: int) -> bool:
-     return False
- 
- 
-+def _build_project_billing_dict(pb: dict, observed: int, project: dict) -> dict:
-+    total_units = project.get('total_units')
-+    d = {
-+        'id': pb['id'],
-+        'plan_id': pb.get('plan_id'),
-+        'contracted_units': pb.get('contracted_units', 0),
-+        'observed_units': observed,
-+        'cycle_peak_units': pb.get('cycle_peak_units', pb.get('contracted_units', 0)),
-+        'tier_code': pb.get('tier_code', 'none'),
-+        'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
-+        'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
-+        'pricing_version': pb.get('pricing_version', 0),
-+        'monthly_total': pb.get('monthly_total', 0),
-+        'status': pb.get('status', 'active'),
-+        'setup_state': pb.get('setup_state', 'trial'),
-+        'billing_contact_note': pb.get('billing_contact_note'),
-+        'pending_contracted_units': pb.get('pending_contracted_units'),
-+        'pending_effective_from': pb.get('pending_effective_from'),
-+        'total_units_declared': None,
-+    }
-+    if total_units is not None and total_units > 0:
-+        from contractor_ops.billing_plans import calculate_monthly
-+        plan_id = pb.get('plan_id')
-+        computed_monthly = calculate_monthly(total_units, plan_id=plan_id, project_index=1)
-+        d['contracted_units'] = total_units
-+        d['cycle_peak_units'] = total_units
-+        d['monthly_total'] = computed_monthly
-+        d['pending_contracted_units'] = None
-+        d['pending_effective_from'] = None
-+        d['total_units_declared'] = total_units
-+    return d
-+
-+
- async def get_billing_for_project(project_id: str) -> dict:
+ @router.post("/projects", response_model=Project)
+ async def create_project(project: Project, user: dict = Depends(require_roles('project_manager'))):
++    if project.total_units is None or not isinstance(project.total_units, int) or project.total_units < 1:
++        raise HTTPException(status_code=400, detail='חובה להזין את כמות יחידות הדיור בפרויקט (מההיתר)')
      db = get_db()
--    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1})
-+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'id': 1, 'name': 1, 'org_id': 1, 'total_units': 1})
-     if not project:
-         return {'error': 'פרויקט לא נמצא'}
- 
-@@ -1194,23 +1227,7 @@ async def get_billing_for_project(project_id: str) -> dict:
-         'read_only_reason': reason,
-         'paid_until': sub.get('paid_until') if sub and computed_status == 'active' else None,
-         'trial_end_at': sub.get('trial_end_at') if sub and computed_status == 'trial' else None,
--        'billing': {
--            'id': pb['id'],
--            'plan_id': pb.get('plan_id'),
--            'contracted_units': pb.get('contracted_units', 0),
--            'observed_units': observed,
--            'cycle_peak_units': pb.get('cycle_peak_units', pb.get('contracted_units', 0)),
--            'tier_code': pb.get('tier_code', 'none'),
--            'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
--            'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
--            'pricing_version': pb.get('pricing_version', 0),
--            'monthly_total': pb.get('monthly_total', 0),
--            'status': pb.get('status', 'active'),
--            'setup_state': pb.get('setup_state', 'trial'),
--            'billing_contact_note': pb.get('billing_contact_note'),
--            'pending_contracted_units': pb.get('pending_contracted_units'),
--            'pending_effective_from': pb.get('pending_effective_from'),
--        } if pb else None,
-+        'billing': _build_project_billing_dict(pb, observed, project) if pb else None,
+     if not _is_super_admin(user):
+         org = await get_user_org(user['id'])
+@@ -114,6 +116,7 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
+         'end_date': project.end_date, 'created_by': user['id'],
+         'org_id': org['id'] if org else None,
+         'join_code': join_code,
++        'total_units': project.total_units,
+         'created_at': ts, 'updated_at': ts,
      }
-     return result
+     await db.projects.insert_one(doc)
+diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+index 49381cd..0c73e38 100644
+--- a/backend/contractor_ops/schemas.py
++++ b/backend/contractor_ops/schemas.py
+@@ -126,6 +126,7 @@ class Project(BaseModel):
+     code: Optional[str] = None
+     description: Optional[str] = None
+     status: ProjectStatus = ProjectStatus.active
++    total_units: Optional[int] = None
+     client_name: Optional[str] = None
+     start_date: Optional[str] = None
+     end_date: Optional[str] = None
+diff --git a/frontend/src/pages/MyProjectsPage.js b/frontend/src/pages/MyProjectsPage.js
+index f78027a..f9e69b5 100644
+--- a/frontend/src/pages/MyProjectsPage.js
++++ b/frontend/src/pages/MyProjectsPage.js
+@@ -28,13 +28,17 @@ const STATUS_COLORS = {
+ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
+   const [name, setName] = useState('');
+   const [code, setCode] = useState('');
++  const [totalUnits, setTotalUnits] = useState('');
+   const [nameError, setNameError] = useState('');
++  const [unitsError, setUnitsError] = useState('');
+   const [submitting, setSubmitting] = useState(false);
  
-diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
-index 882f23d..a45520f 100644
---- a/frontend/src/pages/AdminBillingPage.js
-+++ b/frontend/src/pages/AdminBillingPage.js
-@@ -394,7 +394,7 @@ const AdminBillingPage = () => {
-           const activeOrgs = orgs.filter(o => o.effective_access === 'full_access').length;
-           const totalMonthly = orgs
-             .filter(o => o.effective_access === 'full_access' && o.subscription?.status === 'active')
--            .reduce((sum, o) => sum + (o.subscription?.total_monthly || 0), 0);
-+            .reduce((sum, o) => sum + (o.subscription?.billable_amount ?? o.subscription?.total_monthly ?? 0), 0);
-           return (
-             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-               <div className="bg-blue-50 rounded-xl border border-blue-100 border-r-[3px] border-r-blue-400 p-3">
-diff --git a/frontend/src/pages/AdminOrgsPage.js b/frontend/src/pages/AdminOrgsPage.js
-index ca2a666..b957482 100644
---- a/frontend/src/pages/AdminOrgsPage.js
-+++ b/frontend/src/pages/AdminOrgsPage.js
-@@ -578,10 +578,10 @@ const AdminOrgsPage = () => {
-                                     <span className="font-medium">{formatDate(sub.manual_override.comped_until)}</span>
-                                   </div>
-                                 )}
--                                {sub.total_monthly > 0 && (
-+                                {(sub.billable_amount ?? sub.total_monthly ?? 0) > 0 && (
-                                   <div>
-                                     <span className="text-slate-400">עלות חודשית: </span>
--                                    <span className="font-medium">{formatCurrency(sub.total_monthly)}</span>
-+                                    <span className="font-medium">{formatCurrency(sub.billable_amount ?? sub.total_monthly ?? 0)}</span>
-                                   </div>
-                                 )}
-                               </div>
-diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-index b20b4e7..591f555 100644
---- a/frontend/src/pages/OrgBillingPage.js
-+++ b/frontend/src/pages/OrgBillingPage.js
-@@ -1126,8 +1126,8 @@ export default function OrgBillingPage() {
-             const lockedDate = isFounderExpiring ? new Date(sub.plan_locked_until) : null;
-             const daysLeft = lockedDate ? Math.ceil((lockedDate - new Date()) / 86400000) : null;
-             const founderExpiring = daysLeft !== null && daysLeft <= 30;
--            const projectedStandard = data.projects?.reduce((sum, pb, idx) => {
--              const units = pb.contracted_units || 0;
-+            const projectedStandard = data.projects?.reduce((sum, pb) => {
-+              const units = (pb.total_units_declared != null && pb.total_units_declared > 0) ? pb.total_units_declared : (pb.contracted_units || 0);
-               const ppu = pb.price_per_unit || 15;
-               const license = 450;
-               return sum + license + (units * ppu);
+   const resetFields = () => {
+     setName('');
+     setCode('');
++    setTotalUnits('');
+     setNameError('');
++    setUnitsError('');
+   };
+ 
+   const handleClose = () => {
+@@ -44,13 +48,20 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault();
++    let hasError = false;
+     if (!name.trim()) {
+       setNameError('שם פרויקט חובה');
+-      return;
++      hasError = true;
+     }
++    const unitsNum = parseInt(totalUnits, 10);
++    if (!totalUnits.trim() || isNaN(unitsNum) || unitsNum < 1) {
++      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
++      hasError = true;
++    }
++    if (hasError) return;
+     setSubmitting(true);
+     try {
+-      const data = { name: name.trim() };
++      const data = { name: name.trim(), total_units: unitsNum };
+       if (code.trim()) data.code = code.trim();
+       const result = await projectService.create(data);
+       toast.success('פרויקט נוצר בהצלחה');
+@@ -112,6 +123,23 @@ const CreateProjectDialog = ({ open, onClose, onSuccess }) => {
+                   className="w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
+                 />
+               </div>
++              <div className="space-y-1.5">
++                <label htmlFor="create-proj-units" className="block text-sm font-medium text-slate-700">
++                  כמות יחידות דיור <span className="text-red-500">*</span>
++                </label>
++                <input
++                  id="create-proj-units"
++                  type="number"
++                  min="1"
++                  step="1"
++                  value={totalUnits}
++                  onChange={(e) => { setTotalUnits(e.target.value); setUnitsError(''); }}
++                  placeholder="למשל: 120"
++                  className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
++                />
++                {unitsError && <p className="text-xs text-red-500">{unitsError}</p>}
++                <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה ויקבע את מחיר המנוי החודשי.</p>
++              </div>
+               <Button
+                 type="submit"
+                 disabled={submitting}
+diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
+index 221b448..a7ebbdc 100644
+--- a/frontend/src/pages/OnboardingPage.js
++++ b/frontend/src/pages/OnboardingPage.js
+@@ -34,6 +34,8 @@ const OnboardingPage = () => {
+   const [email, setEmail] = useState('');
+   const [orgName, setOrgName] = useState('');
+   const [projectName, setProjectName] = useState('');
++  const [totalUnits, setTotalUnits] = useState('');
++  const [unitsError, setUnitsError] = useState('');
+   const [password, setPassword] = useState('');
+   const [passwordError, setPasswordError] = useState('');
+   const [showPassword, setShowPassword] = useState(false);
+@@ -518,6 +520,13 @@ const OnboardingPage = () => {
+       toast.error(t('onboarding', 'err_project_required'));
+       return;
+     }
++    const unitsNum = parseInt(totalUnits, 10);
++    if (!totalUnits || isNaN(unitsNum) || unitsNum < 1) {
++      setUnitsError('חובה להזין כמות יחידות דיור (לפחות 1)');
++      toast.error('חובה להזין כמות יחידות דיור (לפחות 1)');
++      return;
++    }
++    setUnitsError('');
+     const pwErr = validatePassword(password);
+     if (pwErr) {
+       setPasswordError(pwErr);
+@@ -533,6 +542,7 @@ const OnboardingPage = () => {
+         email: email.trim().toLowerCase(),
+         org_name: orgName.trim(),
+         project_name: projectName.trim(),
++        total_units: parseInt(totalUnits, 10),
+         password,
+       });
+       if (result.success && result.token) {
+@@ -551,7 +561,7 @@ const OnboardingPage = () => {
+     } finally {
+       setLoading(false);
+     }
+-  }, [phoneE164, fullName, email, orgName, projectName, password, validatePassword, loginWithOtp, navigate]);
++  }, [phoneE164, fullName, email, orgName, projectName, totalUnits, password, validatePassword, loginWithOtp, navigate]);
+ 
+   const handleAcceptInvite = useCallback(async (e) => {
+     e.preventDefault();
+@@ -1369,6 +1379,23 @@ const OnboardingPage = () => {
+                 <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+               </div>
+             </div>
++            <div className="space-y-2">
++              <label htmlFor="onb-totalunits" className="block text-sm font-medium text-slate-700">
++                כמות יחידות דיור <span className="text-red-500">*</span>
++              </label>
++              <input
++                id="onb-totalunits"
++                type="number"
++                min="1"
++                step="1"
++                value={totalUnits}
++                onChange={(e) => { setTotalUnits(e.target.value); setUnitsError(''); }}
++                placeholder="למשל: 120"
++                className={`w-full h-11 px-3 py-2 text-right text-slate-900 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400 ${unitsError ? 'border-red-500' : 'border-slate-300'}`}
++              />
++              {unitsError && <p className="text-xs text-red-500 mt-1">{unitsError}</p>}
++              <p className="text-xs text-slate-500">מספר זה לקוח מהיתר הבנייה. אם אין לך עדיין — השג את המספר לפני יצירת הפרויקט.</p>
++            </div>
+           </>
+         )}
+ 
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index fbcd3bc..68fc521 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -3343,6 +3343,12 @@ const ProjectControlPage = () => {
+             </button>
+             <div className="flex-1 min-w-0">
+               <ProjectSwitcher currentProjectId={projectId} currentProjectName={project.name} />
++              {project?.total_units != null && (
++                <div className="flex items-center gap-1 text-xs text-white/70 mt-0.5 mr-1">
++                  <span>יחידות דיור:</span>
++                  <span className="font-medium text-white/90">{project.total_units}</span>
++                </div>
++              )}
+             </div>
+             <NotificationBell />
+             <HamburgerMenu
