@@ -84,31 +84,44 @@ async def build_invoice_preview(org_id: str, period_ym: str) -> dict:
     ).to_list(1000)
 
     project_ids = [pb['project_id'] for pb in active_pbs]
-    projects = {}
+    projects_map = {}
     if project_ids:
         proj_docs = await db.projects.find(
             {'id': {'$in': project_ids}},
-            {'_id': 0, 'id': 1, 'name': 1}
+            {'_id': 0, 'id': 1, 'name': 1, 'total_units': 1}
         ).to_list(1000)
-        projects = {p['id']: p.get('name', '') for p in proj_docs}
+        projects_map = {p['id']: {'name': p.get('name', ''), 'total_units': p.get('total_units')} for p in proj_docs}
 
+    from contractor_ops.billing_plans import calculate_monthly, PRICE_PER_UNIT
     line_items = []
     total = 0
     for pb in active_pbs:
-        mt = pb.get('monthly_total', 0)
+        proj_info = projects_map.get(pb['project_id'], {})
+        total_units_declared = proj_info.get('total_units')
+
+        if total_units_declared is not None and total_units_declared > 0:
+            plan_id = pb.get('plan_id')
+            mt = calculate_monthly(total_units_declared, plan_id=plan_id, project_index=1)
+            units_for_display = total_units_declared
+            price_per_unit_for_display = PRICE_PER_UNIT
+        else:
+            mt = pb.get('monthly_total', 0)
+            units_for_display = pb.get('contracted_units', 0)
+            price_per_unit_for_display = pb.get('price_per_unit', 15)
+
         total += mt
         line_items.append({
             'project_id': pb['project_id'],
-            'project_name_snapshot': projects.get(pb['project_id'], ''),
+            'project_name_snapshot': proj_info.get('name', ''),
             'plan_id_snapshot': pb.get('plan_id'),
             'tier_code_snapshot': pb.get('tier_code', 'none'),
-            'contracted_units_snapshot': pb.get('contracted_units', 0),
+            'contracted_units_snapshot': units_for_display,
             'project_fee_snapshot': pb.get('project_fee_snapshot', 0),
             'tier_fee_snapshot': pb.get('tier_fee_snapshot', 0),
             'license_fee_snapshot': pb.get('license_fee', 0),
             'units_fee_snapshot': pb.get('units_fee', 0),
-            'price_per_unit': pb.get('price_per_unit', 15),
-            'units_count': pb.get('contracted_units', 0),
+            'price_per_unit': price_per_unit_for_display,
+            'units_count': units_for_display,
             'monthly_total_snapshot': mt,
         })
 
