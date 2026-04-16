@@ -348,7 +348,6 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
   const projectCap = project?.total_units;
   const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
-  const remaining = projectCap != null && projectCap > 0 ? Math.max(0, projectCap - currentUnitCount) : null;
 
   const handleUnitsChange = (setter) => (val) => {
     const raw = String(val).replace(/[^0-9]/g, '');
@@ -436,10 +435,6 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
   const handleBack = () => setStep(s => Math.max(s - 1, 1));
 
   const handleGenerate = async () => {
-    if (wouldExceed) {
-      toast.error(`חריגה מכמות הדירות המוצהרת (${projectCap}). אי אפשר להקים.`);
-      return;
-    }
     setSubmitting(true);
     try {
       const batchId = `qs-${Date.now().toString(36)}`;
@@ -672,14 +667,13 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
                 </div>
               </div>
               {wouldExceed && (
-                <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4">
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3">
                   <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                     <div className="space-y-1">
-                      <div className="font-semibold text-red-800">חריגה מהכמות המוצהרת — לא ניתן להקים</div>
-                      <div className="text-sm text-red-700">הפרויקט הוצהר ל-{projectCap} יחידות דיור. יש {currentUnitCount} דירות פעילות. ניסית להוסיף {totalUnits} דירות.</div>
-                      <div className="text-sm text-red-700">נותרו <strong>{remaining}</strong> דירות זמינות להוספה.</div>
-                      <div className="text-sm text-red-700 mt-2">חזור אחורה והתאם את כמות הדירות, או צור קשר עם התמיכה להגדלת הכמות המוצהרת.</div>
+                      <div className="font-semibold text-amber-800">חריגה מהכמות המוצהרת</div>
+                      <div className="text-xs text-amber-700">הפרויקט הוצהר ל-{projectCap} יחידות. יש {currentUnitCount} פעילות, ניסית להוסיף {totalUnits}.</div>
+                      <div className="text-xs text-amber-700">הבניין והקומות ייווצרו. בקשה אוטומטית להגדלת הכמות תישלח לאדמין עבור הדירות שבחריגה.</div>
                     </div>
                   </div>
                 </div>
@@ -698,7 +692,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
                 הבא
               </Button>
             ) : (
-              <Button onClick={handleGenerate} disabled={submitting || wouldExceed} className={`flex-1 bg-green-500 hover:bg-green-600 text-white text-sm ${wouldExceed ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm">
                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
               </Button>
             )}
@@ -2250,12 +2244,11 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                         <input
                           type="number"
                           min="0"
-                          value={atUnitCap ? '0' : newUnitCount}
-                          onChange={e => { if (!atUnitCap) setNewUnitCount(e.target.value); }}
+                          value={newUnitCount}
+                          onChange={e => setNewUnitCount(e.target.value)}
                           placeholder="0"
-                          disabled={atUnitCap}
-                          title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : ''}
-                          className={`w-full text-sm border rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center ${atUnitCap ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-amber-200'}`}
+                          title=""
+                          className="w-full text-sm border rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center border-amber-200"
                           onKeyDown={e => e.key === 'Enter' && handleAddFloor(building.id)}
                         />
                       </div>
@@ -2312,9 +2305,9 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                         })()}
                         {canMutateStructure && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); if (atUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); return; } setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
-                            className={`p-2 ml-1 rounded-md transition-colors ${atUnitCap ? 'text-slate-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-50'}`}
-                            title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : 'הוסף דירה'}
+                            onClick={(e) => { e.stopPropagation(); setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
+                            className="p-2 ml-1 rounded-md transition-colors text-blue-500 hover:bg-blue-50"
+                            title="הוסף דירה"
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
@@ -3166,9 +3159,6 @@ const ProjectControlPage = () => {
   const [showFab, setShowFab] = useState(false);
   const isSuperAdmin = user?.platform_role === 'super_admin';
   const canMutateStructure = isSuperAdmin || isOrgOwner || canManageBilling;
-  const fabTotalUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
-  const fabAtUnitCap = project?.total_units != null && project.total_units > 0 && fabTotalUnits >= project.total_units;
-
   const FILTERED_PAGE_SIZE = 50;
   const DEFECT_STATUS_CONFIG = {
     open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
@@ -3866,11 +3856,11 @@ const ProjectControlPage = () => {
           <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
             <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
           </button>
-          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowBulkUnits(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
-            <DoorOpen className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-green-500'}`} />הוסף דירות
+          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
+            <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
           </button>
-          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowExcelImport(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
-            <Upload className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-slate-500'}`} />יבוא אקסל
+          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
+            <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
           </button>
         </div>
       )}
