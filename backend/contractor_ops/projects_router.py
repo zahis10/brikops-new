@@ -888,9 +888,21 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
                     would_create += 1
         return {'dry_run': True, 'would_create': would_create, 'would_skip': would_skip, 'message': f'תצוגה מקדימה: {would_create} דירות חדשות, {would_skip} דילוגים'}
 
-    total_to_add = len(target_floors) * body.units_per_floor
-    if total_to_add > 0:
-        await _check_unit_quota(db, body.project_id, total_to_add, user)
+    would_create_total = 0
+    pre_count_counter = global_counter
+    for floor in target_floors:
+        for unit_idx in range(body.units_per_floor):
+            if body.unit_prefix:
+                unit_num = body.unit_start_number + unit_idx
+                unit_no = f'{body.unit_prefix}{str(unit_num).zfill(body.unit_number_padding) if body.unit_number_padding > 0 else str(unit_num)}'
+            else:
+                pre_count_counter += 1
+                unit_no = str(pre_count_counter)
+            existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
+            if not existing:
+                would_create_total += 1
+    if would_create_total > 0:
+        await _check_unit_quota(db, body.project_id, would_create_total, user)
 
     batch_id = body.batch_id or str(uuid.uuid4())[:12]
     created = []
