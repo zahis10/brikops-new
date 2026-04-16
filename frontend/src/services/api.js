@@ -1016,6 +1016,14 @@ export const billingService = {
     const response = await axios.post(`${API}/admin/quota-requests/${requestId}/reject`, body, { headers: getAuthHeader() });
     return response.data;
   },
+  async setProjectTotalUnits(projectId, totalUnits, reason = '') {
+    const response = await axios.post(
+      `${API}/admin/projects/${projectId}/set-total-units`,
+      { total_units: totalUnits, reason },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
 };
 
 export const invoiceService = {

@@ -174,6 +174,93 @@ const QuotaRequestCard = ({ request, onAction }) => {
   );
 };
 
+const ProjectQuotaRow = ({ project, onUpdated }) => {
+  const [editing, setEditing] = useState(false);
+  const [newTotal, setNewTotal] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  if (!project?.id || !project?.name) return null;
+
+  const activeCount = project.active_units_count || 0;
+  const declared = project.total_units;
+
+  const handleSave = async () => {
+    const trimmed = String(newTotal).trim();
+    if (!/^\d+$/.test(trimmed)) {
+      toast.error('יש להזין מספר שלם לא-שלילי');
+      return;
+    }
+    const num = Number(trimmed);
+    if (!Number.isSafeInteger(num) || num < 0) {
+      toast.error('יש להזין מספר שלם לא-שלילי');
+      return;
+    }
+    if (num > 0 && num < activeCount) {
+      toast.error(`לא ניתן להגדיר פחות מ-${activeCount} דירות פעילות`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await billingService.setProjectTotalUnits(project.id, num, reason);
+      toast.success(`מכסה עודכנה ל-${num} יחידות`);
+      setEditing(false);
+      onUpdated && onUpdated();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בעדכון מכסה');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-2 py-2 px-3 bg-slate-50 rounded-lg flex-wrap">
+      <div className="flex items-center gap-2 min-w-0">
+        <Building2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
+        <span className="text-sm font-medium text-slate-700 truncate">{project.name}</span>
+        <span className="text-xs text-slate-500 whitespace-nowrap">
+          {activeCount} / {declared ?? '—'} יחידות
+        </span>
+      </div>
+      {!editing ? (
+        <button
+          onClick={() => { setEditing(true); setNewTotal(declared != null ? String(declared) : ''); setReason(''); }}
+          className="text-xs text-amber-600 hover:text-amber-700 font-medium whitespace-nowrap"
+        >
+          עדכן מכסה
+        </button>
+      ) : (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <input
+            type="number" min="0" value={newTotal}
+            onChange={e => setNewTotal(e.target.value)}
+            className="w-20 text-sm border border-slate-300 rounded px-2 py-1"
+            placeholder="כמות" dir="ltr"
+          />
+          <input
+            type="text" value={reason}
+            onChange={e => setReason(e.target.value)}
+            className="w-32 text-sm border border-slate-300 rounded px-2 py-1"
+            placeholder="סיבה (אופציונלי)"
+          />
+          <button
+            onClick={handleSave} disabled={saving}
+            className="text-xs bg-amber-500 text-white px-2 py-1 rounded hover:bg-amber-600 disabled:opacity-50"
+          >
+            {saving ? '...' : 'שמור'}
+          </button>
+          <button
+            onClick={() => setEditing(false)}
+            className="text-xs text-slate-400 hover:text-slate-600 px-1"
+          >
+            ביטול
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminBillingPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -889,6 +976,20 @@ const AdminBillingPage = () => {
                             {getInvoiceStatusLabel(latestInv.status)}
                           </span>
                           <span className="font-medium">{formatCurrency(latestInv.total_amount)}</span>
+                        </div>
+                      );
+                    })()}
+                    {(() => {
+                      const projectsWithName = (org.projects || []).filter(p => p?.id && p?.name);
+                      if (projectsWithName.length === 0) return null;
+                      return (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <h4 className="text-xs font-semibold text-slate-500 mb-2">פרויקטים — מכסת יחידות</h4>
+                          <div className="space-y-1">
+                            {projectsWithName.map(p => (
+                              <ProjectQuotaRow key={p.id} project={p} onUpdated={loadData} />
+                            ))}
+                          </div>
                         </div>
                       );
                     })()}

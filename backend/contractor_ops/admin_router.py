@@ -187,11 +187,29 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
 
     all_pbs = await db.project_billing.find(
         {'org_id': {'$in': org_ids}, 'status': 'active'},
-        {'_id': 0, 'org_id': 1, 'plan_id': 1},
+        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1},
     ).to_list(5000)
     pb_map = {}
     for pb in all_pbs:
         pb_map.setdefault(pb['org_id'], []).append(pb)
+
+    org_projects = await db.projects.find(
+        {'org_id': {'$in': org_ids}},
+        {'_id': 0, 'id': 1, 'org_id': 1, 'name': 1, 'total_units': 1},
+    ).to_list(5000)
+    proj_by_id = {p['id']: p for p in org_projects}
+    proj_by_org = {}
+    for p in org_projects:
+        proj_by_org.setdefault(p['org_id'], []).append(p)
+
+    active_units_pipeline = [
+        {'$match': {'project_id': {'$in': list(proj_by_id.keys())}, 'archived': {'$ne': True}}},
+        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}},
+    ] if proj_by_id else None
+    active_count_map = {}
+    if active_units_pipeline:
+        async for row in db.units.aggregate(active_units_pipeline):
+            active_count_map[row['_id']] = row['count']
 
     from contractor_ops.billing import get_billable_amount
     result = []
@@ -205,13 +223,32 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
                 sub['billable_source'] = billing_info['source']
             except Exception:
                 pass
+
+        pb_for_org = pb_map.get(org['id'], [])
+        plan_by_project = {pb.get('project_id'): pb.get('plan_id') for pb in pb_for_org if pb.get('project_id')}
+        enriched_projects = []
+        for p in proj_by_org.get(org['id'], []):
+            enriched_projects.append({
+                'id': p['id'],
+                'name': p.get('name'),
+                'total_units': p.get('total_units'),
+                'active_units_count': active_count_map.get(p['id'], 0),
+                'plan_id': plan_by_project.get(p['id']),
+            })
+        for pb in pb_for_org:
+            if not pb.get('project_id') or pb.get('project_id') not in proj_by_id:
+                enriched_projects.append({
+                    'id': pb.get('project_id'),
+                    'plan_id': pb.get('plan_id'),
+                })
+
         result.append({
             **org,
             'subscription': sub,
             'owner': owner_map.get(org.get('owner_user_id')),
             'effective_access': access.value,
             'read_only_reason': reason,
-            'projects': pb_map.get(org['id'], []),
+            'projects': enriched_projects,
         })
     return result
 
@@ -1257,6 +1294,16 @@ async def admin_set_project_total_units(
         raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
 
     previous = project.get('total_units')
+
+    active_count = await db.units.count_documents({
+        'project_id': project_id,
+        'archived': {'$ne': True},
+    })
+    if total_units > 0 and total_units < active_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f'לא ניתן להגדיר מכסה ({total_units}) נמוכה מכמות הדירות הפעילות ({active_count}). יש לארכב דירות קודם.'
+        )
 
     await db.projects.update_one(
         {'id': project_id},
