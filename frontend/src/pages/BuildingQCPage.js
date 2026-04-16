@@ -77,11 +77,7 @@ export default function BuildingQCPage() {
   const seqRef = useRef(0);
 
   const handleBack = useCallback(() => {
-    if (window.history.length > 2) {
-      navigate(-1);
-    } else {
-      navigate(`/projects/${projectId}/buildings/${buildingId}`);
-    }
+    navigate(`/projects/${projectId}/buildings/${buildingId}`);
   }, [navigate, projectId, buildingId]);
 
   const load = useCallback(async () => {

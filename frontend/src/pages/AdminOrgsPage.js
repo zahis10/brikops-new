@@ -277,7 +277,7 @@ const AdminOrgsPage = () => {
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <header className="bg-gradient-to-l from-slate-900 to-slate-800 text-white">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
+          <button onClick={() => navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
             <ArrowRight className="w-5 h-5" />
           </button>
           <div className="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center">

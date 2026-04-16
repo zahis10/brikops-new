@@ -574,13 +574,9 @@ const ProjectPlansPage = () => {
   }, [editFields.floor_id, allFloors]);
 
   const handleBack = () => {
-    if (window.history.length > 2) {
-      navigate(-1);
-    } else {
-      if (myRole === 'contractor') navigate('/projects');
-      else if (myRole === 'viewer') navigate(`/projects/${projectId}/tasks`);
-      else navigate(`/projects/${projectId}/control`);
-    }
+    if (myRole === 'contractor') navigate('/projects');
+    else if (myRole === 'viewer') navigate(`/projects/${projectId}/tasks`);
+    else navigate(`/projects/${projectId}/control`);
   };
 
   if (loading) {

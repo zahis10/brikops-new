@@ -109,7 +109,7 @@ const UnitDetailPage = () => {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
         <p className="text-slate-500">דירה לא נמצאה</p>
-        <button onClick={() => navigate(-1)} className="text-amber-600 hover:text-amber-700 font-medium">
+        <button onClick={() => navigate(`/projects/${projectId}/control`)} className="text-amber-600 hover:text-amber-700 font-medium">
           חזרה
         </button>
       </div>

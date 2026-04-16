@@ -594,7 +594,7 @@ const AccountSettingsPage = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 py-8 px-4" dir="rtl">
       <div className="max-w-lg mx-auto space-y-6">
         <div className="flex items-center gap-3 mb-2">
-          <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-slate-100 transition-colors">
+          <button onClick={() => navigate('/projects')} className="p-2 rounded-lg hover:bg-slate-100 transition-colors">
             <ArrowRight className="w-5 h-5 text-slate-600" />
           </button>
           <div>

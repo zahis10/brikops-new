@@ -224,11 +224,7 @@ const UnitPlansPage = () => {
   };
 
   const handleBack = () => {
-    if (window.history.length > 2) {
-      navigate(-1);
-    } else {
-      navigate(`/projects/${projectId}/units/${unitId}`);
-    }
+    navigate(`/projects/${projectId}/units/${unitId}`);
   };
 
   const { unit, floor, building, project } = unitData || {};

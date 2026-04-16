@@ -10,7 +10,7 @@ const AccessibilityPage = () => {
       <div className="max-w-2xl mx-auto">
         <div className="flex items-center gap-3 mb-6">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/projects')}
             className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
             aria-label="חזרה"
           >

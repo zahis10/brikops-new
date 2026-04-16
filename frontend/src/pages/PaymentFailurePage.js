@@ -18,7 +18,7 @@ export default function PaymentFailurePage() {
         אנא נסה שנית או פנה לתמיכה
       </p>
       <button
-        onClick={() => navigate(-1)}
+        onClick={() => navigate('/projects')}
         style={{
           background: '#374151', color: '#fff', border: 'none', borderRadius: '0.5rem',
           padding: '0.75rem 2rem', fontSize: '1rem', fontWeight: 600, cursor: 'pointer',

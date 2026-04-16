@@ -766,7 +766,7 @@ const AdminQCTemplatesPage = () => {
       <div className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/admin')} className="text-slate-600">
+            <button onClick={() => navigate('/admin')} className="text-slate-600">
               <ChevronRight className="w-5 h-5" />
             </button>
             <h1 className="text-lg font-bold text-slate-800">תבניות בקרת ביצוע / מסירה</h1>

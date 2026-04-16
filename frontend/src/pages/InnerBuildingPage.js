@@ -56,11 +56,7 @@ const InnerBuildingPage = () => {
   const floorRefs = useRef({});
 
   const handleBack = useCallback(() => {
-    if (window.history.length > 2) {
-      navigate(-1);
-    } else {
-      navigate(`/projects/${projectId}/control?tab=structure`);
-    }
+    navigate(`/projects/${projectId}/control?tab=structure`);
   }, [navigate, projectId]);
 
   const loadData = useCallback(async () => {
