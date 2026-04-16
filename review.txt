@@ -1,225 +1,41 @@
-diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
-index 7fa4ff0..b94a29a 100644
---- a/backend/contractor_ops/admin_router.py
-+++ b/backend/contractor_ops/admin_router.py
-@@ -187,12 +187,30 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
- 
-     all_pbs = await db.project_billing.find(
-         {'org_id': {'$in': org_ids}, 'status': 'active'},
--        {'_id': 0, 'org_id': 1, 'plan_id': 1},
-+        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1},
-     ).to_list(5000)
-     pb_map = {}
-     for pb in all_pbs:
-         pb_map.setdefault(pb['org_id'], []).append(pb)
- 
-+    org_projects = await db.projects.find(
-+        {'org_id': {'$in': org_ids}},
-+        {'_id': 0, 'id': 1, 'org_id': 1, 'name': 1, 'total_units': 1},
-+    ).to_list(5000)
-+    proj_by_id = {p['id']: p for p in org_projects}
-+    proj_by_org = {}
-+    for p in org_projects:
-+        proj_by_org.setdefault(p['org_id'], []).append(p)
-+
-+    active_units_pipeline = [
-+        {'$match': {'project_id': {'$in': list(proj_by_id.keys())}, 'archived': {'$ne': True}}},
-+        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}},
-+    ] if proj_by_id else None
-+    active_count_map = {}
-+    if active_units_pipeline:
-+        async for row in db.units.aggregate(active_units_pipeline):
-+            active_count_map[row['_id']] = row['count']
-+
-     from contractor_ops.billing import get_billable_amount
-     result = []
-     for org in orgs:
-@@ -205,13 +223,32 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
-                 sub['billable_source'] = billing_info['source']
-             except Exception:
-                 pass
-+
-+        pb_for_org = pb_map.get(org['id'], [])
-+        plan_by_project = {pb.get('project_id'): pb.get('plan_id') for pb in pb_for_org if pb.get('project_id')}
-+        enriched_projects = []
-+        for p in proj_by_org.get(org['id'], []):
-+            enriched_projects.append({
-+                'id': p['id'],
-+                'name': p.get('name'),
-+                'total_units': p.get('total_units'),
-+                'active_units_count': active_count_map.get(p['id'], 0),
-+                'plan_id': plan_by_project.get(p['id']),
-+            })
-+        for pb in pb_for_org:
-+            if not pb.get('project_id') or pb.get('project_id') not in proj_by_id:
-+                enriched_projects.append({
-+                    'id': pb.get('project_id'),
-+                    'plan_id': pb.get('plan_id'),
-+                })
-+
-         result.append({
-             **org,
-             'subscription': sub,
-             'owner': owner_map.get(org.get('owner_user_id')),
-             'effective_access': access.value,
-             'read_only_reason': reason,
--            'projects': pb_map.get(org['id'], []),
-+            'projects': enriched_projects,
-         })
-     return result
- 
-@@ -1258,6 +1295,16 @@ async def admin_set_project_total_units(
- 
-     previous = project.get('total_units')
- 
-+    active_count = await db.units.count_documents({
-+        'project_id': project_id,
-+        'archived': {'$ne': True},
-+    })
-+    if total_units > 0 and total_units < active_count:
-+        raise HTTPException(
-+            status_code=400,
-+            detail=f'לא ניתן להגדיר מכסה ({total_units}) נמוכה מכמות הדירות הפעילות ({active_count}). יש לארכב דירות קודם.'
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index 10675e3..7fe2256 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -207,9 +207,10 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
+                         status_code=403,
+                         detail='בתקופת הניסיון ניתן ליצור פרויקט אחד בלבד. לפרויקטים נוספים יש לשדרג את המנוי.'
+                     )
+-    existing = await db.projects.find_one({'code': project.code})
+-    if existing:
+-        raise HTTPException(status_code=400, detail='Project code already exists')
++    if project.code:
++        existing = await db.projects.find_one({'code': project.code})
++        if existing:
++            raise HTTPException(status_code=400, detail='Project code already exists')
+     project_id = str(uuid.uuid4())
+     ts = _now()
+     org = await get_user_org(user['id'])
+diff --git a/backend/server.py b/backend/server.py
+index 4d7838a..bc5fbaf 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -514,7 +514,17 @@ async def create_indexes():
+         )
+         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
+         await db.users.create_index("email", unique=True, sparse=True)
+-        await db.projects.create_index("code", unique=True)
++        try:
++            existing_idx = await db.projects.index_information()
++            if 'code_1' in existing_idx and not existing_idx['code_1'].get('partialFilterExpression'):
++                await db.projects.drop_index('code_1')
++        except Exception as _e:
++            logger.warning(f"could not inspect/drop legacy code_1 index: {_e}")
++        await db.projects.create_index(
++            "code",
++            unique=True,
++            partialFilterExpression={"code": {"$type": "string"}},
 +        )
-+
-     await db.projects.update_one(
-         {'id': project_id},
-         {'$set': {'total_units': total_units, 'updated_at': now}}
-diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
-index a57adcc..855f1cf 100644
---- a/frontend/src/pages/AdminBillingPage.js
-+++ b/frontend/src/pages/AdminBillingPage.js
-@@ -174,6 +174,93 @@ const QuotaRequestCard = ({ request, onAction }) => {
-   );
- };
- 
-+const ProjectQuotaRow = ({ project, onUpdated }) => {
-+  const [editing, setEditing] = useState(false);
-+  const [newTotal, setNewTotal] = useState('');
-+  const [reason, setReason] = useState('');
-+  const [saving, setSaving] = useState(false);
-+
-+  if (!project?.id || !project?.name) return null;
-+
-+  const activeCount = project.active_units_count || 0;
-+  const declared = project.total_units;
-+
-+  const handleSave = async () => {
-+    const trimmed = String(newTotal).trim();
-+    if (!/^\d+$/.test(trimmed)) {
-+      toast.error('יש להזין מספר שלם לא-שלילי');
-+      return;
-+    }
-+    const num = Number(trimmed);
-+    if (!Number.isSafeInteger(num) || num < 0) {
-+      toast.error('יש להזין מספר שלם לא-שלילי');
-+      return;
-+    }
-+    if (num > 0 && num < activeCount) {
-+      toast.error(`לא ניתן להגדיר פחות מ-${activeCount} דירות פעילות`);
-+      return;
-+    }
-+    setSaving(true);
-+    try {
-+      await billingService.setProjectTotalUnits(project.id, num, reason);
-+      toast.success(`מכסה עודכנה ל-${num} יחידות`);
-+      setEditing(false);
-+      onUpdated && onUpdated();
-+    } catch (err) {
-+      toast.error(err.response?.data?.detail || 'שגיאה בעדכון מכסה');
-+    } finally {
-+      setSaving(false);
-+    }
-+  };
-+
-+  return (
-+    <div className="flex items-center justify-between gap-2 py-2 px-3 bg-slate-50 rounded-lg flex-wrap">
-+      <div className="flex items-center gap-2 min-w-0">
-+        <Building2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
-+        <span className="text-sm font-medium text-slate-700 truncate">{project.name}</span>
-+        <span className="text-xs text-slate-500 whitespace-nowrap">
-+          {activeCount} / {declared ?? '—'} יחידות
-+        </span>
-+      </div>
-+      {!editing ? (
-+        <button
-+          onClick={() => { setEditing(true); setNewTotal(declared != null ? String(declared) : ''); setReason(''); }}
-+          className="text-xs text-amber-600 hover:text-amber-700 font-medium whitespace-nowrap"
-+        >
-+          עדכן מכסה
-+        </button>
-+      ) : (
-+        <div className="flex items-center gap-1.5 flex-wrap">
-+          <input
-+            type="number" min="0" value={newTotal}
-+            onChange={e => setNewTotal(e.target.value)}
-+            className="w-20 text-sm border border-slate-300 rounded px-2 py-1"
-+            placeholder="כמות" dir="ltr"
-+          />
-+          <input
-+            type="text" value={reason}
-+            onChange={e => setReason(e.target.value)}
-+            className="w-32 text-sm border border-slate-300 rounded px-2 py-1"
-+            placeholder="סיבה (אופציונלי)"
-+          />
-+          <button
-+            onClick={handleSave} disabled={saving}
-+            className="text-xs bg-amber-500 text-white px-2 py-1 rounded hover:bg-amber-600 disabled:opacity-50"
-+          >
-+            {saving ? '...' : 'שמור'}
-+          </button>
-+          <button
-+            onClick={() => setEditing(false)}
-+            className="text-xs text-slate-400 hover:text-slate-600 px-1"
-+          >
-+            ביטול
-+          </button>
-+        </div>
-+      )}
-+    </div>
-+  );
-+};
-+
- const AdminBillingPage = () => {
-   const { user } = useAuth();
-   const navigate = useNavigate();
-@@ -892,6 +979,20 @@ const AdminBillingPage = () => {
-                         </div>
-                       );
-                     })()}
-+                    {(() => {
-+                      const projectsWithName = (org.projects || []).filter(p => p?.id && p?.name);
-+                      if (projectsWithName.length === 0) return null;
-+                      return (
-+                        <div className="mt-3 pt-3 border-t border-slate-100">
-+                          <h4 className="text-xs font-semibold text-slate-500 mb-2">פרויקטים — מכסת יחידות</h4>
-+                          <div className="space-y-1">
-+                            {projectsWithName.map(p => (
-+                              <ProjectQuotaRow key={p.id} project={p} onUpdated={loadData} />
-+                            ))}
-+                          </div>
-+                        </div>
-+                      );
-+                    })()}
-                   </div>
-                 );
-               })}
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index 8dc039d..832d043 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -1016,6 +1016,14 @@ export const billingService = {
-     const response = await axios.post(`${API}/admin/quota-requests/${requestId}/reject`, body, { headers: getAuthHeader() });
-     return response.data;
-   },
-+  async setProjectTotalUnits(projectId, totalUnits, reason = '') {
-+    const response = await axios.post(
-+      `${API}/admin/projects/${projectId}/set-total-units`,
-+      { total_units: totalUnits, reason },
-+      { headers: getAuthHeader() }
-+    );
-+    return response.data;
-+  },
- };
- 
- export const invoiceService = {
+         await db.buildings.create_index("project_id")
+         await db.floors.create_index("building_id")
+         await db.task_status_history.create_index([("task_id", 1), ("created_at", -1)])
