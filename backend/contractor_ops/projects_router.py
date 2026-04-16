@@ -74,16 +74,16 @@ async def _create_or_update_quota_request(
     return request_doc
 
 
-async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> dict:
+async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> None:
     project = await db.projects.find_one(
         {'id': project_id},
         {'_id': 0, 'total_units': 1, 'org_id': 1, 'name': 1}
     )
     if not project:
-        return {'quota_exceeded': False}
+        return
     total_units = project.get('total_units')
     if total_units is None or total_units < 1:
-        return {'quota_exceeded': False}
+        return
 
     current_count = await db.units.count_documents({
         'project_id': project_id,
@@ -103,12 +103,10 @@ async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user
         except Exception as e:
             logger.error("[QUOTA-REQUEST] Failed to create request: %s", e)
 
-        return {
-            'quota_exceeded': True,
-            'total_units_declared': total_units,
-            'current_count': current_count + num_to_add,
-        }
-    return {'quota_exceeded': False}
+        raise HTTPException(
+            status_code=400,
+            detail=f'חרגת מהכמות המוצהרת ({total_units} יחידות). בקשה להגדלת המכסה נשלחה לאדמין.'
+        )
 
 
 def _natural_sort_key(name: str):
@@ -403,7 +401,7 @@ async def list_buildings(project_id: str, user: dict = Depends(get_current_user)
     return [Building(**b) for b in buildings]
 
 
-@router.post("/buildings/{building_id}/floors")
+@router.post("/buildings/{building_id}/floors", response_model=Floor)
 async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_current_user)):
     db = get_db()
     building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
@@ -465,9 +463,8 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
 
     unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
     created_units = []
-    quota_status = {'quota_exceeded': False}
     if unit_count > 0:
-        quota_status = await _check_unit_quota(db, building['project_id'], unit_count, user)
+        await _check_unit_quota(db, building['project_id'], unit_count, user)
         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
         max_numeric = 0
         for u in all_units:
@@ -513,8 +510,7 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
         'created_units': created_units,
         'units_renumbered': len(reseq_unit_changes),
     })
-    floor_dict = {k: v for k, v in doc.items() if k != '_id'}
-    return {**floor_dict, **quota_status}
+    return Floor(**{k: v for k, v in doc.items() if k != '_id'})
 
 
 @router.get("/buildings/{building_id}/floors", response_model=List[Floor])
@@ -538,7 +534,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
     unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
 
     if unit_count > 0:
-        quota_status = await _check_unit_quota(db, project_id, unit_count, user)
+        await _check_unit_quota(db, project_id, unit_count, user)
         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
         max_numeric = 0
         for u in all_units:
@@ -585,11 +581,11 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
                     'sort_index': c.get('new_sort_index', 0),
                 }})
 
-        return {'created': len(created), 'units': created, **quota_status}
+        return {'created': len(created), 'units': created}
 
     if not unit.unit_no:
         raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
-    quota_status = await _check_unit_quota(db, project_id, 1, user)
+    await _check_unit_quota(db, project_id, 1, user)
     existing = await db.units.find_one({
         'project_id': project_id, 'building_id': building_id,
         'floor_id': floor_id, 'unit_no': unit.unit_no,
@@ -615,8 +611,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
         doc['unit_note'] = unit.unit_note[:200]
     await db.units.insert_one(doc)
     await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
-    unit_dict = {k: v for k, v in doc.items() if k != '_id'}
-    return {**unit_dict, **quota_status}
+    return {k: v for k, v in doc.items() if k != '_id'}
 
 
 @router.get("/floors/{floor_id}/units", response_model=List[Unit])
@@ -893,22 +888,9 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
                     would_create += 1
         return {'dry_run': True, 'would_create': would_create, 'would_skip': would_skip, 'message': f'תצוגה מקדימה: {would_create} דירות חדשות, {would_skip} דילוגים'}
 
-    would_create_total = 0
-    pre_count_counter = global_counter
-    for floor in target_floors:
-        for unit_idx in range(body.units_per_floor):
-            if body.unit_prefix:
-                unit_num = body.unit_start_number + unit_idx
-                unit_no = f'{body.unit_prefix}{str(unit_num).zfill(body.unit_number_padding) if body.unit_number_padding > 0 else str(unit_num)}'
-            else:
-                pre_count_counter += 1
-                unit_no = str(pre_count_counter)
-            existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
-            if not existing:
-                would_create_total += 1
-    quota_status = {'quota_exceeded': False}
-    if would_create_total > 0:
-        quota_status = await _check_unit_quota(db, body.project_id, would_create_total, user)
+    total_to_add = len(target_floors) * body.units_per_floor
+    if total_to_add > 0:
+        await _check_unit_quota(db, body.project_id, total_to_add, user)
 
     batch_id = body.batch_id or str(uuid.uuid4())[:12]
     created = []
@@ -979,7 +961,7 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
 
     return {
         'created_count': len(created), 'skipped_count': skipped, 'items': created,
-        'message': msg, 'batch_id': batch_id, **quota_status,
+        'message': msg, 'batch_id': batch_id,
     }
 
 
