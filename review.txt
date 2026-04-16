@@ -1,151 +1,225 @@
-diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index 40af781..10675e3 100644
---- a/backend/contractor_ops/projects_router.py
-+++ b/backend/contractor_ops/projects_router.py
-@@ -74,16 +74,16 @@ async def _create_or_update_quota_request(
-     return request_doc
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index 7fa4ff0..b94a29a 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -187,12 +187,30 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
  
+     all_pbs = await db.project_billing.find(
+         {'org_id': {'$in': org_ids}, 'status': 'active'},
+-        {'_id': 0, 'org_id': 1, 'plan_id': 1},
++        {'_id': 0, 'org_id': 1, 'plan_id': 1, 'project_id': 1},
+     ).to_list(5000)
+     pb_map = {}
+     for pb in all_pbs:
+         pb_map.setdefault(pb['org_id'], []).append(pb)
  
--async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> dict:
-+async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> None:
-     project = await db.projects.find_one(
-         {'id': project_id},
-         {'_id': 0, 'total_units': 1, 'org_id': 1, 'name': 1}
-     )
-     if not project:
--        return {'quota_exceeded': False}
-+        return
-     total_units = project.get('total_units')
-     if total_units is None or total_units < 1:
--        return {'quota_exceeded': False}
-+        return
++    org_projects = await db.projects.find(
++        {'org_id': {'$in': org_ids}},
++        {'_id': 0, 'id': 1, 'org_id': 1, 'name': 1, 'total_units': 1},
++    ).to_list(5000)
++    proj_by_id = {p['id']: p for p in org_projects}
++    proj_by_org = {}
++    for p in org_projects:
++        proj_by_org.setdefault(p['org_id'], []).append(p)
++
++    active_units_pipeline = [
++        {'$match': {'project_id': {'$in': list(proj_by_id.keys())}, 'archived': {'$ne': True}}},
++        {'$group': {'_id': '$project_id', 'count': {'$sum': 1}}},
++    ] if proj_by_id else None
++    active_count_map = {}
++    if active_units_pipeline:
++        async for row in db.units.aggregate(active_units_pipeline):
++            active_count_map[row['_id']] = row['count']
++
+     from contractor_ops.billing import get_billable_amount
+     result = []
+     for org in orgs:
+@@ -205,13 +223,32 @@ async def admin_list_orgs(user: dict = Depends(require_super_admin)):
+                 sub['billable_source'] = billing_info['source']
+             except Exception:
+                 pass
++
++        pb_for_org = pb_map.get(org['id'], [])
++        plan_by_project = {pb.get('project_id'): pb.get('plan_id') for pb in pb_for_org if pb.get('project_id')}
++        enriched_projects = []
++        for p in proj_by_org.get(org['id'], []):
++            enriched_projects.append({
++                'id': p['id'],
++                'name': p.get('name'),
++                'total_units': p.get('total_units'),
++                'active_units_count': active_count_map.get(p['id'], 0),
++                'plan_id': plan_by_project.get(p['id']),
++            })
++        for pb in pb_for_org:
++            if not pb.get('project_id') or pb.get('project_id') not in proj_by_id:
++                enriched_projects.append({
++                    'id': pb.get('project_id'),
++                    'plan_id': pb.get('plan_id'),
++                })
++
+         result.append({
+             **org,
+             'subscription': sub,
+             'owner': owner_map.get(org.get('owner_user_id')),
+             'effective_access': access.value,
+             'read_only_reason': reason,
+-            'projects': pb_map.get(org['id'], []),
++            'projects': enriched_projects,
+         })
+     return result
  
-     current_count = await db.units.count_documents({
-         'project_id': project_id,
-@@ -103,12 +103,10 @@ async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user
-         except Exception as e:
-             logger.error("[QUOTA-REQUEST] Failed to create request: %s", e)
+@@ -1258,6 +1295,16 @@ async def admin_set_project_total_units(
  
--        return {
--            'quota_exceeded': True,
--            'total_units_declared': total_units,
--            'current_count': current_count + num_to_add,
--        }
--    return {'quota_exceeded': False}
+     previous = project.get('total_units')
+ 
++    active_count = await db.units.count_documents({
++        'project_id': project_id,
++        'archived': {'$ne': True},
++    })
++    if total_units > 0 and total_units < active_count:
 +        raise HTTPException(
 +            status_code=400,
-+            detail=f'חרגת מהכמות המוצהרת ({total_units} יחידות). בקשה להגדלת המכסה נשלחה לאדמין.'
++            detail=f'לא ניתן להגדיר מכסה ({total_units}) נמוכה מכמות הדירות הפעילות ({active_count}). יש לארכב דירות קודם.'
 +        )
++
+     await db.projects.update_one(
+         {'id': project_id},
+         {'$set': {'total_units': total_units, 'updated_at': now}}
+diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
+index a57adcc..855f1cf 100644
+--- a/frontend/src/pages/AdminBillingPage.js
++++ b/frontend/src/pages/AdminBillingPage.js
+@@ -174,6 +174,93 @@ const QuotaRequestCard = ({ request, onAction }) => {
+   );
+ };
  
++const ProjectQuotaRow = ({ project, onUpdated }) => {
++  const [editing, setEditing] = useState(false);
++  const [newTotal, setNewTotal] = useState('');
++  const [reason, setReason] = useState('');
++  const [saving, setSaving] = useState(false);
++
++  if (!project?.id || !project?.name) return null;
++
++  const activeCount = project.active_units_count || 0;
++  const declared = project.total_units;
++
++  const handleSave = async () => {
++    const trimmed = String(newTotal).trim();
++    if (!/^\d+$/.test(trimmed)) {
++      toast.error('יש להזין מספר שלם לא-שלילי');
++      return;
++    }
++    const num = Number(trimmed);
++    if (!Number.isSafeInteger(num) || num < 0) {
++      toast.error('יש להזין מספר שלם לא-שלילי');
++      return;
++    }
++    if (num > 0 && num < activeCount) {
++      toast.error(`לא ניתן להגדיר פחות מ-${activeCount} דירות פעילות`);
++      return;
++    }
++    setSaving(true);
++    try {
++      await billingService.setProjectTotalUnits(project.id, num, reason);
++      toast.success(`מכסה עודכנה ל-${num} יחידות`);
++      setEditing(false);
++      onUpdated && onUpdated();
++    } catch (err) {
++      toast.error(err.response?.data?.detail || 'שגיאה בעדכון מכסה');
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  return (
++    <div className="flex items-center justify-between gap-2 py-2 px-3 bg-slate-50 rounded-lg flex-wrap">
++      <div className="flex items-center gap-2 min-w-0">
++        <Building2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
++        <span className="text-sm font-medium text-slate-700 truncate">{project.name}</span>
++        <span className="text-xs text-slate-500 whitespace-nowrap">
++          {activeCount} / {declared ?? '—'} יחידות
++        </span>
++      </div>
++      {!editing ? (
++        <button
++          onClick={() => { setEditing(true); setNewTotal(declared != null ? String(declared) : ''); setReason(''); }}
++          className="text-xs text-amber-600 hover:text-amber-700 font-medium whitespace-nowrap"
++        >
++          עדכן מכסה
++        </button>
++      ) : (
++        <div className="flex items-center gap-1.5 flex-wrap">
++          <input
++            type="number" min="0" value={newTotal}
++            onChange={e => setNewTotal(e.target.value)}
++            className="w-20 text-sm border border-slate-300 rounded px-2 py-1"
++            placeholder="כמות" dir="ltr"
++          />
++          <input
++            type="text" value={reason}
++            onChange={e => setReason(e.target.value)}
++            className="w-32 text-sm border border-slate-300 rounded px-2 py-1"
++            placeholder="סיבה (אופציונלי)"
++          />
++          <button
++            onClick={handleSave} disabled={saving}
++            className="text-xs bg-amber-500 text-white px-2 py-1 rounded hover:bg-amber-600 disabled:opacity-50"
++          >
++            {saving ? '...' : 'שמור'}
++          </button>
++          <button
++            onClick={() => setEditing(false)}
++            className="text-xs text-slate-400 hover:text-slate-600 px-1"
++          >
++            ביטול
++          </button>
++        </div>
++      )}
++    </div>
++  );
++};
++
+ const AdminBillingPage = () => {
+   const { user } = useAuth();
+   const navigate = useNavigate();
+@@ -892,6 +979,20 @@ const AdminBillingPage = () => {
+                         </div>
+                       );
+                     })()}
++                    {(() => {
++                      const projectsWithName = (org.projects || []).filter(p => p?.id && p?.name);
++                      if (projectsWithName.length === 0) return null;
++                      return (
++                        <div className="mt-3 pt-3 border-t border-slate-100">
++                          <h4 className="text-xs font-semibold text-slate-500 mb-2">פרויקטים — מכסת יחידות</h4>
++                          <div className="space-y-1">
++                            {projectsWithName.map(p => (
++                              <ProjectQuotaRow key={p.id} project={p} onUpdated={loadData} />
++                            ))}
++                          </div>
++                        </div>
++                      );
++                    })()}
+                   </div>
+                 );
+               })}
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 8dc039d..832d043 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -1016,6 +1016,14 @@ export const billingService = {
+     const response = await axios.post(`${API}/admin/quota-requests/${requestId}/reject`, body, { headers: getAuthHeader() });
+     return response.data;
+   },
++  async setProjectTotalUnits(projectId, totalUnits, reason = '') {
++    const response = await axios.post(
++      `${API}/admin/projects/${projectId}/set-total-units`,
++      { total_units: totalUnits, reason },
++      { headers: getAuthHeader() }
++    );
++    return response.data;
++  },
+ };
  
- def _natural_sort_key(name: str):
-@@ -403,7 +401,7 @@ async def list_buildings(project_id: str, user: dict = Depends(get_current_user)
-     return [Building(**b) for b in buildings]
- 
- 
--@router.post("/buildings/{building_id}/floors")
-+@router.post("/buildings/{building_id}/floors", response_model=Floor)
- async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_current_user)):
-     db = get_db()
-     building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
-@@ -465,9 +463,8 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
- 
-     unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
-     created_units = []
--    quota_status = {'quota_exceeded': False}
-     if unit_count > 0:
--        quota_status = await _check_unit_quota(db, building['project_id'], unit_count, user)
-+        await _check_unit_quota(db, building['project_id'], unit_count, user)
-         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
-         max_numeric = 0
-         for u in all_units:
-@@ -513,8 +510,7 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
-         'created_units': created_units,
-         'units_renumbered': len(reseq_unit_changes),
-     })
--    floor_dict = {k: v for k, v in doc.items() if k != '_id'}
--    return {**floor_dict, **quota_status}
-+    return Floor(**{k: v for k, v in doc.items() if k != '_id'})
- 
- 
- @router.get("/buildings/{building_id}/floors", response_model=List[Floor])
-@@ -538,7 +534,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
-     unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
- 
-     if unit_count > 0:
--        quota_status = await _check_unit_quota(db, project_id, unit_count, user)
-+        await _check_unit_quota(db, project_id, unit_count, user)
-         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
-         max_numeric = 0
-         for u in all_units:
-@@ -585,11 +581,11 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
-                     'sort_index': c.get('new_sort_index', 0),
-                 }})
- 
--        return {'created': len(created), 'units': created, **quota_status}
-+        return {'created': len(created), 'units': created}
- 
-     if not unit.unit_no:
-         raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
--    quota_status = await _check_unit_quota(db, project_id, 1, user)
-+    await _check_unit_quota(db, project_id, 1, user)
-     existing = await db.units.find_one({
-         'project_id': project_id, 'building_id': building_id,
-         'floor_id': floor_id, 'unit_no': unit.unit_no,
-@@ -615,8 +611,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
-         doc['unit_note'] = unit.unit_note[:200]
-     await db.units.insert_one(doc)
-     await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
--    unit_dict = {k: v for k, v in doc.items() if k != '_id'}
--    return {**unit_dict, **quota_status}
-+    return Unit(**{k: v for k, v in doc.items() if k != '_id'})
- 
- 
- @router.get("/floors/{floor_id}/units", response_model=List[Unit])
-@@ -906,9 +901,8 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
-             existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
-             if not existing:
-                 would_create_total += 1
--    quota_status = {'quota_exceeded': False}
-     if would_create_total > 0:
--        quota_status = await _check_unit_quota(db, body.project_id, would_create_total, user)
-+        await _check_unit_quota(db, body.project_id, would_create_total, user)
- 
-     batch_id = body.batch_id or str(uuid.uuid4())[:12]
-     created = []
-@@ -979,7 +973,7 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
- 
-     return {
-         'created_count': len(created), 'skipped_count': skipped, 'items': created,
--        'message': msg, 'batch_id': batch_id, **quota_status,
-+        'message': msg, 'batch_id': batch_id,
-     }
- 
- 
-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index dfd75d9..90ea3d5 100644
---- a/frontend/src/pages/ProjectControlPage.js
-+++ b/frontend/src/pages/ProjectControlPage.js
-@@ -946,9 +946,6 @@ const BulkUnitsForm = ({ projectId, buildings, onClose, onSuccess }) => {
-       });
-       setResult(res);
-       toast.success(res.message || `${res.created_count} דירות נוצרו בהצלחה`);
--      if (res.quota_exceeded) {
--        toast.warning(`עברת את המכסה המוצהרת (${res.total_units_declared} יחידות). בקשה להגדלת כמות נשלחה לאדמין.`, { duration: 10000 });
--      }
-       onSuccess();
-     } catch (err) {
-       toast.error(err.response?.data?.detail || 'שגיאה ביצירת דירות');
-@@ -1577,11 +1574,8 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
-         unit_count: unitCount,
-       };
-       if (newFloorInsertAfter) payload.insert_after_floor_id = newFloorInsertAfter;
--      const res = await buildingService.createFloor(buildingId, payload);
-+      await buildingService.createFloor(buildingId, payload);
-       toast.success('קומה נוספה בהצלחה');
--      if (res.quota_exceeded) {
--        toast.warning(`עברת את המכסה המוצהרת (${res.total_units_declared} יחידות). בקשה להגדלת כמות נשלחה לאדמין.`, { duration: 10000 });
--      }
-       setAddingFloorTo(null);
-       setNewFloorName('');
-       setNewUnitCount('0');
+ export const invoiceService = {
