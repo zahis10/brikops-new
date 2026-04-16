@@ -255,6 +255,25 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
         upsert=True
     )
     await _audit('project', project_id, 'create', user['id'], {'name': project.name, 'code': project.code})
+
+    try:
+        from contractor_ops.billing import create_project_billing, recalc_org_total
+        _bill_org_id = doc.get('org_id')
+        if _bill_org_id:
+            _sub = await get_subscription(_bill_org_id)
+            _sub_plan = _sub.get('plan_id') if _sub else None
+            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
+            await create_project_billing(
+                project_id=project_id,
+                org_id=_bill_org_id,
+                actor_id=user['id'],
+                plan_id=_plan_for_project,
+                contracted_units=project.total_units or 0,
+            )
+            await recalc_org_total(_bill_org_id)
+    except Exception as _bill_exc:
+        logger.warning(f"Auto billing creation failed for project {project_id}: {_bill_exc}")
+
     return Project(**{k: v for k, v in doc.items() if k != '_id'})
 
 
