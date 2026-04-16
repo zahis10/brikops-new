@@ -1,52 +1,316 @@
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index 4641aa7..7d28bc9 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -128,6 +128,25 @@ def _is_numeric_unit(unit_no: str) -> bool:
+         return False
+ 
+ 
++def _compute_insert_sort_index(floors: list, insert_after_floor_id, strict: bool = False):
++    if not floors:
++        return 0
++    sorted_floors = sorted(floors, key=lambda f: f.get('sort_index', 0))
++    if insert_after_floor_id == '__start__':
++        return sorted_floors[0].get('sort_index', 0) - 1
++    for i, f in enumerate(sorted_floors):
++        if f['id'] == insert_after_floor_id:
++            after_si = f.get('sort_index', 0)
++            if i + 1 < len(sorted_floors):
++                next_si = sorted_floors[i + 1].get('sort_index', 0)
++                return (after_si + next_si) // 2
++            else:
++                return after_si + 1000
++    if strict:
++        raise HTTPException(status_code=422, detail='insert_after_floor_id not found in building')
++    return max(f.get('sort_index', 0) for f in sorted_floors) + 1000
++
++
+ async def _compute_building_resequence(db, building_id: str):
+     floors = await db.floors.find({'building_id': building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+     floor_changes = []
+@@ -402,7 +421,9 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
+ 
+     existing_floors = await db.floors.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+ 
+-    if is_numeric_floor and existing_floors:
++    if floor.insert_after_floor_id and existing_floors:
++        floor.sort_index = _compute_insert_sort_index(existing_floors, floor.insert_after_floor_id, strict=True)
++    elif is_numeric_floor and existing_floors:
+         insert_before = None
+         for ef in existing_floors:
+             ef_num = None
+@@ -721,6 +742,12 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+     if body.to_floor - body.from_floor > 200:
+         raise HTTPException(status_code=422, detail='Maximum 200 floors per batch')
+ 
++    existing_floors = await db.floors.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
++
++    base_si = None
++    if body.insert_after_floor_id:
++        base_si = _compute_insert_sort_index(existing_floors, body.insert_after_floor_id, strict=True)
++
+     if body.dry_run:
+         would_create = 0
+         would_skip = 0
+@@ -736,6 +763,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+     created = []
+     skipped = 0
+     ts = _now()
++    create_idx = 0
+     for num in range(body.from_floor, body.to_floor + 1):
+         existing = await db.floors.find_one({
+             'building_id': body.building_id,
+@@ -746,7 +774,10 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+             skipped += 1
+             continue
+         floor_id = str(uuid.uuid4())
+-        si = num * 1000
++        if base_si is not None:
++            si = base_si + create_idx
++        else:
++            si = num * 1000
+         doc = {
+             'id': floor_id,
+             'building_id': body.building_id,
+@@ -761,6 +792,23 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+         }
+         await db.floors.insert_one(doc)
+         created.append({'id': floor_id, 'name': doc['name'], 'floor_number': num, 'sort_index': si})
++        create_idx += 1
++
++    reseq_floor_changes, reseq_unit_changes = await _compute_building_resequence(db, body.building_id)
++    for c in reseq_floor_changes:
++        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
++    if reseq_unit_changes:
++        for c in reseq_unit_changes:
++            await db.units.update_one({'id': c['id']}, {'$set': {
++                'unit_no': f"__tmp_{c['id']}",
++                'display_label': f"__tmp_{c['id']}",
++            }})
++        for c in reseq_unit_changes:
++            await db.units.update_one({'id': c['id']}, {'$set': {
++                'unit_no': c['new_unit_no'],
++                'display_label': c['new_display_label'],
++                'sort_index': c['new_sort_index'],
++            }})
+ 
+     await _audit('building', body.building_id, 'bulk_create_floors', user['id'], {
+         'project_id': body.project_id,
+@@ -769,6 +817,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+         'created_count': len(created),
+         'skipped_count': skipped,
+         'batch_id': batch_id,
++        'insert_after_floor_id': body.insert_after_floor_id,
+     })
+ 
+     msg = f'נוצרו {len(created)} קומות'
+@@ -1120,7 +1169,12 @@ async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = D
+         raise HTTPException(status_code=404, detail='Building not found in this project')
+ 
+     floors = await db.floors.find({'building_id': body.building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+-    insert_si = body.insert_at_index
++    if body.insert_after_floor_id:
++        insert_si = _compute_insert_sort_index(floors, body.insert_after_floor_id, strict=True)
++    elif body.insert_at_index is not None:
++        insert_si = body.insert_at_index
++    else:
++        insert_si = (max(f.get('sort_index', 0) for f in floors) + 1000) if floors else 0
+ 
+     floors_to_shift = [f for f in floors if f.get('sort_index', 0) >= insert_si]
+     floor_shift_changes = []
+diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+index 0c73e38..3e8035e 100644
+--- a/backend/contractor_ops/schemas.py
++++ b/backend/contractor_ops/schemas.py
+@@ -170,6 +170,7 @@ class Floor(BaseModel):
+     kind: Optional[FloorKind] = None
+     unit_count: int = 0
+     created_at: Optional[str] = None
++    insert_after_floor_id: Optional[str] = None
+ 
+ 
+ class Unit(BaseModel):
+@@ -516,6 +517,7 @@ class BulkFloorRequest(BaseModel):
+     to_floor: int
+     dry_run: bool = False
+     batch_id: Optional[str] = None
++    insert_after_floor_id: Optional[str] = None
+ 
+ class BulkUnitRequest(BaseModel):
+     project_id: str
+@@ -569,7 +571,8 @@ class InsertFloorRequest(BaseModel):
+     name: str
+     display_label: Optional[str] = None
+     kind: Optional[FloorKind] = None
+-    insert_at_index: int
++    insert_at_index: Optional[int] = None
++    insert_after_floor_id: Optional[str] = None
+     auto_renumber_units: bool = False
+     unit_numbering_base: int = 100
+     dry_run: bool = False
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 6a438fb..ac4ebe1 100644
+index ac4ebe1..175c962 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -722,13 +722,23 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
-   const resetState = () => { setPreview(null); setResult(null); setErrors({}); };
+@@ -703,13 +703,13 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+   );
+ };
+ 
+-const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
++const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess }) => {
+   const [mode, setMode] = useState('range');
+   const [buildingId, setBuildingId] = useState('');
+   const [fromFloor, setFromFloor] = useState('');
+   const [toFloor, setToFloor] = useState('');
+   const [singleName, setSingleName] = useState('');
+-  const [insertAt, setInsertAt] = useState('');
++  const [insertAfterFloorId, setInsertAfterFloorId] = useState('');
+   const [autoRenumber, setAutoRenumber] = useState(false);
+   const [submitting, setSubmitting] = useState(false);
+   const [previewing, setPreviewing] = useState(false);
+@@ -719,7 +719,7 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+ 
+   const floorCount = fromFloor !== '' && toFloor !== '' ? Math.max(0, Number(toFloor) - Number(fromFloor) + 1) : 0;
+ 
+-  const resetState = () => { setPreview(null); setResult(null); setErrors({}); };
++  const resetState = () => { setPreview(null); setResult(null); setErrors({}); setInsertAfterFloorId(''); };
    const switchMode = (m) => { setMode(m); resetState(); };
  
-+  const isValidFloorNumber = (v) => {
-+    if (v === '' || v === '-') return false;
-+    const trimmed = String(v).trim();
-+    return /^-?\d+$/.test(trimmed);
-+  };
-+
-   const validate = () => {
-     const errs = {};
-     if (!buildingId) errs.buildingId = 'חובה';
-     if (mode === 'range') {
-       if (fromFloor === '') errs.fromFloor = 'חובה';
-+      else if (!isValidFloorNumber(fromFloor)) errs.fromFloor = 'הזן מספר קומה בלבד (למשל: 3, -1, 0)';
-       if (toFloor === '') errs.toFloor = 'חובה';
--      if (fromFloor !== '' && toFloor !== '' && Number(toFloor) < Number(fromFloor)) errs.toFloor = 'חייב להיות גדול מ-"מקומה"';
-+      else if (!isValidFloorNumber(toFloor)) errs.toFloor = 'הזן מספר קומה בלבד (למשל: 3, -1, 0)';
-+      if (isValidFloorNumber(fromFloor) && isValidFloorNumber(toFloor) && Number(toFloor) < Number(fromFloor)) {
-+        errs.toFloor = 'חייב להיות גדול מ-"מקומה"';
-+      }
-     } else {
-       if (!singleName.trim()) errs.singleName = 'חובה';
-     }
-@@ -804,8 +814,8 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
-       <SelectField label="בניין *" value={buildingId} onChange={v => { setBuildingId(v); resetState(); }} options={buildingOptions} error={errors.buildingId} emptyMessage="אין בניינים - הוסף בניין קודם" />
-       {mode === 'range' ? (
+   const isValidFloorNumber = (v) => {
+@@ -751,14 +751,16 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+     setPreviewing(true);
+     try {
+       if (mode === 'range') {
+-        const res = await buildingService.bulkCreateFloors({
++        const payload = {
+           project_id: projectId, building_id: buildingId,
+           from_floor: Number(fromFloor), to_floor: Number(toFloor), dry_run: true,
+-        });
++        };
++        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
++        const res = await buildingService.bulkCreateFloors(payload);
+         setPreview(res);
+       } else {
+         const payload = { building_id: buildingId, name: singleName.trim(), dry_run: true };
+-        if (insertAt !== '') payload.insert_at_index = Number(insertAt);
++        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+         if (autoRenumber) payload.auto_renumber_units = true;
+         const res = await sortIndexService.insertFloor(projectId, payload);
+         setPreview(res);
+@@ -775,15 +777,17 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+     setSubmitting(true);
+     try {
+       if (mode === 'range') {
+-        const res = await buildingService.bulkCreateFloors({
++        const payload = {
+           project_id: projectId, building_id: buildingId,
+           from_floor: Number(fromFloor), to_floor: Number(toFloor),
+-        });
++        };
++        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
++        const res = await buildingService.bulkCreateFloors(payload);
+         setResult(res);
+         toast.success(res.message || `${res.created_count} קומות נוצרו בהצלחה`);
+       } else {
+         const payload = { building_id: buildingId, name: singleName.trim() };
+-        if (insertAt !== '') payload.insert_at_index = Number(insertAt);
++        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+         if (autoRenumber) payload.auto_renumber_units = true;
+         const res = await sortIndexService.insertFloor(projectId, payload);
+         setResult(res);
+@@ -816,6 +820,11 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
          <>
--          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="למשל: -1" type="text" error={errors.fromFloor} dir="ltr" />
--          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="למשל: 10" type="text" error={errors.toFloor} dir="ltr" />
-+          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
-+          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
+           <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
+           <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
++          <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
++            { value: '', label: 'בסוף (ברירת מחדל)' },
++            { value: '__start__', label: 'בהתחלה (לפני הכל)' },
++            ...((hierarchy || []).find(b => b.id === buildingId)?.floors || []).map(f => ({ value: f.id, label: f.display_label || f.name })),
++          ]} />
            {floorCount > 0 && !preview && (
              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                טווח: {floorCount} קומות
-@@ -815,7 +825,10 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+@@ -825,10 +834,11 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
        ) : (
          <>
            <InputField label="קומה (מספר או שם) *" value={singleName} onChange={v => { setSingleName(v); setPreview(null); }} placeholder="למשל: 3, -1, גג, מרתף" error={errors.singleName} />
--          <InputField label="מיקום הכנסה (sort_index)" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 5" type="number" dir="ltr" />
-+          <div>
-+            <InputField label="מיקום בסדר ההצגה" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 1 (ראש) או 99 (תחתית)" type="number" dir="ltr" />
-+            <div className="text-xs text-slate-500 mt-1">1 = בראש הרשימה, מספר גדול יותר = נמוך יותר ברשימה. השאר ריק כדי להוסיף בסוף.</div>
-+          </div>
+-          <div>
+-            <InputField label="מיקום בסדר ההצגה" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 1 (ראש) או 99 (תחתית)" type="number" dir="ltr" />
+-            <div className="text-xs text-slate-500 mt-1">1 = בראש הרשימה, מספר גדול יותר = נמוך יותר ברשימה. השאר ריק כדי להוסיף בסוף.</div>
+-          </div>
++          <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
++            { value: '', label: 'בסוף (ברירת מחדל)' },
++            { value: '__start__', label: 'בהתחלה (לפני הכל)' },
++            ...((hierarchy || []).find(b => b.id === buildingId)?.floors || []).map(f => ({ value: f.id, label: f.display_label || f.name })),
++          ]} />
            <div className="flex items-center gap-2">
              <input type="checkbox" id="autoRenumber" checked={autoRenumber} onChange={e => { setAutoRenumber(e.target.checked); setPreview(null); }}
                className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500" />
+@@ -1519,6 +1529,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+   const [addingFloorTo, setAddingFloorTo] = useState(null);
+   const [newFloorName, setNewFloorName] = useState('');
+   const [newUnitCount, setNewUnitCount] = useState('0');
++  const [newFloorInsertAfter, setNewFloorInsertAfter] = useState('');
+   const [floorSaving, setFloorSaving] = useState(false);
+   const [addingUnitTo, setAddingUnitTo] = useState(null);
+   const [newUnitNo, setNewUnitNo] = useState('');
+@@ -1557,15 +1568,18 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+     setFloorSaving(true);
+     try {
+       const unitCount = parseInt(newUnitCount) || 0;
+-      await buildingService.createFloor(buildingId, {
++      const payload = {
+         name: newFloorName.trim(),
+         floor_number: 0,
+         unit_count: unitCount,
+-      });
++      };
++      if (newFloorInsertAfter) payload.insert_after_floor_id = newFloorInsertAfter;
++      await buildingService.createFloor(buildingId, payload);
+       toast.success('קומה נוספה בהצלחה');
+       setAddingFloorTo(null);
+       setNewFloorName('');
+       setNewUnitCount('0');
++      setNewFloorInsertAfter('');
+       onRefresh();
+     } catch (err) {
+       const detail = err.response?.data?.detail;
+@@ -2226,7 +2240,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+               )}
+               {canMutateStructure && (
+                 <button
+-                  onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); if (!isExpanded) toggleBuilding(building.id); }}
++                  onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); setNewFloorInsertAfter(''); if (!isExpanded) toggleBuilding(building.id); }}
+                   className="p-2.5 text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-50"
+                   title="הוסף קומה"
+                 >
+@@ -2252,6 +2266,20 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                           autoFocus
+                         />
+                       </div>
++                      <div className="flex-1 min-w-[120px]">
++                        <label className="block text-[11px] font-medium text-amber-800 mb-1">הכנס אחרי</label>
++                        <select
++                          value={newFloorInsertAfter}
++                          onChange={e => setNewFloorInsertAfter(e.target.value)}
++                          className="w-full text-sm border border-amber-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
++                        >
++                          <option value="">בסוף</option>
++                          <option value="__start__">בהתחלה</option>
++                          {(building.floors || []).map(f => (
++                            <option key={f.id} value={f.id}>{f.display_label || f.name}</option>
++                          ))}
++                        </select>
++                      </div>
+                       <div className="w-28">
+                         <label className="block text-[11px] font-medium text-amber-800 mb-1">מס׳ דירות בקומה</label>
+                         <input
+@@ -3885,7 +3913,7 @@ const ProjectControlPage = () => {
+ 
+       {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
+       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
+-      {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
++      {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
+       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
+       {showExcelImport && <ExcelImportModal projectId={projectId} onClose={() => setShowExcelImport(false)} onSuccess={handleRefresh} />}
+ 
