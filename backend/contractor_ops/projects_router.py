@@ -611,7 +611,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
         doc['unit_note'] = unit.unit_note[:200]
     await db.units.insert_one(doc)
     await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
-    return {k: v for k, v in doc.items() if k != '_id'}
+    return Unit(**{k: v for k, v in doc.items() if k != '_id'})
 
 
 @router.get("/floors/{floor_id}/units", response_model=List[Unit])
