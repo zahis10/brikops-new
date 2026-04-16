@@ -207,9 +207,10 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
                         status_code=403,
                         detail='בתקופת הניסיון ניתן ליצור פרויקט אחד בלבד. לפרויקטים נוספים יש לשדרג את המנוי.'
                     )
-    existing = await db.projects.find_one({'code': project.code})
-    if existing:
-        raise HTTPException(status_code=400, detail='Project code already exists')
+    if project.code:
+        existing = await db.projects.find_one({'code': project.code})
+        if existing:
+            raise HTTPException(status_code=400, detail='Project code already exists')
     project_id = str(uuid.uuid4())
     ts = _now()
     org = await get_user_org(user['id'])

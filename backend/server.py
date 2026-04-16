@@ -514,7 +514,17 @@ async def create_indexes():
         )
         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
         await db.users.create_index("email", unique=True, sparse=True)
-        await db.projects.create_index("code", unique=True)
+        try:
+            existing_idx = await db.projects.index_information()
+            if 'code_1' in existing_idx and not existing_idx['code_1'].get('partialFilterExpression'):
+                await db.projects.drop_index('code_1')
+        except Exception as _e:
+            logger.warning(f"could not inspect/drop legacy code_1 index: {_e}")
+        await db.projects.create_index(
+            "code",
+            unique=True,
+            partialFilterExpression={"code": {"$type": "string"}},
+        )
         await db.buildings.create_index("project_id")
         await db.floors.create_index("building_id")
         await db.task_status_history.create_index([("task_id", 1), ("created_at", -1)])
