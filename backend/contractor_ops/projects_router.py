@@ -128,6 +128,25 @@ def _is_numeric_unit(unit_no: str) -> bool:
         return False
 
 
+def _compute_insert_sort_index(floors: list, insert_after_floor_id, strict: bool = False):
+    if not floors:
+        return 0
+    sorted_floors = sorted(floors, key=lambda f: f.get('sort_index', 0))
+    if insert_after_floor_id == '__start__':
+        return sorted_floors[0].get('sort_index', 0) - 1
+    for i, f in enumerate(sorted_floors):
+        if f['id'] == insert_after_floor_id:
+            after_si = f.get('sort_index', 0)
+            if i + 1 < len(sorted_floors):
+                next_si = sorted_floors[i + 1].get('sort_index', 0)
+                return (after_si + next_si) // 2
+            else:
+                return after_si + 1000
+    if strict:
+        raise HTTPException(status_code=422, detail='insert_after_floor_id not found in building')
+    return max(f.get('sort_index', 0) for f in sorted_floors) + 1000
+
+
 async def _compute_building_resequence(db, building_id: str):
     floors = await db.floors.find({'building_id': building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
     floor_changes = []
@@ -402,7 +421,9 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
 
     existing_floors = await db.floors.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
 
-    if is_numeric_floor and existing_floors:
+    if floor.insert_after_floor_id and existing_floors:
+        floor.sort_index = _compute_insert_sort_index(existing_floors, floor.insert_after_floor_id, strict=True)
+    elif is_numeric_floor and existing_floors:
         insert_before = None
         for ef in existing_floors:
             ef_num = None
@@ -1120,7 +1141,12 @@ async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = D
         raise HTTPException(status_code=404, detail='Building not found in this project')
 
     floors = await db.floors.find({'building_id': body.building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
-    insert_si = body.insert_at_index
+    if body.insert_after_floor_id:
+        insert_si = _compute_insert_sort_index(floors, body.insert_after_floor_id, strict=True)
+    elif body.insert_at_index is not None:
+        insert_si = body.insert_at_index
+    else:
+        insert_si = (max(f.get('sort_index', 0) for f in floors) + 1000) if floors else 0
 
     floors_to_shift = [f for f in floors if f.get('sort_index', 0) >= insert_si]
     floor_shift_changes = []

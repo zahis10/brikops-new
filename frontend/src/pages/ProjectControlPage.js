@@ -703,13 +703,13 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
   );
 };
 
-const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess }) => {
   const [mode, setMode] = useState('range');
   const [buildingId, setBuildingId] = useState('');
   const [fromFloor, setFromFloor] = useState('');
   const [toFloor, setToFloor] = useState('');
   const [singleName, setSingleName] = useState('');
-  const [insertAt, setInsertAt] = useState('');
+  const [insertAfterFloorId, setInsertAfterFloorId] = useState('');
   const [autoRenumber, setAutoRenumber] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
@@ -719,7 +719,7 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
 
   const floorCount = fromFloor !== '' && toFloor !== '' ? Math.max(0, Number(toFloor) - Number(fromFloor) + 1) : 0;
 
-  const resetState = () => { setPreview(null); setResult(null); setErrors({}); };
+  const resetState = () => { setPreview(null); setResult(null); setErrors({}); setInsertAfterFloorId(''); };
   const switchMode = (m) => { setMode(m); resetState(); };
 
   const isValidFloorNumber = (v) => {
@@ -758,7 +758,7 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
         setPreview(res);
       } else {
         const payload = { building_id: buildingId, name: singleName.trim(), dry_run: true };
-        if (insertAt !== '') payload.insert_at_index = Number(insertAt);
+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
         if (autoRenumber) payload.auto_renumber_units = true;
         const res = await sortIndexService.insertFloor(projectId, payload);
         setPreview(res);
@@ -783,7 +783,7 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
         toast.success(res.message || `${res.created_count} קומות נוצרו בהצלחה`);
       } else {
         const payload = { building_id: buildingId, name: singleName.trim() };
-        if (insertAt !== '') payload.insert_at_index = Number(insertAt);
+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
         if (autoRenumber) payload.auto_renumber_units = true;
         const res = await sortIndexService.insertFloor(projectId, payload);
         setResult(res);
@@ -825,10 +825,11 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
       ) : (
         <>
           <InputField label="קומה (מספר או שם) *" value={singleName} onChange={v => { setSingleName(v); setPreview(null); }} placeholder="למשל: 3, -1, גג, מרתף" error={errors.singleName} />
-          <div>
-            <InputField label="מיקום בסדר ההצגה" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 1 (ראש) או 99 (תחתית)" type="number" dir="ltr" />
-            <div className="text-xs text-slate-500 mt-1">1 = בראש הרשימה, מספר גדול יותר = נמוך יותר ברשימה. השאר ריק כדי להוסיף בסוף.</div>
-          </div>
+          <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
+            { value: '', label: 'בסוף (ברירת מחדל)' },
+            { value: '__start__', label: 'בהתחלה (לפני הכל)' },
+            ...((hierarchy || []).find(b => b.id === buildingId)?.floors || []).map(f => ({ value: f.id, label: f.display_label || f.name })),
+          ]} />
           <div className="flex items-center gap-2">
             <input type="checkbox" id="autoRenumber" checked={autoRenumber} onChange={e => { setAutoRenumber(e.target.checked); setPreview(null); }}
               className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500" />
@@ -1519,6 +1520,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
   const [addingFloorTo, setAddingFloorTo] = useState(null);
   const [newFloorName, setNewFloorName] = useState('');
   const [newUnitCount, setNewUnitCount] = useState('0');
+  const [newFloorInsertAfter, setNewFloorInsertAfter] = useState('');
   const [floorSaving, setFloorSaving] = useState(false);
   const [addingUnitTo, setAddingUnitTo] = useState(null);
   const [newUnitNo, setNewUnitNo] = useState('');
@@ -1557,15 +1559,18 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
     setFloorSaving(true);
     try {
       const unitCount = parseInt(newUnitCount) || 0;
-      await buildingService.createFloor(buildingId, {
+      const payload = {
         name: newFloorName.trim(),
         floor_number: 0,
         unit_count: unitCount,
-      });
+      };
+      if (newFloorInsertAfter) payload.insert_after_floor_id = newFloorInsertAfter;
+      await buildingService.createFloor(buildingId, payload);
       toast.success('קומה נוספה בהצלחה');
       setAddingFloorTo(null);
       setNewFloorName('');
       setNewUnitCount('0');
+      setNewFloorInsertAfter('');
       onRefresh();
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -2226,7 +2231,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
               )}
               {canMutateStructure && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); if (!isExpanded) toggleBuilding(building.id); }}
+                  onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); setNewFloorInsertAfter(''); if (!isExpanded) toggleBuilding(building.id); }}
                   className="p-2.5 text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-50"
                   title="הוסף קומה"
                 >
@@ -2251,6 +2256,20 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
                           onKeyDown={e => e.key === 'Enter' && handleAddFloor(building.id)}
                           autoFocus
                         />
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="block text-[11px] font-medium text-amber-800 mb-1">הכנס אחרי</label>
+                        <select
+                          value={newFloorInsertAfter}
+                          onChange={e => setNewFloorInsertAfter(e.target.value)}
+                          className="w-full text-sm border border-amber-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        >
+                          <option value="">בסוף</option>
+                          <option value="__start__">בהתחלה</option>
+                          {(building.floors || []).map(f => (
+                            <option key={f.id} value={f.id}>{f.display_label || f.name}</option>
+                          ))}
+                        </select>
                       </div>
                       <div className="w-28">
                         <label className="block text-[11px] font-medium text-amber-800 mb-1">מס׳ דירות בקומה</label>
@@ -3885,7 +3904,7 @@ const ProjectControlPage = () => {
 
       {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
-      {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
+      {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
       {showExcelImport && <ExcelImportModal projectId={projectId} onClose={() => setShowExcelImport(false)} onSuccess={handleRefresh} />}
 

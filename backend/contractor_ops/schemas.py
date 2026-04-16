@@ -170,6 +170,7 @@ class Floor(BaseModel):
     kind: Optional[FloorKind] = None
     unit_count: int = 0
     created_at: Optional[str] = None
+    insert_after_floor_id: Optional[str] = None
 
 
 class Unit(BaseModel):
@@ -569,7 +570,8 @@ class InsertFloorRequest(BaseModel):
     name: str
     display_label: Optional[str] = None
     kind: Optional[FloorKind] = None
-    insert_at_index: int
+    insert_at_index: Optional[int] = None
+    insert_after_floor_id: Optional[str] = None
     auto_renumber_units: bool = False
     unit_numbering_base: int = 100
     dry_run: bool = False
