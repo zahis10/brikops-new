@@ -74,16 +74,16 @@ async def _create_or_update_quota_request(
     return request_doc
 
 
-async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> None:
+async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user: dict) -> dict:
     project = await db.projects.find_one(
         {'id': project_id},
         {'_id': 0, 'total_units': 1, 'org_id': 1, 'name': 1}
     )
     if not project:
-        return
+        return {'quota_exceeded': False}
     total_units = project.get('total_units')
     if total_units is None or total_units < 1:
-        return
+        return {'quota_exceeded': False}
 
     current_count = await db.units.count_documents({
         'project_id': project_id,
@@ -103,10 +103,12 @@ async def _check_unit_quota(db, project_id: str, num_to_add: int, requester_user
         except Exception as e:
             logger.error("[QUOTA-REQUEST] Failed to create request: %s", e)
 
-        raise HTTPException(
-            status_code=400,
-            detail=f'חרגת מהכמות המוצהרת של הדירות ({total_units}). בקשתך להגדלה נשלחה לאישור — תקבל הודעה כשתאושר.'
-        )
+        return {
+            'quota_exceeded': True,
+            'total_units_declared': total_units,
+            'current_count': current_count + num_to_add,
+        }
+    return {'quota_exceeded': False}
 
 
 def _natural_sort_key(name: str):
@@ -463,8 +465,9 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
 
     unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
     created_units = []
+    quota_status = {'quota_exceeded': False}
     if unit_count > 0:
-        await _check_unit_quota(db, building['project_id'], unit_count, user)
+        quota_status = await _check_unit_quota(db, building['project_id'], unit_count, user)
         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
         max_numeric = 0
         for u in all_units:
@@ -534,7 +537,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
     unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
 
     if unit_count > 0:
-        await _check_unit_quota(db, project_id, unit_count, user)
+        quota_status = await _check_unit_quota(db, project_id, unit_count, user)
         all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
         max_numeric = 0
         for u in all_units:
@@ -585,7 +588,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
 
     if not unit.unit_no:
         raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
-    await _check_unit_quota(db, project_id, 1, user)
+    quota_status = await _check_unit_quota(db, project_id, 1, user)
     existing = await db.units.find_one({
         'project_id': project_id, 'building_id': building_id,
         'floor_id': floor_id, 'unit_no': unit.unit_no,
@@ -901,8 +904,9 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
             existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
             if not existing:
                 would_create_total += 1
+    quota_status = {'quota_exceeded': False}
     if would_create_total > 0:
-        await _check_unit_quota(db, body.project_id, would_create_total, user)
+        quota_status = await _check_unit_quota(db, body.project_id, would_create_total, user)
 
     batch_id = body.batch_id or str(uuid.uuid4())[:12]
     created = []
