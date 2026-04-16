@@ -722,13 +722,23 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
   const resetState = () => { setPreview(null); setResult(null); setErrors({}); };
   const switchMode = (m) => { setMode(m); resetState(); };
 
+  const isValidFloorNumber = (v) => {
+    if (v === '' || v === '-') return false;
+    const trimmed = String(v).trim();
+    return /^-?\d+$/.test(trimmed);
+  };
+
   const validate = () => {
     const errs = {};
     if (!buildingId) errs.buildingId = 'חובה';
     if (mode === 'range') {
       if (fromFloor === '') errs.fromFloor = 'חובה';
+      else if (!isValidFloorNumber(fromFloor)) errs.fromFloor = 'הזן מספר קומה בלבד (למשל: 3, -1, 0)';
       if (toFloor === '') errs.toFloor = 'חובה';
-      if (fromFloor !== '' && toFloor !== '' && Number(toFloor) < Number(fromFloor)) errs.toFloor = 'חייב להיות גדול מ-"מקומה"';
+      else if (!isValidFloorNumber(toFloor)) errs.toFloor = 'הזן מספר קומה בלבד (למשל: 3, -1, 0)';
+      if (isValidFloorNumber(fromFloor) && isValidFloorNumber(toFloor) && Number(toFloor) < Number(fromFloor)) {
+        errs.toFloor = 'חייב להיות גדול מ-"מקומה"';
+      }
     } else {
       if (!singleName.trim()) errs.singleName = 'חובה';
     }
@@ -804,8 +814,8 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
       <SelectField label="בניין *" value={buildingId} onChange={v => { setBuildingId(v); resetState(); }} options={buildingOptions} error={errors.buildingId} emptyMessage="אין בניינים - הוסף בניין קודם" />
       {mode === 'range' ? (
         <>
-          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="למשל: -1" type="text" error={errors.fromFloor} dir="ltr" />
-          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="למשל: 10" type="text" error={errors.toFloor} dir="ltr" />
+          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
+          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
           {floorCount > 0 && !preview && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
               טווח: {floorCount} קומות
@@ -815,7 +825,10 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
       ) : (
         <>
           <InputField label="קומה (מספר או שם) *" value={singleName} onChange={v => { setSingleName(v); setPreview(null); }} placeholder="למשל: 3, -1, גג, מרתף" error={errors.singleName} />
-          <InputField label="מיקום הכנסה (sort_index)" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 5" type="number" dir="ltr" />
+          <div>
+            <InputField label="מיקום בסדר ההצגה" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 1 (ראש) או 99 (תחתית)" type="number" dir="ltr" />
+            <div className="text-xs text-slate-500 mt-1">1 = בראש הרשימה, מספר גדול יותר = נמוך יותר ברשימה. השאר ריק כדי להוסיף בסוף.</div>
+          </div>
           <div className="flex items-center gap-2">
             <input type="checkbox" id="autoRenumber" checked={autoRenumber} onChange={e => { setAutoRenumber(e.target.checked); setPreview(null); }}
               className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500" />
