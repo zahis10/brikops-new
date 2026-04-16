@@ -1,5 +1,5 @@
 diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index 76a683f..e425aef 100644
+index 40af781..10675e3 100644
 --- a/backend/contractor_ops/projects_router.py
 +++ b/backend/contractor_ops/projects_router.py
 @@ -74,16 +74,16 @@ async def _create_or_update_quota_request(
@@ -39,6 +39,15 @@ index 76a683f..e425aef 100644
  
  
  def _natural_sort_key(name: str):
+@@ -403,7 +401,7 @@ async def list_buildings(project_id: str, user: dict = Depends(get_current_user)
+     return [Building(**b) for b in buildings]
+ 
+ 
+-@router.post("/buildings/{building_id}/floors")
++@router.post("/buildings/{building_id}/floors", response_model=Floor)
+ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_current_user)):
+     db = get_db()
+     building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
 @@ -465,9 +463,8 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
  
      unit_count = floor.unit_count if floor.unit_count and floor.unit_count > 0 else 0
@@ -50,7 +59,17 @@ index 76a683f..e425aef 100644
          all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
          max_numeric = 0
          for u in all_units:
-@@ -537,7 +534,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
+@@ -513,8 +510,7 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
+         'created_units': created_units,
+         'units_renumbered': len(reseq_unit_changes),
+     })
+-    floor_dict = {k: v for k, v in doc.items() if k != '_id'}
+-    return {**floor_dict, **quota_status}
++    return Floor(**{k: v for k, v in doc.items() if k != '_id'})
+ 
+ 
+ @router.get("/buildings/{building_id}/floors", response_model=List[Floor])
+@@ -538,7 +534,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
      unit_count = unit.unit_count if unit.unit_count and unit.unit_count > 0 else 0
  
      if unit_count > 0:
@@ -59,7 +78,12 @@ index 76a683f..e425aef 100644
          all_units = await db.units.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).to_list(100000)
          max_numeric = 0
          for u in all_units:
-@@ -588,7 +585,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
+@@ -585,11 +581,11 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
+                     'sort_index': c.get('new_sort_index', 0),
+                 }})
+ 
+-        return {'created': len(created), 'units': created, **quota_status}
++        return {'created': len(created), 'units': created}
  
      if not unit.unit_no:
          raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
@@ -68,16 +92,17 @@ index 76a683f..e425aef 100644
      existing = await db.units.find_one({
          'project_id': project_id, 'building_id': building_id,
          'floor_id': floor_id, 'unit_no': unit.unit_no,
-@@ -614,7 +611,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
+@@ -615,8 +611,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
          doc['unit_note'] = unit.unit_note[:200]
      await db.units.insert_one(doc)
      await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
--    return Unit(**{k: v for k, v in doc.items() if k != '_id'})
-+    return {k: v for k, v in doc.items() if k != '_id'}
+-    unit_dict = {k: v for k, v in doc.items() if k != '_id'}
+-    return {**unit_dict, **quota_status}
++    return Unit(**{k: v for k, v in doc.items() if k != '_id'})
  
  
  @router.get("/floors/{floor_id}/units", response_model=List[Unit])
-@@ -904,9 +901,8 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
+@@ -906,9 +901,8 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
              existing = await db.units.find_one({'floor_id': floor['id'], 'unit_no': unit_no, 'archived': {'$ne': True}})
              if not existing:
                  would_create_total += 1
@@ -88,15 +113,39 @@ index 76a683f..e425aef 100644
  
      batch_id = body.batch_id or str(uuid.uuid4())[:12]
      created = []
-@@ -975,7 +971,10 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
-     if skipped > 0:
-         msg += f', דולגו {skipped} דירות קיימות'
+@@ -979,7 +973,7 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
  
--    return {'created_count': len(created), 'skipped_count': skipped, 'items': created, 'message': msg, 'batch_id': batch_id}
-+    return {
-+        'created_count': len(created), 'skipped_count': skipped, 'items': created,
+     return {
+         'created_count': len(created), 'skipped_count': skipped, 'items': created,
+-        'message': msg, 'batch_id': batch_id, **quota_status,
 +        'message': msg, 'batch_id': batch_id,
-+    }
+     }
  
  
- @router.get("/projects/{project_id}/hierarchy")
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index dfd75d9..90ea3d5 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -946,9 +946,6 @@ const BulkUnitsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+       });
+       setResult(res);
+       toast.success(res.message || `${res.created_count} דירות נוצרו בהצלחה`);
+-      if (res.quota_exceeded) {
+-        toast.warning(`עברת את המכסה המוצהרת (${res.total_units_declared} יחידות). בקשה להגדלת כמות נשלחה לאדמין.`, { duration: 10000 });
+-      }
+       onSuccess();
+     } catch (err) {
+       toast.error(err.response?.data?.detail || 'שגיאה ביצירת דירות');
+@@ -1577,11 +1574,8 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+         unit_count: unitCount,
+       };
+       if (newFloorInsertAfter) payload.insert_after_floor_id = newFloorInsertAfter;
+-      const res = await buildingService.createFloor(buildingId, payload);
++      await buildingService.createFloor(buildingId, payload);
+       toast.success('קומה נוספה בהצלחה');
+-      if (res.quota_exceeded) {
+-        toast.warning(`עברת את המכסה המוצהרת (${res.total_units_declared} יחידות). בקשה להגדלת כמות נשלחה לאדמין.`, { duration: 10000 });
+-      }
+       setAddingFloorTo(null);
+       setNewFloorName('');
+       setNewUnitCount('0');
