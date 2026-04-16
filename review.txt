@@ -1,422 +1,108 @@
-diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index caccd08..0c9b40d 100644
---- a/backend/contractor_ops/billing_router.py
-+++ b/backend/contractor_ops/billing_router.py
-@@ -1770,3 +1770,121 @@ async def billing_resolve_failed_renewal(request: Request, user: dict = Depends(
-     logger.info("[RESOLVE-RENEWAL] Resolved attempt=%s org=%s doc=%s by=%s",
-                 resolved_attempt_id, org_id, doc_id, user.get('email', ''))
-     return {"status": "resolved", "mark_paid_result": result}
-+
-+
-+@router.get("/billing/project/{project_id}/pending-quota-request")
-+async def get_pending_quota_request(project_id: str, user: dict = Depends(get_current_user)):
-+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
-+    if not BILLING_V1_ENABLED:
-+        raise HTTPException(status_code=404, detail='Not found')
-+
-+    db = get_db()
-+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
-+    if not project:
-+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
-+
-+    if not _is_super_admin(user):
-+        membership = await db.project_memberships.find_one(
-+            {'user_id': user['id'], 'project_id': project_id}, {'_id': 0, 'role': 1}
-+        )
-+        if not membership:
-+            billing_role = await check_org_billing_role(user['id'], project['org_id'])
-+            if not billing_role:
-+                raise HTTPException(status_code=403, detail='אין הרשאה')
-+
-+    req = await db.unit_quota_requests.find_one(
-+        {'project_id': project_id, 'status': 'pending'},
-+        {'_id': 0}
-+    )
-+    return {'request': req}
-+
-+
-+@router.post("/billing/project/{project_id}/request-quota")
-+async def request_quota_increase(
-+    project_id: str,
-+    request: Request,
-+    user: dict = Depends(get_current_user),
-+):
-+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role, _now
-+    if not BILLING_V1_ENABLED:
-+        raise HTTPException(status_code=404, detail='Not found')
-+
-+    body = await request.json()
-+    requested_total = body.get('requested_total_units')
-+    reason = body.get('reason', '').strip() if body.get('reason') else ''
-+
-+    if not isinstance(requested_total, int) or isinstance(requested_total, bool) or requested_total < 1:
-+        raise HTTPException(status_code=400, detail='כמות לא תקינה')
-+
-+    db = get_db()
-+    project = await db.projects.find_one(
-+        {'id': project_id},
-+        {'_id': 0, 'org_id': 1, 'total_units': 1, 'name': 1}
-+    )
-+    if not project:
-+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
-+
-+    if not _is_super_admin(user):
-+        billing_role = await check_org_billing_role(user['id'], project['org_id'])
-+        if billing_role not in ('org_admin', 'billing_admin', 'owner'):
-+            raise HTTPException(status_code=403, detail='אין הרשאה לבקש שינוי quota')
-+
-+    current_total = project.get('total_units', 0)
-+    if requested_total <= current_total:
-+        raise HTTPException(
-+            status_code=400,
-+            detail=f'הכמות המבוקשת חייבת להיות גדולה מהנוכחית ({current_total})'
-+        )
-+
-+    from contractor_ops.projects_router import _create_or_update_quota_request
-+    req = await _create_or_update_quota_request(
-+        db,
-+        project_id=project_id,
-+        org_id=project['org_id'],
-+        requester_user=user,
-+        requested_total_units=requested_total,
-+        direction='increase',
-+    )
-+
-+    if reason:
-+        await db.unit_quota_requests.update_one(
-+            {'id': req['id']},
-+            {'$set': {'reason': reason, 'updated_at': _now()}}
-+        )
-+
-+    return {'ok': True, 'request_id': req['id']}
-+
-+
-+@router.get("/billing/project/{project_id}/recent-quota-updates")
-+async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_current_user)):
-+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
-+    if not BILLING_V1_ENABLED:
-+        raise HTTPException(status_code=404, detail='Not found')
-+
-+    db = get_db()
-+    project = await db.projects.find_one({'id': project_id}, {'_id': 0, 'org_id': 1})
-+    if not project:
-+        raise HTTPException(status_code=404, detail='פרויקט לא נמצא')
-+
-+    if not _is_super_admin(user):
-+        membership = await db.project_memberships.find_one(
-+            {'user_id': user['id'], 'project_id': project_id}, {'_id': 0}
-+        )
-+        if not membership:
-+            billing_role = await check_org_billing_role(user['id'], project['org_id'])
-+            if not billing_role:
-+                raise HTTPException(status_code=403, detail='אין הרשאה')
-+
-+    from datetime import datetime, timezone, timedelta
-+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-+
-+    requests = await db.unit_quota_requests.find(
-+        {
-+            'project_id': project_id,
-+            'status': {'$in': ['approved', 'rejected']},
-+            'resolved_at': {'$gte': cutoff},
-+        },
-+        {'_id': 0}
-+    ).sort('resolved_at', -1).to_list(10)
-+
-+    return {'requests': requests}
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index add3fd1..746acd6 100644
+index 746acd6..6a438fb 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -21,7 +21,7 @@ import {
-   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
-   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
-   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
--  Zap, Check, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
-+  Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
-   Package
- } from 'lucide-react';
- import { Button } from '../components/ui/button';
-@@ -1505,7 +1505,7 @@ const QC_BADGE_COLORS = {
-   submitted: 'bg-slate-100 text-slate-600',
- };
+@@ -348,7 +348,6 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+   const floorsWithoutUnits = floorsList.filter(f => f.units === 0).length;
+   const projectCap = project?.total_units;
+   const wouldExceed = projectCap != null && projectCap > 0 && (currentUnitCount + totalUnits) > projectCap;
+-  const remaining = projectCap != null && projectCap > 0 ? Math.max(0, projectCap - currentUnitCount) : null;
  
--const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure, project }) => {
-+const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRefresh, onAddBuilding, onQuickSetup, isPM, isSuperAdmin, isManagement, defectsV2Enabled, isOnboarding, canMutateStructure, project, pendingQuotaRequest, recentQuotaUpdates, onOpenQuotaRequestModal, onDismissQuotaUpdate }) => {
-   const navigate = useNavigate();
-   const [expandedBuildings, setExpandedBuildings] = useState({});
-   const [expandedFloors, setExpandedFloors] = useState({});
-@@ -2001,10 +2001,89 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+   const handleUnitsChange = (setter) => (val) => {
+     const raw = String(val).replace(/[^0-9]/g, '');
+@@ -436,10 +435,6 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+   const handleBack = () => setStep(s => Math.max(s - 1, 1));
  
-   return (
-     <div className="space-y-2">
-+      {recentQuotaUpdates && recentQuotaUpdates.map(update => (
-+        <div
-+          key={update.id}
-+          className={`rounded-lg p-3 flex items-start justify-between gap-3 text-sm ${
-+            update.status === 'approved'
-+              ? 'bg-green-50 border border-green-200 text-green-800'
-+              : 'bg-red-50 border border-red-200 text-red-800'
-+          }`}
-+        >
-+          <div className="flex items-start gap-2 flex-1 min-w-0">
-+            {update.status === 'approved' ? (
-+              <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-+            ) : (
-+              <XCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-+            )}
-+            <div className="space-y-1">
-+              {update.status === 'approved' ? (
-+                <>
-+                  <div className="font-semibold">
-+                    בקשתך התקבלה, ניתן להוסיף/להפחית כמות דירות
-+                  </div>
-+                  <div className="text-xs">
-+                    כמות הדירות בפרויקט עודכנה ל-{update.requested_total_units} יחידות.
-+                  </div>
-+                </>
-+              ) : (
-+                <>
-+                  <div className="font-semibold">
-+                    הבקשה שלך נדחתה
-+                  </div>
-+                  {update.rejection_reason && (
-+                    <div className="text-xs italic">
-+                      סיבה: {update.rejection_reason}
-+                    </div>
-+                  )}
-+                  <div className="text-xs">
-+                    אפשר להגיש בקשה חדשה עם סיבה מעודכנת.
-+                  </div>
-+                </>
-+              )}
-+            </div>
-+          </div>
-+          <button
-+            onClick={() => onDismissQuotaUpdate(update.id)}
-+            className="flex-shrink-0 p-1 hover:bg-white/30 rounded"
-+            title="סגור הודעה"
-+          >
-+            <X className="w-4 h-4" />
-+          </button>
-+        </div>
-+      ))}
-+
-       {atUnitCap && (
--        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
--          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
--          <span>{totalProjectUnits}/{projectTotalCap} דירות — הגעת למגבלה המוצהרת</span>
-+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
-+          <div className="flex items-center gap-2 text-sm">
-+            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-+            <span className="text-amber-800 font-medium">
-+              {totalProjectUnits}/{projectTotalCap} דירות — הגעת למגבלה המוצהרת
-+            </span>
-+          </div>
-+
-+          {pendingQuotaRequest ? (
-+            <div className="bg-blue-50 border border-blue-200 rounded p-2 text-xs space-y-1">
-+              <div className="font-medium text-blue-800 flex items-center gap-1">
-+                <Clock className="w-3 h-3" />
-+                בקשה ממתינה לאישור: הגדלה ל-{pendingQuotaRequest.requested_total_units} דירות
-+              </div>
-+              <div className="text-slate-500">
-+                נשלחה ב-{new Date(pendingQuotaRequest.created_at).toLocaleDateString('he-IL')}.
-+                אדמין יבדוק ויאשר בקרוב.
-+              </div>
-+              {pendingQuotaRequest.reason && (
-+                <div className="text-slate-600 italic">סיבה שניתנה: {pendingQuotaRequest.reason}</div>
-+              )}
-+            </div>
-+          ) : onOpenQuotaRequestModal && (
-+            <button
-+              onClick={onOpenQuotaRequestModal}
-+              className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-md font-medium"
-+            >
-+              בקש הגדלת כמות יחידות
-+            </button>
-+          )}
+   const handleGenerate = async () => {
+-    if (wouldExceed) {
+-      toast.error(`חריגה מכמות הדירות המוצהרת (${projectCap}). אי אפשר להקים.`);
+-      return;
+-    }
+     setSubmitting(true);
+     try {
+       const batchId = `qs-${Date.now().toString(36)}`;
+@@ -672,14 +667,13 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+                 </div>
+               </div>
+               {wouldExceed && (
+-                <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4">
++                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3">
+                   <div className="flex items-start gap-2">
+-                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
++                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                     <div className="space-y-1">
+-                      <div className="font-semibold text-red-800">חריגה מהכמות המוצהרת — לא ניתן להקים</div>
+-                      <div className="text-sm text-red-700">הפרויקט הוצהר ל-{projectCap} יחידות דיור. יש {currentUnitCount} דירות פעילות. ניסית להוסיף {totalUnits} דירות.</div>
+-                      <div className="text-sm text-red-700">נותרו <strong>{remaining}</strong> דירות זמינות להוספה.</div>
+-                      <div className="text-sm text-red-700 mt-2">חזור אחורה והתאם את כמות הדירות, או צור קשר עם התמיכה להגדלת הכמות המוצהרת.</div>
++                      <div className="font-semibold text-amber-800">חריגה מהכמות המוצהרת</div>
++                      <div className="text-xs text-amber-700">הפרויקט הוצהר ל-{projectCap} יחידות. יש {currentUnitCount} פעילות, ניסית להוסיף {totalUnits}.</div>
++                      <div className="text-xs text-amber-700">הבניין והקומות ייווצרו. בקשה אוטומטית להגדלת הכמות תישלח לאדמין עבור הדירות שבחריגה.</div>
+                     </div>
+                   </div>
+                 </div>
+@@ -698,7 +692,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+                 הבא
+               </Button>
+             ) : (
+-              <Button onClick={handleGenerate} disabled={submitting || wouldExceed} className={`flex-1 bg-green-500 hover:bg-green-600 text-white text-sm ${wouldExceed ? 'opacity-50 cursor-not-allowed' : ''}`}>
++              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm">
+                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
+               </Button>
+             )}
+@@ -2250,12 +2244,11 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                         <input
+                           type="number"
+                           min="0"
+-                          value={atUnitCap ? '0' : newUnitCount}
+-                          onChange={e => { if (!atUnitCap) setNewUnitCount(e.target.value); }}
++                          value={newUnitCount}
++                          onChange={e => setNewUnitCount(e.target.value)}
+                           placeholder="0"
+-                          disabled={atUnitCap}
+-                          title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : ''}
+-                          className={`w-full text-sm border rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center ${atUnitCap ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-amber-200'}`}
++                          title=""
++                          className="w-full text-sm border rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-center border-amber-200"
+                           onKeyDown={e => e.key === 'Enter' && handleAddFloor(building.id)}
+                         />
+                       </div>
+@@ -2312,9 +2305,9 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+                         })()}
+                         {canMutateStructure && (
+                           <button
+-                            onClick={(e) => { e.stopPropagation(); if (atUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); return; } setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
+-                            className={`p-2 ml-1 rounded-md transition-colors ${atUnitCap ? 'text-slate-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-50'}`}
+-                            title={atUnitCap ? 'הגעת למגבלת הדירות המוצהרת' : 'הוסף דירה'}
++                            onClick={(e) => { e.stopPropagation(); setAddingUnitTo(addingUnitTo === floor.id ? null : floor.id); setNewUnitNo(''); if (!isFloorExpanded) toggleFloor(floor.id); }}
++                            className="p-2 ml-1 rounded-md transition-colors text-blue-500 hover:bg-blue-50"
++                            title="הוסף דירה"
+                           >
+                             <Plus className="w-3.5 h-3.5" />
+                           </button>
+@@ -3166,9 +3159,6 @@ const ProjectControlPage = () => {
+   const [showFab, setShowFab] = useState(false);
+   const isSuperAdmin = user?.platform_role === 'super_admin';
+   const canMutateStructure = isSuperAdmin || isOrgOwner || canManageBilling;
+-  const fabTotalUnits = hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0);
+-  const fabAtUnitCap = project?.total_units != null && project.total_units > 0 && fabTotalUnits >= project.total_units;
+-
+   const FILTERED_PAGE_SIZE = 50;
+   const DEFECT_STATUS_CONFIG = {
+     open: { label: 'פתוח', color: 'bg-blue-100 text-blue-700' },
+@@ -3866,11 +3856,11 @@ const ProjectControlPage = () => {
+           <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+             <Layers className="w-4 h-4 text-blue-500" />הוסף קומות
+           </button>
+-          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowBulkUnits(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
+-            <DoorOpen className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-green-500'}`} />הוסף דירות
++          <button onClick={() => { setShowBulkUnits(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
++            <DoorOpen className="w-4 h-4 text-green-500" />הוסף דירות
+           </button>
+-          <button onClick={() => { if (fabAtUnitCap) { toast.error('הגעת למגבלת הדירות המוצהרת'); setShowFab(false); return; } setShowExcelImport(true); setShowFab(false); }} className={`flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap ${fabAtUnitCap ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50'}`}>
+-            <Upload className={`w-4 h-4 ${fabAtUnitCap ? 'text-slate-300' : 'text-slate-500'}`} />יבוא אקסל
++          <button onClick={() => { setShowExcelImport(true); setShowFab(false); }} className="flex items-center gap-2 rounded-full px-4 py-2.5 shadow-lg border text-sm font-medium whitespace-nowrap bg-white border-slate-200 text-slate-700 hover:bg-amber-50">
++            <Upload className="w-4 h-4 text-slate-500" />יבוא אקסל
+           </button>
          </div>
        )}
-       {canMutateStructure && (
-@@ -3007,6 +3086,72 @@ const ProjectControlPage = () => {
-   const [qcLoading, setQcLoading] = useState(false);
-   const [memberCount, setMemberCount] = useState(null);
-   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-+  const [pendingQuotaRequest, setPendingQuotaRequest] = useState(null);
-+  const [recentQuotaUpdates, setRecentQuotaUpdates] = useState([]);
-+  const [showQuotaRequestModal, setShowQuotaRequestModal] = useState(false);
-+  const [quotaRequestAmount, setQuotaRequestAmount] = useState('');
-+  const [quotaRequestReason, setQuotaRequestReason] = useState('');
-+  const [submittingQuotaRequest, setSubmittingQuotaRequest] = useState(false);
-+
-+  const loadPendingQuotaRequest = useCallback(async () => {
-+    if (!projectId) return;
-+    try {
-+      const res = await billingService.getPendingQuotaRequest(projectId);
-+      setPendingQuotaRequest(res.request || null);
-+    } catch (err) {
-+      setPendingQuotaRequest(null);
-+    }
-+  }, [projectId]);
-+
-+  const loadRecentQuotaUpdates = useCallback(async () => {
-+    if (!projectId) return;
-+    try {
-+      const res = await billingService.getRecentQuotaUpdates(projectId);
-+      const dismissed = JSON.parse(localStorage.getItem('dismissed_quota_updates') || '[]');
-+      const filtered = (res.requests || []).filter(r => !dismissed.includes(r.id));
-+      setRecentQuotaUpdates(filtered);
-+    } catch (err) {
-+      setRecentQuotaUpdates([]);
-+    }
-+  }, [projectId]);
-+
-+  useEffect(() => {
-+    loadPendingQuotaRequest();
-+    loadRecentQuotaUpdates();
-+  }, [loadPendingQuotaRequest, loadRecentQuotaUpdates]);
-+
-+  const dismissQuotaUpdate = (requestId) => {
-+    const dismissed = JSON.parse(localStorage.getItem('dismissed_quota_updates') || '[]');
-+    if (!dismissed.includes(requestId)) {
-+      dismissed.push(requestId);
-+      localStorage.setItem('dismissed_quota_updates', JSON.stringify(dismissed));
-+    }
-+    setRecentQuotaUpdates(prev => prev.filter(r => r.id !== requestId));
-+  };
-+
-+  const handleSubmitQuotaRequest = async () => {
-+    const amount = parseInt(quotaRequestAmount, 10);
-+    if (!amount || amount <= (project?.total_units || 0)) {
-+      toast.error('יש להזין מספר גדול מהכמות הנוכחית');
-+      return;
-+    }
-+    setSubmittingQuotaRequest(true);
-+    try {
-+      await billingService.createQuotaRequest(projectId, {
-+        requested_total_units: amount,
-+        reason: quotaRequestReason.trim(),
-+      });
-+      toast.success('הבקשה נשלחה לאישור');
-+      setShowQuotaRequestModal(false);
-+      setQuotaRequestAmount('');
-+      setQuotaRequestReason('');
-+      await loadPendingQuotaRequest();
-+    } catch (err) {
-+      toast.error(err.response?.data?.detail || 'שגיאה בשליחת בקשה');
-+    } finally {
-+      setSubmittingQuotaRequest(false);
-+    }
-+  };
-   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
-   const [approvalBannerDismissed, setApprovalBannerDismissed] = useState(false);
- 
-@@ -3507,7 +3652,7 @@ const ProjectControlPage = () => {
-             />
-           )}
- 
--          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} project={project} />
-+          <StructureTab hierarchy={hierarchy} hierarchyLoading={hierarchyLoading} buildings={buildings} projectId={projectId} onRefresh={handleRefresh} onAddBuilding={canMutateStructure ? () => setShowAddBuilding(true) : null} onQuickSetup={canMutateStructure ? () => setShowQuickSetup(true) : null} isPM={['owner', 'admin', 'project_manager'].includes(myRole)} isSuperAdmin={isSuperAdmin} isManagement={['owner', 'admin', 'project_manager', 'management_team'].includes(myRole)} defectsV2Enabled={defectsV2Enabled} isOnboarding={isOnboarding} canMutateStructure={canMutateStructure} project={project} pendingQuotaRequest={pendingQuotaRequest} recentQuotaUpdates={recentQuotaUpdates} onOpenQuotaRequestModal={() => setShowQuotaRequestModal(true)} onDismissQuotaUpdate={dismissQuotaUpdate} />
-         </div>
-       )}
- 
-@@ -3740,6 +3885,75 @@ const ProjectControlPage = () => {
-       {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
-       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
-       {showExcelImport && <ExcelImportModal projectId={projectId} onClose={() => setShowExcelImport(false)} onSuccess={handleRefresh} />}
-+
-+      {showQuotaRequestModal && (
-+        <DialogPrimitive.Root open onOpenChange={(v) => { if (!v) setShowQuotaRequestModal(false); }}>
-+          <DialogPrimitive.Portal>
-+            <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
-+            <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4">
-+              <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" dir="rtl">
-+                <DialogPrimitive.Title className="text-lg font-bold text-slate-900 mb-2">
-+                  בקשת הגדלת כמות יחידות
-+                </DialogPrimitive.Title>
-+                <DialogPrimitive.Description className="text-sm text-slate-600 mb-4">
-+                  הכמות הנוכחית: {project?.total_units || 0} יחידות. לאיזה מספר תרצה להגדיל?
-+                </DialogPrimitive.Description>
-+
-+                <div className="space-y-3">
-+                  <div>
-+                    <label className="block text-sm font-medium text-slate-700 mb-1">
-+                      כמות חדשה <span className="text-red-500">*</span>
-+                    </label>
-+                    <input
-+                      type="number"
-+                      min={(project?.total_units || 0) + 1}
-+                      value={quotaRequestAmount}
-+                      onChange={(e) => setQuotaRequestAmount(e.target.value)}
-+                      placeholder={`למשל: ${(project?.total_units || 0) + 50}`}
-+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
-+                    />
-+                  </div>
-+
-+                  <div>
-+                    <label className="block text-sm font-medium text-slate-700 mb-1">
-+                      סיבה (אופציונלי)
-+                    </label>
-+                    <textarea
-+                      value={quotaRequestReason}
-+                      onChange={(e) => setQuotaRequestReason(e.target.value)}
-+                      placeholder="למשל: היתר בנייה עודכן, שינויי תכנון"
-+                      rows={3}
-+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
-+                    />
-+                  </div>
-+                </div>
-+
-+                <div className="flex gap-2 mt-5">
-+                  <Button
-+                    onClick={handleSubmitQuotaRequest}
-+                    disabled={
-+                      submittingQuotaRequest ||
-+                      !quotaRequestAmount ||
-+                      parseInt(quotaRequestAmount, 10) <= (project?.total_units || 0)
-+                    }
-+                    className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
-+                  >
-+                    {submittingQuotaRequest ? 'שולח...' : 'שלח בקשה'}
-+                  </Button>
-+                  <Button
-+                    onClick={() => { setShowQuotaRequestModal(false); setQuotaRequestAmount(''); setQuotaRequestReason(''); }}
-+                    variant="outline"
-+                    className="flex-1"
-+                    disabled={submittingQuotaRequest}
-+                  >
-+                    ביטול
-+                  </Button>
-+                </div>
-+              </div>
-+            </DialogPrimitive.Content>
-+          </DialogPrimitive.Portal>
-+        </DialogPrimitive.Root>
-+      )}
-     </div>
-   );
- };
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index 201751c..8dc039d 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -992,6 +992,18 @@ export const billingService = {
-     const response = await axios.post(`${API}/billing/resolve-failed-renewal`, { attempt_id: attemptId }, { headers: getAuthHeader() });
-     return response.data;
-   },
-+  async getPendingQuotaRequest(projectId) {
-+    const response = await axios.get(`${API}/billing/project/${projectId}/pending-quota-request`, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async createQuotaRequest(projectId, body) {
-+    const response = await axios.post(`${API}/billing/project/${projectId}/request-quota`, body, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-+  async getRecentQuotaUpdates(projectId) {
-+    const response = await axios.get(`${API}/billing/project/${projectId}/recent-quota-updates`, { headers: getAuthHeader() });
-+    return response.data;
-+  },
-   async listQuotaRequests(status = 'pending') {
-     const response = await axios.get(`${API}/admin/quota-requests?status=${status}`, { headers: getAuthHeader() });
-     return response.data;
