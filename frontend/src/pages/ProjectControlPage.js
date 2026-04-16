@@ -946,6 +946,9 @@ const BulkUnitsForm = ({ projectId, buildings, onClose, onSuccess }) => {
       });
       setResult(res);
       toast.success(res.message || `${res.created_count} דירות נוצרו בהצלחה`);
+      if (res.quota_exceeded) {
+        toast.warning(`עברת את המכסה המוצהרת (${res.total_units_declared} יחידות). בקשה להגדלת כמות נשלחה לאדמין.`, { duration: 10000 });
+      }
       onSuccess();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה ביצירת דירות');
@@ -1574,8 +1577,11 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
         unit_count: unitCount,
       };
       if (newFloorInsertAfter) payload.insert_after_floor_id = newFloorInsertAfter;
-      await buildingService.createFloor(buildingId, payload);
+      const res = await buildingService.createFloor(buildingId, payload);
       toast.success('קומה נוספה בהצלחה');
+      if (res.quota_exceeded) {
+        toast.warning(`עברת את המכסה המוצהרת (${res.total_units_declared} יחידות). בקשה להגדלת כמות נשלחה לאדמין.`, { duration: 10000 });
+      }
       setAddingFloorTo(null);
       setNewFloorName('');
       setNewUnitCount('0');

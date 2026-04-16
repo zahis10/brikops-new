@@ -403,7 +403,7 @@ async def list_buildings(project_id: str, user: dict = Depends(get_current_user)
     return [Building(**b) for b in buildings]
 
 
-@router.post("/buildings/{building_id}/floors", response_model=Floor)
+@router.post("/buildings/{building_id}/floors")
 async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_current_user)):
     db = get_db()
     building = await db.buildings.find_one({'id': building_id, 'archived': {'$ne': True}}, {'_id': 0})
@@ -513,7 +513,8 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
         'created_units': created_units,
         'units_renumbered': len(reseq_unit_changes),
     })
-    return Floor(**{k: v for k, v in doc.items() if k != '_id'})
+    floor_dict = {k: v for k, v in doc.items() if k != '_id'}
+    return {**floor_dict, **quota_status}
 
 
 @router.get("/buildings/{building_id}/floors", response_model=List[Floor])
@@ -584,7 +585,7 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
                     'sort_index': c.get('new_sort_index', 0),
                 }})
 
-        return {'created': len(created), 'units': created}
+        return {'created': len(created), 'units': created, **quota_status}
 
     if not unit.unit_no:
         raise HTTPException(status_code=400, detail='יש להזין מספר דירה או כמות דירות')
@@ -614,7 +615,8 @@ async def create_unit(floor_id: str, unit: Unit, user: dict = Depends(get_curren
         doc['unit_note'] = unit.unit_note[:200]
     await db.units.insert_one(doc)
     await _audit('unit', unit_id, 'create', user['id'], {'floor_id': floor_id, 'unit_no': unit.unit_no})
-    return Unit(**{k: v for k, v in doc.items() if k != '_id'})
+    unit_dict = {k: v for k, v in doc.items() if k != '_id'}
+    return {**unit_dict, **quota_status}
 
 
 @router.get("/floors/{floor_id}/units", response_model=List[Unit])
@@ -975,7 +977,10 @@ async def bulk_create_units(body: BulkUnitRequest, user: dict = Depends(get_curr
     if skipped > 0:
         msg += f', דולגו {skipped} דירות קיימות'
 
-    return {'created_count': len(created), 'skipped_count': skipped, 'items': created, 'message': msg, 'batch_id': batch_id}
+    return {
+        'created_count': len(created), 'skipped_count': skipped, 'items': created,
+        'message': msg, 'batch_id': batch_id, **quota_status,
+    }
 
 
 @router.get("/projects/{project_id}/hierarchy")
