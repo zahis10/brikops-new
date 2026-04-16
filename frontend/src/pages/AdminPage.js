@@ -94,6 +94,7 @@ const AdminPage = () => {
   const [systemInfoLoading, setSystemInfoLoading] = useState(false);
   const [apiHealthy, setApiHealthy] = useState(null);
   const [paymentRequests, setPaymentRequests] = useState(null);
+  const [quotaRequests, setQuotaRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -119,6 +120,16 @@ const AdminPage = () => {
     } catch {}
   }, [authHeaders]);
 
+  const loadQuotaRequests = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/admin/quota-requests?status=pending`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setQuotaRequests(data.requests || []);
+      }
+    } catch {}
+  }, [authHeaders]);
+
   const loadAuditEvents = useCallback(async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/admin/billing/audit`, { headers: authHeaders() });
@@ -132,8 +143,9 @@ const AdminPage = () => {
   useEffect(() => {
     loadSystemInfo();
     loadPaymentRequests();
+    loadQuotaRequests();
     loadAuditEvents();
-  }, [loadSystemInfo, loadPaymentRequests, loadAuditEvents]);
+  }, [loadSystemInfo, loadPaymentRequests, loadQuotaRequests, loadAuditEvents]);
 
   const handleTabClick = (tabId) => {
     if (tabId === 'dashboard') { navigate('/admin/dashboard'); return; }
@@ -184,7 +196,7 @@ const AdminPage = () => {
             <h1 className="text-lg font-bold leading-tight">אדמין פאנל</h1>
             <p className="text-xs text-slate-400">{user?.name} • Super Admin</p>
           </div>
-          <button onClick={() => { loadSystemInfo(); loadPaymentRequests(); loadAuditEvents(); }} disabled={systemInfoLoading} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="רענן">
+          <button onClick={() => { loadSystemInfo(); loadPaymentRequests(); loadQuotaRequests(); loadAuditEvents(); }} disabled={systemInfoLoading} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="רענן">
             <RefreshCw className={`w-5 h-5 ${systemInfoLoading ? 'animate-spin' : ''}`} />
           </button>
         </div>
@@ -248,7 +260,7 @@ const AdminPage = () => {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="bg-white rounded-xl border shadow-sm p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -290,6 +302,47 @@ const AdminPage = () => {
                         </button>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-xl border shadow-sm p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-orange-500" />
+                    <h3 className="text-sm font-bold text-slate-700">בקשות מכסה ממתינות</h3>
+                    {quotaRequests.length > 0 && (
+                      <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">{quotaRequests.length}</span>
+                    )}
+                  </div>
+                  <button onClick={() => handleTabClick('billing')} className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1">
+                    הכל <ChevronLeft className="w-3 h-3" />
+                  </button>
+                </div>
+                {quotaRequests.length === 0 ? (
+                  <div className="text-center py-6 text-sm text-slate-400">אין בקשות ממתינות</div>
+                ) : (
+                  <div className="space-y-2">
+                    {quotaRequests.slice(0, 5).map((req, i) => (
+                      <button
+                        key={req.id || i}
+                        onClick={() => handleTabClick('billing')}
+                        className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-orange-50 border border-transparent hover:border-orange-200 transition-all text-right"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-xs font-bold text-orange-600 shrink-0">
+                          {req.project_name_snapshot ? req.project_name_snapshot.slice(0, 2) : '?'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-700 truncate">{req.project_name_snapshot || 'פרויקט'}</p>
+                          <p className="text-xs text-slate-400">
+                            {req.current_total_units} → {req.requested_total_units} יחידות
+                          </p>
+                        </div>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap font-medium bg-orange-100 text-orange-700">
+                          ממתין
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
