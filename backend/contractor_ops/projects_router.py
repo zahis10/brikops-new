@@ -744,9 +744,26 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
 
     existing_floors = await db.floors.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
 
-    base_si = None
+    batch_count = body.to_floor - body.from_floor + 1
     if body.insert_after_floor_id:
-        base_si = _compute_insert_sort_index(existing_floors, body.insert_after_floor_id, strict=True)
+        sorted_ef = sorted(existing_floors, key=lambda f: f.get('sort_index', 0))
+        if body.insert_after_floor_id == '__start__':
+            first_si = sorted_ef[0].get('sort_index', 0) if sorted_ef else 1000
+            base_si = first_si - batch_count - 1
+        else:
+            target = next((f for f in sorted_ef if f['id'] == body.insert_after_floor_id), None)
+            if not target:
+                raise HTTPException(status_code=422, detail='insert_after_floor_id not found in building')
+            after_si = target.get('sort_index', 0)
+            idx = sorted_ef.index(target)
+            if idx + 1 < len(sorted_ef):
+                next_si = sorted_ef[idx + 1].get('sort_index', 0)
+                gap = next_si - after_si
+                base_si = after_si + 1
+            else:
+                base_si = after_si + 1
+    else:
+        base_si = (max(f.get('sort_index', 0) for f in existing_floors) + 1000) if existing_floors else 0
 
     if body.dry_run:
         would_create = 0
@@ -774,10 +791,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
             skipped += 1
             continue
         floor_id = str(uuid.uuid4())
-        if base_si is not None:
-            si = base_si + create_idx
-        else:
-            si = num * 1000
+        si = base_si + create_idx
         doc = {
             'id': floor_id,
             'building_id': body.building_id,

@@ -1,289 +1,394 @@
-diff --git a/frontend/src/pages/AccessibilityPage.js b/frontend/src/pages/AccessibilityPage.js
-index 8e332bf..81dd2f5 100644
---- a/frontend/src/pages/AccessibilityPage.js
-+++ b/frontend/src/pages/AccessibilityPage.js
-@@ -10,7 +10,7 @@ const AccessibilityPage = () => {
-       <div className="max-w-2xl mx-auto">
-         <div className="flex items-center gap-3 mb-6">
-           <button
--            onClick={() => navigate(-1)}
-+            onClick={() => navigate('/projects')}
-             className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-             aria-label="חזרה"
-           >
-diff --git a/frontend/src/pages/AccountSettingsPage.js b/frontend/src/pages/AccountSettingsPage.js
-index 458878e..e5cf410 100644
---- a/frontend/src/pages/AccountSettingsPage.js
-+++ b/frontend/src/pages/AccountSettingsPage.js
-@@ -594,7 +594,7 @@ const AccountSettingsPage = () => {
-     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-amber-50/30 py-8 px-4" dir="rtl">
-       <div className="max-w-lg mx-auto space-y-6">
-         <div className="flex items-center gap-3 mb-2">
--          <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-slate-100 transition-colors">
-+          <button onClick={() => navigate('/projects')} className="p-2 rounded-lg hover:bg-slate-100 transition-colors">
-             <ArrowRight className="w-5 h-5 text-slate-600" />
-           </button>
-           <div>
-diff --git a/frontend/src/pages/AdminActivityPage.js b/frontend/src/pages/AdminActivityPage.js
-index 906b25b..a6a3233 100644
---- a/frontend/src/pages/AdminActivityPage.js
-+++ b/frontend/src/pages/AdminActivityPage.js
-@@ -253,7 +253,7 @@ export default function AdminActivityPage() {
-     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' }}>
-         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
--          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/admin')} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
-+          <button onClick={() => navigate('/admin')} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
-             <ChevronRight className="w-5 h-5" />
-           </button>
-           <Users className="w-5 h-5 text-amber-400" />
-diff --git a/frontend/src/pages/AdminDashboardPage.js b/frontend/src/pages/AdminDashboardPage.js
-index c665367..a1efc50 100644
---- a/frontend/src/pages/AdminDashboardPage.js
-+++ b/frontend/src/pages/AdminDashboardPage.js
-@@ -169,7 +169,7 @@ const AdminDashboardPage = () => {
-     <div className="min-h-screen bg-slate-50 pb-10" dir="rtl">
-       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
-         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
--          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
-+          <button onClick={() => navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
-             <ArrowRight className="w-5 h-5" />
-           </button>
-           <div className="flex-1 min-w-0">
-diff --git a/frontend/src/pages/AdminOrgsPage.js b/frontend/src/pages/AdminOrgsPage.js
-index b957482..9631c91 100644
---- a/frontend/src/pages/AdminOrgsPage.js
-+++ b/frontend/src/pages/AdminOrgsPage.js
-@@ -277,7 +277,7 @@ const AdminOrgsPage = () => {
-     <div className="min-h-screen bg-slate-50" dir="rtl">
-       <header className="bg-gradient-to-l from-slate-900 to-slate-800 text-white">
-         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
--          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
-+          <button onClick={() => navigate('/admin')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לאדמין">
-             <ArrowRight className="w-5 h-5" />
-           </button>
-           <div className="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center">
-diff --git a/frontend/src/pages/AdminPage.js b/frontend/src/pages/AdminPage.js
-index 9f9d26e..5d4fff6 100644
---- a/frontend/src/pages/AdminPage.js
-+++ b/frontend/src/pages/AdminPage.js
-@@ -174,7 +174,7 @@ const AdminPage = () => {
-     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-       <header className="text-white sticky top-0 z-50" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
-         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
--          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
-+          <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
-             <ArrowRight className="w-5 h-5" />
-           </button>
-           <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center">
-diff --git a/frontend/src/pages/AdminQCTemplatesPage.js b/frontend/src/pages/AdminQCTemplatesPage.js
-index 736f590..6ae747a 100644
---- a/frontend/src/pages/AdminQCTemplatesPage.js
-+++ b/frontend/src/pages/AdminQCTemplatesPage.js
-@@ -766,7 +766,7 @@ const AdminQCTemplatesPage = () => {
-       <div className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3">
-         <div className="max-w-3xl mx-auto flex items-center justify-between">
-           <div className="flex items-center gap-3">
--            <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/admin')} className="text-slate-600">
-+            <button onClick={() => navigate('/admin')} className="text-slate-600">
-               <ChevronRight className="w-5 h-5" />
-             </button>
-             <h1 className="text-lg font-bold text-slate-800">תבניות בקרת ביצוע / מסירה</h1>
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 55f99cb..527b645 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -270,7 +270,7 @@ const ApartmentDashboardPage = () => {
-     return (
-       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
-         <p className="text-slate-500">דירה לא נמצאה</p>
--        <button onClick={() => navigate(-1)} className="text-amber-600 hover:text-amber-700 font-medium">
-+        <button onClick={() => navigate(`/projects/${projectId}/control`)} className="text-amber-600 hover:text-amber-700 font-medium">
-           חזרה
-         </button>
-       </div>
-diff --git a/frontend/src/pages/BuildingQCPage.js b/frontend/src/pages/BuildingQCPage.js
-index 6d5d360..c190dd5 100644
---- a/frontend/src/pages/BuildingQCPage.js
-+++ b/frontend/src/pages/BuildingQCPage.js
-@@ -77,11 +77,7 @@ export default function BuildingQCPage() {
-   const seqRef = useRef(0);
+diff --git a/.agents/agent_assets_metadata.toml b/.agents/agent_assets_metadata.toml
+index b7486e0..8f02bc4 100644
+--- a/.agents/agent_assets_metadata.toml
++++ b/.agents/agent_assets_metadata.toml
+@@ -77,7 +77,7 @@ title = "review-94.txt"
+ id = "ocdrZig6YPfAjD1XCgrbr"
+ uri = "file://review.txt"
+ type = "text"
+-title = "#349 — Insert After Dropdown — Full Diff"
++title = "review.txt — Full diff of #350 back-button fix (19 files)"
  
-   const handleBack = useCallback(() => {
--    if (window.history.length > 2) {
--      navigate(-1);
--    } else {
--      navigate(`/projects/${projectId}/buildings/${buildingId}`);
--    }
-+    navigate(`/projects/${projectId}/buildings/${buildingId}`);
-   }, [navigate, projectId, buildingId]);
+ [[outputs]]
+ id = "WdwtqNCiZpAAlX9e9Sq9Z"
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index 7d28bc9..e6ce831 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -744,9 +744,26 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
  
-   const load = useCallback(async () => {
-diff --git a/frontend/src/pages/HandoverOverviewPage.js b/frontend/src/pages/HandoverOverviewPage.js
-index b470edc..5c717de 100644
---- a/frontend/src/pages/HandoverOverviewPage.js
-+++ b/frontend/src/pages/HandoverOverviewPage.js
-@@ -228,7 +228,7 @@ export default function HandoverOverviewPage() {
-     <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
-       <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white sticky top-0 z-50 shadow-md">
-         <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
--          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
-+          <button onClick={() => navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
-             <ChevronRight className="w-4 h-4" />
-           </button>
-           <ProjectSwitcher currentProjectId={projectId} />
-diff --git a/frontend/src/pages/InnerBuildingPage.js b/frontend/src/pages/InnerBuildingPage.js
-index a7102ee..9b50d2a 100644
---- a/frontend/src/pages/InnerBuildingPage.js
-+++ b/frontend/src/pages/InnerBuildingPage.js
-@@ -56,11 +56,7 @@ const InnerBuildingPage = () => {
-   const floorRefs = useRef({});
+     existing_floors = await db.floors.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
  
-   const handleBack = useCallback(() => {
--    if (window.history.length > 2) {
--      navigate(-1);
--    } else {
--      navigate(`/projects/${projectId}/control?tab=structure`);
--    }
-+    navigate(`/projects/${projectId}/control?tab=structure`);
-   }, [navigate, projectId]);
+-    base_si = None
++    batch_count = body.to_floor - body.from_floor + 1
+     if body.insert_after_floor_id:
+-        base_si = _compute_insert_sort_index(existing_floors, body.insert_after_floor_id, strict=True)
++        sorted_ef = sorted(existing_floors, key=lambda f: f.get('sort_index', 0))
++        if body.insert_after_floor_id == '__start__':
++            first_si = sorted_ef[0].get('sort_index', 0) if sorted_ef else 1000
++            base_si = first_si - batch_count - 1
++        else:
++            target = next((f for f in sorted_ef if f['id'] == body.insert_after_floor_id), None)
++            if not target:
++                raise HTTPException(status_code=422, detail='insert_after_floor_id not found in building')
++            after_si = target.get('sort_index', 0)
++            idx = sorted_ef.index(target)
++            if idx + 1 < len(sorted_ef):
++                next_si = sorted_ef[idx + 1].get('sort_index', 0)
++                gap = next_si - after_si
++                base_si = after_si + 1
++            else:
++                base_si = after_si + 1
++    else:
++        base_si = (max(f.get('sort_index', 0) for f in existing_floors) + 1000) if existing_floors else 0
  
-   const loadData = useCallback(async () => {
-diff --git a/frontend/src/pages/OrgBillingPage.js b/frontend/src/pages/OrgBillingPage.js
-index 7b80a8b..a9e57f5 100644
---- a/frontend/src/pages/OrgBillingPage.js
-+++ b/frontend/src/pages/OrgBillingPage.js
-@@ -765,7 +765,7 @@ export default function OrgBillingPage() {
-           >
-             נסה שוב
-           </button>
--          <button onClick={() => navigate(-1)} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
-+          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
-         </div>
-       </div>
-     </div>
-@@ -830,7 +830,7 @@ export default function OrgBillingPage() {
-           >
-             נסה שוב
-           </button>
--          <button onClick={() => navigate(-1)} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
-+          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
-             חזרה
-           </button>
-         </div>
-@@ -850,7 +850,7 @@ export default function OrgBillingPage() {
-   return (
-     <div className="max-w-3xl mx-auto p-4 space-y-6" dir="rtl">
-       <div className="flex items-center gap-2 text-sm text-slate-500">
--        <button onClick={() => navigate(-1)} className="hover:text-slate-700">חזרה</button>
-+        <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
-         <ChevronRight className="w-4 h-4" />
-         <span className="font-medium text-slate-700">חיוב ארגון</span>
-       </div>
-diff --git a/frontend/src/pages/PaymentFailurePage.js b/frontend/src/pages/PaymentFailurePage.js
-index 214ac3e..27c35b7 100644
---- a/frontend/src/pages/PaymentFailurePage.js
-+++ b/frontend/src/pages/PaymentFailurePage.js
-@@ -18,7 +18,7 @@ export default function PaymentFailurePage() {
-         אנא נסה שנית או פנה לתמיכה
-       </p>
-       <button
--        onClick={() => navigate(-1)}
-+        onClick={() => navigate('/projects')}
-         style={{
-           background: '#374151', color: '#fff', border: 'none', borderRadius: '0.5rem',
-           padding: '0.75rem 2rem', fontSize: '1rem', fontWeight: 600, cursor: 'pointer',
+     if body.dry_run:
+         would_create = 0
+@@ -774,10 +791,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+             skipped += 1
+             continue
+         floor_id = str(uuid.uuid4())
+-        if base_si is not None:
+-            si = base_si + create_idx
+-        else:
+-            si = num * 1000
++        si = base_si + create_idx
+         doc = {
+             'id': floor_id,
+             'building_id': body.building_id,
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 175c962..9f91c7d 100644
+index 9f91c7d..90ea3d5 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -3548,7 +3548,7 @@ const ProjectControlPage = () => {
-       <div className="sticky top-0 z-50">
-         <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
-           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
--            <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
-+            <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
-               <ArrowRight className="w-5 h-5" />
-             </button>
-             <div className="flex-1 min-w-0">
-diff --git a/frontend/src/pages/ProjectPlansPage.js b/frontend/src/pages/ProjectPlansPage.js
-index 12186c6..2e290b3 100644
---- a/frontend/src/pages/ProjectPlansPage.js
-+++ b/frontend/src/pages/ProjectPlansPage.js
-@@ -574,13 +574,9 @@ const ProjectPlansPage = () => {
-   }, [editFields.floor_id, allFloors]);
- 
-   const handleBack = () => {
--    if (window.history.length > 2) {
--      navigate(-1);
--    } else {
--      if (myRole === 'contractor') navigate('/projects');
--      else if (myRole === 'viewer') navigate(`/projects/${projectId}/tasks`);
--      else navigate(`/projects/${projectId}/control`);
--    }
-+    if (myRole === 'contractor') navigate('/projects');
-+    else if (myRole === 'viewer') navigate(`/projects/${projectId}/tasks`);
-+    else navigate(`/projects/${projectId}/control`);
-   };
- 
-   if (loading) {
-diff --git a/frontend/src/pages/QCFloorSelectionPage.js b/frontend/src/pages/QCFloorSelectionPage.js
-index 6eaf53d..e730320 100644
---- a/frontend/src/pages/QCFloorSelectionPage.js
-+++ b/frontend/src/pages/QCFloorSelectionPage.js
-@@ -166,7 +166,7 @@ export default function QCFloorSelectionPage() {
-     <div className="bg-slate-800 text-white sticky top-0 z-30">
-       <div className="max-w-2xl mx-auto px-4 py-3">
-         <div className="flex items-center gap-3">
--          <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate(`/projects/${projectId}/control`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
-+          <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
-             <ArrowRight className="w-5 h-5" />
-           </button>
-           <div className="flex-1 min-w-0">
-diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index a4ddec3..6ced5ad 100644
---- a/frontend/src/pages/UnitDetailPage.js
-+++ b/frontend/src/pages/UnitDetailPage.js
-@@ -109,7 +109,7 @@ const UnitDetailPage = () => {
-     return (
-       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" dir="rtl">
-         <p className="text-slate-500">דירה לא נמצאה</p>
--        <button onClick={() => navigate(-1)} className="text-amber-600 hover:text-amber-700 font-medium">
-+        <button onClick={() => navigate(`/projects/${projectId}/control`)} className="text-amber-600 hover:text-amber-700 font-medium">
-           חזרה
-         </button>
-       </div>
-diff --git a/frontend/src/pages/UnitPlansPage.js b/frontend/src/pages/UnitPlansPage.js
-index 157905c..0e28308 100644
---- a/frontend/src/pages/UnitPlansPage.js
-+++ b/frontend/src/pages/UnitPlansPage.js
-@@ -224,11 +224,7 @@ const UnitPlansPage = () => {
-   };
- 
-   const handleBack = () => {
--    if (window.history.length > 2) {
--      navigate(-1);
--    } else {
--      navigate(`/projects/${projectId}/units/${unitId}`);
--    }
-+    navigate(`/projects/${projectId}/units/${unitId}`);
-   };
- 
-   const { unit, floor, building, project } = unitData || {};
-diff --git a/frontend/src/pages/UnitQCSelectionPage.js b/frontend/src/pages/UnitQCSelectionPage.js
-index f478d5b..4680faf 100644
---- a/frontend/src/pages/UnitQCSelectionPage.js
-+++ b/frontend/src/pages/UnitQCSelectionPage.js
-@@ -68,11 +68,7 @@ export default function UnitQCSelectionPage() {
-   };
- 
-   const goBack = () => {
--    if (window.history.length > 2) {
--      navigate(-1);
--    } else {
--      navigate(`/projects/${projectId}/floors/${floorId}`);
--    }
-+    navigate(`/projects/${projectId}/floors/${floorId}`);
-   };
- 
-   if (loading) {
+@@ -818,8 +818,8 @@ const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess })
+       <SelectField label="בניין *" value={buildingId} onChange={v => { setBuildingId(v); resetState(); }} options={buildingOptions} error={errors.buildingId} emptyMessage="אין בניינים - הוסף בניין קודם" />
+       {mode === 'range' ? (
+         <>
+-          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
+-          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
++          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" />
++          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" />
+           <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
+             { value: '', label: 'בסוף (ברירת מחדל)' },
+             { value: '__start__', label: 'בהתחלה (לפני הכל)' },
+diff --git a/review.txt b/review.txt
+index b34befc..944ea6c 100644
+--- a/review.txt
++++ b/review.txt
+@@ -1,316 +0,0 @@
+-diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+-index 4641aa7..7d28bc9 100644
+---- a/backend/contractor_ops/projects_router.py
+-+++ b/backend/contractor_ops/projects_router.py
+-@@ -128,6 +128,25 @@ def _is_numeric_unit(unit_no: str) -> bool:
+-         return False
+- 
+- 
+-+def _compute_insert_sort_index(floors: list, insert_after_floor_id, strict: bool = False):
+-+    if not floors:
+-+        return 0
+-+    sorted_floors = sorted(floors, key=lambda f: f.get('sort_index', 0))
+-+    if insert_after_floor_id == '__start__':
+-+        return sorted_floors[0].get('sort_index', 0) - 1
+-+    for i, f in enumerate(sorted_floors):
+-+        if f['id'] == insert_after_floor_id:
+-+            after_si = f.get('sort_index', 0)
+-+            if i + 1 < len(sorted_floors):
+-+                next_si = sorted_floors[i + 1].get('sort_index', 0)
+-+                return (after_si + next_si) // 2
+-+            else:
+-+                return after_si + 1000
+-+    if strict:
+-+        raise HTTPException(status_code=422, detail='insert_after_floor_id not found in building')
+-+    return max(f.get('sort_index', 0) for f in sorted_floors) + 1000
+-+
+-+
+- async def _compute_building_resequence(db, building_id: str):
+-     floors = await db.floors.find({'building_id': building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+-     floor_changes = []
+-@@ -402,7 +421,9 @@ async def create_floor(building_id: str, floor: Floor, user: dict = Depends(get_
+- 
+-     existing_floors = await db.floors.find({'building_id': building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+- 
+--    if is_numeric_floor and existing_floors:
+-+    if floor.insert_after_floor_id and existing_floors:
+-+        floor.sort_index = _compute_insert_sort_index(existing_floors, floor.insert_after_floor_id, strict=True)
+-+    elif is_numeric_floor and existing_floors:
+-         insert_before = None
+-         for ef in existing_floors:
+-             ef_num = None
+-@@ -721,6 +742,12 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+-     if body.to_floor - body.from_floor > 200:
+-         raise HTTPException(status_code=422, detail='Maximum 200 floors per batch')
+- 
+-+    existing_floors = await db.floors.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+-+
+-+    base_si = None
+-+    if body.insert_after_floor_id:
+-+        base_si = _compute_insert_sort_index(existing_floors, body.insert_after_floor_id, strict=True)
+-+
+-     if body.dry_run:
+-         would_create = 0
+-         would_skip = 0
+-@@ -736,6 +763,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+-     created = []
+-     skipped = 0
+-     ts = _now()
+-+    create_idx = 0
+-     for num in range(body.from_floor, body.to_floor + 1):
+-         existing = await db.floors.find_one({
+-             'building_id': body.building_id,
+-@@ -746,7 +774,10 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+-             skipped += 1
+-             continue
+-         floor_id = str(uuid.uuid4())
+--        si = num * 1000
+-+        if base_si is not None:
+-+            si = base_si + create_idx
+-+        else:
+-+            si = num * 1000
+-         doc = {
+-             'id': floor_id,
+-             'building_id': body.building_id,
+-@@ -761,6 +792,23 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+-         }
+-         await db.floors.insert_one(doc)
+-         created.append({'id': floor_id, 'name': doc['name'], 'floor_number': num, 'sort_index': si})
+-+        create_idx += 1
+-+
+-+    reseq_floor_changes, reseq_unit_changes = await _compute_building_resequence(db, body.building_id)
+-+    for c in reseq_floor_changes:
+-+        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+-+    if reseq_unit_changes:
+-+        for c in reseq_unit_changes:
+-+            await db.units.update_one({'id': c['id']}, {'$set': {
+-+                'unit_no': f"__tmp_{c['id']}",
+-+                'display_label': f"__tmp_{c['id']}",
+-+            }})
+-+        for c in reseq_unit_changes:
+-+            await db.units.update_one({'id': c['id']}, {'$set': {
+-+                'unit_no': c['new_unit_no'],
+-+                'display_label': c['new_display_label'],
+-+                'sort_index': c['new_sort_index'],
+-+            }})
+- 
+-     await _audit('building', body.building_id, 'bulk_create_floors', user['id'], {
+-         'project_id': body.project_id,
+-@@ -769,6 +817,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
+-         'created_count': len(created),
+-         'skipped_count': skipped,
+-         'batch_id': batch_id,
+-+        'insert_after_floor_id': body.insert_after_floor_id,
+-     })
+- 
+-     msg = f'נוצרו {len(created)} קומות'
+-@@ -1120,7 +1169,12 @@ async def insert_floor(project_id: str, body: InsertFloorRequest, user: dict = D
+-         raise HTTPException(status_code=404, detail='Building not found in this project')
+- 
+-     floors = await db.floors.find({'building_id': body.building_id}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+--    insert_si = body.insert_at_index
+-+    if body.insert_after_floor_id:
+-+        insert_si = _compute_insert_sort_index(floors, body.insert_after_floor_id, strict=True)
+-+    elif body.insert_at_index is not None:
+-+        insert_si = body.insert_at_index
+-+    else:
+-+        insert_si = (max(f.get('sort_index', 0) for f in floors) + 1000) if floors else 0
+- 
+-     floors_to_shift = [f for f in floors if f.get('sort_index', 0) >= insert_si]
+-     floor_shift_changes = []
+-diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+-index 0c73e38..3e8035e 100644
+---- a/backend/contractor_ops/schemas.py
+-+++ b/backend/contractor_ops/schemas.py
+-@@ -170,6 +170,7 @@ class Floor(BaseModel):
+-     kind: Optional[FloorKind] = None
+-     unit_count: int = 0
+-     created_at: Optional[str] = None
+-+    insert_after_floor_id: Optional[str] = None
+- 
+- 
+- class Unit(BaseModel):
+-@@ -516,6 +517,7 @@ class BulkFloorRequest(BaseModel):
+-     to_floor: int
+-     dry_run: bool = False
+-     batch_id: Optional[str] = None
+-+    insert_after_floor_id: Optional[str] = None
+- 
+- class BulkUnitRequest(BaseModel):
+-     project_id: str
+-@@ -569,7 +571,8 @@ class InsertFloorRequest(BaseModel):
+-     name: str
+-     display_label: Optional[str] = None
+-     kind: Optional[FloorKind] = None
+--    insert_at_index: int
+-+    insert_at_index: Optional[int] = None
+-+    insert_after_floor_id: Optional[str] = None
+-     auto_renumber_units: bool = False
+-     unit_numbering_base: int = 100
+-     dry_run: bool = False
+-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+-index ac4ebe1..175c962 100644
+---- a/frontend/src/pages/ProjectControlPage.js
+-+++ b/frontend/src/pages/ProjectControlPage.js
+-@@ -703,13 +703,13 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+-   );
+- };
+- 
+--const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+-+const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess }) => {
+-   const [mode, setMode] = useState('range');
+-   const [buildingId, setBuildingId] = useState('');
+-   const [fromFloor, setFromFloor] = useState('');
+-   const [toFloor, setToFloor] = useState('');
+-   const [singleName, setSingleName] = useState('');
+--  const [insertAt, setInsertAt] = useState('');
+-+  const [insertAfterFloorId, setInsertAfterFloorId] = useState('');
+-   const [autoRenumber, setAutoRenumber] = useState(false);
+-   const [submitting, setSubmitting] = useState(false);
+-   const [previewing, setPreviewing] = useState(false);
+-@@ -719,7 +719,7 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+- 
+-   const floorCount = fromFloor !== '' && toFloor !== '' ? Math.max(0, Number(toFloor) - Number(fromFloor) + 1) : 0;
+- 
+--  const resetState = () => { setPreview(null); setResult(null); setErrors({}); };
+-+  const resetState = () => { setPreview(null); setResult(null); setErrors({}); setInsertAfterFloorId(''); };
+-   const switchMode = (m) => { setMode(m); resetState(); };
+- 
+-   const isValidFloorNumber = (v) => {
+-@@ -751,14 +751,16 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+-     setPreviewing(true);
+-     try {
+-       if (mode === 'range') {
+--        const res = await buildingService.bulkCreateFloors({
+-+        const payload = {
+-           project_id: projectId, building_id: buildingId,
+-           from_floor: Number(fromFloor), to_floor: Number(toFloor), dry_run: true,
+--        });
+-+        };
+-+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+-+        const res = await buildingService.bulkCreateFloors(payload);
+-         setPreview(res);
+-       } else {
+-         const payload = { building_id: buildingId, name: singleName.trim(), dry_run: true };
+--        if (insertAt !== '') payload.insert_at_index = Number(insertAt);
+-+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+-         if (autoRenumber) payload.auto_renumber_units = true;
+-         const res = await sortIndexService.insertFloor(projectId, payload);
+-         setPreview(res);
+-@@ -775,15 +777,17 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+-     setSubmitting(true);
+-     try {
+-       if (mode === 'range') {
+--        const res = await buildingService.bulkCreateFloors({
+-+        const payload = {
+-           project_id: projectId, building_id: buildingId,
+-           from_floor: Number(fromFloor), to_floor: Number(toFloor),
+--        });
+-+        };
+-+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+-+        const res = await buildingService.bulkCreateFloors(payload);
+-         setResult(res);
+-         toast.success(res.message || `${res.created_count} קומות נוצרו בהצלחה`);
+-       } else {
+-         const payload = { building_id: buildingId, name: singleName.trim() };
+--        if (insertAt !== '') payload.insert_at_index = Number(insertAt);
+-+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+-         if (autoRenumber) payload.auto_renumber_units = true;
+-         const res = await sortIndexService.insertFloor(projectId, payload);
+-         setResult(res);
+-@@ -816,6 +820,11 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+-         <>
+-           <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
+-           <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
+-+          <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
+-+            { value: '', label: 'בסוף (ברירת מחדל)' },
+-+            { value: '__start__', label: 'בהתחלה (לפני הכל)' },
+-+            ...((hierarchy || []).find(b => b.id === buildingId)?.floors || []).map(f => ({ value: f.id, label: f.display_label || f.name })),
+-+          ]} />
+-           {floorCount > 0 && !preview && (
+-             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+-               טווח: {floorCount} קומות
+-@@ -825,10 +834,11 @@ const BulkFloorsForm = ({ projectId, buildings, onClose, onSuccess }) => {
+-       ) : (
+-         <>
+-           <InputField label="קומה (מספר או שם) *" value={singleName} onChange={v => { setSingleName(v); setPreview(null); }} placeholder="למשל: 3, -1, גג, מרתף" error={errors.singleName} />
+--          <div>
+--            <InputField label="מיקום בסדר ההצגה" value={insertAt} onChange={v => { setInsertAt(v); setPreview(null); }} placeholder="למשל: 1 (ראש) או 99 (תחתית)" type="number" dir="ltr" />
+--            <div className="text-xs text-slate-500 mt-1">1 = בראש הרשימה, מספר גדול יותר = נמוך יותר ברשימה. השאר ריק כדי להוסיף בסוף.</div>
+--          </div>
+-+          <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
+-+            { value: '', label: 'בסוף (ברירת מחדל)' },
+-+            { value: '__start__', label: 'בהתחלה (לפני הכל)' },
+-+            ...((hierarchy || []).find(b => b.id === buildingId)?.floors || []).map(f => ({ value: f.id, label: f.display_label || f.name })),
+-+          ]} />
+-           <div className="flex items-center gap-2">
+-             <input type="checkbox" id="autoRenumber" checked={autoRenumber} onChange={e => { setAutoRenumber(e.target.checked); setPreview(null); }}
+-               className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500" />
+-@@ -1519,6 +1529,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+-   const [addingFloorTo, setAddingFloorTo] = useState(null);
+-   const [newFloorName, setNewFloorName] = useState('');
+-   const [newUnitCount, setNewUnitCount] = useState('0');
+-+  const [newFloorInsertAfter, setNewFloorInsertAfter] = useState('');
+-   const [floorSaving, setFloorSaving] = useState(false);
+-   const [addingUnitTo, setAddingUnitTo] = useState(null);
+-   const [newUnitNo, setNewUnitNo] = useState('');
+-@@ -1557,15 +1568,18 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+-     setFloorSaving(true);
+-     try {
+-       const unitCount = parseInt(newUnitCount) || 0;
+--      await buildingService.createFloor(buildingId, {
+-+      const payload = {
+-         name: newFloorName.trim(),
+-         floor_number: 0,
+-         unit_count: unitCount,
+--      });
+-+      };
+-+      if (newFloorInsertAfter) payload.insert_after_floor_id = newFloorInsertAfter;
+-+      await buildingService.createFloor(buildingId, payload);
+-       toast.success('קומה נוספה בהצלחה');
+-       setAddingFloorTo(null);
+-       setNewFloorName('');
+-       setNewUnitCount('0');
+-+      setNewFloorInsertAfter('');
+-       onRefresh();
+-     } catch (err) {
+-       const detail = err.response?.data?.detail;
+-@@ -2226,7 +2240,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+-               )}
+-               {canMutateStructure && (
+-                 <button
+--                  onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); if (!isExpanded) toggleBuilding(building.id); }}
+-+                  onClick={(e) => { e.stopPropagation(); setAddingFloorTo(addingFloorTo === building.id ? null : building.id); setNewFloorName(''); setNewUnitCount('0'); setNewFloorInsertAfter(''); if (!isExpanded) toggleBuilding(building.id); }}
+-                   className="p-2.5 text-amber-600 hover:bg-amber-50 transition-colors border-r border-slate-50"
+-                   title="הוסף קומה"
+-                 >
+-@@ -2252,6 +2266,20 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+-                           autoFocus
+-                         />
+-                       </div>
+-+                      <div className="flex-1 min-w-[120px]">
+-+                        <label className="block text-[11px] font-medium text-amber-800 mb-1">הכנס אחרי</label>
+-+                        <select
+-+                          value={newFloorInsertAfter}
+-+                          onChange={e => setNewFloorInsertAfter(e.target.value)}
+-+                          className="w-full text-sm border border-amber-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+-+                        >
+-+                          <option value="">בסוף</option>
+-+                          <option value="__start__">בהתחלה</option>
+-+                          {(building.floors || []).map(f => (
+-+                            <option key={f.id} value={f.id}>{f.display_label || f.name}</option>
+-+                          ))}
+-+                        </select>
+-+                      </div>
+-                       <div className="w-28">
+-                         <label className="block text-[11px] font-medium text-amber-800 mb-1">מס׳ דירות בקומה</label>
+-                         <input
+-@@ -3885,7 +3913,7 @@ const ProjectControlPage = () => {
+- 
+-       {showQuickSetup && <QuickSetupWizard projectId={projectId} project={project} currentUnitCount={hierarchy.reduce((sum, b) => sum + (b.floors || []).reduce((s, f) => s + (f.units || []).length, 0), 0)} onClose={() => setShowQuickSetup(false)} onSuccess={handleRefresh} />}
+-       {showAddBuilding && <AddBuildingForm projectId={projectId} onClose={() => setShowAddBuilding(false)} onSuccess={handleRefresh} />}
+--      {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
+-+      {showBulkFloors && <BulkFloorsForm projectId={projectId} buildings={buildings} hierarchy={hierarchy} onClose={() => setShowBulkFloors(false)} onSuccess={handleRefresh} />}
+-       {showBulkUnits && <BulkUnitsForm projectId={projectId} buildings={buildings} onClose={() => setShowBulkUnits(false)} onSuccess={handleRefresh} />}
+-       {showExcelImport && <ExcelImportModal projectId={projectId} onClose={() => setShowExcelImport(false)} onSuccess={handleRefresh} />}
+- 

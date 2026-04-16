@@ -818,8 +818,8 @@ const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess })
       <SelectField label="בניין *" value={buildingId} onChange={v => { setBuildingId(v); resetState(); }} options={buildingOptions} error={errors.buildingId} emptyMessage="אין בניינים - הוסף בניין קודם" />
       {mode === 'range' ? (
         <>
-          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
-          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
+          <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" />
+          <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" />
           <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
             { value: '', label: 'בסוף (ברירת מחדל)' },
             { value: '__start__', label: 'בהתחלה (לפני הכל)' },
