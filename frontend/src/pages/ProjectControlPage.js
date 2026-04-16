@@ -751,10 +751,12 @@ const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess })
     setPreviewing(true);
     try {
       if (mode === 'range') {
-        const res = await buildingService.bulkCreateFloors({
+        const payload = {
           project_id: projectId, building_id: buildingId,
           from_floor: Number(fromFloor), to_floor: Number(toFloor), dry_run: true,
-        });
+        };
+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+        const res = await buildingService.bulkCreateFloors(payload);
         setPreview(res);
       } else {
         const payload = { building_id: buildingId, name: singleName.trim(), dry_run: true };
@@ -775,10 +777,12 @@ const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess })
     setSubmitting(true);
     try {
       if (mode === 'range') {
-        const res = await buildingService.bulkCreateFloors({
+        const payload = {
           project_id: projectId, building_id: buildingId,
           from_floor: Number(fromFloor), to_floor: Number(toFloor),
-        });
+        };
+        if (insertAfterFloorId) payload.insert_after_floor_id = insertAfterFloorId;
+        const res = await buildingService.bulkCreateFloors(payload);
         setResult(res);
         toast.success(res.message || `${res.created_count} קומות נוצרו בהצלחה`);
       } else {
@@ -816,6 +820,11 @@ const BulkFloorsForm = ({ projectId, buildings, hierarchy, onClose, onSuccess })
         <>
           <InputField label="מקומה *" value={fromFloor} onChange={v => { setFromFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: -1" type="text" error={errors.fromFloor} dir="ltr" inputMode="numeric" />
           <InputField label="עד קומה *" value={toFloor} onChange={v => { setToFloor(v); setPreview(null); }} placeholder="מספר בלבד, למשל: 10" type="text" error={errors.toFloor} dir="ltr" inputMode="numeric" />
+          <SelectField label="הכנס אחרי" value={insertAfterFloorId} onChange={v => { setInsertAfterFloorId(v); setPreview(null); }} options={[
+            { value: '', label: 'בסוף (ברירת מחדל)' },
+            { value: '__start__', label: 'בהתחלה (לפני הכל)' },
+            ...((hierarchy || []).find(b => b.id === buildingId)?.floors || []).map(f => ({ value: f.id, label: f.display_label || f.name })),
+          ]} />
           {floorCount > 0 && !preview && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
               טווח: {floorCount} קומות

@@ -517,6 +517,7 @@ class BulkFloorRequest(BaseModel):
     to_floor: int
     dry_run: bool = False
     batch_id: Optional[str] = None
+    insert_after_floor_id: Optional[str] = None
 
 class BulkUnitRequest(BaseModel):
     project_id: str

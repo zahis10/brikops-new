@@ -742,6 +742,12 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
     if body.to_floor - body.from_floor > 200:
         raise HTTPException(status_code=422, detail='Maximum 200 floors per batch')
 
+    existing_floors = await db.floors.find({'building_id': body.building_id, 'archived': {'$ne': True}}, {'_id': 0}).sort('sort_index', 1).to_list(1000)
+
+    base_si = None
+    if body.insert_after_floor_id:
+        base_si = _compute_insert_sort_index(existing_floors, body.insert_after_floor_id, strict=True)
+
     if body.dry_run:
         would_create = 0
         would_skip = 0
@@ -757,6 +763,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
     created = []
     skipped = 0
     ts = _now()
+    create_idx = 0
     for num in range(body.from_floor, body.to_floor + 1):
         existing = await db.floors.find_one({
             'building_id': body.building_id,
@@ -767,7 +774,10 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
             skipped += 1
             continue
         floor_id = str(uuid.uuid4())
-        si = num * 1000
+        if base_si is not None:
+            si = base_si + create_idx
+        else:
+            si = num * 1000
         doc = {
             'id': floor_id,
             'building_id': body.building_id,
@@ -782,6 +792,23 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
         }
         await db.floors.insert_one(doc)
         created.append({'id': floor_id, 'name': doc['name'], 'floor_number': num, 'sort_index': si})
+        create_idx += 1
+
+    reseq_floor_changes, reseq_unit_changes = await _compute_building_resequence(db, body.building_id)
+    for c in reseq_floor_changes:
+        await db.floors.update_one({'id': c['id']}, {'$set': {'sort_index': c['new_sort_index']}})
+    if reseq_unit_changes:
+        for c in reseq_unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': f"__tmp_{c['id']}",
+                'display_label': f"__tmp_{c['id']}",
+            }})
+        for c in reseq_unit_changes:
+            await db.units.update_one({'id': c['id']}, {'$set': {
+                'unit_no': c['new_unit_no'],
+                'display_label': c['new_display_label'],
+                'sort_index': c['new_sort_index'],
+            }})
 
     await _audit('building', body.building_id, 'bulk_create_floors', user['id'], {
         'project_id': body.project_id,
@@ -790,6 +817,7 @@ async def bulk_create_floors(body: BulkFloorRequest, user: dict = Depends(get_cu
         'created_count': len(created),
         'skipped_count': skipped,
         'batch_id': batch_id,
+        'insert_after_floor_id': body.insert_after_floor_id,
     })
 
     msg = f'נוצרו {len(created)} קומות'
