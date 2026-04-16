@@ -1333,6 +1333,34 @@ async def admin_set_project_total_units(
         project_id, project.get('org_id'), previous, total_units, user['id'], reason
     )
 
+    try:
+        from contractor_ops.billing import (
+            update_project_billing, create_project_billing, recalc_org_total,
+        )
+        _org_id = project.get('org_id')
+        _pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0})
+        if _pb:
+            await update_project_billing(
+                _pb['id'], {'contracted_units': total_units}, user['id']
+            )
+        elif _org_id:
+            _sub = await get_subscription(_org_id)
+            _sub_plan = _sub.get('plan_id') if _sub else None
+            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
+            await create_project_billing(
+                project_id=project_id,
+                org_id=_org_id,
+                actor_id=user['id'],
+                plan_id=_plan_for_project,
+                contracted_units=total_units,
+            )
+        if _org_id:
+            await recalc_org_total(_org_id)
+    except Exception as _bill_exc:
+        logger.warning(
+            f"Billing sync failed for project {project_id} after total_units change: {_bill_exc}"
+        )
+
     return {
         'ok': True,
         'project_id': project_id,
@@ -1423,6 +1451,34 @@ async def admin_approve_quota_request(
         "[BILLING] Approved quota request: project=%s %s -> %s (actor=%s request=%s)",
         project_id, previous_total, new_total, user['id'], request_id
     )
+
+    try:
+        from contractor_ops.billing import (
+            update_project_billing, create_project_billing, recalc_org_total,
+        )
+        _org_id = project.get('org_id')
+        _pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0})
+        if _pb:
+            await update_project_billing(
+                _pb['id'], {'contracted_units': new_total}, user['id']
+            )
+        elif _org_id:
+            _sub = await get_subscription(_org_id)
+            _sub_plan = _sub.get('plan_id') if _sub else None
+            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
+            await create_project_billing(
+                project_id=project_id,
+                org_id=_org_id,
+                actor_id=user['id'],
+                plan_id=_plan_for_project,
+                contracted_units=new_total,
+            )
+        if _org_id:
+            await recalc_org_total(_org_id)
+    except Exception as _bill_exc:
+        logger.warning(
+            f"Billing sync failed after quota approval {request_id} (project {project_id}): {_bill_exc}"
+        )
 
     return {
         'ok': True,
