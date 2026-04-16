@@ -1,41 +1,104 @@
+diff --git a/backend/contractor_ops/admin_router.py b/backend/contractor_ops/admin_router.py
+index b94a29a..2facaed 100644
+--- a/backend/contractor_ops/admin_router.py
++++ b/backend/contractor_ops/admin_router.py
+@@ -1333,6 +1333,34 @@ async def admin_set_project_total_units(
+         project_id, project.get('org_id'), previous, total_units, user['id'], reason
+     )
+ 
++    try:
++        from contractor_ops.billing import (
++            update_project_billing, create_project_billing, recalc_org_total,
++        )
++        _org_id = project.get('org_id')
++        _pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0})
++        if _pb:
++            await update_project_billing(
++                _pb['id'], {'contracted_units': total_units}, user['id']
++            )
++        elif _org_id:
++            _sub = await get_subscription(_org_id)
++            _sub_plan = _sub.get('plan_id') if _sub else None
++            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
++            await create_project_billing(
++                project_id=project_id,
++                org_id=_org_id,
++                actor_id=user['id'],
++                plan_id=_plan_for_project,
++                contracted_units=total_units,
++            )
++        if _org_id:
++            await recalc_org_total(_org_id)
++    except Exception as _bill_exc:
++        logger.warning(
++            f"Billing sync failed for project {project_id} after total_units change: {_bill_exc}"
++        )
++
+     return {
+         'ok': True,
+         'project_id': project_id,
+@@ -1424,6 +1452,34 @@ async def admin_approve_quota_request(
+         project_id, previous_total, new_total, user['id'], request_id
+     )
+ 
++    try:
++        from contractor_ops.billing import (
++            update_project_billing, create_project_billing, recalc_org_total,
++        )
++        _org_id = project.get('org_id')
++        _pb = await db.project_billing.find_one({'project_id': project_id}, {'_id': 0})
++        if _pb:
++            await update_project_billing(
++                _pb['id'], {'contracted_units': new_total}, user['id']
++            )
++        elif _org_id:
++            _sub = await get_subscription(_org_id)
++            _sub_plan = _sub.get('plan_id') if _sub else None
++            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
++            await create_project_billing(
++                project_id=project_id,
++                org_id=_org_id,
++                actor_id=user['id'],
++                plan_id=_plan_for_project,
++                contracted_units=new_total,
++            )
++        if _org_id:
++            await recalc_org_total(_org_id)
++    except Exception as _bill_exc:
++        logger.warning(
++            f"Billing sync failed after quota approval {request_id} (project {project_id}): {_bill_exc}"
++        )
++
+     return {
+         'ok': True,
+         'project_id': project_id,
 diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index 10675e3..7fe2256 100644
+index 7fe2256..dfadc81 100644
 --- a/backend/contractor_ops/projects_router.py
 +++ b/backend/contractor_ops/projects_router.py
-@@ -207,9 +207,10 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
-                         status_code=403,
-                         detail='בתקופת הניסיון ניתן ליצור פרויקט אחד בלבד. לפרויקטים נוספים יש לשדרג את המנוי.'
-                     )
--    existing = await db.projects.find_one({'code': project.code})
--    if existing:
--        raise HTTPException(status_code=400, detail='Project code already exists')
-+    if project.code:
-+        existing = await db.projects.find_one({'code': project.code})
-+        if existing:
-+            raise HTTPException(status_code=400, detail='Project code already exists')
-     project_id = str(uuid.uuid4())
-     ts = _now()
-     org = await get_user_org(user['id'])
-diff --git a/backend/server.py b/backend/server.py
-index 4d7838a..bc5fbaf 100644
---- a/backend/server.py
-+++ b/backend/server.py
-@@ -514,7 +514,17 @@ async def create_indexes():
-         )
-         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
-         await db.users.create_index("email", unique=True, sparse=True)
--        await db.projects.create_index("code", unique=True)
-+        try:
-+            existing_idx = await db.projects.index_information()
-+            if 'code_1' in existing_idx and not existing_idx['code_1'].get('partialFilterExpression'):
-+                await db.projects.drop_index('code_1')
-+        except Exception as _e:
-+            logger.warning(f"could not inspect/drop legacy code_1 index: {_e}")
-+        await db.projects.create_index(
-+            "code",
-+            unique=True,
-+            partialFilterExpression={"code": {"$type": "string"}},
-+        )
-         await db.buildings.create_index("project_id")
-         await db.floors.create_index("building_id")
-         await db.task_status_history.create_index([("task_id", 1), ("created_at", -1)])
+@@ -255,6 +255,25 @@ async def create_project(project: Project, user: dict = Depends(require_roles('p
+         upsert=True
+     )
+     await _audit('project', project_id, 'create', user['id'], {'name': project.name, 'code': project.code})
++
++    try:
++        from contractor_ops.billing import create_project_billing, recalc_org_total
++        _bill_org_id = doc.get('org_id')
++        if _bill_org_id:
++            _sub = await get_subscription(_bill_org_id)
++            _sub_plan = _sub.get('plan_id') if _sub else None
++            _plan_for_project = _sub_plan if _sub_plan in ('standard', 'founder_6m') else None
++            await create_project_billing(
++                project_id=project_id,
++                org_id=_bill_org_id,
++                actor_id=user['id'],
++                plan_id=_plan_for_project,
++                contracted_units=project.total_units or 0,
++            )
++            await recalc_org_total(_bill_org_id)
++    except Exception as _bill_exc:
++        logger.warning(f"Auto billing creation failed for project {project_id}: {_bill_exc}")
++
+     return Project(**{k: v for k, v in doc.items() if k != '_id'})
+ 
+ 
