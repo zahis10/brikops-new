@@ -562,6 +562,86 @@ async def admin_migration_apply(user: dict = Depends(require_stepup)):
     return result
 
 
+@router.post("/admin/billing/recalc-all")
+async def admin_recalc_all_orgs(user: dict = Depends(require_super_admin)):
+    """One-time cleanup: re-run recalc_org_total for every org to sync stale total_monthly cache."""
+    from contractor_ops.billing import BILLING_V1_ENABLED, recalc_org_total
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+
+    db = get_db()
+    orgs = await db.organizations.find({}, {'_id': 0, 'id': 1, 'name': 1}).to_list(10000)
+
+    changes = []
+    errors = []
+    processed = 0
+
+    for org in orgs:
+        org_id = org.get('id')
+        if not org_id:
+            continue
+        try:
+            sub_before = await db.subscriptions.find_one(
+                {'org_id': org_id}, {'_id': 0, 'total_monthly': 1}
+            )
+            before_amount = (sub_before or {}).get('total_monthly', 0) or 0
+
+            await recalc_org_total(org_id)
+
+            sub_after = await db.subscriptions.find_one(
+                {'org_id': org_id}, {'_id': 0, 'total_monthly': 1}
+            )
+            after_amount = (sub_after or {}).get('total_monthly', 0) or 0
+
+            processed += 1
+            if before_amount != after_amount:
+                changes.append({
+                    'org_id': org_id,
+                    'org_name': org.get('name', ''),
+                    'before': before_amount,
+                    'after': after_amount,
+                    'diff': after_amount - before_amount,
+                })
+        except Exception as e:
+            errors.append({
+                'org_id': org_id,
+                'org_name': org.get('name', ''),
+                'error': str(e),
+            })
+            logger.warning(f"[RECALC-ALL] Failed for org={org_id}: {e}")
+
+    try:
+        await db.audit_events.insert_one({
+            'id': str(uuid.uuid4()),
+            'event_type': 'admin',
+            'entity_type': 'billing',
+            'entity_id': 'recalc_all',
+            'action': 'billing_recalc_all',
+            'actor_id': user['id'],
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'payload': {
+                'processed': processed,
+                'changed_count': len(changes),
+                'errors_count': len(errors),
+            },
+        })
+    except Exception as e:
+        logger.warning(f"[RECALC-ALL] Failed to write audit event: {e}")
+
+    logger.info(
+        f"[RECALC-ALL] Completed: processed={processed} changed={len(changes)} errors={len(errors)} actor={user['id']}"
+    )
+
+    return {
+        'ok': True,
+        'processed': processed,
+        'changed': len(changes),
+        'errors': len(errors),
+        'changes': changes,
+        'error_details': errors,
+    }
+
+
 @router.get("/admin/users")
 async def admin_list_users(
     q: Optional[str] = Query(None),
