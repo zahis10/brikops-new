@@ -1,44 +1,183 @@
-commit e143d201ef8928c4ab1aef922148cde5c807c23c
+commit aa27647278248c8e04407c919f53d086788b31ce
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 15:48:59 2026 +0000
+Date:   Fri Apr 17 16:02:40 2026 +0000
 
-    Task #358 — Header bleed follow-up: UnitHomePage + ApartmentDashboardPage
+    Task #370 — Add typography scale to tailwind.config.js
     
-    Same fix as #357.2:
-    - UnitHomePage.js:95: outer wrapper bg-gradient-to-l → bg-slate-50; inner div gains bg-gradient-to-l + rounded-b-2xl, kept inside max-w-lg mx-auto.
-    - ApartmentDashboardPage.js:329: same swap.
+    Additive-only: 6 fontSize entries inside theme.extend, between colors and keyframes.
     
-    Verification: grep 'bg-gradient-to-l from-amber-500 to-amber-600' in frontend/src/pages → exactly 4 matches, all of the form 'max-w-lg mx-auto bg-gradient-to-l ... rounded-b-2xl' (UnitDetailPage, BuildingDefectsPage, UnitHomePage, ApartmentDashboardPage). No outer-wrapper instance remains.
+    - caption  12/16  letter-spacing 0.01em
+    - body-sm  14/20
+    - body     16/24
+    - subhead  18/26  weight 600
+    - title    24/32  weight 700
+    - display  32/40  weight 700  letter-spacing -0.01em
     
-    No backend, routing, i18n, or icon-button changes.
+    No changes to borderRadius, colors, keyframes, animation, plugins, darkMode, content.
+    Tailwind defaults (text-xs, text-sm, text-base, text-2xl, etc.) preserved.
+    
+    Verified: cd frontend && npx craco build succeeded; no Tailwind/PostCSS warnings.
+    git diff scope: only frontend/tailwind.config.js.
 
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 527b645..d08424f 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -326,8 +326,8 @@ const ApartmentDashboardPage = () => {
- 
-   return (
-     <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
--      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
--        <div className="max-w-lg mx-auto px-4 py-3">
-+      <div className="bg-slate-50">
-+        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-           <div className="flex items-center gap-3">
-             <button
-               onClick={() => {
-diff --git a/frontend/src/pages/UnitHomePage.js b/frontend/src/pages/UnitHomePage.js
-index 4c685cc..35e5352 100644
---- a/frontend/src/pages/UnitHomePage.js
-+++ b/frontend/src/pages/UnitHomePage.js
-@@ -92,8 +92,8 @@ const UnitHomePage = () => {
- 
-   return (
-     <div className="min-h-screen bg-slate-50" dir="rtl">
--      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
--        <div className="max-w-lg mx-auto px-4 py-3">
-+      <div className="bg-slate-50">
-+        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-           <div className="flex items-center gap-3">
-             <button
-               onClick={() => {
+diff --git a/frontend/tailwind.config.js b/frontend/tailwind.config.js
+index 747a586..82d2d7e 100644
+--- a/frontend/tailwind.config.js
++++ b/frontend/tailwind.config.js
+@@ -6,77 +6,85 @@ module.exports = {
+     "./public/index.html"
+   ],
+   theme: {
+-  	extend: {
+-  		borderRadius: {
+-  			lg: 'var(--radius)',
+-  			md: 'calc(var(--radius) - 2px)',
+-  			sm: 'calc(var(--radius) - 4px)'
+-  		},
+-  		colors: {
+-  			background: 'hsl(var(--background))',
+-  			foreground: 'hsl(var(--foreground))',
+-  			card: {
+-  				DEFAULT: 'hsl(var(--card))',
+-  				foreground: 'hsl(var(--card-foreground))'
+-  			},
+-  			popover: {
+-  				DEFAULT: 'hsl(var(--popover))',
+-  				foreground: 'hsl(var(--popover-foreground))'
+-  			},
+-  			primary: {
+-  				DEFAULT: 'hsl(var(--primary))',
+-  				foreground: 'hsl(var(--primary-foreground))'
+-  			},
+-  			secondary: {
+-  				DEFAULT: 'hsl(var(--secondary))',
+-  				foreground: 'hsl(var(--secondary-foreground))'
+-  			},
+-  			muted: {
+-  				DEFAULT: 'hsl(var(--muted))',
+-  				foreground: 'hsl(var(--muted-foreground))'
+-  			},
+-  			accent: {
+-  				DEFAULT: 'hsl(var(--accent))',
+-  				foreground: 'hsl(var(--accent-foreground))'
+-  			},
+-  			destructive: {
+-  				DEFAULT: 'hsl(var(--destructive))',
+-  				foreground: 'hsl(var(--destructive-foreground))'
+-  			},
+-  			border: 'hsl(var(--border))',
+-  			input: 'hsl(var(--input))',
+-  			ring: 'hsl(var(--ring))',
+-  			chart: {
+-  				'1': 'hsl(var(--chart-1))',
+-  				'2': 'hsl(var(--chart-2))',
+-  				'3': 'hsl(var(--chart-3))',
+-  				'4': 'hsl(var(--chart-4))',
+-  				'5': 'hsl(var(--chart-5))'
+-  			}
+-  		},
+-  		keyframes: {
+-  			'accordion-down': {
+-  				from: {
+-  					height: '0'
+-  				},
+-  				to: {
+-  					height: 'var(--radix-accordion-content-height)'
+-  				}
+-  			},
+-  			'accordion-up': {
+-  				from: {
+-  					height: 'var(--radix-accordion-content-height)'
+-  				},
+-  				to: {
+-  					height: '0'
+-  				}
+-  			}
+-  		},
+-  		animation: {
+-  			'accordion-down': 'accordion-down 0.2s ease-out',
+-  			'accordion-up': 'accordion-up 0.2s ease-out'
+-  		}
+-  	}
++        extend: {
++                borderRadius: {
++                        lg: 'var(--radius)',
++                        md: 'calc(var(--radius) - 2px)',
++                        sm: 'calc(var(--radius) - 4px)'
++                },
++                colors: {
++                        background: 'hsl(var(--background))',
++                        foreground: 'hsl(var(--foreground))',
++                        card: {
++                                DEFAULT: 'hsl(var(--card))',
++                                foreground: 'hsl(var(--card-foreground))'
++                        },
++                        popover: {
++                                DEFAULT: 'hsl(var(--popover))',
++                                foreground: 'hsl(var(--popover-foreground))'
++                        },
++                        primary: {
++                                DEFAULT: 'hsl(var(--primary))',
++                                foreground: 'hsl(var(--primary-foreground))'
++                        },
++                        secondary: {
++                                DEFAULT: 'hsl(var(--secondary))',
++                                foreground: 'hsl(var(--secondary-foreground))'
++                        },
++                        muted: {
++                                DEFAULT: 'hsl(var(--muted))',
++                                foreground: 'hsl(var(--muted-foreground))'
++                        },
++                        accent: {
++                                DEFAULT: 'hsl(var(--accent))',
++                                foreground: 'hsl(var(--accent-foreground))'
++                        },
++                        destructive: {
++                                DEFAULT: 'hsl(var(--destructive))',
++                                foreground: 'hsl(var(--destructive-foreground))'
++                        },
++                        border: 'hsl(var(--border))',
++                        input: 'hsl(var(--input))',
++                        ring: 'hsl(var(--ring))',
++                        chart: {
++                                '1': 'hsl(var(--chart-1))',
++                                '2': 'hsl(var(--chart-2))',
++                                '3': 'hsl(var(--chart-3))',
++                                '4': 'hsl(var(--chart-4))',
++                                '5': 'hsl(var(--chart-5))'
++                        }
++                },
++                fontSize: {
++                        'caption': ['12px', { lineHeight: '16px', letterSpacing: '0.01em' }],
++                        'body-sm': ['14px', { lineHeight: '20px' }],
++                        'body':    ['16px', { lineHeight: '24px' }],
++                        'subhead': ['18px', { lineHeight: '26px', fontWeight: '600' }],
++                        'title':   ['24px', { lineHeight: '32px', fontWeight: '700' }],
++                        'display': ['32px', { lineHeight: '40px', fontWeight: '700', letterSpacing: '-0.01em' }]
++                },
++                keyframes: {
++                        'accordion-down': {
++                                from: {
++                                        height: '0'
++                                },
++                                to: {
++                                        height: 'var(--radix-accordion-content-height)'
++                                }
++                        },
++                        'accordion-up': {
++                                from: {
++                                        height: 'var(--radix-accordion-content-height)'
++                                },
++                                to: {
++                                        height: '0'
++                                }
++                        }
++                },
++                animation: {
++                        'accordion-down': 'accordion-down 0.2s ease-out',
++                        'accordion-up': 'accordion-up 0.2s ease-out'
++                }
++        }
+   },
+   plugins: [require("tailwindcss-animate")],
+ };
+\ No newline at end of file
