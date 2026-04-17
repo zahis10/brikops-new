@@ -89,3 +89,162 @@ index 2facaed..3a0731a 100644
  @router.get("/admin/users")
  async def admin_list_users(
      q: Optional[str] = Query(None),
+diff --git a/frontend/src/pages/AdminBillingPage.js b/frontend/src/pages/AdminBillingPage.js
+index 855f1cf..722dafb 100644
+--- a/frontend/src/pages/AdminBillingPage.js
++++ b/frontend/src/pages/AdminBillingPage.js
+@@ -308,6 +308,9 @@ const AdminBillingPage = () => {
+   const [founderToggling, setFounderToggling] = useState(false);
+   const [pendingQuotaRequests, setPendingQuotaRequests] = useState([]);
+   const [loadingQuotaRequests, setLoadingQuotaRequests] = useState(false);
++  const [recalcLoading, setRecalcLoading] = useState(false);
++  const [recalcResult, setRecalcResult] = useState(null);
++  const [showTools, setShowTools] = useState(false);
+ 
+   const loadQuotaRequests = useCallback(async () => {
+     setLoadingQuotaRequests(true);
+@@ -456,6 +459,26 @@ const AdminBillingPage = () => {
+   };
+ 
+ 
++  const handleRecalcAll = async () => {
++    if (!window.confirm('פעולה זו תעבור על כל הארגונים ותסנכרן את סכומי החיוב הקאשיים. זה בטוח ולא משנה כסף. להמשיך?')) return;
++    setRecalcLoading(true);
++    setRecalcResult(null);
++    try {
++      const result = await billingService.recalcAllOrgs();
++      setRecalcResult(result);
++      toast.success(`סונכרנו ${result.processed} ארגונים, ${result.changed} השתנו`);
++      loadData();
++    } catch (err) {
++      if (isStepupError(err)) {
++        startStepup(() => handleRecalcAll());
++      } else {
++        toast.error(err.response?.data?.detail || ('שגיאה בסנכרון: ' + err.message));
++      }
++    } finally {
++      setRecalcLoading(false);
++    }
++  };
++
+   const handleAction = async () => {
+     if (!actionNote.trim()) {
+       toast.error('חובה לציין הערה');
+@@ -1138,6 +1161,102 @@ const AdminBillingPage = () => {
+           )}
+         </section>
+ 
++        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
++          <button
++            onClick={() => setShowTools(!showTools)}
++            className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
++          >
++            <div className="flex items-center gap-2">
++              <RefreshCw className="w-4 h-4 text-slate-400" />
++              <span className="text-sm font-bold text-slate-700">כלי ניהול</span>
++            </div>
++            {showTools ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
++          </button>
++          {showTools && (
++            <div className="px-4 pb-4 space-y-3">
++              <div>
++                <Button
++                  onClick={handleRecalcAll}
++                  disabled={recalcLoading}
++                  className="bg-orange-500 hover:bg-orange-600 text-white"
++                >
++                  {recalcLoading ? <Loader2 className="w-3 h-3 animate-spin ml-1" /> : <RefreshCw className="w-3 h-3 ml-1" />}
++                  {recalcLoading ? 'מסנכרן...' : 'סנכרן סכומים (חד-פעמי)'}
++                </Button>
++                <p className="text-xs text-slate-500 mt-1.5">
++                  מסנכרן את שדה <code className="bg-slate-100 px-1 rounded">total_monthly</code> הקאשי לפי המחושב בפועל. בטוח — לא מזיז כסף.
++                </p>
++              </div>
++
++              {recalcResult && (
++                <div className="border border-slate-200 rounded-lg p-3 space-y-2 text-sm">
++                  <div className="grid grid-cols-3 gap-2">
++                    <div className="bg-slate-50 rounded p-2">
++                      <div className="text-slate-500 text-xs">עובדו</div>
++                      <div className="font-bold text-slate-800">{recalcResult.processed}</div>
++                    </div>
++                    <div className="bg-blue-50 rounded p-2">
++                      <div className="text-blue-600 text-xs">השתנו</div>
++                      <div className="font-bold text-blue-700">{recalcResult.changed}</div>
++                    </div>
++                    <div className={`rounded p-2 ${recalcResult.errors > 0 ? 'bg-red-50' : 'bg-slate-50'}`}>
++                      <div className={`text-xs ${recalcResult.errors > 0 ? 'text-red-600' : 'text-slate-500'}`}>שגיאות</div>
++                      <div className={`font-bold ${recalcResult.errors > 0 ? 'text-red-700' : 'text-slate-800'}`}>{recalcResult.errors}</div>
++                    </div>
++                  </div>
++
++                  {recalcResult.changes && recalcResult.changes.length > 0 && (
++                    <details className="mt-2">
++                      <summary className="cursor-pointer text-xs font-semibold text-slate-700 hover:text-slate-900">
++                        פירוט השינויים ({recalcResult.changes.length})
++                      </summary>
++                      <div className="mt-2 overflow-x-auto">
++                        <table className="w-full text-xs">
++                          <thead className="bg-slate-50 text-slate-500">
++                            <tr>
++                              <th className="text-right px-2 py-1.5">ארגון</th>
++                              <th className="text-right px-2 py-1.5">לפני</th>
++                              <th className="text-right px-2 py-1.5">אחרי</th>
++                              <th className="text-right px-2 py-1.5">הפרש</th>
++                            </tr>
++                          </thead>
++                          <tbody>
++                            {recalcResult.changes.map(c => (
++                              <tr key={c.org_id} className="border-t border-slate-100">
++                                <td className="px-2 py-1.5 truncate">{c.org_name || c.org_id}</td>
++                                <td className="px-2 py-1.5">{formatCurrency(c.before)}</td>
++                                <td className="px-2 py-1.5 font-medium">{formatCurrency(c.after)}</td>
++                                <td className={`px-2 py-1.5 font-medium ${c.diff > 0 ? 'text-green-600' : 'text-red-600'}`}>
++                                  {c.diff > 0 ? '+' : ''}{formatCurrency(c.diff)}
++                                </td>
++                              </tr>
++                            ))}
++                          </tbody>
++                        </table>
++                      </div>
++                    </details>
++                  )}
++
++                  {recalcResult.error_details && recalcResult.error_details.length > 0 && (
++                    <details className="mt-2">
++                      <summary className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700">
++                        פירוט שגיאות ({recalcResult.error_details.length})
++                      </summary>
++                      <div className="mt-2 space-y-1 text-xs">
++                        {recalcResult.error_details.map((e, i) => (
++                          <div key={i} className="bg-red-50 rounded px-2 py-1">
++                            <span className="font-medium">{e.org_name || e.org_id}:</span> {e.error}
++                          </div>
++                        ))}
++                      </div>
++                    </details>
++                  )}
++                </div>
++              )}
++            </div>
++          )}
++        </section>
++
+         <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+           <button
+             onClick={() => setShowAudit(!showAudit)}
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 832d043..3f5ec22 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -891,6 +891,10 @@ export const billingService = {
+     const response = await axios.post(`${API}/admin/billing/migration/apply`, {}, { headers: getAuthHeader() });
+     return response.data;
+   },
++  async recalcAllOrgs() {
++    const response = await axios.post(`${API}/admin/billing/recalc-all`, {}, { headers: getAuthHeader() });
++    return response.data;
++  },
+   async updateProjectBilling(projectId, data) {
+     const response = await axios.patch(`${API}/billing/project/${projectId}`, data, { headers: getAuthHeader() });
+     return response.data;
