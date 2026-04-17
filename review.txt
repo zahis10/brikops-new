@@ -1,156 +1,149 @@
 ==========================================
-#377 — Hover/Press states polish (Spec #346 Task 9)
-Commit: 3b3bbf2
+#378 — Empty states illustration hint (Spec #346 Task 10)
+Commit: 866543d
 ==========================================
 
 ### git show --stat ###
-commit 3b3bbf2a0b4318a19f37b9bff1c74a923651cc2a
+commit 866543d22d332d7d2a71b22d1714d47281269bdd
 Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 17 19:07:41 2026 +0000
+Date:   Fri Apr 17 19:32:14 2026 +0000
 
-    #377 — Hover/Press states polish (Spec #346 Task 9)
+    #378 — Empty states illustration hint (Spec #346 Task 10)
     
-    Add `active:` press feedback in three high-traffic places that
-    previously relied on `hover:` only — invisible on mobile, where most
-    BrikOps users work in the field.
+    Wrap the Lucide icons in the three main defect-list empty states with a
+    soft slate-100 circle, giving them a modern "illustration hint" look
+    (matching Linear/Stripe/Notion empty-state patterns) instead of the
+    previous bare icon on white.
     
-    Changes (3 files, 3 className edits, additive only):
+    Changes (3 files, JSX-only, additive wrapper):
     
-    1. frontend/src/components/ui/button.jsx (variant block)
-       - All six shadcn Button variants gain an `active:` darker shade:
-         - default     → active:bg-primary/80
-         - destructive → active:bg-destructive/80
-         - outline     → active:bg-accent/70
-         - secondary   → active:bg-secondary/70
-         - ghost       → active:bg-accent/70
-         - link        → active:opacity-75
-       - Base cva already has transition-colors; no new transition needed.
-       - Affects every <Button> across the app, but only adds a press
-         state — default/hover behavior unchanged.
+    1. frontend/src/pages/UnitDetailPage.js (lines 246–248)
+       - Replaced `<div className="text-slate-400 mb-2">` wrapping a
+         `w-10 h-10 mx-auto` CheckCircle2 with a 64px slate-100 circle
+         (`w-16 h-16 mx-auto mb-3 rounded-full bg-slate-100 flex
+         items-center justify-center`) containing a 32px CheckCircle2
+         (`w-8 h-8 text-slate-400`).
     
-    2. frontend/src/pages/ProjectTasksPage.js (line 492)
-       - Defect Card: `transition-shadow` → `transition-all`, plus
-         `active:bg-slate-100`. The transition swap is required because
-         transition-shadow doesn't cover background changes.
+    2. frontend/src/pages/ApartmentDashboardPage.js (lines 650–652)
+       - Identical transformation to #1.
     
-    3. frontend/src/pages/ProjectControlPage.js (line 287)
-       - Overdue-defects banner gains `active:bg-orange-200`. Single token
-         added; everything else identical.
+    3. frontend/src/pages/ProjectTasksPage.js (lines 457–459)
+       - Replaced the single `<ListTodo className="w-12 h-12 ... mx-auto
+         mb-3" />` line with an 80px slate-100 circle containing a 40px
+         ListTodo (`w-10 h-10 text-slate-300`). Larger circle matches the
+         larger ProjectTasks Card (which has h3+p+CTA below, vs. just <p>
+         in the other two pages).
     
     Out of scope (untouched, as planned):
-    - Other shadcn primitives, modals/dialogs, focus-visible, disabled.
-    - Pages already correct (UnitDetail, Apartment, MyProjects, UnitHome,
-      StageDetail, NewDefectModal, QCApproversTab, HamburgerMenu).
-    - Tailwind config, i18n, backend.
-    - No active:scale convention added/changed.
+    - ProjectControlPage (different layouts — horizontal ClipboardCheck +
+      Building2 empty state). Future spec if needed.
+    - Filter-chip empty states, Handover, Admin, MyProjects.
+    - Microcopy from #376, h3, p, CTA button, outer Card/wrapper.
+    - Icon colors preserved (slate-400 / slate-300).
+    - No shadow/border/transition/hover on the circle (static empty state).
+    - Card primitive, tailwind config, i18n, backend.
     
-    Verification: button has 6 active: tokens, ProjectTasks new line hits 1,
-    old line hits 0, ProjectControl banner line hits 1, build passes.
+    Verification: 1 hit each for the new circle classes; 0 hits for the
+    old `text-slate-400 mb-2` and `w-12 h-12 ... mx-auto mb-3` patterns.
+    Frontend build passes. ProjectControlPage diff empty (untouched).
     
     No deviation from plan.
 
- frontend/src/components/ui/button.jsx    | 12 ++++++------
- frontend/src/pages/ProjectControlPage.js |  2 +-
- frontend/src/pages/ProjectTasksPage.js   |  2 +-
- 3 files changed, 8 insertions(+), 8 deletions(-)
+ frontend/src/pages/ApartmentDashboardPage.js | 4 ++--
+ frontend/src/pages/ProjectTasksPage.js       | 4 +++-
+ frontend/src/pages/UnitDetailPage.js         | 4 ++--
+ 3 files changed, 7 insertions(+), 5 deletions(-)
 
 ==========================================
 ### FULL DIFF ###
 ==========================================
-commit 3b3bbf2a0b4318a19f37b9bff1c74a923651cc2a
+commit 866543d22d332d7d2a71b22d1714d47281269bdd
 Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 17 19:07:41 2026 +0000
+Date:   Fri Apr 17 19:32:14 2026 +0000
 
-    #377 — Hover/Press states polish (Spec #346 Task 9)
+    #378 — Empty states illustration hint (Spec #346 Task 10)
     
-    Add `active:` press feedback in three high-traffic places that
-    previously relied on `hover:` only — invisible on mobile, where most
-    BrikOps users work in the field.
+    Wrap the Lucide icons in the three main defect-list empty states with a
+    soft slate-100 circle, giving them a modern "illustration hint" look
+    (matching Linear/Stripe/Notion empty-state patterns) instead of the
+    previous bare icon on white.
     
-    Changes (3 files, 3 className edits, additive only):
+    Changes (3 files, JSX-only, additive wrapper):
     
-    1. frontend/src/components/ui/button.jsx (variant block)
-       - All six shadcn Button variants gain an `active:` darker shade:
-         - default     → active:bg-primary/80
-         - destructive → active:bg-destructive/80
-         - outline     → active:bg-accent/70
-         - secondary   → active:bg-secondary/70
-         - ghost       → active:bg-accent/70
-         - link        → active:opacity-75
-       - Base cva already has transition-colors; no new transition needed.
-       - Affects every <Button> across the app, but only adds a press
-         state — default/hover behavior unchanged.
+    1. frontend/src/pages/UnitDetailPage.js (lines 246–248)
+       - Replaced `<div className="text-slate-400 mb-2">` wrapping a
+         `w-10 h-10 mx-auto` CheckCircle2 with a 64px slate-100 circle
+         (`w-16 h-16 mx-auto mb-3 rounded-full bg-slate-100 flex
+         items-center justify-center`) containing a 32px CheckCircle2
+         (`w-8 h-8 text-slate-400`).
     
-    2. frontend/src/pages/ProjectTasksPage.js (line 492)
-       - Defect Card: `transition-shadow` → `transition-all`, plus
-         `active:bg-slate-100`. The transition swap is required because
-         transition-shadow doesn't cover background changes.
+    2. frontend/src/pages/ApartmentDashboardPage.js (lines 650–652)
+       - Identical transformation to #1.
     
-    3. frontend/src/pages/ProjectControlPage.js (line 287)
-       - Overdue-defects banner gains `active:bg-orange-200`. Single token
-         added; everything else identical.
+    3. frontend/src/pages/ProjectTasksPage.js (lines 457–459)
+       - Replaced the single `<ListTodo className="w-12 h-12 ... mx-auto
+         mb-3" />` line with an 80px slate-100 circle containing a 40px
+         ListTodo (`w-10 h-10 text-slate-300`). Larger circle matches the
+         larger ProjectTasks Card (which has h3+p+CTA below, vs. just <p>
+         in the other two pages).
     
     Out of scope (untouched, as planned):
-    - Other shadcn primitives, modals/dialogs, focus-visible, disabled.
-    - Pages already correct (UnitDetail, Apartment, MyProjects, UnitHome,
-      StageDetail, NewDefectModal, QCApproversTab, HamburgerMenu).
-    - Tailwind config, i18n, backend.
-    - No active:scale convention added/changed.
+    - ProjectControlPage (different layouts — horizontal ClipboardCheck +
+      Building2 empty state). Future spec if needed.
+    - Filter-chip empty states, Handover, Admin, MyProjects.
+    - Microcopy from #376, h3, p, CTA button, outer Card/wrapper.
+    - Icon colors preserved (slate-400 / slate-300).
+    - No shadow/border/transition/hover on the circle (static empty state).
+    - Card primitive, tailwind config, i18n, backend.
     
-    Verification: button has 6 active: tokens, ProjectTasks new line hits 1,
-    old line hits 0, ProjectControl banner line hits 1, build passes.
+    Verification: 1 hit each for the new circle classes; 0 hits for the
+    old `text-slate-400 mb-2` and `w-12 h-12 ... mx-auto mb-3` patterns.
+    Frontend build passes. ProjectControlPage diff empty (untouched).
     
     No deviation from plan.
 
-diff --git a/frontend/src/components/ui/button.jsx b/frontend/src/components/ui/button.jsx
-index 91db9be..84f94ef 100644
---- a/frontend/src/components/ui/button.jsx
-+++ b/frontend/src/components/ui/button.jsx
-@@ -10,15 +10,15 @@ const buttonVariants = cva(
-     variants: {
-       variant: {
-         default:
--          "bg-primary text-primary-foreground shadow hover:bg-primary/90",
-+          "bg-primary text-primary-foreground shadow hover:bg-primary/90 active:bg-primary/80",
-         destructive:
--          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
-+          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 active:bg-destructive/80",
-         outline:
--          "border border-input shadow-sm hover:bg-accent hover:text-accent-foreground",
-+          "border border-input shadow-sm hover:bg-accent hover:text-accent-foreground active:bg-accent/70",
-         secondary:
--          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
--        ghost: "hover:bg-accent hover:text-accent-foreground",
--        link: "text-primary underline-offset-4 hover:underline",
-+          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80 active:bg-secondary/70",
-+        ghost: "hover:bg-accent hover:text-accent-foreground active:bg-accent/70",
-+        link: "text-primary underline-offset-4 hover:underline active:opacity-75",
-       },
-       size: {
-         default: "h-9 px-4 py-2",
-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 32e3839..662c300 100644
---- a/frontend/src/pages/ProjectControlPage.js
-+++ b/frontend/src/pages/ProjectControlPage.js
-@@ -281,7 +281,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
-       )}
-       {hasOverdue && stats.overdue_defects > 0 && (
-         <button type="button" onClick={onViewDefects}
--          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 transition-colors text-right">
-+          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 active:bg-orange-200 transition-colors text-right">
-           <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
-           <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים באיחור טיפול</span>
-           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>
+diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+index 3d3ad89..765fb86 100644
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -644,8 +644,8 @@ const ApartmentDashboardPage = () => {
+           </div>
+         ) : filteredTasks.length === 0 ? (
+           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+-            <div className="text-slate-400 mb-2">
+-              <CheckCircle2 className="w-10 h-10 mx-auto" />
++            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-slate-100 flex items-center justify-center">
++              <CheckCircle2 className="w-8 h-8 text-slate-400" />
+             </div>
+             <p className="text-sm text-slate-500">
+               {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
 diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
-index b7f75fb..f1ce1d6 100644
+index f1ce1d6..ad26338 100644
 --- a/frontend/src/pages/ProjectTasksPage.js
 +++ b/frontend/src/pages/ProjectTasksPage.js
-@@ -486,7 +486,7 @@ const ProjectTasksPage = () => {
-               return (
-                 <Card
-                   key={task.id}
--                  className="p-3 hover:shadow-md transition-shadow cursor-pointer"
-+                  className="p-3 hover:shadow-md active:bg-slate-100 transition-all cursor-pointer"
-                   onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: fromDashboard ? `/projects/${projectId}/dashboard` : `/projects/${projectId}/tasks?${searchParams.toString()}` } })}
-                 >
-                   <div className="flex items-start justify-between mb-2">
+@@ -451,7 +451,9 @@ const ProjectTasksPage = () => {
+           </div>
+         ) : tasks.length === 0 ? (
+           <Card className="p-8 text-center">
+-            <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
++            <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-slate-100 flex items-center justify-center">
++              <ListTodo className="w-10 h-10 text-slate-300" />
++            </div>
+             <h3 className="text-base font-bold text-slate-700 mb-1">
+               {hasActiveFilter ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בפרויקט'}
+             </h3>
+diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
+index 1b0880f..645edd6 100644
+--- a/frontend/src/pages/UnitDetailPage.js
++++ b/frontend/src/pages/UnitDetailPage.js
+@@ -240,8 +240,8 @@ const UnitDetailPage = () => {
+           </div>
+         ) : tasks.length === 0 ? (
+           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+-            <div className="text-slate-400 mb-2">
+-              <CheckCircle2 className="w-10 h-10 mx-auto" />
++            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-slate-100 flex items-center justify-center">
++              <CheckCircle2 className="w-8 h-8 text-slate-400" />
+             </div>
+             <p className="text-sm text-slate-500">
+               {activeFilters > 0 ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
