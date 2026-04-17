@@ -1,4 +1,4 @@
-commit d48a95a5551c2b9f491385c5d8b962369599d5d8
+commit 3598103b9cac9c3d6aaa30d438009e1b48205a6c
 Author: zahis10 <zahis10@gmail.com>
 Date:   Fri Apr 17 16:23:09 2026 +0000
 
@@ -8,6 +8,19 @@ Date:   Fri Apr 17 16:23:09 2026 +0000
     text-only StatCard component on UnitDetailPage, UnitHomePage, and
     ApartmentDashboardPage. Visual-only — data flow, props, i18n unchanged.
 
+diff --git a/.agents/agent_assets_metadata.toml b/.agents/agent_assets_metadata.toml
+index 730f594..680f8a9 100644
+--- a/.agents/agent_assets_metadata.toml
++++ b/.agents/agent_assets_metadata.toml
+@@ -77,7 +77,7 @@ title = "review-94.txt"
+ id = "ocdrZig6YPfAjD1XCgrbr"
+ uri = "file://review.txt"
+ type = "text"
+-title = "Task #370 — Typography scale (config-only)"
++title = "#371 StatCard refactor — git diff (commit d48a95a)"
+ 
+ [[outputs]]
+ id = "WdwtqNCiZpAAlX9e9Sq9Z"
 diff --git a/frontend/src/components/StatCard.jsx b/frontend/src/components/StatCard.jsx
 new file mode 100644
 index 0000000..dca0464
@@ -27,17 +40,20 @@ index 0000000..dca0464
 +
 +export default StatCard;
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index d08424f..ee3352f 100644
+index d08424f..b2f49b9 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -9,6 +9,7 @@ import NewDefectModal from '../components/NewDefectModal';
+@@ -9,8 +9,9 @@ import NewDefectModal from '../components/NewDefectModal';
  import FilterDrawer from '../components/FilterDrawer';
  import ExportModal from '../components/ExportModal';
  import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 +import StatCard from '../components/StatCard';
  import {
-   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
+-  ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
++  ArrowRight, Loader2, AlertTriangle, CheckCircle2,
    ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
+   SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2
+ } from 'lucide-react';
 @@ -386,28 +387,10 @@ const ApartmentDashboardPage = () => {
            </button>
            {summaryOpen && (
@@ -72,17 +88,21 @@ index d08424f..ee3352f 100644
              </div>
            )}
 diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index 8a99060..ab0c54e 100644
+index 8a99060..317d2cf 100644
 --- a/frontend/src/pages/UnitDetailPage.js
 +++ b/frontend/src/pages/UnitDetailPage.js
-@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
+@@ -5,9 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
  import { toast } from 'sonner';
  import { formatUnitLabel } from '../utils/formatters';
  import NewDefectModal from '../components/NewDefectModal';
 +import StatCard from '../components/StatCard';
  import {
    ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
-   AlertTriangle, CheckCircle2, Clock, ChevronDown, X
+-  AlertTriangle, CheckCircle2, Clock, ChevronDown, X
++  CheckCircle2, ChevronDown, X
+ } from 'lucide-react';
+ import { tCategory } from '../i18n';
+ 
 @@ -146,28 +147,10 @@ const UnitDetailPage = () => {
  
        <div className="max-w-lg mx-auto px-4 -mt-2">
@@ -117,17 +137,21 @@ index 8a99060..ab0c54e 100644
          </div>
        </div>
 diff --git a/frontend/src/pages/UnitHomePage.js b/frontend/src/pages/UnitHomePage.js
-index 35e5352..ed7b9e0 100644
+index 35e5352..d25c998 100644
 --- a/frontend/src/pages/UnitHomePage.js
 +++ b/frontend/src/pages/UnitHomePage.js
-@@ -6,6 +6,7 @@ import { toast } from 'sonner';
+@@ -6,9 +6,10 @@ import { toast } from 'sonner';
  import { formatUnitLabel } from '../utils/formatters';
  import { t } from '../i18n';
  import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 +import StatCard from '../components/StatCard';
  import {
    ArrowRight, Loader2, Building2, Layers, DoorOpen,
-   AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home, Pencil
+-  AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home, Pencil
++  ClipboardList, FileText, Home, Pencil
+ } from 'lucide-react';
+ import { Card } from '../components/ui/card';
+ 
 @@ -140,28 +141,10 @@ const UnitHomePage = () => {
  
        <div className="max-w-lg mx-auto px-4 -mt-2">
@@ -161,3 +185,350 @@ index 35e5352..ed7b9e0 100644
            </div>
          </div>
        </div>
+diff --git a/review.txt b/review.txt
+index f749edb..ba93ade 100644
+--- a/review.txt
++++ b/review.txt
+@@ -1,183 +1,163 @@
+-commit aa27647278248c8e04407c919f53d086788b31ce
++commit d48a95a5551c2b9f491385c5d8b962369599d5d8
+ Author: zahis10 <zahis10@gmail.com>
+-Date:   Fri Apr 17 16:02:40 2026 +0000
++Date:   Fri Apr 17 16:23:09 2026 +0000
+ 
+-    Task #370 — Add typography scale to tailwind.config.js
++    feat(ui): #371 StatCard neutral refactor for KPI grids
+     
+-    Additive-only: 6 fontSize entries inside theme.extend, between colors and keyframes.
+-    
+-    - caption  12/16  letter-spacing 0.01em
+-    - body-sm  14/20
+-    - body     16/24
+-    - subhead  18/26  weight 600
+-    - title    24/32  weight 700
+-    - display  32/40  weight 700  letter-spacing -0.01em
+-    
+-    No changes to borderRadius, colors, keyframes, animation, plugins, darkMode, content.
+-    Tailwind defaults (text-xs, text-sm, text-base, text-2xl, etc.) preserved.
+-    
+-    Verified: cd frontend && npx craco build succeeded; no Tailwind/PostCSS warnings.
+-    git diff scope: only frontend/tailwind.config.js.
++    Spec #346 Task 2. Replaces noisy 3-icon colored KPI grids with neutral
++    text-only StatCard component on UnitDetailPage, UnitHomePage, and
++    ApartmentDashboardPage. Visual-only — data flow, props, i18n unchanged.
+ 
+-diff --git a/frontend/tailwind.config.js b/frontend/tailwind.config.js
+-index 747a586..82d2d7e 100644
+---- a/frontend/tailwind.config.js
+-+++ b/frontend/tailwind.config.js
+-@@ -6,77 +6,85 @@ module.exports = {
+-     "./public/index.html"
+-   ],
+-   theme: {
+--  	extend: {
+--  		borderRadius: {
+--  			lg: 'var(--radius)',
+--  			md: 'calc(var(--radius) - 2px)',
+--  			sm: 'calc(var(--radius) - 4px)'
+--  		},
+--  		colors: {
+--  			background: 'hsl(var(--background))',
+--  			foreground: 'hsl(var(--foreground))',
+--  			card: {
+--  				DEFAULT: 'hsl(var(--card))',
+--  				foreground: 'hsl(var(--card-foreground))'
+--  			},
+--  			popover: {
+--  				DEFAULT: 'hsl(var(--popover))',
+--  				foreground: 'hsl(var(--popover-foreground))'
+--  			},
+--  			primary: {
+--  				DEFAULT: 'hsl(var(--primary))',
+--  				foreground: 'hsl(var(--primary-foreground))'
+--  			},
+--  			secondary: {
+--  				DEFAULT: 'hsl(var(--secondary))',
+--  				foreground: 'hsl(var(--secondary-foreground))'
+--  			},
+--  			muted: {
+--  				DEFAULT: 'hsl(var(--muted))',
+--  				foreground: 'hsl(var(--muted-foreground))'
+--  			},
+--  			accent: {
+--  				DEFAULT: 'hsl(var(--accent))',
+--  				foreground: 'hsl(var(--accent-foreground))'
+--  			},
+--  			destructive: {
+--  				DEFAULT: 'hsl(var(--destructive))',
+--  				foreground: 'hsl(var(--destructive-foreground))'
+--  			},
+--  			border: 'hsl(var(--border))',
+--  			input: 'hsl(var(--input))',
+--  			ring: 'hsl(var(--ring))',
+--  			chart: {
+--  				'1': 'hsl(var(--chart-1))',
+--  				'2': 'hsl(var(--chart-2))',
+--  				'3': 'hsl(var(--chart-3))',
+--  				'4': 'hsl(var(--chart-4))',
+--  				'5': 'hsl(var(--chart-5))'
+--  			}
+--  		},
+--  		keyframes: {
+--  			'accordion-down': {
+--  				from: {
+--  					height: '0'
+--  				},
+--  				to: {
+--  					height: 'var(--radix-accordion-content-height)'
+--  				}
+--  			},
+--  			'accordion-up': {
+--  				from: {
+--  					height: 'var(--radix-accordion-content-height)'
+--  				},
+--  				to: {
+--  					height: '0'
+--  				}
+--  			}
+--  		},
+--  		animation: {
+--  			'accordion-down': 'accordion-down 0.2s ease-out',
+--  			'accordion-up': 'accordion-up 0.2s ease-out'
+--  		}
+--  	}
+-+        extend: {
+-+                borderRadius: {
+-+                        lg: 'var(--radius)',
+-+                        md: 'calc(var(--radius) - 2px)',
+-+                        sm: 'calc(var(--radius) - 4px)'
+-+                },
+-+                colors: {
+-+                        background: 'hsl(var(--background))',
+-+                        foreground: 'hsl(var(--foreground))',
+-+                        card: {
+-+                                DEFAULT: 'hsl(var(--card))',
+-+                                foreground: 'hsl(var(--card-foreground))'
+-+                        },
+-+                        popover: {
+-+                                DEFAULT: 'hsl(var(--popover))',
+-+                                foreground: 'hsl(var(--popover-foreground))'
+-+                        },
+-+                        primary: {
+-+                                DEFAULT: 'hsl(var(--primary))',
+-+                                foreground: 'hsl(var(--primary-foreground))'
+-+                        },
+-+                        secondary: {
+-+                                DEFAULT: 'hsl(var(--secondary))',
+-+                                foreground: 'hsl(var(--secondary-foreground))'
+-+                        },
+-+                        muted: {
+-+                                DEFAULT: 'hsl(var(--muted))',
+-+                                foreground: 'hsl(var(--muted-foreground))'
+-+                        },
+-+                        accent: {
+-+                                DEFAULT: 'hsl(var(--accent))',
+-+                                foreground: 'hsl(var(--accent-foreground))'
+-+                        },
+-+                        destructive: {
+-+                                DEFAULT: 'hsl(var(--destructive))',
+-+                                foreground: 'hsl(var(--destructive-foreground))'
+-+                        },
+-+                        border: 'hsl(var(--border))',
+-+                        input: 'hsl(var(--input))',
+-+                        ring: 'hsl(var(--ring))',
+-+                        chart: {
+-+                                '1': 'hsl(var(--chart-1))',
+-+                                '2': 'hsl(var(--chart-2))',
+-+                                '3': 'hsl(var(--chart-3))',
+-+                                '4': 'hsl(var(--chart-4))',
+-+                                '5': 'hsl(var(--chart-5))'
+-+                        }
+-+                },
+-+                fontSize: {
+-+                        'caption': ['12px', { lineHeight: '16px', letterSpacing: '0.01em' }],
+-+                        'body-sm': ['14px', { lineHeight: '20px' }],
+-+                        'body':    ['16px', { lineHeight: '24px' }],
+-+                        'subhead': ['18px', { lineHeight: '26px', fontWeight: '600' }],
+-+                        'title':   ['24px', { lineHeight: '32px', fontWeight: '700' }],
+-+                        'display': ['32px', { lineHeight: '40px', fontWeight: '700', letterSpacing: '-0.01em' }]
+-+                },
+-+                keyframes: {
+-+                        'accordion-down': {
+-+                                from: {
+-+                                        height: '0'
+-+                                },
+-+                                to: {
+-+                                        height: 'var(--radix-accordion-content-height)'
+-+                                }
+-+                        },
+-+                        'accordion-up': {
+-+                                from: {
+-+                                        height: 'var(--radix-accordion-content-height)'
+-+                                },
+-+                                to: {
+-+                                        height: '0'
+-+                                }
+-+                        }
+-+                },
+-+                animation: {
+-+                        'accordion-down': 'accordion-down 0.2s ease-out',
+-+                        'accordion-up': 'accordion-up 0.2s ease-out'
+-+                }
+-+        }
+-   },
+-   plugins: [require("tailwindcss-animate")],
+- };
+-\ No newline at end of file
++diff --git a/frontend/src/components/StatCard.jsx b/frontend/src/components/StatCard.jsx
++new file mode 100644
++index 0000000..dca0464
++--- /dev/null
+++++ b/frontend/src/components/StatCard.jsx
++@@ -0,0 +1,12 @@
+++import React from 'react';
+++
+++const StatCard = ({ label, value }) => (
+++  <div className="px-3 text-center" dir="rtl">
+++    <div className="text-3xl font-bold text-slate-900 tabular-nums leading-none">
+++      {value ?? 0}
+++    </div>
+++    <div className="text-xs text-slate-500 mt-1.5 font-medium">{label}</div>
+++  </div>
+++);
+++
+++export default StatCard;
++diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
++index d08424f..ee3352f 100644
++--- a/frontend/src/pages/ApartmentDashboardPage.js
+++++ b/frontend/src/pages/ApartmentDashboardPage.js
++@@ -9,6 +9,7 @@ import NewDefectModal from '../components/NewDefectModal';
++ import FilterDrawer from '../components/FilterDrawer';
++ import ExportModal from '../components/ExportModal';
++ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+++import StatCard from '../components/StatCard';
++ import {
++   ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
++   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
++@@ -386,28 +387,10 @@ const ApartmentDashboardPage = () => {
++           </button>
++           {summaryOpen && (
++             <div className="px-4 pb-4">
++-              <div className="grid grid-cols-3 gap-3 text-center">
++-                <div className="space-y-1">
++-                  <div className="flex items-center justify-center gap-1 text-red-500">
++-                    <AlertTriangle className="w-4 h-4" />
++-                  </div>
++-                  <div className="text-2xl font-bold text-slate-800">{openCount}</div>
++-                  <div className="text-xs text-slate-500">פתוחות</div>
++-                </div>
++-                <div className="space-y-1">
++-                  <div className="flex items-center justify-center gap-1 text-blue-500">
++-                    <Clock className="w-4 h-4" />
++-                  </div>
++-                  <div className="text-2xl font-bold text-slate-800">{inProgressCount}</div>
++-                  <div className="text-xs text-slate-500">בטיפול</div>
++-                </div>
++-                <div className="space-y-1">
++-                  <div className="flex items-center justify-center gap-1 text-green-500">
++-                    <CheckCircle2 className="w-4 h-4" />
++-                  </div>
++-                  <div className="text-2xl font-bold text-slate-800">{closedCount}</div>
++-                  <div className="text-xs text-slate-500">סגורות</div>
++-                </div>
+++              <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+++                <StatCard label="פתוחות" value={openCount} />
+++                <StatCard label="בטיפול" value={inProgressCount} />
+++                <StatCard label="סגורות" value={closedCount} />
++               </div>
++             </div>
++           )}
++diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
++index 8a99060..ab0c54e 100644
++--- a/frontend/src/pages/UnitDetailPage.js
+++++ b/frontend/src/pages/UnitDetailPage.js
++@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
++ import { toast } from 'sonner';
++ import { formatUnitLabel } from '../utils/formatters';
++ import NewDefectModal from '../components/NewDefectModal';
+++import StatCard from '../components/StatCard';
++ import {
++   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
++   AlertTriangle, CheckCircle2, Clock, ChevronDown, X
++@@ -146,28 +147,10 @@ const UnitDetailPage = () => {
++ 
++       <div className="max-w-lg mx-auto px-4 -mt-2">
++         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
++-          <div className="grid grid-cols-3 gap-3 text-center">
++-            <div className="space-y-1">
++-              <div className="flex items-center justify-center gap-1 text-red-500">
++-                <AlertTriangle className="w-4 h-4" />
++-              </div>
++-              <div className="text-2xl font-bold text-slate-800">{kpi.open}</div>
++-              <div className="text-xs text-slate-500">פתוחות</div>
++-            </div>
++-            <div className="space-y-1">
++-              <div className="flex items-center justify-center gap-1 text-blue-500">
++-                <Clock className="w-4 h-4" />
++-              </div>
++-              <div className="text-2xl font-bold text-slate-800">{kpi.in_progress}</div>
++-              <div className="text-xs text-slate-500">בטיפול</div>
++-            </div>
++-            <div className="space-y-1">
++-              <div className="flex items-center justify-center gap-1 text-green-500">
++-                <CheckCircle2 className="w-4 h-4" />
++-              </div>
++-              <div className="text-2xl font-bold text-slate-800">{kpi.closed}</div>
++-              <div className="text-xs text-slate-500">סגורות</div>
++-            </div>
+++          <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+++            <StatCard label="פתוחות" value={kpi.open} />
+++            <StatCard label="בטיפול" value={kpi.in_progress} />
+++            <StatCard label="סגורות" value={kpi.closed} />
++           </div>
++         </div>
++       </div>
++diff --git a/frontend/src/pages/UnitHomePage.js b/frontend/src/pages/UnitHomePage.js
++index 35e5352..ed7b9e0 100644
++--- a/frontend/src/pages/UnitHomePage.js
+++++ b/frontend/src/pages/UnitHomePage.js
++@@ -6,6 +6,7 @@ import { toast } from 'sonner';
++ import { formatUnitLabel } from '../utils/formatters';
++ import { t } from '../i18n';
++ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+++import StatCard from '../components/StatCard';
++ import {
++   ArrowRight, Loader2, Building2, Layers, DoorOpen,
++   AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home, Pencil
++@@ -140,28 +141,10 @@ const UnitHomePage = () => {
++ 
++       <div className="max-w-lg mx-auto px-4 -mt-2">
++         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
++-          <div className="grid grid-cols-3 gap-3 text-center">
++-            <div className="space-y-1">
++-              <div className="flex items-center justify-center gap-1 text-red-500">
++-                <AlertTriangle className="w-4 h-4" />
++-              </div>
++-              <div className="text-2xl font-bold text-slate-800">{kpi?.open ?? 0}</div>
++-              <div className="text-xs text-slate-500">{t('unitHome', 'kpiOpen')}</div>
++-            </div>
++-            <div className="space-y-1">
++-              <div className="flex items-center justify-center gap-1 text-blue-500">
++-                <Clock className="w-4 h-4" />
++-              </div>
++-              <div className="text-2xl font-bold text-slate-800">{kpi?.in_progress ?? 0}</div>
++-              <div className="text-xs text-slate-500">{t('unitHome', 'kpiInProgress')}</div>
++-            </div>
++-            <div className="space-y-1">
++-              <div className="flex items-center justify-center gap-1 text-green-500">
++-                <CheckCircle2 className="w-4 h-4" />
++-              </div>
++-              <div className="text-2xl font-bold text-slate-800">{kpi?.closed ?? 0}</div>
++-              <div className="text-xs text-slate-500">{t('unitHome', 'kpiClosed')}</div>
++-            </div>
+++          <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+++            <StatCard label={t('unitHome', 'kpiOpen')} value={kpi?.open ?? 0} />
+++            <StatCard label={t('unitHome', 'kpiInProgress')} value={kpi?.in_progress ?? 0} />
+++            <StatCard label={t('unitHome', 'kpiClosed')} value={kpi?.closed ?? 0} />
++           </div>
++         </div>
++       </div>
