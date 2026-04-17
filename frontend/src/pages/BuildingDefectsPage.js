@@ -179,23 +179,20 @@ const BuildingDefectsPage = () => {
 
   const getStatusCount = (c) => {
     if (!c) return 0;
-    if (filters.status.length === 0) return c.total || 0;
-    const rawStatuses = new Set();
-    if (filters.status.includes('open')) {
-      rawStatuses.add('open');
-      rawStatuses.add('in_progress');
-      rawStatuses.add('waiting_verify');
+    if (filters.status.length === 1) {
+      const s = filters.status[0];
+      if (s === 'open') return (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
+      if (s === 'closed') return c.closed || 0;
+      if (s === 'blocking') return (c.open || 0) + (c.in_progress || 0);
     }
-    if (filters.status.includes('blocking')) {
-      rawStatuses.add('open');
-      rawStatuses.add('in_progress');
+    if (filters.status.length > 1) {
+      let sum = 0;
+      if (filters.status.includes('open'))     sum += (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
+      if (filters.status.includes('closed'))   sum += (c.closed || 0);
+      if (filters.status.includes('blocking')) sum += (c.open || 0) + (c.in_progress || 0);
+      return sum;
     }
-    if (filters.status.includes('closed')) {
-      rawStatuses.add('closed');
-    }
-    let sum = 0;
-    rawStatuses.forEach(s => { sum += c[s] || 0; });
-    return sum;
+    return c.total || 0;
   };
 
   const getFilteredFloorData = () => {
