@@ -240,8 +240,8 @@ const UnitDetailPage = () => {
           </div>
         ) : tasks.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-            <div className="text-slate-400 mb-2">
-              <CheckCircle2 className="w-10 h-10 mx-auto" />
+            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-slate-100 flex items-center justify-center">
+              <CheckCircle2 className="w-8 h-8 text-slate-400" />
             </div>
             <p className="text-sm text-slate-500">
               {activeFilters > 0 ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}

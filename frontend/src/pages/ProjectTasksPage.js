@@ -451,7 +451,9 @@ const ProjectTasksPage = () => {
           </div>
         ) : tasks.length === 0 ? (
           <Card className="p-8 text-center">
-            <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-slate-100 flex items-center justify-center">
+              <ListTodo className="w-10 h-10 text-slate-300" />
+            </div>
             <h3 className="text-base font-bold text-slate-700 mb-1">
               {hasActiveFilter ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בפרויקט'}
             </h3>
