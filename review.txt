@@ -1,230 +1,147 @@
 ==========================================
-#375 — TaskCardSkeleton אחיד (Spec #346 Task 6)
-Commit range: HEAD~1..HEAD
+#376 — Microcopy refresh ל-defect-list empty states (Spec #346 Task 8)
+Commit: 6ab3aea
 ==========================================
 
 ### git show --stat ###
-commit 134a902afc50824d112d227839f0fb806074d75c
+commit 6ab3aea0cea781f4fbd661082507e94eb71c2ba9
 Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 17 17:33:49 2026 +0000
+Date:   Fri Apr 17 18:27:31 2026 +0000
 
-    #375 — Unify TaskCardSkeleton across defect-list pages (Spec #346 Task 6)
+    #376 — Microcopy refresh ל-defect-list empty states (Spec #346 Task 8)
     
-    Extract the inline TaskCardSkeleton from ProjectTasksPage into a shared
-    component and use it in the two other pages that previously showed only
-    a Loader2 spinner during defect-list loading.
+    Unify the empty-state microcopy on the four pages that show defect lists.
+    Previously each page used a slightly different phrase for the same idea
+    (filter-active vs no-defects-baseline), with one English-flavored word
+    ("פילטר") and one ungrammatical phrase ("התואמים את הסינון").
     
-    Changes:
-    - New: frontend/src/components/TaskCardSkeleton.jsx (default-exported
-      arrow component, matching the convention of recently extracted
-      StatCard/StatusPill/CategoryPill/Breadcrumbs).
-    - frontend/src/pages/ProjectTasksPage.js — removed the local
-      `function TaskCardSkeleton()` (was lines 56–74) and added
-      `import TaskCardSkeleton from '../components/TaskCardSkeleton'`. All
-      7 existing usages preserved unchanged.
-    - frontend/src/pages/UnitDetailPage.js — replaced the tasksLoading
-      Loader2 spinner block (lines 234–238) with `<div class="space-y-2">`
-      containing 3 <TaskCardSkeleton /> cards. Loader2 import retained
-      (still used by the page-level loader).
-    - frontend/src/pages/ApartmentDashboardPage.js — same replacement
-      (lines 638–642). Loader2 import retained (page-level loader +
-      spareTilesSaving button).
+    Final wording (consistent across the app):
+    - Filter-active everywhere: "אין ליקויים התואמים לסינון"
+    - Unit-context baseline: "אין ליקויים בדירה"
+    - Project-context baseline: "אין ליקויים בפרויקט"
     
-    Deviation from plan: The plan said "byte-identical" extraction, but the
-    new component uses `const TaskCardSkeleton = () => {...}` (arrow form)
-    instead of `function TaskCardSkeleton() {...}`. This is intentional to
-    match the convention of the four other recently extracted components.
-    The JSX body is byte-identical; behavior and visuals are unchanged.
+    Changes (4 files, 4 lines, text-only):
+    - frontend/src/pages/UnitDetailPage.js (line 250) — both halves of the
+      ternary updated.
+    - frontend/src/pages/ApartmentDashboardPage.js (line 654) — only the
+      baseline half updated; filter half was already correct.
+    - frontend/src/pages/ProjectTasksPage.js (line 459) — both halves
+      updated (grammar fix + baseline change).
+    - frontend/src/pages/ProjectControlPage.js (line 3833) — removed
+      leading "עדיין " from the green "no defects yet" card; the existing
+      "צור ליקוי" CTA next to it provides the encouragement.
     
     Out of scope (untouched, as planned):
-    - ContractorDashboard.js TaskCardSkeleton (different shape — border-r-4
-      + action-button area)
-    - Page-level Loader2 spinners (full-screen pre-header loaders)
-    - spareTilesSaving button spinner
-    - shadcn ui/skeleton.jsx primitive
+    - ProjectControlPage:3749 chip-specific copy ("אין ליקויים באיחור" /
+      "במצב X") — context-specific and informative.
+    - i18n/he.json no_open_defects (celebratory dashboard text).
+    - Icons, subtitles, CTA buttons, wrappers, classes, error/loading/toast
+      messages.
+    - Backend: untouched.
     
-    Verification:
-    - 3 imports of TaskCardSkeleton across the target pages
-    - Local `function TaskCardSkeleton` count = 1 (only in ContractorDashboard)
-    - Usages: ProjectTasksPage 7, UnitDetailPage 3, ApartmentDashboardPage 3
-    - Loader2 references: UnitDetailPage 2, ApartmentDashboardPage 3
-    - frontend craco build passes
-    - Backend untouched
-    - Architect review: PASS (only flagged the declaration-style deviation)
+    Verification: 11/11 grep checks pass (forbidden phrases = 0; new phrases
+    hit expected counts; out-of-scope chip preserved). Frontend build passes.
+    
+    No deviation from plan.
 
- frontend/src/components/TaskCardSkeleton.jsx | 24 ++++++++++++++++++++++++
- frontend/src/pages/ApartmentDashboardPage.js |  7 +++++--
- frontend/src/pages/ProjectTasksPage.js       | 21 +--------------------
- frontend/src/pages/UnitDetailPage.js         |  7 +++++--
- 4 files changed, 35 insertions(+), 24 deletions(-)
+ frontend/src/pages/ApartmentDashboardPage.js | 2 +-
+ frontend/src/pages/ProjectControlPage.js     | 2 +-
+ frontend/src/pages/ProjectTasksPage.js       | 2 +-
+ frontend/src/pages/UnitDetailPage.js         | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
 
 ==========================================
 ### FULL DIFF ###
 ==========================================
-commit 134a902afc50824d112d227839f0fb806074d75c
+commit 6ab3aea0cea781f4fbd661082507e94eb71c2ba9
 Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 17 17:33:49 2026 +0000
+Date:   Fri Apr 17 18:27:31 2026 +0000
 
-    #375 — Unify TaskCardSkeleton across defect-list pages (Spec #346 Task 6)
+    #376 — Microcopy refresh ל-defect-list empty states (Spec #346 Task 8)
     
-    Extract the inline TaskCardSkeleton from ProjectTasksPage into a shared
-    component and use it in the two other pages that previously showed only
-    a Loader2 spinner during defect-list loading.
+    Unify the empty-state microcopy on the four pages that show defect lists.
+    Previously each page used a slightly different phrase for the same idea
+    (filter-active vs no-defects-baseline), with one English-flavored word
+    ("פילטר") and one ungrammatical phrase ("התואמים את הסינון").
     
-    Changes:
-    - New: frontend/src/components/TaskCardSkeleton.jsx (default-exported
-      arrow component, matching the convention of recently extracted
-      StatCard/StatusPill/CategoryPill/Breadcrumbs).
-    - frontend/src/pages/ProjectTasksPage.js — removed the local
-      `function TaskCardSkeleton()` (was lines 56–74) and added
-      `import TaskCardSkeleton from '../components/TaskCardSkeleton'`. All
-      7 existing usages preserved unchanged.
-    - frontend/src/pages/UnitDetailPage.js — replaced the tasksLoading
-      Loader2 spinner block (lines 234–238) with `<div class="space-y-2">`
-      containing 3 <TaskCardSkeleton /> cards. Loader2 import retained
-      (still used by the page-level loader).
-    - frontend/src/pages/ApartmentDashboardPage.js — same replacement
-      (lines 638–642). Loader2 import retained (page-level loader +
-      spareTilesSaving button).
+    Final wording (consistent across the app):
+    - Filter-active everywhere: "אין ליקויים התואמים לסינון"
+    - Unit-context baseline: "אין ליקויים בדירה"
+    - Project-context baseline: "אין ליקויים בפרויקט"
     
-    Deviation from plan: The plan said "byte-identical" extraction, but the
-    new component uses `const TaskCardSkeleton = () => {...}` (arrow form)
-    instead of `function TaskCardSkeleton() {...}`. This is intentional to
-    match the convention of the four other recently extracted components.
-    The JSX body is byte-identical; behavior and visuals are unchanged.
+    Changes (4 files, 4 lines, text-only):
+    - frontend/src/pages/UnitDetailPage.js (line 250) — both halves of the
+      ternary updated.
+    - frontend/src/pages/ApartmentDashboardPage.js (line 654) — only the
+      baseline half updated; filter half was already correct.
+    - frontend/src/pages/ProjectTasksPage.js (line 459) — both halves
+      updated (grammar fix + baseline change).
+    - frontend/src/pages/ProjectControlPage.js (line 3833) — removed
+      leading "עדיין " from the green "no defects yet" card; the existing
+      "צור ליקוי" CTA next to it provides the encouragement.
     
     Out of scope (untouched, as planned):
-    - ContractorDashboard.js TaskCardSkeleton (different shape — border-r-4
-      + action-button area)
-    - Page-level Loader2 spinners (full-screen pre-header loaders)
-    - spareTilesSaving button spinner
-    - shadcn ui/skeleton.jsx primitive
+    - ProjectControlPage:3749 chip-specific copy ("אין ליקויים באיחור" /
+      "במצב X") — context-specific and informative.
+    - i18n/he.json no_open_defects (celebratory dashboard text).
+    - Icons, subtitles, CTA buttons, wrappers, classes, error/loading/toast
+      messages.
+    - Backend: untouched.
     
-    Verification:
-    - 3 imports of TaskCardSkeleton across the target pages
-    - Local `function TaskCardSkeleton` count = 1 (only in ContractorDashboard)
-    - Usages: ProjectTasksPage 7, UnitDetailPage 3, ApartmentDashboardPage 3
-    - Loader2 references: UnitDetailPage 2, ApartmentDashboardPage 3
-    - frontend craco build passes
-    - Backend untouched
-    - Architect review: PASS (only flagged the declaration-style deviation)
+    Verification: 11/11 grep checks pass (forbidden phrases = 0; new phrases
+    hit expected counts; out-of-scope chip preserved). Frontend build passes.
+    
+    No deviation from plan.
 
-diff --git a/frontend/src/components/TaskCardSkeleton.jsx b/frontend/src/components/TaskCardSkeleton.jsx
-new file mode 100644
-index 0000000..cf74222
---- /dev/null
-+++ b/frontend/src/components/TaskCardSkeleton.jsx
-@@ -0,0 +1,24 @@
-+import React from 'react';
-+import { Card } from './ui/card';
-+
-+const TaskCardSkeleton = () => {
-+  return (
-+    <Card className="p-3">
-+      <div className="animate-pulse">
-+        <div className="flex items-start justify-between mb-2">
-+          <div className="flex-1">
-+            <div className="h-4 bg-slate-200 rounded w-3/4 mb-1"></div>
-+            <div className="h-3 bg-slate-100 rounded w-1/2"></div>
-+          </div>
-+          <div className="h-5 bg-slate-200 rounded w-16 mr-2"></div>
-+        </div>
-+        <div className="flex items-center gap-3">
-+          <div className="h-4 bg-slate-100 rounded w-16"></div>
-+          <div className="h-4 bg-slate-100 rounded w-12"></div>
-+        </div>
-+      </div>
-+    </Card>
-+  );
-+};
-+
-+export default TaskCardSkeleton;
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index bbe509b..568ce88 100644
+index 568ce88..3d3ad89 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -13,6 +13,7 @@ import StatCard from '../components/StatCard';
- import StatusPill from '../components/StatusPill';
- import CategoryPill from '../components/CategoryPill';
- import Breadcrumbs from '../components/Breadcrumbs';
-+import TaskCardSkeleton from '../components/TaskCardSkeleton';
- import {
-   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
-   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-@@ -636,8 +637,10 @@ const ApartmentDashboardPage = () => {
- 
-       <div className="max-w-lg mx-auto px-4 mt-3">
-         {tasksLoading ? (
--          <div className="flex justify-center py-8">
--            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
-+          <div className="space-y-2">
-+            <TaskCardSkeleton />
-+            <TaskCardSkeleton />
-+            <TaskCardSkeleton />
+@@ -648,7 +648,7 @@ const ApartmentDashboardPage = () => {
+               <CheckCircle2 className="w-10 h-10 mx-auto" />
+             </div>
+             <p className="text-sm text-slate-500">
+-              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים לדירה זו'}
++              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
+             </p>
            </div>
-         ) : filteredTasks.length === 0 ? (
-           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+         ) : (
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index 7dcad86..32e3839 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -3827,7 +3827,7 @@ const ProjectControlPage = () => {
+               <div className="flex items-center gap-3">
+                 <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
+                 <div className="flex-1">
+-                  <p className="text-sm font-medium text-slate-700">עדיין אין ליקויים בפרויקט</p>
++                  <p className="text-sm font-medium text-slate-700">אין ליקויים בפרויקט</p>
+                   <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
+                 </div>
+                 <button onClick={() => { if (hierarchy.length > 0) navigate(`/projects/${projectId}/buildings/${hierarchy[0].id}/defects`); }}
 diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
-index 7e3728b..a8aa7a0 100644
+index a8aa7a0..b7f75fb 100644
 --- a/frontend/src/pages/ProjectTasksPage.js
 +++ b/frontend/src/pages/ProjectTasksPage.js
-@@ -9,6 +9,7 @@ import {
- } from 'lucide-react';
- import NewDefectModal from '../components/NewDefectModal';
- import CategoryPill from '../components/CategoryPill';
-+import TaskCardSkeleton from '../components/TaskCardSkeleton';
- import { Card } from '../components/ui/card';
- import { tCategory } from '../i18n';
- import ProjectSwitcher from '../components/ProjectSwitcher';
-@@ -53,26 +54,6 @@ const PRIORITY_CONFIG = {
-   critical: { label: 'קריטי', color: 'text-red-600' },
- };
- 
--function TaskCardSkeleton() {
--  return (
--    <Card className="p-3">
--      <div className="animate-pulse">
--        <div className="flex items-start justify-between mb-2">
--          <div className="flex-1">
--            <div className="h-4 bg-slate-200 rounded w-3/4 mb-1"></div>
--            <div className="h-3 bg-slate-100 rounded w-1/2"></div>
--          </div>
--          <div className="h-5 bg-slate-200 rounded w-16 mr-2"></div>
--        </div>
--        <div className="flex items-center gap-3">
--          <div className="h-4 bg-slate-100 rounded w-16"></div>
--          <div className="h-4 bg-slate-100 rounded w-12"></div>
--        </div>
--      </div>
--    </Card>
--  );
--}
--
- const ProjectTasksPage = () => {
-   const { projectId } = useParams();
-   const navigate = useNavigate();
+@@ -453,7 +453,7 @@ const ProjectTasksPage = () => {
+           <Card className="p-8 text-center">
+             <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+             <h3 className="text-base font-bold text-slate-700 mb-1">
+-              {hasActiveFilter ? 'אין ליקויים התואמים את הסינון' : 'אין ליקויים עדיין'}
++              {hasActiveFilter ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בפרויקט'}
+             </h3>
+             <p className="text-sm text-slate-500 mb-4">
+               {hasActiveFilter
 diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index ffdac42..cd752c4 100644
+index cd752c4..1b0880f 100644
 --- a/frontend/src/pages/UnitDetailPage.js
 +++ b/frontend/src/pages/UnitDetailPage.js
-@@ -9,6 +9,7 @@ import StatCard from '../components/StatCard';
- import StatusPill from '../components/StatusPill';
- import CategoryPill from '../components/CategoryPill';
- import Breadcrumbs from '../components/Breadcrumbs';
-+import TaskCardSkeleton from '../components/TaskCardSkeleton';
- import {
-   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
-   CheckCircle2, ChevronDown, X
-@@ -232,8 +233,10 @@ const UnitDetailPage = () => {
-         )}
- 
-         {tasksLoading ? (
--          <div className="flex justify-center py-8">
--            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
-+          <div className="space-y-2">
-+            <TaskCardSkeleton />
-+            <TaskCardSkeleton />
-+            <TaskCardSkeleton />
+@@ -244,7 +244,7 @@ const UnitDetailPage = () => {
+               <CheckCircle2 className="w-10 h-10 mx-auto" />
+             </div>
+             <p className="text-sm text-slate-500">
+-              {activeFilters > 0 ? 'אין ליקויים התואמים לפילטר' : 'אין ליקויים לדירה זו'}
++              {activeFilters > 0 ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
+             </p>
            </div>
-         ) : tasks.length === 0 ? (
-           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+         ) : (
