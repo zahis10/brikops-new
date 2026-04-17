@@ -13,6 +13,7 @@ import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
 import Breadcrumbs from '../components/Breadcrumbs';
+import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
@@ -636,8 +637,10 @@ const ApartmentDashboardPage = () => {
 
       <div className="max-w-lg mx-auto px-4 mt-3">
         {tasksLoading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+          <div className="space-y-2">
+            <TaskCardSkeleton />
+            <TaskCardSkeleton />
+            <TaskCardSkeleton />
           </div>
         ) : filteredTasks.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">

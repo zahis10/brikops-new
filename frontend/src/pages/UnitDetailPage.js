@@ -9,6 +9,7 @@ import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
 import Breadcrumbs from '../components/Breadcrumbs';
+import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import {
   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
   CheckCircle2, ChevronDown, X
@@ -232,8 +233,10 @@ const UnitDetailPage = () => {
         )}
 
         {tasksLoading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+          <div className="space-y-2">
+            <TaskCardSkeleton />
+            <TaskCardSkeleton />
+            <TaskCardSkeleton />
           </div>
         ) : tasks.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
