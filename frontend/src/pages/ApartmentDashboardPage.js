@@ -21,11 +21,11 @@ import {
 } from 'lucide-react';
 
 const APARTMENT_DEFAULT_FILTERS = {
-  status: 'all',
-  category: 'all',
-  company: 'all',
-  assignee: 'all',
-  created_by: 'all',
+  status: [],
+  category: [],
+  company: [],
+  assignee: [],
+  created_by: [],
 };
 
 const STATUS_LABELS = {
@@ -188,21 +188,37 @@ const ApartmentDashboardPage = () => {
     setFilters(prev => {
       const next = { ...prev };
       let changed = false;
-      if (prev.category !== 'all' && !tasks.some(t => t.category === prev.category)) {
-        next.category = 'all';
-        changed = true;
+      if (prev.category.length > 0) {
+        const validCats = new Set(tasks.map(t => t.category).filter(Boolean));
+        const filtered = prev.category.filter(c => validCats.has(c));
+        if (filtered.length !== prev.category.length) {
+          next.category = filtered;
+          changed = true;
+        }
       }
-      if (prev.company !== 'all' && !tasks.some(t => t.company_id === prev.company)) {
-        next.company = 'all';
-        changed = true;
+      if (prev.company.length > 0) {
+        const validCompanies = new Set(tasks.map(t => t.company_id).filter(Boolean));
+        const filtered = prev.company.filter(id => validCompanies.has(id));
+        if (filtered.length !== prev.company.length) {
+          next.company = filtered;
+          changed = true;
+        }
       }
-      if (prev.assignee !== 'all' && !tasks.some(t => t.assignee_id === prev.assignee)) {
-        next.assignee = 'all';
-        changed = true;
+      if (prev.assignee.length > 0) {
+        const validAssignees = new Set(tasks.map(t => t.assignee_id).filter(Boolean));
+        const filtered = prev.assignee.filter(id => validAssignees.has(id));
+        if (filtered.length !== prev.assignee.length) {
+          next.assignee = filtered;
+          changed = true;
+        }
       }
-      if (prev.created_by !== 'all' && !tasks.some(t => t.created_by === prev.created_by)) {
-        next.created_by = 'all';
-        changed = true;
+      if (prev.created_by.length > 0) {
+        const validCreators = new Set(tasks.map(t => t.created_by).filter(Boolean));
+        const filtered = prev.created_by.filter(id => validCreators.has(id));
+        if (filtered.length !== prev.created_by.length) {
+          next.created_by = filtered;
+          changed = true;
+        }
       }
       return changed ? next : prev;
     });
@@ -227,22 +243,55 @@ const ApartmentDashboardPage = () => {
       }
     });
 
+    const countBy = (predicate) => tasks.filter(predicate).length;
+
     return [
-      { key: 'status', label: 'סטטוס', options: STATUS_FILTER_OPTIONS },
-      { key: 'category', label: 'תחום', options: Object.entries(cats).map(([v, l]) => ({ value: v, label: l })) },
-      { key: 'company', label: 'חברה', options: Object.entries(companies).map(([v, l]) => ({ value: v, label: l })) },
-      { key: 'assignee', label: 'אחראי', options: Object.entries(assignees).map(([v, l]) => ({ value: v, label: l })) },
-      { key: 'created_by', label: 'נוצר על ידי', options: Object.entries(creators).map(([v, l]) => ({ value: v, label: l })) },
+      {
+        key: 'status',
+        label: 'סטטוס',
+        options: STATUS_FILTER_OPTIONS.map(o => ({
+          ...o,
+          count: countBy(t => STATUS_LABELS[t.status]?.key === o.value),
+        })),
+      },
+      {
+        key: 'category',
+        label: 'תחום',
+        options: Object.entries(cats).map(([v, l]) => ({
+          value: v, label: l, count: countBy(t => t.category === v),
+        })),
+      },
+      {
+        key: 'company',
+        label: 'חברה',
+        options: Object.entries(companies).map(([v, l]) => ({
+          value: v, label: l, count: countBy(t => t.company_id === v),
+        })),
+      },
+      {
+        key: 'assignee',
+        label: 'אחראי',
+        options: Object.entries(assignees).map(([v, l]) => ({
+          value: v, label: l, count: countBy(t => t.assignee_id === v),
+        })),
+      },
+      {
+        key: 'created_by',
+        label: 'נוצר על ידי',
+        options: Object.entries(creators).map(([v, l]) => ({
+          value: v, label: l, count: countBy(t => t.created_by === v),
+        })),
+      },
     ];
   }, [tasks]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (filters.status !== 'all') count++;
-    if (filters.category !== 'all') count++;
-    if (filters.company !== 'all') count++;
-    if (filters.assignee !== 'all') count++;
-    if (filters.created_by !== 'all') count++;
+    if (filters.status.length > 0) count++;
+    if (filters.category.length > 0) count++;
+    if (filters.company.length > 0) count++;
+    if (filters.assignee.length > 0) count++;
+    if (filters.created_by.length > 0) count++;
     if (searchQuery.trim()) count++;
     return count;
   }, [filters, searchQuery]);
@@ -250,10 +299,11 @@ const ApartmentDashboardPage = () => {
   const filterSummaryText = useMemo(() => {
     const parts = [];
     filterSections.forEach(section => {
-      const val = filters[section.key];
-      if (val && val !== 'all') {
-        const opt = section.options.find(o => o.value === val);
-        parts.push(`${section.label}: ${opt?.label || val}`);
+      const vals = filters[section.key];
+      if (Array.isArray(vals) && vals.length > 0) {
+        const labels = vals.map(v => section.options.find(o => o.value === v)?.label || v);
+        const joined = labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1}`;
+        parts.push(`${section.label}: ${joined}`);
       }
     });
     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
@@ -262,6 +312,22 @@ const ApartmentDashboardPage = () => {
     if (parts.length <= 3) return parts.join(' · ');
     return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
   }, [filters, searchQuery, filterSections]);
+
+  const computeMatchCount = useCallback((draft) => {
+    const draftSearchLower = searchQuery.trim().toLowerCase();
+    return tasks.filter(t => {
+      if (draft.category.length > 0 && !draft.category.includes(t.category)) return false;
+      if (draft.company.length > 0 && !draft.company.includes(t.company_id)) return false;
+      if (draft.assignee.length > 0 && !draft.assignee.includes(t.assignee_id)) return false;
+      if (draft.created_by.length > 0 && !draft.created_by.includes(t.created_by)) return false;
+      if (draft.status.length > 0 && !draft.status.includes(STATUS_LABELS[t.status]?.key)) return false;
+      if (draftSearchLower && !(
+        (t.title || '').toLowerCase().includes(draftSearchLower) ||
+        (t.description || '').toLowerCase().includes(draftSearchLower)
+      )) return false;
+      return true;
+    }).length;
+  }, [tasks, searchQuery]);
 
   if (!flagChecked || loading) {
     return (
@@ -305,10 +371,10 @@ const ApartmentDashboardPage = () => {
 
   const searchLower = searchQuery.trim().toLowerCase();
   const baseFilteredTasks = tasks.filter(t => {
-    if (filters.category !== 'all' && t.category !== filters.category) return false;
-    if (filters.company !== 'all' && t.company_id !== filters.company) return false;
-    if (filters.assignee !== 'all' && t.assignee_id !== filters.assignee) return false;
-    if (filters.created_by !== 'all' && t.created_by !== filters.created_by) return false;
+    if (filters.category.length > 0 && !filters.category.includes(t.category)) return false;
+    if (filters.company.length > 0 && !filters.company.includes(t.company_id)) return false;
+    if (filters.assignee.length > 0 && !filters.assignee.includes(t.assignee_id)) return false;
+    if (filters.created_by.length > 0 && !filters.created_by.includes(t.created_by)) return false;
     if (searchLower && !(
       (t.title || '').toLowerCase().includes(searchLower) ||
       (t.description || '').toLowerCase().includes(searchLower)
@@ -323,9 +389,9 @@ const ApartmentDashboardPage = () => {
     closed: baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === 'closed').length,
   };
 
-  const filteredTasks = filters.status === 'all'
+  const filteredTasks = filters.status.length === 0
     ? baseFilteredTasks
-    : baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === filters.status);
+    : baseFilteredTasks.filter(t => filters.status.includes(STATUS_LABELS[t.status]?.key));
 
   const hasActiveFilters = activeFilterCount > 0;
 
@@ -744,6 +810,8 @@ const ApartmentDashboardPage = () => {
         defaultFilters={APARTMENT_DEFAULT_FILTERS}
         onApply={setFilters}
         sections={filterSections}
+        computeMatchCount={computeMatchCount}
+        matchLabel="ליקויים"
       />
 
       <ExportModal

@@ -13,10 +13,10 @@ import {
 } from 'lucide-react';
 
 const BUILDING_DEFAULT_FILTERS = {
-  status: 'all',
-  category: 'all',
-  floor: 'all',
-  unit: 'all',
+  status: [],
+  category: [],
+  floor: [],
+  unit: [],
 };
 
 const STATUS_FILTER_OPTIONS = [
@@ -85,22 +85,28 @@ const BuildingDefectsPage = () => {
     setFilters(prev => {
       const next = { ...prev };
       let changed = false;
-      if (prev.floor !== 'all' && !data.floors.some(f => f.id === prev.floor)) {
-        next.floor = 'all';
-        changed = true;
-      }
-      if (prev.unit !== 'all') {
-        const allUnits = data.floors.flatMap(f => f.units || []);
-        if (!allUnits.some(u => u.id === prev.unit)) {
-          next.unit = 'all';
+      if (prev.floor.length > 0) {
+        const validFloorIds = new Set(data.floors.map(f => f.id));
+        const filtered = prev.floor.filter(id => validFloorIds.has(id));
+        if (filtered.length !== prev.floor.length) {
+          next.floor = filtered;
           changed = true;
         }
       }
-      if (prev.category !== 'all') {
+      if (prev.unit.length > 0) {
+        const allUnitIds = new Set(data.floors.flatMap(f => (f.units || []).map(u => u.id)));
+        const filtered = prev.unit.filter(id => allUnitIds.has(id));
+        if (filtered.length !== prev.unit.length) {
+          next.unit = filtered;
+          changed = true;
+        }
+      }
+      if (prev.category.length > 0) {
         const allCats = new Set();
         data.floors.forEach(f => (f.units || []).forEach(u => (u.categories || []).forEach(c => allCats.add(c))));
-        if (!allCats.has(prev.category)) {
-          next.category = 'all';
+        const filtered = prev.category.filter(c => allCats.has(c));
+        if (filtered.length !== prev.category.length) {
+          next.category = filtered;
           changed = true;
         }
       }
@@ -150,13 +156,18 @@ const BuildingDefectsPage = () => {
 
   const unitPassesFilter = (unit) => {
     if (unitTypeFilter && unit.unit_type_tag !== unitTypeFilter) return false;
-    if (filters.unit !== 'all' && unit.id !== filters.unit) return false;
-    if (filters.category !== 'all' && !(unit.categories || []).includes(filters.category)) return false;
-    if (filters.status !== 'all') {
+    if (filters.unit.length > 0 && !filters.unit.includes(unit.id)) return false;
+    if (filters.category.length > 0) {
+      const unitCats = unit.categories || [];
+      if (!filters.category.some(c => unitCats.includes(c))) return false;
+    }
+    if (filters.status.length > 0) {
       const c = unit.defect_counts || {};
-      if (filters.status === 'open' && (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0) === 0) return false;
-      if (filters.status === 'closed' && (c.closed || 0) === 0) return false;
-      if (filters.status === 'blocking' && (c.open || 0) + (c.in_progress || 0) === 0) return false;
+      const matchesAny =
+        (filters.status.includes('open')     && ((c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0)) > 0) ||
+        (filters.status.includes('closed')   && (c.closed || 0) > 0) ||
+        (filters.status.includes('blocking') && ((c.open || 0) + (c.in_progress || 0)) > 0);
+      if (!matchesAny) return false;
     }
     const searchLower = searchQuery.trim().toLowerCase();
     if (searchLower) {
@@ -168,17 +179,30 @@ const BuildingDefectsPage = () => {
 
   const getStatusCount = (c) => {
     if (!c) return 0;
-    if (filters.status === 'open') return (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
-    if (filters.status === 'closed') return c.closed || 0;
-    if (filters.status === 'blocking') return (c.open || 0) + (c.in_progress || 0);
-    return c.total || 0;
+    if (filters.status.length === 0) return c.total || 0;
+    const rawStatuses = new Set();
+    if (filters.status.includes('open')) {
+      rawStatuses.add('open');
+      rawStatuses.add('in_progress');
+      rawStatuses.add('waiting_verify');
+    }
+    if (filters.status.includes('blocking')) {
+      rawStatuses.add('open');
+      rawStatuses.add('in_progress');
+    }
+    if (filters.status.includes('closed')) {
+      rawStatuses.add('closed');
+    }
+    let sum = 0;
+    rawStatuses.forEach(s => { sum += c[s] || 0; });
+    return sum;
   };
 
   const getFilteredFloorData = () => {
     if (!data?.floors) return [];
-    const hasFilters = filters.status !== 'all' || filters.category !== 'all' || filters.floor !== 'all' || filters.unit !== 'all' || searchQuery.trim();
+    const hasFilters = filters.status.length > 0 || filters.category.length > 0 || filters.floor.length > 0 || filters.unit.length > 0 || searchQuery.trim();
     return (data.floors || [])
-      .filter(f => filters.floor === 'all' || f.id === filters.floor)
+      .filter(f => filters.floor.length === 0 || filters.floor.includes(f.id))
       .map(floor => {
         const filteredUnits = (floor.units || []).filter(unitPassesFilter);
         return { ...floor, filteredUnits };
@@ -193,18 +217,46 @@ const BuildingDefectsPage = () => {
   const filterSections = useMemo(() => {
     if (!data?.floors) return [];
     const cats = new Set();
+    const catCounts = {};
+    const statusCounts = { open: 0, closed: 0, blocking: 0 };
     const floorOpts = [];
     const unitOpts = [];
+
     (data.floors || []).forEach(f => {
-      floorOpts.push({ value: f.id, label: f.display_label || f.name || `קומה ${f.floor_number}` });
-      (f.units || []).forEach(u => {
-        (u.categories || []).forEach(c => cats.add(c));
-        unitOpts.push({ value: u.id, label: formatUnitLabel(u.display_label || u.unit_no || '') });
+      const fUnits = f.units || [];
+      floorOpts.push({
+        value: f.id,
+        label: f.display_label || f.name || `קומה ${f.floor_number}`,
+        count: fUnits.length,
+      });
+      fUnits.forEach(u => {
+        (u.categories || []).forEach(c => {
+          cats.add(c);
+          catCounts[c] = (catCounts[c] || 0) + 1;
+        });
+        const c = u.defect_counts || {};
+        if ((c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0) > 0) statusCounts.open += 1;
+        if ((c.closed || 0) > 0) statusCounts.closed += 1;
+        if ((c.open || 0) + (c.in_progress || 0) > 0) statusCounts.blocking += 1;
+        unitOpts.push({
+          value: u.id,
+          label: formatUnitLabel(u.display_label || u.unit_no || ''),
+          count: c.total || 0,
+        });
       });
     });
+
     return [
-      { key: 'status', label: 'סטטוס', options: STATUS_FILTER_OPTIONS },
-      { key: 'category', label: 'תחום', options: [...cats].sort().map(c => ({ value: c, label: tCategory(c) })) },
+      {
+        key: 'status',
+        label: 'סטטוס',
+        options: STATUS_FILTER_OPTIONS.map(o => ({ ...o, count: statusCounts[o.value] || 0 })),
+      },
+      {
+        key: 'category',
+        label: 'תחום',
+        options: [...cats].sort().map(c => ({ value: c, label: tCategory(c), count: catCounts[c] || 0 })),
+      },
       { key: 'floor', label: 'קומה', options: floorOpts },
       { key: 'unit', label: 'דירה', options: unitOpts },
     ];
@@ -212,10 +264,10 @@ const BuildingDefectsPage = () => {
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (filters.status !== 'all') count++;
-    if (filters.category !== 'all') count++;
-    if (filters.floor !== 'all') count++;
-    if (filters.unit !== 'all') count++;
+    if (filters.status.length > 0) count++;
+    if (filters.category.length > 0) count++;
+    if (filters.floor.length > 0) count++;
+    if (filters.unit.length > 0) count++;
     if (searchQuery.trim()) count++;
     return count;
   }, [filters, searchQuery]);
@@ -223,10 +275,11 @@ const BuildingDefectsPage = () => {
   const filterSummaryText = useMemo(() => {
     const parts = [];
     filterSections.forEach(section => {
-      const val = filters[section.key];
-      if (val && val !== 'all') {
-        const opt = section.options.find(o => o.value === val);
-        parts.push(`${section.label}: ${opt?.label || val}`);
+      const vals = filters[section.key];
+      if (Array.isArray(vals) && vals.length > 0) {
+        const labels = vals.map(v => section.options.find(o => o.value === v)?.label || v);
+        const joined = labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1}`;
+        parts.push(`${section.label}: ${joined}`);
       }
     });
     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
@@ -234,6 +287,39 @@ const BuildingDefectsPage = () => {
     if (parts.length <= 3) return parts.join(' · ');
     return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
   }, [filters, searchQuery, filterSections]);
+
+  const computeMatchCount = useCallback((draft) => {
+    if (!data?.floors) return 0;
+    const draftSearchLower = searchQuery.trim().toLowerCase();
+    const unitPasses = (unit) => {
+      if (unitTypeFilter && unit.unit_type_tag !== unitTypeFilter) return false;
+      if (draft.unit.length > 0 && !draft.unit.includes(unit.id)) return false;
+      if (draft.category.length > 0) {
+        const unitCats = unit.categories || [];
+        if (!draft.category.some(c => unitCats.includes(c))) return false;
+      }
+      if (draft.status.length > 0) {
+        const c = unit.defect_counts || {};
+        const matchesAny =
+          (draft.status.includes('open')     && ((c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0)) > 0) ||
+          (draft.status.includes('closed')   && (c.closed || 0) > 0) ||
+          (draft.status.includes('blocking') && ((c.open || 0) + (c.in_progress || 0)) > 0);
+        if (!matchesAny) return false;
+      }
+      if (draftSearchLower) {
+        const label = (unit.display_label || unit.unit_no || '').toLowerCase();
+        if (!label.includes(draftSearchLower)) return false;
+      }
+      return true;
+    };
+    let count = 0;
+    (data.floors || [])
+      .filter(f => draft.floor.length === 0 || draft.floor.includes(f.id))
+      .forEach(f => {
+        count += (f.units || []).filter(unitPasses).length;
+      });
+    return count;
+  }, [data, searchQuery, unitTypeFilter]);
 
   const hasActiveFilters = activeFilterCount > 0;
 
@@ -424,7 +510,7 @@ const BuildingDefectsPage = () => {
                     <div className="flex items-center gap-2">
                       {floorCount > 0 && (
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          filters.status === 'blocking' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
+                          filters.status.includes('blocking') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
                         }`}>
                           {floorCount}
                         </span>
@@ -496,6 +582,8 @@ const BuildingDefectsPage = () => {
         defaultFilters={BUILDING_DEFAULT_FILTERS}
         onApply={setFilters}
         sections={filterSections}
+        computeMatchCount={computeMatchCount}
+        matchLabel="דירות"
       />
 
       <ExportModal

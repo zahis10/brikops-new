@@ -6,13 +6,13 @@ import {
   SheetTitle,
   SheetDescription,
 } from './ui/sheet';
-import { SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
+import { SlidersHorizontal, ChevronDown, ChevronUp, Check } from 'lucide-react';
 
-const FilterSection = ({ label, value, onChange, options, isOpen, onToggle }) => (
+const FilterSection = ({ label, values, onToggle, options, isOpen, onToggleOpen }) => (
   <div>
     <button
       type="button"
-      onClick={onToggle}
+      onClick={onToggleOpen}
       className="w-full flex items-center justify-between py-1"
     >
       <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
@@ -23,37 +23,44 @@ const FilterSection = ({ label, value, onChange, options, isOpen, onToggle }) =>
     </button>
     {isOpen && (
       <div className="flex flex-wrap gap-2 mt-2">
-        <button
-          type="button"
-          onClick={() => onChange('all')}
-          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-            value === 'all'
-              ? 'bg-amber-500 text-white shadow-sm'
-              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-          }`}
-        >
-          הכל
-        </button>
-        {options.map(opt => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] truncate ${
-              value === opt.value
-                ? 'bg-amber-500 text-white shadow-sm'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+        {options.map(opt => {
+          const selected = values.includes(opt.value);
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onToggle(opt.value)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] ${
+                selected
+                  ? 'bg-amber-500 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {selected && <Check className="w-3.5 h-3.5 shrink-0" />}
+              <span className="truncate">{opt.label}</span>
+              {typeof opt.count === 'number' && (
+                <span className={`shrink-0 text-[11px] tabular-nums ${selected ? 'text-white/80' : 'text-slate-400'}`}>
+                  {opt.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
     )}
   </div>
 );
 
-const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, sections }) => {
+const FilterDrawer = ({
+  open,
+  onOpenChange,
+  filters,
+  defaultFilters,
+  onApply,
+  sections,
+  computeMatchCount,
+  matchLabel = 'ליקויים',
+}) => {
   const [draft, setDraft] = useState({ ...filters });
   const [wasOpen, setWasOpen] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState({});
@@ -70,8 +77,14 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
     setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const updateDraft = (key, value) => {
-    setDraft(prev => ({ ...prev, [key]: value }));
+  const toggleValue = (key, value) => {
+    setDraft(prev => {
+      const current = Array.isArray(prev[key]) ? prev[key] : [];
+      const next = current.includes(value)
+        ? current.filter(v => v !== value)
+        : [...current, value];
+      return { ...prev, [key]: next };
+    });
   };
 
   const handleApply = () => {
@@ -82,6 +95,10 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
   const handleReset = () => {
     setDraft({ ...defaultFilters });
   };
+
+  const matchCount = typeof computeMatchCount === 'function'
+    ? computeMatchCount(draft)
+    : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -102,11 +119,11 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
               <FilterSection
                 key={section.key}
                 label={section.label}
-                value={draft[section.key]}
-                onChange={v => updateDraft(section.key, v)}
+                values={Array.isArray(draft[section.key]) ? draft[section.key] : []}
+                onToggle={v => toggleValue(section.key, v)}
                 options={section.options}
                 isOpen={!collapsedSections[section.key]}
-                onToggle={() => toggleSection(section.key)}
+                onToggleOpen={() => toggleSection(section.key)}
               />
             )
           ))}
@@ -116,16 +133,16 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
           <button
             type="button"
             onClick={handleReset}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-50 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-50 active:bg-slate-100 transition-colors"
           >
             אפס
           </button>
           <button
             type="button"
             onClick={handleApply}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow-sm transition-colors"
           >
-            סיים
+            {matchCount === null ? 'סיים' : `הצג ${matchCount} ${matchLabel}`}
           </button>
         </div>
       </SheetContent>
