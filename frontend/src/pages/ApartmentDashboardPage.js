@@ -819,7 +819,14 @@ const ApartmentDashboardPage = () => {
         onOpenChange={setExportModalOpen}
         scope="unit"
         unitId={unitId}
-        filters={{ ...filters, search: searchQuery }}
+        filters={{
+          status: filters.status.length === 1 ? filters.status[0] : 'all',
+          category: filters.category.length === 1 ? filters.category[0] : 'all',
+          company: filters.company.length === 1 ? filters.company[0] : 'all',
+          assignee: filters.assignee.length === 1 ? filters.assignee[0] : 'all',
+          created_by: filters.created_by.length === 1 ? filters.created_by[0] : 'all',
+          search: searchQuery,
+        }}
         meta={{
           projectName: unitData?.project_name,
           unitLabel: formatUnitLabel(effectiveLabel),

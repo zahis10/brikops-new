@@ -588,7 +588,13 @@ const BuildingDefectsPage = () => {
         onOpenChange={setExportModalOpen}
         scope="building"
         buildingId={buildingId}
-        filters={{ ...filters, search: searchQuery }}
+        filters={{
+          status: filters.status.length === 1 ? filters.status[0] : 'all',
+          category: filters.category.length === 1 ? filters.category[0] : 'all',
+          floor: filters.floor.length === 1 ? filters.floor[0] : 'all',
+          unit: filters.unit.length === 1 ? filters.unit[0] : 'all',
+          search: searchQuery,
+        }}
         meta={{
           projectName: data?.project?.name,
           buildingName: data?.building?.name,
