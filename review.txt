@@ -1,51 +1,42 @@
-commit c9d25db54f4c2ef10ba5a98e73ac401d981c729e
+commit 9068fcb278bdd4fb0ca6c7a417e52f54af9f8192
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 12:48:52 2026 +0000
+Date:   Fri Apr 17 13:01:42 2026 +0000
 
-    Task #357.1 — Touch targets ≥44×44 in header (HamburgerMenu, NotificationBell, ProjectSwitcher)
+    Task #357.2 — Header bleed: gradient confined to max-w-lg container
     
-    - HamburgerMenu.js: p-1.5 → h-11 w-11 flex items-center justify-center (icon-only)
-    - NotificationBell.js: p-1.5 → h-11 w-11 flex items-center justify-center (icon-only)
-    - ProjectSwitcher.js: px-2 py-1 -mx-2 -my-1 → min-h-[44px] px-3 (text button — keeps room for project name)
-    
-    All three preserve background, hover, rounded, border classes and inner icon sizes.
+    UnitDetailPage.js:126 + BuildingDefectsPage.js:282
+    - Outer wrapper: bg-gradient-to-l → bg-slate-50 (full width, neutral)
+    - Inner container: adds bg-gradient-to-l from-amber-500 to-amber-600 + rounded-b-2xl
+    - Same max-w-lg mx-auto px-4 py-3 layout preserved
+    - Result: amber gradient now stops at 512px (max-w-lg) instead of bleeding edge-to-edge on desktop
 
-diff --git a/frontend/src/components/HamburgerMenu.js b/frontend/src/components/HamburgerMenu.js
-index 46c1d68..87c8749 100644
---- a/frontend/src/components/HamburgerMenu.js
-+++ b/frontend/src/components/HamburgerMenu.js
-@@ -39,7 +39,7 @@ export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, on
-     <>
-       <button
-         onClick={() => setOpen(true)}
--        className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
-+        className="h-11 w-11 flex items-center justify-center bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
-         title="תפריט"
-       >
-         <Menu className="w-4 h-4" />
-diff --git a/frontend/src/components/NotificationBell.js b/frontend/src/components/NotificationBell.js
-index dad0171..881f42d 100644
---- a/frontend/src/components/NotificationBell.js
-+++ b/frontend/src/components/NotificationBell.js
-@@ -79,7 +79,7 @@ export default function NotificationBell() {
-     <Popover open={open} onOpenChange={setOpen}>
-       <PopoverTrigger asChild>
-         <button
--          className="relative p-1.5 hover:bg-slate-700 rounded-lg transition-colors"
-+          className="relative h-11 w-11 flex items-center justify-center hover:bg-slate-700 rounded-lg transition-colors"
-           aria-label="התראות"
-           aria-haspopup="true"
-           aria-expanded={open}
-diff --git a/frontend/src/components/ProjectSwitcher.js b/frontend/src/components/ProjectSwitcher.js
-index 1bfd77b..50f2d92 100644
---- a/frontend/src/components/ProjectSwitcher.js
-+++ b/frontend/src/components/ProjectSwitcher.js
-@@ -46,7 +46,7 @@ export default function ProjectSwitcher({ currentProjectId, currentProjectName }
-     <div className="relative" ref={ref}>
-       <button
-         onClick={() => showSwitcher && setOpen(!open)}
--        className={`flex items-center gap-1.5 min-w-0 ${showSwitcher ? 'cursor-pointer hover:bg-slate-700/50 rounded-lg px-2 py-1 -mx-2 -my-1 transition-colors' : ''}`}
-+        className={`flex items-center gap-1.5 min-w-0 ${showSwitcher ? 'cursor-pointer hover:bg-slate-700/50 rounded-lg min-h-[44px] px-3 transition-colors' : ''}`}
-         disabled={!showSwitcher}
-       >
-         <h1 className="text-lg font-bold leading-tight truncate">{currentProjectName}</h1>
+diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
+index b9fae39..7617249 100644
+--- a/frontend/src/pages/BuildingDefectsPage.js
++++ b/frontend/src/pages/BuildingDefectsPage.js
+@@ -279,8 +279,8 @@ const BuildingDefectsPage = () => {
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
+-        <div className="max-w-lg mx-auto px-4 py-3">
++      <div className="bg-slate-50">
++        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+           <div className="flex items-center gap-3">
+             <button
+               onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
+diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
+index 6ced5ad..8a99060 100644
+--- a/frontend/src/pages/UnitDetailPage.js
++++ b/frontend/src/pages/UnitDetailPage.js
+@@ -123,8 +123,8 @@ const UnitDetailPage = () => {
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
+-      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
+-        <div className="max-w-lg mx-auto px-4 py-3">
++      <div className="bg-slate-50">
++        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+           <div className="flex items-center gap-3">
+             <button
+               onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
