@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import NewDefectModal from '../components/NewDefectModal';
 import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
+import CategoryPill from '../components/CategoryPill';
 import {
   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
   CheckCircle2, ChevronDown, X
@@ -262,9 +263,7 @@ const UnitDetailPage = () => {
                       )}
                       <div className="flex items-center gap-2 mt-2 flex-wrap">
                         <StatusPill status={task.status} label={statusInfo.label} />
-                        <span className="text-[10px] text-slate-400">
-                          {tCategory(task.category)}
-                        </span>
+                        <CategoryPill>{tCategory(task.category)}</CategoryPill>
                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
                           {priorityInfo.label}
                         </span>

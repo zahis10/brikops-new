@@ -11,6 +11,7 @@ import ExportModal from '../components/ExportModal';
 import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
+import CategoryPill from '../components/CategoryPill';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
@@ -677,9 +678,7 @@ const ApartmentDashboardPage = () => {
                         <StatusPill status={task.status} label={statusInfo.label} />
                       </div>
                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                        <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-600">
-                          {tCategory(task.category)}
-                        </span>
+                        <CategoryPill>{tCategory(task.category)}</CategoryPill>
                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
                           {priorityInfo.label}
                         </span>

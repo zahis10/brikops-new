@@ -8,6 +8,7 @@ import {
   CheckCircle2, AlertTriangle, ArrowLeftRight, MessageSquare, Users, UserPlus
 } from 'lucide-react';
 import NewDefectModal from '../components/NewDefectModal';
+import CategoryPill from '../components/CategoryPill';
 import { Card } from '../components/ui/card';
 import { tCategory } from '../i18n';
 import ProjectSwitcher from '../components/ProjectSwitcher';
@@ -519,7 +520,7 @@ const ProjectTasksPage = () => {
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-                    <span className="bg-slate-100 px-2 py-0.5 rounded">{tCategory(task.category)}</span>
+                    <CategoryPill>{tCategory(task.category)}</CategoryPill>
                     <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
                     {task.due_date && (
                       <span className="flex items-center gap-1">

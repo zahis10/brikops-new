@@ -16,6 +16,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import { qcFloorStatusLabel } from '../utils/qcLabels';
 import QCApproversTab from '../components/QCApproversTab';
 import ProjectBillingCard from '../components/ProjectBillingCard';
+import CategoryPill from '../components/CategoryPill';
 import ProjectDataExportTab from '../components/ProjectDataExportTab';
 import {
   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
@@ -3784,7 +3785,7 @@ const ProjectControlPage = () => {
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-                      <span className="bg-slate-100 px-2 py-0.5 rounded">{tCategory(task.category)}</span>
+                      <CategoryPill>{tCategory(task.category)}</CategoryPill>
                       <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
                       {task.due_date && (
                         <span className="flex items-center gap-1">

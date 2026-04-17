@@ -9,6 +9,7 @@ import {
   Camera, Eye, Settings, ChevronLeft, Flame
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
+import CategoryPill from '../components/CategoryPill';
 
 const PAGE_SIZE = 50;
 
@@ -475,7 +476,7 @@ const ContractorDashboard = () => {
 
                       <div className="flex items-center gap-2 flex-wrap text-[11px]">
                         <span className={`px-1.5 py-0.5 rounded ${priBadgeCls}`}>{tPriority(task.priority)}</span>
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{tCategory(task.category)}</span>
+                        <CategoryPill>{tCategory(task.category)}</CategoryPill>
                         {waitStr && (
                           <span className="text-slate-400 flex items-center gap-0.5">
                             <Clock className="w-3 h-3" /> {t('dashboard', 'waiting_label')} {waitStr}
