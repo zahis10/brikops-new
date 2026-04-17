@@ -3908,7 +3908,7 @@ const ProjectControlPage = () => {
 
       {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
       {canMutateStructure && (
-        <div className={`fixed bottom-20 left-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+        <div className={`fixed bottom-20 right-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
           <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
             <Zap className="w-4 h-4" />הקמה מהירה
           </button>
@@ -3924,7 +3924,7 @@ const ProjectControlPage = () => {
         </div>
       )}
       {canMutateStructure && (
-        <button onClick={() => setShowFab(prev => !prev)} aria-label="תפריט פעולות" aria-expanded={showFab} className={`fixed bottom-6 left-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
+        <button onClick={() => setShowFab(prev => !prev)} aria-label="תפריט פעולות" aria-expanded={showFab} className={`fixed bottom-6 right-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
           <Plus className="w-6 h-6 text-white" />
         </button>
       )}
