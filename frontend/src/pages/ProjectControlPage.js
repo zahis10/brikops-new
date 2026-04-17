@@ -281,7 +281,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
       )}
       {hasOverdue && stats.overdue_defects > 0 && (
         <button type="button" onClick={onViewDefects}
-          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 transition-colors text-right">
+          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 active:bg-orange-200 transition-colors text-right">
           <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
           <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים באיחור טיפול</span>
           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>

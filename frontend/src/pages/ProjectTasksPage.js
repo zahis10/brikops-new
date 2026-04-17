@@ -486,7 +486,7 @@ const ProjectTasksPage = () => {
               return (
                 <Card
                   key={task.id}
-                  className="p-3 hover:shadow-md transition-shadow cursor-pointer"
+                  className="p-3 hover:shadow-md active:bg-slate-100 transition-all cursor-pointer"
                   onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: fromDashboard ? `/projects/${projectId}/dashboard` : `/projects/${projectId}/tasks?${searchParams.toString()}` } })}
                 >
                   <div className="flex items-start justify-between mb-2">
