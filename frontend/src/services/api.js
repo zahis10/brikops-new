@@ -891,6 +891,10 @@ export const billingService = {
     const response = await axios.post(`${API}/admin/billing/migration/apply`, {}, { headers: getAuthHeader() });
     return response.data;
   },
+  async recalcAllOrgs() {
+    const response = await axios.post(`${API}/admin/billing/recalc-all`, {}, { headers: getAuthHeader() });
+    return response.data;
+  },
   async updateProjectBilling(projectId, data) {
     const response = await axios.patch(`${API}/billing/project/${projectId}`, data, { headers: getAuthHeader() });
     return response.data;
