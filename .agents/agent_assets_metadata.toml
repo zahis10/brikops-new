@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "review.txt — #355 full diff (Phase 1 + Phase 2 billing auto-sync)"
+title = "review.txt — #356 Phase 1 (Backend) full diff"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
