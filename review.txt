@@ -1,147 +1,156 @@
 ==========================================
-#376 — Microcopy refresh ל-defect-list empty states (Spec #346 Task 8)
-Commit: 6ab3aea
+#377 — Hover/Press states polish (Spec #346 Task 9)
+Commit: 3b3bbf2
 ==========================================
 
 ### git show --stat ###
-commit 6ab3aea0cea781f4fbd661082507e94eb71c2ba9
+commit 3b3bbf2a0b4318a19f37b9bff1c74a923651cc2a
 Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 17 18:27:31 2026 +0000
+Date:   Fri Apr 17 19:07:41 2026 +0000
 
-    #376 — Microcopy refresh ל-defect-list empty states (Spec #346 Task 8)
+    #377 — Hover/Press states polish (Spec #346 Task 9)
     
-    Unify the empty-state microcopy on the four pages that show defect lists.
-    Previously each page used a slightly different phrase for the same idea
-    (filter-active vs no-defects-baseline), with one English-flavored word
-    ("פילטר") and one ungrammatical phrase ("התואמים את הסינון").
+    Add `active:` press feedback in three high-traffic places that
+    previously relied on `hover:` only — invisible on mobile, where most
+    BrikOps users work in the field.
     
-    Final wording (consistent across the app):
-    - Filter-active everywhere: "אין ליקויים התואמים לסינון"
-    - Unit-context baseline: "אין ליקויים בדירה"
-    - Project-context baseline: "אין ליקויים בפרויקט"
+    Changes (3 files, 3 className edits, additive only):
     
-    Changes (4 files, 4 lines, text-only):
-    - frontend/src/pages/UnitDetailPage.js (line 250) — both halves of the
-      ternary updated.
-    - frontend/src/pages/ApartmentDashboardPage.js (line 654) — only the
-      baseline half updated; filter half was already correct.
-    - frontend/src/pages/ProjectTasksPage.js (line 459) — both halves
-      updated (grammar fix + baseline change).
-    - frontend/src/pages/ProjectControlPage.js (line 3833) — removed
-      leading "עדיין " from the green "no defects yet" card; the existing
-      "צור ליקוי" CTA next to it provides the encouragement.
+    1. frontend/src/components/ui/button.jsx (variant block)
+       - All six shadcn Button variants gain an `active:` darker shade:
+         - default     → active:bg-primary/80
+         - destructive → active:bg-destructive/80
+         - outline     → active:bg-accent/70
+         - secondary   → active:bg-secondary/70
+         - ghost       → active:bg-accent/70
+         - link        → active:opacity-75
+       - Base cva already has transition-colors; no new transition needed.
+       - Affects every <Button> across the app, but only adds a press
+         state — default/hover behavior unchanged.
+    
+    2. frontend/src/pages/ProjectTasksPage.js (line 492)
+       - Defect Card: `transition-shadow` → `transition-all`, plus
+         `active:bg-slate-100`. The transition swap is required because
+         transition-shadow doesn't cover background changes.
+    
+    3. frontend/src/pages/ProjectControlPage.js (line 287)
+       - Overdue-defects banner gains `active:bg-orange-200`. Single token
+         added; everything else identical.
     
     Out of scope (untouched, as planned):
-    - ProjectControlPage:3749 chip-specific copy ("אין ליקויים באיחור" /
-      "במצב X") — context-specific and informative.
-    - i18n/he.json no_open_defects (celebratory dashboard text).
-    - Icons, subtitles, CTA buttons, wrappers, classes, error/loading/toast
-      messages.
-    - Backend: untouched.
+    - Other shadcn primitives, modals/dialogs, focus-visible, disabled.
+    - Pages already correct (UnitDetail, Apartment, MyProjects, UnitHome,
+      StageDetail, NewDefectModal, QCApproversTab, HamburgerMenu).
+    - Tailwind config, i18n, backend.
+    - No active:scale convention added/changed.
     
-    Verification: 11/11 grep checks pass (forbidden phrases = 0; new phrases
-    hit expected counts; out-of-scope chip preserved). Frontend build passes.
+    Verification: button has 6 active: tokens, ProjectTasks new line hits 1,
+    old line hits 0, ProjectControl banner line hits 1, build passes.
     
     No deviation from plan.
 
- frontend/src/pages/ApartmentDashboardPage.js | 2 +-
- frontend/src/pages/ProjectControlPage.js     | 2 +-
- frontend/src/pages/ProjectTasksPage.js       | 2 +-
- frontend/src/pages/UnitDetailPage.js         | 2 +-
- 4 files changed, 4 insertions(+), 4 deletions(-)
+ frontend/src/components/ui/button.jsx    | 12 ++++++------
+ frontend/src/pages/ProjectControlPage.js |  2 +-
+ frontend/src/pages/ProjectTasksPage.js   |  2 +-
+ 3 files changed, 8 insertions(+), 8 deletions(-)
 
 ==========================================
 ### FULL DIFF ###
 ==========================================
-commit 6ab3aea0cea781f4fbd661082507e94eb71c2ba9
+commit 3b3bbf2a0b4318a19f37b9bff1c74a923651cc2a
 Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 17 18:27:31 2026 +0000
+Date:   Fri Apr 17 19:07:41 2026 +0000
 
-    #376 — Microcopy refresh ל-defect-list empty states (Spec #346 Task 8)
+    #377 — Hover/Press states polish (Spec #346 Task 9)
     
-    Unify the empty-state microcopy on the four pages that show defect lists.
-    Previously each page used a slightly different phrase for the same idea
-    (filter-active vs no-defects-baseline), with one English-flavored word
-    ("פילטר") and one ungrammatical phrase ("התואמים את הסינון").
+    Add `active:` press feedback in three high-traffic places that
+    previously relied on `hover:` only — invisible on mobile, where most
+    BrikOps users work in the field.
     
-    Final wording (consistent across the app):
-    - Filter-active everywhere: "אין ליקויים התואמים לסינון"
-    - Unit-context baseline: "אין ליקויים בדירה"
-    - Project-context baseline: "אין ליקויים בפרויקט"
+    Changes (3 files, 3 className edits, additive only):
     
-    Changes (4 files, 4 lines, text-only):
-    - frontend/src/pages/UnitDetailPage.js (line 250) — both halves of the
-      ternary updated.
-    - frontend/src/pages/ApartmentDashboardPage.js (line 654) — only the
-      baseline half updated; filter half was already correct.
-    - frontend/src/pages/ProjectTasksPage.js (line 459) — both halves
-      updated (grammar fix + baseline change).
-    - frontend/src/pages/ProjectControlPage.js (line 3833) — removed
-      leading "עדיין " from the green "no defects yet" card; the existing
-      "צור ליקוי" CTA next to it provides the encouragement.
+    1. frontend/src/components/ui/button.jsx (variant block)
+       - All six shadcn Button variants gain an `active:` darker shade:
+         - default     → active:bg-primary/80
+         - destructive → active:bg-destructive/80
+         - outline     → active:bg-accent/70
+         - secondary   → active:bg-secondary/70
+         - ghost       → active:bg-accent/70
+         - link        → active:opacity-75
+       - Base cva already has transition-colors; no new transition needed.
+       - Affects every <Button> across the app, but only adds a press
+         state — default/hover behavior unchanged.
+    
+    2. frontend/src/pages/ProjectTasksPage.js (line 492)
+       - Defect Card: `transition-shadow` → `transition-all`, plus
+         `active:bg-slate-100`. The transition swap is required because
+         transition-shadow doesn't cover background changes.
+    
+    3. frontend/src/pages/ProjectControlPage.js (line 287)
+       - Overdue-defects banner gains `active:bg-orange-200`. Single token
+         added; everything else identical.
     
     Out of scope (untouched, as planned):
-    - ProjectControlPage:3749 chip-specific copy ("אין ליקויים באיחור" /
-      "במצב X") — context-specific and informative.
-    - i18n/he.json no_open_defects (celebratory dashboard text).
-    - Icons, subtitles, CTA buttons, wrappers, classes, error/loading/toast
-      messages.
-    - Backend: untouched.
+    - Other shadcn primitives, modals/dialogs, focus-visible, disabled.
+    - Pages already correct (UnitDetail, Apartment, MyProjects, UnitHome,
+      StageDetail, NewDefectModal, QCApproversTab, HamburgerMenu).
+    - Tailwind config, i18n, backend.
+    - No active:scale convention added/changed.
     
-    Verification: 11/11 grep checks pass (forbidden phrases = 0; new phrases
-    hit expected counts; out-of-scope chip preserved). Frontend build passes.
+    Verification: button has 6 active: tokens, ProjectTasks new line hits 1,
+    old line hits 0, ProjectControl banner line hits 1, build passes.
     
     No deviation from plan.
 
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 568ce88..3d3ad89 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -648,7 +648,7 @@ const ApartmentDashboardPage = () => {
-               <CheckCircle2 className="w-10 h-10 mx-auto" />
-             </div>
-             <p className="text-sm text-slate-500">
--              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים לדירה זו'}
-+              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
-             </p>
-           </div>
-         ) : (
+diff --git a/frontend/src/components/ui/button.jsx b/frontend/src/components/ui/button.jsx
+index 91db9be..84f94ef 100644
+--- a/frontend/src/components/ui/button.jsx
++++ b/frontend/src/components/ui/button.jsx
+@@ -10,15 +10,15 @@ const buttonVariants = cva(
+     variants: {
+       variant: {
+         default:
+-          "bg-primary text-primary-foreground shadow hover:bg-primary/90",
++          "bg-primary text-primary-foreground shadow hover:bg-primary/90 active:bg-primary/80",
+         destructive:
+-          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
++          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 active:bg-destructive/80",
+         outline:
+-          "border border-input shadow-sm hover:bg-accent hover:text-accent-foreground",
++          "border border-input shadow-sm hover:bg-accent hover:text-accent-foreground active:bg-accent/70",
+         secondary:
+-          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
+-        ghost: "hover:bg-accent hover:text-accent-foreground",
+-        link: "text-primary underline-offset-4 hover:underline",
++          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80 active:bg-secondary/70",
++        ghost: "hover:bg-accent hover:text-accent-foreground active:bg-accent/70",
++        link: "text-primary underline-offset-4 hover:underline active:opacity-75",
+       },
+       size: {
+         default: "h-9 px-4 py-2",
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 7dcad86..32e3839 100644
+index 32e3839..662c300 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -3827,7 +3827,7 @@ const ProjectControlPage = () => {
-               <div className="flex items-center gap-3">
-                 <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
-                 <div className="flex-1">
--                  <p className="text-sm font-medium text-slate-700">עדיין אין ליקויים בפרויקט</p>
-+                  <p className="text-sm font-medium text-slate-700">אין ליקויים בפרויקט</p>
-                   <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
-                 </div>
-                 <button onClick={() => { if (hierarchy.length > 0) navigate(`/projects/${projectId}/buildings/${hierarchy[0].id}/defects`); }}
+@@ -281,7 +281,7 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
+       )}
+       {hasOverdue && stats.overdue_defects > 0 && (
+         <button type="button" onClick={onViewDefects}
+-          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 transition-colors text-right">
++          className="w-full flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-orange-100 active:bg-orange-200 transition-colors text-right">
+           <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm text-base flex-shrink-0">🔥</span>
+           <span className="flex-1 text-sm text-orange-800 font-medium">{stats.overdue_defects} ליקויים באיחור טיפול</span>
+           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{stats.overdue_defects}</span>
 diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
-index a8aa7a0..b7f75fb 100644
+index b7f75fb..f1ce1d6 100644
 --- a/frontend/src/pages/ProjectTasksPage.js
 +++ b/frontend/src/pages/ProjectTasksPage.js
-@@ -453,7 +453,7 @@ const ProjectTasksPage = () => {
-           <Card className="p-8 text-center">
-             <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-             <h3 className="text-base font-bold text-slate-700 mb-1">
--              {hasActiveFilter ? 'אין ליקויים התואמים את הסינון' : 'אין ליקויים עדיין'}
-+              {hasActiveFilter ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בפרויקט'}
-             </h3>
-             <p className="text-sm text-slate-500 mb-4">
-               {hasActiveFilter
-diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index cd752c4..1b0880f 100644
---- a/frontend/src/pages/UnitDetailPage.js
-+++ b/frontend/src/pages/UnitDetailPage.js
-@@ -244,7 +244,7 @@ const UnitDetailPage = () => {
-               <CheckCircle2 className="w-10 h-10 mx-auto" />
-             </div>
-             <p className="text-sm text-slate-500">
--              {activeFilters > 0 ? 'אין ליקויים התואמים לפילטר' : 'אין ליקויים לדירה זו'}
-+              {activeFilters > 0 ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
-             </p>
-           </div>
-         ) : (
+@@ -486,7 +486,7 @@ const ProjectTasksPage = () => {
+               return (
+                 <Card
+                   key={task.id}
+-                  className="p-3 hover:shadow-md transition-shadow cursor-pointer"
++                  className="p-3 hover:shadow-md active:bg-slate-100 transition-all cursor-pointer"
+                   onClick={() => navigate(`/tasks/${task.id}`, { state: { returnTo: fromDashboard ? `/projects/${projectId}/dashboard` : `/projects/${projectId}/tasks?${searchParams.toString()}` } })}
+                 >
+                   <div className="flex items-start justify-between mb-2">
