@@ -1,123 +1,230 @@
-commit bfbbb801d63c2ae0b7dfc0b6dbd435ae4feff47d
-Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 17:13:02 2026 +0000
+==========================================
+#375 — TaskCardSkeleton אחיד (Spec #346 Task 6)
+Commit range: HEAD~1..HEAD
+==========================================
 
-    feat(ui): #374 extract Breadcrumbs component
-    
-    Spec #346 Task 5. Three identical inline breadcrumb blocks
-    (project > building > floor) in amber-gradient headers replaced
-    with a single <Breadcrumbs items={[...]} /> component. Filters
-    out falsy values, renders aria-hidden separator, preserves
-    gap-1.5/text-xs/text-amber-100 styling exactly. Visual-only.
-    
-    Sites: UnitDetailPage:140, UnitHomePage:129, ApartmentDashboardPage:368.
-    Out of scope (different shape): FloorDetailPage, UnitPlansPage.
+### git show --stat ###
+commit 134a902afc50824d112d227839f0fb806074d75c
+Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
+Date:   Fri Apr 17 17:33:49 2026 +0000
 
-diff --git a/frontend/src/components/Breadcrumbs.jsx b/frontend/src/components/Breadcrumbs.jsx
+    #375 — Unify TaskCardSkeleton across defect-list pages (Spec #346 Task 6)
+    
+    Extract the inline TaskCardSkeleton from ProjectTasksPage into a shared
+    component and use it in the two other pages that previously showed only
+    a Loader2 spinner during defect-list loading.
+    
+    Changes:
+    - New: frontend/src/components/TaskCardSkeleton.jsx (default-exported
+      arrow component, matching the convention of recently extracted
+      StatCard/StatusPill/CategoryPill/Breadcrumbs).
+    - frontend/src/pages/ProjectTasksPage.js — removed the local
+      `function TaskCardSkeleton()` (was lines 56–74) and added
+      `import TaskCardSkeleton from '../components/TaskCardSkeleton'`. All
+      7 existing usages preserved unchanged.
+    - frontend/src/pages/UnitDetailPage.js — replaced the tasksLoading
+      Loader2 spinner block (lines 234–238) with `<div class="space-y-2">`
+      containing 3 <TaskCardSkeleton /> cards. Loader2 import retained
+      (still used by the page-level loader).
+    - frontend/src/pages/ApartmentDashboardPage.js — same replacement
+      (lines 638–642). Loader2 import retained (page-level loader +
+      spareTilesSaving button).
+    
+    Deviation from plan: The plan said "byte-identical" extraction, but the
+    new component uses `const TaskCardSkeleton = () => {...}` (arrow form)
+    instead of `function TaskCardSkeleton() {...}`. This is intentional to
+    match the convention of the four other recently extracted components.
+    The JSX body is byte-identical; behavior and visuals are unchanged.
+    
+    Out of scope (untouched, as planned):
+    - ContractorDashboard.js TaskCardSkeleton (different shape — border-r-4
+      + action-button area)
+    - Page-level Loader2 spinners (full-screen pre-header loaders)
+    - spareTilesSaving button spinner
+    - shadcn ui/skeleton.jsx primitive
+    
+    Verification:
+    - 3 imports of TaskCardSkeleton across the target pages
+    - Local `function TaskCardSkeleton` count = 1 (only in ContractorDashboard)
+    - Usages: ProjectTasksPage 7, UnitDetailPage 3, ApartmentDashboardPage 3
+    - Loader2 references: UnitDetailPage 2, ApartmentDashboardPage 3
+    - frontend craco build passes
+    - Backend untouched
+    - Architect review: PASS (only flagged the declaration-style deviation)
+
+ frontend/src/components/TaskCardSkeleton.jsx | 24 ++++++++++++++++++++++++
+ frontend/src/pages/ApartmentDashboardPage.js |  7 +++++--
+ frontend/src/pages/ProjectTasksPage.js       | 21 +--------------------
+ frontend/src/pages/UnitDetailPage.js         |  7 +++++--
+ 4 files changed, 35 insertions(+), 24 deletions(-)
+
+==========================================
+### FULL DIFF ###
+==========================================
+commit 134a902afc50824d112d227839f0fb806074d75c
+Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
+Date:   Fri Apr 17 17:33:49 2026 +0000
+
+    #375 — Unify TaskCardSkeleton across defect-list pages (Spec #346 Task 6)
+    
+    Extract the inline TaskCardSkeleton from ProjectTasksPage into a shared
+    component and use it in the two other pages that previously showed only
+    a Loader2 spinner during defect-list loading.
+    
+    Changes:
+    - New: frontend/src/components/TaskCardSkeleton.jsx (default-exported
+      arrow component, matching the convention of recently extracted
+      StatCard/StatusPill/CategoryPill/Breadcrumbs).
+    - frontend/src/pages/ProjectTasksPage.js — removed the local
+      `function TaskCardSkeleton()` (was lines 56–74) and added
+      `import TaskCardSkeleton from '../components/TaskCardSkeleton'`. All
+      7 existing usages preserved unchanged.
+    - frontend/src/pages/UnitDetailPage.js — replaced the tasksLoading
+      Loader2 spinner block (lines 234–238) with `<div class="space-y-2">`
+      containing 3 <TaskCardSkeleton /> cards. Loader2 import retained
+      (still used by the page-level loader).
+    - frontend/src/pages/ApartmentDashboardPage.js — same replacement
+      (lines 638–642). Loader2 import retained (page-level loader +
+      spareTilesSaving button).
+    
+    Deviation from plan: The plan said "byte-identical" extraction, but the
+    new component uses `const TaskCardSkeleton = () => {...}` (arrow form)
+    instead of `function TaskCardSkeleton() {...}`. This is intentional to
+    match the convention of the four other recently extracted components.
+    The JSX body is byte-identical; behavior and visuals are unchanged.
+    
+    Out of scope (untouched, as planned):
+    - ContractorDashboard.js TaskCardSkeleton (different shape — border-r-4
+      + action-button area)
+    - Page-level Loader2 spinners (full-screen pre-header loaders)
+    - spareTilesSaving button spinner
+    - shadcn ui/skeleton.jsx primitive
+    
+    Verification:
+    - 3 imports of TaskCardSkeleton across the target pages
+    - Local `function TaskCardSkeleton` count = 1 (only in ContractorDashboard)
+    - Usages: ProjectTasksPage 7, UnitDetailPage 3, ApartmentDashboardPage 3
+    - Loader2 references: UnitDetailPage 2, ApartmentDashboardPage 3
+    - frontend craco build passes
+    - Backend untouched
+    - Architect review: PASS (only flagged the declaration-style deviation)
+
+diff --git a/frontend/src/components/TaskCardSkeleton.jsx b/frontend/src/components/TaskCardSkeleton.jsx
 new file mode 100644
-index 0000000..59fafbd
+index 0000000..cf74222
 --- /dev/null
-+++ b/frontend/src/components/Breadcrumbs.jsx
-@@ -0,0 +1,18 @@
++++ b/frontend/src/components/TaskCardSkeleton.jsx
+@@ -0,0 +1,24 @@
 +import React from 'react';
++import { Card } from './ui/card';
 +
-+const Breadcrumbs = ({ items = [], separator = '›', className = '' }) => {
-+  const parts = items.filter(Boolean);
-+  if (parts.length === 0) return null;
++const TaskCardSkeleton = () => {
 +  return (
-+    <div className={`flex items-center gap-1.5 text-xs ${className}`}>
-+      {parts.map((item, i) => (
-+        <React.Fragment key={i}>
-+          {i > 0 && <span aria-hidden="true">{separator}</span>}
-+          <span className="truncate">{item}</span>
-+        </React.Fragment>
-+      ))}
-+    </div>
++    <Card className="p-3">
++      <div className="animate-pulse">
++        <div className="flex items-start justify-between mb-2">
++          <div className="flex-1">
++            <div className="h-4 bg-slate-200 rounded w-3/4 mb-1"></div>
++            <div className="h-3 bg-slate-100 rounded w-1/2"></div>
++          </div>
++          <div className="h-5 bg-slate-200 rounded w-16 mr-2"></div>
++        </div>
++        <div className="flex items-center gap-3">
++          <div className="h-4 bg-slate-100 rounded w-16"></div>
++          <div className="h-4 bg-slate-100 rounded w-12"></div>
++        </div>
++      </div>
++    </Card>
 +  );
 +};
 +
-+export default Breadcrumbs;
++export default TaskCardSkeleton;
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 5f51bcc..bbe509b 100644
+index bbe509b..568ce88 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -12,6 +12,7 @@ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
- import StatCard from '../components/StatCard';
+@@ -13,6 +13,7 @@ import StatCard from '../components/StatCard';
  import StatusPill from '../components/StatusPill';
  import CategoryPill from '../components/CategoryPill';
-+import Breadcrumbs from '../components/Breadcrumbs';
+ import Breadcrumbs from '../components/Breadcrumbs';
++import TaskCardSkeleton from '../components/TaskCardSkeleton';
  import {
    ArrowRight, Loader2, AlertTriangle, CheckCircle2,
    ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-@@ -365,11 +366,10 @@ const ApartmentDashboardPage = () => {
-                   <Pencil className="w-3.5 h-3.5 text-white" />
-                 </button>
-               </div>
--              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
--                {project && <span>{project.name}</span>}
--                {building && <><span>›</span><span>{building.name}</span></>}
--                {floor && <><span>›</span><span>{floor.name}</span></>}
--              </div>
-+              <Breadcrumbs
-+                items={[project?.name, building?.name, floor?.name]}
-+                className="text-amber-100"
-+              />
-               {unit.unit_note && (
-                 <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
-               )}
+@@ -636,8 +637,10 @@ const ApartmentDashboardPage = () => {
+ 
+       <div className="max-w-lg mx-auto px-4 mt-3">
+         {tasksLoading ? (
+-          <div className="flex justify-center py-8">
+-            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
++          <div className="space-y-2">
++            <TaskCardSkeleton />
++            <TaskCardSkeleton />
++            <TaskCardSkeleton />
+           </div>
+         ) : filteredTasks.length === 0 ? (
+           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
+index 7e3728b..a8aa7a0 100644
+--- a/frontend/src/pages/ProjectTasksPage.js
++++ b/frontend/src/pages/ProjectTasksPage.js
+@@ -9,6 +9,7 @@ import {
+ } from 'lucide-react';
+ import NewDefectModal from '../components/NewDefectModal';
+ import CategoryPill from '../components/CategoryPill';
++import TaskCardSkeleton from '../components/TaskCardSkeleton';
+ import { Card } from '../components/ui/card';
+ import { tCategory } from '../i18n';
+ import ProjectSwitcher from '../components/ProjectSwitcher';
+@@ -53,26 +54,6 @@ const PRIORITY_CONFIG = {
+   critical: { label: 'קריטי', color: 'text-red-600' },
+ };
+ 
+-function TaskCardSkeleton() {
+-  return (
+-    <Card className="p-3">
+-      <div className="animate-pulse">
+-        <div className="flex items-start justify-between mb-2">
+-          <div className="flex-1">
+-            <div className="h-4 bg-slate-200 rounded w-3/4 mb-1"></div>
+-            <div className="h-3 bg-slate-100 rounded w-1/2"></div>
+-          </div>
+-          <div className="h-5 bg-slate-200 rounded w-16 mr-2"></div>
+-        </div>
+-        <div className="flex items-center gap-3">
+-          <div className="h-4 bg-slate-100 rounded w-16"></div>
+-          <div className="h-4 bg-slate-100 rounded w-12"></div>
+-        </div>
+-      </div>
+-    </Card>
+-  );
+-}
+-
+ const ProjectTasksPage = () => {
+   const { projectId } = useParams();
+   const navigate = useNavigate();
 diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index 6fdf811..ffdac42 100644
+index ffdac42..cd752c4 100644
 --- a/frontend/src/pages/UnitDetailPage.js
 +++ b/frontend/src/pages/UnitDetailPage.js
-@@ -8,6 +8,7 @@ import NewDefectModal from '../components/NewDefectModal';
- import StatCard from '../components/StatCard';
+@@ -9,6 +9,7 @@ import StatCard from '../components/StatCard';
  import StatusPill from '../components/StatusPill';
  import CategoryPill from '../components/CategoryPill';
-+import Breadcrumbs from '../components/Breadcrumbs';
+ import Breadcrumbs from '../components/Breadcrumbs';
++import TaskCardSkeleton from '../components/TaskCardSkeleton';
  import {
    ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
    CheckCircle2, ChevronDown, X
-@@ -137,11 +138,10 @@ const UnitDetailPage = () => {
-             </button>
-             <div className="flex-1 min-w-0">
-               <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
--              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
--                {project && <span>{project.name}</span>}
--                {building && <><span>›</span><span>{building.name}</span></>}
--                {floor && <><span>›</span><span>{floor.name}</span></>}
--              </div>
-+              <Breadcrumbs
-+                items={[project?.name, building?.name, floor?.name]}
-+                className="text-amber-100"
-+              />
-             </div>
+@@ -232,8 +233,10 @@ const UnitDetailPage = () => {
+         )}
+ 
+         {tasksLoading ? (
+-          <div className="flex justify-center py-8">
+-            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
++          <div className="space-y-2">
++            <TaskCardSkeleton />
++            <TaskCardSkeleton />
++            <TaskCardSkeleton />
            </div>
-         </div>
-diff --git a/frontend/src/pages/UnitHomePage.js b/frontend/src/pages/UnitHomePage.js
-index d25c998..8b3f41d 100644
---- a/frontend/src/pages/UnitHomePage.js
-+++ b/frontend/src/pages/UnitHomePage.js
-@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
- import { t } from '../i18n';
- import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
- import StatCard from '../components/StatCard';
-+import Breadcrumbs from '../components/Breadcrumbs';
- import {
-   ArrowRight, Loader2, Building2, Layers, DoorOpen,
-   ClipboardList, FileText, Home, Pencil
-@@ -126,11 +127,10 @@ const UnitHomePage = () => {
-                   <Pencil className="w-3.5 h-3.5 text-white" />
-                 </button>
-               </div>
--              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
--                {project && <span>{project.name}</span>}
--                {building && <><span>›</span><span>{building.name}</span></>}
--                {floor && <><span>›</span><span>{floor.name}</span></>}
--              </div>
-+              <Breadcrumbs
-+                items={[project?.name, building?.name, floor?.name]}
-+                className="text-amber-100"
-+              />
-               {unit.unit_note && (
-                 <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
-               )}
+         ) : tasks.length === 0 ? (
+           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
