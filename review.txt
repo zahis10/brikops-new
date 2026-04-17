@@ -1,56 +1,83 @@
-commit 1edd5410a61527e2f4ba110616f357001e345911
+commit e364002b44555f15aff706cb7d4afd8b2cbb76aa
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 13:59:00 2026 +0000
+Date:   Fri Apr 17 14:41:55 2026 +0000
 
-    Task #357.4 — Primary CTAs: green → amber
+    Task #357.5 — Banner neutral state for 0 open defects
     
-    ProjectControlPage.js, 4 button class swaps (bg-green-500/600 → bg-amber-500/600):
-    - L695: 'הבא' / 'צור בניין' button in building setup wizard
-    - L1797: 'הקמה מהירה' Quick Setup CTA in empty buildings state
-    - L3818: 'צור ליקוי →' CTA in defects empty state
-    - L3897: 'הקמה מהירה' FAB action button
+    ProjectControlPage.js:217-234 (KpiSection activeCard === 0 block)
+    Wraps banner in IIFE that picks style based on openCount:
+    - 0     → bg #f1f5f9 (slate-100), text-slate-700, label text-slate-500
+    - 1-9   → amber gradient (#f59e0b → #d97706)
+    - 10-49 → orange gradient (#f97316 → #ea580c)
+    - 50+   → red gradient (#ef4444 → #dc2626) — original behavior preserved
     
-    Untouched (success indicators, kept green):
-    - L588: 'סגור' close button in success toast
-    - L2857: ✓ checkmark badge in checklist done state
+    When empty, label reads 'אין ליקויים פתוחים — מצב מצוין' and the
+    'צפה בליקויים' button switches to slate-200/300 with slate-700 text.
+    No change to stats.open_defects logic or subParts.
+    
+    Verified: babel parser parses file successfully (no JSX syntax errors).
 
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index c9eeab2..6f662d0 100644
+index 6f662d0..f659bbe 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -692,7 +692,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
-                 הבא
-               </Button>
-             ) : (
--              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm">
-+              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
-                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
-               </Button>
-             )}
-@@ -1791,7 +1791,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
-             {onQuickSetup && (
-               <Button
-                 onClick={onQuickSetup}
--                className="bg-green-500 hover:bg-green-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
-+                className="bg-amber-500 hover:bg-amber-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
-               >
-                 <Zap className="w-4 h-4 ml-1 inline" />
-                 הקמה מהירה
-@@ -3812,7 +3812,7 @@ const ProjectControlPage = () => {
-                   <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
-                 </div>
-                 <button onClick={() => { if (hierarchy.length > 0) navigate(`/projects/${projectId}/buildings/${hierarchy[0].id}/defects`); }}
--                  className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium whitespace-nowrap">
-+                  className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium whitespace-nowrap">
-                   צור ליקוי →
-                 </button>
+@@ -214,24 +214,42 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
+     <div className="space-y-3">
+       <div className="overflow-hidden rounded-xl shadow-lg"
+         onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+-        {activeCard === 0 && (
+-          <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
+-            style={{ background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' }}>
+-            <div className="flex items-center justify-between gap-4">
+-              <div>
+-                <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
+-                <p className="text-sm font-medium mt-1 text-white/90">ליקויים פתוחים</p>
+-                {subParts.length > 0 && (
+-                  <p className="text-xs mt-1.5 text-white/70">{subParts.join(' · ')}</p>
+-                )}
++        {activeCard === 0 && (() => {
++          const openCount = stats.open_defects ?? 0;
++            const bannerStyle = openCount === 0
++              ? { background: '#f1f5f9' }
++              : openCount < 10
++              ? { background: 'linear-gradient(to bottom right, #f59e0b, #d97706)' }
++              : openCount < 50
++              ? { background: 'linear-gradient(to bottom right, #f97316, #ea580c)' }
++              : { background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' };
++            const isEmpty = openCount === 0;
++            const textColorClass = isEmpty ? 'text-slate-700' : 'text-white';
++            const labelColorClass = isEmpty ? 'text-slate-500' : 'text-white/90';
++            const subColorClass = isEmpty ? 'text-slate-400' : 'text-white/70';
++            const buttonColorClass = isEmpty
++              ? 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
++              : 'bg-white/20 hover:bg-white/30 text-white border-white/20';
++            return (
++              <div className={`p-4 md:p-5 rounded-xl ${textColorClass}`} dir="rtl" style={bannerStyle}>
++                <div className="flex items-center justify-between gap-4">
++                  <div>
++                    <p className="text-4xl md:text-5xl font-black leading-none">{openCount}</p>
++                    <p className={`text-sm font-medium mt-1 ${labelColorClass}`}>
++                      {isEmpty ? 'אין ליקויים פתוחים — מצב מצוין' : 'ליקויים פתוחים'}
++                    </p>
++                    {subParts.length > 0 && (
++                      <p className={`text-xs mt-1.5 ${subColorClass}`}>{subParts.join(' · ')}</p>
++                    )}
++                  </div>
++                  <button onClick={onViewDefects}
++                    className={`backdrop-blur-sm text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border ${buttonColorClass}`}>
++                    צפה בליקויים
++                  </button>
++                </div>
                </div>
-@@ -3891,7 +3891,7 @@ const ProjectControlPage = () => {
-       {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
-       {canMutateStructure && (
-         <div className={`fixed bottom-20 left-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
--          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-green-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-green-600 whitespace-nowrap">
-+          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
-             <Zap className="w-4 h-4" />הקמה מהירה
-           </button>
-           <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
+-              <button onClick={onViewDefects}
+-                className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
+-                צפה בליקויים
+-              </button>
+-            </div>
+-          </div>
+-        )}
++            );
++          })()}
+         {activeCard === 1 && hasQc && (
+           <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
+             style={{ background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
