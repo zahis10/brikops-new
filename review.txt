@@ -1,34 +1,44 @@
-commit 694d48b656f9a13fa43a6cbc7c10b591f719e0c3
+commit e143d201ef8928c4ab1aef922148cde5c807c23c
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 15:34:33 2026 +0000
+Date:   Fri Apr 17 15:48:59 2026 +0000
 
-    Task #357.6 — FAB: left-5 → right-5 for RTL
+    Task #358 — Header bleed follow-up: UnitHomePage + ApartmentDashboardPage
     
-    ProjectControlPage.js
-    - L3911 (FAB action menu): fixed bottom-20 left-5 → right-5
-    - L3927 (FAB +/× toggle button): fixed bottom-6 left-5 → right-5
+    Same fix as #357.2:
+    - UnitHomePage.js:95: outer wrapper bg-gradient-to-l → bg-slate-50; inner div gains bg-gradient-to-l + rounded-b-2xl, kept inside max-w-lg mx-auto.
+    - ApartmentDashboardPage.js:329: same swap.
     
-    In RTL Hebrew layout the FAB belongs in the bottom-right corner. No other class changes.
+    Verification: grep 'bg-gradient-to-l from-amber-500 to-amber-600' in frontend/src/pages → exactly 4 matches, all of the form 'max-w-lg mx-auto bg-gradient-to-l ... rounded-b-2xl' (UnitDetailPage, BuildingDefectsPage, UnitHomePage, ApartmentDashboardPage). No outer-wrapper instance remains.
+    
+    No backend, routing, i18n, or icon-button changes.
 
-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index f659bbe..01c0f85 100644
---- a/frontend/src/pages/ProjectControlPage.js
-+++ b/frontend/src/pages/ProjectControlPage.js
-@@ -3908,7 +3908,7 @@ const ProjectControlPage = () => {
+diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+index 527b645..d08424f 100644
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -326,8 +326,8 @@ const ApartmentDashboardPage = () => {
  
-       {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
-       {canMutateStructure && (
--        <div className={`fixed bottom-20 left-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-+        <div className={`fixed bottom-20 right-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-           <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
-             <Zap className="w-4 h-4" />הקמה מהירה
-           </button>
-@@ -3924,7 +3924,7 @@ const ProjectControlPage = () => {
-         </div>
-       )}
-       {canMutateStructure && (
--        <button onClick={() => setShowFab(prev => !prev)} aria-label="תפריט פעולות" aria-expanded={showFab} className={`fixed bottom-6 left-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
-+        <button onClick={() => setShowFab(prev => !prev)} aria-label="תפריט פעולות" aria-expanded={showFab} className={`fixed bottom-6 right-5 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all ${showFab ? 'bg-slate-600 rotate-45' : 'bg-amber-500 hover:bg-amber-600'}`}>
-           <Plus className="w-6 h-6 text-white" />
-         </button>
-       )}
+   return (
+     <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
+-      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
+-        <div className="max-w-lg mx-auto px-4 py-3">
++      <div className="bg-slate-50">
++        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+           <div className="flex items-center gap-3">
+             <button
+               onClick={() => {
+diff --git a/frontend/src/pages/UnitHomePage.js b/frontend/src/pages/UnitHomePage.js
+index 4c685cc..35e5352 100644
+--- a/frontend/src/pages/UnitHomePage.js
++++ b/frontend/src/pages/UnitHomePage.js
+@@ -92,8 +92,8 @@ const UnitHomePage = () => {
+ 
+   return (
+     <div className="min-h-screen bg-slate-50" dir="rtl">
+-      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
+-        <div className="max-w-lg mx-auto px-4 py-3">
++      <div className="bg-slate-50">
++        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
+           <div className="flex items-center gap-3">
+             <button
+               onClick={() => {
