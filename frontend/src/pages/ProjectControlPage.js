@@ -3827,7 +3827,7 @@ const ProjectControlPage = () => {
               <div className="flex items-center gap-3">
                 <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-slate-700">עדיין אין ליקויים בפרויקט</p>
+                  <p className="text-sm font-medium text-slate-700">אין ליקויים בפרויקט</p>
                   <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
                 </div>
                 <button onClick={() => { if (hierarchy.length > 0) navigate(`/projects/${projectId}/buildings/${hierarchy[0].id}/defects`); }}

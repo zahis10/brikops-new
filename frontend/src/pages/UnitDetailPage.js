@@ -244,7 +244,7 @@ const UnitDetailPage = () => {
               <CheckCircle2 className="w-10 h-10 mx-auto" />
             </div>
             <p className="text-sm text-slate-500">
-              {activeFilters > 0 ? 'אין ליקויים התואמים לפילטר' : 'אין ליקויים לדירה זו'}
+              {activeFilters > 0 ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
             </p>
           </div>
         ) : (

@@ -453,7 +453,7 @@ const ProjectTasksPage = () => {
           <Card className="p-8 text-center">
             <ListTodo className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <h3 className="text-base font-bold text-slate-700 mb-1">
-              {hasActiveFilter ? 'אין ליקויים התואמים את הסינון' : 'אין ליקויים עדיין'}
+              {hasActiveFilter ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בפרויקט'}
             </h3>
             <p className="text-sm text-slate-500 mb-4">
               {hasActiveFilter

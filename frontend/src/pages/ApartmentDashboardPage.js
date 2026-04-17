@@ -648,7 +648,7 @@ const ApartmentDashboardPage = () => {
               <CheckCircle2 className="w-10 h-10 mx-auto" />
             </div>
             <p className="text-sm text-slate-500">
-              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים לדירה זו'}
+              {hasActiveFilters ? 'אין ליקויים התואמים לסינון' : 'אין ליקויים בדירה'}
             </p>
           </div>
         ) : (
