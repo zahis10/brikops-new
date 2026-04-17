@@ -1,25 +1,56 @@
-commit b3af97431399bd594f8486cb8c9e96dce8a2af25
+commit 1edd5410a61527e2f4ba110616f357001e345911
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 13:29:43 2026 +0000
+Date:   Fri Apr 17 13:59:00 2026 +0000
 
-    Task #357.3 — Replace 💪 emoji with ClipboardCheck icon in empty state
+    Task #357.4 — Primary CTAs: green → amber
     
-    ProjectControlPage.js:3809
-    - <span className="text-2xl">💪</span>
-    + <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
+    ProjectControlPage.js, 4 button class swaps (bg-green-500/600 → bg-amber-500/600):
+    - L695: 'הבא' / 'צור בניין' button in building setup wizard
+    - L1797: 'הקמה מהירה' Quick Setup CTA in empty buildings state
+    - L3818: 'צור ליקוי →' CTA in defects empty state
+    - L3897: 'הקמה מהירה' FAB action button
     
-    ClipboardCheck already imported from lucide-react (line 24). Empty state in defects work mode now uses a clean SVG icon instead of an emoji.
+    Untouched (success indicators, kept green):
+    - L588: 'סגור' close button in success toast
+    - L2857: ✓ checkmark badge in checklist done state
 
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 90ea3d5..c9eeab2 100644
+index c9eeab2..6f662d0 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -3806,7 +3806,7 @@ const ProjectControlPage = () => {
-           {hasBuildings && totalDefects === 0 && (
-             <Card className="p-4 border-green-200 bg-green-50/50">
-               <div className="flex items-center gap-3">
--                <span className="text-2xl">💪</span>
-+                <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
-                 <div className="flex-1">
-                   <p className="text-sm font-medium text-slate-700">עדיין אין ליקויים בפרויקט</p>
+@@ -692,7 +692,7 @@ const QuickSetupWizard = ({ projectId, project, currentUnitCount, onClose, onSuc
+                 הבא
+               </Button>
+             ) : (
+-              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm">
++              <Button onClick={handleGenerate} disabled={submitting} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm">
+                 {submitting ? <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />יוצר...</span> : `צור בניין (${floorCount} קומות, ${totalUnits} דירות)`}
+               </Button>
+             )}
+@@ -1791,7 +1791,7 @@ const StructureTab = ({ hierarchy, hierarchyLoading, buildings, projectId, onRef
+             {onQuickSetup && (
+               <Button
+                 onClick={onQuickSetup}
+-                className="bg-green-500 hover:bg-green-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
++                className="bg-amber-500 hover:bg-amber-600 text-white font-medium px-6 py-2.5 rounded-lg text-sm"
+               >
+                 <Zap className="w-4 h-4 ml-1 inline" />
+                 הקמה מהירה
+@@ -3812,7 +3812,7 @@ const ProjectControlPage = () => {
                    <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
+                 </div>
+                 <button onClick={() => { if (hierarchy.length > 0) navigate(`/projects/${projectId}/buildings/${hierarchy[0].id}/defects`); }}
+-                  className="text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium whitespace-nowrap">
++                  className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium whitespace-nowrap">
+                   צור ליקוי →
+                 </button>
+               </div>
+@@ -3891,7 +3891,7 @@ const ProjectControlPage = () => {
+       {canMutateStructure && showFab && <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setShowFab(false)} />}
+       {canMutateStructure && (
+         <div className={`fixed bottom-20 left-5 z-50 flex flex-col gap-2 transition-all ${showFab ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+-          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-green-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-green-600 whitespace-nowrap">
++          <button onClick={() => { setShowQuickSetup(true); setShowFab(false); }} className="flex items-center gap-2 bg-amber-500 rounded-full px-4 py-2.5 shadow-lg text-sm font-medium text-white hover:bg-amber-600 whitespace-nowrap">
+             <Zap className="w-4 h-4" />הקמה מהירה
+           </button>
+           <button onClick={() => { setShowBulkFloors(true); setShowFab(false); }} className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 shadow-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-amber-50 whitespace-nowrap">
