@@ -8,6 +8,7 @@ import NewDefectModal from '../components/NewDefectModal';
 import StatCard from '../components/StatCard';
 import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
+import Breadcrumbs from '../components/Breadcrumbs';
 import {
   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
   CheckCircle2, ChevronDown, X
@@ -137,11 +138,10 @@ const UnitDetailPage = () => {
             </button>
             <div className="flex-1 min-w-0">
               <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
-              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
-                {project && <span>{project.name}</span>}
-                {building && <><span>›</span><span>{building.name}</span></>}
-                {floor && <><span>›</span><span>{floor.name}</span></>}
-              </div>
+              <Breadcrumbs
+                items={[project?.name, building?.name, floor?.name]}
+                className="text-amber-100"
+              />
             </div>
           </div>
         </div>

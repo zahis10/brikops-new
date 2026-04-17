@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import StatCard from '../components/StatCard';
+import Breadcrumbs from '../components/Breadcrumbs';
 import {
   ArrowRight, Loader2, Building2, Layers, DoorOpen,
   ClipboardList, FileText, Home, Pencil
@@ -126,11 +127,10 @@ const UnitHomePage = () => {
                   <Pencil className="w-3.5 h-3.5 text-white" />
                 </button>
               </div>
-              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
-                {project && <span>{project.name}</span>}
-                {building && <><span>›</span><span>{building.name}</span></>}
-                {floor && <><span>›</span><span>{floor.name}</span></>}
-              </div>
+              <Breadcrumbs
+                items={[project?.name, building?.name, floor?.name]}
+                className="text-amber-100"
+              />
               {unit.unit_note && (
                 <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
               )}
