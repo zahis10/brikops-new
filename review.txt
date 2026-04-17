@@ -1,137 +1,123 @@
-commit 3aae58d602de8b223a83ac178b8ec0113f27bfb5
+commit bfbbb801d63c2ae0b7dfc0b6dbd435ae4feff47d
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 17:01:23 2026 +0000
+Date:   Fri Apr 17 17:13:02 2026 +0000
 
-    feat(ui): #373 unify category pills to CategoryPill component
+    feat(ui): #374 extract Breadcrumbs component
     
-    Spec #346 Task 4. Five tCategory call sites (UnitDetailPage,
-    ApartmentDashboardPage, ContractorDashboard, ProjectTasksPage,
-    ProjectControlPage) used 3 different stylings; now all render
-    through new <CategoryPill> with uniform bg-slate-100/text-slate-600/
-    text-[11px]/rounded-md. Visual-only — STATUS_LABELS/i18n untouched,
-    TaskDetailPage and KIND_COLORS deliberately out of scope.
+    Spec #346 Task 5. Three identical inline breadcrumb blocks
+    (project > building > floor) in amber-gradient headers replaced
+    with a single <Breadcrumbs items={[...]} /> component. Filters
+    out falsy values, renders aria-hidden separator, preserves
+    gap-1.5/text-xs/text-amber-100 styling exactly. Visual-only.
+    
+    Sites: UnitDetailPage:140, UnitHomePage:129, ApartmentDashboardPage:368.
+    Out of scope (different shape): FloorDetailPage, UnitPlansPage.
 
-diff --git a/frontend/src/components/CategoryPill.jsx b/frontend/src/components/CategoryPill.jsx
+diff --git a/frontend/src/components/Breadcrumbs.jsx b/frontend/src/components/Breadcrumbs.jsx
 new file mode 100644
-index 0000000..2e58dd9
+index 0000000..59fafbd
 --- /dev/null
-+++ b/frontend/src/components/CategoryPill.jsx
-@@ -0,0 +1,9 @@
++++ b/frontend/src/components/Breadcrumbs.jsx
+@@ -0,0 +1,18 @@
 +import React from 'react';
 +
-+const CategoryPill = ({ children, className = '' }) => (
-+  <span className={`inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium whitespace-nowrap ${className}`}>
-+    {children}
-+  </span>
-+);
++const Breadcrumbs = ({ items = [], separator = '›', className = '' }) => {
++  const parts = items.filter(Boolean);
++  if (parts.length === 0) return null;
++  return (
++    <div className={`flex items-center gap-1.5 text-xs ${className}`}>
++      {parts.map((item, i) => (
++        <React.Fragment key={i}>
++          {i > 0 && <span aria-hidden="true">{separator}</span>}
++          <span className="truncate">{item}</span>
++        </React.Fragment>
++      ))}
++    </div>
++  );
++};
 +
-+export default CategoryPill;
++export default Breadcrumbs;
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 8f079a1..5f51bcc 100644
+index 5f51bcc..bbe509b 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -11,6 +11,7 @@ import ExportModal from '../components/ExportModal';
- import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+@@ -12,6 +12,7 @@ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
  import StatCard from '../components/StatCard';
  import StatusPill from '../components/StatusPill';
-+import CategoryPill from '../components/CategoryPill';
+ import CategoryPill from '../components/CategoryPill';
++import Breadcrumbs from '../components/Breadcrumbs';
  import {
    ArrowRight, Loader2, AlertTriangle, CheckCircle2,
    ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-@@ -677,9 +678,7 @@ const ApartmentDashboardPage = () => {
-                         <StatusPill status={task.status} label={statusInfo.label} />
-                       </div>
-                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
--                        <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-600">
--                          {tCategory(task.category)}
--                        </span>
-+                        <CategoryPill>{tCategory(task.category)}</CategoryPill>
-                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
-                           {priorityInfo.label}
-                         </span>
-diff --git a/frontend/src/pages/ContractorDashboard.js b/frontend/src/pages/ContractorDashboard.js
-index 834a2c0..877d85d 100644
---- a/frontend/src/pages/ContractorDashboard.js
-+++ b/frontend/src/pages/ContractorDashboard.js
-@@ -9,6 +9,7 @@ import {
-   Camera, Eye, Settings, ChevronLeft, Flame
- } from 'lucide-react';
- import { Card } from '../components/ui/card';
-+import CategoryPill from '../components/CategoryPill';
- 
- const PAGE_SIZE = 50;
- 
-@@ -475,7 +476,7 @@ const ContractorDashboard = () => {
- 
-                       <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                         <span className={`px-1.5 py-0.5 rounded ${priBadgeCls}`}>{tPriority(task.priority)}</span>
--                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{tCategory(task.category)}</span>
-+                        <CategoryPill>{tCategory(task.category)}</CategoryPill>
-                         {waitStr && (
-                           <span className="text-slate-400 flex items-center gap-0.5">
-                             <Clock className="w-3 h-3" /> {t('dashboard', 'waiting_label')} {waitStr}
-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 01c0f85..7dcad86 100644
---- a/frontend/src/pages/ProjectControlPage.js
-+++ b/frontend/src/pages/ProjectControlPage.js
-@@ -16,6 +16,7 @@ import { formatUnitLabel } from '../utils/formatters';
- import { qcFloorStatusLabel } from '../utils/qcLabels';
- import QCApproversTab from '../components/QCApproversTab';
- import ProjectBillingCard from '../components/ProjectBillingCard';
-+import CategoryPill from '../components/CategoryPill';
- import ProjectDataExportTab from '../components/ProjectDataExportTab';
- import {
-   X, ChevronDown, ChevronRight, ChevronUp, Loader2, Building2, Layers, DoorOpen,
-@@ -3784,7 +3785,7 @@ const ProjectControlPage = () => {
-                       </span>
-                     </div>
-                     <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
--                      <span className="bg-slate-100 px-2 py-0.5 rounded">{tCategory(task.category)}</span>
-+                      <CategoryPill>{tCategory(task.category)}</CategoryPill>
-                       <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
-                       {task.due_date && (
-                         <span className="flex items-center gap-1">
-diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
-index 27c5a79..7e3728b 100644
---- a/frontend/src/pages/ProjectTasksPage.js
-+++ b/frontend/src/pages/ProjectTasksPage.js
-@@ -8,6 +8,7 @@ import {
-   CheckCircle2, AlertTriangle, ArrowLeftRight, MessageSquare, Users, UserPlus
- } from 'lucide-react';
- import NewDefectModal from '../components/NewDefectModal';
-+import CategoryPill from '../components/CategoryPill';
- import { Card } from '../components/ui/card';
- import { tCategory } from '../i18n';
- import ProjectSwitcher from '../components/ProjectSwitcher';
-@@ -519,7 +520,7 @@ const ProjectTasksPage = () => {
-                     </span>
-                   </div>
-                   <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
--                    <span className="bg-slate-100 px-2 py-0.5 rounded">{tCategory(task.category)}</span>
-+                    <CategoryPill>{tCategory(task.category)}</CategoryPill>
-                     <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
-                     {task.due_date && (
-                       <span className="flex items-center gap-1">
+@@ -365,11 +366,10 @@ const ApartmentDashboardPage = () => {
+                   <Pencil className="w-3.5 h-3.5 text-white" />
+                 </button>
+               </div>
+-              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
+-                {project && <span>{project.name}</span>}
+-                {building && <><span>›</span><span>{building.name}</span></>}
+-                {floor && <><span>›</span><span>{floor.name}</span></>}
+-              </div>
++              <Breadcrumbs
++                items={[project?.name, building?.name, floor?.name]}
++                className="text-amber-100"
++              />
+               {unit.unit_note && (
+                 <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
+               )}
 diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index cfc7397..6fdf811 100644
+index 6fdf811..ffdac42 100644
 --- a/frontend/src/pages/UnitDetailPage.js
 +++ b/frontend/src/pages/UnitDetailPage.js
-@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
- import NewDefectModal from '../components/NewDefectModal';
+@@ -8,6 +8,7 @@ import NewDefectModal from '../components/NewDefectModal';
  import StatCard from '../components/StatCard';
  import StatusPill from '../components/StatusPill';
-+import CategoryPill from '../components/CategoryPill';
+ import CategoryPill from '../components/CategoryPill';
++import Breadcrumbs from '../components/Breadcrumbs';
  import {
    ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
    CheckCircle2, ChevronDown, X
-@@ -262,9 +263,7 @@ const UnitDetailPage = () => {
-                       )}
-                       <div className="flex items-center gap-2 mt-2 flex-wrap">
-                         <StatusPill status={task.status} label={statusInfo.label} />
--                        <span className="text-[10px] text-slate-400">
--                          {tCategory(task.category)}
--                        </span>
-+                        <CategoryPill>{tCategory(task.category)}</CategoryPill>
-                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
-                           {priorityInfo.label}
-                         </span>
+@@ -137,11 +138,10 @@ const UnitDetailPage = () => {
+             </button>
+             <div className="flex-1 min-w-0">
+               <h1 className="text-lg font-bold truncate">{formatUnitLabel(effectiveLabel)}</h1>
+-              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
+-                {project && <span>{project.name}</span>}
+-                {building && <><span>›</span><span>{building.name}</span></>}
+-                {floor && <><span>›</span><span>{floor.name}</span></>}
+-              </div>
++              <Breadcrumbs
++                items={[project?.name, building?.name, floor?.name]}
++                className="text-amber-100"
++              />
+             </div>
+           </div>
+         </div>
+diff --git a/frontend/src/pages/UnitHomePage.js b/frontend/src/pages/UnitHomePage.js
+index d25c998..8b3f41d 100644
+--- a/frontend/src/pages/UnitHomePage.js
++++ b/frontend/src/pages/UnitHomePage.js
+@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
+ import { t } from '../i18n';
+ import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+ import StatCard from '../components/StatCard';
++import Breadcrumbs from '../components/Breadcrumbs';
+ import {
+   ArrowRight, Loader2, Building2, Layers, DoorOpen,
+   ClipboardList, FileText, Home, Pencil
+@@ -126,11 +127,10 @@ const UnitHomePage = () => {
+                   <Pencil className="w-3.5 h-3.5 text-white" />
+                 </button>
+               </div>
+-              <div className="flex items-center gap-1.5 text-amber-100 text-xs">
+-                {project && <span>{project.name}</span>}
+-                {building && <><span>›</span><span>{building.name}</span></>}
+-                {floor && <><span>›</span><span>{floor.name}</span></>}
+-              </div>
++              <Breadcrumbs
++                items={[project?.name, building?.name, floor?.name]}
++                className="text-amber-100"
++              />
+               {unit.unit_note && (
+                 <p className="text-[11px] text-amber-100/80 mt-0.5 truncate">{unit.unit_note}</p>
+               )}
