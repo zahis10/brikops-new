@@ -326,8 +326,8 @@ const ApartmentDashboardPage = () => {
 
   return (
     <div className={`min-h-screen bg-slate-50 ${canCreateDefect ? 'pb-24' : 'pb-6'}`} dir="rtl">
-      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
-        <div className="max-w-lg mx-auto px-4 py-3">
+      <div className="bg-slate-50">
+        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
