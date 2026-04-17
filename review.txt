@@ -1,42 +1,25 @@
-commit 9068fcb278bdd4fb0ca6c7a417e52f54af9f8192
+commit b3af97431399bd594f8486cb8c9e96dce8a2af25
 Author: zahis10 <zahis10@gmail.com>
-Date:   Fri Apr 17 13:01:42 2026 +0000
+Date:   Fri Apr 17 13:29:43 2026 +0000
 
-    Task #357.2 — Header bleed: gradient confined to max-w-lg container
+    Task #357.3 — Replace 💪 emoji with ClipboardCheck icon in empty state
     
-    UnitDetailPage.js:126 + BuildingDefectsPage.js:282
-    - Outer wrapper: bg-gradient-to-l → bg-slate-50 (full width, neutral)
-    - Inner container: adds bg-gradient-to-l from-amber-500 to-amber-600 + rounded-b-2xl
-    - Same max-w-lg mx-auto px-4 py-3 layout preserved
-    - Result: amber gradient now stops at 512px (max-w-lg) instead of bleeding edge-to-edge on desktop
+    ProjectControlPage.js:3809
+    - <span className="text-2xl">💪</span>
+    + <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
+    
+    ClipboardCheck already imported from lucide-react (line 24). Empty state in defects work mode now uses a clean SVG icon instead of an emoji.
 
-diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
-index b9fae39..7617249 100644
---- a/frontend/src/pages/BuildingDefectsPage.js
-+++ b/frontend/src/pages/BuildingDefectsPage.js
-@@ -279,8 +279,8 @@ const BuildingDefectsPage = () => {
- 
-   return (
-     <div className="min-h-screen bg-slate-50" dir="rtl">
--      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
--        <div className="max-w-lg mx-auto px-4 py-3">
-+      <div className="bg-slate-50">
-+        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-           <div className="flex items-center gap-3">
-             <button
-               onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
-diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
-index 6ced5ad..8a99060 100644
---- a/frontend/src/pages/UnitDetailPage.js
-+++ b/frontend/src/pages/UnitDetailPage.js
-@@ -123,8 +123,8 @@ const UnitDetailPage = () => {
- 
-   return (
-     <div className="min-h-screen bg-slate-50 pb-24" dir="rtl">
--      <div className="bg-gradient-to-l from-amber-500 to-amber-600 text-white">
--        <div className="max-w-lg mx-auto px-4 py-3">
-+      <div className="bg-slate-50">
-+        <div className="max-w-lg mx-auto bg-gradient-to-l from-amber-500 to-amber-600 text-white rounded-b-2xl px-4 py-3">
-           <div className="flex items-center gap-3">
-             <button
-               onClick={() => navigate(`/projects/${projectId}/units/${unitId}`)}
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index 90ea3d5..c9eeab2 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -3806,7 +3806,7 @@ const ProjectControlPage = () => {
+           {hasBuildings && totalDefects === 0 && (
+             <Card className="p-4 border-green-200 bg-green-50/50">
+               <div className="flex items-center gap-3">
+-                <span className="text-2xl">💪</span>
++                <ClipboardCheck className="w-8 h-8 text-emerald-500" strokeWidth={1.5} />
+                 <div className="flex-1">
+                   <p className="text-sm font-medium text-slate-700">עדיין אין ליקויים בפרויקט</p>
+                   <p className="text-xs text-slate-500 mt-0.5">צור ליקוי ראשון כדי להתחיל לעבוד</p>
