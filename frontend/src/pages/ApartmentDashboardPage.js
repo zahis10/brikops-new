@@ -9,8 +9,9 @@ import NewDefectModal from '../components/NewDefectModal';
 import FilterDrawer from '../components/FilterDrawer';
 import ExportModal from '../components/ExportModal';
 import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+import StatCard from '../components/StatCard';
 import {
-  ArrowRight, Loader2, AlertTriangle, CheckCircle2, Clock,
+  ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
   SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2
 } from 'lucide-react';
@@ -386,28 +387,10 @@ const ApartmentDashboardPage = () => {
           </button>
           {summaryOpen && (
             <div className="px-4 pb-4">
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-center gap-1 text-red-500">
-                    <AlertTriangle className="w-4 h-4" />
-                  </div>
-                  <div className="text-2xl font-bold text-slate-800">{openCount}</div>
-                  <div className="text-xs text-slate-500">פתוחות</div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-center gap-1 text-blue-500">
-                    <Clock className="w-4 h-4" />
-                  </div>
-                  <div className="text-2xl font-bold text-slate-800">{inProgressCount}</div>
-                  <div className="text-xs text-slate-500">בטיפול</div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-center gap-1 text-green-500">
-                    <CheckCircle2 className="w-4 h-4" />
-                  </div>
-                  <div className="text-2xl font-bold text-slate-800">{closedCount}</div>
-                  <div className="text-xs text-slate-500">סגורות</div>
-                </div>
+              <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+                <StatCard label="פתוחות" value={openCount} />
+                <StatCard label="בטיפול" value={inProgressCount} />
+                <StatCard label="סגורות" value={closedCount} />
               </div>
             </div>
           )}

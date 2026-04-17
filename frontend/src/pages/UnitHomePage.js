@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import { t } from '../i18n';
 import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
+import StatCard from '../components/StatCard';
 import {
   ArrowRight, Loader2, Building2, Layers, DoorOpen,
-  AlertTriangle, CheckCircle2, Clock, ClipboardList, FileText, Home, Pencil
+  ClipboardList, FileText, Home, Pencil
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
 
@@ -140,28 +141,10 @@ const UnitHomePage = () => {
 
       <div className="max-w-lg mx-auto px-4 -mt-2">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="space-y-1">
-              <div className="flex items-center justify-center gap-1 text-red-500">
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-              <div className="text-2xl font-bold text-slate-800">{kpi?.open ?? 0}</div>
-              <div className="text-xs text-slate-500">{t('unitHome', 'kpiOpen')}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-center gap-1 text-blue-500">
-                <Clock className="w-4 h-4" />
-              </div>
-              <div className="text-2xl font-bold text-slate-800">{kpi?.in_progress ?? 0}</div>
-              <div className="text-xs text-slate-500">{t('unitHome', 'kpiInProgress')}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-center gap-1 text-green-500">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-              <div className="text-2xl font-bold text-slate-800">{kpi?.closed ?? 0}</div>
-              <div className="text-xs text-slate-500">{t('unitHome', 'kpiClosed')}</div>
-            </div>
+          <div className="grid grid-cols-3 divide-x divide-slate-100" dir="ltr">
+            <StatCard label={t('unitHome', 'kpiOpen')} value={kpi?.open ?? 0} />
+            <StatCard label={t('unitHome', 'kpiInProgress')} value={kpi?.in_progress ?? 0} />
+            <StatCard label={t('unitHome', 'kpiClosed')} value={kpi?.closed ?? 0} />
           </div>
         </div>
       </div>
