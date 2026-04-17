@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
 import NewDefectModal from '../components/NewDefectModal';
 import StatCard from '../components/StatCard';
+import StatusPill from '../components/StatusPill';
 import {
   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
   CheckCircle2, ChevronDown, X
@@ -260,9 +261,7 @@ const UnitDetailPage = () => {
                         <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{task.description}</p>
                       )}
                       <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusInfo.color}`}>
-                          {statusInfo.label}
-                        </span>
+                        <StatusPill status={task.status} label={statusInfo.label} />
                         <span className="text-[10px] text-slate-400">
                           {tCategory(task.category)}
                         </span>

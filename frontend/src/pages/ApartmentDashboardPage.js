@@ -10,6 +10,7 @@ import FilterDrawer from '../components/FilterDrawer';
 import ExportModal from '../components/ExportModal';
 import UnitTypeEditModal, { TAG_MAP } from '../components/UnitTypeEditModal';
 import StatCard from '../components/StatCard';
+import StatusPill from '../components/StatusPill';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
@@ -423,9 +424,7 @@ const ApartmentDashboardPage = () => {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-medium text-slate-800 truncate">{task.title}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${statusInfo.color}`}>
-                          {statusInfo.label}
-                        </span>
+                        <StatusPill status={task.status} label={statusInfo.label} />
                       </div>
                     </button>
                   );
@@ -675,9 +674,7 @@ const ApartmentDashboardPage = () => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <h3 className="text-sm font-semibold text-slate-800 truncate">{task.title}</h3>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${statusInfo.color}`}>
-                          {statusInfo.label}
-                        </span>
+                        <StatusPill status={task.status} label={statusInfo.label} />
                       </div>
                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                         <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-600">
