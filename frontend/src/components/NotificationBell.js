@@ -79,7 +79,7 @@ export default function NotificationBell() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="relative p-1.5 hover:bg-slate-700 rounded-lg transition-colors"
+          className="relative h-11 w-11 flex items-center justify-center hover:bg-slate-700 rounded-lg transition-colors"
           aria-label="התראות"
           aria-haspopup="true"
           aria-expanded={open}

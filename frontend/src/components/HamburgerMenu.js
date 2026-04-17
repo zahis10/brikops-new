@@ -39,7 +39,7 @@ export default function HamburgerMenu({ onSelectTab, showBilling, onNavigate, on
     <>
       <button
         onClick={() => setOpen(true)}
-        className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
+        className="h-11 w-11 flex items-center justify-center bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
         title="תפריט"
       >
         <Menu className="w-4 h-4" />

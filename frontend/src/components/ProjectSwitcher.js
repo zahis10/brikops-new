@@ -46,7 +46,7 @@ export default function ProjectSwitcher({ currentProjectId, currentProjectName }
     <div className="relative" ref={ref}>
       <button
         onClick={() => showSwitcher && setOpen(!open)}
-        className={`flex items-center gap-1.5 min-w-0 ${showSwitcher ? 'cursor-pointer hover:bg-slate-700/50 rounded-lg px-2 py-1 -mx-2 -my-1 transition-colors' : ''}`}
+        className={`flex items-center gap-1.5 min-w-0 ${showSwitcher ? 'cursor-pointer hover:bg-slate-700/50 rounded-lg min-h-[44px] px-3 transition-colors' : ''}`}
         disabled={!showSwitcher}
       >
         <h1 className="text-lg font-bold leading-tight truncate">{currentProjectName}</h1>
