@@ -214,24 +214,42 @@ const KpiSection = ({ stats, onViewDefects, qcSummary, qcLoading, onViewQc }) =>
     <div className="space-y-3">
       <div className="overflow-hidden rounded-xl shadow-lg"
         onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-        {activeCard === 0 && (
-          <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
-            style={{ background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' }}>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-4xl md:text-5xl font-black leading-none">{stats.open_defects ?? 0}</p>
-                <p className="text-sm font-medium mt-1 text-white/90">ליקויים פתוחים</p>
-                {subParts.length > 0 && (
-                  <p className="text-xs mt-1.5 text-white/70">{subParts.join(' · ')}</p>
-                )}
+        {activeCard === 0 && (() => {
+          const openCount = stats.open_defects ?? 0;
+            const bannerStyle = openCount === 0
+              ? { background: '#f1f5f9' }
+              : openCount < 10
+              ? { background: 'linear-gradient(to bottom right, #f59e0b, #d97706)' }
+              : openCount < 50
+              ? { background: 'linear-gradient(to bottom right, #f97316, #ea580c)' }
+              : { background: 'linear-gradient(to bottom right, #ef4444, #dc2626)' };
+            const isEmpty = openCount === 0;
+            const textColorClass = isEmpty ? 'text-slate-700' : 'text-white';
+            const labelColorClass = isEmpty ? 'text-slate-500' : 'text-white/90';
+            const subColorClass = isEmpty ? 'text-slate-400' : 'text-white/70';
+            const buttonColorClass = isEmpty
+              ? 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
+              : 'bg-white/20 hover:bg-white/30 text-white border-white/20';
+            return (
+              <div className={`p-4 md:p-5 rounded-xl ${textColorClass}`} dir="rtl" style={bannerStyle}>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-4xl md:text-5xl font-black leading-none">{openCount}</p>
+                    <p className={`text-sm font-medium mt-1 ${labelColorClass}`}>
+                      {isEmpty ? 'אין ליקויים פתוחים — מצב מצוין' : 'ליקויים פתוחים'}
+                    </p>
+                    {subParts.length > 0 && (
+                      <p className={`text-xs mt-1.5 ${subColorClass}`}>{subParts.join(' · ')}</p>
+                    )}
+                  </div>
+                  <button onClick={onViewDefects}
+                    className={`backdrop-blur-sm text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border ${buttonColorClass}`}>
+                    צפה בליקויים
+                  </button>
+                </div>
               </div>
-              <button onClick={onViewDefects}
-                className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap border border-white/20">
-                צפה בליקויים
-              </button>
-            </div>
-          </div>
-        )}
+            );
+          })()}
         {activeCard === 1 && hasQc && (
           <div className="p-4 md:p-5 text-white rounded-xl" dir="rtl"
             style={{ background: 'linear-gradient(to bottom right, #10b981, #059669)' }}>
