@@ -1,146 +1,49 @@
-commit 0bf21cc1f71b20a0fde5a1574e9ad51c28e102c1
-Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Sat Apr 18 08:03:49 2026 +0000
+commit df4162ea09d322360d1ced4bcccddbb419f8cb52
+Author: zahis10 <zahis10@gmail.com>
+Date:   Sat Apr 18 12:51:23 2026 +0000
 
-    #383 — Enrich GET /units/{unit_id}/tasks with names
-    
-    Backend-only change. Replaces per-task UUID slices in the
-    ApartmentDashboardPage FilterDrawer with real company / assignee /
-    creator names.
-    
-    Changes:
-    - backend/contractor_ops/projects_router.py: rewrote list_unit_tasks
-      - Dropped response_model=List[Task] so new fields aren't stripped
-      - Added batch enrichment after the tasks query:
-        * project_companies → companies fallback for company_name
-        * project_memberships (per project) for assignee_name + assignee
-          company_id, with users.name as fallback
-        * users for created_by_name (and assignee fallback)
-        * Extra project_companies → companies lookup for membership
-          company_ids not already loaded from tasks
-      - Total Mongo round-trips bounded at ~6 regardless of task count
-      - Each response item carries company_name, assignee_name,
-        assignee_company_name, created_by_name when ids resolve
-    
-    Architect review: initially failed because extra_company_ids only
-    queried project_companies (no fallback to companies). Fixed in same
-    commit by adding the companies fallback for still-missing ids.
-    
-    Verified via curl against demo PM account: 12-task unit returned
-    populated names for company, assignee + assignee company, and
-    created_by; tasks with no company/assignee correctly stay empty.
-    
-    Out of scope (per spec): Task pydantic schema, single-task endpoint
-    (already enriched), get_unit_detail KPI endpoint, BuildingDefectsPage
-    aggregate endpoint, frontend changes.
+    spec #384 Phase 2: add Capgo OTA upload workflow
 
-diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
-index dfadc81..5101894 100644
---- a/backend/contractor_ops/projects_router.py
-+++ b/backend/contractor_ops/projects_router.py
-@@ -1081,7 +1081,7 @@ async def get_project_hierarchy(project_id: str, user: dict = Depends(get_curren
-     }
- 
- 
--@router.get("/units/{unit_id}/tasks", response_model=List[Task])
-+@router.get("/units/{unit_id}/tasks")
- async def list_unit_tasks(unit_id: str,
-                           status: Optional[str] = Query(None),
-                           category: Optional[str] = Query(None),
-@@ -1095,11 +1095,96 @@ async def list_unit_tasks(unit_id: str,
-     tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
-     tasks = sorted(tasks, key=_priority_sort_key)
-     from services.object_storage import resolve_urls_in_doc
+diff --git a/.github/workflows/deploy-frontend-capgo.yml b/.github/workflows/deploy-frontend-capgo.yml
+new file mode 100644
+index 0000000..b40e4a0
+--- /dev/null
++++ b/.github/workflows/deploy-frontend-capgo.yml
+@@ -0,0 +1,37 @@
++name: Upload Frontend Bundle to Capgo
 +
-+    # ---- Batch enrichment ----
-+    project_id = tasks[0].get('project_id') if tasks else None
++on:
++  push:
++    branches: [main]
++    paths:
++      - 'frontend/**'
 +
-+    company_ids = {t.get('company_id') for t in tasks if t.get('company_id')}
-+    assignee_ids = {t.get('assignee_id') for t in tasks if t.get('assignee_id')}
-+    creator_ids = {t.get('created_by') for t in tasks if t.get('created_by')}
++jobs:
++  capgo-upload:
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v4
 +
-+    # companies: project_companies (preferred) ← fallback companies
-+    company_name_map: dict = {}
-+    if company_ids:
-+        async for pc in db.project_companies.find(
-+            {'id': {'$in': list(company_ids)}, 'deletedAt': {'$exists': False}},
-+            {'_id': 0, 'id': 1, 'name': 1}
-+        ):
-+            if pc.get('id'):
-+                company_name_map[pc['id']] = pc.get('name', '')
-+        missing = company_ids - set(company_name_map.keys())
-+        if missing:
-+            async for c in db.companies.find(
-+                {'id': {'$in': list(missing)}},
-+                {'_id': 0, 'id': 1, 'name': 1}
-+            ):
-+                if c.get('id'):
-+                    company_name_map[c['id']] = c.get('name', '')
++      - name: Setup Node
++        uses: actions/setup-node@v4
++        with:
++          node-version: ${{ vars.NODE_VERSION }}
 +
-+    # memberships (for assignee_name + assignee company_id)
-+    membership_map: dict = {}
-+    if assignee_ids and project_id:
-+        async for pm in db.project_memberships.find(
-+            {'project_id': project_id, 'user_id': {'$in': list(assignee_ids)}},
-+            {'_id': 0, 'user_id': 1, 'user_name': 1, 'company_id': 1}
-+        ):
-+            if pm.get('user_id'):
-+                membership_map[pm['user_id']] = pm
++      - name: Install frontend dependencies
++        working-directory: frontend
++        run: yarn install --frozen-lockfile
 +
-+    # users: fallback name source for assignee + source for created_by
-+    all_user_ids = assignee_ids | creator_ids
-+    user_name_map: dict = {}
-+    if all_user_ids:
-+        async for u in db.users.find(
-+            {'id': {'$in': list(all_user_ids)}},
-+            {'_id': 0, 'id': 1, 'name': 1}
-+        ):
-+            if u.get('id'):
-+                user_name_map[u['id']] = u.get('name', '')
++      - name: Build frontend
++        working-directory: frontend
++        env:
++          REACT_APP_BACKEND_URL: ${{ vars.REACT_APP_BACKEND_URL }}
++          REACT_APP_GOOGLE_CLIENT_ID: ${{ vars.REACT_APP_GOOGLE_CLIENT_ID }}
++          REACT_APP_GIT_SHA: ${{ github.sha }}
++        run: yarn build
 +
-+    # Fetch any extra project_companies referenced via membership.company_id
-+    # that weren't already in tasks
-+    extra_company_ids = {
-+        m.get('company_id') for m in membership_map.values() if m.get('company_id')
-+    } - set(company_name_map.keys())
-+    if extra_company_ids:
-+        async for pc in db.project_companies.find(
-+            {'id': {'$in': list(extra_company_ids)}, 'deletedAt': {'$exists': False}},
-+            {'_id': 0, 'id': 1, 'name': 1}
-+        ):
-+            if pc.get('id'):
-+                company_name_map[pc['id']] = pc.get('name', '')
-+        still_missing = extra_company_ids - set(company_name_map.keys())
-+        if still_missing:
-+            async for c in db.companies.find(
-+                {'id': {'$in': list(still_missing)}},
-+                {'_id': 0, 'id': 1, 'name': 1}
-+            ):
-+                if c.get('id'):
-+                    company_name_map[c['id']] = c.get('name', '')
-+
-+    # ---- Build response ----
-     result = []
-     for t in tasks:
-         td = Task(**t).dict()
-         resolve_urls_in_doc(td)
-+
-+        if t.get('company_id'):
-+            td['company_name'] = company_name_map.get(t['company_id'], '')
-+
-+        if t.get('assignee_id'):
-+            pm = membership_map.get(t['assignee_id'])
-+            a_name = (pm.get('user_name') if pm else None) or user_name_map.get(t['assignee_id'], '')
-+            td['assignee_name'] = a_name
-+            a_company_id = (pm.get('company_id') if pm else None) or t.get('company_id')
-+            if a_company_id:
-+                td['assignee_company_name'] = company_name_map.get(a_company_id, '')
-+
-+        if t.get('created_by'):
-+            td['created_by_name'] = user_name_map.get(t['created_by'], '')
-+
-         result.append(td)
-+
-     return result
- 
- 
++      - name: Upload bundle to Capgo
++        working-directory: frontend
++        env:
++          CAPGO_API_KEY: ${{ secrets.CAPGO_API_KEY }}
++        run: npx @capgo/cli bundle upload --apikey "$CAPGO_API_KEY" --channel production
