@@ -1,131 +1,149 @@
 ================================================================
-#385 שלב 5 צעד 1 — Diff מלא של כל השינויים בסשן הזה
+#385 שלב 5 צעד 1 — Bootstrap iOS Capacitor (RETRY)
+סטטוס: ✅ הושלם, commit מקומי, לא נדחף
 ================================================================
-TL;DR: לא בוצע אף שינוי קוד / תלות. ההתקנה של @capacitor/ios בוצעה
-ובוטלה מיד באותו סשן (yarn add → yarn remove), כי yarn בחר major
-8.3.1 בעוד שאר ה-Capacitor stack נעול ל-^7.6.1. המפרט דרש לעצור
-ולדווח. הריפו במצב נקי לחלוטין מבחינת קוד.
 
-================================================================
-1. STAT — סיכום דחוס
-================================================================
-שינויי קוד אפליקציה (frontend/src, backend/, וכו׳)..... 0 קבצים
-שינויי תלויות (package.json, yarn.lock, requirements).. 0 קבצים
-תיקייה חדשה frontend/ios/.............................. לא קיימת
-שינויי קונפיגורציה (capacitor.config.json וכו׳)........ 0 קבצים
-
-קבצים שכן שונו בסשן (לא קוד אפליקציה):
-  review.txt                                  (override — הקובץ הזה)
-  .local/.commit_message                      (חדש — מסר commit פנימי)
-  .local/tasks/task-376.md                    (override — תוכנית משימה)
-  .local/tasks/385-apple-phase5-step1-...md   (אותו דבר, override)
-  .agents/agent_assets_metadata.toml          (אוטומטי ע״י Replit —
-                                               רק כותרת ה-asset של
-                                               review.txt התעדכנה)
+Commit SHA: d220e7366fe7f85b32667373ba20e768792cad8e
+Branch:     main (LOCAL ONLY — git push לא הורץ)
+Parent:     d6bb2e1 (checkpoint Replit אחרי הניסיון הקודם)
 
 ================================================================
-2. אימות שאין שינויי קוד
+1. אישור גרסה — major 7 כמו שביקשת
 ================================================================
-$ git status
-On branch main
-nothing to commit, working tree clean
-
-$ git diff HEAD
-(ריק — אין שינויים לא-מקומיטים)
-
-$ git log -3 --oneline
-d6bb2e1 (HEAD -> main) Update Apple sign-in to use environment
-        variables for client ID                  ← checkpoint אוטומטי
-                                                   של Replit (ראה §4)
-6340568 (origin/main) Update Apple Sign-In to use environment
-        variable for client ID                   ← #385 Phase 2 שלך
-d8ba460 spec #385 Phase 2: frontend Apple Sign-In ...
-
 $ grep '"@capacitor/' frontend/package.json
-    "@capacitor/android": "^7.6.1"
-    "@capacitor/camera": "^7.0.5"
-    "@capacitor/cli": "^7.6.1"
-    "@capacitor/core": "^7.6.1"
+    "@capacitor/android":    "^7.6.1"
+    "@capacitor/camera":     "^7.0.5"
+    "@capacitor/cli":        "^7.6.1"
+    "@capacitor/core":       "^7.6.1"
+    "@capacitor/ios":        "^7.6.1"   ← חדש
     "@capacitor/status-bar": "^7.0.6"
-(אין @capacitor/ios — בוטל)
 
-$ ls frontend/ios
-ls: cannot access 'frontend/ios': No such file or directory
-
-================================================================
-3. רצף הפקודות שהורצו (תיעוד מלא)
-================================================================
-[1] cd frontend && yarn add @capacitor/ios
-    תוצאה: התקנה הסתיימה ב-35 שניות.
-    אזהרת yarn:
-      warning " > @capacitor/ios@8.3.1" has incorrect peer
-      dependency "@capacitor/core@^8.3.0".
-    yarn בחר major 8 כי ^7.6.1 לא תומך ב-8.x ולא צוינה גרסה.
-
-[2] cd frontend && yarn remove @capacitor/ios
-    תוצאה: בוטל תוך 37 שניות. yarn.lock + package.json חזרו
-    בדיוק למצב 6340568.
-
-[3] git status --short
-    תוצאה: ריק. אין שינויים לא-מקומיטים.
-
-לא הורץ: npx cap add ios.
-לא הורץ: git commit על קוד.
-לא הורץ: git push.
+הגרסה שהותקנה בפועל: @capacitor/ios@7.6.2 (הגרסה האחרונה בטווח
+^7.6.1, תואם major 7). אין שינוי לאף חבילה אחרת.
 
 ================================================================
-4. מה הdiff של commit d6bb2e1 (האוטומטי של Replit)
+2. רצף הפקודות
 ================================================================
-זה checkpoint אוטומטי שהפלטפורמה יצרה בסיום הסשן. *הכותרת מטעה*
-(היא הועתקה מהcommit הקודם). התוכן בפועל:
+[1] cd frontend && yarn add @capacitor/ios@^7.6.1
+    → "Done in 31.40s." — אין תלייה.
+    → "Saved 1 new dependency. info Direct dependencies
+       └─ @capacitor/ios@7.6.2"
 
- .agents/agent_assets_metadata.toml |   2 +-
- review.txt                         | 219 +++++++--------------------
- 2 files changed, 69 insertions(+), 152 deletions(-)
+[2] cd frontend && npx cap add ios
+    → "✔ Adding native Xcode project in ios in 137.76ms"
+    → "✔ Copying web assets from build to ios/App/App/public"
+    → "✔ Creating capacitor.config.json in ios/App/App"
+    → [warn] Skipping pod install because CocoaPods is not installed
+       (צפוי על Linux — pod install הוא בStep 2 אצלך ב-Mac)
+    → [warn] Unable to find "xcodebuild". Skipping clean step
+       (צפוי על Linux)
+    → [info] Found 3 Capacitor plugins for ios:
+       @capacitor/camera@7.0.5
+       @capacitor/status-bar@7.0.6
+       @capgo/capacitor-updater@7.43.3
+    → [success] ios platform added!
 
-הdiff המלא:
+[3] cd frontend && CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
+    → 5 שורות אחרונות:
+        Find out more about deployment here:
+          https://cra.link/deployment
+        Done in 41.36s.
+      ("The build folder is ready to be deployed." הופיע ממש לפני)
+    → exit 0, אין warnings חדשים.
 
---- a/.agents/agent_assets_metadata.toml
-+++ b/.agents/agent_assets_metadata.toml
-@@ -77,7 +77,7 @@ title = "review-94.txt"
- id = "ocdrZig6YPfAjD1XCgrbr"
- uri = "file://review.txt"
- type = "text"
--title = "#385 Phase 2 — Frontend Apple Sign-In (full diff)"
-+title = "#385 Phase 5 Step 1 — STOP & REPORT (version mismatch)"
-
---- a/review.txt          (התוכן הקודם של Phase 2 הוחלף בתוכן הנוכחי)
-+++ b/review.txt
-@@ ... @@
-(שינוי תוכן בלבד של הקובץ הזה — אין השפעה על האפליקציה)
-
-ה-commit הזה אינו מכיל אף שינוי תחת frontend/ או backend/ או כל
-מקום שמשפיע על קוד הריצה. השרת והאפליקציה זהים בדיוק ל-6340568.
-
-================================================================
-5. הסיבה שעצרתי
-================================================================
-המפרט של המשימה (#376) קובע במפורש:
-  "If yarn picks a different major, stop and report — do not commit."
-
-yarn picked major 8 → עצרתי ודיווחתי. הריפו במצב מקורי.
+[4] git add frontend/ios/ frontend/package.json frontend/yarn.lock
+[5] git commit -m "feat(#385 Phase 5 Step 1): bootstrap iOS Capacitor platform"
+[6] git push — ❌ לא הורץ. (אין upstream גם בלאו הכי.)
 
 ================================================================
-6. אפשרויות להמשך — אתה בוחר
+3. אימות הקבצים שנוצרו
 ================================================================
-א׳ (מומלץ — נשארים על Capacitor 7):
-   cd frontend && yarn add @capacitor/ios@^7.6.1
-   npx cap add ios
-   CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
-   git add frontend/ios/ frontend/package.json frontend/yarn.lock
-   git commit -m "feat(#385 Phase 5 Step 1): bootstrap iOS Capacitor platform"
+$ ls frontend/ios/App/
+App  App.xcodeproj  App.xcworkspace  Podfile
 
-ב׳ (שדרוג Capacitor 8 — מחוץ להיקף המשימה הנוכחית):
-   שדרוג core/cli/android/camera/status-bar ל-^8.x + תאימות
-   @capgo/capacitor-updater. דורש משימה נפרדת ובדיקה.
+$ ls frontend/ios/App/App/
+AppDelegate.swift   Base.lproj            config.xml   public
+Assets.xcassets     capacitor.config.json Info.plist
 
-הערה: ההתקנה לא נתקעה ב-Replit (35 שניות), בניגוד לחשש שצוין
-ב-scratchpad. אם תבחר א׳, סביר שאסיים את כל הצעד כאן בלי שתצטרך
-ל-Mac.
+$ cat frontend/ios/.gitignore
+App/build
+App/Pods
+App/output
+App/App/public
+DerivedData
+xcuserdata
+# Cordova plugins for Capacitor
+capacitor-cordova-ios-plugins
+# Generated Config files
+App/App/capacitor.config.json
+App/App/config.xml
 
-ממתין להוראה: א׳ או ב׳?
+⚠️ הערה לגבי VERIFY #2 בספק שלך
+--------------------------------
+הספק דרש לאמת:
+  ls frontend/ios/App/App.xcworkspace/contents.xcworkspacedata
+הקובץ הזה **לא קיים** אצלי, וזה תקין:
+- ה-template של Capacitor 7 לא כולל אותו (בדקתי ב-node_modules,
+  הקובץ לא מופיע באף template של @capacitor).
+- Xcode מייצר אותו אוטומטית בפתיחה ראשונה ב-Mac.
+- ה-xcworkspace עצמה כן קיימת ותקפה — מכילה תיקיית xcshareddata
+  עם IDEWorkspaceChecks.plist:
+
+  $ ls frontend/ios/App/App.xcworkspace/
+  xcshareddata/
+  $ ls frontend/ios/App/App.xcworkspace/xcshareddata/
+  IDEWorkspaceChecks.plist
+
+כשתפתח את הפרויקט ב-Xcode על ה-Mac, contents.xcworkspacedata
+יופיע אוטומטית. אם זה מטריד — תגיד ואוסיף אותו ידנית במשימה
+נפרדת.
+
+================================================================
+4. git diff HEAD~1 HEAD --stat
+================================================================
+ frontend/ios/.gitignore                            |  13 +
+ frontend/ios/App/App.xcodeproj/project.pbxproj     | 408 ++++++++++
+ .../xcshareddata/IDEWorkspaceChecks.plist          |   8 +
+ frontend/ios/App/App/AppDelegate.swift             |  49 +++
+ .../AppIcon.appiconset/AppIcon-512@2x.png          | Bin 0 -> 110522 bytes
+ .../AppIcon.appiconset/Contents.json               |  14 +
+ frontend/ios/App/App/Assets.xcassets/Contents.json |   6 +
+ .../Assets.xcassets/Splash.imageset/Contents.json  |  23 ++
+ .../Splash.imageset/splash-2732x2732-1.png         | Bin 0 -> 41273 bytes
+ .../Splash.imageset/splash-2732x2732-2.png         | Bin 0 -> 41273 bytes
+ .../Splash.imageset/splash-2732x2732.png           | Bin 0 -> 41273 bytes
+ .../ios/App/App/Base.lproj/LaunchScreen.storyboard |  32 ++
+ frontend/ios/App/App/Base.lproj/Main.storyboard    |  19 +
+ frontend/ios/App/App/Info.plist                    |  49 +++
+ frontend/ios/App/Podfile                           |  26 ++
+ frontend/package.json                              |   1 +
+ frontend/yarn.lock                                 |   5 +
+ 17 files changed, 653 insertions(+)
+
+(בנוסף בעצם נוצרו גם capacitor.config.json + config.xml + public
+תחת ios/App/App/, אבל ה-.gitignore של Capacitor מחריג אותם בכוונה
+— הם generated מ-frontend/build בכל cap sync. זה ההתנהגות הסטנדרטית.)
+
+================================================================
+5. בדיקות סטריקטיות שעברו
+================================================================
+✅ @capacitor/ios pinned to ^7.6.1, התקנה בפועל 7.6.2 (major 7)
+✅ frontend/ios/App/{App.xcworkspace, App.xcodeproj, Podfile,
+   App/Info.plist, App/capacitor.config.json} — קיימים
+✅ frontend/ios/.gitignore — קיים
+✅ yarn build — Done in 41.36s, exit 0
+✅ git diff HEAD~1 HEAD --name-only | grep "^frontend/src/" → ריק
+✅ git diff HEAD~1 HEAD -- frontend/capacitor.config.json → ריק
+✅ אין שינוי ל-frontend/android/
+✅ אין שינוי לגרסת @capacitor/core, /android, /cli, /camera, /status-bar
+✅ git push — לא הורץ
+✅ ההתקנה לא נתקעה (31s + 0.5s + 41s)
+
+================================================================
+6. הצעד הבא
+================================================================
+מחכה לאישור שלך כדי להמשיך לStep 2 (תוסף
+@capacitor-community/apple-sign-in + handler ב-Capacitor branch).
+ה-pod install ירוץ אצלך ב-Mac אחרי שתמשוך עם ./deploy.sh --prod.
+
+ממתין לאישור: ✅ Approve / 🔧 שינויים / 🛑 Rollback?
