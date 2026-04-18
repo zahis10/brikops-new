@@ -365,8 +365,15 @@ const LoginPage = () => {
         });
       }
 
+      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
+      if (!appleServicesId) {
+        toast.error('שירות Apple לא מוגדר');
+        setSocialLoading(false);
+        return;
+      }
+
       window.AppleID.auth.init({
-        clientId: 'com.brikops.app',
+        clientId: appleServicesId,
         scope: 'name email',
         redirectURI: window.location.origin + '/login',
         usePopup: true,
