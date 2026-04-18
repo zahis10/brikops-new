@@ -6,6 +6,17 @@ require("dotenv").config();
 // Craco sets NODE_ENV=development for start, NODE_ENV=production for build
 const isDevServer = process.env.NODE_ENV !== "production";
 
+// In production builds, also load .env.production BEFORE the fail-fast guard.
+// react-scripts would load this later in its pipeline, but craco.config.js
+// runs first — so without this we'd false-alarm on a perfectly valid .env.production.
+// { override: false } keeps already-set env vars (e.g. from CI) winning over the file.
+if (!isDevServer) {
+  require("dotenv").config({
+    path: path.resolve(__dirname, ".env.production"),
+    override: false,
+  });
+}
+
 // Fail-fast guard: production builds MUST have REACT_APP_BACKEND_URL set.
 // Without it, the bundled app can't reach the backend and login breaks
 // with "תגובה לא תקינה מהשרת". This check prevents shipping a broken AAB.
