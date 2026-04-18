@@ -30,6 +30,15 @@ jobs:
           REACT_APP_GIT_SHA: ${{ github.sha }}
         run: yarn build
 
+      - name: Smoke test — verify backend URL baked into bundle
+        working-directory: frontend
+        run: |
+          if ! grep -rq "api.brikops.com" build/static/js/; then
+            echo "::error::Built bundle does NOT contain 'api.brikops.com'. REACT_APP_BACKEND_URL was probably not set. Refusing to upload a broken bundle to Capgo."
+            exit 1
+          fi
+          echo "Smoke test passed: backend URL is present in bundle."
+
       - name: Upload bundle to Capgo
         working-directory: frontend
         env:
