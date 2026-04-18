@@ -14,6 +14,7 @@ import StatusPill from '../components/StatusPill';
 import CategoryPill from '../components/CategoryPill';
 import Breadcrumbs from '../components/Breadcrumbs';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
+import { arraysEqualAsSets } from '../utils/filterHelpers';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
@@ -64,13 +65,6 @@ const APARTMENT_PRESETS = [
   { id: 'in_progress', label: 'בטיפול', values: { status: ['in_progress'] } },
   { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
 ];
-
-const arraysEqualAsSets = (a, b) => {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every(v => set.has(v));
-};
 
 const getApartmentActivePresetId = (draft) => {
   if (

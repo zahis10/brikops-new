@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import { toast } from 'sonner';
 import FilterDrawer from '../components/FilterDrawer';
+import { arraysEqualAsSets } from '../utils/filterHelpers';
 import {
   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
   Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download, Pencil
@@ -37,13 +38,6 @@ const BUILDING_PRESETS = [
   { id: 'open_blocking', label: 'פתוחים + חוסמים', values: { status: ['open', 'blocking'] } },
   { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
 ];
-
-const arraysEqualAsSets = (a, b) => {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every(v => set.has(v));
-};
 
 const getBuildingActivePresetId = (draft) => {
   if (

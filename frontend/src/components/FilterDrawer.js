@@ -108,9 +108,15 @@ const FilterDrawer = ({
 
   const applyPreset = (preset) => {
     if (activePresetId === preset.id) {
-      setDraft({ ...defaultFilters });
+      setDraft(prev => {
+        const next = { ...prev };
+        Object.keys(preset.values).forEach(key => {
+          next[key] = defaultFilters[key];
+        });
+        return next;
+      });
     } else {
-      setDraft({ ...defaultFilters, ...preset.values });
+      setDraft(prev => ({ ...prev, ...preset.values }));
     }
   };
 
@@ -175,6 +181,8 @@ const FilterDrawer = ({
                     key={`${chip.sectionKey}:${chip.value}`}
                     type="button"
                     onClick={() => toggleValue(chip.sectionKey, chip.value)}
+                    aria-label={`הסר ${chip.label}`}
+                    title={chip.label}
                     className="inline-flex items-center gap-1 max-w-[140px] px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 active:bg-amber-200 transition-colors"
                   >
                     <span className="truncate">{chip.label}</span>
