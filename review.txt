@@ -1,149 +1,154 @@
 ================================================================
-#385 שלב 5 צעד 1 — Bootstrap iOS Capacitor (RETRY)
+#385 שלב 5 צעד 2 — Native Apple Sign-In + platform-aware frontend
 סטטוס: ✅ הושלם, commit מקומי, לא נדחף
 ================================================================
 
-Commit SHA: d220e7366fe7f85b32667373ba20e768792cad8e
-Branch:     main (LOCAL ONLY — git push לא הורץ)
-Parent:     d6bb2e1 (checkpoint Replit אחרי הניסיון הקודם)
+Commit SHA: 2fe89dd
+Branch:     main (LOCAL ONLY — git push לא הורץ, אין upstream)
+Parent:     d220e73 (Step 1 — bootstrap iOS)
 
 ================================================================
-1. אישור גרסה — major 7 כמו שביקשת
+1. אישור גרסת Plugin
 ================================================================
-$ grep '"@capacitor/' frontend/package.json
+$ grep '"@capacitor-community/apple-sign-in"' frontend/package.json
+    "@capacitor-community/apple-sign-in": "^7.0.0"
+
+הגרסה שהותקנה בפועל: 7.1.0 (האחרונה בטווח ^7.0.0, תואם
+Capacitor 7). אין שינוי לאף חבילה אחרת מה-Capacitor stack:
+
     "@capacitor/android":    "^7.6.1"
     "@capacitor/camera":     "^7.0.5"
     "@capacitor/cli":        "^7.6.1"
     "@capacitor/core":       "^7.6.1"
-    "@capacitor/ios":        "^7.6.1"   ← חדש
+    "@capacitor/ios":        "^7.6.1"
     "@capacitor/status-bar": "^7.0.6"
 
-הגרסה שהותקנה בפועל: @capacitor/ios@7.6.2 (הגרסה האחרונה בטווח
-^7.6.1, תואם major 7). אין שינוי לאף חבילה אחרת.
+(התקנו גם 2 transitive deps: @types/scriptjs@0.0.2, scriptjs@2.5.9)
 
 ================================================================
 2. רצף הפקודות
 ================================================================
-[1] cd frontend && yarn add @capacitor/ios@^7.6.1
-    → "Done in 31.40s." — אין תלייה.
-    → "Saved 1 new dependency. info Direct dependencies
-       └─ @capacitor/ios@7.6.2"
+[1] cd frontend && yarn add @capacitor-community/apple-sign-in@^7.0.0
+    → "Done in 32.91s." — אין תלייה.
+    → Saved 3 new dependencies (plugin + 2 transitive).
 
-[2] cd frontend && npx cap add ios
-    → "✔ Adding native Xcode project in ios in 137.76ms"
-    → "✔ Copying web assets from build to ios/App/App/public"
-    → "✔ Creating capacitor.config.json in ios/App/App"
-    → [warn] Skipping pod install because CocoaPods is not installed
-       (צפוי על Linux — pod install הוא בStep 2 אצלך ב-Mac)
-    → [warn] Unable to find "xcodebuild". Skipping clean step
-       (צפוי על Linux)
-    → [info] Found 3 Capacitor plugins for ios:
+[2] cd frontend && npx cap sync ios
+    → ✔ Copying web assets from build to ios/App/App/public
+    → ✔ Updating iOS plugins
+    → [info] Found 4 Capacitor plugins for ios:
+       @capacitor-community/apple-sign-in@7.1.0    ← חדש
        @capacitor/camera@7.0.5
        @capacitor/status-bar@7.0.6
        @capgo/capacitor-updater@7.43.3
-    → [success] ios platform added!
+    → [info] Sync finished in 1.209s
+    (warnings על pod install + xcodebuild — צפוי על Linux,
+     ירוצו אוטומטית אצלך ב-Mac)
 
-[3] cd frontend && CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
-    → 5 שורות אחרונות:
-        Find out more about deployment here:
-          https://cra.link/deployment
-        Done in 41.36s.
-      ("The build folder is ready to be deployed." הופיע ממש לפני)
-    → exit 0, אין warnings חדשים.
+[3] עריכת LoginPage.js + OnboardingPage.js (פירוט בסעיף 4).
 
-[4] git add frontend/ios/ frontend/package.json frontend/yarn.lock
-[5] git commit -m "feat(#385 Phase 5 Step 1): bootstrap iOS Capacitor platform"
-[6] git push — ❌ לא הורץ. (אין upstream גם בלאו הכי.)
+[4] cd frontend && CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
+    → "Done in 38.26s." exit 0
+    → "The build folder is ready to be deployed."
+    → אין warnings חדשים על Apple/Capacitor.
 
-================================================================
-3. אימות הקבצים שנוצרו
-================================================================
-$ ls frontend/ios/App/
-App  App.xcodeproj  App.xcworkspace  Podfile
-
-$ ls frontend/ios/App/App/
-AppDelegate.swift   Base.lproj            config.xml   public
-Assets.xcassets     capacitor.config.json Info.plist
-
-$ cat frontend/ios/.gitignore
-App/build
-App/Pods
-App/output
-App/App/public
-DerivedData
-xcuserdata
-# Cordova plugins for Capacitor
-capacitor-cordova-ios-plugins
-# Generated Config files
-App/App/capacitor.config.json
-App/App/config.xml
-
-⚠️ הערה לגבי VERIFY #2 בספק שלך
---------------------------------
-הספק דרש לאמת:
-  ls frontend/ios/App/App.xcworkspace/contents.xcworkspacedata
-הקובץ הזה **לא קיים** אצלי, וזה תקין:
-- ה-template של Capacitor 7 לא כולל אותו (בדקתי ב-node_modules,
-  הקובץ לא מופיע באף template של @capacitor).
-- Xcode מייצר אותו אוטומטית בפתיחה ראשונה ב-Mac.
-- ה-xcworkspace עצמה כן קיימת ותקפה — מכילה תיקיית xcshareddata
-  עם IDEWorkspaceChecks.plist:
-
-  $ ls frontend/ios/App/App.xcworkspace/
-  xcshareddata/
-  $ ls frontend/ios/App/App.xcworkspace/xcshareddata/
-  IDEWorkspaceChecks.plist
-
-כשתפתח את הפרויקט ב-Xcode על ה-Mac, contents.xcworkspacedata
-יופיע אוטומטית. אם זה מטריד — תגיד ואוסיף אותו ידנית במשימה
-נפרדת.
+[5] git add frontend/{package.json,yarn.lock,src/pages/{LoginPage,OnboardingPage}.js,ios/}
+[6] git commit -m "feat(#385 Phase 5 Step 2): native Apple Sign-In plugin + platform-aware frontend"
+[7] git push — ❌ לא הורץ (גם אין upstream).
 
 ================================================================
-4. git diff HEAD~1 HEAD --stat
+3. אישור Podfile (cap sync עשה את העבודה)
 ================================================================
- frontend/ios/.gitignore                            |  13 +
- frontend/ios/App/App.xcodeproj/project.pbxproj     | 408 ++++++++++
- .../xcshareddata/IDEWorkspaceChecks.plist          |   8 +
- frontend/ios/App/App/AppDelegate.swift             |  49 +++
- .../AppIcon.appiconset/AppIcon-512@2x.png          | Bin 0 -> 110522 bytes
- .../AppIcon.appiconset/Contents.json               |  14 +
- frontend/ios/App/App/Assets.xcassets/Contents.json |   6 +
- .../Assets.xcassets/Splash.imageset/Contents.json  |  23 ++
- .../Splash.imageset/splash-2732x2732-1.png         | Bin 0 -> 41273 bytes
- .../Splash.imageset/splash-2732x2732-2.png         | Bin 0 -> 41273 bytes
- .../Splash.imageset/splash-2732x2732.png           | Bin 0 -> 41273 bytes
- .../ios/App/App/Base.lproj/LaunchScreen.storyboard |  32 ++
- frontend/ios/App/App/Base.lproj/Main.storyboard    |  19 +
- frontend/ios/App/App/Info.plist                    |  49 +++
- frontend/ios/App/Podfile                           |  26 ++
- frontend/package.json                              |   1 +
- frontend/yarn.lock                                 |   5 +
- 17 files changed, 653 insertions(+)
+$ grep -i apple frontend/ios/App/Podfile
+  pod 'CapacitorCommunityAppleSignIn',
+      :path => '../../node_modules/@capacitor-community/apple-sign-in'
 
-(בנוסף בעצם נוצרו גם capacitor.config.json + config.xml + public
-תחת ios/App/App/, אבל ה-.gitignore של Capacitor מחריג אותם בכוונה
-— הם generated מ-frontend/build בכל cap sync. זה ההתנהגות הסטנדרטית.)
+ה-pod רשום ב-Podfile. ה-Podfile.lock ייווצר רק אחרי
+`pod install` שירוץ ב-Mac (אין CocoaPods על Replit).
+
+================================================================
+4. שינויי קוד — LoginPage.js + OnboardingPage.js
+================================================================
+שני הקבצים קיבלו טיפול זהה:
+
+א. יבואים חדשים בראש הקובץ:
+   import { Capacitor } from '@capacitor/core';
+   import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+
+   - LoginPage.js שורות 10-11
+   - OnboardingPage.js שורות 15-16
+
+ב. handleAppleSignIn הוחלף — branch לפי פלטפורמה:
+
+   if (Capacitor.getPlatform() === 'ios') {
+      // ⮕ SignInWithApple.authorize() — Face ID / Touch ID נטיבי
+      //   clientId: 'com.brikops.app' (Bundle ID)
+      //   nonce: window.crypto.randomUUID() עם fallback
+      //   redirectURI: '', state: '', scopes: 'email name'
+   } else {
+      // ⮕ הקוד הישן בדיוק — appleid.cdn-apple.com script,
+      //   process.env.REACT_APP_APPLE_SERVICES_ID, popup
+      //   *לא* שונה אף שורה בלוגיקה הזו
+   }
+
+   const result = await onboardingService.socialAuth('apple', idToken, appleName);
+   await handleSocialAuthResult(result);
+
+ג. catch הורחב לטפל גם בביטול native של iOS:
+   if (error.error === 'popup_closed_by_user' || error.code === '1001')
+
+ד. שינוי שם משתנה פנימי בלבד: השתמשתי ב-`nativeResult` בתוך
+   ה-if-block (במקום `result`) כדי למנוע shadowing עם `result`
+   החיצוני שמגיע מ-onboardingService.socialAuth. **אין הבדל
+   פונקציונלי**, רק היגיינה — שני המסלולים עדיין מחזירים
+   idToken + appleName בדיוק כמו הקוד שבמפרט.
 
 ================================================================
 5. בדיקות סטריקטיות שעברו
 ================================================================
-✅ @capacitor/ios pinned to ^7.6.1, התקנה בפועל 7.6.2 (major 7)
-✅ frontend/ios/App/{App.xcworkspace, App.xcodeproj, Podfile,
-   App/Info.plist, App/capacitor.config.json} — קיימים
-✅ frontend/ios/.gitignore — קיים
-✅ yarn build — Done in 41.36s, exit 0
-✅ git diff HEAD~1 HEAD --name-only | grep "^frontend/src/" → ריק
-✅ git diff HEAD~1 HEAD -- frontend/capacitor.config.json → ריק
-✅ אין שינוי ל-frontend/android/
-✅ אין שינוי לגרסת @capacitor/core, /android, /cli, /camera, /status-bar
+✅ @capacitor-community/apple-sign-in@^7.0.0 (התקנה בפועל 7.1.0)
+✅ npx cap sync ios — Sync finished in 1.2s
+✅ Podfile מכיל CapacitorCommunityAppleSignIn pod
+✅ yarn build — Done in 38.26s, exit 0, אין warnings חדשים
+✅ git diff HEAD~1 HEAD --name-only:
+   frontend/ios/App/Podfile
+   frontend/package.json
+   frontend/src/pages/LoginPage.js
+   frontend/src/pages/OnboardingPage.js
+   frontend/yarn.lock
+   (5 קבצים בלבד, זהה למפורט במפרט)
+✅ אין שינוי ב-frontend/capacitor.config.json
+✅ אין שינוי ב-frontend/android/
+✅ אין שינוי ב-backend/
+✅ אין שינוי בגרסאות @capacitor/core/android/cli/ios/camera/status-bar
+✅ socialAuth signature לא שונה (api.js לא נגוע)
+✅ handleSocialAuthResult / pending_deletion navigation — לא שונו
+✅ Google Sign-In + phone OTP — לא נגעו
+✅ Capacitor.getPlatform() === 'ios' branch קיים בשני הקבצים
 ✅ git push — לא הורץ
-✅ ההתקנה לא נתקעה (31s + 0.5s + 41s)
 
 ================================================================
-6. הצעד הבא
+6. git diff HEAD~1 HEAD --stat
 ================================================================
-מחכה לאישור שלך כדי להמשיך לStep 2 (תוסף
-@capacitor-community/apple-sign-in + handler ב-Capacitor branch).
-ה-pod install ירוץ אצלך ב-Mac אחרי שתמשוך עם ./deploy.sh --prod.
+ frontend/ios/App/Podfile             |   1 +
+ frontend/package.json                |   1 +
+ frontend/src/pages/LoginPage.js      |  93 +++++++++++++++--------
+ frontend/src/pages/OnboardingPage.js |  93 +++++++++++++++--------
+ frontend/yarn.lock                   |  18 +++++
+ 5 files changed, 136 insertions(+), 70 deletions(-)
+
+================================================================
+7. הצעד הבא
+================================================================
+אצלך ב-Mac אחרי משיכה:
+  cd frontend/ios/App && pod install
+  open App.xcworkspace
+  → Signing & Capabilities → הוסף "Sign In with Apple"
+  → ודא ש-Bundle ID = com.brikops.app
+
+אז אפשר להריץ build ב-Xcode על device, ו-Apple Sign-In נטיבי
+יעבוד עם Face ID / Touch ID.
+
+ה-web flow (Cloudflare/דפדפן) ו-Android — נשארים בדיוק כמו
+שהיו בפרודקשן היום.
 
 ממתין לאישור: ✅ Approve / 🔧 שינויים / 🛑 Rollback?
