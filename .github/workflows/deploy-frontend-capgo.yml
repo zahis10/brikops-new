@@ -27,6 +27,7 @@ jobs:
         env:
           REACT_APP_BACKEND_URL: ${{ vars.REACT_APP_BACKEND_URL }}
           REACT_APP_GOOGLE_CLIENT_ID: ${{ vars.REACT_APP_GOOGLE_CLIENT_ID }}
+          REACT_APP_APPLE_SERVICES_ID: ${{ vars.REACT_APP_APPLE_SERVICES_ID }}
           REACT_APP_GIT_SHA: ${{ github.sha }}
         run: yarn build
 
