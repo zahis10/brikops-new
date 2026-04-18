@@ -1,112 +1,206 @@
 ================================================================================
-TASK #380-FIX — FilterDrawer Phase 2 fixes
-Commit: cea17b1 (parent: f15347a / base: af3bac9)
+TASK #381 — FilterDrawer Phase 3: search + polish
+Commit: 2db27dc (parent: 2a7a1dc / base before phase: 5bf1587)
 ================================================================================
 
-cea17b11970d40fc9de1353cb8e4bc1896b6c299 #380-FIX — FilterDrawer Phase 2 fixes (Spec #380-FIX)
+2db27dc924084dca8c22e552a45625d08b781f75 #381 — FilterDrawer Phase 3: search + polish (Spec #381)
 
 
- frontend/src/components/FilterDrawer.js      | 12 ++++++++++--
- frontend/src/pages/ApartmentDashboardPage.js |  8 +-------
- frontend/src/pages/BuildingDefectsPage.js    |  8 +-------
- frontend/src/utils/filterHelpers.js          |  6 ++++++
- 4 files changed, 18 insertions(+), 16 deletions(-)
+ frontend/src/components/FilterDrawer.js | 154 +++++++++++++++++++++++---------
+ 1 file changed, 111 insertions(+), 43 deletions(-)
 
 ================================================================================
 FULL DIFF
 ================================================================================
 diff --git a/frontend/src/components/FilterDrawer.js b/frontend/src/components/FilterDrawer.js
-index bf3dac8..d46da64 100644
+index d46da64..d8aa7aa 100644
 --- a/frontend/src/components/FilterDrawer.js
 +++ b/frontend/src/components/FilterDrawer.js
-@@ -108,9 +108,15 @@ const FilterDrawer = ({
+@@ -6,50 +6,110 @@ import {
+   SheetTitle,
+   SheetDescription,
+ } from './ui/sheet';
+-import { SlidersHorizontal, ChevronDown, ChevronUp, Check, X } from 'lucide-react';
+-
+-const FilterSection = ({ label, values, onToggle, options, isOpen, onToggleOpen }) => (
+-  <div>
+-    <button
+-      type="button"
+-      onClick={onToggleOpen}
+-      className="w-full flex items-center justify-between py-1"
+-    >
+-      <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
+-      {isOpen
+-        ? <ChevronUp className="w-4 h-4 text-slate-400" />
+-        : <ChevronDown className="w-4 h-4 text-slate-400" />
+-      }
+-    </button>
+-    {isOpen && (
+-      <div className="flex flex-wrap gap-2 mt-2">
+-        {options.map(opt => {
+-          const selected = values.includes(opt.value);
+-          return (
+-            <button
+-              key={opt.value}
+-              type="button"
+-              onClick={() => onToggle(opt.value)}
+-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] ${
+-                selected
+-                  ? 'bg-amber-500 text-white shadow-sm'
+-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+-              }`}
+-            >
+-              {selected && <Check className="w-3.5 h-3.5 shrink-0" />}
+-              <span className="truncate">{opt.label}</span>
+-              {typeof opt.count === 'number' && (
+-                <span className={`shrink-0 text-[11px] tabular-nums ${selected ? 'text-white/80' : 'text-slate-400'}`}>
+-                  {opt.count}
+-                </span>
++import { SlidersHorizontal, ChevronDown, ChevronUp, Check, X, Search } from 'lucide-react';
++
++const SEARCH_THRESHOLD = 8;
++
++const FilterSection = ({
++  label,
++  values,
++  onToggle,
++  options,
++  isOpen,
++  onToggleOpen,
++  searchQuery,
++  onSearchChange,
++}) => {
++  const selectedCount = values.length;
++  const needsSearch = options.length >= SEARCH_THRESHOLD;
++
++  const filteredOptions = needsSearch && searchQuery.trim()
++    ? options.filter(opt =>
++        opt.label.toLowerCase().includes(searchQuery.trim().toLowerCase())
++      )
++    : options;
++
++  return (
++    <div>
++      <button
++        type="button"
++        onClick={onToggleOpen}
++        className="w-full flex items-center justify-between py-1"
++      >
++        <div className="flex items-center gap-2">
++          <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
++          {selectedCount > 0 && (
++            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 tabular-nums">
++              {selectedCount}
++            </span>
++          )}
++        </div>
++        {isOpen
++          ? <ChevronUp className="w-4 h-4 text-slate-400" />
++          : <ChevronDown className="w-4 h-4 text-slate-400" />
++        }
++      </button>
++
++      {isOpen && (
++        <div className="mt-2 space-y-2">
++          {needsSearch && (
++            <div className="relative">
++              <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
++              <input
++                type="text"
++                value={searchQuery}
++                onChange={(e) => onSearchChange(e.target.value)}
++                placeholder="חפש..."
++                className="w-full pr-8 pl-8 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 placeholder:text-slate-400"
++              />
++              {searchQuery && (
++                <button
++                  type="button"
++                  onClick={() => onSearchChange('')}
++                  aria-label="נקה חיפוש"
++                  className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
++                >
++                  <X className="w-3.5 h-3.5" />
++                </button>
+               )}
+-            </button>
+-          );
+-        })}
+-      </div>
+-    )}
+-  </div>
+-);
++            </div>
++          )}
++
++          {filteredOptions.length === 0 ? (
++            <div className="text-xs text-slate-400 py-2 text-center">אין תוצאות מתאימות</div>
++          ) : (
++            <div className="flex flex-wrap gap-2">
++              {filteredOptions.map(opt => {
++                const isSelected = values.includes(opt.value);
++                return (
++                  <button
++                    key={opt.value}
++                    type="button"
++                    onClick={() => onToggle(opt.value)}
++                    title={opt.label}
++                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] ${
++                      isSelected
++                        ? 'bg-amber-500 text-white shadow-sm'
++                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
++                    }`}
++                  >
++                    {isSelected && <Check className="w-3.5 h-3.5 shrink-0" />}
++                    <span className="truncate">{opt.label}</span>
++                    {typeof opt.count === 'number' && (
++                      <span className={`text-[10px] tabular-nums ${isSelected ? 'text-white/80' : 'text-slate-400'}`}>
++                        {opt.count}
++                      </span>
++                    )}
++                  </button>
++                );
++              })}
++            </div>
++          )}
++        </div>
++      )}
++    </div>
++  );
++};
  
-   const applyPreset = (preset) => {
-     if (activePresetId === preset.id) {
--      setDraft({ ...defaultFilters });
-+      setDraft(prev => {
-+        const next = { ...prev };
-+        Object.keys(preset.values).forEach(key => {
-+          next[key] = defaultFilters[key];
-+        });
-+        return next;
-+      });
-     } else {
--      setDraft({ ...defaultFilters, ...preset.values });
-+      setDraft(prev => ({ ...prev, ...preset.values }));
+ const FilterDrawer = ({
+   open,
+@@ -66,11 +126,13 @@ const FilterDrawer = ({
+   const [draft, setDraft] = useState({ ...filters });
+   const [wasOpen, setWasOpen] = useState(false);
+   const [collapsedSections, setCollapsedSections] = useState({});
++  const [sectionSearch, setSectionSearch] = useState({});
+ 
+   useEffect(() => {
+     if (open && !wasOpen) {
+       setDraft({ ...filters });
+       setCollapsedSections({});
++      setSectionSearch({});
      }
+     setWasOpen(open);
+   }, [open, filters, wasOpen]);
+@@ -79,6 +141,10 @@ const FilterDrawer = ({
+     setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
    };
  
-@@ -175,6 +181,8 @@ const FilterDrawer = ({
-                     key={`${chip.sectionKey}:${chip.value}`}
-                     type="button"
-                     onClick={() => toggleValue(chip.sectionKey, chip.value)}
-+                    aria-label={`הסר ${chip.label}`}
-+                    title={chip.label}
-                     className="inline-flex items-center gap-1 max-w-[140px] px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 active:bg-amber-200 transition-colors"
-                   >
-                     <span className="truncate">{chip.label}</span>
-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 8498a5b..f1f73a1 100644
---- a/frontend/src/pages/ApartmentDashboardPage.js
-+++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -14,6 +14,7 @@ import StatusPill from '../components/StatusPill';
- import CategoryPill from '../components/CategoryPill';
- import Breadcrumbs from '../components/Breadcrumbs';
- import TaskCardSkeleton from '../components/TaskCardSkeleton';
-+import { arraysEqualAsSets } from '../utils/filterHelpers';
- import {
-   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
-   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
-@@ -65,13 +66,6 @@ const APARTMENT_PRESETS = [
-   { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
- ];
- 
--const arraysEqualAsSets = (a, b) => {
--  if (!Array.isArray(a) || !Array.isArray(b)) return false;
--  if (a.length !== b.length) return false;
--  const set = new Set(a);
--  return b.every(v => set.has(v));
--};
--
- const getApartmentActivePresetId = (draft) => {
-   if (
-     draft.category.length > 0 ||
-diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
-index 9bae0f3..654c4a5 100644
---- a/frontend/src/pages/BuildingDefectsPage.js
-+++ b/frontend/src/pages/BuildingDefectsPage.js
-@@ -7,6 +7,7 @@ import { formatUnitLabel } from '../utils/formatters';
- import { tCategory } from '../i18n';
- import { toast } from 'sonner';
- import FilterDrawer from '../components/FilterDrawer';
-+import { arraysEqualAsSets } from '../utils/filterHelpers';
- import {
-   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
-   Home, AlertTriangle, Clock, CheckCircle2, SlidersHorizontal, Search, X, Download, Pencil
-@@ -38,13 +39,6 @@ const BUILDING_PRESETS = [
-   { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
- ];
- 
--const arraysEqualAsSets = (a, b) => {
--  if (!Array.isArray(a) || !Array.isArray(b)) return false;
--  if (a.length !== b.length) return false;
--  const set = new Set(a);
--  return b.every(v => set.has(v));
--};
--
- const getBuildingActivePresetId = (draft) => {
-   if (
-     draft.category.length > 0 ||
-diff --git a/frontend/src/utils/filterHelpers.js b/frontend/src/utils/filterHelpers.js
-new file mode 100644
-index 0000000..1651726
---- /dev/null
-+++ b/frontend/src/utils/filterHelpers.js
-@@ -0,0 +1,6 @@
-+export const arraysEqualAsSets = (a, b) => {
-+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-+  if (a.length !== b.length) return false;
-+  const set = new Set(a);
-+  return b.every(v => set.has(v));
-+};
++  const setSearchFor = (key, value) => {
++    setSectionSearch(prev => ({ ...prev, [key]: value }));
++  };
++
+   const toggleValue = (key, value) => {
+     setDraft(prev => {
+       const current = Array.isArray(prev[key]) ? prev[key] : [];
+@@ -203,6 +269,8 @@ const FilterDrawer = ({
+                 options={section.options}
+                 isOpen={!collapsedSections[section.key]}
+                 onToggleOpen={() => toggleSection(section.key)}
++                searchQuery={sectionSearch[section.key] || ''}
++                onSearchChange={(value) => setSearchFor(section.key, value)}
+               />
+             )
+           ))}
