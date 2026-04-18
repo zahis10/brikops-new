@@ -31,6 +31,32 @@ const STATUS_LABEL_MAP = {
   blocking: 'חוסמי מסירה',
 };
 
+const BUILDING_PRESETS = [
+  { id: 'open', label: 'פתוחים', values: { status: ['open'] } },
+  { id: 'blocking', label: 'חוסמים', values: { status: ['blocking'] } },
+  { id: 'open_blocking', label: 'פתוחים + חוסמים', values: { status: ['open', 'blocking'] } },
+  { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
+];
+
+const arraysEqualAsSets = (a, b) => {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every(v => set.has(v));
+};
+
+const getBuildingActivePresetId = (draft) => {
+  if (
+    draft.category.length > 0 ||
+    draft.floor.length > 0 ||
+    draft.unit.length > 0
+  ) return null;
+  for (const p of BUILDING_PRESETS) {
+    if (arraysEqualAsSets(draft.status, p.values.status)) return p.id;
+  }
+  return null;
+};
+
 import UnitTypeEditModal, { UNIT_TYPE_TAGS, TAG_MAP } from '../components/UnitTypeEditModal';
 
 const BuildingDefectsPage = () => {
@@ -581,6 +607,8 @@ const BuildingDefectsPage = () => {
         sections={filterSections}
         computeMatchCount={computeMatchCount}
         matchLabel="דירות"
+        presets={BUILDING_PRESETS}
+        getActivePresetId={getBuildingActivePresetId}
       />
 
       <ExportModal

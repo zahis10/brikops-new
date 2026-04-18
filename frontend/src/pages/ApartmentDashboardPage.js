@@ -59,6 +59,32 @@ const STATUS_LABEL_MAP = {
   closed: 'סגורים',
 };
 
+const APARTMENT_PRESETS = [
+  { id: 'open', label: 'פתוחים', values: { status: ['open'] } },
+  { id: 'in_progress', label: 'בטיפול', values: { status: ['in_progress'] } },
+  { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
+];
+
+const arraysEqualAsSets = (a, b) => {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every(v => set.has(v));
+};
+
+const getApartmentActivePresetId = (draft) => {
+  if (
+    draft.category.length > 0 ||
+    draft.company.length > 0 ||
+    draft.assignee.length > 0 ||
+    draft.created_by.length > 0
+  ) return null;
+  for (const p of APARTMENT_PRESETS) {
+    if (arraysEqualAsSets(draft.status, p.values.status)) return p.id;
+  }
+  return null;
+};
+
 const ApartmentDashboardPage = () => {
   const { projectId, unitId } = useParams();
   const navigate = useNavigate();
@@ -812,6 +838,8 @@ const ApartmentDashboardPage = () => {
         sections={filterSections}
         computeMatchCount={computeMatchCount}
         matchLabel="ליקויים"
+        presets={APARTMENT_PRESETS}
+        getActivePresetId={getApartmentActivePresetId}
       />
 
       <ExportModal

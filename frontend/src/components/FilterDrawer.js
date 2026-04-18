@@ -6,7 +6,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from './ui/sheet';
-import { SlidersHorizontal, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { SlidersHorizontal, ChevronDown, ChevronUp, Check, X } from 'lucide-react';
 
 const FilterSection = ({ label, values, onToggle, options, isOpen, onToggleOpen }) => (
   <div>
@@ -60,6 +60,8 @@ const FilterDrawer = ({
   sections,
   computeMatchCount,
   matchLabel = 'ליקויים',
+  presets,
+  getActivePresetId,
 }) => {
   const [draft, setDraft] = useState({ ...filters });
   const [wasOpen, setWasOpen] = useState(false);
@@ -100,6 +102,31 @@ const FilterDrawer = ({
     ? computeMatchCount(draft)
     : null;
 
+  const activePresetId = typeof getActivePresetId === 'function'
+    ? getActivePresetId(draft)
+    : null;
+
+  const applyPreset = (preset) => {
+    if (activePresetId === preset.id) {
+      setDraft({ ...defaultFilters });
+    } else {
+      setDraft({ ...defaultFilters, ...preset.values });
+    }
+  };
+
+  const selectedChips = [];
+  sections.forEach(section => {
+    const vals = Array.isArray(draft[section.key]) ? draft[section.key] : [];
+    vals.forEach(v => {
+      const opt = section.options.find(o => o.value === v);
+      selectedChips.push({
+        sectionKey: section.key,
+        value: v,
+        label: opt?.label || v,
+      });
+    });
+  });
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-[320px] sm:w-[360px] flex flex-col p-0" dir="rtl">
@@ -114,6 +141,50 @@ const FilterDrawer = ({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {Array.isArray(presets) && presets.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-slate-500 mb-2">תבניות מהירות</h4>
+              <div className="flex flex-wrap gap-2">
+                {presets.map(preset => {
+                  const active = activePresetId === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        active
+                          ? 'bg-amber-500 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {selectedChips.length > 0 && (
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500 shrink-0">נבחרו:</span>
+                {selectedChips.map(chip => (
+                  <button
+                    key={`${chip.sectionKey}:${chip.value}`}
+                    type="button"
+                    onClick={() => toggleValue(chip.sectionKey, chip.value)}
+                    className="inline-flex items-center gap-1 max-w-[140px] px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 active:bg-amber-200 transition-colors"
+                  >
+                    <span className="truncate">{chip.label}</span>
+                    <X className="w-3 h-3 shrink-0" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {sections.map(section => (
             section.options.length > 0 && (
               <FilterSection
