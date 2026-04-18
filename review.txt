@@ -1,152 +1,69 @@
 ================================================================
-#385 Phase 2 — Frontend Apple Sign-In env-driven clientId
+#385 שלב 5 צעד 1 — Bootstrap iOS Capacitor
+סטטוס: 🛑 עצור ודווח (כפי שדרש המפרט) — אין commit
 ================================================================
-Commit: d8ba460cd170954b03ed7a2c8c748bfc1ad41b70
-Branch: main (LOCAL ONLY — NOT pushed; Zahi pushes via ./deploy.sh --prod)
 
-================================================================
-STAT
-================================================================
- frontend/src/pages/LoginPage.js      | 9 ++++++++-
- frontend/src/pages/OnboardingPage.js | 9 ++++++++-
- 2 files changed, 16 insertions(+), 2 deletions(-)
+מה נעשה
+-------
+הרצתי `cd frontend && yarn add @capacitor/ios` (35 שניות, ללא תלייה).
+Yarn בחר אוטומטית `@capacitor/ios@8.3.1` — major שונה משאר חבילות
+ה-Capacitor בפרויקט (כולן `^7.6.1`).
 
-================================================================
-UNIFIED DIFF (HEAD~1..HEAD)
-================================================================
-diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
-index f1645cd..34b1059 100644
---- a/frontend/src/pages/LoginPage.js
-+++ b/frontend/src/pages/LoginPage.js
-@@ -365,8 +365,15 @@ const LoginPage = () => {
-         });
-       }
- 
-+      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
-+      if (!appleServicesId) {
-+        toast.error('שירות Apple לא מוגדר');
-+        setSocialLoading(false);
-+        return;
-+      }
-+
-       window.AppleID.auth.init({
--        clientId: 'com.brikops.app',
-+        clientId: appleServicesId,
-         scope: 'name email',
-         redirectURI: window.location.origin + '/login',
-         usePopup: true,
-diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
-index a7ebbdc..66a98dc 100644
---- a/frontend/src/pages/OnboardingPage.js
-+++ b/frontend/src/pages/OnboardingPage.js
-@@ -251,8 +251,15 @@ const OnboardingPage = () => {
-         });
-       }
- 
-+      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
-+      if (!appleServicesId) {
-+        toast.error('שירות Apple לא מוגדר');
-+        setSocialLoading(false);
-+        return;
-+      }
-+
-       window.AppleID.auth.init({
--        clientId: 'com.brikops.app',
-+        clientId: appleServicesId,
-         scope: 'name email',
-         redirectURI: window.location.origin + '/login',
-         usePopup: true,
+האזהרה המדויקת מ-yarn:
+  warning " > @capacitor/ios@8.3.1" has incorrect peer dependency
+  "@capacitor/core@^8.3.0".
 
-================================================================
-FILE 1: frontend/src/pages/LoginPage.js — BEFORE (lines 366-374)
-================================================================
-      }
+המפרט קובע במפורש: "אם yarn בוחר major אחר — עצור ודווח, אל
+תבצע commit". לכן הרצתי מיד `yarn remove @capacitor/ios` כדי
+להחזיר את הריפו למצב נקי, ולא ביצעתי `npx cap add ios`.
 
-      window.AppleID.auth.init({
-        clientId: 'com.brikops.app',
-        scope: 'name email',
-        redirectURI: window.location.origin + '/login',
-        usePopup: true,
-      });
+אימות מצב נקי
+-------------
+$ git status --short
+(ריק)
 
+$ git log -1 --oneline
+6340568 (HEAD -> main) Update Apple Sign-In to use environment
+        variable for client ID
 
-================================================================
-FILE 1: frontend/src/pages/LoginPage.js — AFTER (lines 366-384)
-================================================================
-      }
+$ grep '"@capacitor/' frontend/package.json
+    "@capacitor/android": "^7.6.1",
+    "@capacitor/camera": "^7.0.5",
+    "@capacitor/cli": "^7.6.1",
+    "@capacitor/core": "^7.6.1",
+    "@capacitor/status-bar": "^7.0.6",
+(אין `@capacitor/ios` — בוטל)
 
-      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
-      if (!appleServicesId) {
-        toast.error('שירות Apple לא מוגדר');
-        setSocialLoading(false);
-        return;
-      }
+$ ls frontend/ios/
+ls: cannot access 'frontend/ios/': No such file or directory
+(לא רץ `npx cap add ios` — אין תיקיית iOS)
 
-      window.AppleID.auth.init({
-        clientId: appleServicesId,
-        scope: 'name email',
-        redirectURI: window.location.origin + '/login',
-        usePopup: true,
-      });
+git push לא הורץ. yarn.lock חזר למצב המקורי.
 
-      const response = await window.AppleID.auth.signIn();
-      const idToken = response.authorization.id_token;
-      const appleName = response.user
+למה זה קרה
+----------
+החבילות הקיימות נעולות ל-`^7.6.1` שלא מתיר 8.x. כשמריצים
+`yarn add @capacitor/ios` בלי גרסה, yarn מביא את ה-latest
+(`8.3.1`). חייבים לציין גרסה מפורשת.
 
-================================================================
-FILE 2: frontend/src/pages/OnboardingPage.js — BEFORE (lines 252-260)
-================================================================
-      }
+שתי אפשרויות להמשך — אתה בוחר
+------------------------------
+אפשרות א׳ (מומלץ — תואם ל-7.x הקיים):
+  cd frontend && yarn add @capacitor/ios@^7.6.1
+  npx cap add ios
+  CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
+  git add frontend/ios/ frontend/package.json frontend/yarn.lock
+  git commit -m "feat(#385 Phase 5 Step 1): bootstrap iOS Capacitor platform"
 
-      window.AppleID.auth.init({
-        clientId: 'com.brikops.app',
-        scope: 'name email',
-        redirectURI: window.location.origin + '/login',
-        usePopup: true,
-      });
+אפשרות ב׳ (שדרוג מלא ל-Capacitor 8 — מחוץ להיקף המשימה):
+  שדרוג של core/cli/android/camera/status-bar ל-^8.x +
+  בדיקות תאימות עם @capgo/capacitor-updater. דורש משימה נפרדת.
 
+הערה לגבי Replit
+----------------
+ההתקנה רצה תוך 35 שניות בלי תלייה — בניגוד לחשש שצוין ב-scratchpad
+לגבי תלקיים של חבילות native. אם תבחר באפשרות א׳, סביר שאוכל
+להריץ את כל הצעד כולל `npx cap add ios` ב-Replit ולשלוח לבדיקה.
+אם בכל זאת תרצה להריץ ב-Mac — תגיד.
 
-================================================================
-FILE 2: frontend/src/pages/OnboardingPage.js — AFTER (lines 252-270)
-================================================================
-      }
-
-      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
-      if (!appleServicesId) {
-        toast.error('שירות Apple לא מוגדר');
-        setSocialLoading(false);
-        return;
-      }
-
-      window.AppleID.auth.init({
-        clientId: appleServicesId,
-        scope: 'name email',
-        redirectURI: window.location.origin + '/login',
-        usePopup: true,
-      });
-
-      const response = await window.AppleID.auth.signIn();
-      const idToken = response.authorization.id_token;
-      const appleName = response.user
-
-================================================================
-VERIFICATION
-================================================================
-$ grep -rn "com.brikops.app" frontend/src/
-(no matches)
-
-$ cd frontend && yarn build  (last lines)
-The project was built assuming it is hosted at /.
-You can control this with the homepage field in your package.json.
-
-The build folder is ready to be deployed.
-You may serve it with a static server:
-
-  yarn global add serve
-  serve -s build
-
-Find out more about deployment here:
-
-  https://cra.link/deployment
-
-Done in 34.79s.
+ממתין לאישור: א׳ או ב׳? (או הוראה אחרת)
