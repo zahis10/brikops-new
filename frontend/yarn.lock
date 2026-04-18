@@ -1137,6 +1137,11 @@
   dependencies:
     tslib "^2.1.0"
 
+"@capacitor/ios@^7.6.1":
+  version "7.6.2"
+  resolved "https://registry.yarnpkg.com/@capacitor/ios/-/ios-7.6.2.tgz#557836a19561c0ca86ca95c1454b0998fe46a15f"
+  integrity sha512-TZOXn7ZSEMsetrIEb8EHT4X9Nwsed1itqMwe+z5QOCDvm9XZ7i2YsjnrinUC1ZOIgva9IE2l+azus7qOpQ0aCg==
+
 "@capacitor/status-bar@^7.0.6":
   version "7.0.6"
   resolved "https://registry.npmjs.org/@capacitor/status-bar/-/status-bar-7.0.6.tgz"
