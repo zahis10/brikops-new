@@ -146,3 +146,14 @@ VERIFICATION
 $ cd backend && python -c "from config import APPLE_AUDIENCES; print(APPLE_AUDIENCES)"
 [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
 ['com.brikops.app']
+
+================================================================
+VERIFICATION OUTPUT (re-run, exact)
+================================================================
+$ cd backend && python -c "from config import APPLE_AUDIENCES; print(APPLE_AUDIENCES)"
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+['com.brikops.app']
+
+Length = 1 → APPLE_SERVICES_ID is NOT set in Replit Secrets yet.
+Once you add APPLE_SERVICES_ID=com.brikops.app.signin, the list will be:
+  ['com.brikops.app', 'com.brikops.app.signin']
