@@ -1,677 +1,215 @@
 ================================================================================
-TASK #379 — FilterDrawer Phase 1: multi-select + counts + live CTA (Spec #26)
-Combined diff across 3 commits: d89b0be, 01bf0d2, 9ef7e04
+TASK #380 — FilterDrawer Phase 2: presets + selected chips
+Commit: af3bac9 (parent: 1d4c691)
 ================================================================================
 
-9ef7e04 #379 — FilterDrawer Phase 1: multi-select + counts + live CTA (Spec #26)
-01bf0d2 #379 — FilterDrawer Phase 1: multi-select + counts + live CTA (Spec #26)
-d89b0be #379 — FilterDrawer Phase 1: multi-select + counts + live CTA (Spec #26)
-dec21b8 Transitioned from Plan to Build mode
+af3bac95dd6d9e6b2bcb8085c090907744ded13c #380 — FilterDrawer Phase 2: presets + selected chips
 
 ================================================================================
-FILES CHANGED (combined)
+FILES CHANGED
 ================================================================================
- frontend/src/components/FilterDrawer.js      |  91 ++++++++------
- frontend/src/pages/ApartmentDashboardPage.js | 151 +++++++++++++++++------
- frontend/src/pages/BuildingDefectsPage.js    | 173 ++++++++++++++++++++-------
- 3 files changed, 299 insertions(+), 116 deletions(-)
+ frontend/src/components/FilterDrawer.js      | 73 +++++++++++++++++++++++++++-
+ frontend/src/pages/ApartmentDashboardPage.js | 28 +++++++++++
+ frontend/src/pages/BuildingDefectsPage.js    | 28 +++++++++++
+ 3 files changed, 128 insertions(+), 1 deletion(-)
 
 ================================================================================
-FULL DIFF (d3f5336..HEAD)
+FULL DIFF
 ================================================================================
 diff --git a/frontend/src/components/FilterDrawer.js b/frontend/src/components/FilterDrawer.js
-index fc34e8d..3440216 100644
+index 3440216..bf3dac8 100644
 --- a/frontend/src/components/FilterDrawer.js
 +++ b/frontend/src/components/FilterDrawer.js
-@@ -6,13 +6,13 @@ import {
+@@ -6,7 +6,7 @@ import {
    SheetTitle,
    SheetDescription,
  } from './ui/sheet';
--import { SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
-+import { SlidersHorizontal, ChevronDown, ChevronUp, Check } from 'lucide-react';
+-import { SlidersHorizontal, ChevronDown, ChevronUp, Check } from 'lucide-react';
++import { SlidersHorizontal, ChevronDown, ChevronUp, Check, X } from 'lucide-react';
  
--const FilterSection = ({ label, value, onChange, options, isOpen, onToggle }) => (
-+const FilterSection = ({ label, values, onToggle, options, isOpen, onToggleOpen }) => (
+ const FilterSection = ({ label, values, onToggle, options, isOpen, onToggleOpen }) => (
    <div>
-     <button
-       type="button"
--      onClick={onToggle}
-+      onClick={onToggleOpen}
-       className="w-full flex items-center justify-between py-1"
-     >
-       <h4 className="text-sm font-semibold text-slate-700">{label}</h4>
-@@ -23,37 +23,44 @@ const FilterSection = ({ label, value, onChange, options, isOpen, onToggle }) =>
-     </button>
-     {isOpen && (
-       <div className="flex flex-wrap gap-2 mt-2">
--        <button
--          type="button"
--          onClick={() => onChange('all')}
--          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
--            value === 'all'
--              ? 'bg-amber-500 text-white shadow-sm'
--              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
--          }`}
--        >
--          הכל
--        </button>
--        {options.map(opt => (
--          <button
--            key={opt.value}
--            type="button"
--            onClick={() => onChange(opt.value)}
--            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] truncate ${
--              value === opt.value
--                ? 'bg-amber-500 text-white shadow-sm'
--                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
--            }`}
--          >
--            {opt.label}
--          </button>
--        ))}
-+        {options.map(opt => {
-+          const selected = values.includes(opt.value);
-+          return (
-+            <button
-+              key={opt.value}
-+              type="button"
-+              onClick={() => onToggle(opt.value)}
-+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors max-w-[200px] ${
-+                selected
-+                  ? 'bg-amber-500 text-white shadow-sm'
-+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-+              }`}
-+            >
-+              {selected && <Check className="w-3.5 h-3.5 shrink-0" />}
-+              <span className="truncate">{opt.label}</span>
-+              {typeof opt.count === 'number' && (
-+                <span className={`shrink-0 text-[11px] tabular-nums ${selected ? 'text-white/80' : 'text-slate-400'}`}>
-+                  {opt.count}
-+                </span>
-+              )}
-+            </button>
-+          );
-+        })}
-       </div>
-     )}
-   </div>
- );
- 
--const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, sections }) => {
-+const FilterDrawer = ({
-+  open,
-+  onOpenChange,
-+  filters,
-+  defaultFilters,
-+  onApply,
-+  sections,
-+  computeMatchCount,
-+  matchLabel = 'ליקויים',
-+}) => {
+@@ -60,6 +60,8 @@ const FilterDrawer = ({
+   sections,
+   computeMatchCount,
+   matchLabel = 'ליקויים',
++  presets,
++  getActivePresetId,
+ }) => {
    const [draft, setDraft] = useState({ ...filters });
    const [wasOpen, setWasOpen] = useState(false);
-   const [collapsedSections, setCollapsedSections] = useState({});
-@@ -70,8 +77,14 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
-     setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
-   };
+@@ -100,6 +102,31 @@ const FilterDrawer = ({
+     ? computeMatchCount(draft)
+     : null;
  
--  const updateDraft = (key, value) => {
--    setDraft(prev => ({ ...prev, [key]: value }));
-+  const toggleValue = (key, value) => {
-+    setDraft(prev => {
-+      const current = Array.isArray(prev[key]) ? prev[key] : [];
-+      const next = current.includes(value)
-+        ? current.filter(v => v !== value)
-+        : [...current, value];
-+      return { ...prev, [key]: next };
-+    });
-   };
- 
-   const handleApply = () => {
-@@ -83,6 +96,10 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
-     setDraft({ ...defaultFilters });
-   };
- 
-+  const matchCount = typeof computeMatchCount === 'function'
-+    ? computeMatchCount(draft)
++  const activePresetId = typeof getActivePresetId === 'function'
++    ? getActivePresetId(draft)
 +    : null;
++
++  const applyPreset = (preset) => {
++    if (activePresetId === preset.id) {
++      setDraft({ ...defaultFilters });
++    } else {
++      setDraft({ ...defaultFilters, ...preset.values });
++    }
++  };
++
++  const selectedChips = [];
++  sections.forEach(section => {
++    const vals = Array.isArray(draft[section.key]) ? draft[section.key] : [];
++    vals.forEach(v => {
++      const opt = section.options.find(o => o.value === v);
++      selectedChips.push({
++        sectionKey: section.key,
++        value: v,
++        label: opt?.label || v,
++      });
++    });
++  });
 +
    return (
      <Sheet open={open} onOpenChange={onOpenChange}>
        <SheetContent side="right" className="w-[320px] sm:w-[360px] flex flex-col p-0" dir="rtl">
-@@ -102,11 +119,11 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
+@@ -114,6 +141,50 @@ const FilterDrawer = ({
+         </SheetHeader>
+ 
+         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
++          {Array.isArray(presets) && presets.length > 0 && (
++            <div>
++              <h4 className="text-xs font-semibold text-slate-500 mb-2">תבניות מהירות</h4>
++              <div className="flex flex-wrap gap-2">
++                {presets.map(preset => {
++                  const active = activePresetId === preset.id;
++                  return (
++                    <button
++                      key={preset.id}
++                      type="button"
++                      onClick={() => applyPreset(preset)}
++                      className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
++                        active
++                          ? 'bg-amber-500 text-white shadow-sm'
++                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
++                      }`}
++                    >
++                      {preset.label}
++                    </button>
++                  );
++                })}
++              </div>
++            </div>
++          )}
++
++          {selectedChips.length > 0 && (
++            <div>
++              <div className="flex flex-wrap items-center gap-2">
++                <span className="text-xs font-semibold text-slate-500 shrink-0">נבחרו:</span>
++                {selectedChips.map(chip => (
++                  <button
++                    key={`${chip.sectionKey}:${chip.value}`}
++                    type="button"
++                    onClick={() => toggleValue(chip.sectionKey, chip.value)}
++                    className="inline-flex items-center gap-1 max-w-[140px] px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 active:bg-amber-200 transition-colors"
++                  >
++                    <span className="truncate">{chip.label}</span>
++                    <X className="w-3 h-3 shrink-0" />
++                  </button>
++                ))}
++              </div>
++            </div>
++          )}
++
+           {sections.map(section => (
+             section.options.length > 0 && (
                <FilterSection
-                 key={section.key}
-                 label={section.label}
--                value={draft[section.key]}
--                onChange={v => updateDraft(section.key, v)}
-+                values={Array.isArray(draft[section.key]) ? draft[section.key] : []}
-+                onToggle={v => toggleValue(section.key, v)}
-                 options={section.options}
-                 isOpen={!collapsedSections[section.key]}
--                onToggle={() => toggleSection(section.key)}
-+                onToggleOpen={() => toggleSection(section.key)}
-               />
-             )
-           ))}
-@@ -116,16 +133,16 @@ const FilterDrawer = ({ open, onOpenChange, filters, defaultFilters, onApply, se
-           <button
-             type="button"
-             onClick={handleReset}
--            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-50 transition-colors"
-+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-50 active:bg-slate-100 transition-colors"
-           >
-             אפס
-           </button>
-           <button
-             type="button"
-             onClick={handleApply}
--            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-colors"
-+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow-sm transition-colors"
-           >
--            סיים
-+            {matchCount === null ? 'סיים' : `הצג ${matchCount} ${matchLabel}`}
-           </button>
-         </div>
-       </SheetContent>
 diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
-index 765fb86..cd1824a 100644
+index cd1824a..8498a5b 100644
 --- a/frontend/src/pages/ApartmentDashboardPage.js
 +++ b/frontend/src/pages/ApartmentDashboardPage.js
-@@ -21,11 +21,11 @@ import {
- } from 'lucide-react';
- 
- const APARTMENT_DEFAULT_FILTERS = {
--  status: 'all',
--  category: 'all',
--  company: 'all',
--  assignee: 'all',
--  created_by: 'all',
-+  status: [],
-+  category: [],
-+  company: [],
-+  assignee: [],
-+  created_by: [],
+@@ -59,6 +59,32 @@ const STATUS_LABEL_MAP = {
+   closed: 'סגורים',
  };
  
- const STATUS_LABELS = {
-@@ -188,21 +188,37 @@ const ApartmentDashboardPage = () => {
-     setFilters(prev => {
-       const next = { ...prev };
-       let changed = false;
--      if (prev.category !== 'all' && !tasks.some(t => t.category === prev.category)) {
--        next.category = 'all';
--        changed = true;
-+      if (prev.category.length > 0) {
-+        const validCats = new Set(tasks.map(t => t.category).filter(Boolean));
-+        const filtered = prev.category.filter(c => validCats.has(c));
-+        if (filtered.length !== prev.category.length) {
-+          next.category = filtered;
-+          changed = true;
-+        }
-       }
--      if (prev.company !== 'all' && !tasks.some(t => t.company_id === prev.company)) {
--        next.company = 'all';
--        changed = true;
-+      if (prev.company.length > 0) {
-+        const validCompanies = new Set(tasks.map(t => t.company_id).filter(Boolean));
-+        const filtered = prev.company.filter(id => validCompanies.has(id));
-+        if (filtered.length !== prev.company.length) {
-+          next.company = filtered;
-+          changed = true;
-+        }
-       }
--      if (prev.assignee !== 'all' && !tasks.some(t => t.assignee_id === prev.assignee)) {
--        next.assignee = 'all';
--        changed = true;
-+      if (prev.assignee.length > 0) {
-+        const validAssignees = new Set(tasks.map(t => t.assignee_id).filter(Boolean));
-+        const filtered = prev.assignee.filter(id => validAssignees.has(id));
-+        if (filtered.length !== prev.assignee.length) {
-+          next.assignee = filtered;
-+          changed = true;
-+        }
-       }
--      if (prev.created_by !== 'all' && !tasks.some(t => t.created_by === prev.created_by)) {
--        next.created_by = 'all';
--        changed = true;
-+      if (prev.created_by.length > 0) {
-+        const validCreators = new Set(tasks.map(t => t.created_by).filter(Boolean));
-+        const filtered = prev.created_by.filter(id => validCreators.has(id));
-+        if (filtered.length !== prev.created_by.length) {
-+          next.created_by = filtered;
-+          changed = true;
-+        }
-       }
-       return changed ? next : prev;
-     });
-@@ -227,22 +243,55 @@ const ApartmentDashboardPage = () => {
-       }
-     });
- 
-+    const countBy = (predicate) => tasks.filter(predicate).length;
++const APARTMENT_PRESETS = [
++  { id: 'open', label: 'פתוחים', values: { status: ['open'] } },
++  { id: 'in_progress', label: 'בטיפול', values: { status: ['in_progress'] } },
++  { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
++];
 +
-     return [
--      { key: 'status', label: 'סטטוס', options: STATUS_FILTER_OPTIONS },
--      { key: 'category', label: 'תחום', options: Object.entries(cats).map(([v, l]) => ({ value: v, label: l })) },
--      { key: 'company', label: 'חברה', options: Object.entries(companies).map(([v, l]) => ({ value: v, label: l })) },
--      { key: 'assignee', label: 'אחראי', options: Object.entries(assignees).map(([v, l]) => ({ value: v, label: l })) },
--      { key: 'created_by', label: 'נוצר על ידי', options: Object.entries(creators).map(([v, l]) => ({ value: v, label: l })) },
-+      {
-+        key: 'status',
-+        label: 'סטטוס',
-+        options: STATUS_FILTER_OPTIONS.map(o => ({
-+          ...o,
-+          count: countBy(t => STATUS_LABELS[t.status]?.key === o.value),
-+        })),
-+      },
-+      {
-+        key: 'category',
-+        label: 'תחום',
-+        options: Object.entries(cats).map(([v, l]) => ({
-+          value: v, label: l, count: countBy(t => t.category === v),
-+        })),
-+      },
-+      {
-+        key: 'company',
-+        label: 'חברה',
-+        options: Object.entries(companies).map(([v, l]) => ({
-+          value: v, label: l, count: countBy(t => t.company_id === v),
-+        })),
-+      },
-+      {
-+        key: 'assignee',
-+        label: 'אחראי',
-+        options: Object.entries(assignees).map(([v, l]) => ({
-+          value: v, label: l, count: countBy(t => t.assignee_id === v),
-+        })),
-+      },
-+      {
-+        key: 'created_by',
-+        label: 'נוצר על ידי',
-+        options: Object.entries(creators).map(([v, l]) => ({
-+          value: v, label: l, count: countBy(t => t.created_by === v),
-+        })),
-+      },
-     ];
-   }, [tasks]);
- 
-   const activeFilterCount = useMemo(() => {
-     let count = 0;
--    if (filters.status !== 'all') count++;
--    if (filters.category !== 'all') count++;
--    if (filters.company !== 'all') count++;
--    if (filters.assignee !== 'all') count++;
--    if (filters.created_by !== 'all') count++;
-+    if (filters.status.length > 0) count++;
-+    if (filters.category.length > 0) count++;
-+    if (filters.company.length > 0) count++;
-+    if (filters.assignee.length > 0) count++;
-+    if (filters.created_by.length > 0) count++;
-     if (searchQuery.trim()) count++;
-     return count;
-   }, [filters, searchQuery]);
-@@ -250,10 +299,11 @@ const ApartmentDashboardPage = () => {
-   const filterSummaryText = useMemo(() => {
-     const parts = [];
-     filterSections.forEach(section => {
--      const val = filters[section.key];
--      if (val && val !== 'all') {
--        const opt = section.options.find(o => o.value === val);
--        parts.push(`${section.label}: ${opt?.label || val}`);
-+      const vals = filters[section.key];
-+      if (Array.isArray(vals) && vals.length > 0) {
-+        const labels = vals.map(v => section.options.find(o => o.value === v)?.label || v);
-+        const joined = labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1}`;
-+        parts.push(`${section.label}: ${joined}`);
-       }
-     });
-     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
-@@ -263,6 +313,22 @@ const ApartmentDashboardPage = () => {
-     return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
-   }, [filters, searchQuery, filterSections]);
- 
-+  const computeMatchCount = useCallback((draft) => {
-+    const draftSearchLower = searchQuery.trim().toLowerCase();
-+    return tasks.filter(t => {
-+      if (draft.category.length > 0 && !draft.category.includes(t.category)) return false;
-+      if (draft.company.length > 0 && !draft.company.includes(t.company_id)) return false;
-+      if (draft.assignee.length > 0 && !draft.assignee.includes(t.assignee_id)) return false;
-+      if (draft.created_by.length > 0 && !draft.created_by.includes(t.created_by)) return false;
-+      if (draft.status.length > 0 && !draft.status.includes(STATUS_LABELS[t.status]?.key)) return false;
-+      if (draftSearchLower && !(
-+        (t.title || '').toLowerCase().includes(draftSearchLower) ||
-+        (t.description || '').toLowerCase().includes(draftSearchLower)
-+      )) return false;
-+      return true;
-+    }).length;
-+  }, [tasks, searchQuery]);
++const arraysEqualAsSets = (a, b) => {
++  if (!Array.isArray(a) || !Array.isArray(b)) return false;
++  if (a.length !== b.length) return false;
++  const set = new Set(a);
++  return b.every(v => set.has(v));
++};
 +
-   if (!flagChecked || loading) {
-     return (
-       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-@@ -305,10 +371,10 @@ const ApartmentDashboardPage = () => {
- 
-   const searchLower = searchQuery.trim().toLowerCase();
-   const baseFilteredTasks = tasks.filter(t => {
--    if (filters.category !== 'all' && t.category !== filters.category) return false;
--    if (filters.company !== 'all' && t.company_id !== filters.company) return false;
--    if (filters.assignee !== 'all' && t.assignee_id !== filters.assignee) return false;
--    if (filters.created_by !== 'all' && t.created_by !== filters.created_by) return false;
-+    if (filters.category.length > 0 && !filters.category.includes(t.category)) return false;
-+    if (filters.company.length > 0 && !filters.company.includes(t.company_id)) return false;
-+    if (filters.assignee.length > 0 && !filters.assignee.includes(t.assignee_id)) return false;
-+    if (filters.created_by.length > 0 && !filters.created_by.includes(t.created_by)) return false;
-     if (searchLower && !(
-       (t.title || '').toLowerCase().includes(searchLower) ||
-       (t.description || '').toLowerCase().includes(searchLower)
-@@ -323,9 +389,9 @@ const ApartmentDashboardPage = () => {
-     closed: baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === 'closed').length,
-   };
- 
--  const filteredTasks = filters.status === 'all'
-+  const filteredTasks = filters.status.length === 0
-     ? baseFilteredTasks
--    : baseFilteredTasks.filter(t => STATUS_LABELS[t.status]?.key === filters.status);
-+    : baseFilteredTasks.filter(t => filters.status.includes(STATUS_LABELS[t.status]?.key));
- 
-   const hasActiveFilters = activeFilterCount > 0;
- 
-@@ -744,6 +810,8 @@ const ApartmentDashboardPage = () => {
-         defaultFilters={APARTMENT_DEFAULT_FILTERS}
-         onApply={setFilters}
++const getApartmentActivePresetId = (draft) => {
++  if (
++    draft.category.length > 0 ||
++    draft.company.length > 0 ||
++    draft.assignee.length > 0 ||
++    draft.created_by.length > 0
++  ) return null;
++  for (const p of APARTMENT_PRESETS) {
++    if (arraysEqualAsSets(draft.status, p.values.status)) return p.id;
++  }
++  return null;
++};
++
+ const ApartmentDashboardPage = () => {
+   const { projectId, unitId } = useParams();
+   const navigate = useNavigate();
+@@ -812,6 +838,8 @@ const ApartmentDashboardPage = () => {
          sections={filterSections}
-+        computeMatchCount={computeMatchCount}
-+        matchLabel="ליקויים"
+         computeMatchCount={computeMatchCount}
+         matchLabel="ליקויים"
++        presets={APARTMENT_PRESETS}
++        getActivePresetId={getApartmentActivePresetId}
        />
  
        <ExportModal
-@@ -751,7 +819,14 @@ const ApartmentDashboardPage = () => {
-         onOpenChange={setExportModalOpen}
-         scope="unit"
-         unitId={unitId}
--        filters={{ ...filters, search: searchQuery }}
-+        filters={{
-+          status: filters.status.length === 1 ? filters.status[0] : 'all',
-+          category: filters.category.length === 1 ? filters.category[0] : 'all',
-+          company: filters.company.length === 1 ? filters.company[0] : 'all',
-+          assignee: filters.assignee.length === 1 ? filters.assignee[0] : 'all',
-+          created_by: filters.created_by.length === 1 ? filters.created_by[0] : 'all',
-+          search: searchQuery,
-+        }}
-         meta={{
-           projectName: unitData?.project_name,
-           unitLabel: formatUnitLabel(effectiveLabel),
 diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
-index 7617249..31cd554 100644
+index 31cd554..9bae0f3 100644
 --- a/frontend/src/pages/BuildingDefectsPage.js
 +++ b/frontend/src/pages/BuildingDefectsPage.js
-@@ -13,10 +13,10 @@ import {
- } from 'lucide-react';
- 
- const BUILDING_DEFAULT_FILTERS = {
--  status: 'all',
--  category: 'all',
--  floor: 'all',
--  unit: 'all',
-+  status: [],
-+  category: [],
-+  floor: [],
-+  unit: [],
+@@ -31,6 +31,32 @@ const STATUS_LABEL_MAP = {
+   blocking: 'חוסמי מסירה',
  };
  
- const STATUS_FILTER_OPTIONS = [
-@@ -85,22 +85,28 @@ const BuildingDefectsPage = () => {
-     setFilters(prev => {
-       const next = { ...prev };
-       let changed = false;
--      if (prev.floor !== 'all' && !data.floors.some(f => f.id === prev.floor)) {
--        next.floor = 'all';
--        changed = true;
-+      if (prev.floor.length > 0) {
-+        const validFloorIds = new Set(data.floors.map(f => f.id));
-+        const filtered = prev.floor.filter(id => validFloorIds.has(id));
-+        if (filtered.length !== prev.floor.length) {
-+          next.floor = filtered;
-+          changed = true;
-+        }
-       }
--      if (prev.unit !== 'all') {
--        const allUnits = data.floors.flatMap(f => f.units || []);
--        if (!allUnits.some(u => u.id === prev.unit)) {
--          next.unit = 'all';
-+      if (prev.unit.length > 0) {
-+        const allUnitIds = new Set(data.floors.flatMap(f => (f.units || []).map(u => u.id)));
-+        const filtered = prev.unit.filter(id => allUnitIds.has(id));
-+        if (filtered.length !== prev.unit.length) {
-+          next.unit = filtered;
-           changed = true;
-         }
-       }
--      if (prev.category !== 'all') {
-+      if (prev.category.length > 0) {
-         const allCats = new Set();
-         data.floors.forEach(f => (f.units || []).forEach(u => (u.categories || []).forEach(c => allCats.add(c))));
--        if (!allCats.has(prev.category)) {
--          next.category = 'all';
-+        const filtered = prev.category.filter(c => allCats.has(c));
-+        if (filtered.length !== prev.category.length) {
-+          next.category = filtered;
-           changed = true;
-         }
-       }
-@@ -150,13 +156,18 @@ const BuildingDefectsPage = () => {
- 
-   const unitPassesFilter = (unit) => {
-     if (unitTypeFilter && unit.unit_type_tag !== unitTypeFilter) return false;
--    if (filters.unit !== 'all' && unit.id !== filters.unit) return false;
--    if (filters.category !== 'all' && !(unit.categories || []).includes(filters.category)) return false;
--    if (filters.status !== 'all') {
-+    if (filters.unit.length > 0 && !filters.unit.includes(unit.id)) return false;
-+    if (filters.category.length > 0) {
-+      const unitCats = unit.categories || [];
-+      if (!filters.category.some(c => unitCats.includes(c))) return false;
-+    }
-+    if (filters.status.length > 0) {
-       const c = unit.defect_counts || {};
--      if (filters.status === 'open' && (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0) === 0) return false;
--      if (filters.status === 'closed' && (c.closed || 0) === 0) return false;
--      if (filters.status === 'blocking' && (c.open || 0) + (c.in_progress || 0) === 0) return false;
-+      const matchesAny =
-+        (filters.status.includes('open')     && ((c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0)) > 0) ||
-+        (filters.status.includes('closed')   && (c.closed || 0) > 0) ||
-+        (filters.status.includes('blocking') && ((c.open || 0) + (c.in_progress || 0)) > 0);
-+      if (!matchesAny) return false;
-     }
-     const searchLower = searchQuery.trim().toLowerCase();
-     if (searchLower) {
-@@ -168,17 +179,27 @@ const BuildingDefectsPage = () => {
- 
-   const getStatusCount = (c) => {
-     if (!c) return 0;
--    if (filters.status === 'open') return (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
--    if (filters.status === 'closed') return c.closed || 0;
--    if (filters.status === 'blocking') return (c.open || 0) + (c.in_progress || 0);
-+    if (filters.status.length === 1) {
-+      const s = filters.status[0];
-+      if (s === 'open') return (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
-+      if (s === 'closed') return c.closed || 0;
-+      if (s === 'blocking') return (c.open || 0) + (c.in_progress || 0);
-+    }
-+    if (filters.status.length > 1) {
-+      let sum = 0;
-+      if (filters.status.includes('open'))     sum += (c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0);
-+      if (filters.status.includes('closed'))   sum += (c.closed || 0);
-+      if (filters.status.includes('blocking')) sum += (c.open || 0) + (c.in_progress || 0);
-+      return sum;
-+    }
-     return c.total || 0;
-   };
- 
-   const getFilteredFloorData = () => {
-     if (!data?.floors) return [];
--    const hasFilters = filters.status !== 'all' || filters.category !== 'all' || filters.floor !== 'all' || filters.unit !== 'all' || searchQuery.trim();
-+    const hasFilters = filters.status.length > 0 || filters.category.length > 0 || filters.floor.length > 0 || filters.unit.length > 0 || searchQuery.trim();
-     return (data.floors || [])
--      .filter(f => filters.floor === 'all' || f.id === filters.floor)
-+      .filter(f => filters.floor.length === 0 || filters.floor.includes(f.id))
-       .map(floor => {
-         const filteredUnits = (floor.units || []).filter(unitPassesFilter);
-         return { ...floor, filteredUnits };
-@@ -193,18 +214,46 @@ const BuildingDefectsPage = () => {
-   const filterSections = useMemo(() => {
-     if (!data?.floors) return [];
-     const cats = new Set();
-+    const catCounts = {};
-+    const statusCounts = { open: 0, closed: 0, blocking: 0 };
-     const floorOpts = [];
-     const unitOpts = [];
++const BUILDING_PRESETS = [
++  { id: 'open', label: 'פתוחים', values: { status: ['open'] } },
++  { id: 'blocking', label: 'חוסמים', values: { status: ['blocking'] } },
++  { id: 'open_blocking', label: 'פתוחים + חוסמים', values: { status: ['open', 'blocking'] } },
++  { id: 'closed', label: 'סגורים', values: { status: ['closed'] } },
++];
 +
-     (data.floors || []).forEach(f => {
--      floorOpts.push({ value: f.id, label: f.display_label || f.name || `קומה ${f.floor_number}` });
--      (f.units || []).forEach(u => {
--        (u.categories || []).forEach(c => cats.add(c));
--        unitOpts.push({ value: u.id, label: formatUnitLabel(u.display_label || u.unit_no || '') });
-+      const fUnits = f.units || [];
-+      floorOpts.push({
-+        value: f.id,
-+        label: f.display_label || f.name || `קומה ${f.floor_number}`,
-+        count: fUnits.length,
-+      });
-+      fUnits.forEach(u => {
-+        (u.categories || []).forEach(c => {
-+          cats.add(c);
-+          catCounts[c] = (catCounts[c] || 0) + 1;
-+        });
-+        const c = u.defect_counts || {};
-+        if ((c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0) > 0) statusCounts.open += 1;
-+        if ((c.closed || 0) > 0) statusCounts.closed += 1;
-+        if ((c.open || 0) + (c.in_progress || 0) > 0) statusCounts.blocking += 1;
-+        unitOpts.push({
-+          value: u.id,
-+          label: formatUnitLabel(u.display_label || u.unit_no || ''),
-+          count: c.total || 0,
-+        });
-       });
-     });
++const arraysEqualAsSets = (a, b) => {
++  if (!Array.isArray(a) || !Array.isArray(b)) return false;
++  if (a.length !== b.length) return false;
++  const set = new Set(a);
++  return b.every(v => set.has(v));
++};
 +
-     return [
--      { key: 'status', label: 'סטטוס', options: STATUS_FILTER_OPTIONS },
--      { key: 'category', label: 'תחום', options: [...cats].sort().map(c => ({ value: c, label: tCategory(c) })) },
-+      {
-+        key: 'status',
-+        label: 'סטטוס',
-+        options: STATUS_FILTER_OPTIONS.map(o => ({ ...o, count: statusCounts[o.value] || 0 })),
-+      },
-+      {
-+        key: 'category',
-+        label: 'תחום',
-+        options: [...cats].sort().map(c => ({ value: c, label: tCategory(c), count: catCounts[c] || 0 })),
-+      },
-       { key: 'floor', label: 'קומה', options: floorOpts },
-       { key: 'unit', label: 'דירה', options: unitOpts },
-     ];
-@@ -212,10 +261,10 @@ const BuildingDefectsPage = () => {
- 
-   const activeFilterCount = useMemo(() => {
-     let count = 0;
--    if (filters.status !== 'all') count++;
--    if (filters.category !== 'all') count++;
--    if (filters.floor !== 'all') count++;
--    if (filters.unit !== 'all') count++;
-+    if (filters.status.length > 0) count++;
-+    if (filters.category.length > 0) count++;
-+    if (filters.floor.length > 0) count++;
-+    if (filters.unit.length > 0) count++;
-     if (searchQuery.trim()) count++;
-     return count;
-   }, [filters, searchQuery]);
-@@ -223,10 +272,11 @@ const BuildingDefectsPage = () => {
-   const filterSummaryText = useMemo(() => {
-     const parts = [];
-     filterSections.forEach(section => {
--      const val = filters[section.key];
--      if (val && val !== 'all') {
--        const opt = section.options.find(o => o.value === val);
--        parts.push(`${section.label}: ${opt?.label || val}`);
-+      const vals = filters[section.key];
-+      if (Array.isArray(vals) && vals.length > 0) {
-+        const labels = vals.map(v => section.options.find(o => o.value === v)?.label || v);
-+        const joined = labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1}`;
-+        parts.push(`${section.label}: ${joined}`);
-       }
-     });
-     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
-@@ -235,6 +285,39 @@ const BuildingDefectsPage = () => {
-     return parts.slice(0, 2).join(' · ') + ` · עוד ${parts.length - 2}`;
-   }, [filters, searchQuery, filterSections]);
- 
-+  const computeMatchCount = useCallback((draft) => {
-+    if (!data?.floors) return 0;
-+    const draftSearchLower = searchQuery.trim().toLowerCase();
-+    const unitPasses = (unit) => {
-+      if (unitTypeFilter && unit.unit_type_tag !== unitTypeFilter) return false;
-+      if (draft.unit.length > 0 && !draft.unit.includes(unit.id)) return false;
-+      if (draft.category.length > 0) {
-+        const unitCats = unit.categories || [];
-+        if (!draft.category.some(c => unitCats.includes(c))) return false;
-+      }
-+      if (draft.status.length > 0) {
-+        const c = unit.defect_counts || {};
-+        const matchesAny =
-+          (draft.status.includes('open')     && ((c.open || 0) + (c.in_progress || 0) + (c.waiting_verify || 0)) > 0) ||
-+          (draft.status.includes('closed')   && (c.closed || 0) > 0) ||
-+          (draft.status.includes('blocking') && ((c.open || 0) + (c.in_progress || 0)) > 0);
-+        if (!matchesAny) return false;
-+      }
-+      if (draftSearchLower) {
-+        const label = (unit.display_label || unit.unit_no || '').toLowerCase();
-+        if (!label.includes(draftSearchLower)) return false;
-+      }
-+      return true;
-+    };
-+    let count = 0;
-+    (data.floors || [])
-+      .filter(f => draft.floor.length === 0 || draft.floor.includes(f.id))
-+      .forEach(f => {
-+        count += (f.units || []).filter(unitPasses).length;
-+      });
-+    return count;
-+  }, [data, searchQuery, unitTypeFilter]);
++const getBuildingActivePresetId = (draft) => {
++  if (
++    draft.category.length > 0 ||
++    draft.floor.length > 0 ||
++    draft.unit.length > 0
++  ) return null;
++  for (const p of BUILDING_PRESETS) {
++    if (arraysEqualAsSets(draft.status, p.values.status)) return p.id;
++  }
++  return null;
++};
 +
-   const hasActiveFilters = activeFilterCount > 0;
+ import UnitTypeEditModal, { UNIT_TYPE_TAGS, TAG_MAP } from '../components/UnitTypeEditModal';
  
-   const getTotalCounts = () => {
-@@ -424,7 +507,7 @@ const BuildingDefectsPage = () => {
-                     <div className="flex items-center gap-2">
-                       {floorCount > 0 && (
-                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
--                          filters.status === 'blocking' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
-+                          filters.status.includes('blocking') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
-                         }`}>
-                           {floorCount}
-                         </span>
-@@ -496,6 +579,8 @@ const BuildingDefectsPage = () => {
-         defaultFilters={BUILDING_DEFAULT_FILTERS}
-         onApply={setFilters}
+ const BuildingDefectsPage = () => {
+@@ -581,6 +607,8 @@ const BuildingDefectsPage = () => {
          sections={filterSections}
-+        computeMatchCount={computeMatchCount}
-+        matchLabel="דירות"
+         computeMatchCount={computeMatchCount}
+         matchLabel="דירות"
++        presets={BUILDING_PRESETS}
++        getActivePresetId={getBuildingActivePresetId}
        />
  
        <ExportModal
-@@ -503,7 +588,13 @@ const BuildingDefectsPage = () => {
-         onOpenChange={setExportModalOpen}
-         scope="building"
-         buildingId={buildingId}
--        filters={{ ...filters, search: searchQuery }}
-+        filters={{
-+          status: filters.status.length === 1 ? filters.status[0] : 'all',
-+          category: filters.category.length === 1 ? filters.category[0] : 'all',
-+          floor: filters.floor.length === 1 ? filters.floor[0] : 'all',
-+          unit: filters.unit.length === 1 ? filters.unit[0] : 'all',
-+          search: searchQuery,
-+        }}
-         meta={{
-           projectName: data?.project?.name,
-           buildingName: data?.building?.name,
