@@ -188,6 +188,10 @@ GOOGLE_CLIENT_ID_WEB = os.getenv("GOOGLE_CLIENT_ID_WEB", "")
 GOOGLE_CLIENT_ID_IOS = os.getenv("GOOGLE_CLIENT_ID_IOS", "")
 GOOGLE_CLIENT_ID_ANDROID = os.getenv("GOOGLE_CLIENT_ID_ANDROID", "")
 APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID", "com.brikops.app")
+APPLE_SERVICES_ID = os.getenv("APPLE_SERVICES_ID", "")  # e.g. "com.brikops.app.signin" — required for web flow
+
+# Audiences accepted when verifying Apple ID tokens
+APPLE_AUDIENCES = [a for a in [APPLE_BUNDLE_ID, APPLE_SERVICES_ID] if a]
 
 STEPUP_CHANNEL = os.environ.get('STEPUP_CHANNEL', 'email')
 STEPUP_EMAIL = os.environ.get('STEPUP_EMAIL', '')

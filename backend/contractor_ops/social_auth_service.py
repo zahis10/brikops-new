@@ -15,7 +15,7 @@ from config import (
     GOOGLE_CLIENT_ID_WEB,
     GOOGLE_CLIENT_ID_IOS,
     GOOGLE_CLIENT_ID_ANDROID,
-    APPLE_BUNDLE_ID,
+    APPLE_AUDIENCES,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,11 +91,15 @@ async def verify_apple_token(id_token_str: str) -> dict:
         from jwt.algorithms import RSAAlgorithm
         public_key = RSAAlgorithm.from_jwk(key_data)
 
+        if not APPLE_AUDIENCES:
+            logger.error("Apple audiences not configured (set APPLE_BUNDLE_ID and/or APPLE_SERVICES_ID)")
+            raise ValueError("אימות Apple נכשל — שירות לא מוגדר")
+
         decoded = pyjwt.decode(
             id_token_str,
             public_key,
             algorithms=["RS256"],
-            audience=APPLE_BUNDLE_ID,
+            audience=APPLE_AUDIENCES,  # pyjwt accepts list — passes if aud matches ANY
             issuer="https://appleid.apple.com",
         )
 
