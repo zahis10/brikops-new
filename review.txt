@@ -1,69 +1,131 @@
 ================================================================
-#385 שלב 5 צעד 1 — Bootstrap iOS Capacitor
-סטטוס: 🛑 עצור ודווח (כפי שדרש המפרט) — אין commit
+#385 שלב 5 צעד 1 — Diff מלא של כל השינויים בסשן הזה
 ================================================================
+TL;DR: לא בוצע אף שינוי קוד / תלות. ההתקנה של @capacitor/ios בוצעה
+ובוטלה מיד באותו סשן (yarn add → yarn remove), כי yarn בחר major
+8.3.1 בעוד שאר ה-Capacitor stack נעול ל-^7.6.1. המפרט דרש לעצור
+ולדווח. הריפו במצב נקי לחלוטין מבחינת קוד.
 
-מה נעשה
--------
-הרצתי `cd frontend && yarn add @capacitor/ios` (35 שניות, ללא תלייה).
-Yarn בחר אוטומטית `@capacitor/ios@8.3.1` — major שונה משאר חבילות
-ה-Capacitor בפרויקט (כולן `^7.6.1`).
+================================================================
+1. STAT — סיכום דחוס
+================================================================
+שינויי קוד אפליקציה (frontend/src, backend/, וכו׳)..... 0 קבצים
+שינויי תלויות (package.json, yarn.lock, requirements).. 0 קבצים
+תיקייה חדשה frontend/ios/.............................. לא קיימת
+שינויי קונפיגורציה (capacitor.config.json וכו׳)........ 0 קבצים
 
-האזהרה המדויקת מ-yarn:
-  warning " > @capacitor/ios@8.3.1" has incorrect peer dependency
-  "@capacitor/core@^8.3.0".
+קבצים שכן שונו בסשן (לא קוד אפליקציה):
+  review.txt                                  (override — הקובץ הזה)
+  .local/.commit_message                      (חדש — מסר commit פנימי)
+  .local/tasks/task-376.md                    (override — תוכנית משימה)
+  .local/tasks/385-apple-phase5-step1-...md   (אותו דבר, override)
+  .agents/agent_assets_metadata.toml          (אוטומטי ע״י Replit —
+                                               רק כותרת ה-asset של
+                                               review.txt התעדכנה)
 
-המפרט קובע במפורש: "אם yarn בוחר major אחר — עצור ודווח, אל
-תבצע commit". לכן הרצתי מיד `yarn remove @capacitor/ios` כדי
-להחזיר את הריפו למצב נקי, ולא ביצעתי `npx cap add ios`.
+================================================================
+2. אימות שאין שינויי קוד
+================================================================
+$ git status
+On branch main
+nothing to commit, working tree clean
 
-אימות מצב נקי
--------------
-$ git status --short
-(ריק)
+$ git diff HEAD
+(ריק — אין שינויים לא-מקומיטים)
 
-$ git log -1 --oneline
-6340568 (HEAD -> main) Update Apple Sign-In to use environment
-        variable for client ID
+$ git log -3 --oneline
+d6bb2e1 (HEAD -> main) Update Apple sign-in to use environment
+        variables for client ID                  ← checkpoint אוטומטי
+                                                   של Replit (ראה §4)
+6340568 (origin/main) Update Apple Sign-In to use environment
+        variable for client ID                   ← #385 Phase 2 שלך
+d8ba460 spec #385 Phase 2: frontend Apple Sign-In ...
 
 $ grep '"@capacitor/' frontend/package.json
-    "@capacitor/android": "^7.6.1",
-    "@capacitor/camera": "^7.0.5",
-    "@capacitor/cli": "^7.6.1",
-    "@capacitor/core": "^7.6.1",
-    "@capacitor/status-bar": "^7.0.6",
-(אין `@capacitor/ios` — בוטל)
+    "@capacitor/android": "^7.6.1"
+    "@capacitor/camera": "^7.0.5"
+    "@capacitor/cli": "^7.6.1"
+    "@capacitor/core": "^7.6.1"
+    "@capacitor/status-bar": "^7.0.6"
+(אין @capacitor/ios — בוטל)
 
-$ ls frontend/ios/
-ls: cannot access 'frontend/ios/': No such file or directory
-(לא רץ `npx cap add ios` — אין תיקיית iOS)
+$ ls frontend/ios
+ls: cannot access 'frontend/ios': No such file or directory
 
-git push לא הורץ. yarn.lock חזר למצב המקורי.
+================================================================
+3. רצף הפקודות שהורצו (תיעוד מלא)
+================================================================
+[1] cd frontend && yarn add @capacitor/ios
+    תוצאה: התקנה הסתיימה ב-35 שניות.
+    אזהרת yarn:
+      warning " > @capacitor/ios@8.3.1" has incorrect peer
+      dependency "@capacitor/core@^8.3.0".
+    yarn בחר major 8 כי ^7.6.1 לא תומך ב-8.x ולא צוינה גרסה.
 
-למה זה קרה
-----------
-החבילות הקיימות נעולות ל-`^7.6.1` שלא מתיר 8.x. כשמריצים
-`yarn add @capacitor/ios` בלי גרסה, yarn מביא את ה-latest
-(`8.3.1`). חייבים לציין גרסה מפורשת.
+[2] cd frontend && yarn remove @capacitor/ios
+    תוצאה: בוטל תוך 37 שניות. yarn.lock + package.json חזרו
+    בדיוק למצב 6340568.
 
-שתי אפשרויות להמשך — אתה בוחר
-------------------------------
-אפשרות א׳ (מומלץ — תואם ל-7.x הקיים):
-  cd frontend && yarn add @capacitor/ios@^7.6.1
-  npx cap add ios
-  CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
-  git add frontend/ios/ frontend/package.json frontend/yarn.lock
-  git commit -m "feat(#385 Phase 5 Step 1): bootstrap iOS Capacitor platform"
+[3] git status --short
+    תוצאה: ריק. אין שינויים לא-מקומיטים.
 
-אפשרות ב׳ (שדרוג מלא ל-Capacitor 8 — מחוץ להיקף המשימה):
-  שדרוג של core/cli/android/camera/status-bar ל-^8.x +
-  בדיקות תאימות עם @capgo/capacitor-updater. דורש משימה נפרדת.
+לא הורץ: npx cap add ios.
+לא הורץ: git commit על קוד.
+לא הורץ: git push.
 
-הערה לגבי Replit
-----------------
-ההתקנה רצה תוך 35 שניות בלי תלייה — בניגוד לחשש שצוין ב-scratchpad
-לגבי תלקיים של חבילות native. אם תבחר באפשרות א׳, סביר שאוכל
-להריץ את כל הצעד כולל `npx cap add ios` ב-Replit ולשלוח לבדיקה.
-אם בכל זאת תרצה להריץ ב-Mac — תגיד.
+================================================================
+4. מה הdiff של commit d6bb2e1 (האוטומטי של Replit)
+================================================================
+זה checkpoint אוטומטי שהפלטפורמה יצרה בסיום הסשן. *הכותרת מטעה*
+(היא הועתקה מהcommit הקודם). התוכן בפועל:
 
-ממתין לאישור: א׳ או ב׳? (או הוראה אחרת)
+ .agents/agent_assets_metadata.toml |   2 +-
+ review.txt                         | 219 +++++++--------------------
+ 2 files changed, 69 insertions(+), 152 deletions(-)
+
+הdiff המלא:
+
+--- a/.agents/agent_assets_metadata.toml
++++ b/.agents/agent_assets_metadata.toml
+@@ -77,7 +77,7 @@ title = "review-94.txt"
+ id = "ocdrZig6YPfAjD1XCgrbr"
+ uri = "file://review.txt"
+ type = "text"
+-title = "#385 Phase 2 — Frontend Apple Sign-In (full diff)"
++title = "#385 Phase 5 Step 1 — STOP & REPORT (version mismatch)"
+
+--- a/review.txt          (התוכן הקודם של Phase 2 הוחלף בתוכן הנוכחי)
++++ b/review.txt
+@@ ... @@
+(שינוי תוכן בלבד של הקובץ הזה — אין השפעה על האפליקציה)
+
+ה-commit הזה אינו מכיל אף שינוי תחת frontend/ או backend/ או כל
+מקום שמשפיע על קוד הריצה. השרת והאפליקציה זהים בדיוק ל-6340568.
+
+================================================================
+5. הסיבה שעצרתי
+================================================================
+המפרט של המשימה (#376) קובע במפורש:
+  "If yarn picks a different major, stop and report — do not commit."
+
+yarn picked major 8 → עצרתי ודיווחתי. הריפו במצב מקורי.
+
+================================================================
+6. אפשרויות להמשך — אתה בוחר
+================================================================
+א׳ (מומלץ — נשארים על Capacitor 7):
+   cd frontend && yarn add @capacitor/ios@^7.6.1
+   npx cap add ios
+   CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
+   git add frontend/ios/ frontend/package.json frontend/yarn.lock
+   git commit -m "feat(#385 Phase 5 Step 1): bootstrap iOS Capacitor platform"
+
+ב׳ (שדרוג Capacitor 8 — מחוץ להיקף המשימה הנוכחית):
+   שדרוג core/cli/android/camera/status-bar ל-^8.x + תאימות
+   @capgo/capacitor-updater. דורש משימה נפרדת ובדיקה.
+
+הערה: ההתקנה לא נתקעה ב-Replit (35 שניות), בניגוד לחשש שצוין
+ב-scratchpad. אם תבחר א׳, סביר שאסיים את כל הצעד כאן בלי שתצטרך
+ל-Mac.
+
+ממתין להוראה: א׳ או ב׳?
