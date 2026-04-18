@@ -6,6 +6,20 @@ require("dotenv").config();
 // Craco sets NODE_ENV=development for start, NODE_ENV=production for build
 const isDevServer = process.env.NODE_ENV !== "production";
 
+// Fail-fast guard: production builds MUST have REACT_APP_BACKEND_URL set.
+// Without it, the bundled app can't reach the backend and login breaks
+// with "תגובה לא תקינה מהשרת". This check prevents shipping a broken AAB.
+if (!isDevServer) {
+  const backendUrl = process.env.REACT_APP_BACKEND_URL;
+  if (!backendUrl || backendUrl.trim() === "") {
+    throw new Error(
+      "[build] REACT_APP_BACKEND_URL is not set. " +
+      "Production build would ship a broken bundle (login fails with 'תגובה לא תקינה מהשרת'). " +
+      "Set it in frontend/.env.production or as an env var before running 'yarn build'."
+    );
+  }
+}
+
 // Environment variable overrides
 const config = {
   enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",
