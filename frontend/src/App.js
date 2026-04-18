@@ -13,6 +13,7 @@ import PaywallModal from './components/PaywallModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
+import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import './App.css';
 import './index.css';
 
@@ -462,6 +463,11 @@ function App() {
       StatusBar.setOverlaysWebView({ overlay: false });
       StatusBar.setBackgroundColor({ color: '#0F172A' });
       StatusBar.setStyle({ style: Style.Dark });
+      try {
+        CapacitorUpdater.notifyAppReady();
+      } catch (e) {
+        console.warn('Capgo notifyAppReady failed:', e);
+      }
     }
   }, []);
 
