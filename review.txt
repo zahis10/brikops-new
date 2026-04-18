@@ -1,159 +1,152 @@
 ================================================================
-#385 Phase 1 — Backend Apple multi-audience — FULL DIFF
+#385 Phase 2 — Frontend Apple Sign-In env-driven clientId
 ================================================================
-Commit: 17789c1ea60806e75c070c184a8779f152ccd7cb
-Files: 2 changed, 10 insertions(+), 2 deletions(-)
+Commit: d8ba460cd170954b03ed7a2c8c748bfc1ad41b70
+Branch: main (LOCAL ONLY — NOT pushed; Zahi pushes via ./deploy.sh --prod)
 
 ================================================================
 STAT
 ================================================================
- backend/config.py                             | 4 ++++
- backend/contractor_ops/social_auth_service.py | 8 ++++++--
- 2 files changed, 10 insertions(+), 2 deletions(-)
+ frontend/src/pages/LoginPage.js      | 9 ++++++++-
+ frontend/src/pages/OnboardingPage.js | 9 ++++++++-
+ 2 files changed, 16 insertions(+), 2 deletions(-)
 
 ================================================================
 UNIFIED DIFF (HEAD~1..HEAD)
 ================================================================
-diff --git a/backend/config.py b/backend/config.py
-index 963dfcd..cec6af5 100644
---- a/backend/config.py
-+++ b/backend/config.py
-@@ -188,6 +188,10 @@ GOOGLE_CLIENT_ID_WEB = os.getenv("GOOGLE_CLIENT_ID_WEB", "")
- GOOGLE_CLIENT_ID_IOS = os.getenv("GOOGLE_CLIENT_ID_IOS", "")
- GOOGLE_CLIENT_ID_ANDROID = os.getenv("GOOGLE_CLIENT_ID_ANDROID", "")
- APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID", "com.brikops.app")
-+APPLE_SERVICES_ID = os.getenv("APPLE_SERVICES_ID", "")  # e.g. "com.brikops.app.signin" — required for web flow
+diff --git a/frontend/src/pages/LoginPage.js b/frontend/src/pages/LoginPage.js
+index f1645cd..34b1059 100644
+--- a/frontend/src/pages/LoginPage.js
++++ b/frontend/src/pages/LoginPage.js
+@@ -365,8 +365,15 @@ const LoginPage = () => {
+         });
+       }
+ 
++      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
++      if (!appleServicesId) {
++        toast.error('שירות Apple לא מוגדר');
++        setSocialLoading(false);
++        return;
++      }
 +
-+# Audiences accepted when verifying Apple ID tokens
-+APPLE_AUDIENCES = [a for a in [APPLE_BUNDLE_ID, APPLE_SERVICES_ID] if a]
+       window.AppleID.auth.init({
+-        clientId: 'com.brikops.app',
++        clientId: appleServicesId,
+         scope: 'name email',
+         redirectURI: window.location.origin + '/login',
+         usePopup: true,
+diff --git a/frontend/src/pages/OnboardingPage.js b/frontend/src/pages/OnboardingPage.js
+index a7ebbdc..66a98dc 100644
+--- a/frontend/src/pages/OnboardingPage.js
++++ b/frontend/src/pages/OnboardingPage.js
+@@ -251,8 +251,15 @@ const OnboardingPage = () => {
+         });
+       }
  
- STEPUP_CHANNEL = os.environ.get('STEPUP_CHANNEL', 'email')
- STEPUP_EMAIL = os.environ.get('STEPUP_EMAIL', '')
-diff --git a/backend/contractor_ops/social_auth_service.py b/backend/contractor_ops/social_auth_service.py
-index a19fd93..492e81b 100644
---- a/backend/contractor_ops/social_auth_service.py
-+++ b/backend/contractor_ops/social_auth_service.py
-@@ -15,7 +15,7 @@ from config import (
-     GOOGLE_CLIENT_ID_WEB,
-     GOOGLE_CLIENT_ID_IOS,
-     GOOGLE_CLIENT_ID_ANDROID,
--    APPLE_BUNDLE_ID,
-+    APPLE_AUDIENCES,
- )
- 
- logger = logging.getLogger(__name__)
-@@ -91,11 +91,15 @@ async def verify_apple_token(id_token_str: str) -> dict:
-         from jwt.algorithms import RSAAlgorithm
-         public_key = RSAAlgorithm.from_jwk(key_data)
- 
-+        if not APPLE_AUDIENCES:
-+            logger.error("Apple audiences not configured (set APPLE_BUNDLE_ID and/or APPLE_SERVICES_ID)")
-+            raise ValueError("אימות Apple נכשל — שירות לא מוגדר")
++      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
++      if (!appleServicesId) {
++        toast.error('שירות Apple לא מוגדר');
++        setSocialLoading(false);
++        return;
++      }
 +
-         decoded = pyjwt.decode(
-             id_token_str,
-             public_key,
-             algorithms=["RS256"],
--            audience=APPLE_BUNDLE_ID,
-+            audience=APPLE_AUDIENCES,  # pyjwt accepts list — passes if aud matches ANY
-             issuer="https://appleid.apple.com",
-         )
- 
+       window.AppleID.auth.init({
+-        clientId: 'com.brikops.app',
++        clientId: appleServicesId,
+         scope: 'name email',
+         redirectURI: window.location.origin + '/login',
+         usePopup: true,
 
 ================================================================
-FILE 1: backend/config.py — BEFORE (lines 187-191)
+FILE 1: frontend/src/pages/LoginPage.js — BEFORE (lines 366-374)
 ================================================================
-GOOGLE_CLIENT_ID_WEB = os.getenv("GOOGLE_CLIENT_ID_WEB", "")
-GOOGLE_CLIENT_ID_IOS = os.getenv("GOOGLE_CLIENT_ID_IOS", "")
-GOOGLE_CLIENT_ID_ANDROID = os.getenv("GOOGLE_CLIENT_ID_ANDROID", "")
-APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID", "com.brikops.app")
+      }
 
-
-================================================================
-FILE 1: backend/config.py — AFTER (lines 187-198)
-================================================================
-GOOGLE_CLIENT_ID_WEB = os.getenv("GOOGLE_CLIENT_ID_WEB", "")
-GOOGLE_CLIENT_ID_IOS = os.getenv("GOOGLE_CLIENT_ID_IOS", "")
-GOOGLE_CLIENT_ID_ANDROID = os.getenv("GOOGLE_CLIENT_ID_ANDROID", "")
-APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID", "com.brikops.app")
-APPLE_SERVICES_ID = os.getenv("APPLE_SERVICES_ID", "")  # e.g. "com.brikops.app.signin" — required for web flow
-
-# Audiences accepted when verifying Apple ID tokens
-APPLE_AUDIENCES = [a for a in [APPLE_BUNDLE_ID, APPLE_SERVICES_ID] if a]
-
-STEPUP_CHANNEL = os.environ.get('STEPUP_CHANNEL', 'email')
-STEPUP_EMAIL = os.environ.get('STEPUP_EMAIL', '')
-STEPUP_TTL_SECONDS = int(os.environ.get('STEPUP_TTL_SECONDS', '300'))
-
-================================================================
-FILE 2: backend/contractor_ops/social_auth_service.py — BEFORE
-================================================================
---- imports (lines 14-19) ---
-from config import (
-    GOOGLE_CLIENT_ID_WEB,
-    GOOGLE_CLIENT_ID_IOS,
-    GOOGLE_CLIENT_ID_ANDROID,
-    APPLE_BUNDLE_ID,
-)
-
---- verify_apple_token decode block (lines 91-101) ---
-        from jwt.algorithms import RSAAlgorithm
-        public_key = RSAAlgorithm.from_jwk(key_data)
-
-        decoded = pyjwt.decode(
-            id_token_str,
-            public_key,
-            algorithms=["RS256"],
-            audience=APPLE_BUNDLE_ID,
-            issuer="https://appleid.apple.com",
-        )
+      window.AppleID.auth.init({
+        clientId: 'com.brikops.app',
+        scope: 'name email',
+        redirectURI: window.location.origin + '/login',
+        usePopup: true,
+      });
 
 
 ================================================================
-FILE 2: backend/contractor_ops/social_auth_service.py — AFTER
+FILE 1: frontend/src/pages/LoginPage.js — AFTER (lines 366-384)
 ================================================================
---- imports (lines 14-22) ---
-from config import (
-    GOOGLE_CLIENT_ID_WEB,
-    GOOGLE_CLIENT_ID_IOS,
-    GOOGLE_CLIENT_ID_ANDROID,
-    APPLE_AUDIENCES,
-)
+      }
 
-logger = logging.getLogger(__name__)
+      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
+      if (!appleServicesId) {
+        toast.error('שירות Apple לא מוגדר');
+        setSocialLoading(false);
+        return;
+      }
+
+      window.AppleID.auth.init({
+        clientId: appleServicesId,
+        scope: 'name email',
+        redirectURI: window.location.origin + '/login',
+        usePopup: true,
+      });
+
+      const response = await window.AppleID.auth.signIn();
+      const idToken = response.authorization.id_token;
+      const appleName = response.user
+
+================================================================
+FILE 2: frontend/src/pages/OnboardingPage.js — BEFORE (lines 252-260)
+================================================================
+      }
+
+      window.AppleID.auth.init({
+        clientId: 'com.brikops.app',
+        scope: 'name email',
+        redirectURI: window.location.origin + '/login',
+        usePopup: true,
+      });
 
 
---- verify_apple_token decode block (lines 94-108) ---
-        if not APPLE_AUDIENCES:
-            logger.error("Apple audiences not configured (set APPLE_BUNDLE_ID and/or APPLE_SERVICES_ID)")
-            raise ValueError("אימות Apple נכשל — שירות לא מוגדר")
+================================================================
+FILE 2: frontend/src/pages/OnboardingPage.js — AFTER (lines 252-270)
+================================================================
+      }
 
-        decoded = pyjwt.decode(
-            id_token_str,
-            public_key,
-            algorithms=["RS256"],
-            audience=APPLE_AUDIENCES,  # pyjwt accepts list — passes if aud matches ANY
-            issuer="https://appleid.apple.com",
-        )
+      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
+      if (!appleServicesId) {
+        toast.error('שירות Apple לא מוגדר');
+        setSocialLoading(false);
+        return;
+      }
 
-        return {
-            "sub": decoded["sub"],
-            "email": decoded.get("email", ""),
+      window.AppleID.auth.init({
+        clientId: appleServicesId,
+        scope: 'name email',
+        redirectURI: window.location.origin + '/login',
+        usePopup: true,
+      });
+
+      const response = await window.AppleID.auth.signIn();
+      const idToken = response.authorization.id_token;
+      const appleName = response.user
 
 ================================================================
 VERIFICATION
 ================================================================
-$ cd backend && python -c "from config import APPLE_AUDIENCES; print(APPLE_AUDIENCES)"
-[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
-['com.brikops.app']
+$ grep -rn "com.brikops.app" frontend/src/
+(no matches)
 
-================================================================
-VERIFICATION OUTPUT (re-run, exact)
-================================================================
-$ cd backend && python -c "from config import APPLE_AUDIENCES; print(APPLE_AUDIENCES)"
-[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
-['com.brikops.app']
+$ cd frontend && yarn build  (last lines)
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
 
-Length = 1 → APPLE_SERVICES_ID is NOT set in Replit Secrets yet.
-Once you add APPLE_SERVICES_ID=com.brikops.app.signin, the list will be:
-  ['com.brikops.app', 'com.brikops.app.signin']
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  yarn global add serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+Done in 34.79s.
