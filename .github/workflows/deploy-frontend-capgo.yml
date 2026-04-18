@@ -1,0 +1,37 @@
+name: Upload Frontend Bundle to Capgo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+
+jobs:
+  capgo-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ vars.NODE_VERSION }}
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          REACT_APP_BACKEND_URL: ${{ vars.REACT_APP_BACKEND_URL }}
+          REACT_APP_GOOGLE_CLIENT_ID: ${{ vars.REACT_APP_GOOGLE_CLIENT_ID }}
+          REACT_APP_GIT_SHA: ${{ github.sha }}
+        run: yarn build
+
+      - name: Upload bundle to Capgo
+        working-directory: frontend
+        env:
+          CAPGO_API_KEY: ${{ secrets.CAPGO_API_KEY }}
+        run: npx @capgo/cli bundle upload --apikey "$CAPGO_API_KEY" --channel production
