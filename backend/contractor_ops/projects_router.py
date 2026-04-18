@@ -1081,7 +1081,7 @@ async def get_project_hierarchy(project_id: str, user: dict = Depends(get_curren
     }
 
 
-@router.get("/units/{unit_id}/tasks", response_model=List[Task])
+@router.get("/units/{unit_id}/tasks")
 async def list_unit_tasks(unit_id: str,
                           status: Optional[str] = Query(None),
                           category: Optional[str] = Query(None),
@@ -1095,11 +1095,96 @@ async def list_unit_tasks(unit_id: str,
     tasks = await db.tasks.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
     tasks = sorted(tasks, key=_priority_sort_key)
     from services.object_storage import resolve_urls_in_doc
+
+    # ---- Batch enrichment ----
+    project_id = tasks[0].get('project_id') if tasks else None
+
+    company_ids = {t.get('company_id') for t in tasks if t.get('company_id')}
+    assignee_ids = {t.get('assignee_id') for t in tasks if t.get('assignee_id')}
+    creator_ids = {t.get('created_by') for t in tasks if t.get('created_by')}
+
+    # companies: project_companies (preferred) ← fallback companies
+    company_name_map: dict = {}
+    if company_ids:
+        async for pc in db.project_companies.find(
+            {'id': {'$in': list(company_ids)}, 'deletedAt': {'$exists': False}},
+            {'_id': 0, 'id': 1, 'name': 1}
+        ):
+            if pc.get('id'):
+                company_name_map[pc['id']] = pc.get('name', '')
+        missing = company_ids - set(company_name_map.keys())
+        if missing:
+            async for c in db.companies.find(
+                {'id': {'$in': list(missing)}},
+                {'_id': 0, 'id': 1, 'name': 1}
+            ):
+                if c.get('id'):
+                    company_name_map[c['id']] = c.get('name', '')
+
+    # memberships (for assignee_name + assignee company_id)
+    membership_map: dict = {}
+    if assignee_ids and project_id:
+        async for pm in db.project_memberships.find(
+            {'project_id': project_id, 'user_id': {'$in': list(assignee_ids)}},
+            {'_id': 0, 'user_id': 1, 'user_name': 1, 'company_id': 1}
+        ):
+            if pm.get('user_id'):
+                membership_map[pm['user_id']] = pm
+
+    # users: fallback name source for assignee + source for created_by
+    all_user_ids = assignee_ids | creator_ids
+    user_name_map: dict = {}
+    if all_user_ids:
+        async for u in db.users.find(
+            {'id': {'$in': list(all_user_ids)}},
+            {'_id': 0, 'id': 1, 'name': 1}
+        ):
+            if u.get('id'):
+                user_name_map[u['id']] = u.get('name', '')
+
+    # Fetch any extra project_companies referenced via membership.company_id
+    # that weren't already in tasks
+    extra_company_ids = {
+        m.get('company_id') for m in membership_map.values() if m.get('company_id')
+    } - set(company_name_map.keys())
+    if extra_company_ids:
+        async for pc in db.project_companies.find(
+            {'id': {'$in': list(extra_company_ids)}, 'deletedAt': {'$exists': False}},
+            {'_id': 0, 'id': 1, 'name': 1}
+        ):
+            if pc.get('id'):
+                company_name_map[pc['id']] = pc.get('name', '')
+        still_missing = extra_company_ids - set(company_name_map.keys())
+        if still_missing:
+            async for c in db.companies.find(
+                {'id': {'$in': list(still_missing)}},
+                {'_id': 0, 'id': 1, 'name': 1}
+            ):
+                if c.get('id'):
+                    company_name_map[c['id']] = c.get('name', '')
+
+    # ---- Build response ----
     result = []
     for t in tasks:
         td = Task(**t).dict()
         resolve_urls_in_doc(td)
+
+        if t.get('company_id'):
+            td['company_name'] = company_name_map.get(t['company_id'], '')
+
+        if t.get('assignee_id'):
+            pm = membership_map.get(t['assignee_id'])
+            a_name = (pm.get('user_name') if pm else None) or user_name_map.get(t['assignee_id'], '')
+            td['assignee_name'] = a_name
+            a_company_id = (pm.get('company_id') if pm else None) or t.get('company_id')
+            if a_company_id:
+                td['assignee_company_name'] = company_name_map.get(a_company_id, '')
+
+        if t.get('created_by'):
+            td['created_by_name'] = user_name_map.get(t['created_by'], '')
+
         result.append(td)
+
     return result
 
 
