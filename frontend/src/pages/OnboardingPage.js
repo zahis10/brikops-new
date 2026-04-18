@@ -12,6 +12,8 @@ import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
 import { navigateToProject } from '../utils/navigation';
 import { t } from '../i18n';
+import { Capacitor } from '@capacitor/core';
+import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 
 const OnboardingPage = () => {
   const [searchParams] = useSearchParams();
@@ -233,49 +235,70 @@ const OnboardingPage = () => {
     setSocialLoading(true);
 
     try {
-      if (!window.AppleID) {
-        await new Promise((resolve, reject) => {
-          if (document.getElementById('apple-signin-script')) {
-            const check = setInterval(() => {
-              if (window.AppleID) { clearInterval(check); resolve(); }
-            }, 100);
-            setTimeout(() => { clearInterval(check); reject(new Error('timeout')); }, 5000);
-          } else {
-            const script = document.createElement('script');
-            script.id = 'apple-signin-script';
-            script.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js';
-            script.onload = resolve;
-            script.onerror = reject;
-            document.head.appendChild(script);
-          }
+      let idToken;
+      let appleName = null;
+
+      if (Capacitor.getPlatform() === 'ios') {
+        // iOS native — Face ID / Touch ID sheet
+        const nonce = (window.crypto?.randomUUID?.())
+          || (Math.random().toString(36).slice(2) + Date.now().toString(36));
+        const nativeResult = await SignInWithApple.authorize({
+          clientId: 'com.brikops.app',
+          redirectURI: '',
+          scopes: 'email name',
+          state: '',
+          nonce,
         });
+        idToken = nativeResult.response.identityToken;
+        if (nativeResult.response.givenName || nativeResult.response.familyName) {
+          appleName = `${nativeResult.response.givenName || ''} ${nativeResult.response.familyName || ''}`.trim();
+        }
+      } else {
+        // Web flow — UNCHANGED. Do NOT modify anything inside this else block.
+        if (!window.AppleID) {
+          await new Promise((resolve, reject) => {
+            if (document.getElementById('apple-signin-script')) {
+              const check = setInterval(() => {
+                if (window.AppleID) { clearInterval(check); resolve(); }
+              }, 100);
+              setTimeout(() => { clearInterval(check); reject(new Error('timeout')); }, 5000);
+            } else {
+              const script = document.createElement('script');
+              script.id = 'apple-signin-script';
+              script.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js';
+              script.onload = resolve;
+              script.onerror = reject;
+              document.head.appendChild(script);
+            }
+          });
+        }
+
+        const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
+        if (!appleServicesId) {
+          toast.error('שירות Apple לא מוגדר');
+          setSocialLoading(false);
+          return;
+        }
+
+        window.AppleID.auth.init({
+          clientId: appleServicesId,
+          scope: 'name email',
+          redirectURI: window.location.origin + '/login',
+          usePopup: true,
+        });
+
+        const response = await window.AppleID.auth.signIn();
+        idToken = response.authorization.id_token;
+        appleName = response.user
+          ? `${response.user.name?.firstName || ''} ${response.user.name?.lastName || ''}`.trim()
+          : null;
       }
-
-      const appleServicesId = process.env.REACT_APP_APPLE_SERVICES_ID;
-      if (!appleServicesId) {
-        toast.error('שירות Apple לא מוגדר');
-        setSocialLoading(false);
-        return;
-      }
-
-      window.AppleID.auth.init({
-        clientId: appleServicesId,
-        scope: 'name email',
-        redirectURI: window.location.origin + '/login',
-        usePopup: true,
-      });
-
-      const response = await window.AppleID.auth.signIn();
-      const idToken = response.authorization.id_token;
-      const appleName = response.user
-        ? `${response.user.name?.firstName || ''} ${response.user.name?.lastName || ''}`.trim()
-        : null;
 
       const result = await onboardingService.socialAuth('apple', idToken, appleName);
       await handleSocialAuthResult(result);
     } catch (error) {
-      if (error.error === 'popup_closed_by_user') {
-        // User cancelled — do nothing
+      if (error.error === 'popup_closed_by_user' || error.code === '1001') {
+        // User cancelled — do nothing. 1001 is iOS user cancel.
       } else {
         const detail = error.response?.data?.detail;
         if (typeof detail === 'object' && detail.code === 'pending_deletion') {
