@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "#385 Phase 5 Step 2 — DONE (commit 2fe89dd)"
+title = "CORS fix — DONE (commit 712028b, ready to deploy)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

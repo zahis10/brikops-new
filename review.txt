@@ -1,154 +1,138 @@
 ================================================================
-#385 שלב 5 צעד 2 — Native Apple Sign-In + platform-aware frontend
+CORS fix for iOS Capacitor WebView
 סטטוס: ✅ הושלם, commit מקומי, לא נדחף
 ================================================================
 
-Commit SHA: 2fe89dd
-Branch:     main (LOCAL ONLY — git push לא הורץ, אין upstream)
-Parent:     d220e73 (Step 1 — bootstrap iOS)
+Commit SHA: 712028b
+Branch:     main (LOCAL ONLY — git push לא הורץ)
+Parent:     2fe89dd (Step 2 — native Apple Sign-In)
 
 ================================================================
-1. אישור גרסת Plugin
+1. שינוי הקוד (backend/server.py)
 ================================================================
-$ grep '"@capacitor-community/apple-sign-in"' frontend/package.json
-    "@capacitor-community/apple-sign-in": "^7.0.0"
 
-הגרסה שהותקנה בפועל: 7.1.0 (האחרונה בטווח ^7.0.0, תואם
-Capacitor 7). אין שינוי לאף חבילה אחרת מה-Capacitor stack:
+$ git diff HEAD~1 HEAD -- backend/server.py
+@@ -1383,7 +1383,13 @@
+ app.add_middleware(GZipMiddleware, minimum_size=500)
 
-    "@capacitor/android":    "^7.6.1"
-    "@capacitor/camera":     "^7.0.5"
-    "@capacitor/cli":        "^7.6.1"
-    "@capacitor/core":       "^7.6.1"
-    "@capacitor/ios":        "^7.6.1"
-    "@capacitor/status-bar": "^7.0.6"
+-_cors_default = 'https://app.brikops.com,https://www.brikops.com' if APP_MODE == 'prod' else '*'
++_cors_default = (
++    'https://app.brikops.com,'
++    'https://www.brikops.com,'
++    'capacitor://localhost,'
++    'ionic://localhost,'
++    'https://localhost'
++) if APP_MODE == 'prod' else '*'
+ app.add_middleware(
+     CORSMiddleware,
+     allow_credentials=True,
 
-(התקנו גם 2 transitive deps: @types/scriptjs@0.0.2, scriptjs@2.5.9)
-
-================================================================
-2. רצף הפקודות
-================================================================
-[1] cd frontend && yarn add @capacitor-community/apple-sign-in@^7.0.0
-    → "Done in 32.91s." — אין תלייה.
-    → Saved 3 new dependencies (plugin + 2 transitive).
-
-[2] cd frontend && npx cap sync ios
-    → ✔ Copying web assets from build to ios/App/App/public
-    → ✔ Updating iOS plugins
-    → [info] Found 4 Capacitor plugins for ios:
-       @capacitor-community/apple-sign-in@7.1.0    ← חדש
-       @capacitor/camera@7.0.5
-       @capacitor/status-bar@7.0.6
-       @capgo/capacitor-updater@7.43.3
-    → [info] Sync finished in 1.209s
-    (warnings על pod install + xcodebuild — צפוי על Linux,
-     ירוצו אוטומטית אצלך ב-Mac)
-
-[3] עריכת LoginPage.js + OnboardingPage.js (פירוט בסעיף 4).
-
-[4] cd frontend && CI=true REACT_APP_BACKEND_URL="https://api.brikops.com" yarn build
-    → "Done in 38.26s." exit 0
-    → "The build folder is ready to be deployed."
-    → אין warnings חדשים על Apple/Capacitor.
-
-[5] git add frontend/{package.json,yarn.lock,src/pages/{LoginPage,OnboardingPage}.js,ios/}
-[6] git commit -m "feat(#385 Phase 5 Step 2): native Apple Sign-In plugin + platform-aware frontend"
-[7] git push — ❌ לא הורץ (גם אין upstream).
+5 origins סה״כ ב-prod, בדיוק לפי המפרט. אין שינוי לא ל-
+allow_credentials, לא ל-SecurityHeadersMiddleware, ולא ל-CSP.
 
 ================================================================
-3. אישור Podfile (cap sync עשה את העבודה)
+2. בדיקת CORS_ORIGINS Secret ב-Replit
 ================================================================
-$ grep -i apple frontend/ios/App/Podfile
-  pod 'CapacitorCommunityAppleSignIn',
-      :path => '../../node_modules/@capacitor-community/apple-sign-in'
 
-ה-pod רשום ב-Podfile. ה-Podfile.lock ייווצר רק אחרי
-`pod install` שירוץ ב-Mac (אין CocoaPods על Replit).
+ביקשתי מהפלטפורמה לבדוק:
+  CORS_ORIGINS  → ❌ לא קיים (אין override)
+  APP_MODE      → ✅ קיים (prod ב-production, dev ב-development)
 
-================================================================
-4. שינויי קוד — LoginPage.js + OnboardingPage.js
-================================================================
-שני הקבצים קיבלו טיפול זהה:
+✅ אין צורך לעדכן Secret. כיוון שאין `CORS_ORIGINS`, הקוד יקרא
+   את ה-default החדש שכתבתי (5 origins).
 
-א. יבואים חדשים בראש הקובץ:
-   import { Capacitor } from '@capacitor/core';
-   import { SignInWithApple } from '@capacitor-community/apple-sign-in';
-
-   - LoginPage.js שורות 10-11
-   - OnboardingPage.js שורות 15-16
-
-ב. handleAppleSignIn הוחלף — branch לפי פלטפורמה:
-
-   if (Capacitor.getPlatform() === 'ios') {
-      // ⮕ SignInWithApple.authorize() — Face ID / Touch ID נטיבי
-      //   clientId: 'com.brikops.app' (Bundle ID)
-      //   nonce: window.crypto.randomUUID() עם fallback
-      //   redirectURI: '', state: '', scopes: 'email name'
-   } else {
-      // ⮕ הקוד הישן בדיוק — appleid.cdn-apple.com script,
-      //   process.env.REACT_APP_APPLE_SERVICES_ID, popup
-      //   *לא* שונה אף שורה בלוגיקה הזו
-   }
-
-   const result = await onboardingService.socialAuth('apple', idToken, appleName);
-   await handleSocialAuthResult(result);
-
-ג. catch הורחב לטפל גם בביטול native של iOS:
-   if (error.error === 'popup_closed_by_user' || error.code === '1001')
-
-ד. שינוי שם משתנה פנימי בלבד: השתמשתי ב-`nativeResult` בתוך
-   ה-if-block (במקום `result`) כדי למנוע shadowing עם `result`
-   החיצוני שמגיע מ-onboardingService.socialAuth. **אין הבדל
-   פונקציונלי**, רק היגיינה — שני המסלולים עדיין מחזירים
-   idToken + appleName בדיוק כמו הקוד שבמפרט.
+⚠️ אם בעתיד מישהו יוסיף את ה-Secret הזה — חייב לכלול את כל 5
+   ה-origins אחרת iOS ייכשל שוב.
 
 ================================================================
-5. בדיקות סטריקטיות שעברו
+3. אימות פרסינג של ה-default
 ================================================================
-✅ @capacitor-community/apple-sign-in@^7.0.0 (התקנה בפועל 7.1.0)
-✅ npx cap sync ios — Sync finished in 1.2s
-✅ Podfile מכיל CapacitorCommunityAppleSignIn pod
-✅ yarn build — Done in 38.26s, exit 0, אין warnings חדשים
-✅ git diff HEAD~1 HEAD --name-only:
-   frontend/ios/App/Podfile
-   frontend/package.json
-   frontend/src/pages/LoginPage.js
-   frontend/src/pages/OnboardingPage.js
-   frontend/yarn.lock
-   (5 קבצים בלבד, זהה למפורט במפרט)
-✅ אין שינוי ב-frontend/capacitor.config.json
-✅ אין שינוי ב-frontend/android/
-✅ אין שינוי ב-backend/
-✅ אין שינוי בגרסאות @capacitor/core/android/cli/ios/camera/status-bar
-✅ socialAuth signature לא שונה (api.js לא נגוע)
-✅ handleSocialAuthResult / pending_deletion navigation — לא שונו
-✅ Google Sign-In + phone OTP — לא נגעו
-✅ Capacitor.getPlatform() === 'ios' branch קיים בשני הקבצים
+
+$ python3 -c "<simulate APP_MODE=prod>"
+output:
+  'https://app.brikops.com'
+  'https://www.brikops.com'
+  'capacitor://localhost'
+  'ionic://localhost'
+  'https://localhost'
+
+✅ 5 שורות, כל אחת origin תקפה. אין רווחים מיותרים, אין פסיק
+מיותר בסוף.
+
+================================================================
+4. TEST 1 — curl OPTIONS preflight (מקומי על Replit)
+================================================================
+
+הערה חשובה: האפליקציה ב-Replit רצה ב-`APP_MODE=dev`, שם
+ה-default הוא `*` ולא הרשימה החדשה. לכן curl מקומי מוכיח שה-
+middleware פועל ושהקוד נטען בלי שגיאות, אבל **לא** מוכיח שה-
+allowlist של prod עובד. את זה אפשר לאמת רק אחרי שתפרוס ל-AWS.
+
+ריצה אחרי restart_workflow (Start application):
+
+  curl -i -X OPTIONS http://localhost:5000/auth/login \
+    -H "Origin: capacitor://localhost" \
+    -H "Access-Control-Request-Method: POST" \
+    -H "Access-Control-Request-Headers: content-type,authorization"
+
+  HTTP/1.1 200 OK
+  access-control-allow-credentials: true
+  access-control-allow-origin: capacitor://localhost     ✅
+  access-control-allow-headers: content-type,authorization
+  access-control-allow-methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+
+בדקתי גם את שאר ה-origins על אותו backend מקומי:
+
+  Origin: ionic://localhost      → allow-origin: ionic://localhost      ✅
+  Origin: https://localhost      → allow-origin: https://localhost      ✅
+  Origin: https://app.brikops.com → allow-origin: https://app.brikops.com ✅
+
+המידלוור מחזיר את ה-Origin הנכון בכל המקרים, ה-credentials מופעל.
+
+================================================================
+5. מה שיקרה אחרי שתפרוס (TEST 1 על api.brikops.com)
+================================================================
+
+הרץ אצלך אחרי `./deploy.sh --prod` והדeploy ל-AWS:
+
+  curl -i -X OPTIONS https://api.brikops.com/auth/login \
+    -H "Origin: capacitor://localhost" \
+    -H "Access-Control-Request-Method: POST" \
+    -H "Access-Control-Request-Headers: content-type,authorization"
+
+ציפייה:
+  HTTP/2 200
+  access-control-allow-origin: capacitor://localhost   ← זה הדבר הקריטי
+  access-control-allow-credentials: true
+
+❌ סימני כשל אם:
+  - אין שורת `access-control-allow-origin` בכלל → CORS עדיין חוסם
+  - הערך הוא `https://app.brikops.com` במקום `capacitor://localhost`
+    → סימן שמישהו הוסיף את הסקרט CORS_ORIGINS עם רשימה ישנה,
+       חזור לסעיף 2 ועדכן.
+
+================================================================
+6. בדיקות סטריקטיות
+================================================================
+✅ שורה אחת בודדת ב-backend/server.py הוחלפה (1386→1389-1395)
+✅ allow_credentials=True לא נגוע
+✅ אין `*` ב-prod allowlist
+✅ CSP / SecurityHeadersMiddleware לא נגעו
+✅ אין origin נוסף מעבר ל-5 שצוינו במפרט
+✅ CORS_ORIGINS secret נבדק (לא קיים — אין override)
+✅ Workflow restart הצליח, האפליקציה עולה בלי שגיאות
 ✅ git push — לא הורץ
 
 ================================================================
-6. git diff HEAD~1 HEAD --stat
+7. דיווח לפי המפרט
 ================================================================
- frontend/ios/App/Podfile             |   1 +
- frontend/package.json                |   1 +
- frontend/src/pages/LoginPage.js      |  93 +++++++++++++++--------
- frontend/src/pages/OnboardingPage.js |  93 +++++++++++++++--------
- frontend/yarn.lock                   |  18 +++++
- 5 files changed, 136 insertions(+), 70 deletions(-)
+1. ✅ שורה 1386 (עכשיו 1389-1395) עודכנה.
+2. ✅ CORS_ORIGINS secret נבדק — לא קיים, אין צורך לעדכן.
+3. ✅ curl test הורץ מקומית (האפליקציה ב-dev mode, ראה הסבר
+      בסעיף 4) — middleware פועל, מחזיר את ה-Origin הנכון.
+      curl על https://api.brikops.com יעבוד אחרי deploy.
+4. ⏳ Deploy מחכה לך — תריץ `./deploy.sh --prod` מה-Mac.
 
-================================================================
-7. הצעד הבא
-================================================================
-אצלך ב-Mac אחרי משיכה:
-  cd frontend/ios/App && pod install
-  open App.xcworkspace
-  → Signing & Capabilities → הוסף "Sign In with Apple"
-  → ודא ש-Bundle ID = com.brikops.app
+ROLLBACK: revert commit 712028b אם משהו נשבר אחרי deploy.
 
-אז אפשר להריץ build ב-Xcode על device, ו-Apple Sign-In נטיבי
-יעבוד עם Face ID / Touch ID.
-
-ה-web flow (Cloudflare/דפדפן) ו-Android — נשארים בדיוק כמו
-שהיו בפרודקשן היום.
-
-ממתין לאישור: ✅ Approve / 🔧 שינויים / 🛑 Rollback?
+ממתין לאישור: ✅ Approve / 🔧 שינויים?
