@@ -1,0 +1,151 @@
+========================================================================
+#385 Phase 6 — Wave 4: Rate-limit cascade fix + icon re-sync
+========================================================================
+
+## Root cause (מאומת מלוגי nginx + eb-docker)
+
+מאז Wave 3 (commit b6390cd, הוסיפו push-navigation לקריאות cross-page tab
+ב-ProjectControlPage.js שורות 3514-3517), כל לחיצה על tab
+(Dashboard/QC/Handover/Plans) גורמת ל-remount של ProjectControlPage →
+טריגר של כל useEffects → ~10-12 API calls בבת אחת.
+
+3-4 החלפות tab ב-30 שניות = 120+ בקשות = 429 cascade, כל האפליקציה
+נתקעת.
+
+לוגים מ-20:43:23-27 מראים:
+```
+[RATE-LIMIT] kind=user key=af9dcab5... path=/api/projects/.../memberships
+[RATE-LIMIT] kind=user key=af9dcab5... path=/api/qc/floors/batch-status
+[RATE-LIMIT] kind=user key=af9dcab5... path=/api/projects
+... (14 בקשות חסומות ב-5 שניות)
+```
+
+הגבלה נוכחית: `backend/server.py:153` — 120 req/min per user.
+
+
+## Fix — 2 שינויים
+
+### Fix 1 — רפרוף הגבלה מ-120 ל-300 (מיידי, unblock)
+
+`backend/server.py:153`:
+
+**לפני:**
+```py
+allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=120, window_seconds=60)
+```
+
+**אחרי:**
+```py
+allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=300, window_seconds=60)
+```
+
+הערה: 300/min = 5/sec ממוצע, עדיין בטוח מול attacks אמיתיים אבל לא
+חוסם navigation רגיל.
+
+
+### Fix 2 — Request deduplication ב-frontend (פתרון שורש)
+
+הבעיה האמיתית: `ProjectControlPage.js` שורה 3418-3428 — useEffect יחיד
+שמפעיל 7 load* פונקציות כשה-projectId משתנה או accessChecked משתנה.
+במעבר tab, הקומפוננטה מתמאונטת מחדש, ה-useEffect רץ מחדש, כל
+הפונקציות רצות.
+
+**הפתרון:** cache קצר (30s) ברמת ה-service. לדוגמה ב-
+`frontend/src/services/api.js`:
+
+```js
+// utility
+const _cache = new Map();
+const _CACHE_TTL_MS = 30_000;
+
+function cachedFetch(key, fetcher) {
+  const entry = _cache.get(key);
+  const now = Date.now();
+  if (entry && (now - entry.ts) < _CACHE_TTL_MS) return entry.value;
+  const promise = fetcher().finally(() => {
+    // אם השאילתה נכשלה, הוצא מה-cache בעוד 5s כדי לאפשר retry
+    setTimeout(() => _cache.delete(key), 5_000);
+  });
+  _cache.set(key, { value: promise, ts: now });
+  return promise;
+}
+
+// שנה ב-projectService.get / getHierarchy / getMemberships / stats / trades
+// להשתמש ב-cachedFetch:
+export const projectService = {
+  get: (id) => cachedFetch(`project:${id}`, () =>
+    axios.get(`${API}/projects/${id}`, { headers: getAuthHeader() }).then(r => r.data)
+  ),
+  getHierarchy: (id) => cachedFetch(`hierarchy:${id}`, () =>
+    axios.get(`${API}/projects/${id}/hierarchy`, { headers: getAuthHeader() }).then(r => r.data)
+  ),
+  getMemberships: (id) => cachedFetch(`memberships:${id}`, () =>
+    axios.get(`${API}/projects/${id}/memberships`, { headers: getAuthHeader() }).then(r => r.data)
+  ),
+  // ... (stats, trades, companies דומים)
+};
+```
+
+חשוב: cache invalidation — אחרי יצירה/עדכון/מחיקה של entity, לקרוא
+`_cache.clear()` או לנקות מפתחות רלוונטיים. דוגמה:
+
+```js
+export function clearProjectCache(projectId) {
+  for (const key of _cache.keys()) {
+    if (key.includes(projectId)) _cache.delete(key);
+  }
+}
+```
+
+וקריאה ל-`clearProjectCache(projectId)` בכל מקום שמעדכן את הפרויקט.
+
+
+### Fix 3 (bonus) — הסרת הקריאה ל-/api/debug/version
+
+`frontend/src/pages/ProjectControlPage.js` שורות 3455-3459:
+```js
+useEffect(() => {
+  versionService.get().then(...);
+}, []);
+```
+
+הראוט `/api/debug/version` מחזיר 404 בפרודקשן. כל פעם שהעמוד נטען,
+בקשה זו נורה לחינם. אפשר פשוט להוריד את ה-useEffect הזה, או לעטוף
+ב-`if (process.env.NODE_ENV === 'development')`.
+
+
+## DO NOT
+
+- ❌ אל תגע ב-Wave 3 fix (שורות 3514-3517) — זה תיקון נכון, הבעיה היא
+  side effect שצריך לתקן ב-cache layer.
+- ❌ אל תעלה את ה-rate limit ללא גבול — 300/min זה תקרה סבירה.
+- ❌ אל תיצור useEffect חדש או תשנה סדר של הקיימים.
+- ❌ אל תיגע ב-routes ב-App.js.
+
+
+## VERIFY
+
+1. אחרי Fix 1: בדיקת stress — ניווט 5-6 tabs ברצף, לא אמור להופיע 429.
+2. אחרי Fix 2: בחלונית Network של Chrome DevTools — מעבר tab שני
+   לאותו פרויקט לא אמור לירות `/hierarchy`, `/memberships`, `/stats`
+   מחדש (קיים ב-cache). מעבר אחרי 30s — כן מרענן.
+3. אחרי Fix 2: יצירת בניין/קומה חדשים → הקאש מתנקה → refetch קורה.
+4. אחרי Fix 3: בקונסול של iPhone / Chrome — אין יותר 404 על
+   `/api/debug/version`.
+
+
+## Commit
+
+```
+fix(#385): rate-limit cascade — raise 120→300/min + frontend request dedup
+```
+
+
+## ⛔ STOP after Wave 4
+
+דווח ל-Zahi:
+- Commit SHA
+- screenshot של Network tab (אחרי Fix 2) שמראה שאין duplicates
+- אישור שהלוגים לא מראים יותר 429
+
+אחרי אישור — `./deploy.sh --prod` → Capgo OTA.
