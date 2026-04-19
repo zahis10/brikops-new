@@ -35,6 +35,7 @@ import { MoreVertical } from 'lucide-react';
 import HamburgerMenu from '../components/HamburgerMenu';
 import OfflineState from '../components/OfflineState';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { SelectField } from '../components/BottomSheetSelect';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -107,56 +108,6 @@ const BottomSheetModal = ({ open, onClose, title, children }) => {
         </SheetPrimitive.Content>
       </SheetPortal>
     </Sheet>
-  );
-};
-
-const OptionsOverlay = ({ open, options, value, onChange, onClose, label, emptyMessage }) => {
-  return (
-    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <SheetPortal>
-        <SheetOverlay className="fixed inset-0 z-[9999] bg-black/40" />
-        <SheetPrimitive.Content
-          className="fixed inset-x-0 bottom-0 z-[9999] w-full max-w-lg mx-auto bg-white rounded-t-2xl shadow-2xl max-h-[60vh] flex flex-col outline-none"
-          dir="rtl"
-        >
-          <SheetTitle className="sr-only">{label || 'בחר'}</SheetTitle>
-          <SheetDescription className="sr-only">בחירת ערך מתוך רשימת אפשרויות</SheetDescription>
-          <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-            <span className="font-bold text-slate-800">{label || 'בחר'}</span>
-            <SheetClose asChild>
-              <button className="p-1 hover:bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
-            </SheetClose>
-          </div>
-          <div className="overflow-y-auto flex-1 p-2">
-            {options.length === 0 ? (
-              <p className="text-center text-slate-400 py-6">{emptyMessage || 'אין אפשרויות'}</p>
-            ) : options.map(opt => (
-              <button key={opt.value} onClick={() => { onChange(opt.value); onClose(); }}
-                className={`w-full text-right p-3 rounded-lg mb-1 transition-colors ${value === opt.value ? 'bg-amber-100 text-amber-800 font-bold' : 'hover:bg-slate-100 text-slate-700'}`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </SheetPrimitive.Content>
-      </SheetPortal>
-    </Sheet>
-  );
-};
-
-const SelectField = ({ label, value, options, onChange, error, emptyMessage }) => {
-  const [open, setOpen] = useState(false);
-  const selected = options.find(o => o.value === value);
-  return (
-    <div className="space-y-1">
-      {label && <label className="block text-sm font-medium text-slate-700">{label}</label>}
-      <button type="button" onClick={() => setOpen(true)}
-        className={`w-full flex items-center justify-between px-3 py-2.5 border rounded-lg text-sm ${error ? 'border-red-400' : 'border-slate-300'} bg-white`}>
-        <span className={selected ? 'text-slate-800' : 'text-slate-400'}>{selected ? selected.label : 'בחר...'}</span>
-        <ChevronDown className="w-4 h-4 text-slate-400" />
-      </button>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-      <OptionsOverlay open={open} options={options} value={value} onChange={onChange} onClose={() => setOpen(false)} label={label} emptyMessage={emptyMessage} />
-    </div>
   );
 };
 
