@@ -137,7 +137,7 @@ title = "Billing Bugs #2 — Full Diff (Task #250)"
 id = "moqFZUgKv_rc2bQ3f5Qaf"
 uri = "file://.local/review.txt"
 type = "text"
-title = "Full diff — commit b6390cd (Wave 3)"
+title = "Wave 4 — commit 2c5750a (rate-limit + request dedup)"
 
 [[outputs]]
 id = "Uttosn1CSRes5mf7KkA_R"
