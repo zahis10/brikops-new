@@ -103,6 +103,17 @@ code {
   }
 }
 
+/* Bug #4 — prevent iOS auto-zoom on text input focus.
+   iOS zooms when the focused input has font-size < 16px. Tailwind's
+   text-sm / text-xs leave inputs below 16px on mobile. Mobile-scoped
+   so desktop typography is unaffected. */
+@media (max-width: 768px) {
+  input,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.3s ease-in;
 }
