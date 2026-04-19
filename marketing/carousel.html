@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrikOps - Feature Carousel</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Heebo', sans-serif;
+    background: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px;
+    gap: 30px;
+  }
+
+  h1 {
+    font-size: 24px;
+    color: #333;
+    margin-bottom: 10px;
+  }
+
+  .slides-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .slide {
+    width: 1080px;
+    height: 1080px;
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Scale down for preview */
+  .slide { transform: scale(0.35); transform-origin: top center; margin-bottom: -700px; }
+
+  /* Slide header */
+  .slide-header {
+    padding: 60px 60px 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .slide-header .logo {
+    font-size: 28px;
+    font-weight: 900;
+  }
+
+  .slide-header .counter {
+    font-size: 20px;
+    font-weight: 300;
+    opacity: 0.5;
+  }
+
+  /* Slide body */
+  .slide-body {
+    flex: 1;
+    padding: 0 60px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .slide-icon {
+    font-size: 80px;
+    margin-bottom: 30px;
+  }
+
+  .slide-title {
+    font-size: 52px;
+    font-weight: 900;
+    line-height: 1.3;
+    margin-bottom: 25px;
+  }
+
+  .slide-desc {
+    font-size: 26px;
+    line-height: 1.7;
+    font-weight: 400;
+    opacity: 0.7;
+  }
+
+  /* Visual element */
+  .slide-visual {
+    padding: 30px 60px 60px;
+  }
+
+  .visual-card {
+    background: rgba(255,255,255,0.15);
+    border-radius: 24px;
+    padding: 30px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+
+  /* Dots */
+  .slide-dots {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+  }
+
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.3);
+  }
+
+  .dot.active {
+    background: white;
+    width: 30px;
+    border-radius: 6px;
+  }
+
+  /* SLIDE 1 - Intro */
+  .slide-1 {
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    color: white;
+  }
+
+  .slide-1 .slide-header .logo { color: white; }
+
+  /* SLIDE 2 - Defects */
+  .slide-2 {
+    background: linear-gradient(135deg, #2c3e50, #34495e);
+    color: white;
+  }
+
+  .slide-2 .slide-header .logo { color: #e8922a; }
+
+  .defect-demo {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+  }
+
+  .defect-chip {
+    background: rgba(255,255,255,0.1);
+    border-radius: 16px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 20px;
+  }
+
+  .defect-chip .status {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+  }
+
+  /* SLIDE 3 - QC */
+  .slide-3 {
+    background: linear-gradient(135deg, #1a5276, #2980b9);
+    color: white;
+  }
+
+  .slide-3 .slide-header .logo { color: #e8922a; }
+
+  .qc-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .qc-bar-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+  }
+
+  .qc-bar-item .label {
+    width: 120px;
+    text-align: left;
+    font-size: 18px;
+    opacity: 0.7;
+  }
+
+  .qc-bar-item .bar {
+    flex: 1;
+    height: 20px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .qc-bar-item .fill {
+    height: 100%;
+    border-radius: 10px;
+    background: linear-gradient(90deg, #2ecc71, #27ae60);
+  }
+
+  .qc-bar-item .pct {
+    font-size: 22px;
+    font-weight: 700;
+    width: 55px;
+  }
+
+  /* SLIDE 4 - Handover */
+  .slide-4 {
+    background: linear-gradient(135deg, #1e8449, #27ae60);
+    color: white;
+  }
+
+  .slide-4 .slide-header .logo { color: white; }
+
+  .handover-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+
+  .unit-box {
+    aspect-ratio: 1;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 700;
+  }
+
+  .unit-box.done { background: rgba(255,255,255,0.3); }
+  .unit-box.pending { background: rgba(255,255,255,0.1); border: 2px dashed rgba(255,255,255,0.3); }
+  .unit-box.done::after { content: '✓'; }
+  .unit-box.pending::after { content: '·'; font-size: 30px; opacity: 0.5; }
+
+  /* SLIDE 5 - CTA */
+  .slide-5 {
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    color: white;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+
+  .slide-5 .slide-header { position: absolute; top: 0; left: 0; right: 0; }
+  .slide-5 .slide-header .logo { color: white; }
+
+  .cta-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+  }
+
+  .cta-title {
+    font-size: 56px;
+    font-weight: 900;
+    line-height: 1.3;
+    max-width: 700px;
+  }
+
+  .cta-subtitle {
+    font-size: 28px;
+    font-weight: 400;
+    opacity: 0.8;
+  }
+
+  .cta-button {
+    background: white;
+    color: #e8922a;
+    padding: 20px 60px;
+    border-radius: 50px;
+    font-size: 28px;
+    font-weight: 700;
+    margin-top: 20px;
+  }
+
+  .cta-url {
+    font-size: 22px;
+    opacity: 0.7;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>BrikOps Feature Carousel — 5 Slides (1080x1080)</h1>
+
+<!-- SLIDE 1: Intro -->
+<div class="slide slide-1">
+  <div class="slide-header">
+    <div class="counter">1/5</div>
+    <div class="logo">BrikOps</div>
+  </div>
+  <div class="slide-body">
+    <div class="slide-icon">🏗️</div>
+    <div class="slide-title">עדיין מנהלים ליקויים<br>בוואטסאפ?</div>
+    <div class="slide-desc">
+      6 קבוצות. 3 אקסלים. תמונות בגלריה.<br>
+      יש דרך טובה יותר.
+    </div>
+  </div>
+  <div class="slide-dots">
+    <div class="dot active"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+</div>
+
+<!-- SLIDE 2: Defects -->
+<div class="slide slide-2">
+  <div class="slide-header">
+    <div class="counter">2/5</div>
+    <div class="logo">BrikOps</div>
+  </div>
+  <div class="slide-body">
+    <div class="slide-icon">📋</div>
+    <div class="slide-title">תיעוד ליקויים<br>ב-10 שניות</div>
+    <div class="slide-desc">
+      צלם, תאר, שייך לקבלן — הכל מהטלפון.<br>
+      כל ליקוי עם תמונה, מיקום ועדיפות.
+    </div>
+  </div>
+  <div class="slide-visual">
+    <div class="visual-card">
+      <div class="defect-demo">
+        <div class="defect-chip"><div class="status" style="background:#e74c3c"></div> משקוף — לא תקין</div>
+        <div class="defect-chip"><div class="status" style="background:#e8922a"></div> שיפועים — מרפסת</div>
+        <div class="defect-chip"><div class="status" style="background:#27ae60"></div> הארקת חשמל ✓</div>
+        <div class="defect-chip"><div class="status" style="background:#e74c3c"></div> סדק בקיר — חדר שינה</div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-dots">
+    <div class="dot"></div>
+    <div class="dot active"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+</div>
+
+<!-- SLIDE 3: QC -->
+<div class="slide slide-3">
+  <div class="slide-header">
+    <div class="counter">3/5</div>
+    <div class="logo">BrikOps</div>
+  </div>
+  <div class="slide-body">
+    <div class="slide-icon">✅</div>
+    <div class="slide-title">בקרת ביצוע<br>שלב אחרי שלב</div>
+    <div class="slide-desc">
+      מעקב התקדמות לכל קומה ולכל שלב בנייה.<br>
+      תמיד יודעים מה הסטטוס.
+    </div>
+  </div>
+  <div class="slide-visual">
+    <div class="visual-card">
+      <div class="qc-bars">
+        <div class="qc-bar-item">
+          <div class="pct">89%</div>
+          <div class="bar"><div class="fill" style="width:89%"></div></div>
+          <div class="label">בלוקים</div>
+        </div>
+        <div class="qc-bar-item">
+          <div class="pct">91%</div>
+          <div class="bar"><div class="fill" style="width:91%"></div></div>
+          <div class="label">אינסטלציה</div>
+        </div>
+        <div class="qc-bar-item">
+          <div class="pct">78%</div>
+          <div class="bar"><div class="fill" style="width:78%"></div></div>
+          <div class="label">תקרה</div>
+        </div>
+        <div class="qc-bar-item">
+          <div class="pct">40%</div>
+          <div class="bar"><div class="fill" style="width:40%"></div></div>
+          <div class="label">חשמל</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-dots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot active"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+</div>
+
+<!-- SLIDE 4: Handover -->
+<div class="slide slide-4">
+  <div class="slide-header">
+    <div class="counter">4/5</div>
+    <div class="logo">BrikOps</div>
+  </div>
+  <div class="slide-body">
+    <div class="slide-icon">🔑</div>
+    <div class="slide-title">מסירה דיגיטלית<br>בלי ניירת</div>
+    <div class="slide-desc">
+      145 פריטים נבדקו. פרוטוקול חתום.<br>
+      PDF מוכן — בלחיצה אחת.
+    </div>
+  </div>
+  <div class="slide-visual">
+    <div class="visual-card">
+      <div class="handover-grid">
+        <div class="unit-box done"></div>
+        <div class="unit-box done"></div>
+        <div class="unit-box done"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box done"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box done"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+        <div class="unit-box pending"></div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-dots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot active"></div>
+    <div class="dot"></div>
+  </div>
+</div>
+
+<!-- SLIDE 5: CTA -->
+<div class="slide slide-5">
+  <div class="slide-header">
+    <div class="counter">5/5</div>
+    <div class="logo">BrikOps</div>
+  </div>
+  <div class="cta-content">
+    <div class="cta-title">מנהלים פרויקט?<br>תנו ל-BrikOps<br>לעבוד בשבילכם</div>
+    <div class="cta-subtitle">ליקויים · בקרה · מסירה — במקום אחד</div>
+    <div class="cta-button">התחילו עכשיו</div>
+    <div class="cta-url">brikops.com</div>
+  </div>
+  <div class="slide-dots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot active"></div>
+  </div>
+</div>
+
+</body>
+</html>

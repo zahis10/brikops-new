@@ -45,5 +45,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>BrikOps משתמש במצלמה כדי לצלם ליקויים באתר הבנייה ולתעד את מצב הדירה.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BrikOps דורש גישה לגלריה כדי לצרף תמונות ליקויים קיימות לדיווחים באתר הבנייה.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>BrikOps שומר תמונות ליקויים בגלריה שלך לשמירה מקומית ותיעוד.</string>
 </dict>
 </plist>

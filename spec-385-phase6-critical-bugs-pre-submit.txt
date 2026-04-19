@@ -1,0 +1,339 @@
+SPEC #385 — Phase 6: Critical mobile bugs — must fix before App Store submit
+=============================================================================
+
+What & Why
+----------
+Build 2 passed TestFlight install + login (CORS fixed). Before submit to Apple Review,
+7 bugs were found on real iPhone / mobile Capacitor. Apple reviewer will hit at least
+4-5 of them within 60 seconds of normal use → guaranteed rejection on Guideline 2.1
+(App Completeness).
+
+Build 3 must fix all 7 below. Non-critical bugs (Android padding, PDF/Excel download,
+top bar polish) are deferred to Build 4.
+
+
+========================================================================
+EXECUTION MODEL — WAVE BY WAVE, STOP AFTER EACH
+========================================================================
+
+DO NOT do all bugs in parallel. Bug #4 changes input font-size globally (14 → 16px)
+which will shift layouts in the selectors of bugs #1-3. Must see the impact before
+touching selectors.
+
+Execute in 3 waves. After each wave:
+  1. Commit + push
+  2. Report to Zahi: what changed, file paths, screenshots
+  3. STOP. Wait for Zahi to verify on iPhone TestFlight
+  4. Only proceed to next wave after explicit approval
+
+
+========================================================================
+WAVE 1 — Two independent fixes (parallel-safe within the wave)
+========================================================================
+
+## Wave 1a — Bug #4: iOS auto-zoom on input focus
+
+### Root cause (confirmed)
+`frontend/src/index.css` line 98 has a TYPO:
+```
+font--size: 16px !important;
+```
+It's `font--size` (double dash) instead of `font-size`. The rule is silently invalid,
+so inputs fall back to default ~14px → iOS auto-zooms on focus.
+
+### Fix — 1 line
+File: `frontend/src/index.css` line 98
+Change:
+```
+font--size: 16px !important;
+```
+to:
+```
+font-size: 16px !important;
+```
+
+Verify via:
+```
+grep -n "font-size\|font--size" frontend/src/index.css
+```
+Expected: only valid `font-size` declarations, no `font--size`.
+
+### Viewport meta — verify, DO NOT change
+File: `frontend/public/index.html` line 5
+Current:
+```
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+```
+This is correct. DO NOT add `user-scalable=no` or `maximum-scale=1`.
+
+### VERIFY
+1. Capacitor rebuild → install on iPhone → open any form with text input
+2. Tap into input → page must NOT zoom in
+3. Type → zoom does not change
+4. Tap outside → zoom stays at 1.0
+
+
+## Wave 1b — Bug #7: Offline state
+
+### Root cause (confirmed)
+No `navigator.onLine` or offline hook exists anywhere in codebase.
+`/frontend/src/App.js` line 103 has `networkError` state in ProtectedRoute, but data-level
+screens have no offline awareness → they just show red error "שגיאה בטעינת סיכום ליקויים"
+then empty state "לא נמצאו נתונים לבניין זה".
+
+### Fix
+
+#### 1. Create hook
+New file: `frontend/src/hooks/useOnlineStatus.js`
+```javascript
+import { useEffect, useState } from 'react';
+
+export function useOnlineStatus() {
+  const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
+  return online;
+}
+```
+
+#### 2. Create OfflineState component
+New file: `frontend/src/components/OfflineState.js`
+Simple centered card: WifiOff icon + "אין חיבור לאינטרנט" + hint + Retry button.
+Use existing design tokens (amber primary, Heebo font, RTL).
+
+#### 3. Wire into 4 priority screens
+In each screen, before the existing error UI:
+```jsx
+const online = useOnlineStatus();
+if (!online) return <OfflineState onRetry={refetch} />;
+if (error) { ... existing error UI stays ... }
+```
+
+Priority screens:
+- `frontend/src/pages/BuildingDefectsPage.js` (the one with "שגיאה בטעינת סיכום ליקויים")
+- `frontend/src/pages/ProjectDashboardPage.js`
+- `frontend/src/pages/ProjectsListPage.js` (or equivalent)
+- `frontend/src/pages/ProjectControlPage.js`
+
+grep to confirm file names:
+```
+grep -rn "שגיאה בטעינת סיכום" frontend/src/ --include="*.js"
+grep -l "ProjectDashboard\|ProjectsList" frontend/src/pages/
+```
+
+DO NOT wire into every screen in the app — just the 4 above. Build 4 expands coverage.
+
+### VERIFY
+1. iPhone → Airplane Mode ON
+2. Open BrikOps → login with cached session
+3. Open a project → Dashboard → shows "אין חיבור לאינטרנט" (NOT red error)
+4. Same for defects list
+5. Airplane Mode OFF → tap Retry → data loads
+
+
+### Wave 1 commits
+- `fix(#385): typo font--size → font-size prevents iOS input zoom (bug 4)`
+- `fix(#385): offline state on 4 priority screens (bug 7)`
+
+### ⛔ STOP after Wave 1
+Report to Zahi:
+- Screenshots of fixed zoom behavior (bug 4)
+- Screenshot of offline state (bug 7)
+- Git SHAs of both commits
+
+DO NOT start Wave 2 until Zahi approves.
+
+
+========================================================================
+WAVE 2 — Selectors (bugs #1, #2, #3)
+========================================================================
+
+### Why wait
+Wave 1 changes input font-size 14 → 16px globally. This may shift form layouts and
+change how the bottom-sheet selectors render. Must see the impact first.
+
+### Root cause (confirmed)
+There are TWO separate SelectField implementations:
+- `frontend/src/components/NewDefectModal.js` lines 87-133 — SelectField using Radix Dialog as Sheet
+- `frontend/src/pages/ProjectControlPage.js` lines 144-159 — separate SelectField with OptionsOverlay
+
+Both use `position: fixed; inset-x-0 bottom-0` bottom-sheet pattern, which on iOS
+Capacitor gets clipped by keyboard / safe area.
+
+### Fix — TWO options, pick one
+
+#### Option A (preferred) — Refactor to one shared component
+1. Create `frontend/src/components/BottomSheetSelect.js` as the single source of truth
+2. Fix the bottom-sheet positioning once:
+   - Replace `100vh` with `100dvh` (dynamic viewport height) anywhere it appears
+   - Add `max-height: calc(100dvh - 120px); overflow-y: auto;` to the sheet content
+   - Use `visualViewport.height` to recompute height when keyboard opens
+   - Respect safe-area: `padding-bottom: env(safe-area-inset-bottom);`
+3. Replace both SelectField implementations with imports of the new component
+
+#### Option B (fast path if A is too risky) — Fix both separately, same fix applied twice
+Apply the same positioning fixes to both files independently.
+Leaves tech debt (duplicated component) but lower risk.
+
+**Replit — pick Option A unless you hit a blocker. If Option B, flag it in the report.**
+
+### grep commands
+```
+grep -n "100vh\|inset-x-0 bottom-0\|DialogPrimitive" frontend/src/components/NewDefectModal.js
+grep -n "100vh\|OptionsOverlay\|SelectField" frontend/src/pages/ProjectControlPage.js
+```
+
+### VERIFY on iPhone TestFlight
+1. Open new defect form → עדיפות selector → all 4 options visible + OK button tappable
+2. Same form → חברה selector → full list scrollable, no clipping at bottom
+3. Same form → קבלן selector → full list scrollable, no clipping
+4. ProjectControlPage (בקרת ביצוע) → any selector there → no clipping
+5. Rotate to landscape → selector repositions correctly
+6. Open selector while keyboard is open → selector above keyboard, no clipping
+
+### Wave 2 commit
+- `fix(#385): bottom-sheet selectors no longer clipped on iOS (bugs 1-3)`
+
+### ⛔ STOP after Wave 2
+Report to Zahi:
+- Which option used (A refactor or B duplicated)
+- Screenshots of all 3 selectors opened on iPhone
+- Git SHA
+
+
+========================================================================
+WAVE 3 — Back navigation (bugs #5, #6)
+========================================================================
+
+### Why these two together
+Both are history-stack / routing issues. Same family. Investigate together,
+root cause is likely the same.
+
+### Root cause hypothesis (needs investigation first)
+
+**Bug #5 — Dashboard cards:**
+- `frontend/src/pages/ProjectDashboardPage.js` lines 283-341 — all 6 cards use:
+  `navigate(/projects/${projectId}/control?workMode=defects&statusChip=open)`
+- "בקרת ביצוע" tab (line 355) navigates to: `navigate(/projects/${projectId}/qc)` — works correctly
+- Both push history. So why does Back from `/control?...` fall outside project?
+
+**Bug #6 — מסירות:**
+- Handover routes in `frontend/src/App.js` lines 374-401 as separate pages
+- ProjectDashboardPage line 520: `navigate(/projects/${projectId}/handover)`
+- NOT wired as a tab in ProjectControlPage SECONDARY_TABS (lines 77-80: only team/companies/data-export)
+
+### STEP 0 — INVESTIGATE FIRST (before any code changes)
+```
+grep -n "navigate(" frontend/src/pages/ProjectDashboardPage.js
+grep -n "navigate(" frontend/src/pages/ProjectControlPage.js | head -30
+grep -rn "HandoverOverviewPage\|HandoverTabPage" frontend/src/ --include="*.js"
+```
+
+Report:
+1. When user is on `/projects/:id/control?workMode=defects&statusChip=open` and clicks
+   the browser/hardware Back button — what does React Router do? Does Back pop to `/projects/:id`
+   (dashboard) or to `/projects` (list)?
+2. Is there a redirect or useEffect somewhere that intercepts navigation?
+3. What's the history stack after: Projects → Project Dashboard → card click?
+
+### Likely fix paths
+
+#### Path 1: Missing intermediate history entry
+If history stack is `[Projects, Control?filter]` and Back pops Control, user lands on Projects
+(not Dashboard). Fix: ensure Dashboard is pushed before Control. Replace:
+```
+navigate(/projects/:id/control?filter=...)
+```
+with a flow that ensures Dashboard is in history.
+
+#### Path 2: `replace: true` somewhere unintentional
+`grep -n "replace: true\|replace={true}" frontend/src/pages/ProjectDashboardPage.js`
+If found — remove it.
+
+#### Path 3: Handover not under /projects/:id prefix
+If `/handover` is a top-level route (not `/projects/:id/handover`), Back exits project.
+Fix in App.js routing to nest handover under the project route.
+
+### Fix
+Apply whichever path the investigation reveals. The KEY requirement:
+- From Dashboard → any card → Back → MUST return to Dashboard
+- From any tab (מבנה, ליקויים, בקרת ביצוע, מסירות) → Back → MUST return to previous tab or Dashboard, NOT to project list
+- בקרת ביצוע already works — use its behavior as the reference
+
+### VERIFY on iPhone
+1. Projects list → open "פרויקט מגדלי הים" → Dashboard loads
+2. Tap "פתוחים (57)" card → defects list opens
+3. Tap Back → returns to Dashboard (NOT projects list)
+4. Repeat for all 6 cards (פתוחים, בביצוע, באיחור, לאישורי, נסגרו, צוות)
+5. From Dashboard → מסירות tab → Back → returns to Dashboard
+6. From מבנה → מסירות → Back → returns to מבנה
+7. Regression: בקרת ביצוע still works as before
+
+### Wave 3 commit
+- `fix(#385): back navigation preserves project context (bugs 5-6)`
+
+### ⛔ STOP after Wave 3
+Report to Zahi:
+- Root cause as discovered in investigation
+- Which fix path used
+- Screenshots / screen recording of back-nav flows
+- Git SHA
+
+
+========================================================================
+AFTER ALL 3 WAVES APPROVED — DEPLOY BUILD 3
+========================================================================
+1. Capacitor sync:
+   ```
+   cd frontend
+   npm run build
+   npx cap sync ios
+   npx cap open ios
+   ```
+2. Xcode → Archive → Upload → App Store Connect as Build 3
+3. Zahi installs Build 3 from TestFlight
+4. Zahi runs full pre-submit checklist on iPhone
+5. If green → Zahi submits Build 3 for Apple Review
+
+
+========================================================================
+DO NOT (GLOBAL — across all 3 waves)
+========================================================================
+- Do NOT change backend/server.py — frontend only
+- Do NOT add a full offline write queue / IndexedDB / sync engine
+- Do NOT add `user-scalable=no` to viewport meta (WCAG violation → Apple rejection)
+- Do NOT use `WebkitOverflowScrolling: 'touch'` (known iOS freeze)
+- Do NOT rewrite the router — only fix the 2 specific back-nav bugs
+- Do NOT touch the "בקרת ביצוע" tab behavior — it works, use as reference
+- Do NOT upgrade any npm package
+- Do NOT change `allow_credentials`, CORS_ORIGINS, or auth code
+- Do NOT try to fix Android padding, PDF/Excel download, or top-bar logo — those are Build 4
+- Do NOT skip the STOP points. Even if Wave 1 fixes look trivial — STOP, wait for Zahi.
+
+
+========================================================================
+REPORT FORMAT AFTER EACH WAVE
+========================================================================
+```
+Wave X complete.
+
+Bug #N — [title]
+  File(s): [paths + line numbers]
+  Change summary: [1 sentence]
+  Commit SHA: [sha]
+
+[repeat for each bug in wave]
+
+Screenshots: [attached]
+Unexpected findings: [if any]
+
+Waiting for Zahi approval before Wave X+1.
+```

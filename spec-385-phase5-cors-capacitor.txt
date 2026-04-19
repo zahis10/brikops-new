@@ -1,0 +1,106 @@
+SPEC — CORS fix for iOS Capacitor WebView
+==========================================
+
+PROBLEM
+-------
+iOS app (TestFlight / Build 2) fails login with "network error".
+Same credentials work fine in Safari mobile (https://app.brikops.com).
+
+Root cause: Capacitor WebView on iOS sends API requests from origin
+`capacitor://localhost`. Backend CORS allowlist currently only includes
+`https://app.brikops.com, https://www.brikops.com`, so the preflight OPTIONS
+response omits Access-Control-Allow-Origin for the Capacitor origin and the
+WebView blocks the request before any network call reaches the handler.
+
+
+SCOPE
+-----
+Single-line change in backend/server.py + verify/update Replit Secrets.
+
+
+FILE: backend/server.py
+-----------------------
+
+CURRENT (line 1386):
+
+    _cors_default = 'https://app.brikops.com,https://www.brikops.com' if APP_MODE == 'prod' else '*'
+
+CHANGE TO:
+
+    _cors_default = (
+        'https://app.brikops.com,'
+        'https://www.brikops.com,'
+        'capacitor://localhost,'
+        'ionic://localhost,'
+        'https://localhost'
+    ) if APP_MODE == 'prod' else '*'
+
+WHY THESE 3 EXTRA ORIGINS:
+- capacitor://localhost  → iOS Capacitor WebView (THE fix for our case)
+- ionic://localhost      → legacy iOS origin (some older Capacitor plugins)
+- https://localhost      → Android Capacitor + some iOS edge cases
+
+
+REPLIT SECRETS — CHECK + UPDATE
+-------------------------------
+1. Go to Replit → Secrets
+2. Search for `CORS_ORIGINS`
+3. IF it exists → update value to:
+     https://app.brikops.com,https://www.brikops.com,capacitor://localhost,ionic://localhost,https://localhost
+4. IF it does not exist → no action needed (code default will be used)
+
+CRITICAL: env var OVERRIDES code default.
+If CORS_ORIGINS is set in Secrets, code change alone WON'T fix the bug.
+Check the Secret first.
+
+
+VERIFY
+------
+
+TEST 1 — curl from command line (run in Replit shell after deploy):
+
+    curl -i -X OPTIONS https://api.brikops.com/auth/login \
+      -H "Origin: capacitor://localhost" \
+      -H "Access-Control-Request-Method: POST" \
+      -H "Access-Control-Request-Headers: content-type,authorization"
+
+EXPECTED response headers:
+    HTTP/2 200
+    access-control-allow-origin: capacitor://localhost
+    access-control-allow-credentials: true
+    access-control-allow-methods: ...
+
+FAIL signals:
+- No `access-control-allow-origin` header at all → CORS still blocking
+- Header says `https://app.brikops.com` instead of `capacitor://localhost`
+  → env var probably still set to old value
+
+TEST 2 — Real iOS test (Zahi runs this):
+1. Backend deploy complete
+2. Force-close BrikOps on iPhone
+3. Reopen → attempt login with test credentials
+4. Expected: login succeeds, dashboard loads
+
+
+DO NOT
+------
+- Do NOT change `allow_credentials=True` — required for cookies.
+- Do NOT add `*` to allow_origins in prod — browsers reject `*` when
+  allow_credentials is true.
+- Do NOT add any origin beyond the 5 listed above.
+- Do NOT touch the SecurityHeadersMiddleware / CSP — those are fine.
+
+
+ROLLBACK PLAN
+-------------
+If anything breaks post-deploy → revert line 1386 to original string
+and redeploy. iOS login will stay broken but web login unaffected.
+
+
+AFTER DEPLOY
+------------
+Report back to Zahi with:
+1. confirmation line 1386 updated
+2. confirmation CORS_ORIGINS secret checked (and updated if existed)
+3. curl test output (from TEST 1 above)
+4. deploy done — ready for iOS retest

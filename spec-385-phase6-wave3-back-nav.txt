@@ -1,0 +1,105 @@
+========================================================================
+#385 Phase 6 — Wave 3: Back navigation fix (bugs #5, #6)
+========================================================================
+
+## Root cause (confirmed from investigation)
+
+ב-`frontend/src/pages/ProjectControlPage.js` שורות 3514-3517 — ארבע
+navigate() ל-cross-page routes משתמשות ב-`{ replace: true }`. זה מוחק
+את ה-history entry של Control מה-stack, ולכן iOS hardware back /
+swipe-back עובר דרך כל הפרויקט ונוחת ב-projects list במקום ב-context
+הקודם.
+
+### דוגמה (Bug #6):
+1. Projects list → project → push → Stack: [projects, control]
+2. Control → Handover tab → **replace** → Stack: [projects, handover]
+3. Back → projects list ❌ (אמור להיות control)
+
+### דוגמה (Bug #5):
+אם Dashboard נכנס דרך Control tab (replace:true), כל card click שדוחף
+Control מייצר Stack: [projects, dashboard_replaced_entry, control?...]
+וה-Back לא עובד כצפוי.
+
+
+## Fix
+
+ב-`frontend/src/pages/ProjectControlPage.js` שורות 3514-3517 — הסר את
+`{ replace: true }` מכל ארבע הקריאות:
+
+**לפני:**
+```js
+navigate(`/projects/${projectId}/dashboard`, { replace: true });
+navigate(`/projects/${projectId}/qc`, { replace: true });
+navigate(`/projects/${projectId}/handover`, { replace: true });
+navigate(`/projects/${projectId}/plans`, { replace: true });
+```
+
+**אחרי:**
+```js
+navigate(`/projects/${projectId}/dashboard`);
+navigate(`/projects/${projectId}/qc`);
+navigate(`/projects/${projectId}/handover`);
+navigate(`/projects/${projectId}/plans`);
+```
+
+
+## DO NOT
+
+- ❌ אל תיגע ב-`setSearchParams(..., { replace: true })` ב-L3292 / 3335
+  / 3348 / 3680 / 3715 — אלה in-page URL updates, תקינים כמו שהם.
+- ❌ אל תשנה את `navigate('/projects')` ב-L3319 / 3359 / 3528 — הם
+  כבר push, פועלים כצפוי.
+- ❌ אל תיצור useEffect חדש או custom back handler.
+- ❌ אל תיגע ב-HandoverOverviewPage / HandoverTabPage.
+- ❌ אל תשנה routes ב-App.js.
+- ❌ אל תגע בקוד של Wave 1 / Wave 2.
+
+
+## grep לאימות לפני commit
+
+```
+grep -n "replace: true" frontend/src/pages/ProjectControlPage.js
+```
+
+אמור להציג רק את השורות 3292 / 3335 / 3348 / 3680 / 3715 (setSearchParams).
+אסור שיופיעו 3514-3517.
+
+
+## VERIFY on iPhone TestFlight
+
+1. Projects list → פתח פרויקט → Dashboard → כל אחד מ-6 הכרטיסים → Back
+   → חוזר ל-Dashboard (לא ל-projects list).
+
+2. Projects list → פתח פרויקט → Control → Dashboard tab → Back → חוזר
+   ל-Control (לא ל-projects list).
+
+3. Projects list → פתח פרויקט → Control → Handover tab → Back → חוזר
+   ל-Control.
+
+4. Projects list → פתח פרויקט → Control → QC tab → Back → חוזר ל-Control.
+
+5. Projects list → פתח פרויקט → Dashboard → מסירות → Back → חוזר
+   ל-Dashboard.
+
+6. Projects list → פתח פרויקט → מבנה → מסירות → Back → חוזר למבנה.
+
+7. Regression: בקרת ביצוע ממשיך לעבוד תקין עם הניווט הפנימי שלו
+   (workMode / tab switches דרך setSearchParams).
+
+
+## Commit
+
+```
+fix(#385): remove replace:true from cross-page tab nav (bugs 5-6)
+```
+
+
+## ⛔ STOP after Wave 3
+
+דווח ל-Zahi:
+- Commit SHA
+- תצלומי מסך / screen recording של Back flows
+- grep output שמוכיח שנשארו רק 5 שורות replace:true (כולן
+  setSearchParams, אף אחת לא ב-3514-3517)
+
+אחרי אישור — `./deploy.sh --prod` → GitHub Action → Capgo → TestFlight.

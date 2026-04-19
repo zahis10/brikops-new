@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrikOps - Phone Mockup</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Heebo', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: #f5f5f5;
+  }
+
+  .poster {
+    width: 1080px;
+    height: 1080px;
+    background: linear-gradient(135deg, #fef6ed 0%, #fff 40%, #f0f7ff 100%);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Subtle background pattern */
+  .poster::before {
+    content: '';
+    position: absolute;
+    top: -200px;
+    right: -200px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(232,146,42,0.08) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+
+  .poster::after {
+    content: '';
+    position: absolute;
+    bottom: -150px;
+    left: -150px;
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(39,174,96,0.06) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+
+  .top-section {
+    text-align: center;
+    margin-bottom: 30px;
+    z-index: 2;
+  }
+
+  .logo {
+    font-size: 38px;
+    font-weight: 900;
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 10px;
+  }
+
+  .tagline {
+    font-size: 22px;
+    font-weight: 500;
+    color: #555;
+    line-height: 1.5;
+  }
+
+  .tagline strong {
+    color: #333;
+    font-weight: 700;
+  }
+
+  /* Phone frame */
+  .phone-wrapper {
+    position: relative;
+    z-index: 2;
+  }
+
+  .phone {
+    width: 320px;
+    height: 640px;
+    background: #1a1a1a;
+    border-radius: 44px;
+    padding: 12px;
+    box-shadow:
+      0 25px 80px rgba(0,0,0,0.15),
+      0 10px 30px rgba(0,0,0,0.1),
+      inset 0 0 0 2px rgba(255,255,255,0.1);
+    position: relative;
+  }
+
+  .phone-notch {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 130px;
+    height: 28px;
+    background: #1a1a1a;
+    border-radius: 0 0 18px 18px;
+    z-index: 10;
+  }
+
+  .phone-screen {
+    width: 100%;
+    height: 100%;
+    background: #fff;
+    border-radius: 34px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* App header */
+  .app-header {
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    padding: 40px 16px 14px;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .app-header .title {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .app-header .back {
+    font-size: 18px;
+    opacity: 0.8;
+  }
+
+  /* App content */
+  .app-content {
+    padding: 12px;
+    background: #fafafa;
+    height: calc(100% - 70px);
+    overflow: hidden;
+  }
+
+  .summary-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  }
+
+  .summary-card .card-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 8px;
+    text-align: right;
+  }
+
+  .mini-kpi-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .mini-kpi {
+    flex: 1;
+    text-align: center;
+    padding: 6px 2px;
+    border-radius: 8px;
+    background: #f8f9fa;
+  }
+
+  .mini-kpi .n {
+    font-size: 18px;
+    font-weight: 900;
+    color: #333;
+  }
+
+  .mini-kpi .l {
+    font-size: 8px;
+    color: #888;
+  }
+
+  .mini-kpi.g { background: #e8f8ef; }
+  .mini-kpi.g .n { color: #27ae60; }
+  .mini-kpi.y { background: #fef3e2; }
+  .mini-kpi.y .n { color: #e8922a; }
+  .mini-kpi.r { background: #fde8e8; }
+  .mini-kpi.r .n { color: #e74c3c; }
+
+  /* Defect mini cards */
+  .defect-mini {
+    background: white;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .defect-mini .info {
+    text-align: right;
+  }
+
+  .defect-mini .info .name {
+    font-size: 11px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .defect-mini .info .meta {
+    font-size: 9px;
+    color: #999;
+    margin-top: 2px;
+  }
+
+  .defect-mini .status-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+  }
+
+  .status-dot.open { background: #e8922a; }
+  .status-dot.critical { background: #e74c3c; }
+  .status-dot.closed { background: #27ae60; }
+
+  /* Floating action button */
+  .fab {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 24px;
+    font-weight: 300;
+    box-shadow: 0 4px 15px rgba(232,146,42,0.4);
+  }
+
+  /* Feature pills around phone */
+  .feature-pill {
+    position: absolute;
+    padding: 10px 20px;
+    background: white;
+    border-radius: 30px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .feature-pill .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .feature-pill:nth-child(1) {
+    top: 200px;
+    right: 80px;
+  }
+
+  .feature-pill:nth-child(2) {
+    top: 350px;
+    left: 70px;
+  }
+
+  .feature-pill:nth-child(3) {
+    bottom: 350px;
+    right: 60px;
+  }
+
+  .feature-pill:nth-child(4) {
+    bottom: 220px;
+    left: 80px;
+  }
+
+  /* Connector lines */
+  .feature-pill::after {
+    content: '';
+    position: absolute;
+    width: 40px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(232,146,42,0.3));
+  }
+
+  .feature-pill:nth-child(1)::after { left: -40px; top: 50%; }
+  .feature-pill:nth-child(2)::after { right: -40px; top: 50%; }
+  .feature-pill:nth-child(3)::after { left: -40px; top: 50%; }
+  .feature-pill:nth-child(4)::after { right: -40px; top: 50%; }
+
+  /* Bottom CTA */
+  .bottom-cta {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    text-align: center;
+  }
+
+  .bottom-cta .cta-text {
+    font-size: 18px;
+    font-weight: 700;
+    color: #333;
+  }
+
+  .bottom-cta .cta-url {
+    font-size: 16px;
+    color: #e8922a;
+    font-weight: 600;
+    margin-top: 5px;
+  }
+</style>
+</head>
+<body>
+<div class="poster">
+  <!-- Top branding -->
+  <div class="top-section">
+    <div class="logo">BrikOps</div>
+    <div class="tagline">ניהול ליקויים, בקרה ומסירה<br><strong>מהאתר ועד המסירה</strong></div>
+  </div>
+
+  <!-- Feature pills -->
+  <div class="feature-pill">
+    <div class="dot" style="background:#e8922a"></div>
+    תיעוד ליקויים בשטח
+  </div>
+  <div class="feature-pill">
+    <div class="dot" style="background:#3498db"></div>
+    בקרת ביצוע שלב-אחרי-שלב
+  </div>
+  <div class="feature-pill">
+    <div class="dot" style="background:#27ae60"></div>
+    פרוטוקול מסירה דיגיטלי
+  </div>
+  <div class="feature-pill">
+    <div class="dot" style="background:#9b59b6"></div>
+    שיוך אוטומטי לקבלנים
+  </div>
+
+  <!-- Phone mockup -->
+  <div class="phone-wrapper">
+    <div class="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="app-header">
+          <div class="back">←</div>
+          <div class="title">דירה 8 · בניין A · קומה 2</div>
+        </div>
+        <div class="app-content">
+          <div class="summary-card">
+            <div class="card-title">סיכום מהיר</div>
+            <div class="mini-kpi-row">
+              <div class="mini-kpi g"><div class="n">1</div><div class="l">סגורות</div></div>
+              <div class="mini-kpi"><div class="n">0</div><div class="l">בטיפול</div></div>
+              <div class="mini-kpi r"><div class="n">5</div><div class="l">פתוחות</div></div>
+            </div>
+          </div>
+
+          <div class="defect-mini">
+            <div class="status-dot critical">!</div>
+            <div class="info">
+              <div class="name">כניסה > משקוף — לא תקין</div>
+              <div class="meta">דלתות · קריטי · 21.3.2026</div>
+            </div>
+          </div>
+
+          <div class="defect-mini">
+            <div class="status-dot open">~</div>
+            <div class="info">
+              <div class="name">מרפסת סלון > שיפועים</div>
+              <div class="meta">ריצוף · בינוני · 21.3.2026</div>
+            </div>
+          </div>
+
+          <div class="defect-mini">
+            <div class="status-dot open">~</div>
+            <div class="info">
+              <div class="name">חדר שינה > סדק בקיר</div>
+              <div class="meta">טיח · בינוני · 19.3.2026</div>
+            </div>
+          </div>
+
+          <div class="defect-mini">
+            <div class="status-dot closed">✓</div>
+            <div class="info">
+              <div class="name">בדיקת הארקת חשמל</div>
+              <div class="meta">חשמל · קריטי · 12.3.2026</div>
+            </div>
+          </div>
+
+          <div class="fab">+</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom CTA -->
+  <div class="bottom-cta">
+    <div class="cta-text">התחילו לנהל את הפרויקט שלכם</div>
+    <div class="cta-url">brikops.com</div>
+  </div>
+</div>
+</body>
+</html>

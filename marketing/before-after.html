@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrikOps - Before & After</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Heebo', sans-serif;
+    background: #f5f5f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+  }
+
+  .container {
+    width: 1080px;
+    height: 1080px;
+    background: white;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+  }
+
+  /* LEFT SIDE - BEFORE (chaos) */
+  .before {
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    padding: 40px 30px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .before::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 3px;
+    height: 100%;
+    background: rgba(255,255,255,0.1);
+  }
+
+  .before .label {
+    font-size: 28px;
+    font-weight: 900;
+    color: #ff6b6b;
+    text-align: center;
+    margin-bottom: 25px;
+    letter-spacing: 1px;
+  }
+
+  /* WhatsApp-style messages */
+  .wa-chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  .wa-msg {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    position: relative;
+  }
+
+  .wa-msg.sent {
+    background: #005c4b;
+    color: #e9edef;
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+  }
+
+  .wa-msg.received {
+    background: #202c33;
+    color: #e9edef;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+  }
+
+  .wa-msg .sender {
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+
+  .wa-msg.sent .sender { color: #53bdeb; }
+  .wa-msg.received .sender { color: #ff9f43; }
+
+  .wa-msg .time {
+    font-size: 10px;
+    color: rgba(255,255,255,0.4);
+    text-align: left;
+    margin-top: 3px;
+  }
+
+  .chaos-items {
+    margin-top: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .chaos-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(255,255,255,0.6);
+    font-size: 14px;
+  }
+
+  .chaos-item .icon {
+    font-size: 20px;
+  }
+
+  .chaos-stat {
+    text-align: center;
+    margin-top: 20px;
+    padding: 15px;
+    background: rgba(255,107,107,0.15);
+    border-radius: 12px;
+    border: 1px solid rgba(255,107,107,0.3);
+  }
+
+  .chaos-stat .num {
+    font-size: 36px;
+    font-weight: 900;
+    color: #ff6b6b;
+  }
+
+  .chaos-stat .desc {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    margin-top: 4px;
+  }
+
+  /* RIGHT SIDE - AFTER (BrikOps) */
+  .after {
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(180deg, #fff8f0 0%, #ffffff 30%);
+    padding: 40px 30px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .after .label {
+    font-size: 28px;
+    font-weight: 900;
+    color: #e8922a;
+    text-align: center;
+    margin-bottom: 25px;
+    letter-spacing: 1px;
+  }
+
+  .brikops-logo {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  .brikops-logo span {
+    font-size: 22px;
+    font-weight: 900;
+    color: #e8922a;
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* App UI Cards */
+  .app-card {
+    background: white;
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    border: 1px solid #f0f0f0;
+  }
+
+  .app-card .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .app-card .card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #333;
+  }
+
+  .app-card .badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+
+  .badge.green { background: #e8f8ef; color: #27ae60; }
+  .badge.orange { background: #fef3e2; color: #e8922a; }
+  .badge.red { background: #fde8e8; color: #e74c3c; }
+
+  .kpi-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .kpi-item {
+    flex: 1;
+    text-align: center;
+    padding: 8px 4px;
+    border-radius: 10px;
+    background: #f8f9fa;
+  }
+
+  .kpi-item .num {
+    font-size: 20px;
+    font-weight: 900;
+    color: #333;
+  }
+
+  .kpi-item .label {
+    font-size: 10px;
+    color: #888;
+    font-weight: 400;
+  }
+
+  .kpi-item.highlight {
+    background: #e8f8ef;
+  }
+
+  .kpi-item.highlight .num {
+    color: #27ae60;
+  }
+
+  .kpi-item.warn {
+    background: #fef3e2;
+  }
+
+  .kpi-item.warn .num {
+    color: #e8922a;
+  }
+
+  /* Progress bars */
+  .progress-section {
+    margin-top: 8px;
+  }
+
+  .progress-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .progress-item .name {
+    font-size: 12px;
+    color: #666;
+    width: 80px;
+    text-align: left;
+  }
+
+  .progress-bar {
+    flex: 1;
+    height: 8px;
+    background: #f0f0f0;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+
+  .progress-fill.green { background: linear-gradient(90deg, #27ae60, #2ecc71); }
+  .progress-fill.orange { background: linear-gradient(90deg, #e8922a, #f1a94e); }
+  .progress-fill.blue { background: linear-gradient(90deg, #3498db, #5dade2); }
+
+  .progress-item .pct {
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    width: 35px;
+  }
+
+  .order-stat {
+    text-align: center;
+    margin-top: 15px;
+    padding: 15px;
+    background: linear-gradient(135deg, #e8f8ef, #f0faf5);
+    border-radius: 12px;
+    border: 1px solid rgba(39,174,96,0.2);
+  }
+
+  .order-stat .num {
+    font-size: 36px;
+    font-weight: 900;
+    color: #27ae60;
+  }
+
+  .order-stat .desc {
+    font-size: 13px;
+    color: #666;
+    margin-top: 4px;
+  }
+
+  /* Bottom branding */
+  .bottom-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: linear-gradient(135deg, #e8922a, #d4790e);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+  }
+
+  .bottom-bar .text {
+    font-size: 20px;
+    font-weight: 700;
+    color: white;
+  }
+
+  .bottom-bar .url {
+    font-size: 16px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.8);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- BEFORE - WhatsApp chaos -->
+  <div class="before">
+    <div class="label">בלי BrikOps</div>
+
+    <div class="wa-chat">
+      <div class="wa-msg received">
+        <div class="sender">מוטי - קבלן ריצוף</div>
+        אני לא ידעתי על הליקוי הזה בדירה 8, מי שלח לי?
+        <div class="time">09:12</div>
+      </div>
+
+      <div class="wa-msg sent">
+        <div class="sender">יוסי - מנהל פרויקט</div>
+        שלחתי לך ביום שלישי בקבוצה
+        <div class="time">09:15</div>
+      </div>
+
+      <div class="wa-msg received">
+        <div class="sender">מוטי - קבלן ריצוף</div>
+        באיזה קבוצה?? יש 6 קבוצות
+        <div class="time">09:16</div>
+      </div>
+
+      <div class="wa-msg sent">
+        <div class="sender">רונית - משרד</div>
+        מישהו יודע למה אין תמונה של הליקוי בסלון קומה 3?
+        <div class="time">09:22</div>
+      </div>
+
+      <div class="wa-msg received">
+        <div class="sender">דני - מפקח</div>
+        אני צילמתי. רגע מחפש... היה בטלפון הישן
+        <div class="time">09:30</div>
+      </div>
+
+      <div class="wa-msg sent">
+        <div class="sender">יוסי - מנהל פרויקט</div>
+        מסירה מחר בבוקר לדירה 12. מישהו הכין פרוטוקול?
+        <div class="time">10:01</div>
+      </div>
+
+      <div class="wa-msg received">
+        <div class="sender">רונית - משרד</div>
+        איזה תבנית להשתמש? השנה שינינו 3 פעמים
+        <div class="time">10:05</div>
+      </div>
+
+      <div class="wa-msg received">
+        <div class="sender">מוטי - קבלן ריצוף</div>
+        אגב הליקוי בדירה 8 זה לא שלי, זה של חשמל
+        <div class="time">10:12</div>
+      </div>
+    </div>
+
+    <div class="chaos-items">
+      <div class="chaos-item"><span class="icon">📱</span> 6 קבוצות וואטסאפ</div>
+      <div class="chaos-item"><span class="icon">📋</span> 3 גרסאות אקסל</div>
+      <div class="chaos-item"><span class="icon">🖼️</span> תמונות בגלריה</div>
+    </div>
+
+    <div class="chaos-stat">
+      <div class="num">???</div>
+      <div class="desc">כמה ליקויים פתוחים? אף אחד לא יודע</div>
+    </div>
+  </div>
+
+  <!-- AFTER - BrikOps order -->
+  <div class="after">
+    <div class="label">עם BrikOps</div>
+
+    <div class="brikops-logo">
+      <span>BrikOps</span>
+    </div>
+
+    <div class="app-card">
+      <div class="card-header">
+        <div class="badge orange">בניין A</div>
+        <div class="card-title">סיכום ליקויים</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-item highlight">
+          <div class="num">2</div>
+          <div class="label">סגורות</div>
+        </div>
+        <div class="kpi-item warn">
+          <div class="num">31</div>
+          <div class="label">ממתינים</div>
+        </div>
+        <div class="kpi-item">
+          <div class="num">34</div>
+          <div class="label">סה"כ</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <div class="card-header">
+        <div class="badge green">40%</div>
+        <div class="card-title">בקרת ביצוע — קומה 1</div>
+      </div>
+      <div class="progress-section">
+        <div class="progress-item">
+          <div class="pct">89%</div>
+          <div class="progress-bar"><div class="progress-fill green" style="width:89%"></div></div>
+          <div class="name">בלוקים</div>
+        </div>
+        <div class="progress-item">
+          <div class="pct">91%</div>
+          <div class="progress-bar"><div class="progress-fill blue" style="width:91%"></div></div>
+          <div class="name">אינסטלציה</div>
+        </div>
+        <div class="progress-item">
+          <div class="pct">78%</div>
+          <div class="progress-bar"><div class="progress-fill orange" style="width:78%"></div></div>
+          <div class="name">יציקת תקרה</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <div class="card-header">
+        <div class="badge green">נחתם</div>
+        <div class="card-title">פרוטוקול מסירה — דירה 8</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-item">
+          <div class="num">5</div>
+          <div class="label">ליקויים</div>
+        </div>
+        <div class="kpi-item highlight">
+          <div class="num">131</div>
+          <div class="label">תקין</div>
+        </div>
+        <div class="kpi-item">
+          <div class="num">145</div>
+          <div class="label">נבדקו</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="order-stat">
+      <div class="num">100%</div>
+      <div class="desc">שליטה מלאה. אפס הפתעות.</div>
+    </div>
+  </div>
+
+  <!-- Bottom branding bar -->
+  <div class="bottom-bar">
+    <span class="url">brikops.com</span>
+    <span class="text">BrikOps</span>
+  </div>
+</div>
+</body>
+</html>
