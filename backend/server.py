@@ -1383,7 +1383,13 @@ if _allowed_hosts_raw and APP_MODE == 'prod':
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-_cors_default = 'https://app.brikops.com,https://www.brikops.com' if APP_MODE == 'prod' else '*'
+_cors_default = (
+    'https://app.brikops.com,'
+    'https://www.brikops.com,'
+    'capacitor://localhost,'
+    'ionic://localhost,'
+    'https://localhost'
+) if APP_MODE == 'prod' else '*'
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
