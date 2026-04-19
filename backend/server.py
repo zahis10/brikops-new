@@ -150,7 +150,7 @@ async def global_rate_limit_middleware(request: Request, call_next):
     allowed = True
     try:
         if user_id:
-            allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=120, window_seconds=60)
+            allowed = await _check_rate_limit_global(db, "global_user", user_id, max_requests=300, window_seconds=60)
         else:
             allowed = await _check_rate_limit_global(db, "global_ip", client_ip, max_requests=30, window_seconds=60)
     except Exception:

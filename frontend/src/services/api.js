@@ -5,6 +5,31 @@ const API = `${BACKEND_URL}/api`;
 
 export { BACKEND_URL };
 
+const _cache = new Map();
+const _CACHE_TTL_MS = 30_000;
+
+function cachedFetch(key, fetcher) {
+  const entry = _cache.get(key);
+  const now = Date.now();
+  if (entry && (now - entry.ts) < _CACHE_TTL_MS) return entry.value;
+  const promise = fetcher().catch(err => {
+    setTimeout(() => _cache.delete(key), 5_000);
+    throw err;
+  });
+  _cache.set(key, { value: promise, ts: now });
+  return promise;
+}
+
+export function clearProjectCache(projectId) {
+  if (!projectId) {
+    _cache.clear();
+    return;
+  }
+  for (const key of _cache.keys()) {
+    if (key.includes(projectId)) _cache.delete(key);
+  }
+}
+
 let _paywallCallback = null;
 export const setPaywallCallback = (cb) => { _paywallCallback = cb; };
 
@@ -52,8 +77,10 @@ export const projectService = {
     return response.data;
   },
   async get(id) {
-    const response = await axios.get(`${API}/projects/${id}`, { headers: getAuthHeader() });
-    return response.data;
+    return cachedFetch(`project:get:${id}`, async () => {
+      const response = await axios.get(`${API}/projects/${id}`, { headers: getAuthHeader() });
+      return response.data;
+    });
   },
   async create(data) {
     const response = await axios.post(`${API}/projects`, data, { headers: getAuthHeader() });
@@ -65,19 +92,29 @@ export const projectService = {
   },
   async createBuilding(projectId, data) {
     const response = await axios.post(`${API}/projects/${projectId}/buildings`, data, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async getHierarchy(projectId, { signal } = {}) {
-    const response = await axios.get(`${API}/projects/${projectId}/hierarchy`, { headers: getAuthHeader(), signal });
-    return response.data;
+    if (signal) {
+      const response = await axios.get(`${API}/projects/${projectId}/hierarchy`, { headers: getAuthHeader(), signal });
+      return response.data;
+    }
+    return cachedFetch(`project:hierarchy:${projectId}`, async () => {
+      const response = await axios.get(`${API}/projects/${projectId}/hierarchy`, { headers: getAuthHeader() });
+      return response.data;
+    });
   },
   async assignPm(projectId, userId) {
     const response = await axios.post(`${API}/projects/${projectId}/assign-pm`, { user_id: userId }, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async getMemberships(projectId) {
-    const response = await axios.get(`${API}/projects/${projectId}/memberships`, { headers: getAuthHeader() });
-    return response.data;
+    return cachedFetch(`project:memberships:${projectId}`, async () => {
+      const response = await axios.get(`${API}/projects/${projectId}/memberships`, { headers: getAuthHeader() });
+      return response.data;
+    });
   },
   async getAvailablePms(projectId, search = '') {
     const params = search ? { search } : {};
@@ -86,10 +123,12 @@ export const projectService = {
   },
   async changeMemberRole(projectId, userId, newRole) {
     const response = await axios.put(`${API}/projects/${projectId}/members/${userId}/role`, { new_role: newRole }, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async removeMember(projectId, userId) {
     const response = await axios.delete(`${API}/projects/${projectId}/members/${userId}`, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async removeOrgMember(userId) {
@@ -110,6 +149,7 @@ export const projectService = {
   },
   async updateContractorProfile(projectId, userId, body) {
     const response = await axios.put(`${API}/projects/${projectId}/members/${userId}/contractor-profile`, body, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async markOnboardingComplete(projectId) {
@@ -244,19 +284,24 @@ export const companySearchService = {
 
 export const projectCompanyService = {
   async list(projectId) {
-    const response = await axios.get(`${API}/projects/${projectId}/companies`, { headers: getAuthHeader() });
-    return response.data;
+    return cachedFetch(`project:companies:${projectId}`, async () => {
+      const response = await axios.get(`${API}/projects/${projectId}/companies`, { headers: getAuthHeader() });
+      return response.data;
+    });
   },
   async create(projectId, data) {
     const response = await axios.post(`${API}/projects/${projectId}/companies`, data, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async update(projectId, companyId, data) {
     const response = await axios.put(`${API}/projects/${projectId}/companies/${companyId}`, data, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
   async remove(projectId, companyId) {
     const response = await axios.delete(`${API}/projects/${projectId}/companies/${companyId}`, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
 };
@@ -293,19 +338,24 @@ export const tradeService = {
     return response.data;
   },
   async listForProject(projectId) {
-    const response = await axios.get(`${API}/projects/${projectId}/trades`, { headers: getAuthHeader() });
-    return response.data;
+    return cachedFetch(`project:trades:${projectId}`, async () => {
+      const response = await axios.get(`${API}/projects/${projectId}/trades`, { headers: getAuthHeader() });
+      return response.data;
+    });
   },
   async createForProject(projectId, data) {
     const response = await axios.post(`${API}/projects/${projectId}/trades`, data, { headers: getAuthHeader() });
+    clearProjectCache(projectId);
     return response.data;
   },
 };
 
 export const projectStatsService = {
   async get(projectId) {
-    const response = await axios.get(`${API}/projects/${projectId}/stats`, { headers: getAuthHeader() });
-    return response.data;
+    return cachedFetch(`project:stats:${projectId}`, async () => {
+      const response = await axios.get(`${API}/projects/${projectId}/stats`, { headers: getAuthHeader() });
+      return response.data;
+    });
   },
 };
 

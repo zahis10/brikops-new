@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   projectService, buildingService, floorService, membershipService,
   projectCompanyService, teamInviteService, projectStatsService, excelService, tradeService,
-  sortIndexService, versionService, archiveService, stepupService, isStepupError, billingService,
+  sortIndexService, archiveService, stepupService, isStepupError, billingService,
   qcService, companySearchService, templateService, projectQcService, handoverService, taskService
 } from '../services/api';
 import { toast } from 'sonner';
@@ -3085,7 +3085,6 @@ const ProjectControlPage = () => {
   const [showBulkUnits, setShowBulkUnits] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [openInviteTriggered, setOpenInviteTriggered] = useState(false);
-  const [gitSha, setGitSha] = useState('');
   const [isOrgOwner, setIsOrgOwner] = useState(false);
   const [canManageBilling, setCanManageBilling] = useState(false);
   const [isBillingViewer, setIsBillingViewer] = useState(false);
@@ -3451,12 +3450,6 @@ const ProjectControlPage = () => {
       setQcLoading(false);
     });
   }, [hierarchy, projectId]);
-
-  useEffect(() => {
-    versionService.get().then(data => {
-      setGitSha(data.git_sha || data.sha || data.version || '');
-    }).catch(() => {});
-  }, []);
 
   const handleRefresh = useCallback(() => {
     loadHierarchy();
