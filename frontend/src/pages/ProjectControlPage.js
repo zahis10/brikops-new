@@ -3511,10 +3511,10 @@ const ProjectControlPage = () => {
   ].filter(t => !t.hidden);
 
   const handleWorkTab = (id) => {
-    if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`, { replace: true }); return; }
-    if (id === 'qc') { navigate(`/projects/${projectId}/qc`, { replace: true }); return; }
-    if (id === 'handover') { navigate(`/projects/${projectId}/handover`, { replace: true }); return; }
-    if (id === 'plans') { navigate(`/projects/${projectId}/plans`, { replace: true }); return; }
+    if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`); return; }
+    if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
+    if (id === 'handover') { navigate(`/projects/${projectId}/handover`); return; }
+    if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
     setWorkMode(id);
     if (id !== 'structure') setActiveTab('');
     try { localStorage.setItem(`brikops_workMode_${projectId}`, id); } catch {}
