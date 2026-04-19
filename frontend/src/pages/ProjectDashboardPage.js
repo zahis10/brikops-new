@@ -15,6 +15,9 @@ import {
   Construction, FileSignature, Send, MessageSquare
 } from 'lucide-react';
 
+import OfflineState from '../components/OfflineState';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+
 const TeamActivitySection = React.lazy(() => import('../components/TeamActivitySection'));
 
 const formatHours = (h) => {
@@ -127,6 +130,7 @@ export default function ProjectDashboardPage() {
   const [sendingDigest, setSendingDigest] = useState(false);
   const [sendingReminder, setSendingReminder] = useState({});
   const stageRefs = useRef({});
+  const online = useOnlineStatus();
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -204,6 +208,10 @@ export default function ProjectDashboardPage() {
       setSendingReminder(prev => ({ ...prev, [companyId]: false }));
     }
   };
+
+  if (!online && !data) {
+    return <OfflineState onRetry={() => load()} />;
+  }
 
   if (loading) {
     return (

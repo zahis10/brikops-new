@@ -7,6 +7,8 @@ import { formatUnitLabel } from '../utils/formatters';
 import { tCategory } from '../i18n';
 import { toast } from 'sonner';
 import FilterDrawer from '../components/FilterDrawer';
+import OfflineState from '../components/OfflineState';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
 import {
   ArrowRight, Loader2, Building2, ChevronDown, ChevronUp,
@@ -58,6 +60,7 @@ const BuildingDefectsPage = () => {
   const navigate = useNavigate();
   const { features } = useAuth();
 
+  const online = useOnlineStatus();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const flagChecked = !!features?.defects_v2;
@@ -353,6 +356,10 @@ const BuildingDefectsPage = () => {
     });
     return { total, pending, followUp };
   };
+
+  if (!online && !data) {
+    return <OfflineState onRetry={loadData} />;
+  }
 
   if (!flagChecked || (loading && !data)) {
     return (

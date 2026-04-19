@@ -13,6 +13,8 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import HamburgerMenu from '../components/HamburgerMenu';
 import NotificationBell from '../components/NotificationBell';
+import OfflineState from '../components/OfflineState';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { navigateToProject } from '../utils/navigation';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
@@ -160,6 +162,7 @@ const MyProjectsPage = () => {
   const { user, logout } = useAuth();
   const { billing } = useBilling();
   const navigate = useNavigate();
+  const online = useOnlineStatus();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -211,6 +214,10 @@ const MyProjectsPage = () => {
       (p.address || '').toLowerCase().includes(q)
     );
   });
+
+  if (!online && projects.length === 0) {
+    return <OfflineState onRetry={loadProjects} />;
+  }
 
   if (loading) {
     return (

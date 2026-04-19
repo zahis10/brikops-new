@@ -33,6 +33,8 @@ import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
 import { MoreVertical } from 'lucide-react';
 import HamburgerMenu from '../components/HamburgerMenu';
+import OfflineState from '../components/OfflineState';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -3116,6 +3118,7 @@ const ProjectControlPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  const online = useOnlineStatus();
   const [project, setProject] = useState(null);
   const [hierarchy, setHierarchy] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3519,6 +3522,10 @@ const ProjectControlPage = () => {
       setProject(prev => prev ? { ...prev, onboarding_complete: true } : prev);
     } catch {}
   }, [projectId]);
+
+  if (!online && !project) {
+    return <OfflineState onRetry={() => window.location.reload()} />;
+  }
 
   if (loading || !accessChecked) {
     return (
