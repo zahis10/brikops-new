@@ -156,3 +156,9 @@ id = "PK5UMGCcFq2Cl_B1jpp7s"
 uri = "file://.local/review-phase1.txt"
 type = "text"
 title = "Phase 1 — pull + @capacitor/preferences (לא קומיט)"
+
+[[outputs]]
+id = "EDFBvT8q1uwrKOtWssInW"
+uri = "file://.local/review-phase2.txt"
+type = "text"
+title = "Wave 1 Phases 2-5 — commit d954be5 (8 proof blocks)"
