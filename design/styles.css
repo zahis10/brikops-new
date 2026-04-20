@@ -1,0 +1,292 @@
+/* BrikOps Loading Experience — global styles */
+
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap');
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: #0E1017;
+  color: #E5E7EB;
+  font-family: "Rubik", system-ui, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ─── Animations ─── */
+
+/* logo breathing on react loading screen */
+@keyframes brikBreathe {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.06); filter: brightness(1.08); }
+}
+
+/* loading text dots */
+@keyframes dotFade {
+  0%, 20% { opacity: 0.2; }
+  50%     { opacity: 1; }
+  80%, 100% { opacity: 0.2; }
+}
+
+/* shimmer on skeleton — RTL sweep */
+@keyframes shimmerRTL {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+/* D3-A — bricks drop from top with slight bounce */
+@keyframes brickDrop {
+  0%   { transform: translateY(-240px) rotate(-8deg); opacity: 0; }
+  60%  { opacity: 1; }
+  100% { transform: translateY(0) rotate(0); opacity: 1; }
+}
+
+/* D3-B — blueprint draw */
+@keyframes bpDraw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes bpFill {
+  to { fill-opacity: 1; }
+}
+@keyframes bpFadeOut {
+  to { opacity: 0; }
+}
+@keyframes bpAccent {
+  0%   { opacity: 0; transform: scaleX(0); transform-origin: right; }
+  100% { opacity: 1; transform: scaleX(1); }
+}
+
+/* D3-C — tools fly in, then fade, then B emerges */
+@keyframes toolFly {
+  0%   { transform: translate(calc(-50% + var(--tx-from)), calc(-50% + var(--ty-from))) rotate(var(--r-from)) scale(0.7); opacity: 0; }
+  30%  { opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--tx-to)),   calc(-50% + var(--ty-to)))   rotate(var(--r-to))   scale(1);   opacity: 1; }
+}
+@keyframes toolFade {
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+}
+@keyframes toolsBIn {
+  0%   { opacity: 0; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Device entrance animations for the scene */
+@keyframes tapPulse {
+  0%   { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* Tweaks panel */
+.tweaks-panel {
+  position: fixed;
+  bottom: 20px; right: 20px;
+  width: 280px;
+  background: rgba(20, 23, 32, 0.96);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px;
+  color: #E5E7EB;
+  font-size: 13px;
+  z-index: 1000;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.tweaks-panel h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #9CA3AF;
+}
+.tweaks-row {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 14px;
+}
+.tweaks-row label {
+  font-size: 11px; color: #9CA3AF;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.tweaks-row select,
+.tweaks-row input[type=text] {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.tweak-btn {
+  background: #F59E0B;
+  color: #1F2937;
+  border: none;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+}
+.tweak-btn:hover { background: #FBBF24; }
+.tweak-btn.secondary {
+  background: rgba(255,255,255,0.08);
+  color: #E5E7EB;
+}
+.tweak-btn.secondary:hover { background: rgba(255,255,255,0.12); }
+
+/* Canvas layout */
+.canvas {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 20px 120px;
+}
+.canvas-header {
+  display: flex; align-items: baseline; gap: 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.canvas-header h1 {
+  font-size: 28px; font-weight: 700; margin: 0;
+  color: #fff; letter-spacing: -0.5px;
+}
+.canvas-header .meta {
+  font-size: 13px; color: #9CA3AF;
+}
+.canvas-sub {
+  color: #9CA3AF; margin: 0 0 40px;
+  max-width: 640px; line-height: 1.6;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 32px;
+  margin-bottom: 48px;
+}
+.grid.hero {
+  grid-template-columns: minmax(420px, 500px) 1fr;
+}
+@media (max-width: 900px) {
+  .grid.hero { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: #14171F;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+.card-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  color: #6B7280; margin-bottom: 4px;
+}
+.card-title {
+  font-size: 18px; font-weight: 600; color: #fff;
+  margin: 0 0 4px;
+}
+.card-desc {
+  font-size: 13px; color: #9CA3AF; margin: 0 0 16px; line-height: 1.5;
+}
+.card-stage {
+  aspect-ratio: 9 / 19.5;
+  border-radius: 28px;
+  overflow: hidden;
+  position: relative;
+  background: #323A4E;
+  margin: 0 auto;
+  max-width: 260px;
+}
+
+.section-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin: 0 0 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.section-header h2 {
+  margin: 0; font-size: 20px; font-weight: 600; color: #fff;
+  letter-spacing: -0.3px;
+}
+.section-header .tag {
+  font-size: 11px; padding: 3px 8px; border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12); color: #F59E0B;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+/* Home screen (the "tap the icon" stage) */
+.home-stage {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, #1a2236 0%, #0d1221 100%);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 120px;
+}
+.home-icon-btn {
+  width: 68px; height: 68px;
+  border-radius: 16px;
+  background: #323A4E;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.15s ease;
+}
+.home-icon-btn:active { transform: scale(0.95); }
+.home-icon-btn::after {
+  content: '';
+  position: absolute; inset: -4px;
+  border-radius: 20px;
+  border: 2px solid #F59E0B;
+  opacity: 0;
+}
+.home-icon-btn.pulsing::after {
+  animation: tapPulse 1.4s ease-out infinite;
+  opacity: 1;
+}
+.home-label {
+  position: absolute; top: 200px;
+  font-size: 11px; color: rgba(255,255,255,0.8);
+  font-family: "Rubik", system-ui;
+}
+.home-hint {
+  position: absolute; top: 240px;
+  font-size: 12px; color: rgba(245, 158, 11, 0.9);
+  font-family: "Rubik", system-ui;
+  padding: 6px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 100px;
+}
+
+/* Timeline track */
+.timeline {
+  background: #14171F;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 32px;
+}
+.timeline-row {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 8px;
+}
+.timeline-row:last-child { margin-bottom: 0; }
+.timeline-label {
+  font-size: 11px; color: #9CA3AF; width: 140px; flex-shrink: 0;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.timeline-track {
+  flex: 1; height: 8px; background: rgba(255,255,255,0.04);
+  border-radius: 4px; position: relative; overflow: hidden;
+}
+.timeline-fill {
+  position: absolute; top: 0; bottom: 0;
+  border-radius: 4px;
+}
+.timeline-time {
+  font-size: 10px; color: #6B7280; width: 72px; flex-shrink: 0;
+  text-align: left; font-family: "SF Mono", monospace;
+}

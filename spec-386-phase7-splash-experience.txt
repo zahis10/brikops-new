@@ -1,0 +1,346 @@
+# #386 — Phase 7 Wave 1 — Splash Experience (D2 Daily + D3-A First-Launch)
+
+## What & Why
+החליפו את ה-LoadingSpinner וה-ConnectingScreen הבסיסיים ב-App.js במסך טעינה מותג-אמיתי
+לאפליקציית BrikOps. המסך הזה משתמש בשני וריאנטים:
+- **D2 (Skeleton + Shimmer)** — טעינה יומיומית. מהיר, רואים סקלטון דומה למסך האמיתי,
+  shimmer RTL שעובר פעם אחת. זה המסך שכל משתמש רואה 99% מהפתיחות.
+- **D3-A (Brick Assembly)** — אנימציה של לבנים שנופלות ונבנות לאות B. מוצג רק
+  בהתקנה ראשונה ואחרי עדכון גרסה. פעם אחת → אף פעם לא שוב עד גרסה חדשה.
+
+ההחלטה בין שני הוריאנטים נקבעת דרך `@capacitor/preferences` שמשווה בין הגרסה
+הנוכחית של האפליקציה לגרסה האחרונה שהמשתמש ראה.
+
+הקבצים מקור נמצאים ב-`design/` בשורש הריפו (ייבוא ישיר מ-Claude Design).
+
+## Done looks like
+- ✅ משתמש שמתקין את האפליקציה לראשונה → רואה את אנימציית הלבנים (D3-A) פעם אחת,
+  אחרי זה המערכת שומרת את הגרסה ופותחת את הדשבורד.
+- ✅ משתמש שפותח את האפליקציה ביום הבא (אותה גרסה) → רואה את D2 (Skeleton + Shimmer),
+  לא את אנימציית הלבנים. ההבדל בולט — אין הצגה, ישר סקלטון מודרני.
+- ✅ משתמש שמעדכן ל-1.0.11 (מ-1.0.10) → רואה את D3-A שוב פעם אחת.
+- ✅ אין LoadingSpinner הישן (הספינר הקטן על רקע slate). הוחלף בכל מקום.
+- ✅ אין `ConnectingScreen` הישן עם "מתחבר..." על רקע slate-50. הוחלף ב-D2 עם
+  הטקסט "מתחבר..." כחלק מהסקלטון.
+- ✅ D2 מסתיים ברגע שהדאטה מגיעה (לא טיימר קבוע). אם הדאטה מגיעה ב-300ms,
+  D2 נעלם ב-300ms + 500ms fade = 800ms סה"כ.
+- ✅ D3-A רץ לכל היותר 1600ms (duration של animation) + 500ms fade, ואז דשבורד.
+- ✅ RTL נכון — ה-shimmer זורם מימין לשמאל.
+- ✅ בלי console errors.
+- ✅ בלי שכבות לבנות שנראות רגע לפני הסקלטון (דפוס קלאסי של flash of unstyled).
+
+## Out of scope
+- ❌ לא לגעת ב-native splash (LaunchScreen.storyboard ב-iOS, splash drawable ב-Android)
+  — הם נשארים כמו שהם. רק ה-React loading מתחלף.
+- ❌ לא לשנות את ה-AuthContext, ה-Suspense routing, או לוגיקת ה-deep links.
+- ❌ לא להוסיף D3-B (BlueprintToBuilding) או D3-C (ToolsAssembling) — לא משתמשים בהם
+  עכשיו. יש אותם ב-`design/construction.jsx` אבל לא לייבא אותם.
+- ❌ לא לשנות את אייקוני האפליקציה (mipmap).
+- ❌ לא להוסיף Skeleton componentים חדשים לדפים פנימיים — הסקלטון בסקלטון loading
+  הוא decorative, לא functional.
+
+## Investigation (DO NOT SKIP)
+לפני שכותבים קוד, תבדוק:
+
+```bash
+# 1. איפה ה-LoadingSpinner וה-ConnectingScreen בשימוש היום
+grep -rn "LoadingSpinner\|ConnectingScreen" frontend/src/ --include="*.js" --include="*.jsx" --include="*.tsx" | grep -v node_modules
+
+# 2. האם יש Suspense fallbacks עם LoadingSpinner בעוד מקומות
+grep -rn "Suspense.*fallback" frontend/src/ --include="*.js" --include="*.jsx" | grep -v node_modules
+
+# 3. האם יש כבר imports של @capacitor/preferences
+grep -rn "@capacitor/preferences" frontend/ --include="*.js" --include="*.jsx" --include="*.json" | grep -v node_modules
+```
+
+צריך לגלות:
+- בדיוק איפה ה-LoadingSpinner מוחלף (אמור להיות 3 מקומות ב-App.js: שורות 73, 101, 157)
+- האם יש עוד דפים שמשתמשים ב-LoadingSpinner (כנראה לא, זה local component)
+- האם `@capacitor/preferences` כבר מותקן (כנראה לא — Wave 5 הוסיפה רק app/filesystem/share)
+
+**אם `@capacitor/preferences` לא מותקן — להריץ:**
+```bash
+cd frontend && npm install @capacitor/preferences@^7
+npx cap sync
+```
+
+## Tasks
+
+### Phase 1 — יצירת קבצי ה-Splash החדשים (באותו commit)
+
+#### Task 1.1: הקבצים החדשים
+צור את הקבצים הבאים:
+
+**File: `frontend/src/components/splash/BrikLogo.jsx`**
+
+חלץ מ-`design/logo.jsx` את הפונקציות:
+- `BrikMark` (שורות 5-27)
+- `BlueprintGrid` (שורות 50-71)
+- `RadialGlow` (שורות 74-82)
+
+**חשוב:**
+- **DO NOT** להשתמש ב-`Object.assign(window, {...})` בסוף הקובץ — זה דפוס של Claude Design canvas.
+- במקום זה: `export { BrikMark, BlueprintGrid, RadialGlow };`
+- להוסיף `import React from 'react';` בראש הקובץ.
+
+**File: `frontend/src/components/splash/D2DailySplash.jsx`**
+
+חלץ מ-`design/splash.jsx`:
+- `ReactLoadingScreen` (שורות 40-103)
+- `Shimmer` (שורות 115-131)
+- `SkeletonHeader`, `SkeletonKPIs`, `SkeletonCard` (שורות 133-165)
+
+**חשוב:**
+- להחליף את ה-`phase` prop ב-state פנימי שמתקדם: phase 0 (0-300ms) → phase 1 (300ms+).
+  phase 2 (fade out) קורה כשה-`isReady` prop הופך ל-`true`.
+- לייבא מ-`./BrikLogo`:
+  ```js
+  import { BrikMark, BlueprintGrid, RadialGlow } from './BrikLogo';
+  ```
+- להוסיף `import React, { useState, useEffect } from 'react';`
+- `export default function D2DailySplash({ isReady = false, loadingText = 'מתחבר' })`
+- **DO NOT** להשאיר את `Object.assign(window, {...})` בסוף.
+
+```jsx
+// ההיגיון של phases:
+const [phase, setPhase] = useState(0);
+useEffect(() => {
+  const t = setTimeout(() => setPhase(1), 300);
+  return () => clearTimeout(t);
+}, []);
+useEffect(() => {
+  if (isReady) setPhase(2);
+}, [isReady]);
+```
+
+**File: `frontend/src/components/splash/D3ABrickAssembly.jsx`**
+
+חלץ מ-`design/construction.jsx`:
+- `BrickAssembly` (שורות 8-65) — **רק הזה. לא BlueprintToBuilding ולא ToolsAssembling.**
+
+עטוף אותו במסך מלא כמו שה-`NativeSplash` עושה ב-`design/splash.jsx` (שורות 5-35):
+- רקע gradient zinc→navy (`linear-gradient(180deg, #3A4258, #323A4E, #2A3142)`)
+- BlueprintGrid + RadialGlow ברקע
+- מתחת לאנימציית הלבנים: הטקסט "BrikOps" (Brik לבן, Ops כתום #F59E0B)
+- אחרי שהאנימציה נגמרת (תוך 1600ms), קוראים ל-`onComplete` callback שה-parent מעביר.
+
+**Props:**
+```jsx
+export default function D3ABrickAssembly({ onComplete })
+```
+
+**חשוב:**
+- להשתמש ב-`setTimeout(onComplete, 2100)` (1600ms animation + 500ms fade).
+- לא להיות תלוי ב-`isReady` — האנימציה רצה מלוא המשך ואז מעבירה לדשבורד ללא תלות בדאטה.
+  (רציונל: המשתמש רואה את האנימציה הזו פעם אחת בחיים / לאחר עדכון, אז זה בסדר שזה
+  ייקח 2 שניות גם אם הדאטה כבר מוכנה).
+
+**File: `frontend/src/components/splash/splash.css`**
+
+העתק הכל מ-`design/styles.css` שורות 16-72 (כל ה-`@keyframes`).
+**DO NOT** להעתיק את שורות 1-15 (הגלובלים שכבר יש באפליקציה) או משורה 73 והלאה
+(תנזגחזה-Tweaks/Canvas שהן רק לכלי העיצוב של Claude Design).
+
+הוסף ייבוא של ה-CSS הזה בראש `D2DailySplash.jsx`:
+```jsx
+import './splash.css';
+```
+
+**File: `frontend/src/components/splash/BrikSplash.jsx`**
+
+זה ה-wrapper הראשי שמחליט מה להציג. צור אותו חדש:
+
+```jsx
+import React, { useEffect, useState } from 'react';
+import { Preferences } from '@capacitor/preferences';
+import { App } from '@capacitor/app';
+import D2DailySplash from './D2DailySplash';
+import D3ABrickAssembly from './D3ABrickAssembly';
+
+const LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version';
+
+export default function BrikSplash({ isReady = false, loadingText = 'מתחבר' }) {
+  const [variant, setVariant] = useState(null); // null → D2 → D3A
+  const [d3aDone, setD3aDone] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { version: currentVersion } = await App.getInfo();
+        const { value: lastSeenVersion } = await Preferences.get({
+          key: LAST_SEEN_VERSION_KEY,
+        });
+
+        if (!lastSeenVersion || lastSeenVersion !== currentVersion) {
+          // התקנה ראשונה או אחרי עדכון
+          setVariant('D3A');
+          await Preferences.set({
+            key: LAST_SEEN_VERSION_KEY,
+            value: currentVersion,
+          });
+        } else {
+          setVariant('D2');
+        }
+      } catch (e) {
+        // אם App.getInfo נכשל (למשל ב-dev ב-web) → fallback ל-D2
+        console.warn('[BrikSplash] version check failed, using D2:', e);
+        setVariant('D2');
+      }
+    })();
+  }, []);
+
+  if (variant === null) {
+    // 50-100ms של null עד שה-Preferences עונה. אל תציג כלום — לא גם רקע לבן.
+    // הרקע הזה תואם את native splash של iOS/Android ולא יוצר הבהוב.
+    return (
+      <div style={{
+        position: 'fixed', inset: 0,
+        background: 'linear-gradient(180deg, #3A4258 0%, #323A4E 50%, #2A3142 100%)',
+      }}/>
+    );
+  }
+
+  if (variant === 'D3A' && !d3aDone) {
+    return <D3ABrickAssembly onComplete={() => setD3aDone(true)} />;
+  }
+
+  // D2 או D3A שהסתיים → fallback ל-D2 שמחכה ל-isReady
+  return <D2DailySplash isReady={isReady} loadingText={loadingText} />;
+}
+```
+
+#### Task 1.2: חיווט ב-App.js
+
+ב-`frontend/src/App.js` שורות 73-84, תחליף את `LoadingSpinner` ו-`ConnectingScreen`:
+
+**לפני (שורות 73-84):**
+```jsx
+const LoadingSpinner = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
+  </div>
+);
+
+const ConnectingScreen = () => (
+  <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4" dir="rtl">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
+    <p className="text-slate-600 text-lg">מתחבר...</p>
+  </div>
+);
+```
+
+**אחרי:**
+```jsx
+import BrikSplash from './components/splash/BrikSplash';
+
+const LoadingSpinner = () => <BrikSplash isReady={false} loadingText="טוען" />;
+const ConnectingScreen = () => <BrikSplash isReady={false} loadingText="מתחבר" />;
+```
+
+**הסבר:** השמות `LoadingSpinner` ו-`ConnectingScreen` כבר בשימוש בכל הקובץ (שורות 101, 105, 157). משאירים אותם כ-components-עטיפה כדי לא לגעת בכל ה-references. הם פשוט מעלים את `BrikSplash` עם טקסט שונה.
+
+#### Task 1.3: וידוא שאין flash לבן
+
+בדוק ב-`frontend/public/index.html` שיש:
+```html
+<style>
+  body { background: #323A4E; margin: 0; }
+</style>
+```
+
+אם אין, תוסיף. זה מבטיח שבין ה-native splash לבין render הראשון של React, הרקע יישאר כהה וזהה לרקע של `BrikSplash`.
+
+### Phase 2 — התקנה והתאמות Capacitor
+
+**Task 2.1** (אם `@capacitor/preferences` לא מותקן — ראה Investigation):
+```bash
+cd frontend
+npm install @capacitor/preferences@^7
+npx cap sync
+```
+
+**Task 2.2**: לעדכן את `frontend/ios/App/Podfile.lock` ו-`frontend/android/app/build.gradle`
+עם ה-sync של Capacitor — זה צריך לקרות אוטומטית מ-`npx cap sync`, רק לוודא
+שהקבצים האלה השתנו ולהכניס אותם ל-commit.
+
+**Task 2.3**: לא לבנות iOS/Android בריפליט — רק `npm install` + `npx cap sync`.
+הבניה קורית במק דרך `ship.sh`.
+
+STOP כאן. Report. Wait for approval.
+
+### Phase 3 — Verify + Deploy
+
+**אחרי אישור של Phase 1-2:**
+
+```bash
+# ברפליט
+./deploy.sh --prod
+```
+
+זה מעלה OTA דרך Capgo. אין צורך בבילד native אלא אם `@capacitor/preferences` נוסף
+(ואז Zahi יריץ `./ship.sh` במק).
+
+## Relevant files
+- `frontend/src/App.js` (שורות 73-84, 101, 105, 157) — מקום הדגל של LoadingSpinner/ConnectingScreen
+- `design/splash.jsx` — מקור של ReactLoadingScreen (D2)
+- `design/construction.jsx` — מקור של BrickAssembly (D3-A) בלבד
+- `design/logo.jsx` — מקור של BrikMark, BlueprintGrid, RadialGlow
+- `design/styles.css` — מקור של ה-@keyframes
+- `frontend/package.json` — להוסיף `@capacitor/preferences`
+- `frontend/public/index.html` — אולי `body background` fix
+- `frontend/src/components/splash/*` — התיקייה החדשה שיוצרים
+
+## VERIFY
+
+### iOS (Simulator or Device)
+1. Clean install (מחק את האפליקציה אם מותקנת) → פתח אותה.
+2. **ציפייה**: רואה את אנימציית הלבנים נופלות (D3-A) ונבנות לאות B. טקסט "BrikOps"
+   מתחת. סה"כ כ-2 שניות.
+3. סגור את האפליקציה, פתח שוב.
+4. **ציפייה**: D2 — סקלטון עם shimmer RTL, "BrikOps" למעלה עם לוגו breathing, טקסט
+   "מתחבר...". D2 אמור להימשך בערך 1-1.5 שניות עד הדשבורד.
+5. עדכון גרסה: תחליף את ה-versionName ב-build.gradle ל-1.0.11 (בזמן בדיקה), תעשה
+   build מחדש, תפתח את האפליקציה.
+6. **ציפייה**: D3-A חוזר פעם אחת (כי `lastSeenVersion=1.0.10`, `currentVersion=1.0.11`).
+7. סגור ותפתח שוב → D2 חוזר.
+
+### Android
+חזור על 1-7 ב-Android — זהה.
+
+### Network edge cases
+8. מצב offline — פתח את האפליקציה ללא אינטרנט.
+9. **ציפייה**: רואה את D2 עם הטקסט "מתחבר...", לא crash. כש-ConnectingScreen מופעל
+   (אחרי timeout), זה בדיוק אותו D2 עם הטקסט השונה.
+
+### Development (web, no Capacitor)
+10. `npm start` ב-web → האפליקציה אמורה להציג D2 (fallback בגלל `App.getInfo()` נכשל).
+11. **ציפייה**: אין shout של error, יש warning בלבד ב-console, D2 מוצג תקין.
+
+### State preservation check
+12. אחרי D3-A התפעלה פעם אחת, השם של הגרסה שמור ב-Preferences.
+13. **API check**: פתח את האפליקציה → הרץ ב-console:
+    ```js
+    (await window.Capacitor.Plugins.Preferences.get({ key: 'brikops_last_seen_version' }))
+    ```
+    **ציפייה**: מחזיר `{value: "1.0.10"}` (או הגרסה הנוכחית).
+
+## DO NOT
+- ❌ אל תשנה את `LaunchScreen.storyboard` (iOS) או את ה-splash drawable (Android).
+- ❌ אל תשנה את `capacitor.config.json` — אל תיגע ב-`SplashScreen` plugin config.
+- ❌ אל תמחק את `LoadingSpinner` או `ConnectingScreen` כ-named exports/usages — רק
+  תחליף את הטלה שלהם (ה-body). השמות בשימוש ב-`ProtectedRoute`, `AppRoutes`,
+  ו-`<Suspense fallback={...}>`.
+- ❌ אל תוסיף השהיות מלאכותיות ב-D2. אם `isReady=true`, D2 צריך להיות fade-out תוך
+  500ms לכל היותר.
+- ❌ אל תבנה את `@capacitor/preferences` עם `localStorage` כ-fallback ב-web. השתמש
+  ב-`try/catch` — אם `App.getInfo()` נכשל, פשוט תחזיר D2.
+- ❌ אל תוסיף לוגים של PII (שם משתמש, טוקן וכו').
+- ❌ אל תייבא את `BlueprintToBuilding` או `ToolsAssembling` מ-`construction.jsx` —
+  רק את `BrickAssembly`.
+- ❌ אל תשאיר את `Object.assign(window, {...})` בסוף של אף קובץ JSX. זה דפוס של
+  Claude Design canvas, לא של קוד production.
+- ❌ אל תשנה את הגופן באפליקציה — תשתמש ב-`"Rubik", system-ui` כפי שהקוד המעוצב אומר,
+  אבל רק בתוך רכיבי ה-splash, לא גלובלית.
+- ❌ אל תגע באייקונים (mipmap) — Wave 5 כבר טיפלה בזה.
+- ❌ אל תהפוך את `BrikSplash` ל-fullscreen modal שחוסם את הניווט. זה סתם `<div>`
+  שמחליף את ה-LoadingSpinner.

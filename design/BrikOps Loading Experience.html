@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="he" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<title>BrikOps — Loading Experience</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="logo.jsx"></script>
+<script type="text/babel" src="splash.jsx"></script>
+<script type="text/babel" src="construction.jsx"></script>
+<script type="text/babel" src="dashboard.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, Fragment } = React;
+
+// ═══════════════════════════════════════════════════════════════
+// TWEAKABLE DEFAULTS — exposed via Tweaks panel
+// ═══════════════════════════════════════════════════════════════
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "animationVariant": "skeleton",
+  "loadingTextStyle": "static",
+  "showBlueprintGrid": true,
+  "showRadialGlow": true,
+  "totalDuration": 1700
+}/*EDITMODE-END*/;
+
+// ═══════════════════════════════════════════════════════════════
+// FLOW PLAYER — the heart of the prototype
+// Orchestrates: home → native splash → react loading → dashboard
+// ═══════════════════════════════════════════════════════════════
+const STAGES = {
+  HOME:     { label: 'המתנה',           duration: 0,    color: '#6B7280' },
+  NATIVE:   { label: 'Native splash',   duration: 500,  color: '#64748B' },
+  REACT_1:  { label: 'Skeleton (data)',    duration: 800,  color: '#F59E0B' },
+  REACT_2:  { label: 'Fade to dashboard',  duration: 400,  color: '#10B981' },
+  DASHBOARD:{ label: 'Dashboard',       duration: 0,    color: '#10B981' },
+};
+
+function FlowPlayer({ variant, loadingTextStyle, showGrid, showGlow, autoPlay }) {
+  const [stage, setStage] = useState('HOME');
+  const [elapsed, setElapsed] = useState(0);
+  const [textIdx, setTextIdx] = useState(0);
+  const timerRef = useRef(null);
+  const startRef = useRef(0);
+
+  const loadingTexts = ['מתחבר', 'טוען פרויקטים', 'כמעט מוכן'];
+  const currentText =
+    loadingTextStyle === 'none'   ? ''     :
+    loadingTextStyle === 'cycle'  ? loadingTexts[textIdx] :
+    'טוען';
+
+  function reset() {
+    clearTimeout(timerRef.current);
+    setStage('HOME');
+    setElapsed(0);
+    setTextIdx(0);
+  }
+
+  function play() {
+    reset();
+    setTimeout(() => {
+      setStage('NATIVE');
+      startRef.current = Date.now();
+      const tick = setInterval(() => setElapsed(Date.now() - startRef.current), 60);
+      timerRef.current = tick;
+
+      setTimeout(() => setStage('REACT_1'), STAGES.NATIVE.duration);
+      // cycle text during REACT_1 (only if cycle mode)
+      if (loadingTextStyle === 'cycle') {
+        setTimeout(() => setTextIdx(1), STAGES.NATIVE.duration + 250);
+        setTimeout(() => setTextIdx(2), STAGES.NATIVE.duration + 550);
+      }
+      setTimeout(() => setStage('REACT_2'),
+        STAGES.NATIVE.duration + STAGES.REACT_1.duration);
+      setTimeout(() => {
+        setStage('DASHBOARD');
+        clearInterval(tick);
+      }, STAGES.NATIVE.duration + STAGES.REACT_1.duration + STAGES.REACT_2.duration);
+    }, 180);
+  }
+
+  useEffect(() => {
+    if (autoPlay) play();
+    return () => clearTimeout(timerRef.current);
+    // eslint-disable-next-line
+  }, []);
+
+  // phase for ReactLoadingScreen
+  const reactPhase =
+    stage === 'REACT_1' ? 1 :
+    stage === 'REACT_2' ? 2 : 0;
+
+  const showNative = stage === 'NATIVE';
+  const showReact = stage === 'REACT_1' || stage === 'REACT_2';
+  const showDash  = stage === 'DASHBOARD' || stage === 'REACT_2';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+      <IOSDevice width={300} height={640} dark>
+        <div style={{ position: 'absolute', inset: 0 }}>
+          {/* HOME — tap the icon */}
+          {stage === 'HOME' && (
+            <div className="home-stage">
+              <div className="home-icon-btn pulsing" onClick={play}>
+                <BrikMark size={44} color="#fff" accent="#F59E0B"/>
+              </div>
+              <div className="home-label">BrikOps</div>
+              <div className="home-hint">לחץ לפתיחת האפליקציה ←</div>
+            </div>
+          )}
+
+          {/* Dashboard (renders underneath, revealed on phase 2) */}
+          {showDash && <BrikDashboard/>}
+
+          {/* React loading (atop dashboard, fades out in phase 2) */}
+          {showReact && (
+            <ReactLoadingOverlay
+              phase={reactPhase}
+              loadingText={currentText}
+              variant={variant}
+              showGrid={showGrid}
+              showGlow={showGlow}
+            />
+          )}
+
+          {/* Native splash (top-most during NATIVE) */}
+          {showNative && (
+            <NativeSplash showGrid={showGrid} showGlow={showGlow}/>
+          )}
+        </div>
+      </IOSDevice>
+
+      <FlowTimeline stage={stage} elapsed={elapsed}/>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="tweak-btn" onClick={play} style={{ width: 'auto', padding: '10px 20px' }}>
+          ▶︎ הפעל שוב
+        </button>
+        <button className="tweak-btn secondary" onClick={reset} style={{ width: 'auto', padding: '10px 20px' }}>
+          ⏹ איפוס
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── React loading overlay picks the right animation variant ───
+function ReactLoadingOverlay({ phase, loadingText, variant, showGrid, showGlow }) {
+  // skeleton variant — the default D2
+  if (variant === 'skeleton') {
+    return <ReactLoadingScreen phase={phase} loadingText={loadingText}/>;
+  }
+  // construction variants (D3)
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'linear-gradient(180deg, #3A4258 0%, #323A4E 50%, #2A3142 100%)',
+      overflow: 'hidden',
+      opacity: phase === 2 ? 0 : 1,
+      transition: 'opacity 500ms ease-out',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexDirection: 'column', gap: 24,
+    }}>
+      {showGrid && <BlueprintGrid opacity={0.055} color="#B8C5DB" spacing={36}/>}
+      {showGlow && <RadialGlow color="#F59E0B" size="50%" opacity={0.12}/>}
+      <div style={{ position: 'relative' }}>
+        {variant === 'bricks'    && <BrickAssembly playing={phase >= 0}/>}
+        {variant === 'blueprint' && <BlueprintToBuilding playing={phase >= 0}/>}
+        {variant === 'tools'     && <ToolsAssembling playing={phase >= 0}/>}
+      </div>
+      <div style={{
+        fontFamily: '"Rubik", system-ui', fontSize: 13, fontWeight: 400,
+        color: 'rgba(255,255,255,0.55)', letterSpacing: 0.2,
+        direction: 'rtl',
+      }}>
+        {loadingText}{loadingText && '...'}
+      </div>
+    </div>
+  );
+}
+
+// ─── Timeline visualization ───
+function FlowTimeline({ stage, elapsed }) {
+  const total = STAGES.NATIVE.duration + STAGES.REACT_1.duration + STAGES.REACT_2.duration;
+  const rows = [
+    { key: 'NATIVE',  start: 0,                                             dur: STAGES.NATIVE.duration,  color: '#64748B' },
+    { key: 'REACT_1', start: STAGES.NATIVE.duration,                        dur: STAGES.REACT_1.duration, color: '#F59E0B' },
+    { key: 'REACT_2', start: STAGES.NATIVE.duration + STAGES.REACT_1.duration, dur: STAGES.REACT_2.duration, color: '#10B981' },
+  ];
+  return (
+    <div className="timeline" style={{ width: 300 }}>
+      {rows.map(r => {
+        const reached = elapsed >= r.start;
+        const progress = Math.max(0, Math.min(1, (elapsed - r.start) / r.dur));
+        return (
+          <div className="timeline-row" key={r.key}>
+            <div className="timeline-label">{STAGES[r.key].label}</div>
+            <div className="timeline-track">
+              <div className="timeline-fill" style={{
+                left: `${(r.start / total) * 100}%`,
+                width: `${(r.dur / total) * 100 * progress}%`,
+                background: r.color,
+                opacity: reached ? 1 : 0.3,
+              }}/>
+              <div style={{
+                position: 'absolute', top: 0, bottom: 0,
+                left: `${(r.start / total) * 100}%`,
+                width: `${(r.dur / total) * 100}%`,
+                border: `1px dashed ${r.color}`, opacity: 0.15, borderRadius: 4,
+              }}/>
+            </div>
+            <div className="timeline-time">{r.dur}ms</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STATIC SHOWCASES — D1 (native splash) + D3 variants side-by-side
+// ═══════════════════════════════════════════════════════════════
+function VariantCard({ title, desc, children, tag }) {
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        <div>
+          <div className="card-label">Variant</div>
+          <h3 className="card-title">{title}</h3>
+          <p className="card-desc">{desc}</p>
+        </div>
+        {tag && <div style={{
+          fontSize: 10, padding: '3px 7px', borderRadius: 6,
+          background: 'rgba(245,158,11,0.12)', color: '#F59E0B',
+          fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
+        }}>{tag}</div>}
+      </div>
+      <div className="card-stage">{children}</div>
+    </div>
+  );
+}
+
+// a looping variant preview (plays continuously)
+function LoopingVariant({ Component }) {
+  const [k, setK] = useState(0);
+  useEffect(() => {
+    const i = setInterval(() => setK(x => x + 1), 2400);
+    return () => clearInterval(i);
+  }, []);
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'linear-gradient(180deg, #3A4258 0%, #323A4E 50%, #2A3142 100%)',
+      overflow: 'hidden',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <BlueprintGrid opacity={0.055} color="#B8C5DB" spacing={28}/>
+      <RadialGlow color="#F59E0B" size="50%" opacity={0.12}/>
+      <div key={k} style={{ position: 'relative' }}>
+        <Component playing={true}/>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TWEAKS PANEL
+// ═══════════════════════════════════════════════════════════════
+function TweaksPanel({ state, setState }) {
+  const [open, setOpen] = useState(true);
+  const [available, setAvailable] = useState(false);
+
+  useEffect(() => {
+    function onMsg(e) {
+      if (e.data?.type === '__activate_edit_mode')   setOpen(true);
+      if (e.data?.type === '__deactivate_edit_mode') setOpen(false);
+    }
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    setAvailable(true);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  function update(key, val) {
+    const next = { ...state, [key]: val };
+    setState(next);
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: val } }, '*');
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="tweaks-panel">
+      <h3>Tweaks</h3>
+      <div className="tweaks-row">
+        <label>Animation variant</label>
+        <select value={state.animationVariant} onChange={e => update('animationVariant', e.target.value)}>
+          <option value="skeleton">D2 — Skeleton + shimmer</option>
+          <option value="bricks">D3-A — Brick assembly</option>
+          <option value="blueprint">D3-B — Blueprint to building</option>
+          <option value="tools">D3-C — Tools assembling</option>
+        </select>
+      </div>
+      <div className="tweaks-row">
+        <label>Loading text</label>
+        <select value={state.loadingTextStyle} onChange={e => update('loadingTextStyle', e.target.value)}>
+          <option value="static">Static: טוען...</option>
+          <option value="cycle">Cycle: מתחבר → טוען → מוכן</option>
+          <option value="none">None</option>
+        </select>
+      </div>
+      <div className="tweaks-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <input type="checkbox" checked={state.showBlueprintGrid}
+          onChange={e => update('showBlueprintGrid', e.target.checked)} id="bp"/>
+        <label htmlFor="bp" style={{ textTransform: 'none', letterSpacing: 0, color: '#E5E7EB', fontSize: 13 }}>
+          Blueprint grid
+        </label>
+      </div>
+      <div className="tweaks-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <input type="checkbox" checked={state.showRadialGlow}
+          onChange={e => update('showRadialGlow', e.target.checked)} id="glow"/>
+        <label htmlFor="glow" style={{ textTransform: 'none', letterSpacing: 0, color: '#E5E7EB', fontSize: 13 }}>
+          Amber radial glow
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// APP
+// ═══════════════════════════════════════════════════════════════
+function App() {
+  const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
+
+  return (
+    <div className="canvas">
+      <div className="canvas-header">
+        <h1>BrikOps — Loading Experience</h1>
+        <div className="meta">iOS + Android · Web · RTL · Rubik · Navy #323A4E × Amber #F59E0B</div>
+      </div>
+      <p className="canvas-sub">
+        A cohesive loading journey from app-icon tap to dashboard, designed to eliminate the white-flash gap.
+        Tap the phone to play the full flow. Swap between the skeleton-shimmer default and three construction-themed animations using the Tweaks panel.
+      </p>
+
+      {/* HERO — the live flow */}
+      <div className="grid hero" data-screen-label="01 Flow Player">
+        <div className="card" style={{ padding: 28 }}>
+          <div className="card-label">Deliverable 1 + 2 + 3 — Live flow</div>
+          <h3 className="card-title">From tap to dashboard</h3>
+          <p className="card-desc">
+            Native splash hands off to the React loading screen with zero visual jump — same navy, same
+            blueprint grid, same logo position. Skeleton fades, dashboard fades in. Full transition under 3 seconds.
+          </p>
+          <FlowPlayer
+            variant={tweaks.animationVariant}
+            loadingTextStyle={tweaks.loadingTextStyle}
+            showGrid={tweaks.showBlueprintGrid}
+            showGlow={tweaks.showRadialGlow}
+            autoPlay={true}
+          />
+        </div>
+
+        <div>
+          {/* D1 static */}
+          <div className="card" style={{ marginBottom: 20 }} data-screen-label="02 D1 Native splash">
+            <div className="card-label">Deliverable 1</div>
+            <h3 className="card-title">Native splash · 2732×2732</h3>
+            <p className="card-desc">
+              Solid PNG shown by iOS/Android before the webview boots. Blueprint grid at 5.5% opacity,
+              soft amber radial glow, wordmark + accent underline. No animation possible at this layer.
+            </p>
+            <div style={{
+              width: '100%', aspectRatio: '1/1',
+              borderRadius: 20, overflow: 'hidden', position: 'relative', maxWidth: 360, margin: '0 auto',
+            }}>
+              <NativeSplash/>
+            </div>
+            <div style={{ fontSize: 11, color: '#6B7280', marginTop: 10, fontFamily: 'SF Mono, monospace' }}>
+              splash-2732.png · background: linear-gradient(180deg, #3A4258, #323A4E, #2A3142)
+            </div>
+          </div>
+
+          {/* Handoff diagram */}
+          <div className="card" data-screen-label="03 Handoff diagram">
+            <div className="card-label">Continuity</div>
+            <h3 className="card-title">Seamless handoff</h3>
+            <p className="card-desc">Native splash → React loading → Dashboard. No white flash at any seam.</p>
+            <HandoffDiagram/>
+          </div>
+        </div>
+      </div>
+
+      {/* D3 VARIANTS */}
+      <div className="section-header">
+        <h2>Deliverable 3 — Construction-themed concepts</h2>
+        <span className="tag">Optional exploration</span>
+      </div>
+      <div className="grid">
+        <VariantCard
+          title="A · Brick assembly"
+          desc="18 flat bricks drop in from above with a subtle spring, snapping into the letter B. Two amber bricks for brand pop. 1.4s total."
+          tag="Recommended"
+        >
+          <LoopingVariant Component={BrickAssembly}/>
+        </VariantCard>
+        <VariantCard
+          title="B · Blueprint to building"
+          desc="CAD dimension lines and crosshairs fade in, the B outline strokes on, then fills solid. Amber footing accent completes."
+        >
+          <LoopingVariant Component={BlueprintToBuilding}/>
+        </VariantCard>
+        <VariantCard
+          title="C · Tools assembling"
+          desc="Hammer, level and trowel fly in from 3 corners, pause together, dissolve into the clean B mark."
+        >
+          <LoopingVariant Component={ToolsAssembling}/>
+        </VariantCard>
+      </div>
+
+      {/* SPEC NOTES */}
+      <div className="section-header">
+        <h2>Timing & integration spec</h2>
+      </div>
+      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <div className="card">
+          <div className="card-label">Easing curves</div>
+          <h3 className="card-title">Animation reference</h3>
+          <table style={{ width: '100%', fontSize: 13, color: '#E5E7EB', borderCollapse: 'collapse' }}>
+            <tbody>
+              {[
+                ['Native splash',         '500ms', 'shown by OS'],
+                ['Logo breathing',        '2400ms loop', 'ease-in-out'],
+                ['Skeleton enter',        '300ms', 'cubic-bezier(0.22, 1, 0.36, 1)'],
+                ['Skeleton hold + shimmer','800ms', 'ease-in-out (RTL)'],
+                ['React → dashboard fade','400ms', 'ease-out'],
+                ['TOTAL',                 '1700ms', 'target ≤ 2000ms ✓'],
+                ['Brick drop (D3-A)',     '620ms', 'cubic-bezier(0.34, 1.56, 0.64, 1)'],
+                ['Blueprint stroke (D3-B)','900ms', 'ease-out'],
+                ['Tools fly-in (D3-C)',   '900ms', 'cubic-bezier(0.22, 1, 0.36, 1)'],
+              ].map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <td style={{ padding: '8px 4px', color: '#E5E7EB' }}>{r[0]}</td>
+                  <td style={{ padding: '8px 4px', color: '#F59E0B', fontFamily: 'SF Mono, monospace', fontSize: 12 }}>{r[1]}</td>
+                  <td style={{ padding: '8px 4px', color: '#9CA3AF', fontFamily: 'SF Mono, monospace', fontSize: 11 }}>{r[2]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="card">
+          <div className="card-label">Slow-network fallback</div>
+          <h3 className="card-title">Graceful degradation</h3>
+          <ul style={{ fontSize: 13, lineHeight: 1.8, color: '#D1D5DB', paddingInlineStart: 18, margin: 0 }}>
+            <li><strong style={{ color: '#fff' }}>0–1.7s:</strong> Native splash → skeleton shimmer → dashboard — feels instant.</li>
+            <li><strong style={{ color: '#fff' }}>1.7–5s:</strong> Skeleton holds with shimmer, text stays "טוען...".</li>
+            <li><strong style={{ color: '#fff' }}>5–10s:</strong> Discrete status appears under logo: "עדיין טוען…" at 40% opacity.</li>
+            <li><strong style={{ color: '#fff' }}>10s+:</strong> Error state — amber retry button, message "נסה שוב" — never silent.</li>
+            <li>No spinner, no % bar, no generic CSS loader at any stage.</li>
+          </ul>
+        </div>
+      </div>
+
+      <TweaksPanel state={tweaks} setState={setTweaks}/>
+    </div>
+  );
+}
+
+// Small inline handoff diagram
+function HandoffDiagram() {
+  const frames = [
+    { label: 'Native\nsplash',  bg: 'linear-gradient(180deg, #3A4258, #2A3142)', content: <BrikMark size={32} color="#fff" accent="#F59E0B"/> },
+    { label: 'React\n+ skeleton', bg: 'linear-gradient(180deg, #3A4258, #2A3142)', content: (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <BrikMark size={22} color="#fff" accent="#F59E0B"/>
+        <div style={{ width: 40, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}/>
+        <div style={{ width: 32, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}/>
+      </div>
+    ) },
+    { label: 'Dashboard',  bg: '#F4F5F7', content: (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: '80%' }}>
+        <div style={{ width: '100%', height: 10, background: '#323A4E', borderRadius: 2 }}/>
+        <div style={{ width: '60%', height: 4, background: '#d1d5db', borderRadius: 2 }}/>
+        <div style={{ width: '80%', height: 4, background: '#F59E0B', borderRadius: 2 }}/>
+      </div>
+    ), dark: false },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+      {frames.map((f, i) => (
+        <Fragment key={i}>
+          <div style={{
+            flex: 1, aspectRatio: '9/16', borderRadius: 10,
+            background: f.bg, position: 'relative',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)',
+          }}>
+            <BlueprintGrid opacity={0.05} color={f.dark === false ? '#323A4E' : '#B8C5DB'} spacing={16}/>
+            {f.content}
+            <div style={{
+              position: 'absolute', bottom: 4, left: 0, right: 0,
+              textAlign: 'center', fontSize: 9, color: f.dark === false ? '#6B7280' : 'rgba(255,255,255,0.55)',
+              whiteSpace: 'pre-line', lineHeight: 1.1,
+            }}>{f.label}</div>
+          </div>
+          {i < frames.length - 1 && (
+            <div style={{ color: '#F59E0B', fontSize: 18, fontWeight: 700 }}>→</div>
+          )}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
