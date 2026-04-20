@@ -13,6 +13,7 @@ import PaywallModal from './components/PaywallModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import './App.css';
 import './index.css';
@@ -469,6 +470,22 @@ function App() {
         console.warn('Capgo notifyAppReady failed:', e);
       }
     }
+  }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform?.()) return;
+
+    const listenerPromise = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack) {
+        window.history.back();
+      } else {
+        CapacitorApp.exitApp();
+      }
+    });
+
+    return () => {
+      listenerPromise.then(listener => listener.remove()).catch(() => {});
+    };
   }, []);
 
   return (

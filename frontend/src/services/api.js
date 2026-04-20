@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { downloadBlob } from '../utils/fileDownload';
 
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
@@ -365,14 +366,11 @@ export const excelService = {
       headers: getAuthHeader(),
       responseType: 'blob',
     });
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `template_${projectId}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    return downloadBlob(
+      new Blob([response.data], { type: 'text/csv' }),
+      `template_${projectId}.csv`,
+      'text/csv'
+    );
   },
   async importFile(projectId, file) {
     const formData = new FormData();
@@ -1549,15 +1547,8 @@ export const handoverService = {
   },
   async downloadPdf(projectId, protocolId, filename) {
     const blob = await this.getPdfBlob(projectId, protocolId);
-    const url = window.URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || `protocol_${protocolId.slice(0, 8)}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    a.remove();
-    return { success: true };
+    const finalName = filename || `protocol_${protocolId.slice(0, 8)}.pdf`;
+    return downloadBlob(new Blob([blob], { type: 'application/pdf' }), finalName, 'application/pdf');
   },
 };
 
@@ -1567,14 +1558,11 @@ export const g4ImportService = {
       `${API}/projects/${projectId}/import/g4/template`,
       { headers: getAuthHeader(), responseType: 'blob' }
     );
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'g4_template.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    a.remove();
+    return downloadBlob(
+      new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      'g4_template.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
   },
   async preview(projectId, file) {
     const formData = new FormData();
@@ -1607,15 +1595,10 @@ export const exportService = {
     const match = disposition.match(/filename="?([^"]+)"?/);
     const ext = format === 'pdf' ? '.pdf' : '.xlsx';
     const filename = match ? match[1] : `defects_export_${new Date().toISOString().slice(0, 10)}${ext}`;
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    a.remove();
-    return { success: true, filename };
+    const mime = format === 'pdf'
+      ? 'application/pdf'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    return downloadBlob(new Blob([response.data], { type: mime }), filename, mime);
   },
 };
 

@@ -1110,6 +1110,11 @@
   resolved "https://registry.npmjs.org/@capacitor/android/-/android-7.6.1.tgz"
   integrity sha512-wjK2FloJSp5eVqy/DecRA4zBuGhe/pY8pkkU5+G1mfBFqrmmuXJJIBdKgd2/iqyWhsp89LRZMmHV8EEDXYPqPg==
 
+"@capacitor/app@^7":
+  version "7.1.2"
+  resolved "https://registry.yarnpkg.com/@capacitor/app/-/app-7.1.2.tgz#6b97ac3c36fc21a905142bb7b99f27b9bcbee48b"
+  integrity sha512-d4I/oF/PRu4megL7/IGKYfe5j7yzSON1FRFgq6kH+m5kH6g7V+wyjHRLauCzGNjdRx4S+nWOumINds0qcRBtKg==
+
 "@capacitor/camera@^7.0.5":
   version "7.0.5"
   resolved "https://registry.npmjs.org/@capacitor/camera/-/camera-7.0.5.tgz"
@@ -1145,15 +1150,32 @@
   dependencies:
     tslib "^2.1.0"
 
+"@capacitor/filesystem@^7":
+  version "7.1.8"
+  resolved "https://registry.yarnpkg.com/@capacitor/filesystem/-/filesystem-7.1.8.tgz#82ace28c836959cbc60d93b1083a7ea4585ca9e6"
+  integrity sha512-Qpw/2SE4/CzqAUvGgSM9hw/uXQ5qoOaF4wxbToXwpAaKPS+tzletS1h5ti3jjLmGcqizTs2sEXMtcsARW/Ceew==
+  dependencies:
+    "@capacitor/synapse" "^1.0.3"
+
 "@capacitor/ios@^7.6.1":
   version "7.6.2"
   resolved "https://registry.yarnpkg.com/@capacitor/ios/-/ios-7.6.2.tgz#557836a19561c0ca86ca95c1454b0998fe46a15f"
   integrity sha512-TZOXn7ZSEMsetrIEb8EHT4X9Nwsed1itqMwe+z5QOCDvm9XZ7i2YsjnrinUC1ZOIgva9IE2l+azus7qOpQ0aCg==
 
+"@capacitor/share@^7":
+  version "7.0.4"
+  resolved "https://registry.yarnpkg.com/@capacitor/share/-/share-7.0.4.tgz#8906308aad5d74be0fc3853e4f5262a74726d7d4"
+  integrity sha512-wNXxmXUcChrtbZ5jQv8scFIbIGKo3rk6B7qpWySxfUhYJP5NANgAqQ9Z69m0k/zYsucdh66SBU7XW1ykd9aUug==
+
 "@capacitor/status-bar@^7.0.6":
   version "7.0.6"
   resolved "https://registry.npmjs.org/@capacitor/status-bar/-/status-bar-7.0.6.tgz"
   integrity sha512-7AVqj46b26QikImQzWfsJmzG8NUJZBGkrVSuoeTo+SX/YH3hXH0MqwwFgMqMGHfa/BICDgSvTjM9miVFlq0+RQ==
+
+"@capacitor/synapse@^1.0.3":
+  version "1.0.4"
+  resolved "https://registry.yarnpkg.com/@capacitor/synapse/-/synapse-1.0.4.tgz#c6beb33119d9656b1f04cb7783989fb78933ef6d"
+  integrity sha512-/C1FUo8/OkKuAT4nCIu/34ny9siNHr9qtFezu4kxm6GY1wNFxrCFWjfYx5C1tUhVGz3fxBABegupkpjXvjCHrw==
 
 "@capgo/capacitor-updater@^7.43.3":
   version "7.43.3"

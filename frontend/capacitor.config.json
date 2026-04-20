@@ -1,5 +1,12 @@
 {
   "appId": "com.brikops.app",
   "appName": "BrikOps",
-  "webDir": "build"
+  "webDir": "build",
+  "ios": {
+    "allowsBackForwardNavigationGestures": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
 }
