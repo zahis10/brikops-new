@@ -137,10 +137,16 @@ title = "Billing Bugs #2 — Full Diff (Task #250)"
 id = "moqFZUgKv_rc2bQ3f5Qaf"
 uri = "file://.local/review.txt"
 type = "text"
-title = "Wave 4 — commit 2c5750a (rate-limit + request dedup)"
+title = "Wave 5 — commit 7eca1f7 (8 proof blocks)"
 
 [[outputs]]
 id = "Uttosn1CSRes5mf7KkA_R"
 uri = "file://review-276b.txt"
 type = "text"
 title = "#276b Social Login Frontend — Full Diff"
+
+[[outputs]]
+id = "jBFKu1Xd0hCZn5hd2L0ys"
+uri = "file://.local/ic_launcher_foreground_xxxhdpi.png"
+type = "image"
+title = "Android adaptive icon foreground (xxxhdpi 432×432)"
