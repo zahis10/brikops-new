@@ -1,0 +1,28 @@
+/* BrikOps Splash — animations only (D2 + D3-A) */
+/* Copied from design/styles.css lines 16-42 */
+
+/* logo breathing on react loading screen */
+@keyframes brikBreathe {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.06); filter: brightness(1.08); }
+}
+
+/* loading text dots */
+@keyframes dotFade {
+  0%, 20% { opacity: 0.2; }
+  50%     { opacity: 1; }
+  80%, 100% { opacity: 0.2; }
+}
+
+/* shimmer on skeleton — RTL sweep */
+@keyframes shimmerRTL {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+/* D3-A — bricks drop from top with slight bounce */
+@keyframes brickDrop {
+  0%   { transform: translateY(-240px) rotate(-8deg); opacity: 0; }
+  60%  { opacity: 1; }
+  100% { transform: translateY(0) rotate(0); opacity: 1; }
+}

@@ -15,6 +15,7 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
+import BrikSplash from './components/splash/BrikSplash';
 import './App.css';
 import './index.css';
 
@@ -70,18 +71,10 @@ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
-const LoadingSpinner = () => (
-  <div className="min-h-screen flex items-center justify-center bg-slate-50">
-    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
-  </div>
-);
-
-const ConnectingScreen = () => (
-  <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4" dir="rtl">
-    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
-    <p className="text-slate-600 text-lg">מתחבר...</p>
-  </div>
-);
+// Wave 1 splash: thin wrappers around <BrikSplash> so we don't have to
+// touch the existing references at lines 101, 105, 157.
+const LoadingSpinner = () => <BrikSplash isReady={false} loadingText="טוען" />;
+const ConnectingScreen = () => <BrikSplash isReady={false} loadingText="מתחבר" />;
 
 const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   const { user, loading, token, networkError } = useAuth();
