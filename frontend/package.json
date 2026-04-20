@@ -11,6 +11,7 @@
     "@capacitor/core": "^7.6.1",
     "@capacitor/filesystem": "^7",
     "@capacitor/ios": "^7.6.1",
+    "@capacitor/preferences": "^7",
     "@capacitor/share": "^7",
     "@capacitor/status-bar": "^7.0.6",
     "@capgo/capacitor-updater": "^7.43.3",

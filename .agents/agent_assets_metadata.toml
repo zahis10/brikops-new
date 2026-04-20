@@ -150,3 +150,9 @@ id = "jBFKu1Xd0hCZn5hd2L0ys"
 uri = "file://.local/ic_launcher_foreground_xxxhdpi.png"
 type = "image"
 title = "Android adaptive icon foreground (xxxhdpi 432×432)"
+
+[[outputs]]
+id = "PK5UMGCcFq2Cl_B1jpp7s"
+uri = "file://.local/review-phase1.txt"
+type = "text"
+title = "Phase 1 — pull + @capacitor/preferences (לא קומיט)"
