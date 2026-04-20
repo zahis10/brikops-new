@@ -162,3 +162,9 @@ id = "EDFBvT8q1uwrKOtWssInW"
 uri = "file://.local/review-phase2.txt"
 type = "text"
 title = "Wave 1 Phases 2-5 — commit d954be5 (8 proof blocks)"
+
+[[outputs]]
+id = "B4fRcQyFJPkGysmxx2BeP"
+uri = "file://.local/review-phase7-wave2.txt"
+type = "text"
+title = "Wave 2 — commit 9034aad (refreshed logo + extended D3-A hold)"

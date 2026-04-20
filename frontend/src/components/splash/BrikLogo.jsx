@@ -1,20 +1,56 @@
 import React from 'react';
 
-export function BrikMark({ size = 120, color = '#fff', accent = '#F59E0B', withAccent = false }) {
+// BrikOps logo — matches AppIcon-1024.png
+// Bold "B" drawn as a single evenodd path with two rounded-rectangle counters.
+export function BrikMark({ size = 120, color = '#F59E0B', bg = null, rounded = true }) {
   const s = size;
-  return (
-    <svg width={s} height={s} viewBox="0 0 120 120" fill="none" style={{ display: 'block' }}>
-      <rect x="22" y="20" width="16" height="80" rx="2" fill={color}/>
+
+  const letter = (
+    <svg viewBox="0 0 1024 1024" width="100%" height="100%" style={{ display: 'block' }}>
       <path
-        d="M38 20 H68 a20 20 0 0 1 20 20 v0 a20 20 0 0 1 -20 20 H38 z"
+        fillRule="evenodd"
         fill={color}
+        d="
+          M 270 210
+          L 610 210
+          C 742 210 820 283 820 390
+          C 820 463 788 513 735 540
+          C 804 567 840 624 840 710
+          C 840 822 760 895 620 895
+          L 270 895
+          Z
+          M 400 340
+          L 400 475
+          L 585 475
+          C 640 475 678 450 678 405
+          C 678 362 640 340 585 340
+          Z
+          M 400 565
+          L 400 765
+          L 605 765
+          C 668 765 708 735 708 680
+          C 708 620 668 565 605 565
+          Z
+        "
       />
-      <path
-        d="M38 60 H72 a22 22 0 0 1 22 22 v0 a18 18 0 0 1 -18 18 H38 z"
-        fill={color}
-      />
-      {withAccent && <circle cx="38" cy="60" r="3" fill={accent}/>}
     </svg>
+  );
+
+  if (!bg) {
+    return <div style={{ width: s, height: s }}>{letter}</div>;
+  }
+
+  return (
+    <div style={{
+      width: s, height: s,
+      background: bg,
+      borderRadius: rounded ? s * 0.22 : 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)',
+      overflow: 'hidden',
+    }}>
+      <div style={{ width: '100%', height: '100%' }}>{letter}</div>
+    </div>
   );
 }
 

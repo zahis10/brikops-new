@@ -62,12 +62,13 @@ export default function D3ABrickAssembly({ onComplete }) {
   const [fading, setFading] = useState(false);
 
   useEffect(() => {
-    // Animation runs full 1600ms, then 500ms fade-out, then onComplete.
-    // Total: 2100ms regardless of data readiness.
-    const fadeTimer = setTimeout(() => setFading(true), 1600);
+    // Timing: 1600ms brick-drop animation, then 1500ms HOLD with the
+    // assembled "B" static on screen, then 500ms fade-out, then onComplete.
+    // Total: 3600ms regardless of data readiness.
+    const fadeTimer = setTimeout(() => setFading(true), 3100);
     const completeTimer = setTimeout(() => {
       onComplete && onComplete();
-    }, 2100);
+    }, 3600);
     return () => {
       clearTimeout(fadeTimer);
       clearTimeout(completeTimer);

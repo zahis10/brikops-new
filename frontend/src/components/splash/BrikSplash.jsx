@@ -3,7 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import D2DailySplash from './D2DailySplash';
 import D3ABrickAssembly from './D3ABrickAssembly';
 
-const LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version';
+const LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version_v2';
 
 /**
  * BrikSplash — top-level loading screen wrapper.
