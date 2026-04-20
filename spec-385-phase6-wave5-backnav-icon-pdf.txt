@@ -1,0 +1,497 @@
+========================================================================
+#385 Phase 6 — Wave 5: iOS back-nav + Android icon safe-zone + PDF export
+========================================================================
+
+## מצב נוכחי אחרי Build 4
+
+Build 4 יצא ל-TestFlight עם Wave 2 + 3 + 4 + אייקון חדש.
+נבדק על iPhone וזוהו 3 בעיות שנשארו:
+
+1. swipe-back מהשוליים השמאליים לא עובד בכלל (iOS)
+2. האייקון באנדרואיד נראה דחוס/חתוך (iPhone נראה מצוין)
+3. ייצוא PDF/Excel מציג toast "הקובץ הורד בהצלחה" אבל כלום לא קורה
+
+
+========================================================================
+## Fix 1 — Back navigation: iOS gesture + Android hardware button + Web verify
+========================================================================
+
+### Root cause (מפורט לכל פלטפורמה — כתוב בכנות, בלי ניחושים)
+
+**iOS (מוכח, זו הבעיה האמיתית של iOS):**
+Capacitor WKWebView לא מפעיל את ה-swipe-back gesture מהשוליים כברירת מחדל.
+בלי הפעלה מפורשת של `allowsBackForwardNavigationGestures` ב-capacitor.config.json,
+ה-gesture לא עושה כלום — גם אם היסטוריית react-router תקינה (Wave 3 השליך
+replace:true מ-handleWorkTab). זה מסביר למה ב-Build 4 עדיין לא עובד על iPhone.
+
+**Android (מה שאנחנו יודעים בוודאות לעומת מה שאנחנו מניחים):**
+- ✅ מוכח: ב-@capacitor/core ^7.6.1 + @capacitor/android ^7.6.1, ה-BridgeActivity
+  ברירת המחדל כן קוראת ל-webView.goBack() כאשר canGoBack() מחזיר true.
+  המשמעות: אחרי Wave 3, back button באנדרואיד אמור **לעבוד** רוב הזמן.
+- ⚠️ לא אומת על מכשיר: לא בדקנו פיזית כפתור back על Android build אחרי Wave 3.
+- 🎯 הערך של הוספת @capacitor/app כאן הוא **insurance + explicit control**:
+  (a) אנחנו שולטים במה קורה ב-root screen (יציאה מאוחדת, confirmation אם נרצה)
+  (b) ה-listener מונע edge cases כשה-WebView מאבד focus או אחרי אירוע native
+  (c) מתיישר עם Fix 3 (filesystem + share) — כולל הכל בספק אחד → build אחד
+
+**Web (Wave 3 היה אמור לתקן):**
+Wave 3 הסיר `replace: true` מ-navigate ב-handleWorkTab — אחרי Capgo OTA של Wave 4
+זה אמור לעבוד. אם המשתמש עדיין רואה בעיה ב-web — נאתר אחרי Wave 5 עם
+reproduction מדויק (URL לפני/אחרי, console log של react-router).
+
+---
+
+### Fix 1a — iOS swipe-back gesture (capacitor.config.json)
+
+**קובץ:** `frontend/capacitor.config.json`
+
+**לפני:**
+```json
+{
+  "appId": "com.brikops.app",
+  "appName": "BrikOps",
+  "webDir": "build"
+}
+```
+
+**אחרי:**
+```json
+{
+  "appId": "com.brikops.app",
+  "appName": "BrikOps",
+  "webDir": "build",
+  "ios": {
+    "allowsBackForwardNavigationGestures": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
+```
+
+---
+
+### Fix 1b — Android: explicit back button listener (insurance + control)
+
+**מטרה (כתובה בכנות):**
+לא באנו לתקן ברירת מחדל שבורה — ברירת המחדל של Capacitor 7 BridgeActivity
+קוראת ל-webView.goBack() בעצמה. הוספת ה-listener נותנת לנו:
+1. שליטה מפורשת מצד ה-JS — אנחנו יודעים מה קורה ומתי
+2. טיפול ב-root screen: במקום יציאה פתאומית, יציאה דרך `exitApp()` (שאפשר
+   בעתיד לעטוף ב-confirmation — לא ב-Wave 5)
+3. נקודת אחיזה עתידית לתכונות כמו deep-link back, tab stack מסוים, וכו'
+
+**התקנה:**
+```
+cd frontend
+npm install @capacitor/app
+npx cap sync
+```
+
+**בדיקה ש-@capacitor/app אכן לא מותקן כרגע:**
+```
+grep '@capacitor/app' package.json   # צריך להחזיר 0 שורות לפני ההתקנה
+```
+
+**קובץ:** `frontend/src/App.js` — הוסף listener בקומפוננטה הראשית
+(ליד שאר ה-useEffects הגלובליים):
+
+```js
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+
+// בתוך הקומפוננטה הראשית (App או שכבת routing עליונה):
+useEffect(() => {
+  if (!Capacitor.isNativePlatform?.()) return;
+
+  const listenerPromise = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+    if (canGoBack) {
+      // יש מסך קודם — חזור אליו דרך ההיסטוריה של הדפדפן (react-router מקשיב)
+      window.history.back();
+    } else {
+      // מסך הבית של האפליקציה — סגור את האפליקציה
+      // (אם בעתיד נרצה confirmation, נעטוף את השורה הזו)
+      CapacitorApp.exitApp();
+    }
+  });
+
+  return () => {
+    listenerPromise.then(listener => listener.remove()).catch(() => {});
+  };
+}, []);
+```
+
+**נקודות חשובות:**
+- שימוש ב-`window.history.back()` ולא ב-`navigate(-1)` — react-router מקשיב
+  ל-popstate ומטפל בזה נכון. שימוש ב-navigate(-1) עלול לדרוס state במצבים
+  מסוימים (יש הערה על זה גם ב-DO NOT).
+- `canGoBack` שמגיע מ-@capacitor/app בודק את מצב ה-WebView history — זה
+  המקור האמין (לא `window.history.length`, שמחזיר תמיד ≥1).
+- אם בעתיד תרצה confirmation dialog לפני יציאה ב-root, תוכל להחליף את
+  `CapacitorApp.exitApp()` בלוגיקה שמציגה toast/modal.
+
+---
+
+### Fix 1c — Web verify (אין שינוי קוד ב-Wave 5)
+
+אחרי שה-Capgo OTA של Wave 4 נפרס, המשתמש מדווח שחזרה אחורה ב-web עדיין
+לא עובדת במצבים מסוימים. לא ברור אילו — נחוץ reproduction מדויק.
+
+**Action ל-Zahi:** אחרי Wave 5 ב-web (Chrome DevTools):
+1. פתח פרויקט → Dashboard
+2. עבור ל-QC (אמור להופיע `/projects/:id/qc` בשורת הכתובת)
+3. לחץ ← (browser back) → אמור לחזור ל-`/projects/:id/dashboard`
+4. אם לא עובד → שלח screenshot של console + URL bar בשני המצבים
+   (לפני לחיצה ואחרי), ואני אתקן ב-Wave 6.
+
+חשוב: אחרי Fix 1a + 1b, `cap sync` חובה (יקרה אוטומטית ב-ship.sh).
+
+
+========================================================================
+## Fix 2 — Android adaptive icon safe-zone
+========================================================================
+
+### Root cause
+הקבצים `frontend/android/app/src/main/res/mipmap-*/ic_launcher_foreground.png`
+נבנו מ-`favion-new/android/ic_launcher_foreground-*.png` שבהם האות B
+ממלאת ~85% מהקנבס בלי padding.
+
+Android adaptive icon spec: הקנבס 108dp, הקצוות 25% חתוכים על ידי המסכה
+של היצרן (עגול/ריבוע/tear-drop). ה-"safe zone" הפנימי הוא 66dp (bounding
+circle). המשמעות: B שממלא 85% — נחתך ונראה דחוס.
+
+### הפתרון
+צור foreground חדש: B מוקטן ל-58% מהקנבס (250/432), ממורכז, עם transparent
+padding סביב.
+
+### שלבים
+1. ודא שיש ImageMagick: `which convert` (אם לא — `apt-get install -y imagemagick`)
+
+2. הרץ את הסקריפט הבא מ-root של הפרויקט:
+
+```bash
+#!/bin/bash
+set -e
+SRC="favion-new/android/ic_launcher_foreground-1024.png"
+RES="frontend/android/app/src/main/res"
+TMP=$(mktemp -d)
+
+# Step 1: trim the B to tight bbox, scale to fit 58% of 1024 safe-zone, center on 1024 canvas
+convert "$SRC" -trim +repage "$TMP/trimmed.png"
+convert "$TMP/trimmed.png" -resize 594x594 -background none -gravity center -extent 594x594 "$TMP/scaled.png"
+convert -size 1024x1024 xc:none "$TMP/scaled.png" -gravity center -composite "$TMP/foreground-master.png"
+
+# Step 2: resize to all 5 density buckets
+# mdpi=108, hdpi=162, xhdpi=216, xxhdpi=324, xxxhdpi=432
+for DENSITY in "mdpi:108" "hdpi:162" "xhdpi:216" "xxhdpi:324" "xxxhdpi:432"; do
+  NAME="${DENSITY%:*}"
+  SIZE="${DENSITY#*:}"
+  convert "$TMP/foreground-master.png" -resize "${SIZE}x${SIZE}" "$RES/mipmap-$NAME/ic_launcher_foreground.png"
+  echo "✓ mipmap-$NAME/ic_launcher_foreground.png ($SIZE x $SIZE)"
+done
+
+rm -rf "$TMP"
+echo "Done. Verify with: identify frontend/android/app/src/main/res/mipmap-*/ic_launcher_foreground.png"
+```
+
+3. השאר את `ic_launcher.png` ו-`ic_launcher_round.png` כמו שהם
+   (הם legacy fallback למכשירי אנדרואיד ישנים בלי adaptive icons).
+
+4. ודא ש-`res/values/ic_launcher_background.xml` עדיין מציין `#323A4E`
+   (רקע נייבי).
+
+
+========================================================================
+## Fix 3 — PDF/Excel export ב-Capacitor native (iOS + Android)
+========================================================================
+
+### Root cause (מבוסס על קריאה של הקוד, לא ניחוש)
+ב-`frontend/src/services/api.js` יש **4 פונקציות** שמשתמשות ב:
+```js
+const url = window.URL.createObjectURL(new Blob([response.data]));
+const a = document.createElement('a');
+a.href = url;
+a.download = filename;
+a.click();
+```
+
+מיקומים מדויקים:
+- `exportService.exportDefects` — ~שורות 1599-1619
+- `handoverService.downloadPdf` — ~שורות 1550-1561
+- `excelService.downloadTemplate` — ~שורות 362-376
+- `g4ImportService.downloadTemplate` — ~שורות 1564-1580
+
+זה עובד בדפדפן אבל **לא ב-Capacitor WebView** (iOS + Android):
+- iOS WKWebView: מתעלם מ-`<a download>`, הקובץ פשוט נעלם
+- Android WebView: אותו דבר, הקישור לא מעורר download manager
+
+**הסבר לחוויית המשתמש הנוכחית:** ExportModal (ועוד רכיבים) קוראים לפונקציה,
+ה-promise נפתר בהצלחה (כי ה-fetch הצליח), ואז מוצג toast "הקובץ הורד בהצלחה"
+— גם אם לא נוצר קובץ על המכשיר. זו הסיבה שהמשתמש רואה "הצלחה" בלי קובץ.
+אחרי Fix 3, ה-toast יהיה אמיתי: ב-web הקובץ יורד, ב-native נפתח share sheet.
+
+### הפלאגינים הנדרשים
+```
+cd frontend
+npm install @capacitor/filesystem @capacitor/share
+npx cap sync
+```
+
+שניהם מתחזקים רשמית על ידי Capacitor, גרסה ^7 תואמת ל-@capacitor/core ^7.6.1.
+
+**הערה:** `@capacitor/app` כבר הותקן ב-Fix 1b.
+
+### יצירת utility חדש
+צור קובץ חדש: `frontend/src/utils/fileDownload.js`
+
+```js
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+
+/**
+ * Saves a Blob to the device and opens the share sheet on native,
+ * or triggers a browser download on web.
+ *
+ * @param {Blob} blob - The file data
+ * @param {string} filename - File name with extension (e.g. "report.pdf")
+ * @param {string} mimeType - e.g. "application/pdf" or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ * @returns {Promise<{success: boolean, filename: string}>}
+ */
+export async function downloadBlob(blob, filename, mimeType) {
+  const isNative = Capacitor.isNativePlatform?.() || false;
+
+  if (!isNative) {
+    // Web fallback — existing behavior
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+    return { success: true, filename };
+  }
+
+  // Native: save to Documents and open share sheet
+  const base64 = await blobToBase64(blob);
+  const result = await Filesystem.writeFile({
+    path: filename,
+    data: base64,
+    directory: Directory.Documents,
+  });
+
+  try {
+    await Share.share({
+      title: filename,
+      url: result.uri,
+      dialogTitle: 'שמור או שתף קובץ',
+    });
+  } catch (err) {
+    // User cancelled share — file is still saved, not an error
+    if (err?.message && !/cancel/i.test(err.message)) {
+      throw err;
+    }
+  }
+
+  return { success: true, filename, uri: result.uri };
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result;
+      // strip "data:...;base64," prefix
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+```
+
+### שינויים ב-api.js
+
+**1. exportService.exportDefects (שורה 1599-1619):**
+
+```js
+import { downloadBlob } from '../utils/fileDownload';
+
+export const exportService = {
+  async exportDefects({ scope, unit_id, building_id, project_id, filters, format = 'excel' }) {
+    const response = await axios.post(
+      `${API}/defects/export`,
+      { scope, unit_id, building_id, project_id, filters, format },
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    const disposition = response.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const ext = format === 'pdf' ? '.pdf' : '.xlsx';
+    const filename = match ? match[1] : `defects_export_${new Date().toISOString().slice(0, 10)}${ext}`;
+    const mime = format === 'pdf'
+      ? 'application/pdf'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    return downloadBlob(new Blob([response.data], { type: mime }), filename, mime);
+  },
+};
+```
+
+**2. handoverService.downloadPdf (שורה 1550-1561):**
+
+```js
+async downloadPdf(projectId, protocolId, filename) {
+  const blob = await this.getPdfBlob(projectId, protocolId);
+  const finalName = filename || `protocol_${protocolId.slice(0, 8)}.pdf`;
+  return downloadBlob(new Blob([blob], { type: 'application/pdf' }), finalName, 'application/pdf');
+},
+```
+
+**3. excelService.downloadTemplate (שורה 362-376):**
+
+```js
+async downloadTemplate(projectId) {
+  const response = await axios.get(`${API}/projects/${projectId}/excel-template`, {
+    headers: getAuthHeader(),
+    responseType: 'blob',
+  });
+  return downloadBlob(
+    new Blob([response.data], { type: 'text/csv' }),
+    `template_${projectId}.csv`,
+    'text/csv'
+  );
+},
+```
+
+**4. g4ImportService.downloadTemplate (שורה 1564-):**
+
+```js
+async downloadTemplate(projectId) {
+  const response = await axios.get(
+    `${API}/projects/${projectId}/import/g4/template`,
+    { headers: getAuthHeader(), responseType: 'blob' }
+  );
+  return downloadBlob(
+    new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+    'g4_template.xlsx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+},
+```
+
+
+========================================================================
+## Fix 4 — Version bumps
+========================================================================
+
+### iOS
+`frontend/ios/App/App.xcodeproj/project.pbxproj` (חפש `CURRENT_PROJECT_VERSION`):
+- `CURRENT_PROJECT_VERSION`: 4 → **5**
+- `MARKETING_VERSION`: 1.0.4 → **1.0.5**
+
+(כל הופעה — Debug + Release)
+
+### Android
+`frontend/android/app/build.gradle`:
+- `versionCode 9` → `versionCode 10`
+- `versionName "1.0.9"` → `versionName "1.0.10"`
+
+
+========================================================================
+## DO NOT
+========================================================================
+
+- ❌ אל תיגע בקוד של Wave 3 (ProjectControlPage.js שורות 3514-3517).
+- ❌ אל תגע ב-Wave 4 (rate limit, cachedFetch).
+- ❌ אל תסיר את `ic_launcher.png` / `ic_launcher_round.png` (legacy fallbacks).
+- ❌ אל תשנה את הצבע `#323A4E` ב-ic_launcher_background.xml.
+- ❌ אל תשנה את iOS bundle ID או Android applicationId.
+- ❌ אל תיצור Capacitor config ב-TS (capacitor.config.ts) — השאר JSON.
+- ❌ אל תוסיף תלויות native נוספות מעבר ל-filesystem + share + @capacitor/app.
+- ❌ אל תעשה `navigate(-1)` ב-listener של Android back — זה ידרוס את רצף
+     ההיסטוריה של react-router במצבים מסוימים. השתמש ב-`window.history.back()`.
+
+
+========================================================================
+## VERIFY
+========================================================================
+
+### אחרי Fix 1 (back navigation):
+- **1a (iOS):** `cat frontend/capacitor.config.json` מכיל
+  `"allowsBackForwardNavigationGestures": true` תחת `"ios"`
+- **1b (Android):** `npm list @capacitor/app` מציג גרסה ^7.x
+- **1b (Android):** `grep -n '@capacitor/app' frontend/src/App.js` מחזיר את שורת ה-import
+- **1b (Android):** `grep -n 'backButton' frontend/src/App.js` מחזיר את ה-listener
+- **1b (Android):** `frontend/src/App.js` משתמש ב-`window.history.back()` (לא ב-`navigate(-1)`)
+- (הבדיקה האמיתית על הטלפונים תהיה אחרי Build 5 iOS + Android 10 —
+  נבדוק את 3 הפלטפורמות במסמך QA נפרד)
+
+### אחרי Fix 2 (Android icon):
+- הרץ `identify frontend/android/app/src/main/res/mipmap-*/ic_launcher_foreground.png`
+- ודא שהמידות נכונות: 108/162/216/324/432
+- פתח אחד מהם ויזואלית (xxxhdpi/432) — האות B ממורכזת, גודל ~58% מהקנבס, עם padding שקוף מסביב.
+
+### אחרי Fix 3 (PDF export):
+- `npm list @capacitor/filesystem @capacitor/share` מראה גרסה ^7.x
+- `frontend/src/utils/fileDownload.js` קיים
+- באפליקציית web (Chrome DevTools): ייצוא PDF יורד רגיל כמו לפני.
+- באפליקציה native (TestFlight Build 5): ייצוא PDF פותח share sheet עם אפשרות "Save to Files" או "Share" ליעד כלשהו.
+
+### אחרי Fix 4:
+- iOS: ב-Xcode תחת General → Identity, Version=1.0.5, Build=5
+- Android: `build.gradle` מראה versionCode=10, versionName="1.0.10"
+
+
+========================================================================
+## Commit
+========================================================================
+
+```
+fix(#385) Wave 5: iOS back-gesture + Android icon safe-zone + native PDF export
+```
+
+מומלץ קומיט אחד שמאגד הכל — פשוט יותר לעקוב + rollback.
+
+
+========================================================================
+## ⛔ STOP after Wave 5 — דיווח מלא ל-Zahi
+========================================================================
+
+1. **Commit SHA** + רשימת קבצים ששונו
+2. **Android icon — הוכחה ויזואלית:**
+   - פלט של `identify frontend/android/app/src/main/res/mipmap-*/ic_launcher_foreground.png`
+   - screenshot של `mipmap-xxxhdpi/ic_launcher_foreground.png` (B ממורכז, ~58% מהקנבס)
+3. **Packages — הוכחה שהכל הותקן:**
+   ```
+   npm list @capacitor/app @capacitor/filesystem @capacitor/share
+   ```
+   (שלושתם צריכים להופיע עם ^7.x)
+4. **capacitor.config.json — הוכחה שהשינוי תקף:**
+   ```
+   cat frontend/capacitor.config.json
+   ```
+5. **App.js — הוכחה שה-listener נוסף:**
+   ```
+   grep -n '@capacitor/app\|backButton\|window.history.back' frontend/src/App.js
+   ```
+6. **fileDownload.js — הוכחה שהקובץ קיים:**
+   ```
+   ls -la frontend/src/utils/fileDownload.js
+   wc -l frontend/src/utils/fileDownload.js
+   ```
+7. **api.js — הוכחה שכל 4 הפונקציות הוחלפו:**
+   ```
+   grep -n 'downloadBlob\|createObjectURL\|a.download' frontend/src/services/api.js
+   ```
+   - `downloadBlob` צריך להופיע 4 פעמים (exportDefects, handoverService.downloadPdf,
+     excelService.downloadTemplate, g4ImportService.downloadTemplate)
+   - `createObjectURL` ו-`a.download` אסור שיופיעו בקוד של api.js
+     (הם נשארו רק ב-fileDownload.js כ-web fallback)
+
+אחרי שהדיווח הזה מגיע **מלא** — Zahi מריץ `./ship.sh` במק → Build 5 ל-iOS +
+Android versionCode 10 (versionName 1.0.10).
+
+**שום קומיט אחר לא עולה עם Wave 5** — ספק אחד, commit אחד, rollback אחד.
