@@ -142,7 +142,7 @@ function ToolsAssembling({ playing = true }) {
         opacity: 0,
         animation: playing ? 'toolsBIn 500ms ease 1100ms forwards' : 'none',
       }}>
-        <BrikMark size={140} color="#fff" accent="#F59E0B" withAccent/>
+        <BrikMark size={140} color="#F59E0B"/>
       </div>
     </div>
   );

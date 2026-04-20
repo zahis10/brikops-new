@@ -16,7 +16,7 @@ function NativeSplash({ showGrid = true, showGlow = true, amberDot = true }) {
         position: 'relative', display: 'flex', flexDirection: 'column',
         alignItems: 'center', gap: 20,
       }}>
-        <BrikMark size={110} color="#fff" accent="#F59E0B" withAccent/>
+        <BrikMark size={110} color="#F59E0B"/>
         <div style={{
           fontFamily: '"Rubik", system-ui', fontSize: 22, fontWeight: 600,
           color: '#fff', letterSpacing: -0.3,
@@ -66,7 +66,7 @@ function ReactLoadingScreen({ phase = 0, loadingText = 'מתחבר' }) {
           animation: 'brikBreathe 2.4s ease-in-out infinite',
           filter: 'drop-shadow(0 0 24px rgba(245, 158, 11, 0.25))',
         }}>
-          <BrikMark size={88} color="#fff" accent="#F59E0B" withAccent/>
+          <BrikMark size={88} color="#F59E0B"/>
         </div>
         <div style={{
           fontFamily: '"Rubik", system-ui', fontSize: 18, fontWeight: 600,

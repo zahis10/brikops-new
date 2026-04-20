@@ -16,7 +16,7 @@ function BrikDashboard() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <BrikMark size={28} color="#fff" accent="#F59E0B"/>
+            <BrikMark size={28} color="#F59E0B"/>
             <span style={{ fontWeight: 700, fontSize: 18, direction: 'ltr' }}>
               Brik<span style={{ color: '#F59E0B' }}>Ops</span>
             </span>

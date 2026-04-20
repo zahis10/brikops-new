@@ -108,8 +108,8 @@ function FlowPlayer({ variant, loadingTextStyle, showGrid, showGlow, autoPlay })
           {/* HOME — tap the icon */}
           {stage === 'HOME' && (
             <div className="home-stage">
-              <div className="home-icon-btn pulsing" onClick={play}>
-                <BrikMark size={44} color="#fff" accent="#F59E0B"/>
+              <div className="home-icon-btn pulsing" onClick={play} style={{ background: 'transparent', boxShadow: 'none', padding: 0 }}>
+                <BrikMark size={68} color="#F59E0B" bg="#323A4E" rounded/>
               </div>
               <div className="home-label">BrikOps</div>
               <div className="home-hint">לחץ לפתיחת האפליקציה ←</div>
@@ -478,10 +478,10 @@ function App() {
 // Small inline handoff diagram
 function HandoffDiagram() {
   const frames = [
-    { label: 'Native\nsplash',  bg: 'linear-gradient(180deg, #3A4258, #2A3142)', content: <BrikMark size={32} color="#fff" accent="#F59E0B"/> },
+    { label: 'Native\nsplash',  bg: 'linear-gradient(180deg, #3A4258, #2A3142)', content: <BrikMark size={32} color="#F59E0B"/> },
     { label: 'React\n+ skeleton', bg: 'linear-gradient(180deg, #3A4258, #2A3142)', content: (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-        <BrikMark size={22} color="#fff" accent="#F59E0B"/>
+        <BrikMark size={22} color="#F59E0B"/>
         <div style={{ width: 40, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}/>
         <div style={{ width: 32, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}/>
       </div>
