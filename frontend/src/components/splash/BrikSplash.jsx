@@ -15,7 +15,8 @@ const LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version_v2';
  *   - D2 (Skeleton + Shimmer): every other launch. Stays mounted until
  *     `isReady` flips to true.
  *
- * When D3-A finishes (after 2100ms) and `isReady` is still false, we fall
+ * When D3-A finishes (after 3600ms total: 1600ms anim + 1500ms hold +
+ * 500ms fade) and `isReady` is still false, we fall
  * through to D2, NOT to a blank dashboard. This is anchored by the final
  * return statement below.
  */
