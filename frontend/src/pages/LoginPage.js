@@ -9,6 +9,7 @@ import { Card } from '../components/ui/card';
 import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
 import { Capacitor } from '@capacitor/core';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+import useOtpAutofill from '../hooks/useOtpAutofill';
 
 const ENABLE_REGISTER_MANAGEMENT_REDIRECTS =
   process.env.REACT_APP_ENABLE_REGISTER_MANAGEMENT_REDIRECTS === 'true';
@@ -63,6 +64,9 @@ const LoginPage = () => {
   const [socialPhone, setSocialPhone] = useState('');
   const [socialOtp, setSocialOtp] = useState('');
   const [socialLoading, setSocialLoading] = useState(false);
+
+  useOtpAutofill(setOtpCode);
+  useOtpAutofill(setSocialOtp);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/config/features`)
@@ -545,7 +549,6 @@ const LoginPage = () => {
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="050-1234567"
                   className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
-                  autoFocus
                 />
                 <Phone className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               </div>
@@ -820,7 +823,6 @@ const LoginPage = () => {
                   onChange={(e) => setSocialPhone(e.target.value)}
                   placeholder="050-1234567"
                   className="w-full h-11 px-3 py-2 pr-10 text-right text-slate-900 bg-white border border-slate-300 rounded-lg hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 placeholder:text-slate-400"
-                  autoFocus
                 />
                 <Phone className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               </div>
