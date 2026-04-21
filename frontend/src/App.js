@@ -71,10 +71,20 @@ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
-// Wave 1 splash: thin wrappers around <BrikSplash> so we don't have to
-// touch the existing references at lines 101, 105, 157.
-const LoadingSpinner = () => <BrikSplash isReady={false} loadingText="טוען" />;
-const ConnectingScreen = () => <BrikSplash isReady={false} loadingText="מתחבר" />;
+// Wave 2b: BrikSplash now owns its own lifecycle and is mounted once at
+// the App shell (see <AppShell/> below). The placeholder here is a tiny
+// non-splash gradient used ONLY for the rare network-error case inside
+// ProtectedRoute. z-index 9998 keeps it under BrikSplash (9999) and well
+// below Sonner toasts so error messages stay visible on top.
+const NetworkPlaceholder = ({ label }) => (
+  <div style={{
+    position: 'fixed', inset: 0, zIndex: 9998,
+    background: 'linear-gradient(180deg,#3A4258 0%,#323A4E 50%,#2A3142 100%)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: '#B8C5DB', fontFamily: 'Rubik, system-ui', fontSize: 14,
+    direction: 'rtl',
+  }} role="status" aria-live="polite">{label}</div>
+);
 
 const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   const { user, loading, token, networkError } = useAuth();
@@ -91,11 +101,14 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   }, [userLang, userRole]);
 
   if (loading) {
-    return <LoadingSpinner />;
+    // Defensive: BrikSplash already gates on isAppReady so this branch
+    // should normally be unreachable on cold boot. Kept for safety in
+    // case ProtectedRoute remounts mid-session while auth refreshes.
+    return <NetworkPlaceholder label="טוען" />;
   }
 
   if (!user && token && networkError) {
-    return <ConnectingScreen />;
+    return <NetworkPlaceholder label="מתחבר…" />;
   }
 
   if (!user) {
@@ -147,7 +160,7 @@ const AppRoutes = () => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
   return (
-    <Suspense fallback={<LoadingSpinner />}>
+    <Suspense fallback={null}>
       <Routes key={location.pathname}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/phone-login" element={<Navigate to="/login" replace />} />
@@ -451,6 +464,18 @@ const AppRoutes = () => {
   );
 };
 
+// Wave 2b: BrikSplash is mounted ONCE here, wrapping the routed app
+// tree. It owns its own minimum display time (3600ms D3-A, 800ms D2)
+// and reveals children only when both the timer fires AND auth resolves.
+const AppShell = () => {
+  const { loading } = useAuth();
+  return (
+    <BrikSplash isAppReady={!loading}>
+      <AppRoutes />
+    </BrikSplash>
+  );
+};
+
 function App() {
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
@@ -495,7 +520,7 @@ function App() {
                 <TrialBanner />
                 <CompleteAccountBanner />
                 <main id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
-                  <AppRoutes />
+                  <AppShell />
                 </main>
                 <PaywallModal />
                 <CompleteAccountModal />

@@ -1,35 +1,48 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import D2DailySplash from './D2DailySplash';
 import D3ABrickAssembly from './D3ABrickAssembly';
 
 const LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version_v2';
+const MIN_DURATION_MS = { D3A: 3600, D2: 800 };
+const FADE_OUT_MS = 250;
 
 /**
- * BrikSplash — top-level loading screen wrapper.
+ * BrikSplash — top-level splash overlay that owns its own minimum
+ * display lifecycle.
  *
- * Decides between two variants based on app version:
+ * Mounted ONCE at the App shell, wrapping the routed app tree as
+ * `<BrikSplash isAppReady={!authLoading}>{<AppRoutes/>}</BrikSplash>`.
+ * It always renders `children` underneath; on top it paints a fixed
+ * full-screen overlay (D2 or D3-A) until BOTH:
+ *   1. The minimum display time has elapsed
+ *      (3600ms for D3-A, 800ms for D2), and
+ *   2. The parent signals `isAppReady === true` (auth resolved, etc.)
+ *
+ * After the overlay first reveals the children, it never re-overlays
+ * for the lifetime of this component (one-shot via `revealedRef`).
+ *
+ * Variant decision:
  *   - D3-A (Brick Assembly): first launch + after every version bump.
- *     Saved to Preferences ONLY after the animation completes — if the
- *     user kills the app mid-animation, they should see D3-A again next time.
- *   - D2 (Skeleton + Shimmer): every other launch. Stays mounted until
- *     `isReady` flips to true.
+ *     Persisted to Preferences ONLY after D3-A's onComplete fires, so
+ *     killing the app mid-animation re-shows D3-A on next launch.
+ *   - D2 (Skeleton + Shimmer): every other launch. Web always uses D2.
  *
- * When D3-A finishes (after 3600ms total: 1600ms anim + 1500ms hold +
- * 500ms fade) and `isReady` is still false, we fall
- * through to D2, NOT to a blank dashboard. This is anchored by the final
- * return statement below.
+ * The overlay fades out over 250ms once the gate opens, then unmounts.
  */
-export default function BrikSplash({ isReady = false, loadingText = 'מתחבר' }) {
-  // variant: null (deciding) | 'D2' | 'D3A'
-  const [variant, setVariant] = useState(null);
+export default function BrikSplash({ isAppReady = true, children = null }) {
+  const [variant, setVariant] = useState(null); // null | 'D2' | 'D3A'
   const [d3aDone, setD3aDone] = useState(false);
   const [pendingVersionToSave, setPendingVersionToSave] = useState(null);
+  const [minTimeElapsed, setMinTimeElapsed] = useState(false);
+  const [hiding, setHiding] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const revealedRef = useRef(false);
 
+  // 1. Decide variant on mount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Web fallback — no native APIs, always show D2.
       if (!Capacitor.isNativePlatform?.()) {
         if (!cancelled) setVariant('D2');
         return;
@@ -43,10 +56,7 @@ export default function BrikSplash({ isReady = false, loadingText = 'מתחבר'
           key: LAST_SEEN_VERSION_KEY,
         });
         if (cancelled) return;
-
         if (!lastSeenVersion || lastSeenVersion !== currentVersion) {
-          // First install or after a version bump → show D3-A.
-          // DO NOT save the version yet — only after animation completes.
           setPendingVersionToSave(currentVersion);
           setVariant('D3A');
         } else {
@@ -60,7 +70,15 @@ export default function BrikSplash({ isReady = false, loadingText = 'מתחבר'
     return () => { cancelled = true; };
   }, []);
 
-  // Persist version ONLY after D3-A finished playing in full.
+  // 2. Start minimum-display timer once the variant is known.
+  useEffect(() => {
+    if (!variant) return;
+    const ms = MIN_DURATION_MS[variant === 'D3A' ? 'D3A' : 'D2'];
+    const t = setTimeout(() => setMinTimeElapsed(true), ms);
+    return () => clearTimeout(t);
+  }, [variant]);
+
+  // 3. Persist version ONLY after D3-A actually finished playing in full.
   useEffect(() => {
     if (!d3aDone || !pendingVersionToSave) return;
     (async () => {
@@ -76,24 +94,49 @@ export default function BrikSplash({ isReady = false, loadingText = 'מתחבר'
     })();
   }, [d3aDone, pendingVersionToSave]);
 
-  // Deciding phase — show the same gradient as the native splash so there
-  // is no white flash while Preferences responds (~50-100ms).
-  if (variant === null) {
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'linear-gradient(180deg, #3A4258 0%, #323A4E 50%, #2A3142 100%)',
-      }}/>
-    );
-  }
+  // 4. Open the gate when min time + isAppReady (+ d3aDone for D3-A).
+  //    One-shot: once revealedRef flips true, never re-overlay.
+  const gateOpen =
+    variant !== null &&
+    minTimeElapsed &&
+    isAppReady &&
+    (variant === 'D2' || d3aDone);
 
-  // D3-A is playing.
-  if (variant === 'D3A' && !d3aDone) {
-    return <D3ABrickAssembly onComplete={() => setD3aDone(true)} />;
-  }
+  useEffect(() => {
+    if (!gateOpen || revealedRef.current) return;
+    setHiding(true);
+    const t = setTimeout(() => {
+      revealedRef.current = true;
+      setRevealed(true);
+    }, FADE_OUT_MS);
+    return () => clearTimeout(t);
+  }, [gateOpen]);
 
-  // Either variant === 'D2' from the start, or D3-A finished.
-  // CRITICAL: when D3-A finishes and isReady is still false, fall through
-  // to D2 (Skeleton + Shimmer) — not to a blank dashboard.
-  return <D2DailySplash isReady={isReady} loadingText={loadingText} />;
+  // After first reveal, just render children — no overlay ever again.
+  if (revealed) return children;
+
+  return (
+    <>
+      {children}
+      <div
+        style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          opacity: hiding ? 0 : 1,
+          transition: `opacity ${FADE_OUT_MS}ms ease-out`,
+          pointerEvents: hiding ? 'none' : 'auto',
+        }}
+      >
+        {variant === null ? (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'linear-gradient(180deg, #3A4258 0%, #323A4E 50%, #2A3142 100%)',
+          }}/>
+        ) : variant === 'D3A' && !d3aDone ? (
+          <D3ABrickAssembly onComplete={() => setD3aDone(true)} />
+        ) : (
+          <D2DailySplash isReady={isAppReady && minTimeElapsed} loadingText="טוען" />
+        )}
+      </div>
+    </>
+  );
 }
