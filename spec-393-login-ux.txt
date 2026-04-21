@@ -1,0 +1,231 @@
+# #393 — Login UX: No Auto-Keyboard on Phone + OTP Autofill Popup
+
+## What & Why
+שתי תקלות UX בזרימת ההתחברות, שתיהן JS בלבד:
+
+1. **מקלדת נפתחת אוטומטית באייפון בכניסה לעמוד Login.** באנדרואיד לא קורה
+   בזכות מדיניות אבטחה של Chrome WebView. באייפון (Capacitor WKWebView) אין
+   חסימה כזאת — כל `autoFocus` שמופעל ב-mount פותח את המקלדת, מכסה את הלוגו
+   ואת הכפתורים החלופיים (WhatsApp, Apple, Google).
+
+2. **ה-OTP שמגיע ב-SMS לא מפעיל חלון autofill לחיצה-אחת.** המשתמש נאלץ
+   להקליד ידנית את 6 הספרות במקום לקבל "From Messages: 123456" מעל המקלדת
+   (iOS) או פופ-אפ Web OTP (אנדרואיד Chrome / דפדפן).
+
+שורשי הבעיות אומתו:
+
+1. `LoginPage.js:548` ו-`LoginPage.js:823` — `autoFocus` על שני ה-phone
+   inputs. ב-iOS זה פותח את המקלדת המספרית מיד עם render.
+2. כל שלושת ה-OTP inputs (605, 777, 874) כבר עם `autoComplete="one-time-code"`
+   ו-`inputMode="numeric"` — התשתית הבסיסית קיימת. אבל **אף אחד לא קורא
+   ל-`navigator.credentials.get({ otp: { transport: ['sms'] } })`** שזה ה-API
+   המפורש שפותח את החלונית ב-Web OTP (עובד על Android Chrome + דפדפן).
+
+ה-SMS template בבקאנד (`backend/contractor_ops/otp_service.py:210`) כבר בנוי
+נכון עבור iOS 14+ domain-bound autofill:
+
+```
+BrikOps: קוד האימות שלך הוא 123456. בתוקף 10 דקות.
+
+@app.brikops.com #123456
+```
+
+השורה האחרונה (`@domain #code`) היא הפורמט שגם iOS וגם Web OTP API מצפים לו.
+**אין צורך לגעת בבקאנד.**
+
+## Done looks like
+- `LoginPage.js` — `autoFocus` נמחק משורות 548 ו-823 (שני ה-phone inputs).
+  על שלושת ה-OTP inputs (605, 777, 874) — `autoFocus` **נשאר** (המשתמש
+  ניווט אליהם במכוון, הוא רוצה שהמקלדת תיפתח).
+- קובץ חדש `frontend/src/hooks/useOtpAutofill.js` — hook שבודק אם
+  `'OTPCredential' in window`, קורא ל-`navigator.credentials.get({ otp: ... })`
+  עם `AbortController`, ומעדכן את ה-state עם הקוד כשהוא מגיע. בטוח לכשל
+  (try/catch, AbortError נבלע).
+- שלושת ה-OTP forms ב-LoginPage.js קוראים ל-hook ומעבירים את ה-setter
+  המתאים (`setOtpCode` או `setSocialOtp`).
+- `yarn build` עובר בלי שגיאות חדשות (ישנן אזהרות source-map של
+  apple-sign-in — acceptable).
+- קומיט יחיד על main. `./deploy.sh --prod` בלבד, אין `ship.sh`.
+- אחרי פריסה: באנדרואיד Chrome/WebView תופיע פופ-אפ "BrikOps רוצה לקרוא
+  את הקוד מה-SMS" → תחיצה אחת → הקוד נכתב לבד.
+  באייפון: "From Messages: 123456" מופיע מעל המקלדת, תחיצה → הקוד נכתב.
+
+## Out of scope
+- אין שינוי ב-backend (`otp_service.py` כבר מושלם עם `@app.brikops.com #code`).
+- אין הוספת plugin של Capacitor (כמו `@capacitor-community/sms-retriever`) —
+  זה היה דורש native rebuild + ship.sh. נשמור לגל הבא אם Web OTP API לא
+  מספיק על Capacitor Android native.
+- אין נגיעה בזרימות ה-social register/linking מעבר לקריאה ל-hook.
+- אין שינוי בעיצוב של ה-inputs / buttons / placeholder.
+- אין שינוי ב-autoComplete, inputMode, או maxLength הקיימים ב-OTP inputs.
+- אין bump ל-versionCode / versionName (זה OTA-only).
+
+## Tasks
+
+### Task 1 — מחיקת autoFocus מה-phone inputs
+פתח `frontend/src/pages/LoginPage.js`.
+
+- שורה 548: מחק את השורה שכתוב בה `autoFocus` (ב-input id="phone")
+- שורה 823: מחק את השורה שכתוב בה `autoFocus` (ב-input id="social-phone")
+
+שים לב — אל תיגע ב-`autoFocus` של שלושת ה-OTP inputs:
+- שורה 605 (id="otp")
+- שורה 777 (id="social-otp")
+- שורה 874 (id="social-verify-otp")
+
+אחרי המחיקה, יוודא בעין שאין שם שום `autoFocus` על inputs של `type="tel"`
+(שני ה-phone inputs הם היחידים).
+
+### Task 2 — יצירת hook `useOtpAutofill`
+קובץ חדש: `frontend/src/hooks/useOtpAutofill.js`
+
+```js
+import { useEffect } from 'react';
+
+/**
+ * Web OTP API autofill hook.
+ * On mount: if navigator.credentials supports OTPCredential (Android Chrome,
+ * desktop Chrome, and some Android WebViews), requests a one-time code from
+ * an incoming SMS that ends with `@<origin> #<code>`. When the user taps the
+ * popup, the code is written via setCode.
+ *
+ * Silently no-ops on iOS Safari/WebKit (autocomplete="one-time-code" handles
+ * those via the "From Messages" keyboard chip).
+ *
+ * Automatically aborts when the component unmounts.
+ */
+export default function useOtpAutofill(setCode) {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('OTPCredential' in window)) return;
+    if (!navigator.credentials || !navigator.credentials.get) return;
+
+    const ac = new AbortController();
+
+    navigator.credentials
+      .get({ otp: { transport: ['sms'] }, signal: ac.signal })
+      .then((cred) => {
+        if (cred && typeof cred.code === 'string' && cred.code.length > 0) {
+          const digits = cred.code.replace(/\D/g, '').slice(0, 6);
+          if (digits.length === 6) {
+            setCode(digits);
+          }
+        }
+      })
+      .catch((err) => {
+        // AbortError = unmount; NotAllowedError = user dismissed; ignore both
+        if (err && err.name !== 'AbortError') {
+          // eslint-disable-next-line no-console
+          console.debug('[useOtpAutofill] Web OTP not available:', err.name);
+        }
+      });
+
+    return () => ac.abort();
+  }, [setCode]);
+}
+```
+
+**דגשים:**
+- ה-hook מקבל `setCode` בלבד — פונקציה ש-`setOtpCode(code)` או
+  `setSocialOtp(code)` נכנסות אליה. אל תוסיף עוד פרמטרים.
+- אסור לקרוא ל-`submit` אוטומטית אחרי מילוי. המשתמש לוחץ בעצמו.
+  (הסיבה: UX של רוב האפליקציות מראה למשתמש מה נכתב לפני שליחה.)
+- השתמש ב-`useEffect` **בלי dependencies חדשים** מעבר ל-`setCode`. אם
+  `setCode` משתנה בין renders (בגלל שהוא לא stable) — ה-hook ינתק ויתחבר
+  מחדש. זה תקין.
+
+### Task 3 — חיבור ה-hook לשלוש צורות ה-OTP
+ב-`frontend/src/pages/LoginPage.js`:
+
+1. הוסף import בראש הקובץ (עם שאר ה-hooks imports):
+```js
+import useOtpAutofill from '../hooks/useOtpAutofill';
+```
+
+2. בתוך רכיב `LoginPage` (אחרי הצהרות ה-state הקיימות, ליד
+   `const [otpCode, setOtpCode] = useState('')` סביב שורה ~42), הוסף:
+```js
+useOtpAutofill(setOtpCode);
+useOtpAutofill(setSocialOtp);
+```
+
+שים לב:
+- שני ה-OTP inputs (socialOtp) חולקים את אותו state `socialOtp`, אז קריאה
+  אחת של `useOtpAutofill(setSocialOtp)` מספיקה לשתי הצורות שלהם (lines 767
+  ו-864).
+- ה-hook ירוץ כל זמן שהרכיב (`LoginPage`) mounted. זה בסדר — גם אם
+  המשתמש לא נמצא כרגע במסך OTP, ה-API פשוט ימתין. כשה-SMS מגיע, הפופ-אפ
+  יופיע. אם המשתמש לא במסך OTP — הלחיצה על הפופ-אפ תפעיל את ה-setter, אבל
+  הערך לא ייראה עד שיגיע למסך. לא מסוכן.
+
+**לא לעשות:**
+- לא להוסיף `useOtpAutofill` בתוך sub-components — זה יוצר instances כפולים
+- לא לקרוא ל-hook בתוך `useEffect` אחר — hooks חייבים לרוץ ב-top level של
+  הרכיב
+- לא לעטוף בתנאי `if (phoneStep === 'otp') useOtpAutofill(...)` — זה מפר את
+  כלל ה-Rules of Hooks
+
+### Task 4 — Build, קומיט, review
+1. `yarn build` ב-`frontend/` — חייב לצאת 0. אזהרות source-map של
+   `@capacitor-community/apple-sign-in` — התעלם, הן מוכרות.
+
+2. קומיט יחיד:
+   `feat(#393) Login UX: remove phone autoFocus + Web OTP API autofill`
+
+3. צור `.local/review-393-login-ux.txt` עם 7 proof blocks:
+
+   - PROOF #1 — `git log -1 --oneline`
+   - PROOF #2 — `git show --stat HEAD`
+     (expected: שני קבצים בלבד — `frontend/src/pages/LoginPage.js`
+     ו-`frontend/src/hooks/useOtpAutofill.js`)
+   - PROOF #3 — `grep -n 'autoFocus' frontend/src/pages/LoginPage.js`
+     (expected: 3 שורות בלבד — שורות 604, 776, 873 approximately, כולם
+     על OTP inputs. אסור שיהיה match על phone input.)
+   - PROOF #4 — `grep -n 'type="tel"' frontend/src/pages/LoginPage.js`
+     ואז `grep -B1 -A5 'type="tel"' frontend/src/pages/LoginPage.js`
+     (expected: לא מוצא `autoFocus` בסביבת אף `type="tel"`)
+   - PROOF #5 — `cat frontend/src/hooks/useOtpAutofill.js`
+     (expected: הקובץ המלא כפי שצוין ב-Task 2)
+   - PROOF #6 — `grep -n 'useOtpAutofill' frontend/src/pages/LoginPage.js`
+     (expected: 3 שורות — import אחד + שתי קריאות)
+   - PROOF #7 — `yarn build` tail (15 שורות אחרונות, חייב לכלול
+     "Compiled successfully")
+
+הצג את ה-review כ-asset card. **אל תעשה push ואל תריץ deploy.sh.**
+
+## VERIFY (for Zahi, after deploy)
+1. ב-Replit shell: `./deploy.sh --prod`
+2. חכה 1-2 דקות עד ש-Capgo bundle עולה לערוץ production.
+3. באייפון: force-close את BrikOps. חכה 10 שניות. פתח שוב.
+4. Capgo ימשוך את ה-bundle החדש תוך ~דקה (אם Wave 2d כבר הותקן native).
+5. נסה להתחבר:
+   - **מסך login ראשוני**: אמור להיפתח **בלי מקלדת**. המשתמש רואה את כל
+     האופציות (phone, WhatsApp, Apple, Google) בבהירות, ומקיש בעצמו על
+     שדה הטלפון.
+   - **אחרי הזנת טלפון ושליחת קוד**: מסך OTP נפתח, המקלדת נפתחת אוטומטית.
+     כש-SMS מגיע:
+     - באייפון: "From Messages: 123456" מעל המקלדת → תחיצה → הקוד נכתב.
+     - באנדרואיד Chrome/WebView: פופ-אפ "BrikOps רוצה לקרוא קוד מ-SMS" →
+       אישור → הקוד נכתב.
+6. **אם ב-iOS ה-chip לא מופיע**: זה כנראה עדיין בגלל ש-Capacitor WKWebView
+   לא תומך ב-domain-bound autofill בלי Associated Domain. נפתח wave נפרד
+   לזה (כולל native associated-domain entitlement). אל תיבהל, זה לא
+   regression — זה היה ככה גם לפני Wave 2e.
+
+## Relevant files
+- `frontend/src/pages/LoginPage.js` — מחיקת שתי `autoFocus` + קריאה ל-hook
+- `frontend/src/hooks/useOtpAutofill.js` — קובץ חדש
+
+## DO NOT
+- DO NOT לערוך את `backend/contractor_ops/otp_service.py` — ה-SMS template
+  כבר מושלם.
+- DO NOT להוסיף `autoComplete` חדש — שלושת ה-OTP inputs כבר עם
+  `autoComplete="one-time-code"`.
+- DO NOT להתקין Capacitor plugin חדש (זה native change).
+- DO NOT להוסיף submit אוטומטי אחרי מילוי ה-OTP.
+- DO NOT להסיר `autoFocus` מ-OTP inputs (605, 777, 874) — שם הוא מועיל.
+- DO NOT לעטוף את קריאת ה-hook בתנאי — hooks חייבים לרוץ ב-top level.
+- DO NOT לשנות את capacitor.config.json, ios/, android/, package.json —
+  זה לא native change.
+- DO NOT להריץ `./deploy.sh` או `./ship.sh` מ-Replit — חכה לאישור של Zahi.
+- DO NOT bump version — Capgo OTA מטפל.

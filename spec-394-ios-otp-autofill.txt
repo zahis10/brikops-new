@@ -1,0 +1,144 @@
+# Spec #394 — iOS OTP Autofill (Associated Domains + AASA)
+
+## בעיה
+
+ב-iPhone ב-Capacitor WKWebView, ההצעה של iOS QuickType ל-OTP (הכפתור "מ-Messages: 123456" שמופיע מעל המקלדת) לא מופיעה.
+
+ה-SMS מגיע עם `@app.brikops.com #{code}` כראוי, ה-input יש לו `autoComplete="one-time-code"`, אבל iOS לא מקשר בין ה-SMS לאפליקציה כי חסר Associated Domains entitlement + קובץ AASA (apple-app-site-association).
+
+ב-Spec #393 פתרנו את אנדרואיד דרך Web OTP API. עכשיו צריך פתרון iOS-specific.
+
+---
+
+## קבצים לשינוי
+
+### 1. `frontend/ios/App/App/App.entitlements`
+
+הוסף את ה-key הבא לתוך ה-`<dict>` (אל תיגע ב-applesignin הקיים):
+
+```xml
+<key>com.apple.developer.associated-domains</key>
+<array>
+    <string>webcredentials:app.brikops.com</string>
+</array>
+```
+
+הקובץ הסופי צריך להיראות **בדיוק** כך:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:app.brikops.com</string>
+	</array>
+</dict>
+</plist>
+```
+
+### 2. `frontend/public/.well-known/apple-app-site-association` (קובץ חדש, **בלי סיומת**)
+
+תוכן (JSON תקני, ללא רווחים מיותרים בהתחלה/סוף):
+
+```json
+{
+  "webcredentials": {
+    "apps": ["8FV5CZ886X.com.brikops.app"]
+  }
+}
+```
+
+**חשוב:**
+- שם הקובץ הוא **בדיוק** `apple-app-site-association` — בלי `.json`, בלי `.txt`, בלי שום סיומת.
+- התיקייה היא `.well-known` (עם נקודה בהתחלה).
+- Team ID `8FV5CZ886X` מאומת מתוך `frontend/ios/App/App.xcodeproj/project.pbxproj` (מופיע כ-`DEVELOPMENT_TEAM`).
+- bundle ID `com.brikops.app` מאומת מתוך `frontend/capacitor.config.json` ו-`frontend/ios/App/App.xcodeproj/project.pbxproj`.
+
+---
+
+## VERIFY (לפני dom)
+
+הרץ והדבק את הפלט המלא ב-review.txt:
+
+```bash
+# 1. הקובץ קיים בנתיב הנכון
+ls -la frontend/public/.well-known/apple-app-site-association
+
+# 2. תוכן ה-JSON תקני (ידפיס JSON מפורמט אם תקין, או יזרוק שגיאה)
+cat frontend/public/.well-known/apple-app-site-association | python3 -m json.tool
+
+# 3. App.entitlements כולל את שני ה-keys
+grep -E "applesignin|associated-domains|webcredentials" frontend/ios/App/App/App.entitlements
+
+# 4. קומיט אחד בלבד עם 2 קבצים
+git log -1 --oneline
+git show --stat HEAD
+```
+
+ציפיות:
+- בדיקה 1: יציג שורה אחת עם הקובץ
+- בדיקה 2: יציג JSON מפורמט יפה (אם זורק שגיאה = JSON שבור = פותרים לפני push)
+- בדיקה 3: יציג 4 שורות לפחות (applesignin, Default, associated-domains, webcredentials:app.brikops.com)
+- בדיקה 4: 2 files changed, ~12 insertions
+
+---
+
+## DO NOT
+
+- ❌ אל תיגע ב-`frontend/capacitor.config.json` — אין צורך בפלאגין חדש
+- ❌ אל תיגע ב-`backend/contractor_ops/otp_service.py` — פורמט ה-SMS כבר נכון (`@app.brikops.com #{code}`)
+- ❌ אל תיגע ב-`frontend/src/pages/LoginPage.js` — ה-inputs כבר עם `autoComplete="one-time-code"`
+- ❌ אל תיגע ב-Android (זה רק תיקון iOS)
+- ❌ אל תעלה גרסה (versionCode/versionName) — זה ייעשה בנפרד דרך ship.sh במק
+- ❌ אל תוסיף הערות, console.log, או documentation
+- ❌ אל תדחוף אם יש conflict — תעצור ותגיד ל-Zahi
+- ❌ אל תריץ `./deploy.sh --prod` או `./ship.sh` — זה תהליך ידני של Zahi
+- ❌ אל תעשה `cap sync` או `cap copy` — זה יקרה אוטומטית ב-ship.sh
+
+---
+
+## אחרי שדחפת (Replit's responsibility)
+
+- ספור עד 30 שניות — Cloudflare Pages צריך לתפוס את ה-deploy של ה-frontend
+- בדוק שה-URL של AASA זמין:
+  ```bash
+  curl -I https://app.brikops.com/.well-known/apple-app-site-association
+  ```
+  ציפיות:
+  - `HTTP/2 200`
+  - `Content-Type: application/json` (אם זה `text/html` או `text/plain` — יש בעיה ב-Cloudflare)
+  - ללא redirect
+- אם ה-Content-Type לא JSON — זה issue של Cloudflare Pages routing, נצטרך להוסיף `_headers` rule:
+  ```
+  /.well-known/apple-app-site-association
+    Content-Type: application/json
+  ```
+  בקובץ `frontend/public/_headers`.
+
+---
+
+## חשוב: זה NATIVE CHANGE
+
+App.entitlements הוא תחת `frontend/ios/` — לפי `CLAUDE.md` של הפרויקט, **כל שינוי תחת `ios/` דורש ship.sh + build חדש**, לא Capgo OTA. אז:
+
+- Replit: רק dom/push (deploy.sh ל-Cloudflare ידחוף את ה-AASA)
+- Zahi (במק): `./ship.sh` → Xcode → Archive → Upload to TestFlight → להתקין על האייפון
+- בלי build חדש על האייפון — entitlement לא יחול והתיקון לא יעבוד
+
+---
+
+## כותרת הקומיט
+
+```
+feat(#394): iOS OTP autofill via Associated Domains + AASA
+```
+
+## שם קובץ ה-review
+
+`review-394-ios-otp-autofill.txt`
