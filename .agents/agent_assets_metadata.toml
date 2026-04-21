@@ -174,3 +174,9 @@ id = "pfVhCyGRUgjdawIHkwEZE"
 uri = "file://.local/review-phase7-wave2b.txt"
 type = "text"
 title = "Wave 2b — commit 964c719 (BrikSplash owns its own lifecycle)"
+
+[[outputs]]
+id = "k7nwQ0YPtJ91ofbfe-D_L"
+uri = "file://.local/review-phase7-wave2c.txt"
+type = "text"
+title = "Wave 2c — commit 6c982d7 (build tag on splash, diagnostic)"
