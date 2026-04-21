@@ -1,0 +1,173 @@
+================================================================
+TASK — FIX ANDROID LAUNCHER ICON (B too big) + BUMP VERSION
+================================================================
+
+CONTEXT
+-------
+Android adaptive icon foreground currently has the "B" logo
+occupying ~75% of canvas — on Samsung/Pixel home screens it
+looks cramped, dominating the entire icon area. iPhone icon is
+fine because iOS doesn't use adaptive safe-zone masking.
+
+Fix: regenerate all 15 mipmap PNGs so the B fills ~50% of canvas
+(the source PNG's natural bbox ratio), centered, with transparent
+background on the foreground layer and #323A4E composited into
+the legacy launcher files. Also bump versionCode 17→18 because
+Play Console already has AAB 17 uploaded and will reject a repeat.
+
+DO NOT TOUCH
+------------
+- drawable-v24/ic_launcher_foreground.xml (vector, unused at runtime)
+- mipmap-anydpi-v26/ic_launcher.xml (adaptive icon manifest — stays)
+- mipmap-anydpi-v26/ic_launcher_round.xml
+- values/ic_launcher_background.xml (#323A4E defined here, keep)
+- Any iOS file
+- Any backend file
+- Any JS/React file
+
+CHANGES — ONE SCRIPT + ONE EDIT
+================================================================
+
+STEP 1: Save this Python script as scripts/regenerate_android_icons.py
+(create scripts/ folder if needed), then run it from repo root:
+
+----- BEGIN scripts/regenerate_android_icons.py -----
+#!/usr/bin/env python3
+"""Regenerate Android launcher icons (foreground + legacy) with B at ~50%."""
+import os
+from PIL import Image, ImageDraw
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_PATH = os.path.join(REPO_ROOT, "frontend/android/app/src/main/res")
+
+DENSITIES = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
+TARGET_RATIO = 0.40  # B occupies 40% of canvas — smaller than current 50% which still feels big on Samsung
+BG_COLOR = (0x32, 0x3A, 0x4E, 255)  # #323A4E from ic_launcher_background.xml
+
+def extract_b(src_path):
+    img = Image.open(src_path).convert("RGBA")
+    bbox = img.split()[3].getbbox()
+    if not bbox:
+        raise ValueError(f"No non-transparent pixels in {src_path}")
+    return img.crop(bbox)
+
+def regen_foreground(density, size, source_b):
+    dst = os.path.join(BASE_PATH, f"mipmap-{density}", "ic_launcher_foreground.png")
+    b = source_b.copy()
+    b.thumbnail((int(size * TARGET_RATIO), int(size * TARGET_RATIO)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ox, oy = (size - b.width) // 2, (size - b.height) // 2
+    canvas.paste(b, (ox, oy), b)
+    canvas.save(dst, "PNG", optimize=True)
+    return dst
+
+def regen_legacy(density, size, is_round):
+    fname = "ic_launcher_round.png" if is_round else "ic_launcher.png"
+    dst = os.path.join(BASE_PATH, f"mipmap-{density}", fname)
+    fg = Image.open(os.path.join(BASE_PATH, f"mipmap-{density}", "ic_launcher_foreground.png")).convert("RGBA")
+    bg = Image.new("RGBA", (size, size), BG_COLOR)
+    composite = Image.alpha_composite(bg, fg)
+    if is_round:
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
+        result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        result.paste(composite, (0, 0), mask)
+        composite = result
+    composite.save(dst, "PNG", optimize=True)
+    return dst
+
+def main():
+    source = extract_b(os.path.join(BASE_PATH, "mipmap-xxxhdpi", "ic_launcher_foreground.png"))
+    print(f"Source B cropped: {source.size}")
+    written = 0
+    for density, size in DENSITIES.items():
+        regen_foreground(density, size, source); written += 1
+        regen_legacy(density, size, False); written += 1
+        regen_legacy(density, size, True); written += 1
+        print(f"  {density}: foreground + launcher + launcher_round")
+    print(f"\n{written} files written.")
+
+    print("\nVerification:")
+    for density, size in DENSITIES.items():
+        fg = Image.open(os.path.join(BASE_PATH, f"mipmap-{density}", "ic_launcher_foreground.png"))
+        bbox = fg.split()[3].getbbox()
+        ratio = ((bbox[2] - bbox[0]) / size) * 100
+        assert fg.size == (size, size), f"{density} foreground wrong size"
+        assert 35 < ratio < 45, f"{density} B ratio {ratio:.1f}% outside 35-45"
+        print(f"  {density}: {size}x{size}, B ratio {ratio:.1f}% ✓")
+    print("\nAll good.")
+
+if __name__ == "__main__":
+    main()
+----- END scripts/regenerate_android_icons.py -----
+
+RUN IT:
+  pip install Pillow --break-system-packages
+  python3 scripts/regenerate_android_icons.py
+
+The script MUST print "All good." before continuing.
+
+================================================================
+
+STEP 2: Edit frontend/android/app/build.gradle
+
+BEFORE:
+  versionCode 17
+  versionName "1.0.17"
+
+AFTER:
+  versionCode 18
+  versionName "1.0.18"
+
+================================================================
+
+VERIFY BEFORE COMMIT
+--------------------
+
+1. git status --short
+   Must show 16 files:
+   M frontend/android/app/build.gradle
+   M frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+   M frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+   M frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+   M frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+   M frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+   M frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+   M frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+   M frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+   M frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+   M frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+   M frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+   M frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+   M frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+   M frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+   M frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+   ?? scripts/regenerate_android_icons.py (new file)
+
+2. grep -n "versionCode\|versionName" frontend/android/app/build.gradle
+   Must show: versionCode 18 / versionName "1.0.18"
+
+3. Open any regenerated foreground PNG in a viewer — B should
+   look noticeably smaller and centered compared to what was
+   there before.
+
+COMMIT
+------
+  git add scripts/regenerate_android_icons.py frontend/android/app/
+  git commit -m "fix(android): shrink B logo 75%→50% + composite legacy icons + v1.0.18
+
+Adaptive icon foreground had B occupying ~75% of canvas, making it
+look cramped inside launcher masks on Samsung/Pixel. Regenerated all
+5 mipmap foreground PNGs with B at ~50% centered on transparent bg.
+Also regenerated legacy ic_launcher[_round].png compositing B over
+#323A4E background with rounded/circle masks for pre-adaptive launchers.
+
+Version bump required: Play Console already has AAB versionCode 17.
+
+- scripts/regenerate_android_icons.py: reproducible regen from source PNG
+- 15 mipmap PNGs regenerated (5 densities × 3 variants)
+- versionCode 17→18, versionName 1.0.17→1.0.18"
+
+DO NOT PUSH. Zahi runs ./deploy.sh --prod from Replit shell.
+After that, Zahi runs ./ship.sh on Mac to pull + open Android Studio
+for the native build (Android only — iOS unchanged).
