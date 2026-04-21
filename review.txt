@@ -1,138 +1,479 @@
-================================================================
-CORS fix for iOS Capacitor WebView
-סטטוס: ✅ הושלם, commit מקומי, לא נדחף
-================================================================
+=================================================================
+REVIEW — Follow-up fix to #395 (Android Kotlin plugin + JDK 21)
+Generated: 2026-04-21 18:19:32 UTC
+Base: 97f3c33 (feat(#395): Android OTP autofill via in-house SMS Retriever plugin)
+HEAD: 7eed308068fccf43cf6f000c584bdf8365388f16 (Update Java version to 21 for improved performance)
+=================================================================
 
-Commit SHA: 712028b
-Branch:     main (LOCAL ONLY — git push לא הורץ)
-Parent:     2fe89dd (Step 2 — native Apple Sign-In)
+## COMMITS IN THIS FOLLOW-UP
+7eed308 Update Java version to 21 for improved performance
+f3cb484 fix(#395): add Kotlin Gradle plugin so SmsRetrieverPlugin.kt compiles
+55e83a9 Add system to automatically retrieve SMS verification codes on Android
 
-================================================================
-1. שינוי הקוד (backend/server.py)
-================================================================
+## OVERALL DIFF STAT (97f3c33..HEAD)
+ .agents/agent_assets_metadata.toml | 6 ++++++
+ frontend/android/app/build.gradle  | 7 +++++--
+ frontend/android/build.gradle      | 4 +++-
+ replit.nix                         | 1 +
+ 4 files changed, 15 insertions(+), 3 deletions(-)
 
-$ git diff HEAD~1 HEAD -- backend/server.py
-@@ -1383,7 +1383,13 @@
- app.add_middleware(GZipMiddleware, minimum_size=500)
+=================================================================
+## COMMIT 1 of 2 — f3cb484
+=================================================================
+f3cb48454157f6b73f62836dcb382b9343295983
+zahis10 <zahis10@gmail.com>
+Tue Apr 21 18:15:38 2026 +0000
 
--_cors_default = 'https://app.brikops.com,https://www.brikops.com' if APP_MODE == 'prod' else '*'
-+_cors_default = (
-+    'https://app.brikops.com,'
-+    'https://www.brikops.com,'
-+    'capacitor://localhost,'
-+    'ionic://localhost,'
-+    'https://localhost'
-+) if APP_MODE == 'prod' else '*'
- app.add_middleware(
-     CORSMiddleware,
-     allow_credentials=True,
+fix(#395): add Kotlin Gradle plugin so SmsRetrieverPlugin.kt compiles
 
-5 origins סה״כ ב-prod, בדיוק לפי המפרט. אין שינוי לא ל-
-allow_credentials, לא ל-SecurityHeadersMiddleware, ולא ל-CSP.
+Project was pure Java until #395 added the first .kt file.
+Apply kotlin-android + add kotlin-gradle-plugin classpath so
+SmsRetrieverPlugin.kt is compiled to bytecode. Bump versionCode
+16->17 (16 was consumed by failed build attempt on Mac).
 
-================================================================
-2. בדיקת CORS_ORIGINS Secret ב-Replit
-================================================================
+- frontend/android/build.gradle: ext.kotlin_version + classpath
+- frontend/android/app/build.gradle: apply kotlin-android + stdlib
+- versionCode 16->17, versionName 1.0.16->1.0.17
 
-ביקשתי מהפלטפורמה לבדוק:
-  CORS_ORIGINS  → ❌ לא קיים (אין override)
-  APP_MODE      → ✅ קיים (prod ב-production, dev ב-development)
+Verified in Replit: ./gradlew :app:tasks shows buildKotlinToolingMetadata
+and checkKotlinGradlePluginConfigurationErrors registered (BUILD SUCCESSFUL
+in 26s), confirming kotlin-android plugin is applied. The earlier
+compileReleaseKotlin error was 'SDK location not found' (Android SDK
+absent from Replit), not a Kotlin plugin issue — on Mac with the SDK
+present, compileReleaseKotlin will produce SmsRetrieverPlugin.class
+and MainActivity.java will resolve the symbol.
 
-✅ אין צורך לעדכן Secret. כיוון שאין `CORS_ORIGINS`, הקוד יקרא
-   את ה-default החדש שכתבתי (5 origins).
 
-⚠️ אם בעתיד מישהו יוסיף את ה-Secret הזה — חייב לכלול את כל 5
-   ה-origins אחרת iOS ייכשל שוב.
+----- DIFF (f3cb484^..f3cb484) -----
+diff --git a/frontend/android/app/build.gradle b/frontend/android/app/build.gradle
+index 89ccb20..1ac450e 100644
+--- a/frontend/android/app/build.gradle
++++ b/frontend/android/app/build.gradle
+@@ -1,4 +1,5 @@
+ apply plugin: 'com.android.application'
++apply plugin: 'kotlin-android'
+ 
+ android {
+     namespace "com.brikops.app"
+@@ -7,8 +8,8 @@ android {
+         applicationId "com.brikops.app"
+         minSdkVersion rootProject.ext.minSdkVersion
+         targetSdkVersion rootProject.ext.targetSdkVersion
+-        versionCode 16
+-        versionName "1.0.16"
++        versionCode 17
++        versionName "1.0.17"
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+         aaptOptions {
+              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+@@ -37,6 +38,8 @@ dependencies {
+     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+     implementation 'androidx.core:core:1.15.0'
+     implementation project(':capacitor-android')
++    // Kotlin stdlib (#395 follow-up — required for SmsRetrieverPlugin.kt to compile)
++    implementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlin_version"
+     // SMS Retriever API (#395 — Android OTP autofill, no READ_SMS permission)
+     implementation 'com.google.android.gms:play-services-auth:21.3.0'
+     implementation 'com.google.android.gms:play-services-auth-api-phone:18.1.0'
+diff --git a/frontend/android/build.gradle b/frontend/android/build.gradle
+index f1b3b0e..bd360ff 100644
+--- a/frontend/android/build.gradle
++++ b/frontend/android/build.gradle
+@@ -1,7 +1,8 @@
+ // Top-level build file where you can add configuration options common to all sub-projects/modules.
+ 
+ buildscript {
+-    
++    ext.kotlin_version = '1.9.25'
++
+     repositories {
+         google()
+         mavenCentral()
+@@ -9,6 +10,7 @@ buildscript {
+     dependencies {
+         classpath 'com.android.tools.build:gradle:8.7.2'
+         classpath 'com.google.gms:google-services:4.4.2'
++        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+ 
+         // NOTE: Do not place your application dependencies here; they belong
+         // in the individual module build.gradle files
 
-================================================================
-3. אימות פרסינג של ה-default
-================================================================
+=================================================================
+## COMMIT 2 of 2 — 7eed308
+=================================================================
+7eed308068fccf43cf6f000c584bdf8365388f16
+zahis10 <54837571-zahis10@users.noreply.replit.com>
+Tue Apr 21 18:16:01 2026 +0000
 
-$ python3 -c "<simulate APP_MODE=prod>"
-output:
-  'https://app.brikops.com'
-  'https://www.brikops.com'
-  'capacitor://localhost'
-  'ionic://localhost'
-  'https://localhost'
+Update Java version to 21 for improved performance
 
-✅ 5 שורות, כל אחת origin תקפה. אין רווחים מיותרים, אין פסיק
-מיותר בסוף.
+Update the Java Development Kit version to 21 in the project configuration.
 
-================================================================
-4. TEST 1 — curl OPTIONS preflight (מקומי על Replit)
-================================================================
+Replit-Commit-Author: Agent
+Replit-Commit-Session-Id: 6a9b73f4-23fe-4848-a20a-693ca75817a2
+Replit-Commit-Checkpoint-Type: full_checkpoint
+Replit-Commit-Event-Id: b3f1e6c7-1425-4017-80fe-affcdc7db507
+Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/1cee46ff-369f-4827-bc32-71cdcce76566/6a9b73f4-23fe-4848-a20a-693ca75817a2/vXo8Cze
+Replit-Helium-Checkpoint-Created: true
 
-הערה חשובה: האפליקציה ב-Replit רצה ב-`APP_MODE=dev`, שם
-ה-default הוא `*` ולא הרשימה החדשה. לכן curl מקומי מוכיח שה-
-middleware פועל ושהקוד נטען בלי שגיאות, אבל **לא** מוכיח שה-
-allowlist של prod עובד. את זה אפשר לאמת רק אחרי שתפרוס ל-AWS.
 
-ריצה אחרי restart_workflow (Start application):
+----- DIFF (7eed308^..7eed308) -----
+diff --git a/replit.nix b/replit.nix
+index f112c8d..a68414b 100644
+--- a/replit.nix
++++ b/replit.nix
+@@ -1,5 +1,6 @@
+ {pkgs}: {
+   deps = [
++    pkgs.openjdk21
+     pkgs.cairo
+   ];
+ }
 
-  curl -i -X OPTIONS http://localhost:5000/auth/login \
-    -H "Origin: capacitor://localhost" \
-    -H "Access-Control-Request-Method: POST" \
-    -H "Access-Control-Request-Headers: content-type,authorization"
+=================================================================
+## FULL CURRENT CONTENT OF EVERY CHANGED FILE (after both commits)
+=================================================================
 
-  HTTP/1.1 200 OK
-  access-control-allow-credentials: true
-  access-control-allow-origin: capacitor://localhost     ✅
-  access-control-allow-headers: content-type,authorization
-  access-control-allow-methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+--- FILE: .agents/agent_assets_metadata.toml ---
+uploads = []
+generated = []
 
-בדקתי גם את שאר ה-origins על אותו backend מקומי:
+[[outputs]]
+id = "kvOenhCVwxPYRIqYSU0Vf"
+uri = "file://brikops-source.zip"
+type = "unspecified"
+title = "BrikOps Source Code (March 11, 2026)"
 
-  Origin: ionic://localhost      → allow-origin: ionic://localhost      ✅
-  Origin: https://localhost      → allow-origin: https://localhost      ✅
-  Origin: https://app.brikops.com → allow-origin: https://app.brikops.com ✅
+[[outputs]]
+id = "o-uOOYY9SpJm7-IRckVbJ"
+uri = "file://WEEKLY_CHANGELOG.md"
+type = "text"
+title = "Weekly Changelog (March 4-11, 2026)"
 
-המידלוור מחזיר את ה-Origin הנכון בכל המקרים, ה-credentials מופעל.
+[[outputs]]
+id = "AWBwNTn8NTAzcXNCYDixT"
+uri = "file://brikops-slim.zip"
+type = "unspecified"
+title = "BrikOps Source Code (8.2MB)"
 
-================================================================
-5. מה שיקרה אחרי שתפרוס (TEST 1 על api.brikops.com)
-================================================================
+[[outputs]]
+id = "GYLksbxKV7S1clpc_ExyA"
+uri = "file://SECURITY_AUDIT_REPORT.md"
+type = "text"
+title = "BrikOps Security Audit Report"
 
-הרץ אצלך אחרי `./deploy.sh --prod` והדeploy ל-AWS:
+[[outputs]]
+id = "dgCS26DyHIqCarOkDhll3"
+uri = "file://review-88a.txt"
+type = "text"
+title = "review-88a.txt — Task #88a Code Review"
 
-  curl -i -X OPTIONS https://api.brikops.com/auth/login \
-    -H "Origin: capacitor://localhost" \
-    -H "Access-Control-Request-Method: POST" \
-    -H "Access-Control-Request-Headers: content-type,authorization"
+[[outputs]]
+id = "VfSkskaF3EWw0aTlG5wBd"
+uri = "file:///tmp/review-88b.txt"
+type = "text"
+title = "review-88b.txt — Task #88b Code Review"
 
-ציפייה:
-  HTTP/2 200
-  access-control-allow-origin: capacitor://localhost   ← זה הדבר הקריטי
-  access-control-allow-credentials: true
+[[outputs]]
+id = "PTg1uKFjr1xbzH6X-vsKE"
+uri = "file://review-88b.txt"
+type = "text"
+title = "review-88b.txt — Task #88b Code Review"
 
-❌ סימני כשל אם:
-  - אין שורת `access-control-allow-origin` בכלל → CORS עדיין חוסם
-  - הערך הוא `https://app.brikops.com` במקום `capacitor://localhost`
-    → סימן שמישהו הוסיף את הסקרט CORS_ORIGINS עם רשימה ישנה,
-       חזור לסעיף 2 ועדכן.
+[[outputs]]
+id = "q-CamLfzP94ALKtrO84rm"
+uri = "file://review-90.txt"
+type = "text"
+title = "review-90.txt — Task #90 Code Review"
 
-================================================================
-6. בדיקות סטריקטיות
-================================================================
-✅ שורה אחת בודדת ב-backend/server.py הוחלפה (1386→1389-1395)
-✅ allow_credentials=True לא נגוע
-✅ אין `*` ב-prod allowlist
-✅ CSP / SecurityHeadersMiddleware לא נגעו
-✅ אין origin נוסף מעבר ל-5 שצוינו במפרט
-✅ CORS_ORIGINS secret נבדק (לא קיים — אין override)
-✅ Workflow restart הצליח, האפליקציה עולה בלי שגיאות
-✅ git push — לא הורץ
+[[outputs]]
+id = "Iz3DefZA_5y3voOF4qkeY"
+uri = "file://review-89.txt"
+type = "text"
+title = "review-89.txt — Task #89 Code Review"
 
-================================================================
-7. דיווח לפי המפרט
-================================================================
-1. ✅ שורה 1386 (עכשיו 1389-1395) עודכנה.
-2. ✅ CORS_ORIGINS secret נבדק — לא קיים, אין צורך לעדכן.
-3. ✅ curl test הורץ מקומית (האפליקציה ב-dev mode, ראה הסבר
-      בסעיף 4) — middleware פועל, מחזיר את ה-Origin הנכון.
-      curl על https://api.brikops.com יעבוד אחרי deploy.
-4. ⏳ Deploy מחכה לך — תריץ `./deploy.sh --prod` מה-Mac.
+[[outputs]]
+id = "BXSLrEQenp0pS-npwJXgT"
+uri = "file://review-92.txt"
+type = "text"
+title = "Review Task #92 — PDF Generation Code Review"
 
-ROLLBACK: revert commit 712028b אם משהו נשבר אחרי deploy.
+[[outputs]]
+id = "UorJ02-eRdhHQp2jPMMiJ"
+uri = "file:///tmp/review-94.txt"
+type = "text"
+title = "review-94.txt"
 
-ממתין לאישור: ✅ Approve / 🔧 שינויים?
+[[outputs]]
+id = "LrcoviA7LHuZmOjnTSw3w"
+uri = "file://review-94.txt"
+type = "text"
+title = "review-94.txt"
+
+[[outputs]]
+id = "ocdrZig6YPfAjD1XCgrbr"
+uri = "file://review.txt"
+type = "text"
+title = "CORS fix — DONE (commit 712028b, ready to deploy)"
+
+[[outputs]]
+id = "WdwtqNCiZpAAlX9e9Sq9Z"
+uri = "file://review-107-final.txt"
+type = "text"
+title = "Task #107 — All Checks (Final)"
+
+[[outputs]]
+id = "Hhih25JjJ_C-9nXzhLTsl"
+uri = "file://review1.txt"
+type = "text"
+title = "#211 Handover Photo Annotation + Android Fixes — Full Diff (327 lines)"
+
+[[outputs]]
+id = "uGeCjGUZR8Wa5wgYvwdLd"
+uri = "file://review2.txt"
+type = "text"
+title = "#212 Contractor Proof Photo Annotation + Safety Fixes — Full Diff (139 lines)"
+
+[[outputs]]
+id = "-tFBL-wqdxD-rzS_5vwTn"
+uri = "file://review3.txt"
+type = "text"
+title = "review3.txt — דיפים Tasks #213-#215"
+
+[[outputs]]
+id = "j93L_Qy6er_ALi-5YJSPJ"
+uri = "file://security_report.txt"
+type = "text"
+title = "BrikOps Security Report — 294 Issues"
+
+[[outputs]]
+id = "3cBYpZ9RQYruAA4XvbLBj"
+uri = "file://brikops-context.txt"
+type = "text"
+title = "BrikOps Context — לצ'אט חדש"
+
+[[outputs]]
+id = "aKZetj3IBv-ZTxGuRajRA"
+uri = "file://CODEBASE_SUMMARY.md"
+type = "text"
+title = "BrikOps — Codebase Summary"
+
+[[outputs]]
+id = "r7MU_Jr0qH6pgSnPBl162"
+uri = "file://review_248_frontend.txt"
+type = "text"
+title = "Task #248 — Frontend Diff (380 lines, 5 files)"
+
+[[outputs]]
+id = "dMauyN9NYIsJWotlbNq6X"
+uri = "file://billing_bugs2_diff.txt"
+type = "text"
+title = "Billing Bugs #2 — Full Diff (Task #250)"
+
+[[outputs]]
+id = "moqFZUgKv_rc2bQ3f5Qaf"
+uri = "file://.local/review.txt"
+type = "text"
+title = "Wave 5 — commit 7eca1f7 (8 proof blocks)"
+
+[[outputs]]
+id = "Uttosn1CSRes5mf7KkA_R"
+uri = "file://review-276b.txt"
+type = "text"
+title = "#276b Social Login Frontend — Full Diff"
+
+[[outputs]]
+id = "jBFKu1Xd0hCZn5hd2L0ys"
+uri = "file://.local/ic_launcher_foreground_xxxhdpi.png"
+type = "image"
+title = "Android adaptive icon foreground (xxxhdpi 432×432)"
+
+[[outputs]]
+id = "PK5UMGCcFq2Cl_B1jpp7s"
+uri = "file://.local/review-phase1.txt"
+type = "text"
+title = "Phase 1 — pull + @capacitor/preferences (לא קומיט)"
+
+[[outputs]]
+id = "EDFBvT8q1uwrKOtWssInW"
+uri = "file://.local/review-phase2.txt"
+type = "text"
+title = "Wave 1 Phases 2-5 — commit d954be5 (8 proof blocks)"
+
+[[outputs]]
+id = "B4fRcQyFJPkGysmxx2BeP"
+uri = "file://.local/review-phase7-wave2.txt"
+type = "text"
+title = "Wave 2 — commit 9034aad (refreshed logo + extended D3-A hold)"
+
+[[outputs]]
+id = "pfVhCyGRUgjdawIHkwEZE"
+uri = "file://.local/review-phase7-wave2b.txt"
+type = "text"
+title = "Wave 2b — commit 964c719 (BrikSplash owns its own lifecycle)"
+
+[[outputs]]
+id = "k7nwQ0YPtJ91ofbfe-D_L"
+uri = "file://.local/review-phase7-wave2c.txt"
+type = "text"
+title = "Wave 2c — commit 6c982d7 (build tag on splash, diagnostic)"
+
+[[outputs]]
+id = "Kap0FoM8gxlUDjb3ozLjR"
+uri = "file://.local/review-phase7-wave2d.txt"
+type = "text"
+title = "Wave 2d — commit d7ea3cf (orange logo + Capgo autoUpdate + native-change guard)"
+
+[[outputs]]
+id = "ZIFUepo-oSQm7hhl29j7U"
+uri = "file://.local/review-393-login-ux.txt"
+type = "text"
+title = "Task #393 — commit 8055d22 (login UX: no auto-keyboard + Web OTP autofill)"
+
+[[outputs]]
+id = "9Jfz3vQ9ZdkSMnxP2vVWF"
+uri = "file://.local/review-394-ios-otp-autofill.txt"
+type = "text"
+title = "Task #394 — commit 9e26e67 (iOS OTP autofill: Associated Domains + AASA)"
+
+[[outputs]]
+id = "fb7inUlLBqi_2dBwdlWjH"
+uri = "file://.local/review-395-android-sms-retriever.txt"
+type = "text"
+title = "Review #395 — Android OTP Autofill (9 Proofs)"
+--- END FILE: .agents/agent_assets_metadata.toml ---
+
+--- FILE: frontend/android/app/build.gradle ---
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace "com.brikops.app"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.brikops.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 17
+        versionName "1.0.17"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation 'androidx.core:core:1.15.0'
+    implementation project(':capacitor-android')
+    // Kotlin stdlib (#395 follow-up — required for SmsRetrieverPlugin.kt to compile)
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlin_version"
+    // SMS Retriever API (#395 — Android OTP autofill, no READ_SMS permission)
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
+    implementation 'com.google.android.gms:play-services-auth-api-phone:18.1.0'
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+--- END FILE: frontend/android/app/build.gradle ---
+
+--- FILE: frontend/android/build.gradle ---
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    ext.kotlin_version = '1.9.25'
+
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.2'
+        classpath 'com.google.gms:google-services:4.4.2'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+apply from: "variables.gradle"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+--- END FILE: frontend/android/build.gradle ---
+
+--- FILE: replit.nix ---
+{pkgs}: {
+  deps = [
+    pkgs.openjdk21
+    pkgs.cairo
+  ];
+}
+--- END FILE: replit.nix ---
+
+=================================================================
+## VERIFICATION RUN ON REPLIT
+=================================================================
+1. java -version:
+openjdk version "21.0.7" 2025-04-15
+OpenJDK Runtime Environment (build 21.0.7+6-nixos)
+OpenJDK 64-Bit Server VM (build 21.0.7+6-nixos, mixed mode, sharing)
+
+2. ./gradlew --version (excerpt):
+   Gradle 8.11.1 / Kotlin 2.0.20 / Launcher JVM 21.0.7
+
+3. ./gradlew :app:tasks  (proves kotlin-android plugin applied):
+   BUILD SUCCESSFUL in 26s
+   - buildKotlinToolingMetadata task registered
+   - checkKotlinGradlePluginConfigurationErrors task registered
+
+4. ./gradlew :app:compileReleaseKotlin failed only on:
+   'SDK location not found. Define a valid SDK location with an
+    ANDROID_HOME environment variable...'
+   This is expected — Android SDK is not installable on Replit.
+   On Mac with the SDK present, compileReleaseKotlin will produce
+   SmsRetrieverPlugin.class and MainActivity.java will resolve the
+   symbol cleanly.
+
+=================================================================
+END OF REVIEW
+=================================================================

@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "CORS fix — DONE (commit 712028b, ready to deploy)"
+title = "Review — Follow-up fix לסעיף #395 (Kotlin plugin + JDK 21)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
