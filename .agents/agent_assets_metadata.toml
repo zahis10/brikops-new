@@ -204,3 +204,21 @@ id = "fb7inUlLBqi_2dBwdlWjH"
 uri = "file://.local/review-395-android-sms-retriever.txt"
 type = "text"
 title = "Review #395 — Android OTP Autofill (9 Proofs)"
+
+[[outputs]]
+id = "RtjVuDC-J0JLsueQg_Pn3"
+uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+type = "image"
+title = "ic_launcher.png xxxhdpi (B at ~37% of canvas, composited over #323A4E)"
+
+[[outputs]]
+id = "vVoVL7MRRa-PLLcTiLWy2"
+uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png"
+type = "image"
+title = "ic_launcher_round.png xxxhdpi (circular mask)"
+
+[[outputs]]
+id = "pZGm3qlpZoA8zgNDOJyMT"
+uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png"
+type = "image"
+title = "ic_launcher_foreground.png xxxhdpi (transparent bg, adaptive layer)"
