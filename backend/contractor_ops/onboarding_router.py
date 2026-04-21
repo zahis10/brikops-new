@@ -230,7 +230,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             logger.warning(f"[OTP-AUDIT] event=otp_throttled phone={masked} ip={client_ip} reason=send_phone_limit rid={request_id}")
             raise HTTPException(status_code=429, detail='נא לנסות שוב מאוחר יותר.')
 
-        result = await otp.request_otp(req.phone_e164)
+        result = await otp.request_otp(req.phone_e164, platform=req.platform or 'web')
 
         if not result.get('success'):
             error_type = result.get('error', '')
@@ -252,7 +252,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
         if plain_code and not result.get('idempotent'):
             background_tasks.add_task(
-                otp.deliver_otp_background, req.phone_e164, plain_code, rid
+                otp.deliver_otp_background, req.phone_e164, plain_code, rid, req.platform or 'web'
             )
 
         logger.info(
@@ -1742,6 +1742,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
     class SocialSendOtpRequest(BaseModel):
         session_token: str
         phone: Optional[str] = None
+        platform: Optional[str] = None
 
     class SocialVerifyOtpRequest(BaseModel):
         session_token: str
@@ -1949,7 +1950,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             raise HTTPException(status_code=400, detail="flow לא חוקי")
 
         otp = get_otp()
-        result = await otp.request_otp(phone)
+        result = await otp.request_otp(phone, platform=body.platform or 'web')
 
         if not result["success"]:
             error = result.get("error", "")
@@ -1962,7 +1963,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         plain_code = result.pop('_code', None)
         rid = result.get('rid', '')
         if plain_code and not result.get('idempotent'):
-            background_tasks.add_task(otp.deliver_otp_background, phone, plain_code, rid)
+            background_tasks.add_task(otp.deliver_otp_background, phone, plain_code, rid, body.platform or 'web')
 
         return {
             "status": "otp_sent",

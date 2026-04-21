@@ -576,7 +576,10 @@ export const configService = {
 
 export const onboardingService = {
   async requestOtp(phone_e164) {
-    const response = await axios.post(`${API}/auth/request-otp`, { phone_e164 }, { timeout: 10000 });
+    // #395 — pass platform so backend can pick Android SMS Retriever format on Android builds
+    let platform;
+    try { platform = (await import('@capacitor/core')).Capacitor.getPlatform(); } catch (_e) { platform = 'web'; }
+    const response = await axios.post(`${API}/auth/request-otp`, { phone_e164, platform }, { timeout: 10000 });
     const data = response.data;
     if (response.status === 200 && data?.success === true) {
       return data;
@@ -602,9 +605,13 @@ export const onboardingService = {
     return res.data;
   },
   socialSendOtp: async (sessionToken, phone = null) => {
+    // #395 — pass platform so backend can pick Android SMS Retriever format on Android builds
+    let platform;
+    try { platform = (await import('@capacitor/core')).Capacitor.getPlatform(); } catch (_e) { platform = 'web'; }
     const res = await axios.post(`${API}/auth/social/send-otp`, {
       session_token: sessionToken,
       phone: phone || undefined,
+      platform,
     }, { timeout: 10000 });
     return res.data;
   },

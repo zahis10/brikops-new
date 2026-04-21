@@ -450,6 +450,7 @@ class JoinRequestStatus(str, Enum):
 
 class OTPRequest(BaseModel):
     phone_e164: str
+    platform: Optional[str] = None
 
 
 class OTPVerify(BaseModel):

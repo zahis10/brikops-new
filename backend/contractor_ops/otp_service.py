@@ -72,7 +72,7 @@ class OTPService:
         except Exception as e:
             logger.warning(f"[OTP-METRIC] Failed to log {event}: {e}")
 
-    async def request_otp(self, phone_e164):
+    async def request_otp(self, phone_e164, platform: str = 'web'):
         t_total = _time.perf_counter()
         now = datetime.now(timezone.utc)
         rid = str(uuid.uuid4())[:8]
@@ -155,6 +155,7 @@ class OTPService:
             'created_at': now.isoformat(),
             'delivery_status': 'queued',
             'channel_used': 'pending',
+            'platform': platform,
         }
         await self.db.otp_codes.insert_one(otp_doc)
 
@@ -179,7 +180,7 @@ class OTPService:
 
         return result
 
-    async def deliver_otp_background(self, phone_e164: str, code: str, rid: str):
+    async def deliver_otp_background(self, phone_e164: str, code: str, rid: str, platform: str = 'web'):
         masked = mask_phone(phone_e164)
         channel_used = 'stub'
         delivery_status = 'sent'
@@ -207,8 +208,21 @@ class OTPService:
                     )
                     await self._log_metric('otp_verify_failed', phone_e164, {'reason': 'sms_not_configured', 'rid': rid})
                 else:
-                    text = f"BrikOps: קוד האימות שלך הוא {code}. בתוקף {self.ttl_seconds // 60} דקות.\n\n@app.brikops.com #{code}"
-                    logger.info(f"[OTP] rid={rid} sending SMS to {masked}")
+                    android_app_hash = os.getenv('ANDROID_APP_HASH', '').strip()
+                    if platform == 'android' and android_app_hash:
+                        # Android SMS Retriever API format: <#> prefix + 11-char app hash on last line.
+                        # Google Play Services delivers ONLY this SMS to the app, no permissions needed.
+                        text = (
+                            f"<#> BrikOps: קוד האימות שלך הוא {code}. "
+                            f"בתוקף {self.ttl_seconds // 60} דקות.\n\n{android_app_hash}"
+                        )
+                    else:
+                        # iOS / web format: trailing @domain #code is the iOS Associated Domains autofill marker.
+                        text = (
+                            f"BrikOps: קוד האימות שלך הוא {code}. "
+                            f"בתוקף {self.ttl_seconds // 60} דקות.\n\n@app.brikops.com #{code}"
+                        )
+                    logger.info(f"[OTP] rid={rid} sending SMS to {masked} platform={platform}")
 
                     t_sms = _time.perf_counter()
                     result = await self.sms_client.send_sms(phone_e164, text, context='otp')

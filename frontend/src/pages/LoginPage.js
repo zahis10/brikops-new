@@ -10,6 +10,7 @@ import { canonicalE164, isValidIsraeliMobile } from '../utils/phoneUtils';
 import { Capacitor } from '@capacitor/core';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 import useOtpAutofill from '../hooks/useOtpAutofill';
+import useAndroidSmsRetriever from '../hooks/useAndroidSmsRetriever';
 
 const ENABLE_REGISTER_MANAGEMENT_REDIRECTS =
   process.env.REACT_APP_ENABLE_REGISTER_MANAGEMENT_REDIRECTS === 'true';
@@ -67,6 +68,8 @@ const LoginPage = () => {
 
   useOtpAutofill(setOtpCode);
   useOtpAutofill(setSocialOtp);
+  useAndroidSmsRetriever(setOtpCode);
+  useAndroidSmsRetriever(setSocialOtp);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/config/features`)
