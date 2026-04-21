@@ -96,3 +96,6 @@ backend/uploads/
 backend/document_vault/
 backend/reports/
 **/node_modules/
+
+# Claude Code local state — never commit worktrees or agent scratch
+.claude/
