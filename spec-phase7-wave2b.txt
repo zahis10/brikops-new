@@ -1,0 +1,172 @@
+# #386 — Phase 7 Wave 2b: BrikSplash Owns Its Own Lifecycle
+
+## What & Why
+After Wave 2 deployed, the extended D3-A hold (3600ms) didn't actually appear on
+phones because BrikSplash is currently rendered as a Suspense fallback / loading
+gate. When AuthContext resolves (which happens in ~30ms when a cached token exists
+in iOS Keychain), the parent unmounts BrikSplash instantly — D3-A's 3600ms timer
+never completes, so users see no splash at all.
+
+This wave makes BrikSplash control its OWN lifecycle:
+- Always mounts when the app boots
+- Renders the splash overlay for a guaranteed minimum duration (D3-A: 3600ms,
+  D2: 800ms) regardless of how fast auth resolves
+- Only after BOTH (a) minimum time elapsed AND (b) children are ready, reveals
+  the app content underneath
+
+## Done looks like
+- Fresh install on iPhone → open app → see D3-A brick assembly for full 3600ms
+  even if auth resolves in 30ms
+- Second launch same day → see D2 splash for full 800ms
+- No flash of login page before splash
+- No empty white screen
+- Android behavior unchanged or improved (should also honor the minimum now)
+- Splash dismisses smoothly (fade) at the right moment, not abruptly
+
+## Out of scope
+- No changes to D3-A brick animation visuals
+- No changes to D2 daily splash visuals
+- No changes to BrikMark logo
+- No changes to LAST_SEEN_VERSION_KEY
+- No changes to native splash assets (iOS LaunchScreen, Android splash drawable)
+- No changes to versionCode / versionName
+- No navigation changes
+
+## STEP 0 — INVESTIGATE FIRST (critical)
+
+Before writing any code, run these and PASTE the output:
+
+  grep -n "BrikSplash" frontend/src/App.js
+  grep -n "LoadingSpinner\|ConnectingScreen" frontend/src/App.js
+  grep -n "Suspense\|fallback" frontend/src/App.js
+  cat frontend/src/components/splash/BrikSplash.jsx
+  cat frontend/src/components/splash/D3ABrickAssembly.jsx
+  cat frontend/src/components/splash/D2DailySplash.jsx
+
+Report: exactly how BrikSplash is currently mounted in App.js. Is it:
+(a) rendered inside LoadingSpinner which is a Suspense fallback?
+(b) rendered conditionally based on an isLoading boolean from AuthContext?
+(c) something else?
+
+DO NOT write any code until you report the current mount pattern and get
+approval on the approach.
+
+## Tasks
+
+### Task 1 — Refactor BrikSplash.jsx to be a wrapper, not a fallback
+
+frontend/src/components/splash/BrikSplash.jsx should accept `children` and
+render an OVERLAY on top of them until the splash lifecycle completes.
+
+New contract:
+- Prop: `children` (the actual app content — routes, etc.)
+- Prop (optional): `isAppReady` — boolean; parent can signal "app is ready to
+  reveal" (e.g. auth context resolved, critical data loaded). If omitted, treat
+  as always true after mount.
+- Internal state: `minTimeElapsed` (boolean) — set via setTimeout
+- Internal state: `mode` — 'D2' or 'D3-A' (determined by reading the version
+  from Preferences, as already implemented)
+- Effect: on mount, start a setTimeout of 3600ms for D3-A mode, 800ms for D2 mode
+- Effect: on mount OR when the timeout fires, set `minTimeElapsed = true`
+- Render logic:
+  - If `!minTimeElapsed || !isAppReady` → render the splash overlay (D2 or D3-A)
+  - Else → render `children`
+
+Use a brief fade-out transition (200–300ms) when switching from overlay to
+children so it's not an abrupt cut.
+
+### Task 2 — Wire BrikSplash as a wrapper in App.js
+
+frontend/src/App.js should now wrap the main app (or at least the routed
+content) with <BrikSplash> instead of showing it inside a Suspense fallback.
+
+If the existing structure is:
+  {isLoading ? <LoadingSpinner/> : <Routes ... />}
+
+Change to:
+  <BrikSplash isAppReady={!isLoading}>
+    <Routes ... />
+  </BrikSplash>
+
+Or if Suspense fallback:
+  <Suspense fallback={<LoadingSpinner/>}>
+    <Routes ... />
+  </Suspense>
+
+Change to:
+  <BrikSplash>
+    <Suspense fallback={null}>
+      <Routes ... />
+    </Suspense>
+  </BrikSplash>
+
+Note: the exact wiring depends on the current structure you discover in
+STEP 0. Propose your exact diff before implementing.
+
+### Task 3 — Remove or simplify LoadingSpinner / ConnectingScreen
+
+If LoadingSpinner / ConnectingScreen were previously rendering BrikSplash
+internally, they should either:
+- Be deleted entirely (if they had no other purpose)
+- Or reduced to tiny placeholders that never show BrikSplash anymore
+
+Don't leave dead references to BrikSplash inside LoadingSpinner.
+
+### Task 4 — D3-A should still call onComplete at 3600ms
+
+frontend/src/components/splash/D3ABrickAssembly.jsx already has
+`setFading` at 3100ms and `completeTimer` at 3600ms. These should stay as-is.
+
+When `onComplete` fires, BrikSplash should:
+- Either set an internal "animationFinished" flag and fade to children
+- Or rely on `minTimeElapsed` (which should fire ~at the same time)
+
+Make sure these don't race — the splash should NOT dismiss before D3-A's fade
+visual completes.
+
+### Task 5 — Build + single commit + review.txt
+
+1. Run `yarn build` — must exit 0 with no new warnings
+2. Commit: `feat(#386) Phase 7 Wave 2b: BrikSplash owns minimum display time`
+3. Create `.local/review-phase7-wave2b.txt` with these proof blocks:
+
+   PROOF #1 — `git log -1 --oneline`
+   PROOF #2 — `git show --stat HEAD` (expected files: BrikSplash.jsx,
+              App.js, possibly LoadingSpinner.js or similar)
+   PROOF #3 — full diff of frontend/src/components/splash/BrikSplash.jsx
+              showing it now accepts children and has internal timer
+   PROOF #4 — full diff of frontend/src/App.js showing new wrapper pattern
+   PROOF #5 — `grep -n "Suspense\|fallback" frontend/src/App.js` showing
+              BrikSplash is NOT inside a fallback anymore
+   PROOF #6 — `grep -n "setTimeout\|minTimeElapsed\|3600\|800" frontend/src/components/splash/BrikSplash.jsx`
+              showing the internal timer exists
+   PROOF #7 — `yarn build` tail (last 20 lines, must show "Compiled successfully")
+
+Present the review file so Zahi can verify before deploy.
+
+## DO NOT
+- DO NOT run `./deploy.sh` or `./ship.sh`
+- DO NOT git push to origin
+- DO NOT change D3-A brick animation or any visuals
+- DO NOT change the Preferences key (`brikops_last_seen_version_v2` stays)
+- DO NOT introduce new npm/yarn dependencies
+- DO NOT modify BrikMark/BrikWordmark/BlueprintGrid/RadialGlow
+- DO NOT touch native splash assets (iOS LaunchScreen.storyboard,
+  Android splash.xml / splash.png)
+- DO NOT bump versionCode or versionName
+- DO NOT try to "fix" the architecture more broadly — this spec is
+  scoped to BrikSplash owning its own lifecycle, nothing else
+
+## VERIFY (for Zahi, after deploy)
+1. After Zahi runs `./deploy.sh --prod` and force-closes iPhone app:
+   - First open after OTA → sees D3-A for full ~3.6s
+   - Second open same day → sees D2 for full ~0.8s
+   - No login flash before splash
+
+## Relevant files
+- frontend/src/components/splash/BrikSplash.jsx — main refactor
+- frontend/src/App.js — rewire BrikSplash as wrapper
+- frontend/src/components/splash/D3ABrickAssembly.jsx — read-only, confirm timers
+- frontend/src/components/splash/D2DailySplash.jsx — read-only, no changes
+- Possibly: frontend/src/components/LoadingSpinner*.js or
+  frontend/src/components/ConnectingScreen*.js — delete/simplify

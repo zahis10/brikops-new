@@ -1,0 +1,321 @@
+# #391 — Phase 7 Wave 2d: Logo color + Capgo autoUpdate + native-change guard
+
+## What & Why
+After Wave 2c (the diagnostic build tag) shipped successfully, two things
+are now clear from Zahi's iPhone + app.brikops.com screenshot:
+
+1. **Logo is white where it should be orange.** On `app.brikops.com` the
+   D2 daily splash renders the BrikMark "B" in white (`#fff`) instead of
+   the brand orange (`#F59E0B`). The accent + "Ops" text are already
+   orange — only the main mark is wrong.
+
+2. **Capgo OTA is silently disabled on the installed iOS app.** Root
+   cause confirmed: `frontend/capacitor.config.json` has never contained
+   a `plugins.CapacitorUpdater` block. In Capgo v7, without an explicit
+   `autoUpdate: true`, the plugin does NOT check for updates on app
+   resume. Result: Zahi's iPhone is stuck on bundle 1.0.11, ignoring
+   every bundle we've uploaded since (1.0.12–1.0.23).
+
+This wave does three things in a single commit cycle:
+
+- (A) Fix the logo color.
+- (B) Add the missing Capgo config so future OTA deploys actually reach
+      the iPhone automatically.
+- (C) Remove the Wave 2c diagnostic `W2c · <sha>` tag from the splash —
+      its job is done.
+
+Plus a safety net to prevent this class of bug from silently recurring:
+
+- (D) Add a preflight warning in `deploy.sh` that detects native-layer
+      changes (capacitor.config.json, Podfile, build.gradle, ios/,
+      android/) and reminds the operator that `./deploy.sh --prod` alone
+      is not enough — they must also run `./ship.sh` for native changes
+      to reach devices.
+- (E) Tighten the "2 modes" section in `CLAUDE.md` to make this rule
+      crystal clear.
+
+## Done looks like
+- After `./deploy.sh --prod`, `app.brikops.com` shows the BrikMark "B"
+  in orange `#F59E0B` on both initial paint and on return visits.
+- The `W2c · <sha>` tag no longer appears at the bottom of the splash.
+- `capacitor.config.json` contains a valid `plugins.CapacitorUpdater`
+  block with `autoUpdate: true` and `channel: "production"`.
+- Running `./deploy.sh` (dry-run, no args) with native-layer changes
+  staged/committed prints a BIG yellow warning block:
+  ```
+  ⚠️  NATIVE CHANGES DETECTED
+      Files touched: capacitor.config.json
+      ./deploy.sh --prod alone will NOT deliver these to iPhone/Android.
+      After this deploy, you MUST also run ./ship.sh on the Mac to
+      rebuild the native app and push it to TestFlight / Play Store.
+  ```
+  and continues execution normally (it does not block the deploy —
+  it only warns).
+- `CLAUDE.md` "2 מצבים בלבד" section has an expanded bullet list of
+  files that require mode 2 (`ship.sh`) — `capacitor.config.json`,
+  `package.json` with Capacitor plugin changes, anything under `ios/`
+  or `android/`, Podfile, build.gradle, versionCode/versionName.
+- No visual regression anywhere else. Brick animation, BrikWordmark,
+  blueprint grid, radial glow all unchanged.
+
+## Out of scope
+- No changes to `D3ABrickAssembly.jsx` visuals or `BrickAssembly` internals.
+- No changes to `BrikLogo.jsx` component (we only change the COLOR PROP
+  passed to BrikMark from D2DailySplash.jsx).
+- No new native dependencies. No pod install. No version bumps.
+- No changes to `.github/workflows/deploy-frontend-capgo.yml`.
+- No changes to Android config (the `CapacitorUpdater` block applies to
+  both platforms via `capacitor.config.json`; Android behavior is a
+  free side-benefit).
+- Do NOT add a Settings → About version indicator in this wave. That is
+  a future wave.
+- Do NOT run `./ship.sh` from Replit. That is Zahi's Mac action after
+  this wave deploys.
+
+## Tasks
+
+### Task 1 — Fix BrikMark color on D2 splash
+
+Edit `frontend/src/components/splash/D2DailySplash.jsx`, line 98:
+
+```diff
+-          <BrikMark size={88} color="#fff" accent="#F59E0B" withAccent/>
++          <BrikMark size={88} color="#F59E0B" accent="#fff" withAccent/>
+```
+
+Rationale: the main strokes of the B should be orange (brand color),
+and the small accent dot — which sits on a different part — can flip
+to white for subtle contrast. If after review Zahi prefers accent to
+stay orange, change only `color` and leave `accent="#F59E0B"`.
+
+Verify with `grep -n 'color=' frontend/src/components/splash/D2DailySplash.jsx`.
+
+### Task 2 — Remove the W2c diagnostic build tag from BrikSplash
+
+Revert the additions from commit `06d3901` in
+`frontend/src/components/splash/BrikSplash.jsx`:
+- Delete the two constants `BUILD_SHA` and `BUILD_TAG` near the top of
+  the file.
+- Delete the `<div>` that renders `{BUILD_TAG}` at the bottom of the
+  overlay.
+
+Keep every other line of BrikSplash.jsx exactly as Wave 2b left it.
+The `if (revealed) return children;` short-circuit, `minTimeElapsed`,
+`revealedRef`, `LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version_v2'`
+— all stay untouched.
+
+Verify with `grep -n 'W2c\|BUILD_TAG\|BUILD_SHA' frontend/src/` — should
+return zero matches.
+
+### Task 3 — Add Capgo autoUpdate config to capacitor.config.json
+
+Edit `frontend/capacitor.config.json`. Current content:
+
+```json
+{
+  "appId": "com.brikops.app",
+  "appName": "BrikOps",
+  "webDir": "build",
+  "ios": {
+    "allowsBackForwardNavigationGestures": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
+```
+
+Add a top-level `plugins` key:
+
+```json
+{
+  "appId": "com.brikops.app",
+  "appName": "BrikOps",
+  "webDir": "build",
+  "ios": {
+    "allowsBackForwardNavigationGestures": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": true,
+      "channel": "production"
+    }
+  }
+}
+```
+
+Do NOT reorder existing keys. Do NOT add any other plugin config in
+this wave. Validate the file is valid JSON:
+
+```bash
+python3 -m json.tool < frontend/capacitor.config.json > /dev/null && echo OK
+```
+
+### Task 4 — Add native-change guard to deploy.sh
+
+Edit `deploy.sh`. After the existing `check_files()` function populates
+`frontend_changed` / `backend_changed`, add a new detection for native
+changes. Use the SAME `check_files` infrastructure already in place.
+
+Approximate location: right after line 57 (`check_files < <(git diff ...)`
+blocks). Add a new local variable `native_changed=0` alongside the
+existing ones, and extend the `check_files` pattern matching to set it
+to 1 when any of these paths are touched:
+
+- `frontend/capacitor.config.json`
+- `frontend/ios/**`
+- `frontend/android/**`
+- `frontend/package.json` (only when the diff mentions `@capacitor`
+  or `@capgo` — a simple `git diff | grep -q "@capacitor\|@capgo"`
+  suffices)
+
+Then, in the "Deploy Status" echo block (around line 114–130, where
+the script currently prints "What will deploy:"), add right after the
+existing echos:
+
+```bash
+if [[ $native_changed -eq 1 ]]; then
+  echo
+  echo "⚠️  ═══════════════════════════════════════════════════"
+  echo "   NATIVE CHANGES DETECTED"
+  echo "   Files touched: capacitor.config.json / ios / android / capacitor plugins"
+  echo "   ./deploy.sh --prod alone will NOT deliver these to the"
+  echo "   installed iPhone/Android apps. After this deploy, you"
+  echo "   MUST also run ./ship.sh on the Mac to rebuild the native"
+  echo "   app and push to TestFlight / Play Store."
+  echo "   ═══════════════════════════════════════════════════"
+  echo
+fi
+```
+
+Keep it as a WARNING, not a block. The script must still proceed with
+the deploy if the operator confirms. Do NOT add an extra confirmation
+prompt — the existing `read -rp "Deploy to production? (y/N): "` at
+line 187 is sufficient.
+
+Also add the same warning block to the final "DEPLOY SUMMARY" section
+(around line 214+), right after the frontend/backend status lines, so
+the operator sees it one last time after the push completes.
+
+Verify by running (in Replit shell after the edit is committed but
+before deploy):
+
+```bash
+bash ./deploy.sh   # dry-run, should print the warning because this
+                   # very commit touches capacitor.config.json
+```
+
+### Task 5 — Tighten CLAUDE.md "2 מצבים" section
+
+Edit `CLAUDE.md` at repo root. The current "2 מצבים בלבד" section is
+good but the list of what counts as mode 2 is underspecified.
+
+Replace the current mode-2 bullet list with this expanded version
+(keep the heading and mode-1 section exactly as they are):
+
+```markdown
+### 2. שינוי native (דרוש ./ship.sh, לא רק ./deploy.sh)
+
+**כל אחד מהקבצים/התיקיות הבאים דורש שגם תריץ `./ship.sh` אחרי ה-`./deploy.sh`:**
+- `frontend/capacitor.config.json` — הגדרות פלטפורמה, פלאגינים, channels
+- כל מה שתחת `frontend/ios/` — Podfile, Info.plist, Swift, xcconfig, Assets.xcassets
+- כל מה שתחת `frontend/android/` — build.gradle, AndroidManifest.xml, Java/Kotlin, res/
+- `frontend/package.json` **אם** הוספת או הסרת פלאגין של Capacitor/Capgo
+- עדכון `versionCode` / `versionName`
+
+**למה?** כי הקבצים האלה נצרכים ע"י האפליקציה המקומפלת שכבר מותקנת אצלך באייפון/אנדרואיד. עדכון שלהם לא מועבר דרך Capgo OTA — הם דורשים בניה חדשה של האפליקציה + התקנה חדשה.
+
+**סימן זהירות:** אם ערכת אחד מהקבצים האלה ושכחת להריץ `./ship.sh`, האייפון שלך יישאר על הגרסה הישנה לנצח — בשקט, בלי שגיאה. `./deploy.sh --prod` מאז Wave 2d מזהה שינויים כאלה ומדפיס אזהרה צהובה, אבל לא חוסם את ה-push.
+
+```bash
+במק טרמינל:
+cd ~/brikops-new
+./ship.sh
+```
+
+הסקריפט עושה הכל לבד:
+- מסנכרן גיט (pull+push) — דואג שהמק מעודכן מול רפליט
+- מזהה מה השתנה (iOS / Android / שניהם)
+- פותח **רק** את ה-IDE שצריך (Xcode או Android Studio או שניהם)
+- אם אין שינוי native — לא פותח כלום, פשוט יוצא
+
+שם אני עושה Archive → Upload. וזהו.
+```
+
+Keep the "## כללים ברזל:" section at the bottom as is — don't touch.
+
+### Task 6 — Build, commit, review.txt
+
+1. Run `yarn build` inside `frontend/` — must exit 0.
+2. Single commit:
+   `feat(#391) Phase 7 Wave 2d: orange logo + Capgo autoUpdate + native-change guard`
+3. Create `.local/review-phase7-wave2d.txt` with these proof blocks:
+
+   - PROOF #1 — `git log -1 --oneline`
+   - PROOF #2 — `git show --stat HEAD` — expected files exactly:
+     `CLAUDE.md`, `deploy.sh`, `frontend/capacitor.config.json`,
+     `frontend/src/components/splash/BrikSplash.jsx`,
+     `frontend/src/components/splash/D2DailySplash.jsx`. NO others.
+   - PROOF #3 — `grep -n 'BrikMark' frontend/src/components/splash/D2DailySplash.jsx`
+     showing `color="#F59E0B"` (orange).
+   - PROOF #4 — `grep -n 'W2c\|BUILD_TAG\|BUILD_SHA' frontend/src/` — empty.
+   - PROOF #5 — `python3 -m json.tool < frontend/capacitor.config.json | tail -10`
+     showing the new `plugins.CapacitorUpdater` block.
+   - PROOF #6 — `grep -n 'NATIVE CHANGES DETECTED\|native_changed' deploy.sh`
+     showing the new guard block exists.
+   - PROOF #7 — `bash ./deploy.sh 2>&1 | grep -A 6 'NATIVE CHANGES'`
+     — must print the warning because this very commit touches
+     `frontend/capacitor.config.json`.
+   - PROOF #8 — `grep -n 'ship.sh\|./deploy.sh' CLAUDE.md | head -20`
+     showing the updated mode-2 section.
+   - PROOF #9 — `yarn build` tail (last 10 lines, must show success).
+
+Present the review file so Zahi can verify before deploy.
+
+## VERIFY (for Zahi, after deploy + ship)
+
+Stage 1 — after `./deploy.sh --prod` on Replit:
+1. Cloudflare Pages builds and serves `app.brikops.com`.
+2. Open `app.brikops.com` in a browser — see the BrikMark "B" in ORANGE.
+3. No `W2c · <sha>` tag at the bottom — clean splash.
+4. In Replit's deploy output, see the yellow `NATIVE CHANGES DETECTED`
+   warning block reminding to run `./ship.sh`.
+
+Stage 2 — then on Mac:
+5. `./ship.sh` → native sync picks up new `capacitor.config.json` →
+   Xcode opens.
+6. Archive + upload to TestFlight → install on iPhone.
+7. Force-close BrikOps → reopen. Should see the Wave 2b D3-A brick
+   animation for full ~3.6s (first open after this new install) or D2
+   daily splash for 800ms (subsequent opens).
+8. From now on, every future `./deploy.sh --prod` that touches
+   `frontend/src/**` will reach the iPhone automatically within ~1
+   minute of app resume — no native rebuild needed.
+
+## Relevant files
+- `frontend/src/components/splash/D2DailySplash.jsx` — logo color
+- `frontend/src/components/splash/BrikSplash.jsx` — remove W2c tag
+- `frontend/capacitor.config.json` — Capgo autoUpdate config
+- `deploy.sh` — native-change guard
+- `CLAUDE.md` — mode-2 documentation
+
+## DO NOT
+- DO NOT run `./deploy.sh` or `./ship.sh`
+- DO NOT git push
+- DO NOT modify `BrikLogo.jsx`, `D3ABrickAssembly.jsx`, `splash.css`
+- DO NOT modify `.github/workflows/deploy-frontend-capgo.yml`
+- DO NOT add any npm/yarn/pip dependency
+- DO NOT bump versionCode / versionName
+- DO NOT change `LAST_SEEN_VERSION_KEY`
+- DO NOT change the minimum-display-time constants (3600 / 800)
+- DO NOT touch native files directly (`ios/`, `android/`) — only
+  `capacitor.config.json` is edited; native sync happens later via
+  Zahi's `./ship.sh`
+- DO NOT add any Settings-page version indicator in this wave
+- DO NOT "also fix" anything else you notice along the way — report in
+  review.txt NOTES instead

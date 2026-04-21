@@ -1,0 +1,224 @@
+# #387 — Phase 7 Wave 2c: Build Tag on Splash (Diagnostic)
+
+## What & Why
+Wave 2b (BrikSplash owning its own lifecycle) was merged to main and Capgo
+bundle 1.0.22 was uploaded successfully via the GitHub Action
+`.github/workflows/deploy-frontend-capgo.yml`. But on Zahi's iPhone the new
+splash is NOT appearing — same behavior as before Wave 2b, as if the device
+is still running the old bundle. We need a **visible, unambiguous proof on
+the device itself** of which bundle is running, without relying on Safari
+Web Inspector (which Zahi cannot easily open).
+
+This wave adds a tiny, low-contrast build-tag overlay rendered INSIDE
+BrikSplash.jsx (so it is visible during both D2 and D3-A variants, and
+disappears with the splash). The tag shows the short git SHA baked into
+the bundle plus a wave identifier. If Zahi opens the app and sees
+`W2c · <sha>`, we know Capgo delivered the new bundle and the splash
+problem is something else in the React tree. If he sees nothing at all,
+we know Capgo didn't deliver.
+
+## Done looks like
+- After `./deploy.sh --prod` runs on Replit → a new bundle uploads to
+  Capgo production → Zahi force-closes BrikOps on iPhone → opens it.
+- At the bottom-center (or bottom-left, whichever doesn't clash with D3-A
+  animation) of the splash screen, a tiny text reads:
+  `W2c · abc1234` (where `abc1234` is the first 7 chars of the commit SHA).
+- The tag is ONLY visible while the splash is visible. It disappears
+  along with BrikSplash when the splash fades out.
+- The tag is visible on BOTH D2 (daily) and D3-A (version-bump) variants.
+- Font size ≤ 10px, opacity ≈ 0.45, color white — minimally invasive.
+- No visual regression to the brick animation, logo, or gradient
+  background.
+
+## Out of scope
+- No changes to the D3-A brick animation itself
+- No changes to the D2 skeleton/shimmer
+- No changes to the BrikMark logo
+- No changes to LAST_SEEN_VERSION_KEY (`brikops_last_seen_version_v2` stays)
+- No changes to the minimum-display-time timers (3600ms D3-A, 800ms D2)
+- No changes to any other page or component — BrikSplash.jsx ONLY
+- No changes to the GitHub Action or deploy.sh
+- No new dependencies
+
+## Background — relevant existing code
+
+`.github/workflows/deploy-frontend-capgo.yml` already injects the git SHA
+as a build-time env var:
+
+```yaml
+env:
+  REACT_APP_GIT_SHA: ${{ github.sha }}
+```
+
+So `process.env.REACT_APP_GIT_SHA` is available at runtime inside React.
+You just need to read the first 7 chars and render them.
+
+BrikSplash.jsx (frontend/src/components/splash/BrikSplash.jsx) already
+renders D2 or D3-A inside its own overlay and accepts `children`. We want
+the tag to be rendered **inside the overlay JSX** so it is automatically
+hidden when the splash dismisses. Do NOT render it outside of the overlay.
+
+## Tasks
+
+### Task 1 — Add the build tag inside BrikSplash.jsx
+
+Open `frontend/src/components/splash/BrikSplash.jsx`.
+
+Near the top of the file (after the imports), add a small helper constant:
+
+```js
+const BUILD_SHA = (process.env.REACT_APP_GIT_SHA || '').slice(0, 7) || 'dev';
+const BUILD_TAG = `W2c · ${BUILD_SHA}`;
+```
+
+Inside the return statement, the component renders one of:
+- the "deciding" gradient div
+- `<D3ABrickAssembly onComplete={...} />`
+- `<D2DailySplash isReady=... loadingText=... />`
+- (once revealed) `children`
+
+The tag must appear on top of the first three (the splash overlays) but
+NOT on top of `children` (the real app). Wrap EACH of the three overlay
+branches in a `<div style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>`
+(if they're not already wrapped), and inside that wrapper add at the end:
+
+```jsx
+<div
+  style={{
+    position: 'absolute',
+    bottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    fontSize: '10px',
+    fontWeight: 500,
+    letterSpacing: '0.5px',
+    color: 'rgba(255, 255, 255, 0.45)',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    zIndex: 10000,
+  }}
+>
+  {BUILD_TAG}
+</div>
+```
+
+IMPORTANT: if the existing D3-A or D2 components already render their
+own full-screen container, you can either:
+(a) Add the tag as a sibling inside BrikSplash's render tree, wrapped
+    in a `position: fixed; pointer-events: none; zIndex: 10000;` div
+    that sits above the splash, OR
+(b) Pass the tag as a child to D3ABrickAssembly / D2DailySplash.
+
+Option (a) is preferred — it keeps the tag logic 100% inside
+BrikSplash.jsx and doesn't modify D3A/D2 at all.
+
+Concretely: at the TOP of the return statement, add:
+
+```jsx
+if (/* still in splash mode — any of the overlay branches */) {
+  return (
+    <>
+      {/* existing overlay JSX */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
+          left: 0, right: 0,
+          textAlign: 'center',
+          fontSize: '10px',
+          fontWeight: 500,
+          letterSpacing: '0.5px',
+          color: 'rgba(255, 255, 255, 0.45)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+          pointerEvents: 'none',
+          userSelect: 'none',
+          zIndex: 10000,
+        }}
+      >
+        {BUILD_TAG}
+      </div>
+    </>
+  );
+}
+```
+
+Adapt the exact structure to match the current implementation of
+BrikSplash.jsx — the key requirements are:
+1. `BUILD_TAG` renders ONLY while the splash overlay is visible.
+2. `BUILD_TAG` is NOT rendered when `children` (the real app) is shown.
+3. `BUILD_TAG` is above D3-A / D2 (zIndex 10000) so the user can always
+   see it.
+4. `pointerEvents: 'none'` so it never blocks any clicks.
+
+### Task 2 — Verify `REACT_APP_GIT_SHA` is injected in dev too (optional)
+
+If `process.env.REACT_APP_GIT_SHA` is empty in local dev, `BUILD_TAG`
+falls back to `W2c · dev`. That is fine — no changes needed to dev
+tooling. Production build via GitHub Action injects the real SHA, as
+already configured in `.github/workflows/deploy-frontend-capgo.yml`.
+
+### Task 3 — Build, commit, review.txt
+
+1. Run `yarn build` in `frontend/` — must exit 0.
+2. Single commit:
+   `feat(#387) Phase 7 Wave 2c: build tag on splash (diagnostic)`
+3. Create `.local/review-phase7-wave2c.txt` with these proof blocks:
+
+   PROOF #1 — `git log -1 --oneline`
+   PROOF #2 — `git show --stat HEAD` (expected: only
+              `frontend/src/components/splash/BrikSplash.jsx` changed)
+   PROOF #3 — full diff of BrikSplash.jsx (`git show HEAD -- frontend/src/components/splash/BrikSplash.jsx`)
+   PROOF #4 — `grep -n "BUILD_TAG\|REACT_APP_GIT_SHA\|W2c" frontend/src/components/splash/BrikSplash.jsx`
+              showing the tag is referenced
+   PROOF #5 — `yarn build` tail (last 15 lines — must show "Compiled successfully")
+   PROOF #6 — `grep -n "BUILD_TAG\|W2c" frontend/build/static/js/main*.js | head -3`
+              (or `strings` equivalent) confirming the tag string is
+              baked into the built bundle
+   PROOF #7 — `grep -n "W2c\|BUILD_TAG" frontend/src/` count — should
+              only be in BrikSplash.jsx (no accidental edits elsewhere)
+
+Present the review file so Zahi can verify before deploy.
+
+## VERIFY (for Zahi, after deploy)
+1. Replit: `./deploy.sh --prod` — wait for push + Capgo upload to finish.
+2. Capgo dashboard → production channel → confirm new bundle uploaded
+   (run number +1 from current 22).
+3. iPhone: force-close BrikOps (swipe up, swipe away).
+4. Wait 10 seconds. Re-open BrikOps.
+5. **Expected**: at the bottom-center of the splash, see the tag
+   `W2c · <7-char-sha>`. The SHA should match
+   `git log -1 --pretty=format:"%h"` on Zahi's Mac after he pulls.
+6. If the tag appears → Capgo IS delivering new bundles, so the
+   remaining Wave 2b "no splash" issue is a runtime/lifecycle problem
+   we can debug separately.
+7. If the tag does NOT appear → Capgo is NOT delivering the new bundle
+   to this device, and we have a separate problem (channel, API key,
+   device registration) to fix.
+
+## Relevant files
+- `frontend/src/components/splash/BrikSplash.jsx` — ONLY file to modify
+- `frontend/src/components/splash/D3ABrickAssembly.jsx` — READ-ONLY, do not touch
+- `frontend/src/components/splash/D2DailySplash.jsx` — READ-ONLY, do not touch
+- `.github/workflows/deploy-frontend-capgo.yml` — READ-ONLY, confirms
+  `REACT_APP_GIT_SHA` is already injected at build time
+
+## DO NOT
+- DO NOT run `./deploy.sh` or `./ship.sh`
+- DO NOT git push to origin
+- DO NOT modify D3ABrickAssembly.jsx
+- DO NOT modify D2DailySplash.jsx
+- DO NOT modify BrikMark / BrikWordmark / BlueprintGrid / RadialGlow
+- DO NOT modify `.github/workflows/deploy-frontend-capgo.yml`
+- DO NOT bump versionCode or versionName
+- DO NOT add any new npm/yarn dependencies
+- DO NOT change LAST_SEEN_VERSION_KEY
+- DO NOT change the minimum-display-time constants (3600 / 800)
+- DO NOT persist or log the build tag anywhere (no localStorage, no
+  console.log outside of what already exists)
+- DO NOT make the tag clickable, selectable, or animated — it must be
+  visually minimal (10px, 45% white, monospace, static)
+- DO NOT try to "also fix" the underlying splash-not-showing issue in
+  this wave — this spec is SCOPED to the build-tag diagnostic only.
+  If you notice the bug, report it in the review.txt NOTES section but
+  do not change the code to fix it.

@@ -1,0 +1,159 @@
+# HOTFIX — Remove orphan .claude/worktrees submodule (unblocks Cloudflare Pages)
+
+## What & Why
+Cloudflare Pages builds for `app.brikops.com` have been FAILING silently on
+every commit since `0849756 chore: app icons (iOS + Android) + signing config`.
+Root cause confirmed from Cloudflare build log:
+
+```
+fatal: No url found for submodule path '.claude/worktrees/gifted-meitner'
+       in .gitmodules
+Failed: error occurred while updating repository submodules
+```
+
+The tree `.claude/worktrees/gifted-meitner` is committed as a **gitlink**
+(mode `160000`, pointing to commit `bb830cc`) but there is **no**
+`.gitmodules` file at the repo root. This is an orphan worktree reference
+left behind by a Claude Code `isolation: "worktree"` agent run. It needs
+to be removed from the git index AND blocked from coming back.
+
+Zahi's iPhone ALSO shows the wrong splash because this commit-family has
+never actually been served to any device via Cloudflare Pages. Unblocking
+Cloudflare unblocks the whole pipeline.
+
+Verification before fix — run and paste output:
+
+```bash
+git ls-tree HEAD .claude/worktrees/ | head -5
+# Expected: one line starting with "160000 commit bb830cc..."
+
+ls -la .gitmodules 2>&1
+# Expected: "No such file or directory"
+```
+
+## Done looks like
+- `git ls-tree HEAD -- .claude/` prints nothing.
+- `.gitignore` contains `.claude/` so the worktree directory cannot be
+  re-committed by accident.
+- `git status --porcelain` is clean after the commit.
+- After push to origin main, Cloudflare Pages dashboard shows a new build
+  attempt that gets PAST the submodule step (may or may not succeed after
+  that — we just need submodule step to stop failing).
+- Capgo GitHub Action on same push uploads a new bundle to production
+  channel (run +1 from current).
+- No other file in the repo changes.
+
+## Out of scope
+- No changes to any source file under `frontend/` or `backend/`.
+- No changes to `.github/workflows/`, `deploy.sh`, `ship.sh`,
+  `capacitor.config.json`, native Xcode/Android projects.
+- No bump to `versionCode` / `versionName`.
+- No new npm/yarn/pip dependencies.
+- Do NOT delete or modify any other committed file in `.claude/` if any
+  exists. We ONLY touch `.claude/worktrees/` and `.gitignore`.
+
+## Tasks
+
+### Task 1 — Remove the orphan gitlink from the index
+
+```bash
+# Confirm the offending entry exists (should print one line, mode 160000)
+git ls-tree HEAD .claude/worktrees/
+
+# Remove it from the index (does NOT delete the local folder)
+git rm --cached -r .claude/worktrees
+
+# Double-check it's gone
+git ls-files | grep '^\.claude/' || echo "clean — no .claude entries in index"
+```
+
+### Task 2 — Add `.claude/` to `.gitignore`
+
+Append to the end of `.gitignore` (create the file if missing, but it
+already exists at repo root — do NOT rewrite existing lines):
+
+```
+# Claude Code local state — never commit worktrees or agent scratch
+.claude/
+```
+
+Verify:
+```bash
+tail -5 .gitignore
+git check-ignore -v .claude/worktrees/gifted-meitner
+# Expected: prints the matching .gitignore line
+```
+
+### Task 3 — Single commit, push, and create review.txt
+
+Commit (only 2 files change: the deleted submodule entry and `.gitignore`):
+
+```bash
+git add .gitignore
+git status --porcelain
+# Expected output (order may vary):
+#   D  .claude/worktrees/gifted-meitner
+#   M  .gitignore
+
+git commit -m "fix: remove orphan .claude worktree submodule (unblocks Cloudflare Pages)"
+```
+
+DO NOT push yet. Create `.local/review-hotfix-claude-submodule.txt` with
+these proof blocks:
+
+- PROOF #1 — `git log -1 --oneline`
+- PROOF #2 — `git show --stat HEAD`
+  (must show `.claude/worktrees/gifted-meitner` deleted and `.gitignore`
+  modified; NO other files)
+- PROOF #3 — `git ls-tree HEAD | grep -i claude || echo "no .claude in HEAD tree"`
+  (must print the "no .claude" line)
+- PROOF #4 — `tail -5 .gitignore`
+  (must show the `.claude/` rule)
+- PROOF #5 — `git check-ignore -v .claude/worktrees/gifted-meitner`
+  (must print the matching rule from `.gitignore`)
+- PROOF #6 — `git status --porcelain`
+  (must be empty — clean tree)
+
+Present the review file so Zahi can verify before push.
+
+### Task 4 — After Zahi approves, push (NORMAL deploy flow)
+
+Once Zahi says "approved, push":
+
+```bash
+./deploy.sh --prod "fix: remove orphan .claude worktree submodule"
+```
+
+This triggers:
+- GitHub push
+- Cloudflare Pages builds `app.brikops.com` (should now get past submodule step)
+- GitHub Action `deploy-frontend-capgo.yml` builds + uploads Capgo bundle
+  (run +1 from current)
+
+## VERIFY (for Zahi, after deploy)
+1. Cloudflare Pages dashboard → newest build should advance past the
+   "Cloning repository..." step without the `fatal: No url found for
+   submodule path` error. (It may still fail for other reasons, but NOT
+   that one.)
+2. GitHub Actions → `Upload Frontend Bundle to Capgo` workflow runs
+   successfully. Bundle number increments.
+3. On iPhone: force-close BrikOps → reopen after ~15 seconds → look for
+   the `W2c · <sha>` build tag at the bottom of the splash (added in
+   commit 06d3901). If it appears → pipeline is fully healthy again.
+
+## Relevant files
+- `.gitignore` — append `.claude/` rule
+- `.claude/worktrees/gifted-meitner` — remove from git index only
+  (do NOT delete the local folder)
+- `.gitmodules` — confirm it does NOT exist (no action needed)
+
+## DO NOT
+- DO NOT run `rm -rf .claude/` — only `git rm --cached`. The local folder
+  on disk is Claude Code's working state and should stay.
+- DO NOT create a `.gitmodules` file.
+- DO NOT edit anything under `frontend/`, `backend/`, `.github/`,
+  `ios/`, `android/`, `.platform/`.
+- DO NOT run `./ship.sh`.
+- DO NOT bump any version fields.
+- DO NOT touch the Wave 2c commit (06d3901) — it's already on origin/main
+  and that's what we want Cloudflare to successfully build.
