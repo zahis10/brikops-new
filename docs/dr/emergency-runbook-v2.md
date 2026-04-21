@@ -1,7 +1,7 @@
 # BrikOps — Emergency Runbook v2
 
 **מתי להשתמש:** אירוע אמת בפרודקשן.
-**עודכן:** 2026-04-21 — שמות collections, hosting, ו-fields מתוקנים לפי הקוד האמיתי.
+**עודכן:** 2026-04-21 — פעמיים. פעם לתקן את המסמך הראשון לפי הקוד. פעם שנייה אחרי pre-flight אמיתי שגילה: ה-backend על **Elastic Beanstalk** (לא ECS). כל הפקודות ב-2A logs, 2E, ו-Step 3 תוקנו.
 
 ---
 
@@ -9,12 +9,15 @@
 
 | רכיב | ערך |
 |---|---|
-| Hosting | **AWS ECS** (לא Elastic Beanstalk) |
-| Cluster | `brikops-prod` (אמת) |
-| Service | `brikops-api` (אמת) |
-| DB | `contractor_ops` ב-MongoDB Atlas |
+| Hosting | **AWS Elastic Beanstalk** (Docker platform) |
+| EB Application | `brikops-api` |
+| EB Environment | `Brikops-api-env` (B גדולה) |
+| Deploy pipeline | GitHub Actions (trigger: paths `backend/**` או `.platform/**` ב-main) |
+| DB cluster | MongoDB Atlas — `brikops-eu`, tier M10 |
+| DB name | `contractor_ops` |
 | Region | `eu-central-1` (Frankfurt) |
-| S3 bucket | `brikops-prod-files` |
+| S3 bucket | `brikops-prod-files` (Versioning: Enabled) |
+| Cross-region DB backup | eu-west-1 (Ireland), 1-day retention |
 | Frontend | Cloudflare Pages → `app.brikops.com` |
 | Backend URL | `api.brikops.com` |
 
@@ -45,8 +48,8 @@
 - [ ] כולם — התשתית נפלה
 
 ### Infrastructure status (3 tabs)
-1. **MongoDB Atlas** → Cluster → Metrics
-2. **AWS ECS** → Cluster `brikops-prod` → Service `brikops-api` → Tasks
+1. **MongoDB Atlas** → Cluster `brikops-eu` → Metrics
+2. **AWS Elastic Beanstalk** → Environment `Brikops-api-env` → Health dashboard
 3. **Cloudflare** → status.cloudflare.com
 
 ---
@@ -54,12 +57,23 @@
 ## שלב 2A — "לא יכול להיכנס"
 
 1. בקש screenshot של השגיאה
-2. בדוק logs (CloudWatch, לא EB!):
+2. בדוק logs (CloudWatch — EB Docker streams):
 ```bash
-aws logs tail /ecs/brikops-api --follow --since 30m --filter-pattern "ERROR"
-# או חפש לפי טלפון (אבל מוצפן ב-mask_phone — חפש 4 ספרות אחרונות)
-aws logs tail /ecs/brikops-api --since 30m --filter-pattern "1234"  # 4 ספרות אחרונות
+# תחילה מצא את ה-log group המדויק (EB Docker בדרך כלל משתמש ב-env-name):
+aws logs describe-log-groups \
+  --log-group-name-prefix /aws/elasticbeanstalk/Brikops-api-env \
+  --region eu-central-1 --query 'logGroups[].logGroupName'
+# צפוי משהו כמו:
+#   /aws/elasticbeanstalk/Brikops-api-env/var/log/eb-docker/containers/eb-current-app/stdouterr.log
+
+# Tail של ה-stream (החלף <LOG_GROUP> במה שחזר):
+aws logs tail "<LOG_GROUP>" --follow --since 30m --filter-pattern "ERROR" --region eu-central-1
+
+# חיפוש לפי 4 ספרות אחרונות של טלפון (ה-phone מוצפן ב-mask_phone בלוגים):
+aws logs tail "<LOG_GROUP>" --since 30m --filter-pattern "1234" --region eu-central-1
 ```
+
+**אם logs לא זורמים ל-CloudWatch:** EB → Environment → Configuration → Software → ודא ש-"Log streaming" מופעל.
 
 3. בדוק ב-DB:
 ```javascript
@@ -109,12 +123,21 @@ db.task_updates.countDocuments({ project_id: "PROJECT_ID" })
 
 1. רק אחד → בעיה רשת אצלו (WiFi→4G)
 2. לכולם:
-```bash
-# בדוק באמצעות key S3 ספציפי
-aws s3 ls s3://brikops-prod-files/projects/XXX/task-photos/YYY.jpg
 
-# בדוק את האובייקט
-aws s3api head-object --bucket brikops-prod-files --key "projects/XXX/..."
+**זכור:** ה-S3 structure שטוח — אין תיקייה לפי פרויקט. התמונה תהיה ב-`qc/<uuid>.jpg`, `attachments/<uuid>.jpg`, או `signatures/<user>/<uuid>.png`. כדי להגיע ל-key הספציפי, שלוף מ-DB:
+
+```javascript
+// mongosh
+db.task_updates.findOne({ project_id: "X", task_id: "Y" }, { photo_url: 1 })
+db.qc_inspections.findOne({ project_id: "X" }, { photos: 1 })
+// ה-photo_url הוא ה-S3 key או URL מלא (תוריד את הקידומת אם צריך)
+```
+
+אז:
+```bash
+# בדוק שהאובייקט קיים
+aws s3api head-object --bucket brikops-prod-files --key "attachments/abc123.jpg" \
+  --region eu-central-1
 
 # בדוק signed URL מה-API
 curl -i "https://api.brikops.com/api/tasks/XXX/attachments" \
@@ -126,65 +149,94 @@ curl -i "https://api.brikops.com/api/tasks/XXX/attachments" \
 # האם יש version קודם?
 aws s3api list-object-versions \
   --bucket brikops-prod-files \
-  --prefix "projects/XXX/task-photos/YYY.jpg"
+  --prefix "attachments/abc123.jpg" \
+  --region eu-central-1
 
 # מחק את ה-delete marker לשחזור
 aws s3api delete-object \
   --bucket brikops-prod-files \
-  --key "..." \
-  --version-id "<DeleteMarker_VersionId>"
+  --key "attachments/abc123.jpg" \
+  --version-id "<DeleteMarker_VersionId>" \
+  --region eu-central-1
 ```
 
 4. אם 403:
-   - IAM Task Role ב-ECS אולי איבד permissions
-   - בדוק ECS → Task Definition → Task Role → policy על s3:GetObject
+   - EB EC2 Instance Profile אולי איבד permissions
+   - בדוק EB → Environment → Configuration → Security → EC2 instance profile
+   - האם יש policy על `s3:GetObject` לbucket `brikops-prod-files`?
 
 ---
 
 ## שלב 2E — "האפליקציה לא מגיבה"
 
-1. ECS Health:
+1. EB Environment Health:
 ```bash
-aws ecs describe-services \
-  --cluster brikops-prod \
-  --services brikops-api \
-  --query 'services[0].{desired:desiredCount,running:runningCount,events:events[0:3]}'
+aws elasticbeanstalk describe-environment-health \
+  --environment-name Brikops-api-env \
+  --attribute-names All \
+  --region eu-central-1 \
+  --query '{Status:Status,Health:HealthStatus,Causes:Causes,Instances:InstancesHealth}'
 ```
 
-2. אם `running < desired` → tasks נופלים:
+2. בדוק את ההיסטוריה של ה-env (events אחרונים = מה קרה):
 ```bash
-# ראה למה
-aws ecs describe-tasks \
-  --cluster brikops-prod \
-  --tasks $(aws ecs list-tasks --cluster brikops-prod --service-name brikops-api --desired-status STOPPED --max-results 3 --query 'taskArns[]' --output text) \
-  --query 'tasks[].{reason:stoppedReason,exitCode:containers[0].exitCode}'
+aws elasticbeanstalk describe-events \
+  --environment-name Brikops-api-env \
+  --max-records 20 \
+  --region eu-central-1 \
+  --query 'Events[].{t:EventDate,sev:Severity,msg:Message}' \
+  --output table
 ```
 
-3. תיקונים נפוצים:
-   - **OOMKilled** → Task definition → Memory up (768→1536 MB)
-   - **Container exited with non-zero code** → `aws logs tail /ecs/brikops-api` לפני ה-stop
-   - **HealthCheck failed** → בדוק `/health` endpoint
-
-4. Force redeploy (ECS equivalent של restart):
+3. בדוק את ה-instances הפיזיים:
 ```bash
-aws ecs update-service \
-  --cluster brikops-prod \
-  --service brikops-api \
-  --force-new-deployment
-# ECS יעלה task חדש → drain ישן → switch
+aws elasticbeanstalk describe-instances-health \
+  --environment-name Brikops-api-env \
+  --attribute-names All \
+  --region eu-central-1 \
+  --query 'InstanceHealthList[].{id:InstanceId,health:HealthStatus,causes:Causes}'
 ```
 
-5. Rollback (אחרי deploy רע):
-```bash
-# ראה revisions של task definition
-aws ecs list-task-definitions --family-prefix brikops-api --sort DESC --max-items 5
+4. תיקונים נפוצים:
+   - **OutOfMemory / container killed** → EB Configuration → Capacity → שדרג instance type (t3.small → t3.medium), או פתח `.ebextensions`/`.platform` להוסיף swap
+   - **HealthCheck failed** → בדוק `/health` endpoint ישירות: `curl -i https://api.brikops.com/health`
+   - **Application error** → tail logs (ראה 2A) — לראות את ה-traceback של FastAPI לפני שה-container קרס
 
-# חזור ל-revision קודם
-aws ecs update-service \
-  --cluster brikops-prod \
-  --service brikops-api \
-  --task-definition brikops-api:<PREVIOUS_REVISION>
+5. Restart — הדרך הבטוחה (מפעיל מחדש את ה-container על אותו EC2):
+```bash
+aws elasticbeanstalk restart-app-server \
+  --environment-name Brikops-api-env \
+  --region eu-central-1
+# ~30-90 שניות downtime אם יש instance אחד בלבד
 ```
+
+6. Rebuild — אם restart לא עוזר (מחליף את ה-EC2 כולו):
+```bash
+aws elasticbeanstalk rebuild-environment \
+  --environment-name Brikops-api-env \
+  --region eu-central-1
+# ~5-10 דקות downtime. להשתמש רק אם restart נכשל.
+```
+
+7. Rollback (אחרי deploy רע) — חזור ל-application version קודם:
+```bash
+# ראה היסטוריה של versions
+aws elasticbeanstalk describe-application-versions \
+  --application-name brikops-api \
+  --region eu-central-1 \
+  --query 'ApplicationVersions[0:10].{ver:VersionLabel,created:DateCreated,desc:Description}' \
+  --output table
+
+# deploy version קודמת
+aws elasticbeanstalk update-environment \
+  --environment-name Brikops-api-env \
+  --version-label <PREVIOUS_VERSION_LABEL> \
+  --region eu-central-1
+# ~2-5 דקות. EB עושה rolling deploy (אם יש > 1 instance).
+```
+
+**גישה מהירה ב-UI:**
+EB Console → Environment `Brikops-api-env` → "Actions" → **Restart app server(s)** / **Rebuild environment**.
 
 ---
 
@@ -281,9 +333,9 @@ mongorestore \
 ## Timeline (UTC)
 - 10:23 — Alert from StatusCake
 - 10:25 — Zahi started diagnosis
-- 10:28 — Identified: ECS service scaled to 0 accidentally
-- 10:31 — Fixed: `aws ecs update-service --desired-count 2`
-- 10:34 — Verified: /health returning 200
+- 10:28 — Identified: EB env `Brikops-api-env` in Health=Severe, container OOM crashing
+- 10:31 — Fixed: `aws elasticbeanstalk restart-app-server`
+- 10:34 — Verified: /health returning 200, Health=Ok
 
 ## Impact
 - Users affected: ~45 (all logged-in sessions)
@@ -291,7 +343,7 @@ mongorestore \
 - Data loss: none
 
 ## Root Cause
-Accidental click on "Stop Service" in AWS Console while exploring.
+Memory leak in recent FastAPI handler — container hit 1GB limit and was killed by Docker.
 
 ## Timeline to recovery
 - Detection: 2 min
@@ -301,8 +353,9 @@ Accidental click on "Stop Service" in AWS Console while exploring.
 - Total MTTR: 11 min
 
 ## Prevention
-- [ ] IAM: remove ecs:UpdateService from dev user
-- [ ] CloudWatch alert: alarm if runningCount < 1
+- [ ] Fix memory leak in endpoint X (found in logs at 10:22)
+- [ ] CloudWatch alert: alarm if EB env HealthStatus != Ok for > 2 min
+- [ ] Add `MemoryUtilization` metric tracking on EB env
 - [ ] StatusCake: already in place (triggered correctly)
 
 ## Customer comms
@@ -372,7 +425,7 @@ Sent WhatsApp broadcast at 10:35 with apology + 3-sentence explanation.
 - **שלב 1 אבחון**: 100% אוטומטי — זה רק קריאת APIs
 - **שלב 2A (OTP lockout)**: אוטומטי — DB update פשוט
 - **שלב 2C (S3 restore)**: אוטומטי (עם confirmation)
-- **שלב 2E (ECS redeploy)**: אוטומטי (עם confirmation)
+- **שלב 2E (EB restart)**: אוטומטי (עם confirmation) — boto3: `elasticbeanstalk.restart_app_server`
 
 דורש human-in-the-loop:
 - **שלב 3 (PITR)** — בחירת time + target בעלי עלות גבוהה

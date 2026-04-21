@@ -1,6 +1,7 @@
 # BrikOps Backup & Recovery — Context Snapshot
 **Saved:** 2026-04-21
-**Status:** Paused. To be resumed later when Zahi is ready for the smoke test.
+**Last updated:** 2026-04-21 (post pre-flight verification)
+**Status:** Pre-flight checks 1-4 ✅ passed. Ready for scenario 1.
 
 ---
 
@@ -23,8 +24,7 @@ The original playbook/runbook (built in another chat) had critical inaccuracies 
 | `db.users` → `otp_lockout_until` | OTP lockout lives in **`otp_codes`** collection: `locked_until`, `attempts` |
 | `status: pending_deletion` on org | It's on the **user**: `user_status: 'pending_deletion'` |
 | `scheduled_deletion_at` | Code uses `deletion_scheduled_for` |
-| AWS Elastic Beanstalk commands | Backend runs on **AWS ECS** (per `.env.production.template`) |
-| `aws elasticbeanstalk restart-app-server` | ECS uses `aws ecs update-service --force-new-deployment` |
+| AWS Elastic Beanstalk commands | *(v2 mistakenly switched to ECS — see "v2-was-wrong" below. Reality: **Elastic Beanstalk with Docker platform**)* |
 | `python3 -m contractor_ops.account_deletion_cron` | **No such cron exists.** Deletion is executed via super-admin endpoint in `deletion_router.py` (`_anonymize_user_db`) |
 | DB name `brikops_prod` | Actual DB: `contractor_ops` |
 | Assumed M10 Atlas tier | Unverified. If M0, there's no PITR at all. |
@@ -46,12 +46,17 @@ Run these 4 pre-flight checks before any scenario. If any fails, the dependent s
 - **Required: Enabled** (otherwise scenario 2 is impossible)
 - If Disabled → enable NOW before continuing
 
-### Check 3 — ECS cluster + service naming
+### Check 3 — Elastic Beanstalk environment naming
 ```bash
-aws ecs list-clusters
-aws ecs list-services --cluster <name>
+aws elasticbeanstalk describe-environments --region eu-central-1
 ```
-- Playbook assumes `brikops-prod` / `brikops-api` — verify actual names.
+- **Verified 2026-04-21:**
+  - Application: `brikops-api`
+  - Environment: `Brikops-api-env` (capital B)
+  - Platform: Docker
+  - Region: eu-central-1
+  - Health: Ok
+- Single environment — any restart = brief downtime. Mitigation in playbook scenario 5.
 
 ### Check 4 — Latest daily snapshot + cross-region
 - Atlas → Cluster → Backup → Snapshots
@@ -64,14 +69,23 @@ aws ecs list-services --cluster <name>
 
 ```
 Frontend:   React 19 → Cloudflare Pages → app.brikops.com
-Backend:    FastAPI → AWS ECS (not EB!) → api.brikops.com
-DB:         MongoDB Atlas
+Backend:    FastAPI → AWS Elastic Beanstalk (Docker platform) → api.brikops.com
+            App name: brikops-api
+            Env name: Brikops-api-env
+            Deploy:   GitHub Actions → EB (triggered by push to main when backend/** or .platform/** changes)
+            EB artifact bucket: elasticbeanstalk-eu-central-1-457550570829 (do NOT delete)
+DB:         MongoDB Atlas — cluster `brikops-eu`, tier M10, MongoDB 8.0.20
 DB name:    contractor_ops
+Atlas snapshots: every 6h (labeled "hourly" in Atlas UI), daily, weekly, monthly, yearly
+                 Cross-region copy → eu-west-1 (Ireland)
+                 PITR enabled (M10+)
 Region:     eu-central-1 (Frankfurt)
-S3 bucket:  brikops-prod-files
+S3 bucket:  brikops-prod-files (Bucket Versioning: Enabled)
+S3 prefixes (flat, NOT nested by project): `qc/`, `attachments/`, `exports/{org}/`,
+            `signatures/{user}/`, `billing-receipts/{user}/`
 SMS:        Twilio
 WhatsApp:   Meta Cloud API
-IAM:        ECS Task Role (no AWS_ACCESS_KEY in env)
+IAM:        EB EC2 Instance Profile (no AWS_ACCESS_KEY in env)
 ```
 
 ### Collections
@@ -85,13 +99,26 @@ IAM:        ECS Task Role (no AWS_ACCESS_KEY in env)
 
 ---
 
-## Outstanding risks (unverified, flagged for smoke-test)
+## Verified findings (2026-04-21 pre-flight)
 
-1. **Atlas tier unknown** — if M0, entire DR story is broken
-2. **S3 Versioning unknown** — could lose any deleted file forever
-3. **No automated deletion cron** — means manual super-admin action required at grace expiry
-4. **Cross-region backup unknown** — regional outage in eu-central-1 might mean total loss
-5. **Single ECS task?** — if `desiredCount=1`, any task restart = downtime
+| Area | Status | Notes |
+|---|---|---|
+| Atlas tier | ✅ M10 | PITR available |
+| Atlas cluster name | ✅ `brikops-eu` | us cluster = migration leftover, scheduled for deletion |
+| Cross-region backup | ✅ eu-west-1 (Ireland) | currently 1-day retention → **recommend raise to 7 days** |
+| S3 Versioning | ✅ Enabled | |
+| Backend service | ✅ Elastic Beanstalk | App `brikops-api`, env `Brikops-api-env`, Docker platform |
+| EB health | ✅ Ok | Single env — restart causes brief downtime |
+| Snapshot age | ✅ < 24h | verified in Atlas Backup UI |
+| Deletion cron | ❌ Does not exist | deletion at grace expiry = manual super-admin call |
+| S3 structure | ⚠️ Flat, not project-scoped | restore-by-project requires DB lookup; see risk #2 below |
+
+## Outstanding risks (post pre-flight)
+
+1. **No automated deletion cron** — manual super-admin action required at grace expiry; risk of forgetting = PII retained past 30d. *Fix path:* build a daily cron or endpoint `POST /admin/deletion/tick`.
+2. **S3 flat structure** — a "I lost project X's photos" request can't be served by S3 prefix alone; need DB lookup of task_updates / qc_inspections to find keys. *Fix path:* restructure NEW uploads to `orgs/{org_id}/projects/{project_id}/{type}/{uuid}.{ext}` + build `GET /admin/files?project_id=X`.
+3. **Single EB environment** — any EB restart/deploy = brief downtime. *Fix path:* if/when traffic warrants, add second instance via EB load balancer config, or move to Fargate.
+4. **Cross-region retention is only 1 day** — if regional outage in Frankfurt lasts > 24h and latest Ireland copy is corrupted, no recovery. *Fix path:* raise retention to 7 days in Atlas Backup Policy.
 
 ---
 
@@ -102,9 +129,9 @@ The playbooks explicitly call out which steps an agent can automate vs which req
 **Fully automatable:**
 - All 4 pre-flight checks (AWS + Atlas APIs)
 - S3 restore (boto3)
-- ECS restart (boto3)
+- Elastic Beanstalk restart (boto3: `elasticbeanstalk.restart_app_server`)
 - MongoDB failover test (Atlas API)
-- Monitoring alerts (snapshot_age, versioning, task count, primary elections)
+- Monitoring alerts (snapshot_age, versioning, EB env health, primary elections)
 
 **Human-in-the-loop required:**
 - PITR (choosing target time)
@@ -113,9 +140,10 @@ The playbooks explicitly call out which steps an agent can automate vs which req
 - Post-mortem writing
 
 **Recommended Agent endpoints to build:**
-- `GET /admin/backup-health` → `{ latest_snapshot_ts, atlas_tier, s3_versioning, ecs_task_count }`
+- `GET /admin/backup-health` → `{ latest_snapshot_ts, atlas_tier, s3_versioning, eb_env_health, eb_instance_count }`
 - `POST /admin/dr-test/s3-restore` → dummy file
-- `POST /admin/dr-test/ecs-restart` → stop+verify
+- `POST /admin/dr-test/eb-restart` → restart EB env + verify /health
+- `POST /admin/deletion/tick` → the missing cron (enumerate users where `user_status='pending_deletion'` AND `deletion_scheduled_for <= now`, call `_anonymize_user_db`)
 
 ---
 

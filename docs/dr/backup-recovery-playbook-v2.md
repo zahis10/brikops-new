@@ -2,7 +2,9 @@
 
 **מטרה:** לוודא גיבוי + שחזור **לפני** שיש לקוחות אמיתיים.
 **זמן:** 2–3 שעות לטסט המלא; 10 דקות ל-Pre-flight checks.
-**מעודכן:** 2026-04-21 — מתוקן לפי הקוד האמיתי של BrikOps.
+**מעודכן:** 2026-04-21 — מתוקן פעמיים:
+- פעם ראשונה: לפי ניתוח קוד (תיקן טעויות של המסמך הראשון).
+- פעם שנייה (זו): לפי ממצאי pre-flight אמיתי ב-Console — תוקנה טעות קריטית: ה-backend רץ על **Elastic Beanstalk** (Docker), לא ECS. כל הפקודות בתרחיש 5 עודכנו.
 
 ---
 
@@ -11,10 +13,11 @@
 | רכיב | פרטים |
 |---|---|
 | **Frontend** | React 19 → Cloudflare Pages (`app.brikops.com`) |
-| **Backend** | Python FastAPI → **AWS ECS** (לא Elastic Beanstalk!) — `api.brikops.com` |
-| **Database** | MongoDB Atlas — **DB name: `contractor_ops`** |
-| **Storage** | S3 — bucket `brikops-prod-files`, region `eu-central-1` |
-| **IAM** | ECS Task Role (אין AWS_ACCESS_KEY ב-env) |
+| **Backend** | Python FastAPI → **AWS Elastic Beanstalk** (Docker platform) — `api.brikops.com`<br>App: `brikops-api`, Env: `Brikops-api-env`<br>Deploy: GitHub Actions (paths `backend/**`, `.platform/**`)<br>Artifact bucket: `elasticbeanstalk-eu-central-1-457550570829` |
+| **Database** | MongoDB Atlas — cluster `brikops-eu`, tier M10, MongoDB 8.0.20<br>**DB name: `contractor_ops`** |
+| **Backups** | Atlas Continuous Cloud Backup: snapshots every 6h/daily/weekly/monthly/yearly<br>Cross-region copy → eu-west-1 (Ireland), 1-day retention (⚠ recommend raising to 7)<br>PITR: enabled (M10+) |
+| **Storage** | S3 — bucket `brikops-prod-files`, region `eu-central-1`<br>Bucket Versioning: **Enabled**<br>Prefix structure (FLAT, not project-scoped): `qc/`, `attachments/`, `exports/{org}/`, `signatures/{user}/`, `billing-receipts/{user}/` |
+| **IAM** | EB EC2 Instance Profile (אין AWS_ACCESS_KEY ב-env) |
 | **SMS** | Twilio |
 | **WhatsApp** | Meta Cloud API |
 
@@ -57,34 +60,36 @@ Versioning: Enabled / Suspended / Disabled
 
 אם לא Enabled → **הפעל עכשיו** (Edit → Enable → Save). **זה לא משחזר קבצים שכבר נמחקו** — רק מגן מעתה.
 
-### Check 3 — Backend ECS Service Accessible?
+### Check 3 — Backend Elastic Beanstalk Environment Accessible?
 
 ```bash
-# מה-Mac Terminal שלך (AWS CLI מותקן?)
-aws ecs list-services --cluster brikops-prod
-# או אם שם אחר — נבדוק ביחד
-aws ecs list-clusters
+aws elasticbeanstalk describe-environments --region eu-central-1
+# מציג את כל ה-environments + Health + InstancesHealth
 ```
 
+**Values אמיתיים (מאומת 2026-04-21):**
 ```
-Cluster name: _______
-Service name: _______
-Running tasks: ___
+Application name:   brikops-api
+Environment name:   Brikops-api-env        ← שים לב: B גדולה בהתחלה
+Platform:           Docker
+Region:             eu-central-1 (Frankfurt)
+Health:             Ok
 ```
 
-אם אין AWS CLI מוגדר — תגיד לי וננסה דרך Console.
+אם אין AWS CLI מוגדר — Console: **Elastic Beanstalk → Environments** (region: Frankfurt).
 
 ### Check 4 — יש snapshot יומי אחרון (פחות מ-24 שעות)?
 
-Atlas → Cluster → **...** → Backup → Snapshots tab.
+Atlas → Cluster `brikops-eu` → **...** → Backup → Snapshots tab.
 
+**Values אמיתיים (מאומת 2026-04-21):**
 ```
-Snapshot אחרון: _______ (תאריך+שעה)
-Retention: ___ ימים (צריך להיות לפחות 7)
-Cross-region backup: כן / לא
+Snapshot אחרון: < 24h ✅ (Continuous Cloud Backup)
+Policy: hourly (=every 6h) / daily / weekly / monthly / yearly — כולם פעילים
+Cross-region copy: eu-west-1 (Ireland) ✅ (retention: 1 day — מומלץ להעלות ל-7)
 ```
 
-אם `last snapshot > 24h ago` → יש תקלה במנגנון הגיבוי. נחקור לפני שממשיכים.
+**הערה על שמות ב-Atlas UI:** מה ש-Atlas קורא לו "hourly" זה בפועל **אחת לשש שעות**, לא כל שעה. אם בתרחיש 1 אתה צריך PITR מתחת לרזולוציה הזו — זה עדיין אפשרי כי PITR עובד מה-oplog (רזולוציה של שניות), לא מה-snapshots.
 
 ---
 
@@ -107,8 +112,16 @@ user_id (משתמש טסט עם טלפון שלך): _______________
 db.tasks.countDocuments({ project_id: "YOUR_PROJECT_ID" })
 db.task_updates.countDocuments({ project_id: "YOUR_PROJECT_ID" })
 db.handover_protocols.countDocuments({ project_id: "YOUR_PROJECT_ID" })
-# S3: ספור objects בbucket בparker של הפרויקט
-aws s3 ls s3://brikops-prod-files/projects/YOUR_PROJECT_ID/ --recursive --summarize
+
+# S3: הכי חשוב — *אין* תיקיית פרויקט ב-S3! המבנה שטוח:
+# לכן כדי לספור את ה-objects של פרויקט ספציפי, צריך קודם כל לשלוף את ה-keys מ-DB:
+db.task_updates.distinct("photo_url", { project_id: "YOUR_PROJECT_ID" })
+db.qc_inspections.aggregate([
+  { $match: { project_id: "YOUR_PROJECT_ID" } },
+  { $unwind: "$photos" },
+  { $project: { url: "$photos.url" } }
+])
+# ואז לוודא שכל URL באמת קיים ב-S3 (sample אקראי של 5-10).
 ```
 
 ---
@@ -200,16 +213,22 @@ RTO אמיתי: ___ דקות
 **רק אם Pre-flight Check 2 עבר!**
 
 #### שלב 2.1 — בחר תמונה
-פתח BrikOps → ליקוי עם תמונה → Inspect Element → העתק URL של התמונה.
+פתח BrikOps → ליקוי עם תמונה → Inspect Element (או בקונסולת הנייד) → העתק URL של התמונה.
+
+**הערה על המבנה האמיתי:** ה-S3 key יהיה משהו כמו:
+- `qc/<uuid>.jpg` (תמונות של QC inspections)
+- `attachments/<uuid>.jpg` (תמונות של ליקויים ב-task_updates)
+- `signatures/<user_id>/<uuid>.png` (חתימות)
+
 ```
-S3 key: _______________
+S3 key אמיתי: _______________ (לדוגמה: attachments/abc123-def456.jpg)
 ```
 
 #### שלב 2.2 — מחק מ-S3
 ```bash
 aws s3api delete-object \
   --bucket brikops-prod-files \
-  --key "projects/XXX/task-photos/YYY.jpg"
+  --key "attachments/abc123-def456.jpg"      # השתמש ב-key האמיתי
 # S3 יחזיר VersionId של ה-delete marker
 ```
 
@@ -219,7 +238,7 @@ aws s3api delete-object \
 ```bash
 aws s3api list-object-versions \
   --bucket brikops-prod-files \
-  --prefix "projects/XXX/task-photos/YYY.jpg"
+  --prefix "attachments/abc123-def456.jpg"
 # ראה IsLatest=true ל-DeleteMarker, ו-previous version של הקובץ
 ```
 
@@ -227,7 +246,7 @@ aws s3api list-object-versions \
 ```bash
 aws s3api delete-object \
   --bucket brikops-prod-files \
-  --key "projects/XXX/task-photos/YYY.jpg" \
+  --key "attachments/abc123-def456.jpg" \
   --version-id "<VersionId of delete marker>"
 ```
 
@@ -324,50 +343,93 @@ Retention (Daily/Weekly/Monthly): ______
 
 ---
 
-### תרחיש 5 — Backend Failure (ECS, לא EB!)
+### תרחיש 5 — Backend Failure (Elastic Beanstalk)
 
-⚠️ **תיקון:** הפקודות במסמך הישן היו ל-Elastic Beanstalk. הנה המקבילה ל-ECS:
+⚠️ **תיקון כפול:** המסמך הראשון (v1) כתב EB. v2 שינה בטעות ל-ECS. **האמת: EB.** (ראה Pre-flight 3.)
 
-#### שלב 5.1 — בדוק health
+כל הפקודות כאן משתמשות בשם הסביבה האמיתי: `Brikops-api-env` (B גדולה) ו-application name `brikops-api`.
+
+#### שלב 5.1 — בדוק health של ה-environment
 ```bash
-aws ecs describe-services \
-  --cluster brikops-prod \
-  --services brikops-api \
-  --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount}'
+aws elasticbeanstalk describe-environment-health \
+  --environment-name Brikops-api-env \
+  --attribute-names All \
+  --region eu-central-1 \
+  --query '{Status:Status,Health:HealthStatus,Instances:InstancesHealth}'
 ```
 
-#### שלב 5.2 — סמלץ failure (stop task)
-```bash
-# רשום את task ARN
-aws ecs list-tasks --cluster brikops-prod --service-name brikops-api
-
-# עצור task אחד
-aws ecs stop-task \
-  --cluster brikops-prod \
-  --task <task-arn> \
-  --reason "DR test"
+רשום את מספר ה-instances הנוכחי (ברוב המקרים 1):
+```
+Instances: ___
+Health: ___ (Ok / Warning / Degraded / Severe)
 ```
 
-#### שלב 5.3 — ECS יעלה task חדש תוך 30-60 שניות
+#### שלב 5.2 — סמלץ failure — Restart של ה-App Server
+זו הדרך הבטוחה: EB עוצר את הקונטיינר ומפעיל מחדש על אותה EC2. ה-backend יורד, ואז חוזר.
+
 ```bash
-# עקוב
-watch -n 5 'aws ecs describe-services --cluster brikops-prod --services brikops-api --query "services[0].{desired:desiredCount,running:runningCount}"'
+aws elasticbeanstalk restart-app-server \
+  --environment-name Brikops-api-env \
+  --region eu-central-1
+# הפקודה חוזרת מיד. ה-restart עצמו לוקח 30-90 שניות.
 ```
 
-#### שלב 5.4 — ודא שהאפליקציה עובדת
+התחל לתזמן מיד. במקביל, פתח בטרמינל נוסף:
 ```bash
-curl -s https://api.brikops.com/health
-# או endpoint דומה
+# poll את /health כל שנייה כדי למדוד downtime מדויק
+while true; do
+  ts=$(date +%H:%M:%S)
+  code=$(curl -s -o /dev/null -w "%{http_code}" https://api.brikops.com/health)
+  echo "$ts  $code"
+  sleep 1
+done
 ```
+
+#### שלב 5.3 — מדוד downtime
+הזרם של ה-`while` יחזיר `200`, ואז יתחיל להחזיר `502` או `503` או timeout, ואז יחזור ל-`200`. הפרש הזמנים בין ה-200 האחרון ל-200 הבא = ה-downtime.
+
+```
+Downtime (seconds): ___
+```
+
+#### שלב 5.4 — ודא שה-environment חזר ל-Ok
+```bash
+aws elasticbeanstalk describe-environment-health \
+  --environment-name Brikops-api-env \
+  --attribute-names HealthStatus,Status \
+  --region eu-central-1
+```
+
+```
+Status: Ready / Updating / ...
+HealthStatus: Ok / ...
+```
+
+#### שלב 5.5 — (אופציונלי) סימולציה חמורה יותר — Terminate EC2 instance
+זה מדמה crash של ה-VM (לא רק של ה-app). EB auto-scaling אמור להקפיץ instance חדש.
+
+```bash
+# מצא את ה-instance ID
+aws elasticbeanstalk describe-environment-resources \
+  --environment-name Brikops-api-env \
+  --region eu-central-1 \
+  --query 'EnvironmentResources.Instances[0].Id'
+
+# Terminate אותו
+aws ec2 terminate-instances --instance-ids i-XXXXX --region eu-central-1
+```
+
+**הזהרה:** אם `Instances=1`, ה-downtime כאן יהיה 3-8 דקות (auto-scaling + boot + Docker pull + health check). אל תעשה את זה על prod אחרי שיש משתמשים אמיתיים — רק בטסט.
 
 **תיעוד:**
 ```
-✅/❌ ECS החליף task אוטומטית
-Downtime (אם desiredCount=1): ___ שניות
-Downtime (אם desiredCount≥2): אמור להיות 0
+✅/❌ EB הפעיל מחדש את ה-app server
+Downtime (restart-app-server): ___ שניות   (צפוי: 30-90)
+Downtime (terminate EC2): ___ שניות        (צפוי: 180-480)
+חזר ל-Health=Ok: ___ דקות אחרי ה-trigger
 ```
 
-**המלצה:** אם `desiredCount=1` — שדרג ל-2 instances לפני לקוחות. עולה 2x, אבל zero-downtime deploys + auto-failover.
+**המלצה מבצעית:** אם יש רק instance אחד — **כל deploy = downtime של ~30 שניות**. לפני שיש לקוחות רציניים, שדרג ל-2 instances + Application Load Balancer ב-EB config. עלות ~+$15/mo, תמורת zero-downtime deploys + auto-failover של EC2.
 
 ---
 
@@ -390,15 +452,15 @@ Backend auto-reconnect: כן / לא
 
 | תרחיש | עבר? | זמן | הערות |
 |---|---|---|---|
-| Pre-flight 1 — Atlas tier | | | |
-| Pre-flight 2 — S3 Versioning | | | |
-| Pre-flight 3 — ECS access | | | |
-| Pre-flight 4 — Daily snapshot | | | |
+| Pre-flight 1 — Atlas tier | ✅ | 2026-04-21 | M10, PITR זמין |
+| Pre-flight 2 — S3 Versioning | ✅ | 2026-04-21 | Enabled על `brikops-prod-files` |
+| Pre-flight 3 — EB env access | ✅ | 2026-04-21 | `Brikops-api-env`, Docker, Health=Ok |
+| Pre-flight 4 — Daily snapshot | ✅ | 2026-04-21 | < 24h, cross-region ל-Ireland |
 | 1 — DB PITR | | | |
 | 2 — S3 Restore | | | |
 | 3 — Deletion grace | | | |
 | 4 — Daily snapshots | | | |
-| 5 — Backend failure | | | |
+| 5 — Backend failure (EB) | | | |
 | 6 — MongoDB failover | | | |
 
 ### RPO / RTO אמיתי (אחרי הטסט)
@@ -413,8 +475,8 @@ RTO (זמן התאוששות): _______ (משך מה-trigger ועד הכל עוב
 
 כל ה-playbook הזה אוטומטי בחלק גדול ממנו. Agent יכול:
 - **Pre-flight checks 1–4**: לקרוא את ה-API של Atlas + AWS CLI
-- **תרחיש 2 (S3)**: 100% אוטומטי עם boto3
-- **תרחיש 5 (ECS)**: 100% אוטומטי עם boto3
+- **תרחיש 2 (S3)**: 100% אוטומטי עם boto3 (`s3.delete_object` + `s3.list_object_versions` + `s3.delete_object(VersionId=...)`)
+- **תרחיש 5 (EB)**: 100% אוטומטי עם boto3 (`elasticbeanstalk.restart_app_server`) — פחות הרסני מ-stop_task ב-ECS
 - **תרחיש 6 (Failover)**: אוטומטי עם Atlas API
 
 **לא אוטומטי (דורש שיקול דעת):**
@@ -422,12 +484,15 @@ RTO (זמן התאוששות): _______ (משך מה-trigger ועד הכל עוב
 - תרחיש 3 (deletion) — רגיש לנתוני משתמש
 
 **Endpoints שצריך לבנות לAgent:**
-- `GET /admin/backup-health` — החזר: latest_snapshot_ts, atlas_tier, s3_versioning_enabled, ecs_task_count
+- `GET /admin/backup-health` — החזר: `latest_snapshot_ts`, `atlas_tier`, `s3_versioning_enabled`, `eb_env_health`, `eb_instance_count`, `cross_region_retention_days`
 - `POST /admin/dr-test/s3-restore` — מחק+שחזר קובץ דמה
-- `POST /admin/dr-test/ecs-restart` — stop+verify
+- `POST /admin/dr-test/eb-restart` — restart EB env + verify /health
+- `POST /admin/deletion/tick` — **ה-cron החסר**: ירוץ על `users` ל-`user_status='pending_deletion' AND deletion_scheduled_for <= now`, יקרא `_anonymize_user_db`
 
 **Monitoring מומלץ (אחרי שה-playbook עובר):**
 - Alert אם `snapshot_age > 26h`
 - Alert אם `s3_versioning ≠ Enabled`
-- Alert אם `ecs_running_count < desired_count`
+- Alert אם `eb_env_health ≠ Ok` למשך > 5 דקות
+- Alert אם `eb_instance_count < desired`
 - Alert אם `mongodb_primary_elections > 0` ב-24h
+- Alert אם יש user עם `user_status='pending_deletion' AND deletion_scheduled_for < now - 1day` (סימן שה-tick endpoint לא רץ)
