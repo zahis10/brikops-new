@@ -39,6 +39,7 @@ fi
 
 frontend_changed=0
 backend_changed=0
+native_changed=0
 
 check_files() {
   local f
@@ -46,6 +47,16 @@ check_files() {
     [[ -z "$f" ]] && continue
     if [[ "$f" == frontend/* ]]; then frontend_changed=1; fi
     if [[ "$f" == backend/* || "$f" == .platform/* ]]; then backend_changed=1; fi
+    if [[ "$f" == frontend/capacitor.config.json || "$f" == frontend/ios/* || "$f" == frontend/android/* ]]; then
+      native_changed=1
+    fi
+    if [[ "$f" == frontend/package.json ]]; then
+      if git diff -- frontend/package.json frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo' \
+         || git diff --cached -- frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo' \
+         || git diff "origin/$branch..HEAD" -- frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo'; then
+        native_changed=1
+      fi
+    fi
   done
 }
 
@@ -128,6 +139,18 @@ if [[ $frontend_changed -eq 1 ]]; then echo "  - Frontend (Cloudflare Pages -> h
 if [[ $backend_changed -eq 1 ]]; then echo "  - Backend  (GitHub Actions -> https://api.brikops.com)"; fi
 if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then echo "  - Config/docs only (no pipeline trigger)"; fi
 echo
+
+if [[ $native_changed -eq 1 ]]; then
+  echo "⚠️  ═══════════════════════════════════════════════════"
+  echo "   NATIVE CHANGES DETECTED"
+  echo "   Files touched: capacitor.config.json / ios / android / capacitor plugins"
+  echo "   ./deploy.sh --prod alone will NOT deliver these to the"
+  echo "   installed iPhone/Android apps. After this deploy, you"
+  echo "   MUST also run ./ship.sh on the Mac to rebuild the native"
+  echo "   app and push to TestFlight / Play Store."
+  echo "   ═══════════════════════════════════════════════════"
+  echo
+fi
 
 if [[ "$MODE" != "prod" ]]; then
   echo "Dry-run only. To deploy:"
@@ -263,3 +286,14 @@ if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then
 fi
 echo " $summary_line"
 echo "═══════════════════════════════════════════════════"
+
+if [[ $native_changed -eq 1 ]]; then
+  echo
+  echo "⚠️  ═══════════════════════════════════════════════════"
+  echo "   NATIVE CHANGES DETECTED — ./ship.sh STILL REQUIRED"
+  echo "   This push touched capacitor.config.json / ios / android /"
+  echo "   capacitor plugins. Capgo OTA cannot deliver native changes."
+  echo "   Now run on the Mac:"
+  echo "     cd ~/brikops-new && ./ship.sh"
+  echo "   ═══════════════════════════════════════════════════"
+fi

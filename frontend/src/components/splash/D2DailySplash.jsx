@@ -95,7 +95,7 @@ export default function D2DailySplash({ isReady = false, loadingText = 'מתחב
           animation: 'brikBreathe 2.4s ease-in-out infinite',
           filter: 'drop-shadow(0 0 24px rgba(245, 158, 11, 0.25))',
         }}>
-          <BrikMark size={88} color="#fff" accent="#F59E0B" withAccent/>
+          <BrikMark size={88} color="#F59E0B" accent="#fff" withAccent/>
         </div>
         <div style={{
           fontFamily: '"Rubik", system-ui', fontSize: 18, fontWeight: 600,

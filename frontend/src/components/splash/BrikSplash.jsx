@@ -7,9 +7,6 @@ const LAST_SEEN_VERSION_KEY = 'brikops_last_seen_version_v2';
 const MIN_DURATION_MS = { D3A: 3600, D2: 800 };
 const FADE_OUT_MS = 250;
 
-const BUILD_SHA = (process.env.REACT_APP_GIT_SHA || '').slice(0, 7) || 'dev';
-const BUILD_TAG = `W2c · ${BUILD_SHA}`;
-
 /**
  * BrikSplash — top-level splash overlay that owns its own minimum
  * display lifecycle.
@@ -139,25 +136,6 @@ export default function BrikSplash({ isAppReady = true, children = null }) {
         ) : (
           <D2DailySplash isReady={isAppReady && minTimeElapsed} loadingText="טוען" />
         )}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
-            left: 0,
-            right: 0,
-            textAlign: 'center',
-            fontSize: '10px',
-            fontWeight: 500,
-            letterSpacing: '0.5px',
-            color: 'rgba(255, 255, 255, 0.45)',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
-            pointerEvents: 'none',
-            userSelect: 'none',
-            zIndex: 10000,
-          }}
-        >
-          {BUILD_TAG}
-        </div>
       </div>
     </>
   );
