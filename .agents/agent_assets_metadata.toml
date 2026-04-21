@@ -168,3 +168,9 @@ id = "B4fRcQyFJPkGysmxx2BeP"
 uri = "file://.local/review-phase7-wave2.txt"
 type = "text"
 title = "Wave 2 — commit 9034aad (refreshed logo + extended D3-A hold)"
+
+[[outputs]]
+id = "pfVhCyGRUgjdawIHkwEZE"
+uri = "file://.local/review-phase7-wave2b.txt"
+type = "text"
+title = "Wave 2b — commit 964c719 (BrikSplash owns its own lifecycle)"
