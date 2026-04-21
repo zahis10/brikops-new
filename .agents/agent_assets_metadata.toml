@@ -192,3 +192,9 @@ id = "ZIFUepo-oSQm7hhl29j7U"
 uri = "file://.local/review-393-login-ux.txt"
 type = "text"
 title = "Task #393 — commit 8055d22 (login UX: no auto-keyboard + Web OTP autofill)"
+
+[[outputs]]
+id = "9Jfz3vQ9ZdkSMnxP2vVWF"
+uri = "file://.local/review-394-ios-otp-autofill.txt"
+type = "text"
+title = "Task #394 — commit 9e26e67 (iOS OTP autofill: Associated Domains + AASA)"
