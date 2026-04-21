@@ -198,3 +198,9 @@ id = "9Jfz3vQ9ZdkSMnxP2vVWF"
 uri = "file://.local/review-394-ios-otp-autofill.txt"
 type = "text"
 title = "Task #394 — commit 9e26e67 (iOS OTP autofill: Associated Domains + AASA)"
+
+[[outputs]]
+id = "fb7inUlLBqi_2dBwdlWjH"
+uri = "file://.local/review-395-android-sms-retriever.txt"
+type = "text"
+title = "Review #395 — Android OTP Autofill (9 Proofs)"
