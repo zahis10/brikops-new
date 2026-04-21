@@ -180,3 +180,9 @@ id = "k7nwQ0YPtJ91ofbfe-D_L"
 uri = "file://.local/review-phase7-wave2c.txt"
 type = "text"
 title = "Wave 2c — commit 6c982d7 (build tag on splash, diagnostic)"
+
+[[outputs]]
+id = "Kap0FoM8gxlUDjb3ozLjR"
+uri = "file://.local/review-phase7-wave2d.txt"
+type = "text"
+title = "Wave 2d — commit d7ea3cf (orange logo + Capgo autoUpdate + native-change guard)"
