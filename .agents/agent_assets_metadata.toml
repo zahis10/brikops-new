@@ -186,3 +186,9 @@ id = "Kap0FoM8gxlUDjb3ozLjR"
 uri = "file://.local/review-phase7-wave2d.txt"
 type = "text"
 title = "Wave 2d — commit d7ea3cf (orange logo + Capgo autoUpdate + native-change guard)"
+
+[[outputs]]
+id = "ZIFUepo-oSQm7hhl29j7U"
+uri = "file://.local/review-393-login-ux.txt"
+type = "text"
+title = "Task #393 — commit 8055d22 (login UX: no auto-keyboard + Web OTP autofill)"
