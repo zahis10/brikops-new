@@ -5,15 +5,17 @@ TASK — FIX ANDROID LAUNCHER ICON (B too big) + BUMP VERSION
 CONTEXT
 -------
 Android adaptive icon foreground currently has the "B" logo
-occupying ~75% of canvas — on Samsung/Pixel home screens it
-looks cramped, dominating the entire icon area. iPhone icon is
-fine because iOS doesn't use adaptive safe-zone masking.
+occupying ~50% of canvas (verified from repo's current PNGs).
+On Samsung/Pixel home screens it STILL looks cramped because
+adaptive icon masking crops ~33% of the canvas — so 50% on canvas
+= ~75% of the visible safe zone, which dominates the icon.
+iPhone icon is fine because iOS has no adaptive safe-zone masking.
 
-Fix: regenerate all 15 mipmap PNGs so the B fills ~50% of canvas
-(the source PNG's natural bbox ratio), centered, with transparent
-background on the foreground layer and #323A4E composited into
-the legacy launcher files. Also bump versionCode 17→18 because
-Play Console already has AAB 17 uploaded and will reject a repeat.
+Fix: regenerate all 15 mipmap PNGs so the B fills ~40% of canvas
+(down from ~50%), centered, with transparent background on the
+foreground layer and #323A4E composited into the legacy launcher
+files. Also bump versionCode 17→18 because Play Console already
+has AAB 17 uploaded and will reject a repeat.
 
 DO NOT TOUCH
 ------------
@@ -33,7 +35,7 @@ STEP 1: Save this Python script as scripts/regenerate_android_icons.py
 
 ----- BEGIN scripts/regenerate_android_icons.py -----
 #!/usr/bin/env python3
-"""Regenerate Android launcher icons (foreground + legacy) with B at ~50%."""
+"""Regenerate Android launcher icons (foreground + legacy) with B at ~40% of canvas."""
 import os
 from PIL import Image, ImageDraw
 
@@ -101,11 +103,11 @@ if __name__ == "__main__":
     main()
 ----- END scripts/regenerate_android_icons.py -----
 
-RUN IT:
-  pip install Pillow --break-system-packages
+RUN IT (Pillow is already installed in the Replit environment — skip pip install):
   python3 scripts/regenerate_android_icons.py
 
 The script MUST print "All good." before continuing.
+Per-density B ratio must land in 35%-45% range (assertions enforce this).
 
 ================================================================
 
@@ -154,13 +156,15 @@ VERIFY BEFORE COMMIT
 COMMIT
 ------
   git add scripts/regenerate_android_icons.py frontend/android/app/
-  git commit -m "fix(android): shrink B logo 75%→50% + composite legacy icons + v1.0.18
+  git commit -m "fix(android): shrink B logo 50%→40% + composite legacy icons + v1.0.18
 
-Adaptive icon foreground had B occupying ~75% of canvas, making it
-look cramped inside launcher masks on Samsung/Pixel. Regenerated all
-5 mipmap foreground PNGs with B at ~50% centered on transparent bg.
-Also regenerated legacy ic_launcher[_round].png compositing B over
-#323A4E background with rounded/circle masks for pre-adaptive launchers.
+Adaptive icon foreground had B occupying ~50% of canvas, which
+STILL looks cramped inside adaptive-icon masks on Samsung/Pixel
+(safe zone is ~66dp of 108dp, so 50% canvas = ~75% of visible area).
+Regenerated all 5 mipmap foreground PNGs with B at ~40% centered on
+transparent bg. Also regenerated legacy ic_launcher[_round].png
+compositing B over #323A4E background with rounded/circle masks for
+pre-adaptive launchers.
 
 Version bump required: Play Console already has AAB versionCode 17.
 
