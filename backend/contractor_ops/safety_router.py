@@ -251,7 +251,7 @@ async def get_worker(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    doc = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id})
+    doc = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="worker not found")
     # PII: never expose hash or any raw id_number
@@ -269,7 +269,7 @@ async def update_worker(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id})
+    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="worker not found")
     if before.get("deletedAt"):
@@ -289,7 +289,7 @@ async def update_worker(
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]
 
-    await db.safety_workers.update_one({"id": worker_id}, {"$set": updates})
+    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
     after = await db.safety_workers.find_one({"id": worker_id})
     _STRIP_PII = ("_id", "id_number", "id_number_hash")
     await _audit("safety_worker", worker_id, "updated", user["id"], {
@@ -309,14 +309,14 @@ async def delete_worker(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id})
+    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="worker not found")
     if before.get("deletedAt"):
         return
 
     now = _now()
-    await db.safety_workers.update_one({"id": worker_id}, {"$set": {
+    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": {
         "deletedAt": now,
         "deletedBy": user["id"],
         "deletion_reason": body.reason,
@@ -430,7 +430,7 @@ async def get_training(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id})
+    doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="training not found")
     return SafetyTraining(**doc)
@@ -445,7 +445,7 @@ async def update_training(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id})
+    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="training not found")
     if before.get("deletedAt"):
@@ -455,7 +455,7 @@ async def update_training(
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]
 
-    await db.safety_trainings.update_one({"id": training_id}, {"$set": updates})
+    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
     after = await db.safety_trainings.find_one({"id": training_id})
     await _audit("safety_training", training_id, "updated", user["id"], {
         "project_id": project_id,
@@ -474,13 +474,13 @@ async def delete_training(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id})
+    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="training not found")
     if before.get("deletedAt"):
         return
     now = _now()
-    await db.safety_trainings.update_one({"id": training_id}, {"$set": {
+    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": {
         "deletedAt": now,
         "deletedBy": user["id"],
         "deletion_reason": body.reason,
@@ -625,7 +625,7 @@ async def get_document(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id})
+    doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="document not found")
     return SafetyDocument(**doc)
@@ -640,7 +640,7 @@ async def update_document(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id})
+    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="document not found")
     if before.get("deletedAt"):
@@ -666,7 +666,7 @@ async def update_document(
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]
 
-    await db.safety_documents.update_one({"id": document_id}, {"$set": updates})
+    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
     after = await db.safety_documents.find_one({"id": document_id})
     await _audit("safety_document", document_id, "updated", user["id"], {
         "project_id": project_id,
@@ -685,13 +685,13 @@ async def delete_document(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id})
+    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="document not found")
     if before.get("deletedAt"):
         return
     now = _now()
-    await db.safety_documents.update_one({"id": document_id}, {"$set": {
+    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": {
         "deletedAt": now,
         "deletedBy": user["id"],
         "deletion_reason": body.reason,
@@ -849,7 +849,7 @@ async def get_task(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    doc = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id})
+    doc = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="task not found")
     return SafetyTask(**doc)
@@ -864,7 +864,7 @@ async def update_task(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id})
+    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="task not found")
     if before.get("deletedAt"):
@@ -895,7 +895,7 @@ async def update_task(
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]
 
-    await db.safety_tasks.update_one({"id": task_id}, {"$set": updates})
+    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
     after = await db.safety_tasks.find_one({"id": task_id})
     await _audit("safety_task", task_id, "updated", user["id"], {
         "project_id": project_id,
@@ -914,13 +914,13 @@ async def delete_task(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id})
+    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="task not found")
     if before.get("deletedAt"):
         return
     now = _now()
-    await db.safety_tasks.update_one({"id": task_id}, {"$set": {
+    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": {
         "deletedAt": now,
         "deletedBy": user["id"],
         "deletion_reason": body.reason,
@@ -1046,7 +1046,7 @@ async def get_incident(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id})
+    doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
     if not doc:
         raise HTTPException(status_code=404, detail="incident not found")
     return SafetyIncident(**doc)
@@ -1061,7 +1061,7 @@ async def update_incident(
 ):
     db = get_db()
     await _check_project_access(user, project_id)
-    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id})
+    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="incident not found")
     if before.get("deletedAt"):
@@ -1094,7 +1094,7 @@ async def update_incident(
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]
 
-    await db.safety_incidents.update_one({"id": incident_id}, {"$set": updates})
+    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
     after = await db.safety_incidents.find_one({"id": incident_id})
     await _audit("safety_incident", incident_id, "updated", user["id"], {
         "project_id": project_id,
@@ -1117,7 +1117,7 @@ async def delete_incident(
     if not body.reason or not body.reason.strip():
         raise HTTPException(status_code=400, detail="deletion_reason is required for incidents")
 
-    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id})
+    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
     if not before:
         raise HTTPException(status_code=404, detail="incident not found")
     if before.get("deletedAt"):
@@ -1125,7 +1125,7 @@ async def delete_incident(
 
     # Retention from OCCURRED_AT, not now (regulatory clock)
     retention = _retention_date(before["occurred_at"])
-    await db.safety_incidents.update_one({"id": incident_id}, {"$set": {
+    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": {
         "deletedAt": _now(),
         "deletedBy": user["id"],
         "deletion_reason": body.reason.strip(),
