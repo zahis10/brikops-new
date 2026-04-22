@@ -66,6 +66,9 @@ JWT_RENEWAL_THRESHOLD_DAYS = 15
 WHATSAPP_ENABLED = os.environ.get('WHATSAPP_ENABLED', 'false').lower() == 'true'
 ENABLE_REMINDER_SCHEDULER = os.environ.get('ENABLE_REMINDER_SCHEDULER', 'true').lower() == 'true'
 WA_INVITE_ENABLED = os.environ.get('WA_INVITE_ENABLED', 'false').lower() == 'true'
+# Safety module Phase 1 — default off, opt-in per environment.
+# When off, safety router is NOT registered and endpoints 404.
+ENABLE_SAFETY_MODULE = os.environ.get('ENABLE_SAFETY_MODULE', 'false').lower() == 'true'
 WHATSAPP_PROVIDER = os.environ.get('WHATSAPP_PROVIDER', 'meta')
 WA_ACCESS_TOKEN = os.environ.get('WA_ACCESS_TOKEN', '')
 WA_PHONE_NUMBER_ID = os.environ.get('WA_PHONE_NUMBER_ID', '')

@@ -25,6 +25,7 @@ from config import (
     OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS, OTP_RATE_LIMIT_SECONDS,
     STEPUP_EMAIL, SMTP_USER, SMTP_PASS,
     ENABLE_DEMO_USERS, DEMO_DEFAULT_PASSWORD, DEMO_RESET_PASSWORDS,
+    ENABLE_SAFETY_MODULE,
 )
 
 logging.basicConfig(
@@ -426,6 +427,19 @@ app.include_router(qc_notif_router)
 
 from contractor_ops.config_router import router as config_router
 app.include_router(config_router)
+
+# -----------------------------------------------------------------
+# Safety module — Phase 1 (feature-gated)
+# When ENABLE_SAFETY_MODULE is False, router is NEVER imported and
+# endpoints 404. This is the STRONGEST guarantee that disabled ==
+# invisible, for both scanners and accidental exposure.
+# -----------------------------------------------------------------
+if ENABLE_SAFETY_MODULE:
+    from contractor_ops.safety_router import router as safety_router
+    app.include_router(safety_router)
+    logger.info("Safety module ENABLED — router registered at /api/safety")
+else:
+    logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")
 
 from contractor_ops.debug_router import router as debug_router
 app.include_router(debug_router)
@@ -1114,6 +1128,14 @@ async def _deferred_db_init():
         from contractor_ops.invoicing import ensure_indexes as invoicing_ensure_indexes
         await invoicing_ensure_indexes()
         await ensure_reminder_indexes()
+        # Safety module indices (guarded by feature flag)
+        if ENABLE_SAFETY_MODULE:
+            from contractor_ops.safety_router import ensure_safety_indexes
+            try:
+                await ensure_safety_indexes(db)
+            except Exception as e:
+                logger.error(f"Failed to ensure safety indices: {e}")
+                # Do NOT crash startup — module will still function, queries just slower
     except Exception as e:
         logger.warning(f"[STARTUP] Index creation failed (non-fatal): {e}")
 

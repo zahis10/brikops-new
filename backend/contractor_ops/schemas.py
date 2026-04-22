@@ -662,3 +662,152 @@ class InviteResponse(BaseModel):
     accepted_at: Optional[str] = None
     created_at: str
     updated_at: str
+
+# =====================================================================
+# Safety Module — Phase 1 data models
+# Added: 2026-04-22 · Part 1 Foundation
+# References: specs/safety-phase-1-master-plan.md §5 (Mac-side spec)
+# =====================================================================
+
+class SafetyCategory(str, Enum):
+    """10 regulatory safety categories per תקנות התשע"ט-2019"""
+    scaffolding = "scaffolding"          # פיגומים
+    heights = "heights"                  # עבודה בגובה
+    electrical_safety = "electrical_safety"  # בטיחות חשמל
+    lifting = "lifting"                  # הרמה וציוד
+    excavation = "excavation"            # חפירות
+    fire_safety = "fire_safety"          # אש ובטיחות אש
+    ppe = "ppe"                          # ציוד מגן אישי
+    site_housekeeping = "site_housekeeping"  # סדר וניקיון
+    hazardous_materials = "hazardous_materials"  # חומרים מסוכנים
+    other = "other"                      # אחר
+
+
+class SafetySeverity(str, Enum):
+    """Severity 1-3 per Cemento convention"""
+    sev_1 = "1"   # נמוכה — הערה/שיפור
+    sev_2 = "2"   # בינונית — דורש תיקון
+    sev_3 = "3"   # גבוהה — עצירה מיידית
+
+
+class SafetyDocumentStatus(str, Enum):
+    open = "open"
+    in_progress = "in_progress"
+    resolved = "resolved"
+    verified = "verified"
+
+
+class SafetyTaskStatus(str, Enum):
+    open = "open"
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class SafetyWorker(BaseModel):
+    """Worker on site — minimal Phase 1 shape. Extended in Part 2."""
+    id: str                              # uuid4
+    project_id: str
+    company_id: Optional[str] = None     # FK → project_companies.id
+    full_name: str
+    id_number: Optional[str] = None      # Israeli/Palestinian/foreign ID; stored raw, hashed in Part 2
+    profession: Optional[str] = None     # e.g. "נגר", "חשמלאי"
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: str                      # ISO UTC via _now()
+    created_by: str                      # actor user id
+    # soft-delete (project-wide convention — camelCase)
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+    deletion_reason: Optional[str] = None
+    retention_until: Optional[str] = None  # 7yr from delete for regulatory
+
+
+class SafetyTraining(BaseModel):
+    """Training record per worker. Expiry drives Safety Score."""
+    id: str
+    project_id: str
+    worker_id: str                       # FK → safety_workers.id
+    training_type: str                   # e.g. "הדרכת אתר", "הדרכת סיכונים"
+    instructor_name: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    location: Optional[str] = None
+    trained_at: str                      # ISO date
+    expires_at: Optional[str] = None     # ISO date; null = no expiry
+    certificate_url: Optional[str] = None  # R2/S3 URL if uploaded
+    created_at: str
+    created_by: str
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+
+
+class SafetyDocument(BaseModel):
+    """Safety observation/finding — the regulatory תיעוד records."""
+    id: str
+    project_id: str
+    category: SafetyCategory
+    severity: SafetySeverity
+    status: SafetyDocumentStatus = SafetyDocumentStatus.open
+    title: str
+    description: Optional[str] = None
+    location: Optional[str] = None       # e.g. "קומה 4, גוש מזרחי"
+    company_id: Optional[str] = None     # FK → project_companies.id
+    profession: Optional[str] = None
+    assignee_id: Optional[str] = None    # user id
+    reporter_id: str                     # user id
+    photo_urls: List[str] = []
+    attachment_urls: List[str] = []      # PDF/doc attachments
+    found_at: str                        # ISO UTC (when observed)
+    resolved_at: Optional[str] = None
+    created_at: str
+    created_by: str
+    updated_at: Optional[str] = None
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+
+
+class SafetyTask(BaseModel):
+    """Corrective action task."""
+    id: str
+    project_id: str
+    document_id: Optional[str] = None    # FK → safety_documents.id
+    title: str
+    description: Optional[str] = None
+    status: SafetyTaskStatus = SafetyTaskStatus.open
+    severity: SafetySeverity
+    assignee_id: Optional[str] = None
+    company_id: Optional[str] = None
+    due_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    corrective_action: Optional[str] = None
+    verification_photo_urls: List[str] = []
+    created_at: str
+    created_by: str
+    updated_at: Optional[str] = None
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+
+
+class SafetyIncident(BaseModel):
+    """Near-miss or injury event. 7-year retention is REGULATORY (not optional)."""
+    id: str
+    project_id: str
+    incident_type: str                   # "near_miss" | "injury" | "property_damage"
+    severity: SafetySeverity
+    occurred_at: str                     # ISO UTC
+    description: str
+    location: Optional[str] = None
+    injured_worker_id: Optional[str] = None  # FK → safety_workers.id; null if near-miss
+    witnesses: List[str] = []            # worker_ids
+    photo_urls: List[str] = []
+    medical_record_urls: List[str] = []  # PHI — encrypted at rest (Part 2)
+    reported_to_authority: bool = False
+    authority_report_ref: Optional[str] = None
+    created_at: str
+    created_by: str
+    updated_at: Optional[str] = None
+    # soft-delete: retention_until MUST be set to occurred_at + 7yr on delete
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[str] = None
+    deletion_reason: Optional[str] = None
+    retention_until: Optional[str] = None
