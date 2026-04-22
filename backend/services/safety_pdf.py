@@ -80,13 +80,51 @@ def _fmt_date(iso):
         return str(iso)[:10]
 
 
-def _on_page(canvas, doc):
-    """Page-X-of-Y footer (uses two-pass via doc.page; total via canvas)."""
-    canvas.saveState()
-    canvas.setFont("Rubik", 8)
-    page_str = f"עמוד {doc.page}"
-    canvas.drawCentredString(doc.pagesize[0] / 2.0, 1.0 * 28.35, hebrew(page_str))
-    canvas.restoreState()
+class _NumberedCanvas:
+    """
+    Two-pass page-X-of-Y footer canvas. Buffers each page's state during
+    the first build pass, then stamps the true total-page count on every
+    page during save() (reportlab's standard idiom for X/Y footers).
+    """
+
+    def __init__(self, *args, **kwargs):
+        from reportlab.pdfgen import canvas as _canvas_mod
+        self._canvas_cls = _canvas_mod.Canvas
+        self._canvas = _canvas_mod.Canvas(*args, **kwargs)
+        self._saved_states = []
+
+    def __getattr__(self, name):
+        return getattr(self._canvas, name)
+
+    def showPage(self):
+        self._saved_states.append(self._canvas.__dict__.copy())
+        self._canvas._startPage()
+
+    def save(self):
+        total = len(self._saved_states)
+        for state in self._saved_states:
+            self._canvas.__dict__.update(state)
+            self._draw_footer(total)
+            self._canvas_cls.showPage(self._canvas)
+        self._canvas.save()
+
+    def _draw_footer(self, total):
+        c = self._canvas
+        page = c.getPageNumber()
+        c.saveState()
+        try:
+            c.setFont("Rubik", 8)
+        except Exception:
+            c.setFont("Helvetica", 8)
+        # A4 width = 595.27 pts; 28.35 pts ~= 1 cm
+        text = hebrew(f"עמוד {page} מתוך {total}")
+        c.drawCentredString(595.27 / 2.0, 28.35, text)
+        c.restoreState()
+
+
+def _make_canvas(*args, **kwargs):
+    """Factory used as SimpleDocTemplate(..., canvasmaker=_make_canvas)."""
+    return _NumberedCanvas(*args, **kwargs)
 
 
 async def generate_safety_register(db, project_id: str) -> bytes:
@@ -412,6 +450,6 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
     elems.append(Paragraph(hebrew("נוצר באמצעות BrikOps · brikops.com"), sub))
 
-    doc.build(elems, onFirstPage=_on_page, onLaterPages=_on_page)
+    doc.build(elems, canvasmaker=_make_canvas)
     out.seek(0)
     return out.getvalue()

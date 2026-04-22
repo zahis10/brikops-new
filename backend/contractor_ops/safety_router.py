@@ -1248,7 +1248,6 @@ async def _compute_safety_score(db, project_id: str) -> dict:
     score = max(0, 100 - total_penalty)
 
     return {
-        "project_id": project_id,
         "score": score,
         "breakdown": {
             "documents": {
