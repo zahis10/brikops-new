@@ -1,479 +1,409 @@
-=================================================================
-REVIEW — Follow-up fix to #395 (Android Kotlin plugin + JDK 21)
-Generated: 2026-04-21 18:19:32 UTC
-Base: 97f3c33 (feat(#395): Android OTP autofill via in-house SMS Retriever plugin)
-HEAD: 7eed308068fccf43cf6f000c584bdf8365388f16 (Update Java version to 21 for improved performance)
-=================================================================
-
-## COMMITS IN THIS FOLLOW-UP
-7eed308 Update Java version to 21 for improved performance
-f3cb484 fix(#395): add Kotlin Gradle plugin so SmsRetrieverPlugin.kt compiles
-55e83a9 Add system to automatically retrieve SMS verification codes on Android
-
-## OVERALL DIFF STAT (97f3c33..HEAD)
- .agents/agent_assets_metadata.toml | 6 ++++++
- frontend/android/app/build.gradle  | 7 +++++--
- frontend/android/build.gradle      | 4 +++-
- replit.nix                         | 1 +
- 4 files changed, 15 insertions(+), 3 deletions(-)
-
-=================================================================
-## COMMIT 1 of 2 — f3cb484
-=================================================================
-f3cb48454157f6b73f62836dcb382b9343295983
+=== Safety Phase 1 Part 1 — Foundation ===
+Commit: 17d6b5c (on main, NOT pushed to origin)
+Author/Date:
 zahis10 <zahis10@gmail.com>
-Tue Apr 21 18:15:38 2026 +0000
+Wed Apr 22 18:10:03 2026 +0000
 
-fix(#395): add Kotlin Gradle plugin so SmsRetrieverPlugin.kt compiles
+=== Files changed ===
+ backend/config.py                       |   3 +
+ backend/contractor_ops/safety_router.py | 171 ++++++++++++++++++++++++++++++++
+ backend/contractor_ops/schemas.py       | 149 ++++++++++++++++++++++++++++
+ backend/server.py                       |  22 ++++
+ 4 files changed, 345 insertions(+)
 
-Project was pure Java until #395 added the first .kt file.
-Apply kotlin-android + add kotlin-gradle-plugin classpath so
-SmsRetrieverPlugin.kt is compiled to bytecode. Bump versionCode
-16->17 (16 was consumed by failed build attempt on Mac).
-
-- frontend/android/build.gradle: ext.kotlin_version + classpath
-- frontend/android/app/build.gradle: apply kotlin-android + stdlib
-- versionCode 16->17, versionName 1.0.16->1.0.17
-
-Verified in Replit: ./gradlew :app:tasks shows buildKotlinToolingMetadata
-and checkKotlinGradlePluginConfigurationErrors registered (BUILD SUCCESSFUL
-in 26s), confirming kotlin-android plugin is applied. The earlier
-compileReleaseKotlin error was 'SDK location not found' (Android SDK
-absent from Replit), not a Kotlin plugin issue — on Mac with the SDK
-present, compileReleaseKotlin will produce SmsRetrieverPlugin.class
-and MainActivity.java will resolve the symbol.
-
-
------ DIFF (f3cb484^..f3cb484) -----
-diff --git a/frontend/android/app/build.gradle b/frontend/android/app/build.gradle
-index 89ccb20..1ac450e 100644
---- a/frontend/android/app/build.gradle
-+++ b/frontend/android/app/build.gradle
-@@ -1,4 +1,5 @@
- apply plugin: 'com.android.application'
-+apply plugin: 'kotlin-android'
- 
- android {
-     namespace "com.brikops.app"
-@@ -7,8 +8,8 @@ android {
-         applicationId "com.brikops.app"
-         minSdkVersion rootProject.ext.minSdkVersion
-         targetSdkVersion rootProject.ext.targetSdkVersion
--        versionCode 16
--        versionName "1.0.16"
-+        versionCode 17
-+        versionName "1.0.17"
-         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-         aaptOptions {
-              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-@@ -37,6 +38,8 @@ dependencies {
-     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
-     implementation 'androidx.core:core:1.15.0'
-     implementation project(':capacitor-android')
-+    // Kotlin stdlib (#395 follow-up — required for SmsRetrieverPlugin.kt to compile)
-+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlin_version"
-     // SMS Retriever API (#395 — Android OTP autofill, no READ_SMS permission)
-     implementation 'com.google.android.gms:play-services-auth:21.3.0'
-     implementation 'com.google.android.gms:play-services-auth-api-phone:18.1.0'
-diff --git a/frontend/android/build.gradle b/frontend/android/build.gradle
-index f1b3b0e..bd360ff 100644
---- a/frontend/android/build.gradle
-+++ b/frontend/android/build.gradle
-@@ -1,7 +1,8 @@
- // Top-level build file where you can add configuration options common to all sub-projects/modules.
- 
- buildscript {
--    
-+    ext.kotlin_version = '1.9.25'
+=== FULL DIFF (before/after) ===
+diff --git a/backend/config.py b/backend/config.py
+index cec6af5..14b576a 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -66,6 +66,9 @@ JWT_RENEWAL_THRESHOLD_DAYS = 15
+ WHATSAPP_ENABLED = os.environ.get('WHATSAPP_ENABLED', 'false').lower() == 'true'
+ ENABLE_REMINDER_SCHEDULER = os.environ.get('ENABLE_REMINDER_SCHEDULER', 'true').lower() == 'true'
+ WA_INVITE_ENABLED = os.environ.get('WA_INVITE_ENABLED', 'false').lower() == 'true'
++# Safety module Phase 1 — default off, opt-in per environment.
++# When off, safety router is NOT registered and endpoints 404.
++ENABLE_SAFETY_MODULE = os.environ.get('ENABLE_SAFETY_MODULE', 'false').lower() == 'true'
+ WHATSAPP_PROVIDER = os.environ.get('WHATSAPP_PROVIDER', 'meta')
+ WA_ACCESS_TOKEN = os.environ.get('WA_ACCESS_TOKEN', '')
+ WA_PHONE_NUMBER_ID = os.environ.get('WA_PHONE_NUMBER_ID', '')
+diff --git a/backend/contractor_ops/safety_router.py b/backend/contractor_ops/safety_router.py
+new file mode 100644
+index 0000000..ca685e6
+--- /dev/null
++++ b/backend/contractor_ops/safety_router.py
+@@ -0,0 +1,171 @@
++"""
++Safety module router — Phase 1 Part 1 (Foundation).
 +
-     repositories {
-         google()
-         mavenCentral()
-@@ -9,6 +10,7 @@ buildscript {
-     dependencies {
-         classpath 'com.android.tools.build:gradle:8.7.2'
-         classpath 'com.google.gms:google-services:4.4.2'
-+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
++Only exposes healthz. All CRUD + filters arrive in Part 2.
++
++Registration in server.py is GATED by ENABLE_SAFETY_MODULE env flag.
++When flag is off, this module is never imported and endpoints 404.
++"""
++from fastapi import APIRouter, Depends
++from contractor_ops.router import get_current_user
++import logging
++
++logger = logging.getLogger(__name__)
++
++router = APIRouter(prefix="/api/safety", tags=["safety"])
++
++
++@router.get("/healthz")
++async def healthz(user: dict = Depends(get_current_user)):
++    """
++    Liveness check for Safety module.
++    Requires auth — never expose module existence to unauthenticated scanners.
++    """
++    return {"ok": True, "module": "safety", "enabled": True}
++
++
++# =====================================================================
++# Index management — called from server.py startup when module enabled.
++# =====================================================================
++async def ensure_safety_indexes(db) -> None:
++    """
++    Create MongoDB indices for Safety collections.
++    Idempotent: `create_index` is a no-op if the same spec already exists.
++    Safe to run on every startup.
++
++    All indices use background=True to avoid locking hot collections.
++    """
++    # -----------------------------------------------------------------
++    # safety_workers — 3 indices
++    # -----------------------------------------------------------------
++    await db.safety_workers.create_index(
++        [("project_id", 1), ("deletedAt", 1)],
++        background=True,
++        name="idx_sw_project_deleted",
++    )
++    await db.safety_workers.create_index(
++        [("project_id", 1), ("company_id", 1)],
++        background=True,
++        name="idx_sw_project_company",
++    )
++    await db.safety_workers.create_index(
++        [("project_id", 1), ("id_number", 1)],
++        background=True,
++        sparse=True,
++        name="idx_sw_project_idnum",
++    )
++
++    # -----------------------------------------------------------------
++    # safety_trainings — 3 indices
++    # -----------------------------------------------------------------
++    await db.safety_trainings.create_index(
++        [("project_id", 1), ("worker_id", 1)],
++        background=True,
++        name="idx_st_project_worker",
++    )
++    await db.safety_trainings.create_index(
++        [("project_id", 1), ("expires_at", 1)],
++        background=True,
++        sparse=True,
++        name="idx_st_project_expires",
++    )
++    await db.safety_trainings.create_index(
++        [("project_id", 1), ("training_type", 1)],
++        background=True,
++        name="idx_st_project_type",
++    )
++
++    # -----------------------------------------------------------------
++    # safety_documents — 5 filter-critical indices
++    # -----------------------------------------------------------------
++    await db.safety_documents.create_index(
++        [("project_id", 1), ("deletedAt", 1), ("created_at", -1)],
++        background=True,
++        name="idx_sd_project_deleted_created",
++    )
++    await db.safety_documents.create_index(
++        [("project_id", 1), ("status", 1)],
++        background=True,
++        name="idx_sd_project_status",
++    )
++    await db.safety_documents.create_index(
++        [("project_id", 1), ("severity", 1)],
++        background=True,
++        name="idx_sd_project_severity",
++    )
++    await db.safety_documents.create_index(
++        [("project_id", 1), ("category", 1)],
++        background=True,
++        name="idx_sd_project_category",
++    )
++    await db.safety_documents.create_index(
++        [("project_id", 1), ("company_id", 1)],
++        background=True,
++        sparse=True,
++        name="idx_sd_project_company",
++    )
++
++    # -----------------------------------------------------------------
++    # safety_tasks — 4 indices
++    # -----------------------------------------------------------------
++    await db.safety_tasks.create_index(
++        [("project_id", 1), ("deletedAt", 1), ("due_at", 1)],
++        background=True,
++        name="idx_stk_project_deleted_due",
++    )
++    await db.safety_tasks.create_index(
++        [("project_id", 1), ("status", 1)],
++        background=True,
++        name="idx_stk_project_status",
++    )
++    await db.safety_tasks.create_index(
++        [("project_id", 1), ("assignee_id", 1)],
++        background=True,
++        sparse=True,
++        name="idx_stk_project_assignee",
++    )
++    await db.safety_tasks.create_index(
++        [("document_id", 1)],
++        background=True,
++        sparse=True,
++        name="idx_stk_document",
++    )
++
++    # -----------------------------------------------------------------
++    # safety_incidents — 3 indices (7yr retention-critical)
++    # -----------------------------------------------------------------
++    await db.safety_incidents.create_index(
++        [("project_id", 1), ("occurred_at", -1)],
++        background=True,
++        name="idx_si_project_occurred",
++    )
++    await db.safety_incidents.create_index(
++        [("project_id", 1), ("severity", 1)],
++        background=True,
++        name="idx_si_project_severity",
++    )
++    await db.safety_incidents.create_index(
++        [("retention_until", 1)],
++        background=True,
++        sparse=True,
++        name="idx_si_retention",
++    )
++
++    # -----------------------------------------------------------------
++    # project_companies — 2 new safety-related indices
++    # (safe to add — collection is shared with other modules)
++    # -----------------------------------------------------------------
++    await db.project_companies.create_index(
++        [("project_id", 1), ("safety_contact_id", 1)],
++        background=True,
++        sparse=True,
++        name="idx_pc_project_safety_contact",
++    )
++    await db.project_companies.create_index(
++        [("project_id", 1), ("is_placeholder", 1)],
++        background=True,
++        sparse=True,
++        name="idx_pc_project_placeholder",
++    )
++
++    logger.info("Safety indices ensured (20 total across 6 collections)")
+diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+index 5990f3b..7270c98 100644
+--- a/backend/contractor_ops/schemas.py
++++ b/backend/contractor_ops/schemas.py
+@@ -662,3 +662,152 @@ class InviteResponse(BaseModel):
+     accepted_at: Optional[str] = None
+     created_at: str
+     updated_at: str
++
++# =====================================================================
++# Safety Module — Phase 1 data models
++# Added: 2026-04-22 · Part 1 Foundation
++# References: specs/safety-phase-1-master-plan.md §5 (Mac-side spec)
++# =====================================================================
++
++class SafetyCategory(str, Enum):
++    """10 regulatory safety categories per תקנות התשע"ט-2019"""
++    scaffolding = "scaffolding"          # פיגומים
++    heights = "heights"                  # עבודה בגובה
++    electrical_safety = "electrical_safety"  # בטיחות חשמל
++    lifting = "lifting"                  # הרמה וציוד
++    excavation = "excavation"            # חפירות
++    fire_safety = "fire_safety"          # אש ובטיחות אש
++    ppe = "ppe"                          # ציוד מגן אישי
++    site_housekeeping = "site_housekeeping"  # סדר וניקיון
++    hazardous_materials = "hazardous_materials"  # חומרים מסוכנים
++    other = "other"                      # אחר
++
++
++class SafetySeverity(str, Enum):
++    """Severity 1-3 per Cemento convention"""
++    sev_1 = "1"   # נמוכה — הערה/שיפור
++    sev_2 = "2"   # בינונית — דורש תיקון
++    sev_3 = "3"   # גבוהה — עצירה מיידית
++
++
++class SafetyDocumentStatus(str, Enum):
++    open = "open"
++    in_progress = "in_progress"
++    resolved = "resolved"
++    verified = "verified"
++
++
++class SafetyTaskStatus(str, Enum):
++    open = "open"
++    in_progress = "in_progress"
++    completed = "completed"
++    cancelled = "cancelled"
++
++
++class SafetyWorker(BaseModel):
++    """Worker on site — minimal Phase 1 shape. Extended in Part 2."""
++    id: str                              # uuid4
++    project_id: str
++    company_id: Optional[str] = None     # FK → project_companies.id
++    full_name: str
++    id_number: Optional[str] = None      # Israeli/Palestinian/foreign ID; stored raw, hashed in Part 2
++    profession: Optional[str] = None     # e.g. "נגר", "חשמלאי"
++    phone: Optional[str] = None
++    notes: Optional[str] = None
++    created_at: str                      # ISO UTC via _now()
++    created_by: str                      # actor user id
++    # soft-delete (project-wide convention — camelCase)
++    deletedAt: Optional[str] = None
++    deletedBy: Optional[str] = None
++    deletion_reason: Optional[str] = None
++    retention_until: Optional[str] = None  # 7yr from delete for regulatory
++
++
++class SafetyTraining(BaseModel):
++    """Training record per worker. Expiry drives Safety Score."""
++    id: str
++    project_id: str
++    worker_id: str                       # FK → safety_workers.id
++    training_type: str                   # e.g. "הדרכת אתר", "הדרכת סיכונים"
++    instructor_name: Optional[str] = None
++    duration_minutes: Optional[int] = None
++    location: Optional[str] = None
++    trained_at: str                      # ISO date
++    expires_at: Optional[str] = None     # ISO date; null = no expiry
++    certificate_url: Optional[str] = None  # R2/S3 URL if uploaded
++    created_at: str
++    created_by: str
++    deletedAt: Optional[str] = None
++    deletedBy: Optional[str] = None
++
++
++class SafetyDocument(BaseModel):
++    """Safety observation/finding — the regulatory תיעוד records."""
++    id: str
++    project_id: str
++    category: SafetyCategory
++    severity: SafetySeverity
++    status: SafetyDocumentStatus = SafetyDocumentStatus.open
++    title: str
++    description: Optional[str] = None
++    location: Optional[str] = None       # e.g. "קומה 4, גוש מזרחי"
++    company_id: Optional[str] = None     # FK → project_companies.id
++    profession: Optional[str] = None
++    assignee_id: Optional[str] = None    # user id
++    reporter_id: str                     # user id
++    photo_urls: List[str] = []
++    attachment_urls: List[str] = []      # PDF/doc attachments
++    found_at: str                        # ISO UTC (when observed)
++    resolved_at: Optional[str] = None
++    created_at: str
++    created_by: str
++    updated_at: Optional[str] = None
++    deletedAt: Optional[str] = None
++    deletedBy: Optional[str] = None
++
++
++class SafetyTask(BaseModel):
++    """Corrective action task."""
++    id: str
++    project_id: str
++    document_id: Optional[str] = None    # FK → safety_documents.id
++    title: str
++    description: Optional[str] = None
++    status: SafetyTaskStatus = SafetyTaskStatus.open
++    severity: SafetySeverity
++    assignee_id: Optional[str] = None
++    company_id: Optional[str] = None
++    due_at: Optional[str] = None
++    completed_at: Optional[str] = None
++    corrective_action: Optional[str] = None
++    verification_photo_urls: List[str] = []
++    created_at: str
++    created_by: str
++    updated_at: Optional[str] = None
++    deletedAt: Optional[str] = None
++    deletedBy: Optional[str] = None
++
++
++class SafetyIncident(BaseModel):
++    """Near-miss or injury event. 7-year retention is REGULATORY (not optional)."""
++    id: str
++    project_id: str
++    incident_type: str                   # "near_miss" | "injury" | "property_damage"
++    severity: SafetySeverity
++    occurred_at: str                     # ISO UTC
++    description: str
++    location: Optional[str] = None
++    injured_worker_id: Optional[str] = None  # FK → safety_workers.id; null if near-miss
++    witnesses: List[str] = []            # worker_ids
++    photo_urls: List[str] = []
++    medical_record_urls: List[str] = []  # PHI — encrypted at rest (Part 2)
++    reported_to_authority: bool = False
++    authority_report_ref: Optional[str] = None
++    created_at: str
++    created_by: str
++    updated_at: Optional[str] = None
++    # soft-delete: retention_until MUST be set to occurred_at + 7yr on delete
++    deletedAt: Optional[str] = None
++    deletedBy: Optional[str] = None
++    deletion_reason: Optional[str] = None
++    retention_until: Optional[str] = None
+diff --git a/backend/server.py b/backend/server.py
+index 1c62d60..6c58229 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -25,6 +25,7 @@ from config import (
+     OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS, OTP_RATE_LIMIT_SECONDS,
+     STEPUP_EMAIL, SMTP_USER, SMTP_PASS,
+     ENABLE_DEMO_USERS, DEMO_DEFAULT_PASSWORD, DEMO_RESET_PASSWORDS,
++    ENABLE_SAFETY_MODULE,
+ )
  
-         // NOTE: Do not place your application dependencies here; they belong
-         // in the individual module build.gradle files
-
-=================================================================
-## COMMIT 2 of 2 — 7eed308
-=================================================================
-7eed308068fccf43cf6f000c584bdf8365388f16
-zahis10 <54837571-zahis10@users.noreply.replit.com>
-Tue Apr 21 18:16:01 2026 +0000
-
-Update Java version to 21 for improved performance
-
-Update the Java Development Kit version to 21 in the project configuration.
-
-Replit-Commit-Author: Agent
-Replit-Commit-Session-Id: 6a9b73f4-23fe-4848-a20a-693ca75817a2
-Replit-Commit-Checkpoint-Type: full_checkpoint
-Replit-Commit-Event-Id: b3f1e6c7-1425-4017-80fe-affcdc7db507
-Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/1cee46ff-369f-4827-bc32-71cdcce76566/6a9b73f4-23fe-4848-a20a-693ca75817a2/vXo8Cze
-Replit-Helium-Checkpoint-Created: true
-
-
------ DIFF (7eed308^..7eed308) -----
-diff --git a/replit.nix b/replit.nix
-index f112c8d..a68414b 100644
---- a/replit.nix
-+++ b/replit.nix
-@@ -1,5 +1,6 @@
- {pkgs}: {
-   deps = [
-+    pkgs.openjdk21
-     pkgs.cairo
-   ];
- }
-
-=================================================================
-## FULL CURRENT CONTENT OF EVERY CHANGED FILE (after both commits)
-=================================================================
-
---- FILE: .agents/agent_assets_metadata.toml ---
-uploads = []
-generated = []
-
-[[outputs]]
-id = "kvOenhCVwxPYRIqYSU0Vf"
-uri = "file://brikops-source.zip"
-type = "unspecified"
-title = "BrikOps Source Code (March 11, 2026)"
-
-[[outputs]]
-id = "o-uOOYY9SpJm7-IRckVbJ"
-uri = "file://WEEKLY_CHANGELOG.md"
-type = "text"
-title = "Weekly Changelog (March 4-11, 2026)"
-
-[[outputs]]
-id = "AWBwNTn8NTAzcXNCYDixT"
-uri = "file://brikops-slim.zip"
-type = "unspecified"
-title = "BrikOps Source Code (8.2MB)"
-
-[[outputs]]
-id = "GYLksbxKV7S1clpc_ExyA"
-uri = "file://SECURITY_AUDIT_REPORT.md"
-type = "text"
-title = "BrikOps Security Audit Report"
-
-[[outputs]]
-id = "dgCS26DyHIqCarOkDhll3"
-uri = "file://review-88a.txt"
-type = "text"
-title = "review-88a.txt — Task #88a Code Review"
-
-[[outputs]]
-id = "VfSkskaF3EWw0aTlG5wBd"
-uri = "file:///tmp/review-88b.txt"
-type = "text"
-title = "review-88b.txt — Task #88b Code Review"
-
-[[outputs]]
-id = "PTg1uKFjr1xbzH6X-vsKE"
-uri = "file://review-88b.txt"
-type = "text"
-title = "review-88b.txt — Task #88b Code Review"
-
-[[outputs]]
-id = "q-CamLfzP94ALKtrO84rm"
-uri = "file://review-90.txt"
-type = "text"
-title = "review-90.txt — Task #90 Code Review"
-
-[[outputs]]
-id = "Iz3DefZA_5y3voOF4qkeY"
-uri = "file://review-89.txt"
-type = "text"
-title = "review-89.txt — Task #89 Code Review"
-
-[[outputs]]
-id = "BXSLrEQenp0pS-npwJXgT"
-uri = "file://review-92.txt"
-type = "text"
-title = "Review Task #92 — PDF Generation Code Review"
-
-[[outputs]]
-id = "UorJ02-eRdhHQp2jPMMiJ"
-uri = "file:///tmp/review-94.txt"
-type = "text"
-title = "review-94.txt"
-
-[[outputs]]
-id = "LrcoviA7LHuZmOjnTSw3w"
-uri = "file://review-94.txt"
-type = "text"
-title = "review-94.txt"
-
-[[outputs]]
-id = "ocdrZig6YPfAjD1XCgrbr"
-uri = "file://review.txt"
-type = "text"
-title = "CORS fix — DONE (commit 712028b, ready to deploy)"
-
-[[outputs]]
-id = "WdwtqNCiZpAAlX9e9Sq9Z"
-uri = "file://review-107-final.txt"
-type = "text"
-title = "Task #107 — All Checks (Final)"
-
-[[outputs]]
-id = "Hhih25JjJ_C-9nXzhLTsl"
-uri = "file://review1.txt"
-type = "text"
-title = "#211 Handover Photo Annotation + Android Fixes — Full Diff (327 lines)"
-
-[[outputs]]
-id = "uGeCjGUZR8Wa5wgYvwdLd"
-uri = "file://review2.txt"
-type = "text"
-title = "#212 Contractor Proof Photo Annotation + Safety Fixes — Full Diff (139 lines)"
-
-[[outputs]]
-id = "-tFBL-wqdxD-rzS_5vwTn"
-uri = "file://review3.txt"
-type = "text"
-title = "review3.txt — דיפים Tasks #213-#215"
-
-[[outputs]]
-id = "j93L_Qy6er_ALi-5YJSPJ"
-uri = "file://security_report.txt"
-type = "text"
-title = "BrikOps Security Report — 294 Issues"
-
-[[outputs]]
-id = "3cBYpZ9RQYruAA4XvbLBj"
-uri = "file://brikops-context.txt"
-type = "text"
-title = "BrikOps Context — לצ'אט חדש"
-
-[[outputs]]
-id = "aKZetj3IBv-ZTxGuRajRA"
-uri = "file://CODEBASE_SUMMARY.md"
-type = "text"
-title = "BrikOps — Codebase Summary"
-
-[[outputs]]
-id = "r7MU_Jr0qH6pgSnPBl162"
-uri = "file://review_248_frontend.txt"
-type = "text"
-title = "Task #248 — Frontend Diff (380 lines, 5 files)"
-
-[[outputs]]
-id = "dMauyN9NYIsJWotlbNq6X"
-uri = "file://billing_bugs2_diff.txt"
-type = "text"
-title = "Billing Bugs #2 — Full Diff (Task #250)"
-
-[[outputs]]
-id = "moqFZUgKv_rc2bQ3f5Qaf"
-uri = "file://.local/review.txt"
-type = "text"
-title = "Wave 5 — commit 7eca1f7 (8 proof blocks)"
-
-[[outputs]]
-id = "Uttosn1CSRes5mf7KkA_R"
-uri = "file://review-276b.txt"
-type = "text"
-title = "#276b Social Login Frontend — Full Diff"
-
-[[outputs]]
-id = "jBFKu1Xd0hCZn5hd2L0ys"
-uri = "file://.local/ic_launcher_foreground_xxxhdpi.png"
-type = "image"
-title = "Android adaptive icon foreground (xxxhdpi 432×432)"
-
-[[outputs]]
-id = "PK5UMGCcFq2Cl_B1jpp7s"
-uri = "file://.local/review-phase1.txt"
-type = "text"
-title = "Phase 1 — pull + @capacitor/preferences (לא קומיט)"
-
-[[outputs]]
-id = "EDFBvT8q1uwrKOtWssInW"
-uri = "file://.local/review-phase2.txt"
-type = "text"
-title = "Wave 1 Phases 2-5 — commit d954be5 (8 proof blocks)"
-
-[[outputs]]
-id = "B4fRcQyFJPkGysmxx2BeP"
-uri = "file://.local/review-phase7-wave2.txt"
-type = "text"
-title = "Wave 2 — commit 9034aad (refreshed logo + extended D3-A hold)"
-
-[[outputs]]
-id = "pfVhCyGRUgjdawIHkwEZE"
-uri = "file://.local/review-phase7-wave2b.txt"
-type = "text"
-title = "Wave 2b — commit 964c719 (BrikSplash owns its own lifecycle)"
-
-[[outputs]]
-id = "k7nwQ0YPtJ91ofbfe-D_L"
-uri = "file://.local/review-phase7-wave2c.txt"
-type = "text"
-title = "Wave 2c — commit 6c982d7 (build tag on splash, diagnostic)"
-
-[[outputs]]
-id = "Kap0FoM8gxlUDjb3ozLjR"
-uri = "file://.local/review-phase7-wave2d.txt"
-type = "text"
-title = "Wave 2d — commit d7ea3cf (orange logo + Capgo autoUpdate + native-change guard)"
-
-[[outputs]]
-id = "ZIFUepo-oSQm7hhl29j7U"
-uri = "file://.local/review-393-login-ux.txt"
-type = "text"
-title = "Task #393 — commit 8055d22 (login UX: no auto-keyboard + Web OTP autofill)"
-
-[[outputs]]
-id = "9Jfz3vQ9ZdkSMnxP2vVWF"
-uri = "file://.local/review-394-ios-otp-autofill.txt"
-type = "text"
-title = "Task #394 — commit 9e26e67 (iOS OTP autofill: Associated Domains + AASA)"
-
-[[outputs]]
-id = "fb7inUlLBqi_2dBwdlWjH"
-uri = "file://.local/review-395-android-sms-retriever.txt"
-type = "text"
-title = "Review #395 — Android OTP Autofill (9 Proofs)"
---- END FILE: .agents/agent_assets_metadata.toml ---
-
---- FILE: frontend/android/app/build.gradle ---
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
-
-android {
-    namespace "com.brikops.app"
-    compileSdk rootProject.ext.compileSdkVersion
-    defaultConfig {
-        applicationId "com.brikops.app"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 17
-        versionName "1.0.17"
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
-        }
-    }
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-        }
-    }
-}
-
-repositories {
-    flatDir{
-        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
-    }
-}
-
-dependencies {
-    implementation fileTree(include: ['*.jar'], dir: 'libs')
-    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
-    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
-    implementation 'androidx.core:core:1.15.0'
-    implementation project(':capacitor-android')
-    // Kotlin stdlib (#395 follow-up — required for SmsRetrieverPlugin.kt to compile)
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlin_version"
-    // SMS Retriever API (#395 — Android OTP autofill, no READ_SMS permission)
-    implementation 'com.google.android.gms:play-services-auth:21.3.0'
-    implementation 'com.google.android.gms:play-services-auth-api-phone:18.1.0'
-    testImplementation "junit:junit:$junitVersion"
-    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
-    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
-    implementation project(':capacitor-cordova-android-plugins')
-}
-
-apply from: 'capacitor.build.gradle'
-
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
-}
---- END FILE: frontend/android/app/build.gradle ---
-
---- FILE: frontend/android/build.gradle ---
-// Top-level build file where you can add configuration options common to all sub-projects/modules.
-
-buildscript {
-    ext.kotlin_version = '1.9.25'
-
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.2'
-        classpath 'com.google.gms:google-services:4.4.2'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-
-        // NOTE: Do not place your application dependencies here; they belong
-        // in the individual module build.gradle files
-    }
-}
-
-apply from: "variables.gradle"
-
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-task clean(type: Delete) {
-    delete rootProject.buildDir
-}
---- END FILE: frontend/android/build.gradle ---
-
---- FILE: replit.nix ---
-{pkgs}: {
-  deps = [
-    pkgs.openjdk21
-    pkgs.cairo
-  ];
-}
---- END FILE: replit.nix ---
-
-=================================================================
-## VERIFICATION RUN ON REPLIT
-=================================================================
-1. java -version:
-openjdk version "21.0.7" 2025-04-15
-OpenJDK Runtime Environment (build 21.0.7+6-nixos)
-OpenJDK 64-Bit Server VM (build 21.0.7+6-nixos, mixed mode, sharing)
-
-2. ./gradlew --version (excerpt):
-   Gradle 8.11.1 / Kotlin 2.0.20 / Launcher JVM 21.0.7
-
-3. ./gradlew :app:tasks  (proves kotlin-android plugin applied):
-   BUILD SUCCESSFUL in 26s
-   - buildKotlinToolingMetadata task registered
-   - checkKotlinGradlePluginConfigurationErrors task registered
-
-4. ./gradlew :app:compileReleaseKotlin failed only on:
-   'SDK location not found. Define a valid SDK location with an
-    ANDROID_HOME environment variable...'
-   This is expected — Android SDK is not installable on Replit.
-   On Mac with the SDK present, compileReleaseKotlin will produce
-   SmsRetrieverPlugin.class and MainActivity.java will resolve the
-   symbol cleanly.
-
-=================================================================
-END OF REVIEW
-=================================================================
+ logging.basicConfig(
+@@ -427,6 +428,19 @@ app.include_router(qc_notif_router)
+ from contractor_ops.config_router import router as config_router
+ app.include_router(config_router)
+ 
++# -----------------------------------------------------------------
++# Safety module — Phase 1 (feature-gated)
++# When ENABLE_SAFETY_MODULE is False, router is NEVER imported and
++# endpoints 404. This is the STRONGEST guarantee that disabled ==
++# invisible, for both scanners and accidental exposure.
++# -----------------------------------------------------------------
++if ENABLE_SAFETY_MODULE:
++    from contractor_ops.safety_router import router as safety_router
++    app.include_router(safety_router)
++    logger.info("Safety module ENABLED — router registered at /api/safety")
++else:
++    logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")
++
+ from contractor_ops.debug_router import router as debug_router
+ app.include_router(debug_router)
+ 
+@@ -1114,6 +1128,14 @@ async def _deferred_db_init():
+         from contractor_ops.invoicing import ensure_indexes as invoicing_ensure_indexes
+         await invoicing_ensure_indexes()
+         await ensure_reminder_indexes()
++        # Safety module indices (guarded by feature flag)
++        if ENABLE_SAFETY_MODULE:
++            from contractor_ops.safety_router import ensure_safety_indexes
++            try:
++                await ensure_safety_indexes(db)
++            except Exception as e:
++                logger.error(f"Failed to ensure safety indices: {e}")
++                # Do NOT crash startup — module will still function, queries just slower
+     except Exception as e:
+         logger.warning(f"[STARTUP] Index creation failed (non-fatal): {e}")
+ 
