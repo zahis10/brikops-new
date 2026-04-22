@@ -15,7 +15,10 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import io
+import time as _time
 
 from contractor_ops.router import (
     get_current_user, get_db, _now, _audit,
@@ -1135,6 +1138,463 @@ async def delete_incident(
         "project_id": project_id, "deletion_reason": body.reason.strip(),
         "retention_until": retention,
     })
+
+
+# =====================================================================
+# Score & Exports — Phase 1 Part 3 (Backend Advanced)
+# =====================================================================
+_SCORE_CACHE: dict = {}  # {project_id: (timestamp, payload)}
+_SCORE_TTL_SECONDS = 300  # 5 minutes
+
+
+async def _compute_safety_score(db, project_id: str) -> dict:
+    """
+    Compute 0-100 safety score from live state. Higher = safer.
+
+    Penalties (subtracted from 100):
+      - open severity-3 documents: -10 each
+      - open severity-2 documents: -5 each
+      - open severity-1 documents: -2 each
+      - tasks past due_at and not completed/cancelled: -5 each
+      - incidents in last 90 days: -15 each
+      - workers with no in-force training (no expires_at >= today): -3 each
+
+    Floored at 0. Returns dict with `score` + `breakdown` + `computed_at`.
+    """
+    now = datetime.now(timezone.utc)
+    today_iso = now.date().isoformat()
+    cutoff_90d = (now - timedelta(days=90)).isoformat()
+
+    open_doc_filter = {
+        "project_id": project_id,
+        "deletedAt": None,
+        "status": {"$in": ["open", "in_progress"]},
+    }
+    open_sev3 = await db.safety_documents.count_documents({**open_doc_filter, "severity": "3"})
+    open_sev2 = await db.safety_documents.count_documents({**open_doc_filter, "severity": "2"})
+    open_sev1 = await db.safety_documents.count_documents({**open_doc_filter, "severity": "1"})
+
+    overdue_tasks = await db.safety_tasks.count_documents({
+        "project_id": project_id,
+        "deletedAt": None,
+        "status": {"$nin": ["completed", "cancelled"]},
+        "due_at": {"$lt": now.isoformat(), "$ne": None},
+    })
+
+    recent_incidents = await db.safety_incidents.count_documents({
+        "project_id": project_id,
+        "deletedAt": None,
+        "occurred_at": {"$gte": cutoff_90d},
+    })
+
+    worker_ids = await db.safety_workers.find(
+        {"project_id": project_id, "deletedAt": None}, {"_id": 0, "id": 1}
+    ).to_list(length=10000)
+    worker_ids_list = [w["id"] for w in worker_ids]
+    untrained_workers = 0
+    if worker_ids_list:
+        in_force = await db.safety_trainings.aggregate([
+            {"$match": {
+                "project_id": project_id,
+                "deletedAt": None,
+                "worker_id": {"$in": worker_ids_list},
+                "$or": [{"expires_at": None}, {"expires_at": {"$gte": today_iso}}],
+            }},
+            {"$group": {"_id": "$worker_id"}},
+        ]).to_list(length=10000)
+        trained_set = {row["_id"] for row in in_force}
+        untrained_workers = sum(1 for wid in worker_ids_list if wid not in trained_set)
+
+    penalty = (
+        open_sev3 * 10
+        + open_sev2 * 5
+        + open_sev1 * 2
+        + overdue_tasks * 5
+        + recent_incidents * 15
+        + untrained_workers * 3
+    )
+    score = max(0, 100 - penalty)
+
+    return {
+        "project_id": project_id,
+        "score": score,
+        "breakdown": {
+            "open_sev3": open_sev3,
+            "open_sev2": open_sev2,
+            "open_sev1": open_sev1,
+            "overdue_tasks": overdue_tasks,
+            "recent_incidents": recent_incidents,
+            "untrained_workers": untrained_workers,
+            "total_workers": len(worker_ids_list),
+        },
+        "computed_at": now.isoformat(),
+    }
+
+
+def _strip_pii(records: list) -> list:
+    """Remove PII fields from worker records before any export."""
+    cleaned = []
+    for r in records:
+        c = {k: v for k, v in r.items() if k not in ("_id", "id_number", "id_number_hash")}
+        cleaned.append(c)
+    return cleaned
+
+
+@router.get("/{project_id}/score")
+async def get_safety_score(
+    project_id: str,
+    refresh: bool = Query(False),
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    """Return safety score 0-100 with 5-min in-process cache. Management-only."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+
+    cached = _SCORE_CACHE.get(project_id)
+    if cached and not refresh and (_time.time() - cached[0]) < _SCORE_TTL_SECONDS:
+        await _audit("safety_score", project_id, "served_cached", user["id"], {
+            "project_id": project_id,
+            "score": cached[1]["score"],
+        })
+        return {**cached[1], "cached": True}
+
+    payload = await _compute_safety_score(db, project_id)
+    _SCORE_CACHE[project_id] = (_time.time(), payload)
+
+    await _audit("safety_score", project_id, "computed", user["id"], {
+        "project_id": project_id,
+        "score": payload["score"],
+        "refresh": refresh,
+    })
+    return {**payload, "cached": False}
+
+
+async def _gather_export_data(db, project_id: str, doc_filter_extra: Optional[dict] = None):
+    """Fetch all data needed for exports. Strips PII from workers."""
+    workers = await db.safety_workers.find(
+        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
+    ).to_list(length=100000)
+    workers = _strip_pii(workers)
+
+    trainings = await db.safety_trainings.find(
+        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
+    ).to_list(length=100000)
+
+    doc_q = {"project_id": project_id, "deletedAt": None}
+    if doc_filter_extra:
+        doc_q.update(doc_filter_extra)
+    documents = await db.safety_documents.find(doc_q, {"_id": 0}).to_list(length=100000)
+
+    tasks = await db.safety_tasks.find(
+        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
+    ).to_list(length=100000)
+
+    incidents = await db.safety_incidents.find(
+        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
+    ).to_list(length=100000)
+
+    company_ids = {r.get("company_id") for r in workers + documents + tasks if r.get("company_id")}
+    company_map = {}
+    if company_ids:
+        companies = await db.project_companies.find(
+            {"id": {"$in": list(company_ids)}, "deletedAt": None},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(length=10000)
+        company_map = {c["id"]: c.get("name", "") for c in companies}
+
+    user_ids = set()
+    for src in (documents, tasks, incidents):
+        for r in src:
+            for f in ("assignee_id", "reporter_id", "created_by"):
+                if r.get(f):
+                    user_ids.add(r[f])
+    user_map = {}
+    if user_ids:
+        users = await db.users.find(
+            {"id": {"$in": list(user_ids)}}, {"_id": 0, "id": 1, "name": 1}
+        ).to_list(length=10000)
+        user_map = {u["id"]: u.get("name", "") for u in users}
+
+    return workers, trainings, documents, tasks, incidents, company_map, user_map
+
+
+def _build_safety_excel(
+    project_name, workers, trainings, documents, tasks, incidents, company_map, user_map
+):
+    """Build 3-sheet Hebrew RTL Excel: Documents, Tasks, Workers+Trainings."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from services.safety_pdf import (
+        CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE, TASK_STATUS_HE, INCIDENT_TYPE_HE,
+    )
+
+    wb = Workbook()
+
+    header_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill(start_color="F59E0B", end_color="F59E0B", fill_type="solid")
+    header_align = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    cell_font = Font(name="Arial", size=10)
+    cell_align = Alignment(horizontal="right", vertical="top", wrap_text=True)
+    thin = Border(
+        left=Side(style="thin", color="D1D5DB"),
+        right=Side(style="thin", color="D1D5DB"),
+        top=Side(style="thin", color="D1D5DB"),
+        bottom=Side(style="thin", color="D1D5DB"),
+    )
+
+    def _fmt_dt(s):
+        if not s:
+            return ""
+        try:
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(s)[:16]
+
+    def _add_sheet(title, headers, rows, widths):
+        ws = wb.create_sheet(title)
+        ws.sheet_view.rightToLeft = True
+        for i, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=i, value=h)
+            c.font = header_font
+            c.fill = header_fill
+            c.alignment = header_align
+            c.border = thin
+        for r_idx, row in enumerate(rows, 2):
+            for c_idx, val in enumerate(row, 1):
+                c = ws.cell(row=r_idx, column=c_idx, value=val)
+                c.font = cell_font
+                c.alignment = cell_align
+                c.border = thin
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        if rows:
+            ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(rows) + 1}"
+
+    # remove default
+    wb.remove(wb.active)
+
+    # Sheet 1: Documents
+    doc_rows = []
+    for d in documents:
+        doc_rows.append([
+            d.get("title", ""),
+            CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
+            SEVERITY_HE.get(d.get("severity", ""), ""),
+            DOC_STATUS_HE.get(d.get("status", ""), d.get("status", "")),
+            d.get("location", ""),
+            company_map.get(d.get("company_id", ""), ""),
+            user_map.get(d.get("assignee_id", ""), ""),
+            user_map.get(d.get("reporter_id", ""), ""),
+            _fmt_dt(d.get("found_at")),
+            _fmt_dt(d.get("created_at")),
+            _fmt_dt(d.get("resolved_at")),
+            d.get("description", ""),
+        ])
+    _add_sheet(
+        "ליקויים",
+        ["כותרת", "קטגוריה", "חומרה", "סטטוס", "מיקום", "חברה",
+         "אחראי", "מדווח", "נמצא בתאריך", "נוצר", "נפתר", "תיאור"],
+        doc_rows,
+        [25, 16, 10, 12, 18, 18, 16, 16, 18, 18, 18, 35],
+    )
+
+    # Sheet 2: Tasks
+    task_rows = []
+    for t in tasks:
+        task_rows.append([
+            t.get("title", ""),
+            TASK_STATUS_HE.get(t.get("status", ""), t.get("status", "")),
+            SEVERITY_HE.get(t.get("severity", ""), ""),
+            user_map.get(t.get("assignee_id", ""), ""),
+            company_map.get(t.get("company_id", ""), ""),
+            _fmt_dt(t.get("due_at")),
+            _fmt_dt(t.get("completed_at")),
+            _fmt_dt(t.get("created_at")),
+            t.get("corrective_action", ""),
+        ])
+    _add_sheet(
+        "משימות",
+        ["כותרת", "סטטוס", "חומרה", "אחראי", "חברה", "יעד",
+         "הושלם", "נוצר", "פעולה מתקנת"],
+        task_rows,
+        [25, 12, 10, 16, 18, 18, 18, 18, 30],
+    )
+
+    # Sheet 3: Workers + Trainings (NO id_number / id_number_hash)
+    worker_rows = []
+    worker_name_map = {w["id"]: w.get("full_name", "") for w in workers}
+    trainings_by_worker = {}
+    for tr in trainings:
+        trainings_by_worker.setdefault(tr.get("worker_id"), []).append(tr)
+
+    for w in workers:
+        wid = w["id"]
+        w_trainings = trainings_by_worker.get(wid, [])
+        types = ", ".join(sorted({tr.get("training_type", "") for tr in w_trainings if tr.get("training_type")}))
+        latest_expiry = ""
+        valid_expiries = [tr.get("expires_at") for tr in w_trainings if tr.get("expires_at")]
+        if valid_expiries:
+            latest_expiry = max(valid_expiries)[:10]
+        worker_rows.append([
+            w.get("full_name", ""),
+            w.get("profession", ""),
+            company_map.get(w.get("company_id", ""), ""),
+            w.get("phone", ""),
+            types,
+            latest_expiry,
+            _fmt_dt(w.get("created_at")),
+        ])
+    _add_sheet(
+        "עובדים והדרכות",
+        ["שם מלא", "מקצוע", "חברה", "טלפון", "סוגי הדרכות",
+         "תוקף הדרכה אחרונה", "תאריך כניסה"],
+        worker_rows,
+        [22, 16, 20, 14, 30, 18, 18],
+    )
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
+
+
+@router.get("/{project_id}/export/excel")
+async def export_safety_excel(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    """3-sheet Hebrew RTL Excel export. Management-only. PII stripped."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    project_name = project.get("name", "project")
+
+    workers, trainings, documents, tasks, incidents, company_map, user_map = \
+        await _gather_export_data(db, project_id)
+
+    buf = _build_safety_excel(
+        project_name, workers, trainings, documents, tasks, incidents, company_map, user_map
+    )
+
+    await _audit("safety_export", project_id, "excel_exported", user["id"], {
+        "project_id": project_id,
+        "documents": len(documents),
+        "tasks": len(tasks),
+        "workers": len(workers),
+    })
+
+    filename = f"safety_{project_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{project_id}/export/filtered")
+async def export_safety_filtered(
+    project_id: str,
+    category: Optional[SafetyCategory] = None,
+    severity: Optional[SafetySeverity] = None,
+    status_: Optional[SafetyDocumentStatus] = Query(None, alias="status"),
+    company_id: Optional[str] = None,
+    assignee_id: Optional[str] = None,
+    reporter_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    """Excel export of documents matching the same 7-dim filter as list_documents."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    project_name = project.get("name", "project")
+
+    extra = {}
+    if category:    extra["category"] = category.value
+    if severity:    extra["severity"] = severity.value
+    if status_:     extra["status"] = status_.value
+    if company_id:  extra["company_id"] = company_id
+    if assignee_id: extra["assignee_id"] = assignee_id
+    if reporter_id: extra["reporter_id"] = reporter_id
+    if date_from or date_to:
+        rng = {}
+        if date_from: rng["$gte"] = date_from
+        if date_to:   rng["$lte"] = date_to
+        extra["found_at"] = rng
+
+    workers, trainings, documents, tasks, incidents, company_map, user_map = \
+        await _gather_export_data(db, project_id, doc_filter_extra=extra)
+
+    buf = _build_safety_excel(
+        project_name, workers, trainings, documents, tasks, incidents, company_map, user_map
+    )
+
+    await _audit("safety_export", project_id, "filtered_exported", user["id"], {
+        "project_id": project_id,
+        "filters": extra,
+        "matched_documents": len(documents),
+    })
+
+    filename = f"safety_filtered_{project_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{project_id}/export/pdf-register")
+async def export_safety_pdf_register(
+    project_id: str,
+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
+):
+    """Generate the 9-section Hebrew 'פנקס כללי' PDF. Management-only."""
+    db = get_db()
+    await _check_project_access(user, project_id)
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    workers, trainings, documents, tasks, incidents, company_map, user_map = \
+        await _gather_export_data(db, project_id)
+
+    score = await _compute_safety_score(db, project_id)
+
+    from services.safety_pdf import generate_pnkas_pdf
+    pdf_bytes = generate_pnkas_pdf(
+        project=project,
+        score=score,
+        workers=workers,
+        trainings=trainings,
+        documents=documents,
+        tasks=tasks,
+        incidents=incidents,
+        company_map=company_map,
+        user_map=user_map,
+    )
+
+    await _audit("safety_export", project_id, "pdf_register_exported", user["id"], {
+        "project_id": project_id,
+        "score": score["score"],
+        "documents": len(documents),
+        "incidents": len(incidents),
+    })
+
+    filename = f"pnkas_{project_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # =====================================================================
