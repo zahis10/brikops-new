@@ -1,867 +1,469 @@
-================================================================================
-Safety Phase 1 Part 2b — Soft-Delete Filter Patch (Zombie-Record Fix)
-Commit: dcb31bda8f4c991e5bc12dec4768b31f427d7872 fix(safety): Part 2b — add deletedAt:None filter to prevent zombie records
-Parent: f5d536008f8ba555c7afbfaf7dffd833b7c64f92 Add core backend functionality for safety features and data management
-Generated: 2026-04-22 19:54:24 UTC
-================================================================================
-
-## Verification (all three greps must return 0 lines)
-
-### Grep 1: find_one with project_id missing deletedAt
-  (empty — PASS)
-
-### Grep 2: update_one missing deletedAt
-  (empty — PASS)
-
-### Grep 3: any {id,project_id} filter without deletedAt (excluding insert)
-  (empty — PASS)
-
-================================================================================
-## git diff --stat (HEAD vs HEAD~1)
-================================================================================
-
- backend/contractor_ops/safety_router.py | 50 ++++++++++++++++-----------------
- 1 file changed, 25 insertions(+), 25 deletions(-)
-
-================================================================================
-## git show HEAD --stat (commit metadata)
-================================================================================
-
-commit dcb31bda8f4c991e5bc12dec4768b31f427d7872
-Author:     zahis10 <zahis10@gmail.com>
-AuthorDate: Wed Apr 22 19:53:56 2026 +0000
-Commit:     zahis10 <zahis10@gmail.com>
-CommitDate: Wed Apr 22 19:53:56 2026 +0000
-
-    fix(safety): Part 2b — add deletedAt:None filter to prevent zombie records
-    
-    15 find_one calls + update_one pre-conditions on safety_workers/trainings/
-    documents/tasks/incidents were missing soft-delete filter. After a record
-    was soft-deleted, subsequent GET/PATCH/DELETE could still mutate it,
-    producing records with both deletedAt and fresh updated_at.
-    
-    No new logic, no new deps, no schema changes. Only filter conditions.
-
- backend/contractor_ops/safety_router.py | 50 ++++++++++++++++-----------------
- 1 file changed, 25 insertions(+), 25 deletions(-)
-
-================================================================================
-## FULL UNIFIED DIFF — Part 2b
-================================================================================
-
 diff --git a/backend/contractor_ops/safety_router.py b/backend/contractor_ops/safety_router.py
-index 5c53745..fdee84c 100644
+index fdee84c..52c0dc9 100644
 --- a/backend/contractor_ops/safety_router.py
 +++ b/backend/contractor_ops/safety_router.py
-@@ -251,7 +251,7 @@ async def get_worker(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    doc = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id})
-+    doc = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-     if not doc:
-         raise HTTPException(status_code=404, detail="worker not found")
-     # PII: never expose hash or any raw id_number
-@@ -269,7 +269,7 @@ async def update_worker(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id})
-+    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="worker not found")
-     if before.get("deletedAt"):
-@@ -289,7 +289,7 @@ async def update_worker(
-     updates["updated_at"] = _now()
-     updates["updated_by"] = user["id"]
+@@ -15,7 +15,10 @@ import logging
+ import uuid
  
--    await db.safety_workers.update_one({"id": worker_id}, {"$set": updates})
-+    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-     after = await db.safety_workers.find_one({"id": worker_id})
-     _STRIP_PII = ("_id", "id_number", "id_number_hash")
-     await _audit("safety_worker", worker_id, "updated", user["id"], {
-@@ -309,14 +309,14 @@ async def delete_worker(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id})
-+    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="worker not found")
-     if before.get("deletedAt"):
-         return
+ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
++from fastapi.responses import StreamingResponse
+ from pydantic import BaseModel, Field
++import io
++import time as _time
  
-     now = _now()
--    await db.safety_workers.update_one({"id": worker_id}, {"$set": {
-+    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-         "deletedAt": now,
-         "deletedBy": user["id"],
-         "deletion_reason": body.reason,
-@@ -430,7 +430,7 @@ async def get_training(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id})
-+    doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-     if not doc:
-         raise HTTPException(status_code=404, detail="training not found")
-     return SafetyTraining(**doc)
-@@ -445,7 +445,7 @@ async def update_training(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id})
-+    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="training not found")
-     if before.get("deletedAt"):
-@@ -455,7 +455,7 @@ async def update_training(
-     updates["updated_at"] = _now()
-     updates["updated_by"] = user["id"]
- 
--    await db.safety_trainings.update_one({"id": training_id}, {"$set": updates})
-+    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-     after = await db.safety_trainings.find_one({"id": training_id})
-     await _audit("safety_training", training_id, "updated", user["id"], {
-         "project_id": project_id,
-@@ -474,13 +474,13 @@ async def delete_training(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id})
-+    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="training not found")
-     if before.get("deletedAt"):
-         return
-     now = _now()
--    await db.safety_trainings.update_one({"id": training_id}, {"$set": {
-+    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-         "deletedAt": now,
-         "deletedBy": user["id"],
-         "deletion_reason": body.reason,
-@@ -625,7 +625,7 @@ async def get_document(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id})
-+    doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-     if not doc:
-         raise HTTPException(status_code=404, detail="document not found")
-     return SafetyDocument(**doc)
-@@ -640,7 +640,7 @@ async def update_document(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id})
-+    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="document not found")
-     if before.get("deletedAt"):
-@@ -666,7 +666,7 @@ async def update_document(
-     updates["updated_at"] = _now()
-     updates["updated_by"] = user["id"]
- 
--    await db.safety_documents.update_one({"id": document_id}, {"$set": updates})
-+    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-     after = await db.safety_documents.find_one({"id": document_id})
-     await _audit("safety_document", document_id, "updated", user["id"], {
-         "project_id": project_id,
-@@ -685,13 +685,13 @@ async def delete_document(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id})
-+    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="document not found")
-     if before.get("deletedAt"):
-         return
-     now = _now()
--    await db.safety_documents.update_one({"id": document_id}, {"$set": {
-+    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-         "deletedAt": now,
-         "deletedBy": user["id"],
-         "deletion_reason": body.reason,
-@@ -849,7 +849,7 @@ async def get_task(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    doc = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id})
-+    doc = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-     if not doc:
-         raise HTTPException(status_code=404, detail="task not found")
-     return SafetyTask(**doc)
-@@ -864,7 +864,7 @@ async def update_task(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id})
-+    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="task not found")
-     if before.get("deletedAt"):
-@@ -895,7 +895,7 @@ async def update_task(
-     updates["updated_at"] = _now()
-     updates["updated_by"] = user["id"]
- 
--    await db.safety_tasks.update_one({"id": task_id}, {"$set": updates})
-+    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-     after = await db.safety_tasks.find_one({"id": task_id})
-     await _audit("safety_task", task_id, "updated", user["id"], {
-         "project_id": project_id,
-@@ -914,13 +914,13 @@ async def delete_task(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id})
-+    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="task not found")
-     if before.get("deletedAt"):
-         return
-     now = _now()
--    await db.safety_tasks.update_one({"id": task_id}, {"$set": {
-+    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-         "deletedAt": now,
-         "deletedBy": user["id"],
-         "deletion_reason": body.reason,
-@@ -1046,7 +1046,7 @@ async def get_incident(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id})
-+    doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-     if not doc:
-         raise HTTPException(status_code=404, detail="incident not found")
-     return SafetyIncident(**doc)
-@@ -1061,7 +1061,7 @@ async def update_incident(
- ):
-     db = get_db()
-     await _check_project_access(user, project_id)
--    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id})
-+    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="incident not found")
-     if before.get("deletedAt"):
-@@ -1094,7 +1094,7 @@ async def update_incident(
-     updates["updated_at"] = _now()
-     updates["updated_by"] = user["id"]
- 
--    await db.safety_incidents.update_one({"id": incident_id}, {"$set": updates})
-+    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-     after = await db.safety_incidents.find_one({"id": incident_id})
-     await _audit("safety_incident", incident_id, "updated", user["id"], {
-         "project_id": project_id,
-@@ -1117,7 +1117,7 @@ async def delete_incident(
-     if not body.reason or not body.reason.strip():
-         raise HTTPException(status_code=400, detail="deletion_reason is required for incidents")
- 
--    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id})
-+    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-     if not before:
-         raise HTTPException(status_code=404, detail="incident not found")
-     if before.get("deletedAt"):
-@@ -1125,7 +1125,7 @@ async def delete_incident(
- 
-     # Retention from OCCURRED_AT, not now (regulatory clock)
-     retention = _retention_date(before["occurred_at"])
--    await db.safety_incidents.update_one({"id": incident_id}, {"$set": {
-+    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-         "deletedAt": _now(),
-         "deletedBy": user["id"],
-         "deletion_reason": body.reason.strip(),
-
-
-================================================================================
-## CUMULATIVE DIFF — Part 2 + Part 2b (vs origin/main)
-================================================================================
-
- .agents/agent_assets_metadata.toml      |    2 +-
- backend/contractor_ops/safety_router.py | 1270 ++++++++++++-
- review.txt                              | 3031 +++++++++++++++++++++++++++----
- 3 files changed, 3864 insertions(+), 439 deletions(-)
-
-diff --git a/backend/contractor_ops/safety_router.py b/backend/contractor_ops/safety_router.py
-index ca685e6..fdee84c 100644
---- a/backend/contractor_ops/safety_router.py
-+++ b/backend/contractor_ops/safety_router.py
-@@ -1,20 +1,146 @@
- """
--Safety module router — Phase 1 Part 1 (Foundation).
-+Safety module router — Phase 1 Part 1 (Foundation) + Part 2 (Backend Core).
- 
--Only exposes healthz. All CRUD + filters arrive in Part 2.
-+Part 1: feature flag wiring, healthz, ensure_safety_indexes (20 indices).
-+Part 2: 25 CRUD endpoints (Workers/Trainings/Documents/Tasks/Incidents) +
-+        7-dim Documents filter + photo/PDF upload helper + audit on every write.
- 
- Registration in server.py is GATED by ENABLE_SAFETY_MODULE env flag.
- When flag is off, this module is never imported and endpoints 404.
- """
--from fastapi import APIRouter, Depends
--from contractor_ops.router import get_current_user
-+from datetime import datetime, timedelta, timezone
-+from typing import Optional, List
-+import hashlib
- import logging
-+import uuid
-+
-+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-+from pydantic import BaseModel, Field
-+
-+from contractor_ops.router import (
-+    get_current_user, get_db, _now, _audit,
-+    _check_project_access, _get_project_role, _get_project_membership,
-+    _is_super_admin, require_roles,
-+)
-+from contractor_ops.schemas import (
-+    SafetyWorker, SafetyTraining, SafetyDocument, SafetyTask, SafetyIncident,
-+    SafetyCategory, SafetySeverity, SafetyDocumentStatus, SafetyTaskStatus,
-+)
-+from contractor_ops.upload_safety import (
-+    validate_upload, ALLOWED_IMAGE_EXTENSIONS,
-+)
- 
- logger = logging.getLogger(__name__)
- 
- router = APIRouter(prefix="/api/safety", tags=["safety"])
+ from contractor_ops.router import (
+     get_current_user, get_db, _now, _audit,
+@@ -1137,6 +1140,565 @@ async def delete_incident(
+     })
  
  
 +# =====================================================================
-+# Constants
++# Score & Exports — Phase 1 Part 3 (Backend Advanced)
 +# =====================================================================
-+SAFETY_WRITERS = ("project_manager", "management_team")
-+SAFETY_DELETERS = ("project_manager",)
-+INCIDENT_RETENTION_YEARS = 7
++_SCORE_CACHE: dict = {}  # {project_id: (timestamp, payload)}
++_SCORE_TTL_SECONDS = 300  # 5 minutes
 +
-+# Upload — accepts images AND PDFs (qc is image-only)
-+SAFETY_ALLOWED_CONTENT_TYPES = {
-+    "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
-+    "application/pdf",
-+}
-+SAFETY_ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | {".pdf"}
-+MAX_SAFETY_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-+
-+VALID_INCIDENT_TYPES = {"near_miss", "injury", "property_damage"}
++# Capped penalty buckets (spec §Steps.1)
++_SCORE_DOCS_MAX = 40
++_SCORE_TASKS_MAX = 25
++_SCORE_TRAINING_MAX = 20
++_SCORE_INCIDENTS_MAX = 15
 +
 +
-+# =====================================================================
-+# Helpers
-+# =====================================================================
-+def _new_id() -> str:
-+    """UUID4 as string. Matches project convention."""
-+    return str(uuid.uuid4())
-+
-+
-+def _hash_id_number(id_number: Optional[str]) -> Optional[str]:
-+    """SHA-256 of stripped Israeli ID / passport. Lookup aid; never returned to client."""
-+    if not id_number:
-+        return None
-+    return hashlib.sha256(id_number.strip().encode("utf-8")).hexdigest()
-+
-+
-+def _retention_date(from_iso: str) -> str:
-+    """from_iso + 7 years, ISO string. Used for incident soft-delete (regulatory clock)."""
-+    dt = datetime.fromisoformat(from_iso.replace("Z", "+00:00"))
-+    return (dt + timedelta(days=365 * INCIDENT_RETENTION_YEARS)).isoformat()
-+
-+
-+async def _ensure_company_or_placeholder(
-+    db, project_id: str, company_id: Optional[str], company_name: Optional[str], actor_id: str
-+) -> Optional[str]:
++async def _compute_safety_score(db, project_id: str) -> dict:
 +    """
-+    If company_id is provided and exists on this project (non-deleted) — return it.
-+    If only company_name is provided — create or reuse a placeholder project_companies doc.
-+    If neither — return None.
++    Compute 0-100 safety score from live state via four capped penalty buckets:
++
++      - documents bucket  (≤ _SCORE_DOCS_MAX = 40)
++            sev3*10 + sev2*5 + sev1*2 over open/in_progress documents
++      - tasks bucket      (≤ _SCORE_TASKS_MAX = 25)
++            overdue (due_at past, status not completed/cancelled): 5 each
++      - training bucket   (≤ _SCORE_TRAINING_MAX = 20)
++            untrained workers: 4 each (no in-force training)
++      - incidents bucket  (≤ _SCORE_INCIDENTS_MAX = 15)
++            incidents in last 90 days: 8 each
++
++    score = max(0, 100 - sum_of_capped_penalties).
++
++    All Mongo reads filter `deletedAt: None`. Documents and tasks use
++    `$group/$cond` aggregation in the style of snapshot_cron.py.
 +    """
-+    if company_id:
-+        doc = await db.project_companies.find_one({
-+            "id": company_id,
++    now = datetime.now(timezone.utc)
++    today_iso = now.date().isoformat()
++    now_iso = now.isoformat()
++    cutoff_90d = (now - timedelta(days=90)).isoformat()
++
++    # Documents bucket — single $group with $cond per severity
++    docs_agg = await db.safety_documents.aggregate([
++        {"$match": {
 +            "project_id": project_id,
 +            "deletedAt": None,
-+        })
-+        if doc:
-+            return company_id
-+        raise HTTPException(status_code=404, detail="company_id not found on this project")
++            "status": {"$in": ["open", "in_progress"]},
++        }},
++        {"$group": {
++            "_id": None,
++            "sev3": {"$sum": {"$cond": [{"$eq": ["$severity", "3"]}, 1, 0]}},
++            "sev2": {"$sum": {"$cond": [{"$eq": ["$severity", "2"]}, 1, 0]}},
++            "sev1": {"$sum": {"$cond": [{"$eq": ["$severity", "1"]}, 1, 0]}},
++        }},
++    ]).to_list(length=1)
++    if docs_agg:
++        sev3 = docs_agg[0].get("sev3", 0)
++        sev2 = docs_agg[0].get("sev2", 0)
++        sev1 = docs_agg[0].get("sev1", 0)
++    else:
++        sev3 = sev2 = sev1 = 0
++    docs_raw = sev3 * 10 + sev2 * 5 + sev1 * 2
++    docs_penalty = min(docs_raw, _SCORE_DOCS_MAX)
 +
-+    if not company_name:
-+        return None
++    # Tasks bucket — overdue count via $group/$cond
++    tasks_agg = await db.safety_tasks.aggregate([
++        {"$match": {"project_id": project_id, "deletedAt": None}},
++        {"$group": {
++            "_id": None,
++            "overdue": {"$sum": {"$cond": [
++                {"$and": [
++                    {"$ne": ["$due_at", None]},
++                    {"$lt": ["$due_at", now_iso]},
++                    {"$not": {"$in": ["$status", ["completed", "cancelled"]]}},
++                ]}, 1, 0,
++            ]}},
++        }},
++    ]).to_list(length=1)
++    overdue_tasks = tasks_agg[0]["overdue"] if tasks_agg else 0
++    tasks_penalty = min(overdue_tasks * 5, _SCORE_TASKS_MAX)
 +
-+    name = company_name.strip()
-+    existing = await db.project_companies.find_one({
++    # Incidents bucket — last 90 days
++    recent_incidents = await db.safety_incidents.count_documents({
 +        "project_id": project_id,
-+        "name": name,
 +        "deletedAt": None,
++        "occurred_at": {"$gte": cutoff_90d},
 +    })
-+    if existing:
-+        return existing["id"]
++    incidents_penalty = min(recent_incidents * 8, _SCORE_INCIDENTS_MAX)
 +
-+    new_id = _new_id()
-+    await db.project_companies.insert_one({
-+        "id": new_id,
-+        "project_id": project_id,
-+        "name": name,
-+        "is_placeholder": True,
-+        "created_at": _now(),
-+        "created_by": actor_id,
-+        "deletedAt": None,
-+        "deletedBy": None,
-+    })
-+    await _audit("project_company", new_id, "create_placeholder", actor_id, {
-+        "project_id": project_id, "name": name, "source": "safety",
-+    })
-+    return new_id
++    # Training bucket — workers with no in-force training
++    worker_ids_docs = await db.safety_workers.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0, "id": 1}
++    ).to_list(length=10000)
++    worker_ids = [w["id"] for w in worker_ids_docs]
++    untrained_workers = 0
++    if worker_ids:
++        in_force = await db.safety_trainings.aggregate([
++            {"$match": {
++                "project_id": project_id,
++                "deletedAt": None,
++                "worker_id": {"$in": worker_ids},
++                "$or": [{"expires_at": None}, {"expires_at": {"$gte": today_iso}}],
++            }},
++            {"$group": {"_id": "$worker_id"}},
++        ]).to_list(length=10000)
++        trained_set = {row["_id"] for row in in_force}
++        untrained_workers = sum(1 for wid in worker_ids if wid not in trained_set)
++    training_penalty = min(untrained_workers * 4, _SCORE_TRAINING_MAX)
 +
++    total_penalty = docs_penalty + tasks_penalty + training_penalty + incidents_penalty
++    score = max(0, 100 - total_penalty)
 +
-+async def _strip_mongo_id(items: list) -> list:
-+    """Drop _id from list results (Mongo returns ObjectId which isn't JSON-serializable)."""
-+    for it in items:
-+        it.pop("_id", None)
-+    return items
-+
-+
-+def _resolve_include_deleted(include_deleted: bool, user: dict) -> bool:
-+    """
-+    Spec: include_deleted=true is restricted to super_admin.
-+    Non-super callers passing include_deleted=true get 403, not silent demotion.
-+    """
-+    if include_deleted and not _is_super_admin(user):
-+        raise HTTPException(status_code=403, detail="include_deleted requires super_admin")
-+    return include_deleted
-+
-+
-+# =====================================================================
-+# healthz (Part 1)
-+# =====================================================================
- @router.get("/healthz")
- async def healthz(user: dict = Depends(get_current_user)):
-     """
-@@ -24,6 +150,1044 @@ async def healthz(user: dict = Depends(get_current_user)):
-     return {"ok": True, "module": "safety", "enabled": True}
- 
- 
-+# =====================================================================
-+# Shared request bodies
-+# =====================================================================
-+class SoftDeleteBody(BaseModel):
-+    reason: Optional[str] = None
++    return {
++        "score": score,
++        "breakdown": {
++            "documents": {
++                "open_sev3": sev3, "open_sev2": sev2, "open_sev1": sev1,
++                "raw": docs_raw, "penalty": docs_penalty, "max": _SCORE_DOCS_MAX,
++            },
++            "tasks": {
++                "overdue": overdue_tasks,
++                "penalty": tasks_penalty, "max": _SCORE_TASKS_MAX,
++            },
++            "training": {
++                "untrained_workers": untrained_workers, "total_workers": len(worker_ids),
++                "penalty": training_penalty, "max": _SCORE_TRAINING_MAX,
++            },
++            "incidents": {
++                "recent_90d": recent_incidents,
++                "penalty": incidents_penalty, "max": _SCORE_INCIDENTS_MAX,
++            },
++        },
++        "computed_at": now_iso,
++    }
 +
 +
-+# =====================================================================
-+# Workers CRUD
-+# =====================================================================
-+class SafetyWorkerCreate(BaseModel):
-+    company_id: Optional[str] = None
-+    company_name: Optional[str] = None
-+    full_name: str = Field(..., min_length=2, max_length=120)
-+    id_number: Optional[str] = None
-+    profession: Optional[str] = None
-+    phone: Optional[str] = None
-+    notes: Optional[str] = None
++def _strip_pii(records: list) -> list:
++    """Remove PII fields from worker records before any export."""
++    cleaned = []
++    for r in records:
++        c = {k: v for k, v in r.items() if k not in ("_id", "id_number", "id_number_hash")}
++        cleaned.append(c)
++    return cleaned
 +
 +
-+class SafetyWorkerUpdate(BaseModel):
-+    full_name: Optional[str] = None
-+    id_number: Optional[str] = None
-+    profession: Optional[str] = None
-+    phone: Optional[str] = None
-+    notes: Optional[str] = None
-+    company_id: Optional[str] = None
-+
-+
-+@router.post("/{project_id}/workers", status_code=201, response_model=SafetyWorker)
-+async def create_worker(
++@router.get("/{project_id}/score")
++async def get_safety_score(
 +    project_id: str,
-+    payload: SafetyWorkerCreate,
++    refresh: bool = Query(False),
 +    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 +):
++    """
++    Return safety score with spec-required response shape:
++      {score, breakdown, computed_at, cache_age_seconds}
++
++    5-min in-process cache. `?refresh=true` recomputes. Always audited
++    as `safety_score:computed` with `{score, cache_hit}`.
++    """
 +    db = get_db()
 +    await _check_project_access(user, project_id)
 +
-+    resolved_company_id = await _ensure_company_or_placeholder(
-+        db, project_id, payload.company_id, payload.company_name, user["id"]
++    cached = _SCORE_CACHE.get(project_id)
++    cache_hit = False
++    if cached and not refresh and (_time.time() - cached[0]) < _SCORE_TTL_SECONDS:
++        payload = cached[1]
++        cache_age = int(_time.time() - cached[0])
++        cache_hit = True
++    else:
++        payload = await _compute_safety_score(db, project_id)
++        _SCORE_CACHE[project_id] = (_time.time(), payload)
++        cache_age = 0
++
++    await _audit("safety_score", project_id, "computed", user["id"], {
++        "project_id": project_id,
++        "score": payload["score"],
++        "cache_hit": cache_hit,
++    })
++    return {**payload, "cache_age_seconds": cache_age}
++
++
++async def _gather_export_data(db, project_id: str, doc_filter_extra: Optional[dict] = None):
++    """Fetch all data needed for exports. Strips PII from workers."""
++    workers = await db.safety_workers.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
++    workers = _strip_pii(workers)
++
++    trainings = await db.safety_trainings.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
++
++    doc_q = {"project_id": project_id, "deletedAt": None}
++    if doc_filter_extra:
++        doc_q.update(doc_filter_extra)
++    documents = await db.safety_documents.find(doc_q, {"_id": 0}).to_list(length=100000)
++
++    tasks = await db.safety_tasks.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
++
++    incidents = await db.safety_incidents.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
++
++    company_ids = {r.get("company_id") for r in workers + documents + tasks if r.get("company_id")}
++    company_map = {}
++    if company_ids:
++        companies = await db.project_companies.find(
++            {"id": {"$in": list(company_ids)}, "deletedAt": None},
++            {"_id": 0, "id": 1, "name": 1},
++        ).to_list(length=10000)
++        company_map = {c["id"]: c.get("name", "") for c in companies}
++
++    user_ids = set()
++    for src in (documents, tasks, incidents):
++        for r in src:
++            for f in ("assignee_id", "reporter_id", "created_by"):
++                if r.get(f):
++                    user_ids.add(r[f])
++    user_map = {}
++    if user_ids:
++        users = await db.users.find(
++            {"id": {"$in": list(user_ids)}}, {"_id": 0, "id": 1, "name": 1}
++        ).to_list(length=10000)
++        user_map = {u["id"]: u.get("name", "") for u in users}
++
++    return workers, trainings, documents, tasks, incidents, company_map, user_map
++
++
++_EXCEL_HEADER_FONT_KW = dict(name="Arial", bold=True, size=11, color="FFFFFF")
++_EXCEL_HEADER_FILL_KW = dict(start_color="475569", end_color="475569", fill_type="solid")
++
++
++def _excel_styles():
++    """Cached style objects for our Excel sheets (header grey, RTL alignment)."""
++    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
++    return {
++        "header_font": Font(**_EXCEL_HEADER_FONT_KW),
++        "header_fill": PatternFill(**_EXCEL_HEADER_FILL_KW),
++        "header_align": Alignment(horizontal="right", vertical="center", wrap_text=True),
++        "cell_font": Font(name="Arial", size=10),
++        "cell_align": Alignment(horizontal="right", vertical="top", wrap_text=True),
++        "thin": Border(
++            left=Side(style="thin", color="D1D5DB"),
++            right=Side(style="thin", color="D1D5DB"),
++            top=Side(style="thin", color="D1D5DB"),
++            bottom=Side(style="thin", color="D1D5DB"),
++        ),
++    }
++
++
++def _fmt_dt(s):
++    if not s:
++        return ""
++    try:
++        return datetime.fromisoformat(str(s).replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
++    except Exception:
++        return str(s)[:16]
++
++
++def _write_sheet(wb, title, headers, rows, widths):
++    """
++    Add an RTL Hebrew sheet. Bold grey header, frozen row 1, optional
++    auto-filter when there are data rows.
++    """
++    from openpyxl.utils import get_column_letter
++    s = _excel_styles()
++    ws = wb.create_sheet(title)
++    ws.sheet_view.rightToLeft = True
++    for i, h in enumerate(headers, 1):
++        c = ws.cell(row=1, column=i, value=h)
++        c.font = s["header_font"]
++        c.fill = s["header_fill"]
++        c.alignment = s["header_align"]
++        c.border = s["thin"]
++    for r_idx, row in enumerate(rows, 2):
++        for c_idx, val in enumerate(row, 1):
++            c = ws.cell(row=r_idx, column=c_idx, value=val)
++            c.font = s["cell_font"]
++            c.alignment = s["cell_align"]
++            c.border = s["thin"]
++    for i, w in enumerate(widths, 1):
++        ws.column_dimensions[get_column_letter(i)].width = w
++    # Spec: frozen row 1
++    ws.freeze_panes = "A2"
++    if rows:
++        ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(rows) + 1}"
++    return ws
++
++
++def _build_safety_excel_3sheet(
++    workers, trainings, incidents, company_map, worker_name_map
++):
++    """
++    Build the regulatory 3-sheet RTL Hebrew workbook (spec §Steps.2):
++      Sheet 1: עובדים  (Workers — NO id_number / id_number_hash)
++      Sheet 2: הדרכות  (Trainings)
++      Sheet 3: אירועים (Incidents)
++    Frozen row 1 on every sheet.
++    """
++    from openpyxl import Workbook
++    from services.safety_pdf import SEVERITY_HE, INCIDENT_TYPE_HE
++
++    wb = Workbook()
++    wb.remove(wb.active)
++
++    # Sheet 1: workers (PII already stripped upstream)
++    worker_rows = []
++    for w in workers:
++        worker_rows.append([
++            w.get("full_name", ""),
++            w.get("profession", "") or "",
++            company_map.get(w.get("company_id", ""), ""),
++            w.get("phone", "") or "",
++            _fmt_dt(w.get("created_at")),
++        ])
++    _write_sheet(
++        wb, "עובדים",
++        ["שם מלא", "מקצוע", "חברה", "טלפון", "תאריך כניסה"],
++        worker_rows,
++        [22, 18, 20, 14, 18],
 +    )
 +
-+    # PII: persist only the SHA-256 hash; never store or return raw id_number.
-+    doc = {
-+        "id": _new_id(),
-+        "project_id": project_id,
-+        "company_id": resolved_company_id,
-+        "full_name": payload.full_name.strip(),
-+        "id_number": None,
-+        "id_number_hash": _hash_id_number(payload.id_number),
-+        "profession": payload.profession,
-+        "phone": payload.phone,
-+        "notes": payload.notes,
-+        "created_at": _now(),
-+        "created_by": user["id"],
-+        "deletedAt": None,
-+        "deletedBy": None,
-+        "deletion_reason": None,
-+        "retention_until": None,
-+    }
-+    await db.safety_workers.insert_one(doc)
-+    audit_after = {k: v for k, v in doc.items() if k not in ("id_number", "id_number_hash")}
-+    await _audit("safety_worker", doc["id"], "created", user["id"], {
-+        "project_id": project_id, "after": audit_after,
-+    })
-+    return SafetyWorker(**doc)
++    # Sheet 2: trainings
++    training_rows = []
++    for tr in trainings:
++        training_rows.append([
++            worker_name_map.get(tr.get("worker_id", ""), ""),
++            tr.get("training_type", "") or "",
++            tr.get("instructor_name", "") or "",
++            _fmt_dt(tr.get("trained_at")),
++            _fmt_dt(tr.get("expires_at")),
++        ])
++    _write_sheet(
++        wb, "הדרכות",
++        ["עובד", "סוג הדרכה", "מדריך", "תאריך הדרכה", "תוקף עד"],
++        training_rows,
++        [22, 22, 18, 18, 18],
++    )
++
++    # Sheet 3: incidents
++    incident_rows = []
++    for inc in incidents:
++        incident_rows.append([
++            INCIDENT_TYPE_HE.get(inc.get("incident_type", ""), inc.get("incident_type", "")),
++            SEVERITY_HE.get(inc.get("severity", ""), ""),
++            _fmt_dt(inc.get("occurred_at")),
++            inc.get("location", "") or "",
++            worker_name_map.get(inc.get("injured_worker_id", ""), "") or "",
++            "כן" if inc.get("reported_to_authority") else "לא",
++            inc.get("description", "") or "",
++        ])
++    _write_sheet(
++        wb, "אירועים",
++        ["סוג אירוע", "חומרה", "תאריך אירוע", "מיקום",
++         "עובד נפגע", "דווח לרשות", "תיאור"],
++        incident_rows,
++        [16, 12, 18, 20, 22, 14, 40],
++    )
++
++    out = io.BytesIO()
++    wb.save(out)
++    out.seek(0)
++    return out
 +
 +
-+@router.get("/{project_id}/workers")
-+async def list_workers(
++def _build_filtered_documents_excel(documents, company_map, user_map):
++    """
++    Build single-sheet 'ממצאי בטיחות' workbook (spec §Steps.3) of
++    documents matching the 7-dim filter. Empty list still produces a
++    valid Excel with header only.
++    """
++    from openpyxl import Workbook
++    from services.safety_pdf import CATEGORY_HE, SEVERITY_HE, DOC_STATUS_HE
++
++    wb = Workbook()
++    wb.remove(wb.active)
++
++    rows = []
++    for d in documents:
++        rows.append([
++            d.get("title", ""),
++            CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
++            SEVERITY_HE.get(d.get("severity", ""), ""),
++            DOC_STATUS_HE.get(d.get("status", ""), d.get("status", "")),
++            d.get("location", "") or "",
++            company_map.get(d.get("company_id", ""), ""),
++            user_map.get(d.get("assignee_id", ""), ""),
++            user_map.get(d.get("reporter_id", ""), ""),
++            _fmt_dt(d.get("found_at")),
++            _fmt_dt(d.get("created_at")),
++            _fmt_dt(d.get("resolved_at")),
++            d.get("description", "") or "",
++        ])
++    _write_sheet(
++        wb, "ממצאי בטיחות",
++        ["כותרת", "קטגוריה", "חומרה", "סטטוס", "מיקום", "חברה",
++         "אחראי", "מדווח", "נמצא בתאריך", "נוצר", "נפתר", "תיאור"],
++        rows,
++        [25, 16, 10, 12, 18, 18, 16, 16, 18, 18, 18, 35],
++    )
++
++    out = io.BytesIO()
++    wb.save(out)
++    out.seek(0)
++    return out
++
++
++@router.get("/{project_id}/export/excel")
++async def export_safety_excel(
 +    project_id: str,
-+    limit: int = Query(100, le=500),
-+    offset: int = Query(0, ge=0),
-+    include_deleted: bool = False,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    q = {"project_id": project_id}
-+    include_deleted = _resolve_include_deleted(include_deleted, user)
-+    if not include_deleted:
-+        q["deletedAt"] = None
-+
-+    total = await db.safety_workers.count_documents(q)
-+    cursor = db.safety_workers.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
-+    items = await cursor.to_list(length=limit)
-+    # strip the hash from list responses too
-+    for it in items:
-+        it.pop("id_number_hash", None)
-+    return {"items": items, "total": total, "limit": limit, "offset": offset}
-+
-+
-+@router.get("/{project_id}/workers/{worker_id}", response_model=SafetyWorker)
-+async def get_worker(
-+    project_id: str,
-+    worker_id: str,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    doc = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-+    if not doc:
-+        raise HTTPException(status_code=404, detail="worker not found")
-+    # PII: never expose hash or any raw id_number
-+    doc.pop("id_number_hash", None)
-+    doc["id_number"] = None
-+    return SafetyWorker(**doc)
-+
-+
-+@router.patch("/{project_id}/workers/{worker_id}", response_model=SafetyWorker)
-+async def update_worker(
-+    project_id: str,
-+    worker_id: str,
-+    payload: SafetyWorkerUpdate,
 +    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 +):
++    """
++    3-sheet Hebrew RTL Excel export (workers / trainings / incidents).
++    Management-only. PII (id_number / id_number_hash) is stripped.
++    """
 +    db = get_db()
 +    await _check_project_access(user, project_id)
-+    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="worker not found")
-+    if before.get("deletedAt"):
-+        raise HTTPException(status_code=410, detail="worker deleted")
 +
-+    updates = payload.model_dump(exclude_unset=True)
-+    if "id_number" in updates:
-+        # PII: rotate hash only; never persist raw id_number on the document.
-+        updates["id_number_hash"] = _hash_id_number(updates["id_number"]) if updates["id_number"] else None
-+        updates["id_number"] = None
-+    if "company_id" in updates and updates["company_id"]:
-+        comp = await db.project_companies.find_one({
-+            "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
-+        })
-+        if not comp:
-+            raise HTTPException(status_code=404, detail="company_id not found on this project")
-+    updates["updated_at"] = _now()
-+    updates["updated_by"] = user["id"]
++    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
++    if not project:
++        raise HTTPException(status_code=404, detail="project not found")
 +
-+    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-+    after = await db.safety_workers.find_one({"id": worker_id})
-+    _STRIP_PII = ("_id", "id_number", "id_number_hash")
-+    await _audit("safety_worker", worker_id, "updated", user["id"], {
++    workers, trainings, documents, tasks, incidents, company_map, user_map = \
++        await _gather_export_data(db, project_id)
++    worker_name_map = {w["id"]: w.get("full_name", "") for w in workers}
++
++    buf = _build_safety_excel_3sheet(
++        workers, trainings, incidents, company_map, worker_name_map
++    )
++
++    await _audit("safety_export", project_id, "excel_exported", user["id"], {
 +        "project_id": project_id,
-+        "before": {k: v for k, v in before.items() if k not in _STRIP_PII},
-+        "after": {k: v for k, v in after.items() if k not in _STRIP_PII},
-+    })
-+    return SafetyWorker(**after)
-+
-+
-+@router.delete("/{project_id}/workers/{worker_id}", status_code=204)
-+async def delete_worker(
-+    project_id: str,
-+    worker_id: str,
-+    body: SoftDeleteBody = SoftDeleteBody(),
-+    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="worker not found")
-+    if before.get("deletedAt"):
-+        return
-+
-+    now = _now()
-+    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-+        "deletedAt": now,
-+        "deletedBy": user["id"],
-+        "deletion_reason": body.reason,
-+        "retention_until": _retention_date(now),
-+    }})
-+    await _audit("safety_worker", worker_id, "deleted", user["id"], {
-+        "project_id": project_id, "deletion_reason": body.reason,
++        "workers": len(workers),
++        "trainings": len(trainings),
++        "incidents": len(incidents),
 +    })
 +
-+
-+# =====================================================================
-+# Trainings CRUD
-+# =====================================================================
-+class SafetyTrainingCreate(BaseModel):
-+    worker_id: str
-+    training_type: str
-+    trained_at: str
-+    instructor_name: Optional[str] = None
-+    duration_minutes: Optional[int] = None
-+    location: Optional[str] = None
-+    expires_at: Optional[str] = None
-+    certificate_url: Optional[str] = None
++    filename = (
++        f"safety_{project_id[:8]}_"
++        f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.xlsx"
++    )
++    return StreamingResponse(
++        buf,
++        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
++    )
 +
 +
-+class SafetyTrainingUpdate(BaseModel):
-+    training_type: Optional[str] = None
-+    trained_at: Optional[str] = None
-+    instructor_name: Optional[str] = None
-+    duration_minutes: Optional[int] = None
-+    location: Optional[str] = None
-+    expires_at: Optional[str] = None
-+    certificate_url: Optional[str] = None
-+
-+
-+@router.post("/{project_id}/trainings", status_code=201, response_model=SafetyTraining)
-+async def create_training(
-+    project_id: str,
-+    payload: SafetyTrainingCreate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    worker = await db.safety_workers.find_one({
-+        "id": payload.worker_id,
-+        "project_id": project_id,
-+        "deletedAt": None,
-+    })
-+    if not worker:
-+        raise HTTPException(status_code=404, detail="worker not found or deleted")
-+
-+    doc = {
-+        "id": _new_id(),
-+        "project_id": project_id,
-+        "worker_id": payload.worker_id,
-+        "training_type": payload.training_type.strip(),
-+        "instructor_name": payload.instructor_name,
-+        "duration_minutes": payload.duration_minutes,
-+        "location": payload.location,
-+        "trained_at": payload.trained_at,
-+        "expires_at": payload.expires_at,
-+        "certificate_url": payload.certificate_url,
-+        "created_at": _now(),
-+        "created_by": user["id"],
-+        "deletedAt": None,
-+        "deletedBy": None,
-+    }
-+    await db.safety_trainings.insert_one(doc)
-+    await _audit("safety_training", doc["id"], "created", user["id"], {
-+        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-+    })
-+    return SafetyTraining(**doc)
-+
-+
-+@router.get("/{project_id}/trainings")
-+async def list_trainings(
-+    project_id: str,
-+    worker_id: Optional[str] = None,
-+    training_type: Optional[str] = None,
-+    expires_before: Optional[str] = None,
-+    limit: int = Query(100, le=500),
-+    offset: int = Query(0, ge=0),
-+    include_deleted: bool = False,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    q = {"project_id": project_id}
-+    include_deleted = _resolve_include_deleted(include_deleted, user)
-+    if not include_deleted:
-+        q["deletedAt"] = None
-+    if worker_id:
-+        q["worker_id"] = worker_id
-+    if training_type:
-+        q["training_type"] = training_type
-+    if expires_before:
-+        q["expires_at"] = {"$ne": None, "$lt": expires_before}
-+
-+    total = await db.safety_trainings.count_documents(q)
-+    cursor = db.safety_trainings.find(q, {"_id": 0}).sort("trained_at", -1).skip(offset).limit(limit)
-+    items = await cursor.to_list(length=limit)
-+    return {"items": items, "total": total, "limit": limit, "offset": offset}
-+
-+
-+@router.get("/{project_id}/trainings/{training_id}", response_model=SafetyTraining)
-+async def get_training(
-+    project_id: str,
-+    training_id: str,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-+    if not doc:
-+        raise HTTPException(status_code=404, detail="training not found")
-+    return SafetyTraining(**doc)
-+
-+
-+@router.patch("/{project_id}/trainings/{training_id}", response_model=SafetyTraining)
-+async def update_training(
-+    project_id: str,
-+    training_id: str,
-+    payload: SafetyTrainingUpdate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="training not found")
-+    if before.get("deletedAt"):
-+        raise HTTPException(status_code=410, detail="training deleted")
-+
-+    updates = payload.model_dump(exclude_unset=True)
-+    updates["updated_at"] = _now()
-+    updates["updated_by"] = user["id"]
-+
-+    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-+    after = await db.safety_trainings.find_one({"id": training_id})
-+    await _audit("safety_training", training_id, "updated", user["id"], {
-+        "project_id": project_id,
-+        "before": {k: v for k, v in before.items() if k != "_id"},
-+        "after": {k: v for k, v in after.items() if k != "_id"},
-+    })
-+    return SafetyTraining(**after)
-+
-+
-+@router.delete("/{project_id}/trainings/{training_id}", status_code=204)
-+async def delete_training(
-+    project_id: str,
-+    training_id: str,
-+    body: SoftDeleteBody = SoftDeleteBody(),
-+    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="training not found")
-+    if before.get("deletedAt"):
-+        return
-+    now = _now()
-+    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-+        "deletedAt": now,
-+        "deletedBy": user["id"],
-+        "deletion_reason": body.reason,
-+        "retention_until": _retention_date(now),
-+    }})
-+    await _audit("safety_training", training_id, "deleted", user["id"], {
-+        "project_id": project_id, "deletion_reason": body.reason,
-+    })
-+
-+
-+# =====================================================================
-+# Documents CRUD + 7-dim filter
-+# =====================================================================
-+class SafetyDocumentCreate(BaseModel):
-+    category: SafetyCategory
-+    severity: SafetySeverity
-+    title: str = Field(..., min_length=2, max_length=200)
-+    found_at: str
-+    description: Optional[str] = None
-+    location: Optional[str] = None
-+    company_id: Optional[str] = None
-+    profession: Optional[str] = None
-+    assignee_id: Optional[str] = None
-+    photo_urls: List[str] = Field(default_factory=list)
-+    attachment_urls: List[str] = Field(default_factory=list)
-+
-+
-+class SafetyDocumentUpdate(BaseModel):
-+    category: Optional[SafetyCategory] = None
-+    severity: Optional[SafetySeverity] = None
-+    status: Optional[SafetyDocumentStatus] = None
-+    title: Optional[str] = None
-+    description: Optional[str] = None
-+    location: Optional[str] = None
-+    company_id: Optional[str] = None
-+    profession: Optional[str] = None
-+    assignee_id: Optional[str] = None
-+    photo_urls: Optional[List[str]] = None
-+    attachment_urls: Optional[List[str]] = None
-+    resolved_at: Optional[str] = None
-+
-+
-+@router.post("/{project_id}/documents", status_code=201, response_model=SafetyDocument)
-+async def create_document(
-+    project_id: str,
-+    payload: SafetyDocumentCreate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    if payload.company_id:
-+        comp = await db.project_companies.find_one({
-+            "id": payload.company_id, "project_id": project_id, "deletedAt": None,
-+        })
-+        if not comp:
-+            raise HTTPException(status_code=404, detail="company_id not found on this project")
-+
-+    doc = {
-+        "id": _new_id(),
-+        "project_id": project_id,
-+        "category": payload.category.value,
-+        "severity": payload.severity.value,
-+        "status": SafetyDocumentStatus.open.value,
-+        "title": payload.title.strip(),
-+        "description": payload.description,
-+        "location": payload.location,
-+        "company_id": payload.company_id,
-+        "profession": payload.profession,
-+        "assignee_id": payload.assignee_id,
-+        "reporter_id": user["id"],          # SERVER-SET, never trust client
-+        "photo_urls": payload.photo_urls,
-+        "attachment_urls": payload.attachment_urls,
-+        "found_at": payload.found_at,
-+        "resolved_at": None,
-+        "created_at": _now(),
-+        "created_by": user["id"],
-+        "updated_at": None,
-+        "deletedAt": None,
-+        "deletedBy": None,
-+    }
-+    await db.safety_documents.insert_one(doc)
-+    await _audit("safety_document", doc["id"], "created", user["id"], {
-+        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-+    })
-+    return SafetyDocument(**doc)
-+
-+
-+@router.get("/{project_id}/documents")
-+async def list_documents(
++@router.get("/{project_id}/export/filtered")
++async def export_safety_filtered(
 +    project_id: str,
 +    category: Optional[SafetyCategory] = None,
 +    severity: Optional[SafetySeverity] = None,
@@ -871,2077 +473,570 @@ index ca685e6..fdee84c 100644
 +    reporter_id: Optional[str] = None,
 +    date_from: Optional[str] = None,
 +    date_to: Optional[str] = None,
-+    limit: int = Query(50, le=200),
-+    offset: int = Query(0, ge=0),
-+    include_deleted: bool = False,
-+    user: dict = Depends(get_current_user),
++    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 +):
++    """
++    Single-sheet 'ממצאי בטיחות' Excel of documents matching the same
++    7-dim filter as list_documents. Empty result returns a valid Excel
++    (200) with the header row only.
++    """
 +    db = get_db()
 +    await _check_project_access(user, project_id)
 +
-+    q = {"project_id": project_id}
-+    include_deleted = _resolve_include_deleted(include_deleted, user)
-+    if not include_deleted:
-+        q["deletedAt"] = None
-+    if category:    q["category"] = category.value
-+    if severity:    q["severity"] = severity.value
-+    if status_:     q["status"] = status_.value
-+    if company_id:  q["company_id"] = company_id
-+    if assignee_id: q["assignee_id"] = assignee_id
-+    if reporter_id: q["reporter_id"] = reporter_id
++    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
++    if not project:
++        raise HTTPException(status_code=404, detail="project not found")
++
++    extra = {}
++    if category:    extra["category"] = category.value
++    if severity:    extra["severity"] = severity.value
++    if status_:     extra["status"] = status_.value
++    if company_id:  extra["company_id"] = company_id
++    if assignee_id: extra["assignee_id"] = assignee_id
++    if reporter_id: extra["reporter_id"] = reporter_id
 +    if date_from or date_to:
-+        q["found_at"] = {}
-+        if date_from: q["found_at"]["$gte"] = date_from
-+        if date_to:   q["found_at"]["$lte"] = date_to
++        rng = {}
++        if date_from: rng["$gte"] = date_from
++        if date_to:   rng["$lte"] = date_to
++        extra["found_at"] = rng
 +
-+    total = await db.safety_documents.count_documents(q)
-+    cursor = db.safety_documents.find(q, {"_id": 0}).sort("found_at", -1).skip(offset).limit(limit)
-+    items = await cursor.to_list(length=limit)
-+    filters_applied = {k: v for k, v in {
-+        "category": category.value if category else None,
-+        "severity": severity.value if severity else None,
-+        "status": status_.value if status_ else None,
-+        "company_id": company_id, "assignee_id": assignee_id, "reporter_id": reporter_id,
-+        "date_from": date_from, "date_to": date_to,
-+    }.items() if v}
-+    return {"items": items, "total": total, "limit": limit, "offset": offset,
-+            "filters_applied": filters_applied}
++    doc_q = {"project_id": project_id, "deletedAt": None, **extra}
++    documents = await db.safety_documents.find(doc_q, {"_id": 0}).to_list(length=100000)
++
++    company_ids = {d.get("company_id") for d in documents if d.get("company_id")}
++    company_map = {}
++    if company_ids:
++        companies = await db.project_companies.find(
++            {"id": {"$in": list(company_ids)}, "deletedAt": None},
++            {"_id": 0, "id": 1, "name": 1},
++        ).to_list(length=10000)
++        company_map = {c["id"]: c.get("name", "") for c in companies}
++
++    user_ids = set()
++    for d in documents:
++        for f in ("assignee_id", "reporter_id"):
++            if d.get(f):
++                user_ids.add(d[f])
++    user_map = {}
++    if user_ids:
++        users = await db.users.find(
++            {"id": {"$in": list(user_ids)}}, {"_id": 0, "id": 1, "name": 1}
++        ).to_list(length=10000)
++        user_map = {u["id"]: u.get("name", "") for u in users}
++
++    buf = _build_filtered_documents_excel(documents, company_map, user_map)
++
++    applied = {k: (v if not isinstance(v, dict) else v) for k, v in extra.items()}
++    await _audit("safety_export", project_id, "filtered_exported", user["id"], {
++        "project_id": project_id,
++        "filters": applied,
++        "matched_documents": len(documents),
++    })
++
++    filename = (
++        f"safety_filtered_{project_id[:8]}_"
++        f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.xlsx"
++    )
++    return StreamingResponse(
++        buf,
++        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
++    )
 +
 +
-+@router.get("/{project_id}/documents/{document_id}", response_model=SafetyDocument)
-+async def get_document(
++@router.get("/{project_id}/export/pdf-register")
++async def export_safety_pdf_register(
 +    project_id: str,
-+    document_id: str,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-+    if not doc:
-+        raise HTTPException(status_code=404, detail="document not found")
-+    return SafetyDocument(**doc)
-+
-+
-+@router.patch("/{project_id}/documents/{document_id}", response_model=SafetyDocument)
-+async def update_document(
-+    project_id: str,
-+    document_id: str,
-+    payload: SafetyDocumentUpdate,
 +    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
 +):
++    """Generate the 9-section Hebrew 'פנקס כללי' PDF. Management-only."""
 +    db = get_db()
 +    await _check_project_access(user, project_id)
-+    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="document not found")
-+    if before.get("deletedAt"):
-+        raise HTTPException(status_code=410, detail="document deleted")
 +
-+    updates = payload.model_dump(exclude_unset=True)
++    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
++    if not project:
++        raise HTTPException(status_code=404, detail="project not found")
 +
-+    # Coerce enum values to strings for Mongo
-+    if "category" in updates and updates["category"] is not None:
-+        updates["category"] = updates["category"].value if hasattr(updates["category"], "value") else updates["category"]
-+    if "severity" in updates and updates["severity"] is not None:
-+        updates["severity"] = updates["severity"].value if hasattr(updates["severity"], "value") else updates["severity"]
-+    if "status" in updates and updates["status"] is not None:
-+        updates["status"] = updates["status"].value if hasattr(updates["status"], "value") else updates["status"]
++    from services.safety_pdf import generate_safety_register
++    pdf_bytes = await generate_safety_register(db, project_id)
 +
-+    if "company_id" in updates and updates["company_id"]:
-+        comp = await db.project_companies.find_one({
-+            "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
-+        })
-+        if not comp:
-+            raise HTTPException(status_code=404, detail="company_id not found on this project")
-+
-+    updates["updated_at"] = _now()
-+    updates["updated_by"] = user["id"]
-+
-+    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-+    after = await db.safety_documents.find_one({"id": document_id})
-+    await _audit("safety_document", document_id, "updated", user["id"], {
++    await _audit("safety_export", project_id, "pdf_register_exported", user["id"], {
 +        "project_id": project_id,
-+        "before": {k: v for k, v in before.items() if k != "_id"},
-+        "after": {k: v for k, v in after.items() if k != "_id"},
++        "size_bytes": len(pdf_bytes),
 +    })
-+    return SafetyDocument(**after)
++
++    filename = (
++        f"safety_register_{project_id[:8]}_"
++        f"{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
++    )
++    return StreamingResponse(
++        io.BytesIO(pdf_bytes),
++        media_type="application/pdf",
++        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
++    )
 +
 +
-+@router.delete("/{project_id}/documents/{document_id}", status_code=204)
-+async def delete_document(
-+    project_id: str,
-+    document_id: str,
-+    body: SoftDeleteBody = SoftDeleteBody(),
-+    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="document not found")
-+    if before.get("deletedAt"):
+ # =====================================================================
+ # Photo / PDF upload helper (one endpoint for all resources)
+ # =====================================================================
+diff --git a/backend/services/safety_pdf.py b/backend/services/safety_pdf.py
+new file mode 100644
+index 0000000..44e4df9
+--- /dev/null
++++ b/backend/services/safety_pdf.py
+@@ -0,0 +1,455 @@
++"""
++Safety regulatory "פנקס כללי" (General Register) PDF generator.
++
++Public API: `async generate_safety_register(db, project_id) -> bytes`.
++
++Renders 9 sections in Hebrew RTL with page-X-of-Y footer and the fixed
++work-manager declaration + 3 signature lines in section 9.
++
++PII rule: never reads or emits id_number / id_number_hash. Only the
++fields explicitly selected below are included.
++
++Font path is `__file__`-anchored — survives any cwd (Elastic Beanstalk
++safe). Font registration failures are logged via logger.warning, never
++silently swallowed.
++"""
++import io
++import logging
++import os
++from datetime import datetime, timedelta, timezone
++
++from services.pdf_service import hebrew
++
++logger = logging.getLogger(__name__)
++
++_FONTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fonts")
++
++_fonts_registered = False
++
++
++def _register_fonts_once():
++    global _fonts_registered
++    if _fonts_registered:
 +        return
-+    now = _now()
-+    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-+        "deletedAt": now,
-+        "deletedBy": user["id"],
-+        "deletion_reason": body.reason,
-+        "retention_until": _retention_date(now),
-+    }})
-+    await _audit("safety_document", document_id, "deleted", user["id"], {
-+        "project_id": project_id, "deletion_reason": body.reason,
-+    })
++    from reportlab.pdfbase import pdfmetrics
++    from reportlab.pdfbase.ttfonts import TTFont
++
++    regular = os.path.join(_FONTS_DIR, "Rubik-Regular.ttf")
++    bold = os.path.join(_FONTS_DIR, "Rubik-Bold.ttf")
++    try:
++        pdfmetrics.registerFont(TTFont("Rubik", regular))
++    except Exception as e:
++        logger.warning(f"[SAFETY-PDF] Failed to register Rubik regular at {regular}: {e}")
++    try:
++        pdfmetrics.registerFont(TTFont("Rubik-Bold", bold))
++    except Exception as e:
++        logger.warning(f"[SAFETY-PDF] Failed to register Rubik bold at {bold}: {e}")
++    _fonts_registered = True
 +
 +
-+# =====================================================================
-+# Tasks CRUD + status transition guard
-+# =====================================================================
-+class SafetyTaskCreate(BaseModel):
-+    title: str = Field(..., min_length=2, max_length=200)
-+    severity: SafetySeverity
-+    document_id: Optional[str] = None
-+    description: Optional[str] = None
-+    assignee_id: Optional[str] = None
-+    company_id: Optional[str] = None
-+    due_at: Optional[str] = None
++CATEGORY_HE = {
++    "scaffolding": "פיגומים",
++    "heights": "עבודה בגובה",
++    "electrical_safety": "בטיחות חשמל",
++    "lifting": "הרמה וציוד",
++    "excavation": "חפירות",
++    "fire_safety": "אש ובטיחות אש",
++    "ppe": "ציוד מגן אישי",
++    "site_housekeeping": "סדר וניקיון",
++    "hazardous_materials": "חומרים מסוכנים",
++    "other": "אחר",
++}
++SEVERITY_HE = {"1": "נמוכה", "2": "בינונית", "3": "גבוהה"}
++DOC_STATUS_HE = {"open": "פתוח", "in_progress": "בביצוע", "resolved": "נפתר", "verified": "אומת"}
++TASK_STATUS_HE = {"open": "פתוח", "in_progress": "בביצוע", "completed": "הושלם", "cancelled": "בוטל"}
++INCIDENT_TYPE_HE = {"near_miss": "כמעט-תאונה", "injury": "פציעה", "property_damage": "נזק לרכוש"}
++
++WORK_MANAGER_DECLARATION = (
++    "אני הח״מ, מנהל העבודה באתר, מצהיר/ה בזאת כי הפנקס הכללי נוהל לפי "
++    "תקנות הבטיחות בעבודה (עבודות בנייה), התשמ״ח-1988, וכי הנתונים "
++    "המופיעים בו משקפים את מצב הבטיחות באתר במועד ההפקה."
++)
 +
 +
-+class SafetyTaskUpdate(BaseModel):
-+    title: Optional[str] = None
-+    severity: Optional[SafetySeverity] = None
-+    description: Optional[str] = None
-+    assignee_id: Optional[str] = None
-+    company_id: Optional[str] = None
-+    due_at: Optional[str] = None
-+    status: Optional[SafetyTaskStatus] = None
-+    corrective_action: Optional[str] = None
-+    verification_photo_urls: Optional[List[str]] = None
++def _fmt_date(iso):
++    if not iso:
++        return ""
++    try:
++        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).strftime("%Y-%m-%d")
++    except Exception:
++        return str(iso)[:10]
 +
 +
-+def _assert_transition_allowed(
-+    current: str, next_status: str, project_role: str, payload_dict: dict
-+) -> None:
-+    """Enforce status transition rules. Raises 409 on invalid transition."""
-+    if current == next_status:
-+        return  # idempotent
-+    # Spec: open → in_progress → completed; any → cancelled; reverse = 409
-+    allowed = {
-+        "open": {"in_progress", "cancelled"},
-+        "in_progress": {"completed", "cancelled"},
-+        "completed": {"cancelled"},
-+        "cancelled": set(),
-+    }
-+    if next_status not in allowed.get(current, set()):
-+        raise HTTPException(status_code=409, detail={
-+            "current_status": current,
-+            "requested": next_status,
-+            "reason": "transition not allowed",
-+        })
-+    if next_status == "completed":
-+        ca = payload_dict.get("corrective_action")
-+        if not ca or not str(ca).strip():
-+            raise HTTPException(status_code=409, detail={
-+                "current_status": current,
-+                "requested": next_status,
-+                "reason": "corrective_action is required to mark a task completed",
-+            })
-+    if next_status == "cancelled":
-+        if project_role != "project_manager":
-+            raise HTTPException(status_code=409, detail={
-+                "current_status": current,
-+                "requested": next_status,
-+                "reason": "only project_manager may cancel a task",
-+            })
++class _NumberedCanvas:
++    """
++    Two-pass page-X-of-Y footer canvas. Buffers each page's state during
++    the first build pass, then stamps the true total-page count on every
++    page during save() (reportlab's standard idiom for X/Y footers).
++    """
++
++    def __init__(self, *args, **kwargs):
++        from reportlab.pdfgen import canvas as _canvas_mod
++        self._canvas_cls = _canvas_mod.Canvas
++        self._canvas = _canvas_mod.Canvas(*args, **kwargs)
++        self._saved_states = []
++
++    def __getattr__(self, name):
++        return getattr(self._canvas, name)
++
++    def showPage(self):
++        self._saved_states.append(self._canvas.__dict__.copy())
++        self._canvas._startPage()
++
++    def save(self):
++        total = len(self._saved_states)
++        for state in self._saved_states:
++            self._canvas.__dict__.update(state)
++            self._draw_footer(total)
++            self._canvas_cls.showPage(self._canvas)
++        self._canvas.save()
++
++    def _draw_footer(self, total):
++        c = self._canvas
++        page = c.getPageNumber()
++        c.saveState()
++        try:
++            c.setFont("Rubik", 8)
++        except Exception:
++            c.setFont("Helvetica", 8)
++        # A4 width = 595.27 pts; 28.35 pts ~= 1 cm
++        text = hebrew(f"עמוד {page} מתוך {total}")
++        c.drawCentredString(595.27 / 2.0, 28.35, text)
++        c.restoreState()
 +
 +
-+@router.post("/{project_id}/tasks", status_code=201, response_model=SafetyTask)
-+async def create_task(
-+    project_id: str,
-+    payload: SafetyTaskCreate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    if payload.document_id:
-+        ref = await db.safety_documents.find_one({
-+            "id": payload.document_id, "project_id": project_id, "deletedAt": None,
-+        })
-+        if not ref:
-+            raise HTTPException(status_code=404, detail="document_id not found or deleted")
-+
-+    if payload.company_id:
-+        comp = await db.project_companies.find_one({
-+            "id": payload.company_id, "project_id": project_id, "deletedAt": None,
-+        })
-+        if not comp:
-+            raise HTTPException(status_code=404, detail="company_id not found on this project")
-+
-+    doc = {
-+        "id": _new_id(),
-+        "project_id": project_id,
-+        "document_id": payload.document_id,
-+        "title": payload.title.strip(),
-+        "description": payload.description,
-+        "status": SafetyTaskStatus.open.value,
-+        "severity": payload.severity.value,
-+        "assignee_id": payload.assignee_id,
-+        "company_id": payload.company_id,
-+        "due_at": payload.due_at,
-+        "completed_at": None,
-+        "corrective_action": None,
-+        "verification_photo_urls": [],
-+        "created_at": _now(),
-+        "created_by": user["id"],
-+        "updated_at": None,
-+        "deletedAt": None,
-+        "deletedBy": None,
-+    }
-+    await db.safety_tasks.insert_one(doc)
-+    await _audit("safety_task", doc["id"], "created", user["id"], {
-+        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-+    })
-+    return SafetyTask(**doc)
++def _make_canvas(*args, **kwargs):
++    """Factory used as SimpleDocTemplate(..., canvasmaker=_make_canvas)."""
++    return _NumberedCanvas(*args, **kwargs)
 +
 +
-+@router.get("/{project_id}/tasks")
-+async def list_tasks(
-+    project_id: str,
-+    status_: Optional[SafetyTaskStatus] = Query(None, alias="status"),
-+    assignee_id: Optional[str] = None,
-+    document_id: Optional[str] = None,
-+    limit: int = Query(100, le=500),
-+    offset: int = Query(0, ge=0),
-+    include_deleted: bool = False,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
++async def generate_safety_register(db, project_id: str) -> bytes:
++    """
++    Build the regulatory 9-section פנקס כללי for `project_id`.
 +
-+    q = {"project_id": project_id}
-+    include_deleted = _resolve_include_deleted(include_deleted, user)
-+    if not include_deleted:
-+        q["deletedAt"] = None
-+    if status_:      q["status"] = status_.value
-+    if assignee_id:  q["assignee_id"] = assignee_id
-+    if document_id:  q["document_id"] = document_id
++    All Mongo reads filter `deletedAt: None`. PII fields are never selected.
++    """
++    from reportlab.lib import colors
++    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
++    from reportlab.lib.pagesizes import A4
++    from reportlab.lib.styles import ParagraphStyle
++    from reportlab.lib.units import cm, mm
++    from reportlab.platypus import (
++        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak
++    )
 +
-+    total = await db.safety_tasks.count_documents(q)
-+    cursor = db.safety_tasks.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
-+    items = await cursor.to_list(length=limit)
-+    return {"items": items, "total": total, "limit": limit, "offset": offset}
++    _register_fonts_once()
 +
++    project = await db.projects.find_one({"id": project_id}, {"_id": 0}) or {}
 +
-+@router.get("/{project_id}/tasks/{task_id}", response_model=SafetyTask)
-+async def get_task(
-+    project_id: str,
-+    task_id: str,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    doc = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-+    if not doc:
-+        raise HTTPException(status_code=404, detail="task not found")
-+    return SafetyTask(**doc)
++    workers = await db.safety_workers.find(
++        {"project_id": project_id, "deletedAt": None},
++        {"_id": 0, "id": 1, "full_name": 1, "profession": 1, "company_id": 1,
++         "phone": 1, "created_at": 1},
++    ).to_list(length=100000)
++    worker_ids = [w["id"] for w in workers]
 +
++    trainings = await db.safety_trainings.find(
++        {"project_id": project_id, "deletedAt": None},
++        {"_id": 0, "worker_id": 1, "training_type": 1, "instructor_name": 1,
++         "trained_at": 1, "expires_at": 1},
++    ).to_list(length=100000)
 +
-+@router.patch("/{project_id}/tasks/{task_id}", response_model=SafetyTask)
-+async def update_task(
-+    project_id: str,
-+    task_id: str,
-+    payload: SafetyTaskUpdate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="task not found")
-+    if before.get("deletedAt"):
-+        raise HTTPException(status_code=410, detail="task deleted")
++    documents = await db.safety_documents.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
 +
-+    updates = payload.model_dump(exclude_unset=True)
++    tasks = await db.safety_tasks.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
 +
-+    # Coerce enums
-+    if "severity" in updates and updates["severity"] is not None:
-+        updates["severity"] = updates["severity"].value if hasattr(updates["severity"], "value") else updates["severity"]
++    incidents = await db.safety_incidents.find(
++        {"project_id": project_id, "deletedAt": None}, {"_id": 0}
++    ).to_list(length=100000)
 +
-+    next_status_raw = updates.get("status")
-+    if next_status_raw is not None:
-+        next_status = next_status_raw.value if hasattr(next_status_raw, "value") else next_status_raw
-+        project_role = await _get_project_role(user, project_id)
-+        _assert_transition_allowed(before.get("status", "open"), next_status, project_role, updates)
-+        updates["status"] = next_status
-+        if next_status == "completed":
-+            updates["completed_at"] = _now()
++    company_ids = {r.get("company_id") for r in workers + documents + tasks if r.get("company_id")}
++    company_map = {}
++    if company_ids:
++        companies = await db.project_companies.find(
++            {"id": {"$in": list(company_ids)}, "deletedAt": None},
++            {"_id": 0, "id": 1, "name": 1},
++        ).to_list(length=10000)
++        company_map = {c["id"]: c.get("name", "") for c in companies}
 +
-+    if "company_id" in updates and updates["company_id"]:
-+        comp = await db.project_companies.find_one({
-+            "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
-+        })
-+        if not comp:
-+            raise HTTPException(status_code=404, detail="company_id not found on this project")
++    user_ids = {r.get("assignee_id") for r in tasks if r.get("assignee_id")}
++    user_map = {}
++    if user_ids:
++        users = await db.users.find(
++            {"id": {"$in": list(user_ids)}}, {"_id": 0, "id": 1, "name": 1}
++        ).to_list(length=10000)
++        user_map = {u["id"]: u.get("name", "") for u in users}
 +
-+    updates["updated_at"] = _now()
-+    updates["updated_by"] = user["id"]
++    worker_name_map = {w["id"]: w.get("full_name", "") for w in workers}
 +
-+    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-+    after = await db.safety_tasks.find_one({"id": task_id})
-+    await _audit("safety_task", task_id, "updated", user["id"], {
-+        "project_id": project_id,
-+        "before": {k: v for k, v in before.items() if k != "_id"},
-+        "after": {k: v for k, v in after.items() if k != "_id"},
-+    })
-+    return SafetyTask(**after)
++    SLATE_700 = colors.HexColor("#334155")
++    SLATE_500 = colors.HexColor("#64748B")
++    SLATE_200 = colors.HexColor("#E2E8F0")
++    GREY_HDR = colors.HexColor("#E5E7EB")
 +
++    title_style = ParagraphStyle(
++        "RTitle", fontName="Rubik-Bold", fontSize=20,
++        alignment=TA_CENTER, textColor=SLATE_700, leading=26,
++    )
++    h2 = ParagraphStyle(
++        "RH2", fontName="Rubik-Bold", fontSize=13,
++        alignment=TA_RIGHT, textColor=SLATE_700, leading=18,
++        spaceBefore=8, spaceAfter=4,
++    )
++    body = ParagraphStyle(
++        "RBody", fontName="Rubik", fontSize=10,
++        alignment=TA_RIGHT, textColor=SLATE_700, leading=14,
++    )
++    sub = ParagraphStyle(
++        "RSub", fontName="Rubik", fontSize=9,
++        alignment=TA_CENTER, textColor=SLATE_500, leading=12,
++    )
++    cell = ParagraphStyle(
++        "RCell", fontName="Rubik", fontSize=9,
++        alignment=TA_RIGHT, textColor=SLATE_700, leading=12,
++    )
++    cell_hdr = ParagraphStyle(
++        "RCellHdr", fontName="Rubik-Bold", fontSize=9,
++        alignment=TA_RIGHT, textColor=SLATE_700, leading=12,
++    )
 +
-+@router.delete("/{project_id}/tasks/{task_id}", status_code=204)
-+async def delete_task(
-+    project_id: str,
-+    task_id: str,
-+    body: SoftDeleteBody = SoftDeleteBody(),
-+    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="task not found")
-+    if before.get("deletedAt"):
-+        return
-+    now = _now()
-+    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-+        "deletedAt": now,
-+        "deletedBy": user["id"],
-+        "deletion_reason": body.reason,
-+        "retention_until": _retention_date(now),
-+    }})
-+    await _audit("safety_task", task_id, "deleted", user["id"], {
-+        "project_id": project_id, "deletion_reason": body.reason,
-+    })
++    def _table(headers, rows, col_widths):
++        data = [[Paragraph(hebrew(h), cell_hdr) for h in headers]]
++        for r in rows:
++            data.append([Paragraph(hebrew(c), cell) for c in r])
++        t = Table(data, colWidths=col_widths, repeatRows=1)
++        t.setStyle(TableStyle([
++            ("BACKGROUND", (0, 0), (-1, 0), GREY_HDR),
++            ("GRID", (0, 0), (-1, -1), 0.4, SLATE_200),
++            ("VALIGN", (0, 0), (-1, -1), "TOP"),
++            ("LEFTPADDING", (0, 0), (-1, -1), 4),
++            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
++            ("TOPPADDING", (0, 0), (-1, -1), 4),
++            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
++        ]))
++        return t
 +
++    out = io.BytesIO()
++    doc = SimpleDocTemplate(
++        out, pagesize=A4,
++        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
++        topMargin=1.5 * cm, bottomMargin=1.8 * cm,
++        title="פנקס כללי - בטיחות",
++    )
++    elems = []
++    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 +
-+# =====================================================================
-+# Incidents CRUD + 7yr retention from occurred_at
-+# =====================================================================
-+class SafetyIncidentCreate(BaseModel):
-+    incident_type: str
-+    severity: SafetySeverity
-+    occurred_at: str
-+    description: str = Field(..., min_length=2)
-+    location: Optional[str] = None
-+    injured_worker_id: Optional[str] = None
-+    witnesses: List[str] = Field(default_factory=list)
-+    photo_urls: List[str] = Field(default_factory=list)
-+    medical_record_urls: List[str] = Field(default_factory=list)
-+    reported_to_authority: bool = False
-+    authority_report_ref: Optional[str] = None
++    # Section 1: Cover
++    elems.append(Paragraph(hebrew("פנקס כללי - בטיחות בעבודה"), title_style))
++    elems.append(Spacer(1, 4 * mm))
++    project_name = project.get("name", "")
++    cover_lines = [f"פרויקט: {project_name}"]
++    if project.get("client_name"):
++        cover_lines.append(f"לקוח: {project['client_name']}")
++    if project.get("address"):
++        cover_lines.append(f"כתובת: {project['address']}")
++    cover_lines.append(f"תאריך הפקה: {today}")
++    for line in cover_lines:
++        elems.append(Paragraph(hebrew(line), sub))
++    elems.append(Spacer(1, 8 * mm))
 +
++    # Section 2: Project metadata table
++    elems.append(Paragraph(hebrew("1. פרטי הפרויקט"), h2))
++    meta_rows = [
++        ["שם פרויקט", project_name or "—"],
++        ["מזהה פרויקט", project_id],
++        ["לקוח", project.get("client_name", "—") or "—"],
++        ["כתובת", project.get("address", "—") or "—"],
++        ["תאריך הפקת הפנקס", today],
++    ]
++    elems.append(_table(["שדה", "ערך"], meta_rows, [5 * cm, 11 * cm]))
++    elems.append(Spacer(1, 6 * mm))
 +
-+class SafetyIncidentUpdate(BaseModel):
-+    incident_type: Optional[str] = None
-+    severity: Optional[SafetySeverity] = None
-+    occurred_at: Optional[str] = None
-+    description: Optional[str] = None
-+    location: Optional[str] = None
-+    injured_worker_id: Optional[str] = None
-+    witnesses: Optional[List[str]] = None
-+    photo_urls: Optional[List[str]] = None
-+    medical_record_urls: Optional[List[str]] = None
-+    reported_to_authority: Optional[bool] = None
-+    authority_report_ref: Optional[str] = None
-+    status: Optional[str] = None  # incident lifecycle: draft|reported|closed
-+
-+
-+@router.post("/{project_id}/incidents", status_code=201, response_model=SafetyIncident)
-+async def create_incident(
-+    project_id: str,
-+    payload: SafetyIncidentCreate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    if payload.incident_type not in VALID_INCIDENT_TYPES:
-+        raise HTTPException(status_code=400, detail=f"invalid incident_type; must be one of {sorted(VALID_INCIDENT_TYPES)}")
-+
-+    if payload.injured_worker_id:
-+        worker = await db.safety_workers.find_one({
-+            "id": payload.injured_worker_id, "project_id": project_id, "deletedAt": None,
-+        })
-+        if not worker:
-+            raise HTTPException(status_code=404, detail="injured_worker_id not found or deleted")
-+
-+    doc = {
-+        "id": _new_id(),
-+        "project_id": project_id,
-+        "incident_type": payload.incident_type,
-+        "severity": payload.severity.value,
-+        "occurred_at": payload.occurred_at,
-+        "description": payload.description,
-+        "location": payload.location,
-+        "injured_worker_id": payload.injured_worker_id,
-+        "witnesses": payload.witnesses,
-+        "photo_urls": payload.photo_urls,
-+        "medical_record_urls": payload.medical_record_urls,
-+        "reported_to_authority": payload.reported_to_authority,
-+        "authority_report_ref": payload.authority_report_ref,
-+        "status": "draft",
-+        "created_at": _now(),
-+        "created_by": user["id"],
-+        "updated_at": None,
-+        "deletedAt": None,
-+        "deletedBy": None,
-+        "deletion_reason": None,
-+        "retention_until": None,
-+    }
-+    await db.safety_incidents.insert_one(doc)
-+    await _audit("safety_incident", doc["id"], "created", user["id"], {
-+        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-+    })
-+    return SafetyIncident(**doc)
-+
-+
-+@router.get("/{project_id}/incidents")
-+async def list_incidents(
-+    project_id: str,
-+    incident_type: Optional[str] = None,
-+    severity: Optional[SafetySeverity] = None,
-+    limit: int = Query(100, le=500),
-+    offset: int = Query(0, ge=0),
-+    include_deleted: bool = False,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    q = {"project_id": project_id}
-+    include_deleted = _resolve_include_deleted(include_deleted, user)
-+    if not include_deleted:
-+        q["deletedAt"] = None
-+    if incident_type: q["incident_type"] = incident_type
-+    if severity:      q["severity"] = severity.value
-+
-+    total = await db.safety_incidents.count_documents(q)
-+    cursor = db.safety_incidents.find(q, {"_id": 0}).sort("occurred_at", -1).skip(offset).limit(limit)
-+    items = await cursor.to_list(length=limit)
-+    return {"items": items, "total": total, "limit": limit, "offset": offset}
-+
-+
-+@router.get("/{project_id}/incidents/{incident_id}", response_model=SafetyIncident)
-+async def get_incident(
-+    project_id: str,
-+    incident_id: str,
-+    user: dict = Depends(get_current_user),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-+    if not doc:
-+        raise HTTPException(status_code=404, detail="incident not found")
-+    return SafetyIncident(**doc)
-+
-+
-+@router.patch("/{project_id}/incidents/{incident_id}", response_model=SafetyIncident)
-+async def update_incident(
-+    project_id: str,
-+    incident_id: str,
-+    payload: SafetyIncidentUpdate,
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="incident not found")
-+    if before.get("deletedAt"):
-+        raise HTTPException(status_code=410, detail="incident deleted")
-+
-+    # Once status != "draft", only project_manager OR safety_officer sub-role may edit
-+    if before.get("status", "draft") != "draft":
-+        membership = await _get_project_membership(user, project_id)
-+        is_pm = membership.get("role") == "project_manager"
-+        is_safety_officer = membership.get("sub_role") == "safety_officer"
-+        if not (is_pm or is_safety_officer or _is_super_admin(user)):
-+            raise HTTPException(
-+                status_code=403,
-+                detail="Only project_manager or safety_officer may edit a non-draft incident",
-+            )
-+
-+    updates = payload.model_dump(exclude_unset=True)
-+    if "severity" in updates and updates["severity"] is not None:
-+        updates["severity"] = updates["severity"].value if hasattr(updates["severity"], "value") else updates["severity"]
-+    if "incident_type" in updates and updates["incident_type"] is not None:
-+        if updates["incident_type"] not in VALID_INCIDENT_TYPES:
-+            raise HTTPException(status_code=400, detail=f"invalid incident_type")
-+    if "injured_worker_id" in updates and updates["injured_worker_id"]:
-+        worker = await db.safety_workers.find_one({
-+            "id": updates["injured_worker_id"], "project_id": project_id, "deletedAt": None,
-+        })
-+        if not worker:
-+            raise HTTPException(status_code=404, detail="injured_worker_id not found or deleted")
-+
-+    updates["updated_at"] = _now()
-+    updates["updated_by"] = user["id"]
-+
-+    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-+    after = await db.safety_incidents.find_one({"id": incident_id})
-+    await _audit("safety_incident", incident_id, "updated", user["id"], {
-+        "project_id": project_id,
-+        "before": {k: v for k, v in before.items() if k != "_id"},
-+        "after": {k: v for k, v in after.items() if k != "_id"},
-+    })
-+    return SafetyIncident(**after)
-+
-+
-+@router.delete("/{project_id}/incidents/{incident_id}", status_code=204)
-+async def delete_incident(
-+    project_id: str,
-+    incident_id: str,
-+    body: SoftDeleteBody,
-+    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    if not body.reason or not body.reason.strip():
-+        raise HTTPException(status_code=400, detail="deletion_reason is required for incidents")
-+
-+    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-+    if not before:
-+        raise HTTPException(status_code=404, detail="incident not found")
-+    if before.get("deletedAt"):
-+        return
-+
-+    # Retention from OCCURRED_AT, not now (regulatory clock)
-+    retention = _retention_date(before["occurred_at"])
-+    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-+        "deletedAt": _now(),
-+        "deletedBy": user["id"],
-+        "deletion_reason": body.reason.strip(),
-+        "retention_until": retention,
-+    }})
-+    await _audit("safety_incident", incident_id, "deleted", user["id"], {
-+        "project_id": project_id, "deletion_reason": body.reason.strip(),
-+        "retention_until": retention,
-+    })
-+
-+
-+# =====================================================================
-+# Photo / PDF upload helper (one endpoint for all resources)
-+# =====================================================================
-+@router.post("/{project_id}/upload")
-+async def upload_safety_file(
-+    project_id: str,
-+    file: UploadFile = File(...),
-+    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-+):
-+    db = get_db()
-+    await _check_project_access(user, project_id)
-+
-+    validate_upload(file, SAFETY_ALLOWED_EXTENSIONS, SAFETY_ALLOWED_CONTENT_TYPES)
-+
-+    content = await file.read()
-+    if len(content) > MAX_SAFETY_UPLOAD_SIZE:
-+        raise HTTPException(status_code=413, detail="הקובץ גדול מדי (מקסימום 10MB)")
-+
-+    content_type = file.content_type or "application/octet-stream"
-+    if content_type == "application/pdf":
-+        ext = "pdf"
++    # Section 3: Workers (NO id_number)
++    elems.append(Paragraph(hebrew("2. רשימת עובדים"), h2))
++    if workers:
++        rows = []
++        for w in workers:
++            rows.append([
++                w.get("full_name", ""),
++                w.get("profession", "") or "—",
++                company_map.get(w.get("company_id", ""), "") or "—",
++                w.get("phone", "") or "—",
++                _fmt_date(w.get("created_at")),
++            ])
++        elems.append(_table(
++            ["שם מלא", "מקצוע", "חברה", "טלפון", "תאריך כניסה"],
++            rows, [4 * cm, 3 * cm, 4 * cm, 3 * cm, 3 * cm],
++        ))
 +    else:
-+        ext = content_type.split("/")[-1]
-+        if ext == "jpeg":
-+            ext = "jpg"
++        elems.append(Paragraph(hebrew("אין עובדים רשומים."), body))
++    elems.append(Spacer(1, 6 * mm))
 +
-+    file_id = _new_id()
-+    key = f"safety/{project_id}/{file_id}.{ext}"
++    # Section 4: Trainings
++    elems.append(Paragraph(hebrew("3. הדרכות בטיחות"), h2))
++    if trainings:
++        rows = []
++        for t in trainings:
++            rows.append([
++                worker_name_map.get(t.get("worker_id", ""), ""),
++                t.get("training_type", ""),
++                t.get("instructor_name", "") or "—",
++                _fmt_date(t.get("trained_at")),
++                _fmt_date(t.get("expires_at")) or "—",
++            ])
++        elems.append(_table(
++            ["עובד", "סוג הדרכה", "מדריך", "תאריך הדרכה", "תוקף עד"],
++            rows, [4 * cm, 4 * cm, 3 * cm, 3 * cm, 3 * cm],
++        ))
++    else:
++        elems.append(Paragraph(hebrew("אין הדרכות רשומות."), body))
++    elems.append(PageBreak())
 +
-+    from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url
-+    stored_ref = obj_save_bytes(content, key, content_type)
-+    url = obj_generate_url(stored_ref)
++    # Section 5: Open documents
++    elems.append(Paragraph(hebrew("4. ליקויי בטיחות פתוחים"), h2))
++    open_docs = [d for d in documents if d.get("status") in ("open", "in_progress")]
++    if open_docs:
++        rows = []
++        for d in open_docs:
++            rows.append([
++                d.get("title", ""),
++                CATEGORY_HE.get(d.get("category", ""), d.get("category", "")),
++                SEVERITY_HE.get(d.get("severity", ""), ""),
++                DOC_STATUS_HE.get(d.get("status", ""), d.get("status", "")),
++                d.get("location", "") or "—",
++                _fmt_date(d.get("found_at")),
++            ])
++        elems.append(_table(
++            ["כותרת", "קטגוריה", "חומרה", "סטטוס", "מיקום", "תאריך"],
++            rows, [4 * cm, 3 * cm, 2 * cm, 2 * cm, 3 * cm, 3 * cm],
++        ))
++    else:
++        elems.append(Paragraph(hebrew("אין ליקויים פתוחים."), body))
++    elems.append(Spacer(1, 6 * mm))
 +
-+    await _audit("safety_upload", file_id, "upload", user["id"], {
-+        "project_id": project_id,
-+        "filename": file.filename,
-+        "key": key,
-+        "size": len(content),
-+        "content_type": content_type,
-+    })
++    # Section 6: Corrective tasks
++    elems.append(Paragraph(hebrew("5. משימות מתקנות"), h2))
++    if tasks:
++        rows = []
++        for tk in tasks:
++            rows.append([
++                tk.get("title", ""),
++                TASK_STATUS_HE.get(tk.get("status", ""), tk.get("status", "")),
++                SEVERITY_HE.get(tk.get("severity", ""), ""),
++                user_map.get(tk.get("assignee_id", ""), "") or "—",
++                _fmt_date(tk.get("due_at")) or "—",
++                _fmt_date(tk.get("completed_at")) or "—",
++            ])
++        elems.append(_table(
++            ["כותרת", "סטטוס", "חומרה", "אחראי", "יעד", "הושלם"],
++            rows, [4 * cm, 2.5 * cm, 2 * cm, 3 * cm, 2.5 * cm, 3 * cm],
++        ))
++    else:
++        elems.append(Paragraph(hebrew("אין משימות מתקנות."), body))
++    elems.append(PageBreak())
 +
-+    return {
-+        "id": file_id,
-+        "url": url,
-+        "stored_ref": stored_ref,
-+        "filename": file.filename,
-+        "content_type": content_type,
-+        "size": len(content),
-+    }
++    # Section 7: Incidents
++    elems.append(Paragraph(hebrew("6. אירועי בטיחות"), h2))
++    if incidents:
++        rows = []
++        for inc in incidents:
++            rows.append([
++                INCIDENT_TYPE_HE.get(inc.get("incident_type", ""), inc.get("incident_type", "")),
++                SEVERITY_HE.get(inc.get("severity", ""), ""),
++                _fmt_date(inc.get("occurred_at")),
++                inc.get("location", "") or "—",
++                worker_name_map.get(inc.get("injured_worker_id", ""), "") or "—",
++                "כן" if inc.get("reported_to_authority") else "לא",
++            ])
++        elems.append(_table(
++            ["סוג", "חומרה", "תאריך", "מיקום", "עובד נפגע", "דווח לרשות"],
++            rows, [3 * cm, 2 * cm, 2.5 * cm, 3 * cm, 3.5 * cm, 3 * cm],
++        ))
++    else:
++        elems.append(Paragraph(hebrew("אין אירועי בטיחות רשומים."), body))
++    elems.append(Spacer(1, 6 * mm))
 +
++    # Section 8: Statistical summary
++    elems.append(Paragraph(hebrew("7. סיכום סטטיסטי"), h2))
++    by_category = {}
++    for d in documents:
++        cat = d.get("category", "other")
++        by_category[cat] = by_category.get(cat, 0) + 1
++    if by_category:
++        rows = [
++            [CATEGORY_HE.get(cat, cat), str(cnt)]
++            for cat, cnt in sorted(by_category.items(), key=lambda x: -x[1])
++        ]
++        elems.append(_table(["קטגוריה", "סה״כ ליקויים"], rows, [10 * cm, 6 * cm]))
++    else:
++        elems.append(Paragraph(hebrew("אין נתונים לסיכום."), body))
++    elems.append(Spacer(1, 4 * mm))
++    for line in (
++        f"סה״כ עובדים: {len(workers)}",
++        f"סה״כ הדרכות: {len(trainings)}",
++        f"סה״כ ליקויים: {len(documents)}",
++        f"סה״כ משימות: {len(tasks)}",
++        f"סה״כ אירועים: {len(incidents)}",
++    ):
++        elems.append(Paragraph(hebrew(line), body))
++    elems.append(Spacer(1, 6 * mm))
 +
- # =====================================================================
- # Index management — called from server.py startup when module enabled.
- # =====================================================================
-@@ -35,137 +1199,91 @@ async def ensure_safety_indexes(db) -> None:
- 
-     All indices use background=True to avoid locking hot collections.
-     """
--    # -----------------------------------------------------------------
--    # safety_workers — 3 indices
--    # -----------------------------------------------------------------
-+    # safety_workers — 3
-     await db.safety_workers.create_index(
-         [("project_id", 1), ("deletedAt", 1)],
--        background=True,
--        name="idx_sw_project_deleted",
-+        background=True, name="idx_sw_project_deleted",
-     )
-     await db.safety_workers.create_index(
-         [("project_id", 1), ("company_id", 1)],
--        background=True,
--        name="idx_sw_project_company",
-+        background=True, name="idx_sw_project_company",
-     )
-     await db.safety_workers.create_index(
-         [("project_id", 1), ("id_number", 1)],
--        background=True,
--        sparse=True,
--        name="idx_sw_project_idnum",
-+        background=True, sparse=True, name="idx_sw_project_idnum",
-     )
--
--    # -----------------------------------------------------------------
--    # safety_trainings — 3 indices
--    # -----------------------------------------------------------------
-+    # safety_trainings — 3
-     await db.safety_trainings.create_index(
-         [("project_id", 1), ("worker_id", 1)],
--        background=True,
--        name="idx_st_project_worker",
-+        background=True, name="idx_st_project_worker",
-     )
-     await db.safety_trainings.create_index(
-         [("project_id", 1), ("expires_at", 1)],
--        background=True,
--        sparse=True,
--        name="idx_st_project_expires",
-+        background=True, sparse=True, name="idx_st_project_expires",
-     )
-     await db.safety_trainings.create_index(
-         [("project_id", 1), ("training_type", 1)],
--        background=True,
--        name="idx_st_project_type",
-+        background=True, name="idx_st_project_type",
-     )
--
--    # -----------------------------------------------------------------
--    # safety_documents — 5 filter-critical indices
--    # -----------------------------------------------------------------
-+    # safety_documents — 5
-     await db.safety_documents.create_index(
-         [("project_id", 1), ("deletedAt", 1), ("created_at", -1)],
--        background=True,
--        name="idx_sd_project_deleted_created",
-+        background=True, name="idx_sd_project_deleted_created",
-     )
-     await db.safety_documents.create_index(
-         [("project_id", 1), ("status", 1)],
--        background=True,
--        name="idx_sd_project_status",
-+        background=True, name="idx_sd_project_status",
-     )
-     await db.safety_documents.create_index(
-         [("project_id", 1), ("severity", 1)],
--        background=True,
--        name="idx_sd_project_severity",
-+        background=True, name="idx_sd_project_severity",
-     )
-     await db.safety_documents.create_index(
-         [("project_id", 1), ("category", 1)],
--        background=True,
--        name="idx_sd_project_category",
-+        background=True, name="idx_sd_project_category",
-     )
-     await db.safety_documents.create_index(
-         [("project_id", 1), ("company_id", 1)],
--        background=True,
--        sparse=True,
--        name="idx_sd_project_company",
-+        background=True, sparse=True, name="idx_sd_project_company",
-     )
--
--    # -----------------------------------------------------------------
--    # safety_tasks — 4 indices
--    # -----------------------------------------------------------------
-+    # safety_tasks — 4
-     await db.safety_tasks.create_index(
-         [("project_id", 1), ("deletedAt", 1), ("due_at", 1)],
--        background=True,
--        name="idx_stk_project_deleted_due",
-+        background=True, name="idx_stk_project_deleted_due",
-     )
-     await db.safety_tasks.create_index(
-         [("project_id", 1), ("status", 1)],
--        background=True,
--        name="idx_stk_project_status",
-+        background=True, name="idx_stk_project_status",
-     )
-     await db.safety_tasks.create_index(
-         [("project_id", 1), ("assignee_id", 1)],
--        background=True,
--        sparse=True,
--        name="idx_stk_project_assignee",
-+        background=True, sparse=True, name="idx_stk_project_assignee",
-     )
-     await db.safety_tasks.create_index(
-         [("document_id", 1)],
--        background=True,
--        sparse=True,
--        name="idx_stk_document",
-+        background=True, sparse=True, name="idx_stk_document",
-     )
--
--    # -----------------------------------------------------------------
--    # safety_incidents — 3 indices (7yr retention-critical)
--    # -----------------------------------------------------------------
-+    # safety_incidents — 3 (7yr retention-critical)
-     await db.safety_incidents.create_index(
-         [("project_id", 1), ("occurred_at", -1)],
--        background=True,
--        name="idx_si_project_occurred",
-+        background=True, name="idx_si_project_occurred",
-     )
-     await db.safety_incidents.create_index(
-         [("project_id", 1), ("severity", 1)],
--        background=True,
--        name="idx_si_project_severity",
-+        background=True, name="idx_si_project_severity",
-     )
-     await db.safety_incidents.create_index(
-         [("retention_until", 1)],
--        background=True,
--        sparse=True,
--        name="idx_si_retention",
-+        background=True, sparse=True, name="idx_si_retention",
-     )
--
--    # -----------------------------------------------------------------
--    # project_companies — 2 new safety-related indices
--    # (safe to add — collection is shared with other modules)
--    # -----------------------------------------------------------------
-+    # project_companies — 2 safety-related (shared collection)
-     await db.project_companies.create_index(
-         [("project_id", 1), ("safety_contact_id", 1)],
--        background=True,
--        sparse=True,
--        name="idx_pc_project_safety_contact",
-+        background=True, sparse=True, name="idx_pc_project_safety_contact",
-     )
-     await db.project_companies.create_index(
-         [("project_id", 1), ("is_placeholder", 1)],
--        background=True,
--        sparse=True,
--        name="idx_pc_project_placeholder",
-+        background=True, sparse=True, name="idx_pc_project_placeholder",
-     )
- 
-     logger.info("Safety indices ensured (20 total across 6 collections)")
-
-
-================================================================================
-## FULL FINAL FILE (after Part 2b) — backend/contractor_ops/safety_router.py
-================================================================================
-
-     1	"""
-     2	Safety module router — Phase 1 Part 1 (Foundation) + Part 2 (Backend Core).
-     3	
-     4	Part 1: feature flag wiring, healthz, ensure_safety_indexes (20 indices).
-     5	Part 2: 25 CRUD endpoints (Workers/Trainings/Documents/Tasks/Incidents) +
-     6	        7-dim Documents filter + photo/PDF upload helper + audit on every write.
-     7	
-     8	Registration in server.py is GATED by ENABLE_SAFETY_MODULE env flag.
-     9	When flag is off, this module is never imported and endpoints 404.
-    10	"""
-    11	from datetime import datetime, timedelta, timezone
-    12	from typing import Optional, List
-    13	import hashlib
-    14	import logging
-    15	import uuid
-    16	
-    17	from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-    18	from pydantic import BaseModel, Field
-    19	
-    20	from contractor_ops.router import (
-    21	    get_current_user, get_db, _now, _audit,
-    22	    _check_project_access, _get_project_role, _get_project_membership,
-    23	    _is_super_admin, require_roles,
-    24	)
-    25	from contractor_ops.schemas import (
-    26	    SafetyWorker, SafetyTraining, SafetyDocument, SafetyTask, SafetyIncident,
-    27	    SafetyCategory, SafetySeverity, SafetyDocumentStatus, SafetyTaskStatus,
-    28	)
-    29	from contractor_ops.upload_safety import (
-    30	    validate_upload, ALLOWED_IMAGE_EXTENSIONS,
-    31	)
-    32	
-    33	logger = logging.getLogger(__name__)
-    34	
-    35	router = APIRouter(prefix="/api/safety", tags=["safety"])
-    36	
-    37	
-    38	# =====================================================================
-    39	# Constants
-    40	# =====================================================================
-    41	SAFETY_WRITERS = ("project_manager", "management_team")
-    42	SAFETY_DELETERS = ("project_manager",)
-    43	INCIDENT_RETENTION_YEARS = 7
-    44	
-    45	# Upload — accepts images AND PDFs (qc is image-only)
-    46	SAFETY_ALLOWED_CONTENT_TYPES = {
-    47	    "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
-    48	    "application/pdf",
-    49	}
-    50	SAFETY_ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | {".pdf"}
-    51	MAX_SAFETY_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-    52	
-    53	VALID_INCIDENT_TYPES = {"near_miss", "injury", "property_damage"}
-    54	
-    55	
-    56	# =====================================================================
-    57	# Helpers
-    58	# =====================================================================
-    59	def _new_id() -> str:
-    60	    """UUID4 as string. Matches project convention."""
-    61	    return str(uuid.uuid4())
-    62	
-    63	
-    64	def _hash_id_number(id_number: Optional[str]) -> Optional[str]:
-    65	    """SHA-256 of stripped Israeli ID / passport. Lookup aid; never returned to client."""
-    66	    if not id_number:
-    67	        return None
-    68	    return hashlib.sha256(id_number.strip().encode("utf-8")).hexdigest()
-    69	
-    70	
-    71	def _retention_date(from_iso: str) -> str:
-    72	    """from_iso + 7 years, ISO string. Used for incident soft-delete (regulatory clock)."""
-    73	    dt = datetime.fromisoformat(from_iso.replace("Z", "+00:00"))
-    74	    return (dt + timedelta(days=365 * INCIDENT_RETENTION_YEARS)).isoformat()
-    75	
-    76	
-    77	async def _ensure_company_or_placeholder(
-    78	    db, project_id: str, company_id: Optional[str], company_name: Optional[str], actor_id: str
-    79	) -> Optional[str]:
-    80	    """
-    81	    If company_id is provided and exists on this project (non-deleted) — return it.
-    82	    If only company_name is provided — create or reuse a placeholder project_companies doc.
-    83	    If neither — return None.
-    84	    """
-    85	    if company_id:
-    86	        doc = await db.project_companies.find_one({
-    87	            "id": company_id,
-    88	            "project_id": project_id,
-    89	            "deletedAt": None,
-    90	        })
-    91	        if doc:
-    92	            return company_id
-    93	        raise HTTPException(status_code=404, detail="company_id not found on this project")
-    94	
-    95	    if not company_name:
-    96	        return None
-    97	
-    98	    name = company_name.strip()
-    99	    existing = await db.project_companies.find_one({
-   100	        "project_id": project_id,
-   101	        "name": name,
-   102	        "deletedAt": None,
-   103	    })
-   104	    if existing:
-   105	        return existing["id"]
-   106	
-   107	    new_id = _new_id()
-   108	    await db.project_companies.insert_one({
-   109	        "id": new_id,
-   110	        "project_id": project_id,
-   111	        "name": name,
-   112	        "is_placeholder": True,
-   113	        "created_at": _now(),
-   114	        "created_by": actor_id,
-   115	        "deletedAt": None,
-   116	        "deletedBy": None,
-   117	    })
-   118	    await _audit("project_company", new_id, "create_placeholder", actor_id, {
-   119	        "project_id": project_id, "name": name, "source": "safety",
-   120	    })
-   121	    return new_id
-   122	
-   123	
-   124	async def _strip_mongo_id(items: list) -> list:
-   125	    """Drop _id from list results (Mongo returns ObjectId which isn't JSON-serializable)."""
-   126	    for it in items:
-   127	        it.pop("_id", None)
-   128	    return items
-   129	
-   130	
-   131	def _resolve_include_deleted(include_deleted: bool, user: dict) -> bool:
-   132	    """
-   133	    Spec: include_deleted=true is restricted to super_admin.
-   134	    Non-super callers passing include_deleted=true get 403, not silent demotion.
-   135	    """
-   136	    if include_deleted and not _is_super_admin(user):
-   137	        raise HTTPException(status_code=403, detail="include_deleted requires super_admin")
-   138	    return include_deleted
-   139	
-   140	
-   141	# =====================================================================
-   142	# healthz (Part 1)
-   143	# =====================================================================
-   144	@router.get("/healthz")
-   145	async def healthz(user: dict = Depends(get_current_user)):
-   146	    """
-   147	    Liveness check for Safety module.
-   148	    Requires auth — never expose module existence to unauthenticated scanners.
-   149	    """
-   150	    return {"ok": True, "module": "safety", "enabled": True}
-   151	
-   152	
-   153	# =====================================================================
-   154	# Shared request bodies
-   155	# =====================================================================
-   156	class SoftDeleteBody(BaseModel):
-   157	    reason: Optional[str] = None
-   158	
-   159	
-   160	# =====================================================================
-   161	# Workers CRUD
-   162	# =====================================================================
-   163	class SafetyWorkerCreate(BaseModel):
-   164	    company_id: Optional[str] = None
-   165	    company_name: Optional[str] = None
-   166	    full_name: str = Field(..., min_length=2, max_length=120)
-   167	    id_number: Optional[str] = None
-   168	    profession: Optional[str] = None
-   169	    phone: Optional[str] = None
-   170	    notes: Optional[str] = None
-   171	
-   172	
-   173	class SafetyWorkerUpdate(BaseModel):
-   174	    full_name: Optional[str] = None
-   175	    id_number: Optional[str] = None
-   176	    profession: Optional[str] = None
-   177	    phone: Optional[str] = None
-   178	    notes: Optional[str] = None
-   179	    company_id: Optional[str] = None
-   180	
-   181	
-   182	@router.post("/{project_id}/workers", status_code=201, response_model=SafetyWorker)
-   183	async def create_worker(
-   184	    project_id: str,
-   185	    payload: SafetyWorkerCreate,
-   186	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   187	):
-   188	    db = get_db()
-   189	    await _check_project_access(user, project_id)
-   190	
-   191	    resolved_company_id = await _ensure_company_or_placeholder(
-   192	        db, project_id, payload.company_id, payload.company_name, user["id"]
-   193	    )
-   194	
-   195	    # PII: persist only the SHA-256 hash; never store or return raw id_number.
-   196	    doc = {
-   197	        "id": _new_id(),
-   198	        "project_id": project_id,
-   199	        "company_id": resolved_company_id,
-   200	        "full_name": payload.full_name.strip(),
-   201	        "id_number": None,
-   202	        "id_number_hash": _hash_id_number(payload.id_number),
-   203	        "profession": payload.profession,
-   204	        "phone": payload.phone,
-   205	        "notes": payload.notes,
-   206	        "created_at": _now(),
-   207	        "created_by": user["id"],
-   208	        "deletedAt": None,
-   209	        "deletedBy": None,
-   210	        "deletion_reason": None,
-   211	        "retention_until": None,
-   212	    }
-   213	    await db.safety_workers.insert_one(doc)
-   214	    audit_after = {k: v for k, v in doc.items() if k not in ("id_number", "id_number_hash")}
-   215	    await _audit("safety_worker", doc["id"], "created", user["id"], {
-   216	        "project_id": project_id, "after": audit_after,
-   217	    })
-   218	    return SafetyWorker(**doc)
-   219	
-   220	
-   221	@router.get("/{project_id}/workers")
-   222	async def list_workers(
-   223	    project_id: str,
-   224	    limit: int = Query(100, le=500),
-   225	    offset: int = Query(0, ge=0),
-   226	    include_deleted: bool = False,
-   227	    user: dict = Depends(get_current_user),
-   228	):
-   229	    db = get_db()
-   230	    await _check_project_access(user, project_id)
-   231	
-   232	    q = {"project_id": project_id}
-   233	    include_deleted = _resolve_include_deleted(include_deleted, user)
-   234	    if not include_deleted:
-   235	        q["deletedAt"] = None
-   236	
-   237	    total = await db.safety_workers.count_documents(q)
-   238	    cursor = db.safety_workers.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
-   239	    items = await cursor.to_list(length=limit)
-   240	    # strip the hash from list responses too
-   241	    for it in items:
-   242	        it.pop("id_number_hash", None)
-   243	    return {"items": items, "total": total, "limit": limit, "offset": offset}
-   244	
-   245	
-   246	@router.get("/{project_id}/workers/{worker_id}", response_model=SafetyWorker)
-   247	async def get_worker(
-   248	    project_id: str,
-   249	    worker_id: str,
-   250	    user: dict = Depends(get_current_user),
-   251	):
-   252	    db = get_db()
-   253	    await _check_project_access(user, project_id)
-   254	    doc = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-   255	    if not doc:
-   256	        raise HTTPException(status_code=404, detail="worker not found")
-   257	    # PII: never expose hash or any raw id_number
-   258	    doc.pop("id_number_hash", None)
-   259	    doc["id_number"] = None
-   260	    return SafetyWorker(**doc)
-   261	
-   262	
-   263	@router.patch("/{project_id}/workers/{worker_id}", response_model=SafetyWorker)
-   264	async def update_worker(
-   265	    project_id: str,
-   266	    worker_id: str,
-   267	    payload: SafetyWorkerUpdate,
-   268	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   269	):
-   270	    db = get_db()
-   271	    await _check_project_access(user, project_id)
-   272	    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-   273	    if not before:
-   274	        raise HTTPException(status_code=404, detail="worker not found")
-   275	    if before.get("deletedAt"):
-   276	        raise HTTPException(status_code=410, detail="worker deleted")
-   277	
-   278	    updates = payload.model_dump(exclude_unset=True)
-   279	    if "id_number" in updates:
-   280	        # PII: rotate hash only; never persist raw id_number on the document.
-   281	        updates["id_number_hash"] = _hash_id_number(updates["id_number"]) if updates["id_number"] else None
-   282	        updates["id_number"] = None
-   283	    if "company_id" in updates and updates["company_id"]:
-   284	        comp = await db.project_companies.find_one({
-   285	            "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
-   286	        })
-   287	        if not comp:
-   288	            raise HTTPException(status_code=404, detail="company_id not found on this project")
-   289	    updates["updated_at"] = _now()
-   290	    updates["updated_by"] = user["id"]
-   291	
-   292	    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-   293	    after = await db.safety_workers.find_one({"id": worker_id})
-   294	    _STRIP_PII = ("_id", "id_number", "id_number_hash")
-   295	    await _audit("safety_worker", worker_id, "updated", user["id"], {
-   296	        "project_id": project_id,
-   297	        "before": {k: v for k, v in before.items() if k not in _STRIP_PII},
-   298	        "after": {k: v for k, v in after.items() if k not in _STRIP_PII},
-   299	    })
-   300	    return SafetyWorker(**after)
-   301	
-   302	
-   303	@router.delete("/{project_id}/workers/{worker_id}", status_code=204)
-   304	async def delete_worker(
-   305	    project_id: str,
-   306	    worker_id: str,
-   307	    body: SoftDeleteBody = SoftDeleteBody(),
-   308	    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-   309	):
-   310	    db = get_db()
-   311	    await _check_project_access(user, project_id)
-   312	    before = await db.safety_workers.find_one({"id": worker_id, "project_id": project_id, "deletedAt": None})
-   313	    if not before:
-   314	        raise HTTPException(status_code=404, detail="worker not found")
-   315	    if before.get("deletedAt"):
-   316	        return
-   317	
-   318	    now = _now()
-   319	    await db.safety_workers.update_one({"id": worker_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-   320	        "deletedAt": now,
-   321	        "deletedBy": user["id"],
-   322	        "deletion_reason": body.reason,
-   323	        "retention_until": _retention_date(now),
-   324	    }})
-   325	    await _audit("safety_worker", worker_id, "deleted", user["id"], {
-   326	        "project_id": project_id, "deletion_reason": body.reason,
-   327	    })
-   328	
-   329	
-   330	# =====================================================================
-   331	# Trainings CRUD
-   332	# =====================================================================
-   333	class SafetyTrainingCreate(BaseModel):
-   334	    worker_id: str
-   335	    training_type: str
-   336	    trained_at: str
-   337	    instructor_name: Optional[str] = None
-   338	    duration_minutes: Optional[int] = None
-   339	    location: Optional[str] = None
-   340	    expires_at: Optional[str] = None
-   341	    certificate_url: Optional[str] = None
-   342	
-   343	
-   344	class SafetyTrainingUpdate(BaseModel):
-   345	    training_type: Optional[str] = None
-   346	    trained_at: Optional[str] = None
-   347	    instructor_name: Optional[str] = None
-   348	    duration_minutes: Optional[int] = None
-   349	    location: Optional[str] = None
-   350	    expires_at: Optional[str] = None
-   351	    certificate_url: Optional[str] = None
-   352	
-   353	
-   354	@router.post("/{project_id}/trainings", status_code=201, response_model=SafetyTraining)
-   355	async def create_training(
-   356	    project_id: str,
-   357	    payload: SafetyTrainingCreate,
-   358	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   359	):
-   360	    db = get_db()
-   361	    await _check_project_access(user, project_id)
-   362	
-   363	    worker = await db.safety_workers.find_one({
-   364	        "id": payload.worker_id,
-   365	        "project_id": project_id,
-   366	        "deletedAt": None,
-   367	    })
-   368	    if not worker:
-   369	        raise HTTPException(status_code=404, detail="worker not found or deleted")
-   370	
-   371	    doc = {
-   372	        "id": _new_id(),
-   373	        "project_id": project_id,
-   374	        "worker_id": payload.worker_id,
-   375	        "training_type": payload.training_type.strip(),
-   376	        "instructor_name": payload.instructor_name,
-   377	        "duration_minutes": payload.duration_minutes,
-   378	        "location": payload.location,
-   379	        "trained_at": payload.trained_at,
-   380	        "expires_at": payload.expires_at,
-   381	        "certificate_url": payload.certificate_url,
-   382	        "created_at": _now(),
-   383	        "created_by": user["id"],
-   384	        "deletedAt": None,
-   385	        "deletedBy": None,
-   386	    }
-   387	    await db.safety_trainings.insert_one(doc)
-   388	    await _audit("safety_training", doc["id"], "created", user["id"], {
-   389	        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-   390	    })
-   391	    return SafetyTraining(**doc)
-   392	
-   393	
-   394	@router.get("/{project_id}/trainings")
-   395	async def list_trainings(
-   396	    project_id: str,
-   397	    worker_id: Optional[str] = None,
-   398	    training_type: Optional[str] = None,
-   399	    expires_before: Optional[str] = None,
-   400	    limit: int = Query(100, le=500),
-   401	    offset: int = Query(0, ge=0),
-   402	    include_deleted: bool = False,
-   403	    user: dict = Depends(get_current_user),
-   404	):
-   405	    db = get_db()
-   406	    await _check_project_access(user, project_id)
-   407	
-   408	    q = {"project_id": project_id}
-   409	    include_deleted = _resolve_include_deleted(include_deleted, user)
-   410	    if not include_deleted:
-   411	        q["deletedAt"] = None
-   412	    if worker_id:
-   413	        q["worker_id"] = worker_id
-   414	    if training_type:
-   415	        q["training_type"] = training_type
-   416	    if expires_before:
-   417	        q["expires_at"] = {"$ne": None, "$lt": expires_before}
-   418	
-   419	    total = await db.safety_trainings.count_documents(q)
-   420	    cursor = db.safety_trainings.find(q, {"_id": 0}).sort("trained_at", -1).skip(offset).limit(limit)
-   421	    items = await cursor.to_list(length=limit)
-   422	    return {"items": items, "total": total, "limit": limit, "offset": offset}
-   423	
-   424	
-   425	@router.get("/{project_id}/trainings/{training_id}", response_model=SafetyTraining)
-   426	async def get_training(
-   427	    project_id: str,
-   428	    training_id: str,
-   429	    user: dict = Depends(get_current_user),
-   430	):
-   431	    db = get_db()
-   432	    await _check_project_access(user, project_id)
-   433	    doc = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-   434	    if not doc:
-   435	        raise HTTPException(status_code=404, detail="training not found")
-   436	    return SafetyTraining(**doc)
-   437	
-   438	
-   439	@router.patch("/{project_id}/trainings/{training_id}", response_model=SafetyTraining)
-   440	async def update_training(
-   441	    project_id: str,
-   442	    training_id: str,
-   443	    payload: SafetyTrainingUpdate,
-   444	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   445	):
-   446	    db = get_db()
-   447	    await _check_project_access(user, project_id)
-   448	    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-   449	    if not before:
-   450	        raise HTTPException(status_code=404, detail="training not found")
-   451	    if before.get("deletedAt"):
-   452	        raise HTTPException(status_code=410, detail="training deleted")
-   453	
-   454	    updates = payload.model_dump(exclude_unset=True)
-   455	    updates["updated_at"] = _now()
-   456	    updates["updated_by"] = user["id"]
-   457	
-   458	    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-   459	    after = await db.safety_trainings.find_one({"id": training_id})
-   460	    await _audit("safety_training", training_id, "updated", user["id"], {
-   461	        "project_id": project_id,
-   462	        "before": {k: v for k, v in before.items() if k != "_id"},
-   463	        "after": {k: v for k, v in after.items() if k != "_id"},
-   464	    })
-   465	    return SafetyTraining(**after)
-   466	
-   467	
-   468	@router.delete("/{project_id}/trainings/{training_id}", status_code=204)
-   469	async def delete_training(
-   470	    project_id: str,
-   471	    training_id: str,
-   472	    body: SoftDeleteBody = SoftDeleteBody(),
-   473	    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-   474	):
-   475	    db = get_db()
-   476	    await _check_project_access(user, project_id)
-   477	    before = await db.safety_trainings.find_one({"id": training_id, "project_id": project_id, "deletedAt": None})
-   478	    if not before:
-   479	        raise HTTPException(status_code=404, detail="training not found")
-   480	    if before.get("deletedAt"):
-   481	        return
-   482	    now = _now()
-   483	    await db.safety_trainings.update_one({"id": training_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-   484	        "deletedAt": now,
-   485	        "deletedBy": user["id"],
-   486	        "deletion_reason": body.reason,
-   487	        "retention_until": _retention_date(now),
-   488	    }})
-   489	    await _audit("safety_training", training_id, "deleted", user["id"], {
-   490	        "project_id": project_id, "deletion_reason": body.reason,
-   491	    })
-   492	
-   493	
-   494	# =====================================================================
-   495	# Documents CRUD + 7-dim filter
-   496	# =====================================================================
-   497	class SafetyDocumentCreate(BaseModel):
-   498	    category: SafetyCategory
-   499	    severity: SafetySeverity
-   500	    title: str = Field(..., min_length=2, max_length=200)
-   501	    found_at: str
-   502	    description: Optional[str] = None
-   503	    location: Optional[str] = None
-   504	    company_id: Optional[str] = None
-   505	    profession: Optional[str] = None
-   506	    assignee_id: Optional[str] = None
-   507	    photo_urls: List[str] = Field(default_factory=list)
-   508	    attachment_urls: List[str] = Field(default_factory=list)
-   509	
-   510	
-   511	class SafetyDocumentUpdate(BaseModel):
-   512	    category: Optional[SafetyCategory] = None
-   513	    severity: Optional[SafetySeverity] = None
-   514	    status: Optional[SafetyDocumentStatus] = None
-   515	    title: Optional[str] = None
-   516	    description: Optional[str] = None
-   517	    location: Optional[str] = None
-   518	    company_id: Optional[str] = None
-   519	    profession: Optional[str] = None
-   520	    assignee_id: Optional[str] = None
-   521	    photo_urls: Optional[List[str]] = None
-   522	    attachment_urls: Optional[List[str]] = None
-   523	    resolved_at: Optional[str] = None
-   524	
-   525	
-   526	@router.post("/{project_id}/documents", status_code=201, response_model=SafetyDocument)
-   527	async def create_document(
-   528	    project_id: str,
-   529	    payload: SafetyDocumentCreate,
-   530	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   531	):
-   532	    db = get_db()
-   533	    await _check_project_access(user, project_id)
-   534	
-   535	    if payload.company_id:
-   536	        comp = await db.project_companies.find_one({
-   537	            "id": payload.company_id, "project_id": project_id, "deletedAt": None,
-   538	        })
-   539	        if not comp:
-   540	            raise HTTPException(status_code=404, detail="company_id not found on this project")
-   541	
-   542	    doc = {
-   543	        "id": _new_id(),
-   544	        "project_id": project_id,
-   545	        "category": payload.category.value,
-   546	        "severity": payload.severity.value,
-   547	        "status": SafetyDocumentStatus.open.value,
-   548	        "title": payload.title.strip(),
-   549	        "description": payload.description,
-   550	        "location": payload.location,
-   551	        "company_id": payload.company_id,
-   552	        "profession": payload.profession,
-   553	        "assignee_id": payload.assignee_id,
-   554	        "reporter_id": user["id"],          # SERVER-SET, never trust client
-   555	        "photo_urls": payload.photo_urls,
-   556	        "attachment_urls": payload.attachment_urls,
-   557	        "found_at": payload.found_at,
-   558	        "resolved_at": None,
-   559	        "created_at": _now(),
-   560	        "created_by": user["id"],
-   561	        "updated_at": None,
-   562	        "deletedAt": None,
-   563	        "deletedBy": None,
-   564	    }
-   565	    await db.safety_documents.insert_one(doc)
-   566	    await _audit("safety_document", doc["id"], "created", user["id"], {
-   567	        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-   568	    })
-   569	    return SafetyDocument(**doc)
-   570	
-   571	
-   572	@router.get("/{project_id}/documents")
-   573	async def list_documents(
-   574	    project_id: str,
-   575	    category: Optional[SafetyCategory] = None,
-   576	    severity: Optional[SafetySeverity] = None,
-   577	    status_: Optional[SafetyDocumentStatus] = Query(None, alias="status"),
-   578	    company_id: Optional[str] = None,
-   579	    assignee_id: Optional[str] = None,
-   580	    reporter_id: Optional[str] = None,
-   581	    date_from: Optional[str] = None,
-   582	    date_to: Optional[str] = None,
-   583	    limit: int = Query(50, le=200),
-   584	    offset: int = Query(0, ge=0),
-   585	    include_deleted: bool = False,
-   586	    user: dict = Depends(get_current_user),
-   587	):
-   588	    db = get_db()
-   589	    await _check_project_access(user, project_id)
-   590	
-   591	    q = {"project_id": project_id}
-   592	    include_deleted = _resolve_include_deleted(include_deleted, user)
-   593	    if not include_deleted:
-   594	        q["deletedAt"] = None
-   595	    if category:    q["category"] = category.value
-   596	    if severity:    q["severity"] = severity.value
-   597	    if status_:     q["status"] = status_.value
-   598	    if company_id:  q["company_id"] = company_id
-   599	    if assignee_id: q["assignee_id"] = assignee_id
-   600	    if reporter_id: q["reporter_id"] = reporter_id
-   601	    if date_from or date_to:
-   602	        q["found_at"] = {}
-   603	        if date_from: q["found_at"]["$gte"] = date_from
-   604	        if date_to:   q["found_at"]["$lte"] = date_to
-   605	
-   606	    total = await db.safety_documents.count_documents(q)
-   607	    cursor = db.safety_documents.find(q, {"_id": 0}).sort("found_at", -1).skip(offset).limit(limit)
-   608	    items = await cursor.to_list(length=limit)
-   609	    filters_applied = {k: v for k, v in {
-   610	        "category": category.value if category else None,
-   611	        "severity": severity.value if severity else None,
-   612	        "status": status_.value if status_ else None,
-   613	        "company_id": company_id, "assignee_id": assignee_id, "reporter_id": reporter_id,
-   614	        "date_from": date_from, "date_to": date_to,
-   615	    }.items() if v}
-   616	    return {"items": items, "total": total, "limit": limit, "offset": offset,
-   617	            "filters_applied": filters_applied}
-   618	
-   619	
-   620	@router.get("/{project_id}/documents/{document_id}", response_model=SafetyDocument)
-   621	async def get_document(
-   622	    project_id: str,
-   623	    document_id: str,
-   624	    user: dict = Depends(get_current_user),
-   625	):
-   626	    db = get_db()
-   627	    await _check_project_access(user, project_id)
-   628	    doc = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-   629	    if not doc:
-   630	        raise HTTPException(status_code=404, detail="document not found")
-   631	    return SafetyDocument(**doc)
-   632	
-   633	
-   634	@router.patch("/{project_id}/documents/{document_id}", response_model=SafetyDocument)
-   635	async def update_document(
-   636	    project_id: str,
-   637	    document_id: str,
-   638	    payload: SafetyDocumentUpdate,
-   639	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   640	):
-   641	    db = get_db()
-   642	    await _check_project_access(user, project_id)
-   643	    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-   644	    if not before:
-   645	        raise HTTPException(status_code=404, detail="document not found")
-   646	    if before.get("deletedAt"):
-   647	        raise HTTPException(status_code=410, detail="document deleted")
-   648	
-   649	    updates = payload.model_dump(exclude_unset=True)
-   650	
-   651	    # Coerce enum values to strings for Mongo
-   652	    if "category" in updates and updates["category"] is not None:
-   653	        updates["category"] = updates["category"].value if hasattr(updates["category"], "value") else updates["category"]
-   654	    if "severity" in updates and updates["severity"] is not None:
-   655	        updates["severity"] = updates["severity"].value if hasattr(updates["severity"], "value") else updates["severity"]
-   656	    if "status" in updates and updates["status"] is not None:
-   657	        updates["status"] = updates["status"].value if hasattr(updates["status"], "value") else updates["status"]
-   658	
-   659	    if "company_id" in updates and updates["company_id"]:
-   660	        comp = await db.project_companies.find_one({
-   661	            "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
-   662	        })
-   663	        if not comp:
-   664	            raise HTTPException(status_code=404, detail="company_id not found on this project")
-   665	
-   666	    updates["updated_at"] = _now()
-   667	    updates["updated_by"] = user["id"]
-   668	
-   669	    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-   670	    after = await db.safety_documents.find_one({"id": document_id})
-   671	    await _audit("safety_document", document_id, "updated", user["id"], {
-   672	        "project_id": project_id,
-   673	        "before": {k: v for k, v in before.items() if k != "_id"},
-   674	        "after": {k: v for k, v in after.items() if k != "_id"},
-   675	    })
-   676	    return SafetyDocument(**after)
-   677	
-   678	
-   679	@router.delete("/{project_id}/documents/{document_id}", status_code=204)
-   680	async def delete_document(
-   681	    project_id: str,
-   682	    document_id: str,
-   683	    body: SoftDeleteBody = SoftDeleteBody(),
-   684	    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-   685	):
-   686	    db = get_db()
-   687	    await _check_project_access(user, project_id)
-   688	    before = await db.safety_documents.find_one({"id": document_id, "project_id": project_id, "deletedAt": None})
-   689	    if not before:
-   690	        raise HTTPException(status_code=404, detail="document not found")
-   691	    if before.get("deletedAt"):
-   692	        return
-   693	    now = _now()
-   694	    await db.safety_documents.update_one({"id": document_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-   695	        "deletedAt": now,
-   696	        "deletedBy": user["id"],
-   697	        "deletion_reason": body.reason,
-   698	        "retention_until": _retention_date(now),
-   699	    }})
-   700	    await _audit("safety_document", document_id, "deleted", user["id"], {
-   701	        "project_id": project_id, "deletion_reason": body.reason,
-   702	    })
-   703	
-   704	
-   705	# =====================================================================
-   706	# Tasks CRUD + status transition guard
-   707	# =====================================================================
-   708	class SafetyTaskCreate(BaseModel):
-   709	    title: str = Field(..., min_length=2, max_length=200)
-   710	    severity: SafetySeverity
-   711	    document_id: Optional[str] = None
-   712	    description: Optional[str] = None
-   713	    assignee_id: Optional[str] = None
-   714	    company_id: Optional[str] = None
-   715	    due_at: Optional[str] = None
-   716	
-   717	
-   718	class SafetyTaskUpdate(BaseModel):
-   719	    title: Optional[str] = None
-   720	    severity: Optional[SafetySeverity] = None
-   721	    description: Optional[str] = None
-   722	    assignee_id: Optional[str] = None
-   723	    company_id: Optional[str] = None
-   724	    due_at: Optional[str] = None
-   725	    status: Optional[SafetyTaskStatus] = None
-   726	    corrective_action: Optional[str] = None
-   727	    verification_photo_urls: Optional[List[str]] = None
-   728	
-   729	
-   730	def _assert_transition_allowed(
-   731	    current: str, next_status: str, project_role: str, payload_dict: dict
-   732	) -> None:
-   733	    """Enforce status transition rules. Raises 409 on invalid transition."""
-   734	    if current == next_status:
-   735	        return  # idempotent
-   736	    # Spec: open → in_progress → completed; any → cancelled; reverse = 409
-   737	    allowed = {
-   738	        "open": {"in_progress", "cancelled"},
-   739	        "in_progress": {"completed", "cancelled"},
-   740	        "completed": {"cancelled"},
-   741	        "cancelled": set(),
-   742	    }
-   743	    if next_status not in allowed.get(current, set()):
-   744	        raise HTTPException(status_code=409, detail={
-   745	            "current_status": current,
-   746	            "requested": next_status,
-   747	            "reason": "transition not allowed",
-   748	        })
-   749	    if next_status == "completed":
-   750	        ca = payload_dict.get("corrective_action")
-   751	        if not ca or not str(ca).strip():
-   752	            raise HTTPException(status_code=409, detail={
-   753	                "current_status": current,
-   754	                "requested": next_status,
-   755	                "reason": "corrective_action is required to mark a task completed",
-   756	            })
-   757	    if next_status == "cancelled":
-   758	        if project_role != "project_manager":
-   759	            raise HTTPException(status_code=409, detail={
-   760	                "current_status": current,
-   761	                "requested": next_status,
-   762	                "reason": "only project_manager may cancel a task",
-   763	            })
-   764	
-   765	
-   766	@router.post("/{project_id}/tasks", status_code=201, response_model=SafetyTask)
-   767	async def create_task(
-   768	    project_id: str,
-   769	    payload: SafetyTaskCreate,
-   770	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   771	):
-   772	    db = get_db()
-   773	    await _check_project_access(user, project_id)
-   774	
-   775	    if payload.document_id:
-   776	        ref = await db.safety_documents.find_one({
-   777	            "id": payload.document_id, "project_id": project_id, "deletedAt": None,
-   778	        })
-   779	        if not ref:
-   780	            raise HTTPException(status_code=404, detail="document_id not found or deleted")
-   781	
-   782	    if payload.company_id:
-   783	        comp = await db.project_companies.find_one({
-   784	            "id": payload.company_id, "project_id": project_id, "deletedAt": None,
-   785	        })
-   786	        if not comp:
-   787	            raise HTTPException(status_code=404, detail="company_id not found on this project")
-   788	
-   789	    doc = {
-   790	        "id": _new_id(),
-   791	        "project_id": project_id,
-   792	        "document_id": payload.document_id,
-   793	        "title": payload.title.strip(),
-   794	        "description": payload.description,
-   795	        "status": SafetyTaskStatus.open.value,
-   796	        "severity": payload.severity.value,
-   797	        "assignee_id": payload.assignee_id,
-   798	        "company_id": payload.company_id,
-   799	        "due_at": payload.due_at,
-   800	        "completed_at": None,
-   801	        "corrective_action": None,
-   802	        "verification_photo_urls": [],
-   803	        "created_at": _now(),
-   804	        "created_by": user["id"],
-   805	        "updated_at": None,
-   806	        "deletedAt": None,
-   807	        "deletedBy": None,
-   808	    }
-   809	    await db.safety_tasks.insert_one(doc)
-   810	    await _audit("safety_task", doc["id"], "created", user["id"], {
-   811	        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-   812	    })
-   813	    return SafetyTask(**doc)
-   814	
-   815	
-   816	@router.get("/{project_id}/tasks")
-   817	async def list_tasks(
-   818	    project_id: str,
-   819	    status_: Optional[SafetyTaskStatus] = Query(None, alias="status"),
-   820	    assignee_id: Optional[str] = None,
-   821	    document_id: Optional[str] = None,
-   822	    limit: int = Query(100, le=500),
-   823	    offset: int = Query(0, ge=0),
-   824	    include_deleted: bool = False,
-   825	    user: dict = Depends(get_current_user),
-   826	):
-   827	    db = get_db()
-   828	    await _check_project_access(user, project_id)
-   829	
-   830	    q = {"project_id": project_id}
-   831	    include_deleted = _resolve_include_deleted(include_deleted, user)
-   832	    if not include_deleted:
-   833	        q["deletedAt"] = None
-   834	    if status_:      q["status"] = status_.value
-   835	    if assignee_id:  q["assignee_id"] = assignee_id
-   836	    if document_id:  q["document_id"] = document_id
-   837	
-   838	    total = await db.safety_tasks.count_documents(q)
-   839	    cursor = db.safety_tasks.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
-   840	    items = await cursor.to_list(length=limit)
-   841	    return {"items": items, "total": total, "limit": limit, "offset": offset}
-   842	
-   843	
-   844	@router.get("/{project_id}/tasks/{task_id}", response_model=SafetyTask)
-   845	async def get_task(
-   846	    project_id: str,
-   847	    task_id: str,
-   848	    user: dict = Depends(get_current_user),
-   849	):
-   850	    db = get_db()
-   851	    await _check_project_access(user, project_id)
-   852	    doc = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-   853	    if not doc:
-   854	        raise HTTPException(status_code=404, detail="task not found")
-   855	    return SafetyTask(**doc)
-   856	
-   857	
-   858	@router.patch("/{project_id}/tasks/{task_id}", response_model=SafetyTask)
-   859	async def update_task(
-   860	    project_id: str,
-   861	    task_id: str,
-   862	    payload: SafetyTaskUpdate,
-   863	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   864	):
-   865	    db = get_db()
-   866	    await _check_project_access(user, project_id)
-   867	    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-   868	    if not before:
-   869	        raise HTTPException(status_code=404, detail="task not found")
-   870	    if before.get("deletedAt"):
-   871	        raise HTTPException(status_code=410, detail="task deleted")
-   872	
-   873	    updates = payload.model_dump(exclude_unset=True)
-   874	
-   875	    # Coerce enums
-   876	    if "severity" in updates and updates["severity"] is not None:
-   877	        updates["severity"] = updates["severity"].value if hasattr(updates["severity"], "value") else updates["severity"]
-   878	
-   879	    next_status_raw = updates.get("status")
-   880	    if next_status_raw is not None:
-   881	        next_status = next_status_raw.value if hasattr(next_status_raw, "value") else next_status_raw
-   882	        project_role = await _get_project_role(user, project_id)
-   883	        _assert_transition_allowed(before.get("status", "open"), next_status, project_role, updates)
-   884	        updates["status"] = next_status
-   885	        if next_status == "completed":
-   886	            updates["completed_at"] = _now()
-   887	
-   888	    if "company_id" in updates and updates["company_id"]:
-   889	        comp = await db.project_companies.find_one({
-   890	            "id": updates["company_id"], "project_id": project_id, "deletedAt": None,
-   891	        })
-   892	        if not comp:
-   893	            raise HTTPException(status_code=404, detail="company_id not found on this project")
-   894	
-   895	    updates["updated_at"] = _now()
-   896	    updates["updated_by"] = user["id"]
-   897	
-   898	    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-   899	    after = await db.safety_tasks.find_one({"id": task_id})
-   900	    await _audit("safety_task", task_id, "updated", user["id"], {
-   901	        "project_id": project_id,
-   902	        "before": {k: v for k, v in before.items() if k != "_id"},
-   903	        "after": {k: v for k, v in after.items() if k != "_id"},
-   904	    })
-   905	    return SafetyTask(**after)
-   906	
-   907	
-   908	@router.delete("/{project_id}/tasks/{task_id}", status_code=204)
-   909	async def delete_task(
-   910	    project_id: str,
-   911	    task_id: str,
-   912	    body: SoftDeleteBody = SoftDeleteBody(),
-   913	    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-   914	):
-   915	    db = get_db()
-   916	    await _check_project_access(user, project_id)
-   917	    before = await db.safety_tasks.find_one({"id": task_id, "project_id": project_id, "deletedAt": None})
-   918	    if not before:
-   919	        raise HTTPException(status_code=404, detail="task not found")
-   920	    if before.get("deletedAt"):
-   921	        return
-   922	    now = _now()
-   923	    await db.safety_tasks.update_one({"id": task_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-   924	        "deletedAt": now,
-   925	        "deletedBy": user["id"],
-   926	        "deletion_reason": body.reason,
-   927	        "retention_until": _retention_date(now),
-   928	    }})
-   929	    await _audit("safety_task", task_id, "deleted", user["id"], {
-   930	        "project_id": project_id, "deletion_reason": body.reason,
-   931	    })
-   932	
-   933	
-   934	# =====================================================================
-   935	# Incidents CRUD + 7yr retention from occurred_at
-   936	# =====================================================================
-   937	class SafetyIncidentCreate(BaseModel):
-   938	    incident_type: str
-   939	    severity: SafetySeverity
-   940	    occurred_at: str
-   941	    description: str = Field(..., min_length=2)
-   942	    location: Optional[str] = None
-   943	    injured_worker_id: Optional[str] = None
-   944	    witnesses: List[str] = Field(default_factory=list)
-   945	    photo_urls: List[str] = Field(default_factory=list)
-   946	    medical_record_urls: List[str] = Field(default_factory=list)
-   947	    reported_to_authority: bool = False
-   948	    authority_report_ref: Optional[str] = None
-   949	
-   950	
-   951	class SafetyIncidentUpdate(BaseModel):
-   952	    incident_type: Optional[str] = None
-   953	    severity: Optional[SafetySeverity] = None
-   954	    occurred_at: Optional[str] = None
-   955	    description: Optional[str] = None
-   956	    location: Optional[str] = None
-   957	    injured_worker_id: Optional[str] = None
-   958	    witnesses: Optional[List[str]] = None
-   959	    photo_urls: Optional[List[str]] = None
-   960	    medical_record_urls: Optional[List[str]] = None
-   961	    reported_to_authority: Optional[bool] = None
-   962	    authority_report_ref: Optional[str] = None
-   963	    status: Optional[str] = None  # incident lifecycle: draft|reported|closed
-   964	
-   965	
-   966	@router.post("/{project_id}/incidents", status_code=201, response_model=SafetyIncident)
-   967	async def create_incident(
-   968	    project_id: str,
-   969	    payload: SafetyIncidentCreate,
-   970	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-   971	):
-   972	    db = get_db()
-   973	    await _check_project_access(user, project_id)
-   974	
-   975	    if payload.incident_type not in VALID_INCIDENT_TYPES:
-   976	        raise HTTPException(status_code=400, detail=f"invalid incident_type; must be one of {sorted(VALID_INCIDENT_TYPES)}")
-   977	
-   978	    if payload.injured_worker_id:
-   979	        worker = await db.safety_workers.find_one({
-   980	            "id": payload.injured_worker_id, "project_id": project_id, "deletedAt": None,
-   981	        })
-   982	        if not worker:
-   983	            raise HTTPException(status_code=404, detail="injured_worker_id not found or deleted")
-   984	
-   985	    doc = {
-   986	        "id": _new_id(),
-   987	        "project_id": project_id,
-   988	        "incident_type": payload.incident_type,
-   989	        "severity": payload.severity.value,
-   990	        "occurred_at": payload.occurred_at,
-   991	        "description": payload.description,
-   992	        "location": payload.location,
-   993	        "injured_worker_id": payload.injured_worker_id,
-   994	        "witnesses": payload.witnesses,
-   995	        "photo_urls": payload.photo_urls,
-   996	        "medical_record_urls": payload.medical_record_urls,
-   997	        "reported_to_authority": payload.reported_to_authority,
-   998	        "authority_report_ref": payload.authority_report_ref,
-   999	        "status": "draft",
-  1000	        "created_at": _now(),
-  1001	        "created_by": user["id"],
-  1002	        "updated_at": None,
-  1003	        "deletedAt": None,
-  1004	        "deletedBy": None,
-  1005	        "deletion_reason": None,
-  1006	        "retention_until": None,
-  1007	    }
-  1008	    await db.safety_incidents.insert_one(doc)
-  1009	    await _audit("safety_incident", doc["id"], "created", user["id"], {
-  1010	        "project_id": project_id, "after": {k: v for k, v in doc.items() if k != "_id"},
-  1011	    })
-  1012	    return SafetyIncident(**doc)
-  1013	
-  1014	
-  1015	@router.get("/{project_id}/incidents")
-  1016	async def list_incidents(
-  1017	    project_id: str,
-  1018	    incident_type: Optional[str] = None,
-  1019	    severity: Optional[SafetySeverity] = None,
-  1020	    limit: int = Query(100, le=500),
-  1021	    offset: int = Query(0, ge=0),
-  1022	    include_deleted: bool = False,
-  1023	    user: dict = Depends(get_current_user),
-  1024	):
-  1025	    db = get_db()
-  1026	    await _check_project_access(user, project_id)
-  1027	
-  1028	    q = {"project_id": project_id}
-  1029	    include_deleted = _resolve_include_deleted(include_deleted, user)
-  1030	    if not include_deleted:
-  1031	        q["deletedAt"] = None
-  1032	    if incident_type: q["incident_type"] = incident_type
-  1033	    if severity:      q["severity"] = severity.value
-  1034	
-  1035	    total = await db.safety_incidents.count_documents(q)
-  1036	    cursor = db.safety_incidents.find(q, {"_id": 0}).sort("occurred_at", -1).skip(offset).limit(limit)
-  1037	    items = await cursor.to_list(length=limit)
-  1038	    return {"items": items, "total": total, "limit": limit, "offset": offset}
-  1039	
-  1040	
-  1041	@router.get("/{project_id}/incidents/{incident_id}", response_model=SafetyIncident)
-  1042	async def get_incident(
-  1043	    project_id: str,
-  1044	    incident_id: str,
-  1045	    user: dict = Depends(get_current_user),
-  1046	):
-  1047	    db = get_db()
-  1048	    await _check_project_access(user, project_id)
-  1049	    doc = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-  1050	    if not doc:
-  1051	        raise HTTPException(status_code=404, detail="incident not found")
-  1052	    return SafetyIncident(**doc)
-  1053	
-  1054	
-  1055	@router.patch("/{project_id}/incidents/{incident_id}", response_model=SafetyIncident)
-  1056	async def update_incident(
-  1057	    project_id: str,
-  1058	    incident_id: str,
-  1059	    payload: SafetyIncidentUpdate,
-  1060	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-  1061	):
-  1062	    db = get_db()
-  1063	    await _check_project_access(user, project_id)
-  1064	    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-  1065	    if not before:
-  1066	        raise HTTPException(status_code=404, detail="incident not found")
-  1067	    if before.get("deletedAt"):
-  1068	        raise HTTPException(status_code=410, detail="incident deleted")
-  1069	
-  1070	    # Once status != "draft", only project_manager OR safety_officer sub-role may edit
-  1071	    if before.get("status", "draft") != "draft":
-  1072	        membership = await _get_project_membership(user, project_id)
-  1073	        is_pm = membership.get("role") == "project_manager"
-  1074	        is_safety_officer = membership.get("sub_role") == "safety_officer"
-  1075	        if not (is_pm or is_safety_officer or _is_super_admin(user)):
-  1076	            raise HTTPException(
-  1077	                status_code=403,
-  1078	                detail="Only project_manager or safety_officer may edit a non-draft incident",
-  1079	            )
-  1080	
-  1081	    updates = payload.model_dump(exclude_unset=True)
-  1082	    if "severity" in updates and updates["severity"] is not None:
-  1083	        updates["severity"] = updates["severity"].value if hasattr(updates["severity"], "value") else updates["severity"]
-  1084	    if "incident_type" in updates and updates["incident_type"] is not None:
-  1085	        if updates["incident_type"] not in VALID_INCIDENT_TYPES:
-  1086	            raise HTTPException(status_code=400, detail=f"invalid incident_type")
-  1087	    if "injured_worker_id" in updates and updates["injured_worker_id"]:
-  1088	        worker = await db.safety_workers.find_one({
-  1089	            "id": updates["injured_worker_id"], "project_id": project_id, "deletedAt": None,
-  1090	        })
-  1091	        if not worker:
-  1092	            raise HTTPException(status_code=404, detail="injured_worker_id not found or deleted")
-  1093	
-  1094	    updates["updated_at"] = _now()
-  1095	    updates["updated_by"] = user["id"]
-  1096	
-  1097	    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": updates})
-  1098	    after = await db.safety_incidents.find_one({"id": incident_id})
-  1099	    await _audit("safety_incident", incident_id, "updated", user["id"], {
-  1100	        "project_id": project_id,
-  1101	        "before": {k: v for k, v in before.items() if k != "_id"},
-  1102	        "after": {k: v for k, v in after.items() if k != "_id"},
-  1103	    })
-  1104	    return SafetyIncident(**after)
-  1105	
-  1106	
-  1107	@router.delete("/{project_id}/incidents/{incident_id}", status_code=204)
-  1108	async def delete_incident(
-  1109	    project_id: str,
-  1110	    incident_id: str,
-  1111	    body: SoftDeleteBody,
-  1112	    user: dict = Depends(require_roles(*SAFETY_DELETERS)),
-  1113	):
-  1114	    db = get_db()
-  1115	    await _check_project_access(user, project_id)
-  1116	
-  1117	    if not body.reason or not body.reason.strip():
-  1118	        raise HTTPException(status_code=400, detail="deletion_reason is required for incidents")
-  1119	
-  1120	    before = await db.safety_incidents.find_one({"id": incident_id, "project_id": project_id, "deletedAt": None})
-  1121	    if not before:
-  1122	        raise HTTPException(status_code=404, detail="incident not found")
-  1123	    if before.get("deletedAt"):
-  1124	        return
-  1125	
-  1126	    # Retention from OCCURRED_AT, not now (regulatory clock)
-  1127	    retention = _retention_date(before["occurred_at"])
-  1128	    await db.safety_incidents.update_one({"id": incident_id, "project_id": project_id, "deletedAt": None}, {"$set": {
-  1129	        "deletedAt": _now(),
-  1130	        "deletedBy": user["id"],
-  1131	        "deletion_reason": body.reason.strip(),
-  1132	        "retention_until": retention,
-  1133	    }})
-  1134	    await _audit("safety_incident", incident_id, "deleted", user["id"], {
-  1135	        "project_id": project_id, "deletion_reason": body.reason.strip(),
-  1136	        "retention_until": retention,
-  1137	    })
-  1138	
-  1139	
-  1140	# =====================================================================
-  1141	# Photo / PDF upload helper (one endpoint for all resources)
-  1142	# =====================================================================
-  1143	@router.post("/{project_id}/upload")
-  1144	async def upload_safety_file(
-  1145	    project_id: str,
-  1146	    file: UploadFile = File(...),
-  1147	    user: dict = Depends(require_roles(*SAFETY_WRITERS)),
-  1148	):
-  1149	    db = get_db()
-  1150	    await _check_project_access(user, project_id)
-  1151	
-  1152	    validate_upload(file, SAFETY_ALLOWED_EXTENSIONS, SAFETY_ALLOWED_CONTENT_TYPES)
-  1153	
-  1154	    content = await file.read()
-  1155	    if len(content) > MAX_SAFETY_UPLOAD_SIZE:
-  1156	        raise HTTPException(status_code=413, detail="הקובץ גדול מדי (מקסימום 10MB)")
-  1157	
-  1158	    content_type = file.content_type or "application/octet-stream"
-  1159	    if content_type == "application/pdf":
-  1160	        ext = "pdf"
-  1161	    else:
-  1162	        ext = content_type.split("/")[-1]
-  1163	        if ext == "jpeg":
-  1164	            ext = "jpg"
-  1165	
-  1166	    file_id = _new_id()
-  1167	    key = f"safety/{project_id}/{file_id}.{ext}"
-  1168	
-  1169	    from services.object_storage import save_bytes as obj_save_bytes, generate_url as obj_generate_url
-  1170	    stored_ref = obj_save_bytes(content, key, content_type)
-  1171	    url = obj_generate_url(stored_ref)
-  1172	
-  1173	    await _audit("safety_upload", file_id, "upload", user["id"], {
-  1174	        "project_id": project_id,
-  1175	        "filename": file.filename,
-  1176	        "key": key,
-  1177	        "size": len(content),
-  1178	        "content_type": content_type,
-  1179	    })
-  1180	
-  1181	    return {
-  1182	        "id": file_id,
-  1183	        "url": url,
-  1184	        "stored_ref": stored_ref,
-  1185	        "filename": file.filename,
-  1186	        "content_type": content_type,
-  1187	        "size": len(content),
-  1188	    }
-  1189	
-  1190	
-  1191	# =====================================================================
-  1192	# Index management — called from server.py startup when module enabled.
-  1193	# =====================================================================
-  1194	async def ensure_safety_indexes(db) -> None:
-  1195	    """
-  1196	    Create MongoDB indices for Safety collections.
-  1197	    Idempotent: `create_index` is a no-op if the same spec already exists.
-  1198	    Safe to run on every startup.
-  1199	
-  1200	    All indices use background=True to avoid locking hot collections.
-  1201	    """
-  1202	    # safety_workers — 3
-  1203	    await db.safety_workers.create_index(
-  1204	        [("project_id", 1), ("deletedAt", 1)],
-  1205	        background=True, name="idx_sw_project_deleted",
-  1206	    )
-  1207	    await db.safety_workers.create_index(
-  1208	        [("project_id", 1), ("company_id", 1)],
-  1209	        background=True, name="idx_sw_project_company",
-  1210	    )
-  1211	    await db.safety_workers.create_index(
-  1212	        [("project_id", 1), ("id_number", 1)],
-  1213	        background=True, sparse=True, name="idx_sw_project_idnum",
-  1214	    )
-  1215	    # safety_trainings — 3
-  1216	    await db.safety_trainings.create_index(
-  1217	        [("project_id", 1), ("worker_id", 1)],
-  1218	        background=True, name="idx_st_project_worker",
-  1219	    )
-  1220	    await db.safety_trainings.create_index(
-  1221	        [("project_id", 1), ("expires_at", 1)],
-  1222	        background=True, sparse=True, name="idx_st_project_expires",
-  1223	    )
-  1224	    await db.safety_trainings.create_index(
-  1225	        [("project_id", 1), ("training_type", 1)],
-  1226	        background=True, name="idx_st_project_type",
-  1227	    )
-  1228	    # safety_documents — 5
-  1229	    await db.safety_documents.create_index(
-  1230	        [("project_id", 1), ("deletedAt", 1), ("created_at", -1)],
-  1231	        background=True, name="idx_sd_project_deleted_created",
-  1232	    )
-  1233	    await db.safety_documents.create_index(
-  1234	        [("project_id", 1), ("status", 1)],
-  1235	        background=True, name="idx_sd_project_status",
-  1236	    )
-  1237	    await db.safety_documents.create_index(
-  1238	        [("project_id", 1), ("severity", 1)],
-  1239	        background=True, name="idx_sd_project_severity",
-  1240	    )
-  1241	    await db.safety_documents.create_index(
-  1242	        [("project_id", 1), ("category", 1)],
-  1243	        background=True, name="idx_sd_project_category",
-  1244	    )
-  1245	    await db.safety_documents.create_index(
-  1246	        [("project_id", 1), ("company_id", 1)],
-  1247	        background=True, sparse=True, name="idx_sd_project_company",
-  1248	    )
-  1249	    # safety_tasks — 4
-  1250	    await db.safety_tasks.create_index(
-  1251	        [("project_id", 1), ("deletedAt", 1), ("due_at", 1)],
-  1252	        background=True, name="idx_stk_project_deleted_due",
-  1253	    )
-  1254	    await db.safety_tasks.create_index(
-  1255	        [("project_id", 1), ("status", 1)],
-  1256	        background=True, name="idx_stk_project_status",
-  1257	    )
-  1258	    await db.safety_tasks.create_index(
-  1259	        [("project_id", 1), ("assignee_id", 1)],
-  1260	        background=True, sparse=True, name="idx_stk_project_assignee",
-  1261	    )
-  1262	    await db.safety_tasks.create_index(
-  1263	        [("document_id", 1)],
-  1264	        background=True, sparse=True, name="idx_stk_document",
-  1265	    )
-  1266	    # safety_incidents — 3 (7yr retention-critical)
-  1267	    await db.safety_incidents.create_index(
-  1268	        [("project_id", 1), ("occurred_at", -1)],
-  1269	        background=True, name="idx_si_project_occurred",
-  1270	    )
-  1271	    await db.safety_incidents.create_index(
-  1272	        [("project_id", 1), ("severity", 1)],
-  1273	        background=True, name="idx_si_project_severity",
-  1274	    )
-  1275	    await db.safety_incidents.create_index(
-  1276	        [("retention_until", 1)],
-  1277	        background=True, sparse=True, name="idx_si_retention",
-  1278	    )
-  1279	    # project_companies — 2 safety-related (shared collection)
-  1280	    await db.project_companies.create_index(
-  1281	        [("project_id", 1), ("safety_contact_id", 1)],
-  1282	        background=True, sparse=True, name="idx_pc_project_safety_contact",
-  1283	    )
-  1284	    await db.project_companies.create_index(
-  1285	        [("project_id", 1), ("is_placeholder", 1)],
-  1286	        background=True, sparse=True, name="idx_pc_project_placeholder",
-  1287	    )
-  1288	
-  1289	    logger.info("Safety indices ensured (20 total across 6 collections)")
-
-================================================================================
-END OF REVIEW
-================================================================================
++    # Section 8b: Audit trail (last 30 days)
++    elems.append(Paragraph(hebrew("8. תיעוד פעולות (30 ימים אחרונים)"), h2))
++    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
++    audit_events = await db.audit_events.find(
++        {"entity_type": {"$regex": "^safety"}, "created_at": {"$gte": cutoff_30d},
++         "payload.project_id": project_id},
++        {"_id": 0, "entity_type": 1, "action": 1, "created_at": 1, "actor_id": 1},
++    ).sort("created_at", -1).limit(50).to_list(length=50)
++    if audit_events:
++        rows = []
++        for ev in audit_events:
++            rows.append([
++                _fmt_date(ev.get("created_at")),
++                ev.get("entity_type", ""),
++                ev.get("action", ""),
++                ev.get("actor_id", "")[:8] if ev.get("actor_id") else "",
++            ])
++        elems.append(_table(
++            ["תאריך", "ישות", "פעולה", "מבצע"],
++            rows, [3 * cm, 4 * cm, 5 * cm, 4 * cm],
++        ))
++    else:
++        elems.append(Paragraph(hebrew("אין פעולות בתקופה זו."), body))
++    elems.append(PageBreak())
++
++    # Section 9: Work-manager declaration + 3 signature lines
++    elems.append(Paragraph(hebrew("9. הצהרת מנהל העבודה וחתימות"), h2))
++    elems.append(Spacer(1, 3 * mm))
++    elems.append(Paragraph(hebrew(WORK_MANAGER_DECLARATION), body))
++    elems.append(Spacer(1, 12 * mm))
++
++    sig_line_style = ParagraphStyle(
++        "SigLine", fontName="Rubik", fontSize=10,
++        alignment=TA_RIGHT, textColor=SLATE_700, leading=14,
++    )
++    for label in ("מנהל העבודה", "ממונה הבטיחות", "מנהל הפרויקט"):
++        elems.append(Paragraph(hebrew(f"{label}:"), sig_line_style))
++        elems.append(Spacer(1, 2 * mm))
++        line = Table([[""]], colWidths=[8 * cm], rowHeights=[0.4 * mm])
++        line.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), SLATE_700)]))
++        line.hAlign = "RIGHT"
++        elems.append(line)
++        elems.append(Paragraph(hebrew("שם, תאריך וחתימה"), sub))
++        elems.append(Spacer(1, 8 * mm))
++
++    elems.append(Spacer(1, 6 * mm))
++    elems.append(Paragraph(hebrew("נוצר באמצעות BrikOps · brikops.com"), sub))
++
++    doc.build(elems, canvasmaker=_make_canvas)
++    out.seek(0)
++    return out.getvalue()
