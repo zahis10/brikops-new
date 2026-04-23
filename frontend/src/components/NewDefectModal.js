@@ -849,7 +849,8 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                     <button
                       type="button"
                       onClick={() => setShowQuickAddCompany(true)}
-                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                      disabled={!projectId}
+                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Plus className="w-3 h-3" />
                       הוסף חברה
