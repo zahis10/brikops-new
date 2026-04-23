@@ -1152,6 +1152,9 @@ _SCORE_TASKS_MAX = 25
 _SCORE_TRAINING_MAX = 20
 _SCORE_INCIDENTS_MAX = 15
 
+# Safety score — required training types per worker (spec §Steps.1)
+REQUIRED_TRAINING_TYPES = frozenset({"safety_induction", "height_work", "electrical"})
+
 
 async def _compute_safety_score(db, project_id: str) -> dict:
     """
@@ -1176,7 +1179,7 @@ async def _compute_safety_score(db, project_id: str) -> dict:
     now_iso = now.isoformat()
     cutoff_90d = (now - timedelta(days=90)).isoformat()
 
-    # Documents bucket — single $group with $cond per severity
+    # Documents bucket — single $group with $cond per severity (unchanged)
     docs_agg = await db.safety_documents.aggregate([
         {"$match": {
             "project_id": project_id,
@@ -1190,81 +1193,132 @@ async def _compute_safety_score(db, project_id: str) -> dict:
             "sev1": {"$sum": {"$cond": [{"$eq": ["$severity", "1"]}, 1, 0]}},
         }},
     ]).to_list(length=1)
-    if docs_agg:
-        sev3 = docs_agg[0].get("sev3", 0)
-        sev2 = docs_agg[0].get("sev2", 0)
-        sev1 = docs_agg[0].get("sev1", 0)
-    else:
-        sev3 = sev2 = sev1 = 0
+    sev3 = docs_agg[0].get("sev3", 0) if docs_agg else 0
+    sev2 = docs_agg[0].get("sev2", 0) if docs_agg else 0
+    sev1 = docs_agg[0].get("sev1", 0) if docs_agg else 0
     docs_raw = sev3 * 10 + sev2 * 5 + sev1 * 2
     docs_penalty = min(docs_raw, _SCORE_DOCS_MAX)
 
-    # Tasks bucket — overdue count via $group/$cond
+    # Tasks bucket — overdue tasks grouped by severity (spec §Steps.1)
+    # Weights: sev3=6, sev2=3, sev1=1.5. Sum capped at _SCORE_TASKS_MAX (25).
     tasks_agg = await db.safety_tasks.aggregate([
-        {"$match": {"project_id": project_id, "deletedAt": None}},
+        {"$match": {
+            "project_id": project_id,
+            "deletedAt": None,
+            "due_at": {"$ne": None, "$lt": now_iso},
+            "status": {"$nin": ["completed", "cancelled"]},
+        }},
         {"$group": {
             "_id": None,
-            "overdue": {"$sum": {"$cond": [
-                {"$and": [
-                    {"$ne": ["$due_at", None]},
-                    {"$lt": ["$due_at", now_iso]},
-                    {"$not": {"$in": ["$status", ["completed", "cancelled"]]}},
-                ]}, 1, 0,
-            ]}},
+            "sev3": {"$sum": {"$cond": [{"$eq": ["$severity", "3"]}, 1, 0]}},
+            "sev2": {"$sum": {"$cond": [{"$eq": ["$severity", "2"]}, 1, 0]}},
+            "sev1": {"$sum": {"$cond": [{"$eq": ["$severity", "1"]}, 1, 0]}},
         }},
     ]).to_list(length=1)
-    overdue_tasks = tasks_agg[0]["overdue"] if tasks_agg else 0
-    tasks_penalty = min(overdue_tasks * 5, _SCORE_TASKS_MAX)
+    t_sev3 = tasks_agg[0].get("sev3", 0) if tasks_agg else 0
+    t_sev2 = tasks_agg[0].get("sev2", 0) if tasks_agg else 0
+    t_sev1 = tasks_agg[0].get("sev1", 0) if tasks_agg else 0
+    tasks_raw = t_sev3 * 6 + t_sev2 * 3 + t_sev1 * 1.5
+    tasks_penalty = min(tasks_raw, _SCORE_TASKS_MAX)
+    overdue_tasks_total = t_sev3 + t_sev2 + t_sev1
 
-    # Incidents bucket — last 90 days
-    recent_incidents = await db.safety_incidents.count_documents({
-        "project_id": project_id,
-        "deletedAt": None,
-        "occurred_at": {"$gte": cutoff_90d},
-    })
-    incidents_penalty = min(recent_incidents * 8, _SCORE_INCIDENTS_MAX)
+    # Incidents bucket — last 90d grouped by type (spec §Steps.1)
+    # Weights: injury=5, property_damage=3, near_miss=1. Cap _SCORE_INCIDENTS_MAX (15).
+    inc_agg = await db.safety_incidents.aggregate([
+        {"$match": {
+            "project_id": project_id,
+            "deletedAt": None,
+            "occurred_at": {"$gte": cutoff_90d},
+        }},
+        {"$group": {
+            "_id": None,
+            "injury":          {"$sum": {"$cond": [{"$eq": ["$incident_type", "injury"]}, 1, 0]}},
+            "property_damage": {"$sum": {"$cond": [{"$eq": ["$incident_type", "property_damage"]}, 1, 0]}},
+            "near_miss":       {"$sum": {"$cond": [{"$eq": ["$incident_type", "near_miss"]}, 1, 0]}},
+        }},
+    ]).to_list(length=1)
+    inc_injury   = inc_agg[0].get("injury", 0) if inc_agg else 0
+    inc_property = inc_agg[0].get("property_damage", 0) if inc_agg else 0
+    inc_near     = inc_agg[0].get("near_miss", 0) if inc_agg else 0
+    incidents_raw = inc_injury * 5 + inc_property * 3 + inc_near * 1
+    incidents_penalty = min(incidents_raw, _SCORE_INCIDENTS_MAX)
+    recent_incidents_total = inc_injury + inc_property + inc_near
 
-    # Training bucket — workers with no in-force training
+    # Training bucket — per worker, check each REQUIRED_TRAINING_TYPE has in-force record
+    # (spec §Steps.1: 4pts per expired-required-training, 5pts for workers with NO training record)
     worker_ids_docs = await db.safety_workers.find(
         {"project_id": project_id, "deletedAt": None}, {"_id": 0, "id": 1}
     ).to_list(length=10000)
     worker_ids = [w["id"] for w in worker_ids_docs]
-    untrained_workers = 0
+
+    workers_with_expired_training = 0
+    workers_without_training = 0
+    expired_required_count = 0
+
     if worker_ids:
-        in_force = await db.safety_trainings.aggregate([
-            {"$match": {
+        in_force = await db.safety_trainings.find(
+            {
                 "project_id": project_id,
                 "deletedAt": None,
                 "worker_id": {"$in": worker_ids},
+                "training_type": {"$in": list(REQUIRED_TRAINING_TYPES)},
                 "$or": [{"expires_at": None}, {"expires_at": {"$gte": today_iso}}],
-            }},
-            {"$group": {"_id": "$worker_id"}},
-        ]).to_list(length=10000)
-        trained_set = {row["_id"] for row in in_force}
-        untrained_workers = sum(1 for wid in worker_ids if wid not in trained_set)
-    training_penalty = min(untrained_workers * 4, _SCORE_TRAINING_MAX)
+            },
+            {"_id": 0, "worker_id": 1, "training_type": 1},
+        ).to_list(length=100000)
+
+        any_training_worker_ids = set(
+            r["worker_id"] for r in await db.safety_trainings.find(
+                {"project_id": project_id, "deletedAt": None, "worker_id": {"$in": worker_ids}},
+                {"_id": 0, "worker_id": 1},
+            ).to_list(length=100000)
+        )
+
+        worker_inforce: dict = {wid: set() for wid in worker_ids}
+        for r in in_force:
+            worker_inforce[r["worker_id"]].add(r["training_type"])
+
+        for wid in worker_ids:
+            if wid not in any_training_worker_ids:
+                workers_without_training += 1
+                continue
+            missing_types = REQUIRED_TRAINING_TYPES - worker_inforce[wid]
+            if missing_types:
+                workers_with_expired_training += 1
+                expired_required_count += len(missing_types)
+
+    training_raw = expired_required_count * 4 + workers_without_training * 5
+    training_penalty = min(training_raw, _SCORE_TRAINING_MAX)
 
     total_penalty = docs_penalty + tasks_penalty + training_penalty + incidents_penalty
-    score = max(0, 100 - total_penalty)
+    score = max(0, int(round(100 - total_penalty)))
 
     return {
         "score": score,
         "breakdown": {
-            "documents": {
-                "open_sev3": sev3, "open_sev2": sev2, "open_sev1": sev1,
-                "raw": docs_raw, "penalty": docs_penalty, "max": _SCORE_DOCS_MAX,
+            "doc_penalty": round(docs_penalty, 2),
+            "task_penalty": round(tasks_penalty, 2),
+            "training_penalty": round(training_penalty, 2),
+            "incident_penalty": round(incidents_penalty, 2),
+            "doc_counts": {"sev3": sev3, "sev2": sev2, "sev1": sev1},
+            "overdue_task_counts": {
+                "sev3": t_sev3, "sev2": t_sev2, "sev1": t_sev1,
+                "total": overdue_tasks_total,
             },
-            "tasks": {
-                "overdue": overdue_tasks,
-                "penalty": tasks_penalty, "max": _SCORE_TASKS_MAX,
+            "workers_with_expired_training": workers_with_expired_training,
+            "workers_without_training": workers_without_training,
+            "total_workers": len(worker_ids),
+            "incidents_last_90d": {
+                "injury": inc_injury,
+                "property_damage": inc_property,
+                "near_miss": inc_near,
+                "total": recent_incidents_total,
             },
-            "training": {
-                "untrained_workers": untrained_workers, "total_workers": len(worker_ids),
-                "penalty": training_penalty, "max": _SCORE_TRAINING_MAX,
-            },
-            "incidents": {
-                "recent_90d": recent_incidents,
-                "penalty": incidents_penalty, "max": _SCORE_INCIDENTS_MAX,
+            "caps": {
+                "doc_max": _SCORE_DOCS_MAX,
+                "task_max": _SCORE_TASKS_MAX,
+                "training_max": _SCORE_TRAINING_MAX,
+                "incident_max": _SCORE_INCIDENTS_MAX,
             },
         },
         "computed_at": now_iso,
@@ -1649,7 +1703,14 @@ async def export_safety_filtered(
 
     buf = _build_filtered_documents_excel(documents, company_map, user_map)
 
-    applied = {k: (v if not isinstance(v, dict) else v) for k, v in extra.items()}
+    # Flatten the $gte/$lte range into plain date_from/date_to keys so the audit
+    # payload never contains $-prefixed field names (MongoDB rejects those on insert).
+    applied = {k: v for k, v in extra.items() if k != "found_at"}
+    if date_from:
+        applied["date_from"] = date_from
+    if date_to:
+        applied["date_to"] = date_to
+
     await _audit("safety_export", project_id, "filtered_exported", user["id"], {
         "project_id": project_id,
         "filters": applied,

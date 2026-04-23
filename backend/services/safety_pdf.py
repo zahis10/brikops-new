@@ -190,6 +190,28 @@ async def generate_safety_register(db, project_id: str) -> bytes:
 
     worker_name_map = {w["id"]: w.get("full_name", "") for w in workers}
 
+    # Management team: PM role + safety_officer sub_role (Part 3a)
+    memberships = await db.project_memberships.find(
+        {
+            "project_id": project_id,
+            "deletedAt": None,
+            "$or": [
+                {"role": {"$in": ["project_manager", "management_team"]}},
+                {"sub_role": "safety_officer"},
+            ],
+        },
+        {"_id": 0, "user_id": 1, "role": 1, "sub_role": 1},
+    ).to_list(length=100)
+
+    mgmt_user_ids = list({m["user_id"] for m in memberships if m.get("user_id")})
+    mgmt_users: dict = {}
+    if mgmt_user_ids:
+        for u in await db.users.find(
+            {"id": {"$in": mgmt_user_ids}},
+            {"_id": 0, "id": 1, "name": 1, "phone": 1, "email": 1},
+        ).to_list(length=100):
+            mgmt_users[u["id"]] = u
+
     SLATE_700 = colors.HexColor("#334155")
     SLATE_500 = colors.HexColor("#64748B")
     SLATE_200 = colors.HexColor("#E2E8F0")
@@ -273,8 +295,35 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(_table(["שדה", "ערך"], meta_rows, [5 * cm, 11 * cm]))
     elems.append(Spacer(1, 6 * mm))
 
+    # Section 2: Management Team (Part 3a)
+    elems.append(Paragraph(hebrew("2. צוות ניהולי"), h2))
+    MGMT_ROLE_HE = {
+        "project_manager": "מנהל פרויקט",
+        "management_team": "צוות ניהולי",
+    }
+    if memberships:
+        mgmt_rows = []
+        for m in memberships:
+            u = mgmt_users.get(m.get("user_id", ""), {})
+            role_label = MGMT_ROLE_HE.get(m.get("role", ""), m.get("role", ""))
+            if m.get("sub_role") == "safety_officer":
+                role_label = "ממונה בטיחות"
+            mgmt_rows.append([
+                u.get("name", "") or "—",
+                role_label,
+                u.get("phone", "") or "—",
+                u.get("email", "") or "—",
+            ])
+        elems.append(_table(
+            ["שם", "תפקיד", "טלפון", "אימייל"],
+            mgmt_rows, [4 * cm, 4 * cm, 3.5 * cm, 4.5 * cm],
+        ))
+    else:
+        elems.append(Paragraph(hebrew("אין צוות ניהולי רשום לפרויקט."), body))
+    elems.append(Spacer(1, 6 * mm))
+
     # Section 3: Workers (NO id_number)
-    elems.append(Paragraph(hebrew("2. רשימת עובדים"), h2))
+    elems.append(Paragraph(hebrew("3. רשימת עובדים"), h2))
     if workers:
         rows = []
         for w in workers:
@@ -294,7 +343,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 4: Trainings
-    elems.append(Paragraph(hebrew("3. הדרכות בטיחות"), h2))
+    elems.append(Paragraph(hebrew("4. הדרכות בטיחות"), h2))
     if trainings:
         rows = []
         for t in trainings:
@@ -314,7 +363,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(PageBreak())
 
     # Section 5: Open documents
-    elems.append(Paragraph(hebrew("4. ליקויי בטיחות פתוחים"), h2))
+    elems.append(Paragraph(hebrew("5. ליקויי בטיחות פתוחים"), h2))
     open_docs = [d for d in documents if d.get("status") in ("open", "in_progress")]
     if open_docs:
         rows = []
@@ -336,7 +385,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 6: Corrective tasks
-    elems.append(Paragraph(hebrew("5. משימות מתקנות"), h2))
+    elems.append(Paragraph(hebrew("6. משימות מתקנות"), h2))
     if tasks:
         rows = []
         for tk in tasks:
@@ -357,7 +406,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(PageBreak())
 
     # Section 7: Incidents
-    elems.append(Paragraph(hebrew("6. אירועי בטיחות"), h2))
+    elems.append(Paragraph(hebrew("7. אירועי בטיחות"), h2))
     if incidents:
         rows = []
         for inc in incidents:
@@ -378,7 +427,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     elems.append(Spacer(1, 6 * mm))
 
     # Section 8: Statistical summary
-    elems.append(Paragraph(hebrew("7. סיכום סטטיסטי"), h2))
+    elems.append(Paragraph(hebrew("8. סיכום סטטיסטי"), h2))
     by_category = {}
     for d in documents:
         cat = d.get("category", "other")
@@ -402,8 +451,13 @@ async def generate_safety_register(db, project_id: str) -> bytes:
         elems.append(Paragraph(hebrew(line), body))
     elems.append(Spacer(1, 6 * mm))
 
-    # Section 8b: Audit trail (last 30 days)
-    elems.append(Paragraph(hebrew("8. תיעוד פעולות (30 ימים אחרונים)"), h2))
+    # Section 8b: Audit trail (last 30 days) — sub-block under section 8 (Part 3a)
+    sub_h = ParagraphStyle(
+        "RH3", fontName="Rubik-Bold", fontSize=11,
+        alignment=TA_RIGHT, textColor=SLATE_700, leading=15,
+        spaceBefore=6, spaceAfter=3,
+    )
+    elems.append(Paragraph(hebrew("תיעוד פעולות (30 ימים אחרונים)"), sub_h))
     cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     audit_events = await db.audit_events.find(
         {"entity_type": {"$regex": "^safety"}, "created_at": {"$gte": cutoff_30d},
