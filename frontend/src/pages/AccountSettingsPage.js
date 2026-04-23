@@ -444,12 +444,12 @@ const AccountSettingsPage = () => {
   }, [showReminderPrefs]);
 
   useEffect(() => {
-    if (location.hash === '#language') {
-      setTimeout(() => {
-        const el = document.getElementById('language');
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 100);
-    }
+    if (location.hash !== '#language') return;
+    const timer = setTimeout(() => {
+      const el = document.getElementById('language');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+    return () => clearTimeout(timer);
   }, [location.hash]);
 
   const updateReminderPref = async (type, field, value) => {
