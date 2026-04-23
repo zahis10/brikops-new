@@ -1,2040 +1,2265 @@
-=== TASK #408 (was #405) — SAFETY PHASE 1 PART 5 ===
-=== Frontend Polish: Filter + Bulk + Export ===
+=== TASK #408a — Safety Phase 1 Part 5a Patch (loading gate + polish) ===
 
-=== Files changed ===
- frontend/src/i18n/he.json            |  32 +-
- frontend/src/pages/SafetyHomePage.js | 285 ++++++++++--
- frontend/src/services/api.js         |  34 ++
- review.txt                           | 822 +----------------------------------
- 4 files changed, 326 insertions(+), 847 deletions(-)
+ frontend/src/components/safety/SafetyExportMenu.js |   10 +-
+ frontend/src/pages/SafetyHomePage.js               |   82 +-
+ review.txt                                         | 2040 +-------------------
+ 3 files changed, 61 insertions(+), 2071 deletions(-)
 
-=== New untracked files ===
-frontend/src/components/safety/SafetyBulkActionBar.js
-frontend/src/components/safety/SafetyExportMenu.js
-frontend/src/components/safety/SafetyFilterSheet.js
-
-=== Verify checks ===
-(a) no @/ alias in new files: 0 (expect 0)
-(b) backend untouched: 0 (expect 0)
-(c) deps untouched: 0 (expect 0)
-(d) safety components: 5 (expect 5)
-(e) safety i18n keys: 73 (expect 73 = 43 + 30)
-(f) bulk bar tab-scoped: 1 (expect 1)
-(g) selection cleared on tab leave: 1 (expect 1)
-(h) Promise.allSettled used: 1 (expect 1)
-(i) AlertDialog (not window.confirm): 0 (expect 0); 16 AlertDialog refs
-
-=== UNIFIED DIFF (excluding untracked) ===
-diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
-index 3ecb53c..44047d8 100644
---- a/frontend/src/i18n/he.json
-+++ b/frontend/src/i18n/he.json
-@@ -651,6 +651,36 @@
-     "minutes_short": "דק׳",
-     "no_location": "ללא מיקום",
-     "no_profession": "ללא מקצוע",
--    "coming_soon": "בקרוב"
-+    "coming_soon": "בקרוב",
-+    "filter_title": "סינון ליקויים",
-+    "filter_category": "קטגוריה",
-+    "filter_severity": "חומרה",
-+    "filter_status": "סטטוס",
-+    "filter_company": "חברה",
-+    "filter_assignee": "אחראי",
-+    "filter_reporter": "מדווח",
-+    "filter_date_from": "מתאריך",
-+    "filter_date_to": "עד תאריך",
-+    "filter_apply": "החל",
-+    "filter_clear": "נקה",
-+    "filter_all": "הכל",
-+    "filter_none": "ללא סינון פעיל",
-+    "filter_active_count": "פילטרים פעילים",
-+    "no_results_filtered": "לא נמצאו ליקויים המתאימים לסינון",
-+    "export_label": "ייצוא",
-+    "export_excel": "ייצוא Excel כללי",
-+    "export_filtered": "ייצוא לפי סינון",
-+    "export_pdf": "פנקס כללי PDF",
-+    "export_no_filter": "אין סינון פעיל",
-+    "export_in_progress": "מייצא...",
-+    "export_success": "הקובץ הורד בהצלחה",
-+    "export_error": "שגיאה בייצוא — נסה שוב",
-+    "bulk_select_all": "בחר הכל",
-+    "bulk_selection": "בחירה",
-+    "bulk_delete": "מחק",
-+    "bulk_clear": "נקה",
-+    "bulk_confirm": "למחוק {{count}} ליקויים?",
-+    "bulk_partial_failure": "{{failed}} מתוך {{total}} לא נמחקו",
-+    "bulk_success": "{{count}} ליקויים נמחקו"
-   }
- }
+diff --git a/frontend/src/components/safety/SafetyExportMenu.js b/frontend/src/components/safety/SafetyExportMenu.js
+index 1391783..5d32c01 100644
+--- a/frontend/src/components/safety/SafetyExportMenu.js
++++ b/frontend/src/components/safety/SafetyExportMenu.js
+@@ -16,7 +16,15 @@ function yyyymmdd() {
+ function downloadBlob(response, fallbackName) {
+   const disp = response?.headers?.['content-disposition'] || '';
+   const match = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+-  const filename = match ? decodeURIComponent(match[1]) : fallbackName;
++  let filename = fallbackName;
++  if (match) {
++    try {
++      filename = decodeURIComponent(match[1]);
++    } catch (e) {
++      // Malformed % in header — use the raw captured group as-is.
++      filename = match[1];
++    }
++  }
+   const url = window.URL.createObjectURL(new Blob([response.data]));
+   const a = document.createElement('a');
+   a.href = url;
 diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
-index 96918a2..0457d06 100644
+index 0457d06..39b88d1 100644
 --- a/frontend/src/pages/SafetyHomePage.js
 +++ b/frontend/src/pages/SafetyHomePage.js
-@@ -2,15 +2,22 @@ import React, { useEffect, useState } from 'react';
+@@ -1,4 +1,4 @@
+-import React, { useEffect, useState } from 'react';
++import React, { useEffect, useRef, useState } from 'react';
  import { useParams, useNavigate } from 'react-router-dom';
  import {
    ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
--  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
-+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter,
- } from 'lucide-react';
- import { toast } from 'sonner';
- import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
- import { Card } from '../components/ui/card';
- import { Badge } from '../components/ui/badge';
--import { safetyService, projectService } from '../services/api';
-+import {
-+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-+} from '../components/ui/alert-dialog';
-+import { safetyService, projectService, projectCompanyService } from '../services/api';
- import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
- import SafetyKpiCard from '../components/safety/SafetyKpiCard';
-+import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
-+import SafetyExportMenu from '../components/safety/SafetyExportMenu';
-+import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
+@@ -51,6 +51,10 @@ export default function SafetyHomePage() {
+   const [companies, setCompanies] = useState([]);
+   const [users, setUsers] = useState([]);
  
- const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
- const SEVERITY_COLOR = {
-@@ -35,6 +42,16 @@ export default function SafetyHomePage() {
-   const [loading, setLoading] = useState(true);
-   const [activeTab, setActiveTab] = useState('documents');
- 
-+  // Part 5 — filter / selection / bulk state
-+  const [filter, setFilter] = useState(EMPTY_FILTER);
-+  const [filterOpen, setFilterOpen] = useState(false);
-+  const [selectedIds, setSelectedIds] = useState(new Set());
-+  const [bulkDeleting, setBulkDeleting] = useState(false);
-+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-+  const [companies, setCompanies] = useState([]);
-+  const [users, setUsers] = useState([]);
++  // Skip the filter useEffect's initial run — main useEffect's Promise.all
++  // already fetched documents. The ref flips to false after the first real run.
++  const filterFetchFirstRun = useRef(true);
 +
-+  // Initial load: project + safety data + best-effort companies/memberships.
+   // Initial load: project + safety data + best-effort companies/memberships.
    useEffect(() => {
      let cancelled = false;
-     (async () => {
-@@ -74,6 +91,34 @@ export default function SafetyHomePage() {
+@@ -91,34 +95,6 @@ export default function SafetyHomePage() {
          setDocs(docsResp || { items: [], total: 0 });
          setTasks(tasksResp || { items: [], total: 0 });
          setWorkers(workersResp || { items: [], total: 0 });
-+
-+        // Best-effort fetch for filter dropdowns. Failures are silent —
-+        // dropdowns degrade to a disabled "טוען..." option.
-+        const [membershipsResp, companiesResp] = await Promise.all([
-+          projectService.getMemberships(projectId).catch(() => null),
-+          projectCompanyService.list(projectId).catch(() => null),
-+        ]);
-+        if (cancelled) return;
-+
-+        const memberList = Array.isArray(membershipsResp)
-+          ? membershipsResp
-+          : (membershipsResp?.items || []);
-+        const userMap = new Map();
-+        memberList.forEach((m) => {
-+          const uid = m.user_id || m.id;
-+          if (uid && !userMap.has(uid)) {
-+            userMap.set(uid, {
-+              id: uid,
-+              name: m.user_name || m.name || m.full_name || m.email || uid,
-+            });
-+          }
-+        });
-+        setUsers(Array.from(userMap.values()));
-+
-+        const companyList = Array.isArray(companiesResp)
-+          ? companiesResp
-+          : (companiesResp?.items || []);
-+        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
+-
+-        // Best-effort fetch for filter dropdowns. Failures are silent —
+-        // dropdowns degrade to a disabled "טוען..." option.
+-        const [membershipsResp, companiesResp] = await Promise.all([
+-          projectService.getMemberships(projectId).catch(() => null),
+-          projectCompanyService.list(projectId).catch(() => null),
+-        ]);
+-        if (cancelled) return;
+-
+-        const memberList = Array.isArray(membershipsResp)
+-          ? membershipsResp
+-          : (membershipsResp?.items || []);
+-        const userMap = new Map();
+-        memberList.forEach((m) => {
+-          const uid = m.user_id || m.id;
+-          if (uid && !userMap.has(uid)) {
+-            userMap.set(uid, {
+-              id: uid,
+-              name: m.user_name || m.name || m.full_name || m.email || uid,
+-            });
+-          }
+-        });
+-        setUsers(Array.from(userMap.values()));
+-
+-        const companyList = Array.isArray(companiesResp)
+-          ? companiesResp
+-          : (companiesResp?.items || []);
+-        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
        } catch (err) {
          if (!cancelled) toast.error('שגיאה בטעינת נתונים');
        } finally {
-@@ -83,6 +128,32 @@ export default function SafetyHomePage() {
+@@ -128,10 +104,54 @@ export default function SafetyHomePage() {
      return () => { cancelled = true; };
    }, [projectId]);
  
-+  // Refetch documents whenever the filter changes (skipped before initial load
-+  // and when the page is in a forbidden / flag-off / loading terminal state).
-+  useEffect(() => {
-+    if (!projectId || loading || flagOff || forbidden) return;
+-  // Refetch documents whenever the filter changes (skipped before initial load
+-  // and when the page is in a forbidden / flag-off / loading terminal state).
++  // Best-effort enrichment for filter dropdowns — runs once the page is
++  // interactive, NOT during the loading gate. Dropdowns render "טוען..."
++  // until this completes. Failures are silent.
+   useEffect(() => {
+     if (!projectId || loading || flagOff || forbidden) return;
 +    let cancelled = false;
 +    (async () => {
-+      try {
-+        const params = { limit: 50 };
-+        Object.entries(filter).forEach(([k, v]) => {
-+          if (v != null && v !== '') params[k] = v;
-+        });
-+        const resp = await safetyService.listDocuments(projectId, params);
-+        if (!cancelled) setDocs(resp || { items: [], total: 0 });
-+      } catch (err) {
-+        if (!cancelled) toast.error('שגיאה בטעינת ליקויים מסוננים');
-+      }
++      const [membershipsResp, companiesResp] = await Promise.all([
++        projectService.getMemberships(projectId).catch(() => null),
++        projectCompanyService.list(projectId).catch(() => null),
++      ]);
++      if (cancelled) return;
++
++      const memberList = Array.isArray(membershipsResp)
++        ? membershipsResp
++        : (membershipsResp?.items || []);
++      const userMap = new Map();
++      memberList.forEach((m) => {
++        const uid = m.user_id || m.id;
++        if (uid && !userMap.has(uid)) {
++          userMap.set(uid, {
++            id: uid,
++            name: m.user_name || m.name || m.full_name || m.email || uid,
++          });
++        }
++      });
++      setUsers(Array.from(userMap.values()));
++
++      const companyList = Array.isArray(companiesResp)
++        ? companiesResp
++        : (companiesResp?.items || []);
++      setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
 +    })();
 +    return () => { cancelled = true; };
-+  }, [projectId, filter, loading, flagOff, forbidden]);
++  }, [projectId, loading, flagOff, forbidden]);
 +
-+  // Clear selection whenever the filter changes or the active tab leaves documents.
-+  useEffect(() => { setSelectedIds(new Set()); }, [filter]);
++  // Refetch documents whenever the filter changes. Skipped on the first run
++  // (main useEffect's Promise.all already fetched documents with no filter)
++  // and on forbidden / flag-off / loading terminal states.
 +  useEffect(() => {
-+    if (activeTab !== 'documents') setSelectedIds(new Set());
-+  }, [activeTab]);
++    if (!projectId || loading || flagOff || forbidden) return;
 +
-   if (loading) return <SafetySkeleton />;
-   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
-   if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
-@@ -102,9 +173,53 @@ export default function SafetyHomePage() {
-   const incidentsTotal = b.incidents_last_90d?.total ?? 0;
-   const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
- 
-+  const activeFilterCount = countActiveFilters(filter);
-+  const hasActiveFilter = activeFilterCount > 0;
-+
-+  const docItems = docs.items || [];
-+  const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
-+
-+  const toggleOne = (id) => {
-+    setSelectedIds((prev) => {
-+      const next = new Set(prev);
-+      if (next.has(id)) next.delete(id); else next.add(id);
-+      return next;
-+    });
-+  };
-+
-+  const toggleSelectAll = () => {
-+    if (allSelected) {
-+      setSelectedIds(new Set());
-+    } else {
-+      setSelectedIds(new Set(docItems.map((d) => d.id)));
++    // First run after the page finishes loading: skip — docs already fetched.
++    if (filterFetchFirstRun.current) {
++      filterFetchFirstRun.current = false;
++      return;
 +    }
-+  };
 +
-+  const clearFilter = () => setFilter(EMPTY_FILTER);
-+
-+  const handleBulkDelete = async () => {
-+    if (selectedIds.size === 0) return;
-+    setBulkConfirmOpen(false);
-+    setBulkDeleting(true);
-+    const ids = Array.from(selectedIds);
-+    const results = await Promise.allSettled(
-+      ids.map((id) => safetyService.deleteDocument(projectId, id))
-+    );
-+    const failed = results.filter((r) => r.status === 'rejected').length;
-+    setBulkDeleting(false);
-+    setSelectedIds(new Set());
-+    if (failed > 0) {
-+      toast.error(`${failed} מתוך ${ids.length} לא נמחקו`);
-+    } else {
-+      toast.success(`${ids.length} ליקויים נמחקו`);
-+    }
-+    // Re-trigger the documents refetch effect with the same filter object.
-+    setFilter((f) => ({ ...f }));
-+  };
-+
-   return (
-     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
--      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
-+      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
-         <button
-           onClick={() => navigate(`/projects/${projectId}/dashboard`)}
-           className="p-2 rounded-lg hover:bg-slate-100"
-@@ -117,8 +232,31 @@ export default function SafetyHomePage() {
-           <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
-           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
-         </div>
-+
-+        <SafetyExportMenu
-+          projectId={projectId}
-+          currentFilter={filter}
-+          hasActiveFilter={hasActiveFilter}
-+        />
-+
-+        <button
-+          type="button"
-+          onClick={() => setFilterOpen(true)}
-+          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
-+        >
-+          <Filter className="w-4 h-4" />
-+          סינון
-+          {activeFilterCount > 0 && (
-+            <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
-+              {activeFilterCount}
-+            </span>
-+          )}
-+        </button>
-+
-         {cacheAge > 0 && (
--          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
-+          <p className="hidden sm:block text-[11px] text-slate-400 ml-1">
-+            עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳
-+          </p>
-         )}
-       </div>
- 
-@@ -207,7 +345,15 @@ export default function SafetyHomePage() {
-             </TabsList>
- 
-             <TabsContent value="documents" className="p-0 m-0">
--              <DocumentsList items={docs.items} />
-+              <DocumentsList
-+                items={docItems}
-+                selectedIds={selectedIds}
-+                onToggle={toggleOne}
-+                onSelectAll={toggleSelectAll}
-+                allSelected={allSelected}
-+                hasActiveFilter={hasActiveFilter}
-+                onClearFilter={clearFilter}
-+              />
-             </TabsContent>
-             <TabsContent value="tasks" className="p-0 m-0">
-               <TasksList items={tasks.items} />
-@@ -218,6 +364,45 @@ export default function SafetyHomePage() {
-           </Tabs>
-         </Card>
-       </div>
-+
-+      <SafetyFilterSheet
-+        open={filterOpen}
-+        onOpenChange={setFilterOpen}
-+        value={filter}
-+        onApply={(next) => { setFilter(next); setFilterOpen(false); }}
-+        onClear={clearFilter}
-+        companies={companies}
-+        users={users}
-+      />
-+
-+      {activeTab === 'documents' && selectedIds.size > 0 && (
-+        <SafetyBulkActionBar
-+          count={selectedIds.size}
-+          onDelete={() => setBulkConfirmOpen(true)}
-+          onClear={() => setSelectedIds(new Set())}
-+          deleting={bulkDeleting}
-+        />
-+      )}
-+
-+      <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
-+        <AlertDialogContent dir="rtl">
-+          <AlertDialogHeader>
-+            <AlertDialogTitle>מחיקת ליקויים</AlertDialogTitle>
-+            <AlertDialogDescription>
-+              האם למחוק {selectedIds.size} ליקויים נבחרים? לא ניתן לבטל את הפעולה.
-+            </AlertDialogDescription>
-+          </AlertDialogHeader>
-+          <AlertDialogFooter>
-+            <AlertDialogCancel>ביטול</AlertDialogCancel>
-+            <AlertDialogAction
-+              onClick={handleBulkDelete}
-+              className="bg-red-600 hover:bg-red-700 text-white"
-+            >
-+              מחק
-+            </AlertDialogAction>
-+          </AlertDialogFooter>
-+        </AlertDialogContent>
-+      </AlertDialog>
-     </div>
-   );
- }
-@@ -239,30 +424,76 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
-   );
- }
- 
--function DocumentsList({ items }) {
--  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
-+function DocumentsList({
-+  items, selectedIds, onToggle, onSelectAll, allSelected,
-+  hasActiveFilter, onClearFilter,
-+}) {
-+  if (!items?.length) {
-+    return (
-+      <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-+        <ShieldAlert className="w-10 h-10 mb-2" />
-+        <p className="text-sm font-medium">
-+          {hasActiveFilter ? 'לא נמצאו ליקויים המתאימים לסינון' : 'אין ליקויים פתוחים'}
-+        </p>
-+        {hasActiveFilter && (
-+          <button
-+            type="button"
-+            onClick={onClearFilter}
-+            className="mt-3 text-sm text-blue-600 hover:underline"
-+          >
-+            נקה סינון
-+          </button>
-+        )}
-+      </div>
-+    );
-+  }
-   return (
--    <ul className="divide-y divide-slate-100">
--      {items.map((d) => (
--        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
--          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
--            {SEVERITY_HE[d.severity] || '—'}
--          </Badge>
--          <div className="flex-1 min-w-0">
--            <p className="font-medium text-slate-900 truncate">{d.title}</p>
--            <div className="flex items-center gap-2 mt-1 flex-wrap">
--              <Badge className="bg-slate-100 text-slate-700 font-normal">
--                {DOC_STATUS_HE[d.status] || d.status}
--              </Badge>
--              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
-+    <>
-+      <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center gap-3">
-+        <input
-+          type="checkbox"
-+          aria-label="בחר הכל"
-+          checked={allSelected}
-+          onChange={onSelectAll}
-+          className="w-5 h-5 cursor-pointer accent-blue-600"
-+        />
-+        <span className="text-xs text-slate-600">בחר הכל</span>
-+        {selectedIds.size > 0 && (
-+          <span className="text-xs text-slate-500 mr-auto">
-+            נבחרו {selectedIds.size} מתוך {items.length}
-+          </span>
-+        )}
-+      </div>
-+      <ul className="divide-y divide-slate-100">
-+        {items.map((d) => (
-+          <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
-+            <input
-+              type="checkbox"
-+              aria-label={`בחר ליקוי ${d.title || ''}`}
-+              checked={selectedIds.has(d.id)}
-+              onChange={(e) => { e.stopPropagation(); onToggle(d.id); }}
-+              onClick={(e) => e.stopPropagation()}
-+              className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
-+            />
-+            <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
-+              {SEVERITY_HE[d.severity] || '—'}
-+            </Badge>
-+            <div className="flex-1 min-w-0">
-+              <p className="font-medium text-slate-900 truncate">{d.title}</p>
-+              <div className="flex items-center gap-2 mt-1 flex-wrap">
-+                <Badge className="bg-slate-100 text-slate-700 font-normal">
-+                  {DOC_STATUS_HE[d.status] || d.status}
-+                </Badge>
-+                <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
-+              </div>
-             </div>
--          </div>
--          <time className="text-xs text-slate-400 shrink-0">
--            {(d.found_at || '').slice(0, 10)}
--          </time>
--        </li>
--      ))}
--    </ul>
-+            <time className="text-xs text-slate-400 shrink-0">
-+              {(d.found_at || '').slice(0, 10)}
-+            </time>
-+          </li>
-+        ))}
-+      </ul>
-+    </>
-   );
- }
- 
-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-index f29b4aa..0421de8 100644
---- a/frontend/src/services/api.js
-+++ b/frontend/src/services/api.js
-@@ -221,6 +221,40 @@ export const safetyService = {
-     const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
-     return response.data;
-   },
-+
-+  // ---- exports (binary blob) + single-doc delete ----
-+
-+  async exportExcel(projectId) {
-+    const response = await axios.get(
-+      `${API}/safety/${projectId}/export/excel`,
-+      { headers: getAuthHeader(), responseType: 'blob' }
-+    );
-+    return response;
-+  },
-+
-+  async exportFiltered(projectId, params = {}) {
-+    const response = await axios.get(
-+      `${API}/safety/${projectId}/export/filtered`,
-+      { headers: getAuthHeader(), responseType: 'blob', params }
-+    );
-+    return response;
-+  },
-+
-+  async exportPdfRegister(projectId) {
-+    const response = await axios.get(
-+      `${API}/safety/${projectId}/export/pdf-register`,
-+      { headers: getAuthHeader(), responseType: 'blob' }
-+    );
-+    return response;
-+  },
-+
-+  async deleteDocument(projectId, documentId) {
-+    const response = await axios.delete(
-+      `${API}/safety/${projectId}/documents/${documentId}`,
-+      { headers: getAuthHeader() }
-+    );
-+    return response.data;
-+  },
- };
- 
- export const buildingService = {
+     let cancelled = false;
+     (async () => {
+       try {
 diff --git a/review.txt b/review.txt
-index 121c88b..3b2096d 100644
+index 85bf42c..c799e30 100644
 --- a/review.txt
 +++ b/review.txt
-@@ -1,820 +1,415 @@
--=== TASK #404a — SAFETY PHASE 1 PART 4a (PATCH) ===
--=== Role guard + code cleanup ===
-+=== TASK #408 (was #405) — SAFETY PHASE 1 PART 5 ===
-+=== Frontend Polish: Filter + Bulk + Export ===
- 
--=== git diff --stat ===
-- frontend/src/App.js                  |   2 +-
-- frontend/src/pages/SafetyHomePage.js |  15 +-
-- review.txt                           | 699 +----------------------------------
-- 3 files changed, 9 insertions(+), 707 deletions(-)
-+=== Files changed ===
-+ frontend/src/i18n/he.json            |  32 +-
-+ frontend/src/pages/SafetyHomePage.js | 285 ++++++++++--
-+ frontend/src/services/api.js         |  34 ++
-+ review.txt                           | 822 +----------------------------------
-+ 4 files changed, 326 insertions(+), 847 deletions(-)
- 
--=== VERIFY OUTPUT ===
--(a) allowedRoles on safety route:
--            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
-+=== New untracked files ===
-+frontend/src/components/safety/SafetyBulkActionBar.js
-+frontend/src/components/safety/SafetyExportMenu.js
-+frontend/src/components/safety/SafetyFilterSheet.js
- 
--(b) no incidents state/setIncidents/eslint-disable: (empty = pass)
--  (none — pass)
-+=== Verify checks ===
-+(a) no @/ alias in new files: 0 (expect 0)
-+(b) backend untouched: 0 (expect 0)
-+(c) deps untouched: 0 (expect 0)
-+(d) safety components: 5 (expect 5)
-+(e) safety i18n keys: 73 (expect 73 = 43 + 30)
-+(f) bulk bar tab-scoped: 1 (expect 1)
-+(g) selection cleared on tab leave: 1 (expect 1)
-+(h) Promise.allSettled used: 1 (expect 1)
-+(i) AlertDialog (not window.confirm): 0 (expect 0); 16 AlertDialog refs
- 
--(c) no listIncidents on Home page: (empty = pass)
--  (none — pass)
+@@ -1,2040 +1,99 @@
+-=== TASK #408 (was #405) — SAFETY PHASE 1 PART 5 ===
+-=== Frontend Polish: Filter + Bulk + Export ===
 -
--(d) listIncidents still exported from api.js:
--212:  async listIncidents(projectId, params = {}) {
+-=== Files changed ===
+- frontend/src/i18n/he.json            |  32 +-
+- frontend/src/pages/SafetyHomePage.js | 285 ++++++++++--
+- frontend/src/services/api.js         |  34 ++
+- review.txt                           | 822 +----------------------------------
+- 4 files changed, 326 insertions(+), 847 deletions(-)
 -
--(e) no numeric severity keys: (empty = pass)
--  (none — pass)
+-=== New untracked files ===
+-frontend/src/components/safety/SafetyBulkActionBar.js
+-frontend/src/components/safety/SafetyExportMenu.js
+-frontend/src/components/safety/SafetyFilterSheet.js
 -
--=== FULL UNIFIED DIFF ===
--diff --git a/frontend/src/App.js b/frontend/src/App.js
--index e4634b6..824ce38 100644
----- a/frontend/src/App.js
--+++ b/frontend/src/App.js
--@@ -324,7 +324,7 @@ const AppRoutes = () => {
--         <Route
--           path="/projects/:projectId/safety"
--           element={
---            <ProtectedRoute>
--+            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
--               <SafetyHomePage />
--             </ProtectedRoute>
--           }
-+=== UNIFIED DIFF (excluding untracked) ===
-+diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
-+index 3ecb53c..44047d8 100644
-+--- a/frontend/src/i18n/he.json
-++++ b/frontend/src/i18n/he.json
-+@@ -651,6 +651,36 @@
-+     "minutes_short": "דק׳",
-+     "no_location": "ללא מיקום",
-+     "no_profession": "ללא מקצוע",
-+-    "coming_soon": "בקרוב"
-++    "coming_soon": "בקרוב",
-++    "filter_title": "סינון ליקויים",
-++    "filter_category": "קטגוריה",
-++    "filter_severity": "חומרה",
-++    "filter_status": "סטטוס",
-++    "filter_company": "חברה",
-++    "filter_assignee": "אחראי",
-++    "filter_reporter": "מדווח",
-++    "filter_date_from": "מתאריך",
-++    "filter_date_to": "עד תאריך",
-++    "filter_apply": "החל",
-++    "filter_clear": "נקה",
-++    "filter_all": "הכל",
-++    "filter_none": "ללא סינון פעיל",
-++    "filter_active_count": "פילטרים פעילים",
-++    "no_results_filtered": "לא נמצאו ליקויים המתאימים לסינון",
-++    "export_label": "ייצוא",
-++    "export_excel": "ייצוא Excel כללי",
-++    "export_filtered": "ייצוא לפי סינון",
-++    "export_pdf": "פנקס כללי PDF",
-++    "export_no_filter": "אין סינון פעיל",
-++    "export_in_progress": "מייצא...",
-++    "export_success": "הקובץ הורד בהצלחה",
-++    "export_error": "שגיאה בייצוא — נסה שוב",
-++    "bulk_select_all": "בחר הכל",
-++    "bulk_selection": "בחירה",
-++    "bulk_delete": "מחק",
-++    "bulk_clear": "נקה",
-++    "bulk_confirm": "למחוק {{count}} ליקויים?",
-++    "bulk_partial_failure": "{{failed}} מתוך {{total}} לא נמחקו",
-++    "bulk_success": "{{count}} ליקויים נמחקו"
-+   }
-+ }
+-=== Verify checks ===
+-(a) no @/ alias in new files: 0 (expect 0)
+-(b) backend untouched: 0 (expect 0)
+-(c) deps untouched: 0 (expect 0)
+-(d) safety components: 5 (expect 5)
+-(e) safety i18n keys: 73 (expect 73 = 43 + 30)
+-(f) bulk bar tab-scoped: 1 (expect 1)
+-(g) selection cleared on tab leave: 1 (expect 1)
+-(h) Promise.allSettled used: 1 (expect 1)
+-(i) AlertDialog (not window.confirm): 0 (expect 0); 16 AlertDialog refs
+-
+-=== UNIFIED DIFF (excluding untracked) ===
+-diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
+-index 3ecb53c..44047d8 100644
+---- a/frontend/src/i18n/he.json
+-+++ b/frontend/src/i18n/he.json
+-@@ -651,6 +651,36 @@
+-     "minutes_short": "דק׳",
+-     "no_location": "ללא מיקום",
+-     "no_profession": "ללא מקצוע",
+--    "coming_soon": "בקרוב"
+-+    "coming_soon": "בקרוב",
+-+    "filter_title": "סינון ליקויים",
+-+    "filter_category": "קטגוריה",
+-+    "filter_severity": "חומרה",
+-+    "filter_status": "סטטוס",
+-+    "filter_company": "חברה",
+-+    "filter_assignee": "אחראי",
+-+    "filter_reporter": "מדווח",
+-+    "filter_date_from": "מתאריך",
+-+    "filter_date_to": "עד תאריך",
+-+    "filter_apply": "החל",
+-+    "filter_clear": "נקה",
+-+    "filter_all": "הכל",
+-+    "filter_none": "ללא סינון פעיל",
+-+    "filter_active_count": "פילטרים פעילים",
+-+    "no_results_filtered": "לא נמצאו ליקויים המתאימים לסינון",
+-+    "export_label": "ייצוא",
+-+    "export_excel": "ייצוא Excel כללי",
+-+    "export_filtered": "ייצוא לפי סינון",
+-+    "export_pdf": "פנקס כללי PDF",
+-+    "export_no_filter": "אין סינון פעיל",
+-+    "export_in_progress": "מייצא...",
+-+    "export_success": "הקובץ הורד בהצלחה",
+-+    "export_error": "שגיאה בייצוא — נסה שוב",
+-+    "bulk_select_all": "בחר הכל",
+-+    "bulk_selection": "בחירה",
+-+    "bulk_delete": "מחק",
+-+    "bulk_clear": "נקה",
+-+    "bulk_confirm": "למחוק {{count}} ליקויים?",
+-+    "bulk_partial_failure": "{{failed}} מתוך {{total}} לא נמחקו",
+-+    "bulk_success": "{{count}} ליקויים נמחקו"
+-   }
+- }
++=== TASK #408a — Safety Phase 1 Part 5a Patch (loading gate + polish) ===
++
++ frontend/src/components/safety/SafetyExportMenu.js |   10 +-
++ frontend/src/pages/SafetyHomePage.js               |   82 +-
++ review.txt                                         | 2040 +-------------------
++ 3 files changed, 61 insertions(+), 2071 deletions(-)
++
++diff --git a/frontend/src/components/safety/SafetyExportMenu.js b/frontend/src/components/safety/SafetyExportMenu.js
++index 1391783..5d32c01 100644
++--- a/frontend/src/components/safety/SafetyExportMenu.js
+++++ b/frontend/src/components/safety/SafetyExportMenu.js
++@@ -16,7 +16,15 @@ function yyyymmdd() {
++ function downloadBlob(response, fallbackName) {
++   const disp = response?.headers?.['content-disposition'] || '';
++   const match = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
++-  const filename = match ? decodeURIComponent(match[1]) : fallbackName;
+++  let filename = fallbackName;
+++  if (match) {
+++    try {
+++      filename = decodeURIComponent(match[1]);
+++    } catch (e) {
+++      // Malformed % in header — use the raw captured group as-is.
+++      filename = match[1];
+++    }
+++  }
++   const url = window.URL.createObjectURL(new Blob([response.data]));
++   const a = document.createElement('a');
++   a.href = url;
  diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
--index 9ef4a7f..96918a2 100644
-+index 96918a2..0457d06 100644
+-index 96918a2..0457d06 100644
++index 0457d06..39b88d1 100644
  --- a/frontend/src/pages/SafetyHomePage.js
  +++ b/frontend/src/pages/SafetyHomePage.js
--@@ -12,10 +12,11 @@ import { safetyService, projectService } from '../services/api';
-+@@ -2,15 +2,22 @@ import React, { useEffect, useState } from 'react';
-+ import { useParams, useNavigate } from 'react-router-dom';
-+ import {
-+   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-+-  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
-++  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter,
-+ } from 'lucide-react';
-+ import { toast } from 'sonner';
-+ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
-+ import { Card } from '../components/ui/card';
-+ import { Badge } from '../components/ui/badge';
-+-import { safetyService, projectService } from '../services/api';
-++import {
-++  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-++  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-++} from '../components/ui/alert-dialog';
-++import { safetyService, projectService, projectCompanyService } from '../services/api';
-  import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
-  import SafetyKpiCard from '../components/safety/SafetyKpiCard';
-++import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
-++import SafetyExportMenu from '../components/safety/SafetyExportMenu';
-++import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
-  
---const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה', 1: 'נמוכה', 2: 'בינונית', 3: 'גבוהה' };
--+const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
-+ const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
-  const SEVERITY_COLOR = {
---  '1': 'bg-blue-100 text-blue-800', '2': 'bg-amber-100 text-amber-800', '3': 'bg-red-100 text-red-800',
---  1: 'bg-blue-100 text-blue-800', 2: 'bg-amber-100 text-amber-800', 3: 'bg-red-100 text-red-800',
--+  '1': 'bg-blue-100 text-blue-800',
--+  '2': 'bg-amber-100 text-amber-800',
--+  '3': 'bg-red-100 text-red-800',
-- };
-- const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
-- const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
--@@ -29,8 +30,6 @@ export default function SafetyHomePage() {
--   const [docs, setDocs] = useState({ items: [], total: 0 });
--   const [tasks, setTasks] = useState({ items: [], total: 0 });
--   const [workers, setWorkers] = useState({ items: [], total: 0 });
---  // eslint-disable-next-line no-unused-vars
---  const [incidents, setIncidents] = useState({ items: [], total: 0 });
--   const [flagOff, setFlagOff] = useState(false);
--   const [forbidden, setForbidden] = useState(false);
-+@@ -35,6 +42,16 @@ export default function SafetyHomePage() {
-    const [loading, setLoading] = useState(true);
--@@ -49,16 +48,15 @@ export default function SafetyHomePage() {
--         if (cancelled) return;
--         if (proj) setProject(proj);
-+   const [activeTab, setActiveTab] = useState('documents');
-  
---        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
--+        const [scoreResp, docsResp, tasksResp, workersResp] = await Promise.all([
--           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
--           safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
--           safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
--           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
---          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
--         ]);
--         if (cancelled) return;
+-@@ -2,15 +2,22 @@ import React, { useEffect, useState } from 'react';
++@@ -1,4 +1,4 @@
++-import React, { useEffect, useState } from 'react';
+++import React, { useEffect, useRef, useState } from 'react';
+  import { useParams, useNavigate } from 'react-router-dom';
+  import {
+    ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
+--  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
+-+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter,
+- } from 'lucide-react';
+- import { toast } from 'sonner';
+- import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+- import { Card } from '../components/ui/card';
+- import { Badge } from '../components/ui/badge';
+--import { safetyService, projectService } from '../services/api';
+-+import {
+-+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+-+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+-+} from '../components/ui/alert-dialog';
+-+import { safetyService, projectService, projectCompanyService } from '../services/api';
+- import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
+- import SafetyKpiCard from '../components/safety/SafetyKpiCard';
+-+import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
+-+import SafetyExportMenu from '../components/safety/SafetyExportMenu';
+-+import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
 - 
---        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
--+        const responses = [scoreResp, docsResp, tasksResp, workersResp];
--         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
--         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
-- 
--@@ -76,7 +74,6 @@ export default function SafetyHomePage() {
-++  // Part 5 — filter / selection / bulk state
-++  const [filter, setFilter] = useState(EMPTY_FILTER);
-++  const [filterOpen, setFilterOpen] = useState(false);
-++  const [selectedIds, setSelectedIds] = useState(new Set());
-++  const [bulkDeleting, setBulkDeleting] = useState(false);
-++  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-++  const [companies, setCompanies] = useState([]);
-++  const [users, setUsers] = useState([]);
-++
-++  // Initial load: project + safety data + best-effort companies/memberships.
-+   useEffect(() => {
-+     let cancelled = false;
-+     (async () => {
-+@@ -74,6 +91,34 @@ export default function SafetyHomePage() {
+- const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
+- const SEVERITY_COLOR = {
+-@@ -35,6 +42,16 @@ export default function SafetyHomePage() {
+-   const [loading, setLoading] = useState(true);
+-   const [activeTab, setActiveTab] = useState('documents');
++@@ -51,6 +51,10 @@ export default function SafetyHomePage() {
++   const [companies, setCompanies] = useState([]);
++   const [users, setUsers] = useState([]);
+  
+-+  // Part 5 — filter / selection / bulk state
+-+  const [filter, setFilter] = useState(EMPTY_FILTER);
+-+  const [filterOpen, setFilterOpen] = useState(false);
+-+  const [selectedIds, setSelectedIds] = useState(new Set());
+-+  const [bulkDeleting, setBulkDeleting] = useState(false);
+-+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+-+  const [companies, setCompanies] = useState([]);
+-+  const [users, setUsers] = useState([]);
+++  // Skip the filter useEffect's initial run — main useEffect's Promise.all
+++  // already fetched documents. The ref flips to false after the first real run.
+++  const filterFetchFirstRun = useRef(true);
+ +
+-+  // Initial load: project + safety data + best-effort companies/memberships.
++   // Initial load: project + safety data + best-effort companies/memberships.
+    useEffect(() => {
+      let cancelled = false;
+-     (async () => {
+-@@ -74,6 +91,34 @@ export default function SafetyHomePage() {
++@@ -91,34 +95,6 @@ export default function SafetyHomePage() {
           setDocs(docsResp || { items: [], total: 0 });
           setTasks(tasksResp || { items: [], total: 0 });
           setWorkers(workersResp || { items: [], total: 0 });
---        setIncidents(incidentsResp || { items: [], total: 0 });
-++
-++        // Best-effort fetch for filter dropdowns. Failures are silent —
-++        // dropdowns degrade to a disabled "טוען..." option.
-++        const [membershipsResp, companiesResp] = await Promise.all([
-++          projectService.getMemberships(projectId).catch(() => null),
-++          projectCompanyService.list(projectId).catch(() => null),
-++        ]);
-++        if (cancelled) return;
-++
-++        const memberList = Array.isArray(membershipsResp)
-++          ? membershipsResp
-++          : (membershipsResp?.items || []);
-++        const userMap = new Map();
-++        memberList.forEach((m) => {
-++          const uid = m.user_id || m.id;
-++          if (uid && !userMap.has(uid)) {
-++            userMap.set(uid, {
-++              id: uid,
-++              name: m.user_name || m.name || m.full_name || m.email || uid,
-++            });
-++          }
-++        });
-++        setUsers(Array.from(userMap.values()));
-++
-++        const companyList = Array.isArray(companiesResp)
-++          ? companiesResp
-++          : (companiesResp?.items || []);
-++        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
+-+
+-+        // Best-effort fetch for filter dropdowns. Failures are silent —
+-+        // dropdowns degrade to a disabled "טוען..." option.
+-+        const [membershipsResp, companiesResp] = await Promise.all([
+-+          projectService.getMemberships(projectId).catch(() => null),
+-+          projectCompanyService.list(projectId).catch(() => null),
+-+        ]);
+-+        if (cancelled) return;
+-+
+-+        const memberList = Array.isArray(membershipsResp)
+-+          ? membershipsResp
+-+          : (membershipsResp?.items || []);
+-+        const userMap = new Map();
+-+        memberList.forEach((m) => {
+-+          const uid = m.user_id || m.id;
+-+          if (uid && !userMap.has(uid)) {
+-+            userMap.set(uid, {
+-+              id: uid,
+-+              name: m.user_name || m.name || m.full_name || m.email || uid,
+-+            });
+-+          }
+-+        });
+-+        setUsers(Array.from(userMap.values()));
+-+
+-+        const companyList = Array.isArray(companiesResp)
+-+          ? companiesResp
+-+          : (companiesResp?.items || []);
+-+        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
++-
++-        // Best-effort fetch for filter dropdowns. Failures are silent —
++-        // dropdowns degrade to a disabled "טוען..." option.
++-        const [membershipsResp, companiesResp] = await Promise.all([
++-          projectService.getMemberships(projectId).catch(() => null),
++-          projectCompanyService.list(projectId).catch(() => null),
++-        ]);
++-        if (cancelled) return;
++-
++-        const memberList = Array.isArray(membershipsResp)
++-          ? membershipsResp
++-          : (membershipsResp?.items || []);
++-        const userMap = new Map();
++-        memberList.forEach((m) => {
++-          const uid = m.user_id || m.id;
++-          if (uid && !userMap.has(uid)) {
++-            userMap.set(uid, {
++-              id: uid,
++-              name: m.user_name || m.name || m.full_name || m.email || uid,
++-            });
++-          }
++-        });
++-        setUsers(Array.from(userMap.values()));
++-
++-        const companyList = Array.isArray(companiesResp)
++-          ? companiesResp
++-          : (companiesResp?.items || []);
++-        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
         } catch (err) {
           if (!cancelled) toast.error('שגיאה בטעינת נתונים');
         } finally {
+-@@ -83,6 +128,32 @@ export default function SafetyHomePage() {
++@@ -128,10 +104,54 @@ export default function SafetyHomePage() {
+      return () => { cancelled = true; };
+    }, [projectId]);
+  
+-+  // Refetch documents whenever the filter changes (skipped before initial load
+-+  // and when the page is in a forbidden / flag-off / loading terminal state).
+-+  useEffect(() => {
+-+    if (!projectId || loading || flagOff || forbidden) return;
++-  // Refetch documents whenever the filter changes (skipped before initial load
++-  // and when the page is in a forbidden / flag-off / loading terminal state).
+++  // Best-effort enrichment for filter dropdowns — runs once the page is
+++  // interactive, NOT during the loading gate. Dropdowns render "טוען..."
+++  // until this completes. Failures are silent.
++   useEffect(() => {
++     if (!projectId || loading || flagOff || forbidden) return;
+ +    let cancelled = false;
+ +    (async () => {
+-+      try {
+-+        const params = { limit: 50 };
+-+        Object.entries(filter).forEach(([k, v]) => {
+-+          if (v != null && v !== '') params[k] = v;
+-+        });
+-+        const resp = await safetyService.listDocuments(projectId, params);
+-+        if (!cancelled) setDocs(resp || { items: [], total: 0 });
+-+      } catch (err) {
+-+        if (!cancelled) toast.error('שגיאה בטעינת ליקויים מסוננים');
+-+      }
+-+    })();
+-+    return () => { cancelled = true; };
+-+  }, [projectId, filter, loading, flagOff, forbidden]);
+-+
+-+  // Clear selection whenever the filter changes or the active tab leaves documents.
+-+  useEffect(() => { setSelectedIds(new Set()); }, [filter]);
+-+  useEffect(() => {
+-+    if (activeTab !== 'documents') setSelectedIds(new Set());
+-+  }, [activeTab]);
+-+
+-   if (loading) return <SafetySkeleton />;
+-   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+-   if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+-@@ -102,9 +173,53 @@ export default function SafetyHomePage() {
+-   const incidentsTotal = b.incidents_last_90d?.total ?? 0;
+-   const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
+- 
+-+  const activeFilterCount = countActiveFilters(filter);
+-+  const hasActiveFilter = activeFilterCount > 0;
+-+
+-+  const docItems = docs.items || [];
+-+  const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
+-+
+-+  const toggleOne = (id) => {
+-+    setSelectedIds((prev) => {
+-+      const next = new Set(prev);
+-+      if (next.has(id)) next.delete(id); else next.add(id);
+-+      return next;
+-+    });
+-+  };
+-+
+-+  const toggleSelectAll = () => {
+-+    if (allSelected) {
+-+      setSelectedIds(new Set());
+-+    } else {
+-+      setSelectedIds(new Set(docItems.map((d) => d.id)));
+-+    }
+-+  };
+-+
+-+  const clearFilter = () => setFilter(EMPTY_FILTER);
+-+
+-+  const handleBulkDelete = async () => {
+-+    if (selectedIds.size === 0) return;
+-+    setBulkConfirmOpen(false);
+-+    setBulkDeleting(true);
+-+    const ids = Array.from(selectedIds);
+-+    const results = await Promise.allSettled(
+-+      ids.map((id) => safetyService.deleteDocument(projectId, id))
+-+    );
+-+    const failed = results.filter((r) => r.status === 'rejected').length;
+-+    setBulkDeleting(false);
+-+    setSelectedIds(new Set());
+-+    if (failed > 0) {
+-+      toast.error(`${failed} מתוך ${ids.length} לא נמחקו`);
+-+    } else {
+-+      toast.success(`${ids.length} ליקויים נמחקו`);
+-+    }
+-+    // Re-trigger the documents refetch effect with the same filter object.
+-+    setFilter((f) => ({ ...f }));
+-+  };
+-+
+-   return (
+-     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
+--      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
+-+      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
+-         <button
+-           onClick={() => navigate(`/projects/${projectId}/dashboard`)}
+-           className="p-2 rounded-lg hover:bg-slate-100"
+-@@ -117,8 +232,31 @@ export default function SafetyHomePage() {
+-           <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
+-           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
+-         </div>
+-+
+-+        <SafetyExportMenu
+-+          projectId={projectId}
+-+          currentFilter={filter}
+-+          hasActiveFilter={hasActiveFilter}
+-+        />
+-+
+-+        <button
+-+          type="button"
+-+          onClick={() => setFilterOpen(true)}
+-+          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
+-+        >
+-+          <Filter className="w-4 h-4" />
+-+          סינון
+-+          {activeFilterCount > 0 && (
+-+            <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+-+              {activeFilterCount}
+-+            </span>
+-+          )}
+-+        </button>
+-+
+-         {cacheAge > 0 && (
+--          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
+-+          <p className="hidden sm:block text-[11px] text-slate-400 ml-1">
+-+            עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳
+-+          </p>
+-         )}
+-       </div>
+- 
+-@@ -207,7 +345,15 @@ export default function SafetyHomePage() {
+-             </TabsList>
+- 
+-             <TabsContent value="documents" className="p-0 m-0">
+--              <DocumentsList items={docs.items} />
+-+              <DocumentsList
+-+                items={docItems}
+-+                selectedIds={selectedIds}
+-+                onToggle={toggleOne}
+-+                onSelectAll={toggleSelectAll}
+-+                allSelected={allSelected}
+-+                hasActiveFilter={hasActiveFilter}
+-+                onClearFilter={clearFilter}
+-+              />
+-             </TabsContent>
+-             <TabsContent value="tasks" className="p-0 m-0">
+-               <TasksList items={tasks.items} />
+-@@ -218,6 +364,45 @@ export default function SafetyHomePage() {
+-           </Tabs>
+-         </Card>
+-       </div>
+-+
+-+      <SafetyFilterSheet
+-+        open={filterOpen}
+-+        onOpenChange={setFilterOpen}
+-+        value={filter}
+-+        onApply={(next) => { setFilter(next); setFilterOpen(false); }}
+-+        onClear={clearFilter}
+-+        companies={companies}
+-+        users={users}
+-+      />
+-+
+-+      {activeTab === 'documents' && selectedIds.size > 0 && (
+-+        <SafetyBulkActionBar
+-+          count={selectedIds.size}
+-+          onDelete={() => setBulkConfirmOpen(true)}
+-+          onClear={() => setSelectedIds(new Set())}
+-+          deleting={bulkDeleting}
+-+        />
+-+      )}
+-+
+-+      <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
+-+        <AlertDialogContent dir="rtl">
+-+          <AlertDialogHeader>
+-+            <AlertDialogTitle>מחיקת ליקויים</AlertDialogTitle>
+-+            <AlertDialogDescription>
+-+              האם למחוק {selectedIds.size} ליקויים נבחרים? לא ניתן לבטל את הפעולה.
+-+            </AlertDialogDescription>
+-+          </AlertDialogHeader>
+-+          <AlertDialogFooter>
+-+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+-+            <AlertDialogAction
+-+              onClick={handleBulkDelete}
+-+              className="bg-red-600 hover:bg-red-700 text-white"
+-+            >
+-+              מחק
+-+            </AlertDialogAction>
+-+          </AlertDialogFooter>
+-+        </AlertDialogContent>
+-+      </AlertDialog>
+-     </div>
+-   );
+- }
+-@@ -239,30 +424,76 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
+-   );
+- }
+- 
+--function DocumentsList({ items }) {
+--  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
+-+function DocumentsList({
+-+  items, selectedIds, onToggle, onSelectAll, allSelected,
+-+  hasActiveFilter, onClearFilter,
+-+}) {
+-+  if (!items?.length) {
+-+    return (
+-+      <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+-+        <ShieldAlert className="w-10 h-10 mb-2" />
+-+        <p className="text-sm font-medium">
+-+          {hasActiveFilter ? 'לא נמצאו ליקויים המתאימים לסינון' : 'אין ליקויים פתוחים'}
+-+        </p>
+-+        {hasActiveFilter && (
+-+          <button
+-+            type="button"
+-+            onClick={onClearFilter}
+-+            className="mt-3 text-sm text-blue-600 hover:underline"
+-+          >
+-+            נקה סינון
+-+          </button>
+-+        )}
+-+      </div>
+-+    );
+-+  }
+-   return (
+--    <ul className="divide-y divide-slate-100">
+--      {items.map((d) => (
+--        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+--          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
+--            {SEVERITY_HE[d.severity] || '—'}
+--          </Badge>
+--          <div className="flex-1 min-w-0">
+--            <p className="font-medium text-slate-900 truncate">{d.title}</p>
+--            <div className="flex items-center gap-2 mt-1 flex-wrap">
+--              <Badge className="bg-slate-100 text-slate-700 font-normal">
+--                {DOC_STATUS_HE[d.status] || d.status}
+--              </Badge>
+--              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+-+    <>
+-+      <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center gap-3">
+-+        <input
+-+          type="checkbox"
+-+          aria-label="בחר הכל"
+-+          checked={allSelected}
+-+          onChange={onSelectAll}
+-+          className="w-5 h-5 cursor-pointer accent-blue-600"
+-+        />
+-+        <span className="text-xs text-slate-600">בחר הכל</span>
+-+        {selectedIds.size > 0 && (
+-+          <span className="text-xs text-slate-500 mr-auto">
+-+            נבחרו {selectedIds.size} מתוך {items.length}
+-+          </span>
+-+        )}
+-+      </div>
+-+      <ul className="divide-y divide-slate-100">
+-+        {items.map((d) => (
+-+          <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+-+            <input
+-+              type="checkbox"
+-+              aria-label={`בחר ליקוי ${d.title || ''}`}
+-+              checked={selectedIds.has(d.id)}
+-+              onChange={(e) => { e.stopPropagation(); onToggle(d.id); }}
+-+              onClick={(e) => e.stopPropagation()}
+-+              className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
+-+            />
+-+            <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
+-+              {SEVERITY_HE[d.severity] || '—'}
+-+            </Badge>
+-+            <div className="flex-1 min-w-0">
+-+              <p className="font-medium text-slate-900 truncate">{d.title}</p>
+-+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+-+                <Badge className="bg-slate-100 text-slate-700 font-normal">
+-+                  {DOC_STATUS_HE[d.status] || d.status}
+-+                </Badge>
+-+                <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+-+              </div>
+-             </div>
+--          </div>
+--          <time className="text-xs text-slate-400 shrink-0">
+--            {(d.found_at || '').slice(0, 10)}
+--          </time>
+--        </li>
+--      ))}
+--    </ul>
+-+            <time className="text-xs text-slate-400 shrink-0">
+-+              {(d.found_at || '').slice(0, 10)}
+-+            </time>
+-+          </li>
+-+        ))}
+-+      </ul>
+-+    </>
+-   );
+- }
+- 
+-diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+-index f29b4aa..0421de8 100644
+---- a/frontend/src/services/api.js
+-+++ b/frontend/src/services/api.js
+-@@ -221,6 +221,40 @@ export const safetyService = {
+-     const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
+-     return response.data;
+-   },
+-+
+-+  // ---- exports (binary blob) + single-doc delete ----
+-+
+-+  async exportExcel(projectId) {
+-+    const response = await axios.get(
+-+      `${API}/safety/${projectId}/export/excel`,
+-+      { headers: getAuthHeader(), responseType: 'blob' }
+-+    );
+-+    return response;
+-+  },
+-+
+-+  async exportFiltered(projectId, params = {}) {
+-+    const response = await axios.get(
+-+      `${API}/safety/${projectId}/export/filtered`,
+-+      { headers: getAuthHeader(), responseType: 'blob', params }
+-+    );
+-+    return response;
+-+  },
+-+
+-+  async exportPdfRegister(projectId) {
+-+    const response = await axios.get(
+-+      `${API}/safety/${projectId}/export/pdf-register`,
+-+      { headers: getAuthHeader(), responseType: 'blob' }
+-+    );
+-+    return response;
+-+  },
+-+
+-+  async deleteDocument(projectId, documentId) {
+-+    const response = await axios.delete(
+-+      `${API}/safety/${projectId}/documents/${documentId}`,
+-+      { headers: getAuthHeader() }
+-+    );
+-+    return response.data;
+-+  },
+- };
+- 
+- export const buildingService = {
 -diff --git a/review.txt b/review.txt
--index 70ef1ef..2a32461 100644
+-index 121c88b..3b2096d 100644
 ---- a/review.txt
 -+++ b/review.txt
--@@ -1,699 +1,26 @@
---=== TASK #404 — SAFETY PHASE 1 PART 4 (FRONTEND CORE) ===
---=== COMMIT: bd4ef73 + e7970cc (squashed view) ===
--+=== TASK #404a — SAFETY PHASE 1 PART 4a (PATCH) ===
--+=== Role guard + code cleanup ===
-+@@ -83,6 +128,32 @@ export default function SafetyHomePage() {
-+     return () => { cancelled = true; };
-+   }, [projectId]);
-  
-- === git diff --stat ===
--- frontend/src/App.js                                |   9 +
--- frontend/src/components/safety/SafetyKpiCard.js    |  41 +++
--- frontend/src/components/safety/SafetyScoreGauge.js |  78 +++++
--- frontend/src/i18n/he.json                          |  45 +++
--- frontend/src/pages/ProjectControlPage.js           |   4 +-
--- frontend/src/pages/SafetyHomePage.js               | 370 +++++++++++++++++++++
--- frontend/src/services/api.js                       |  56 ++++
--- 7 files changed, 602 insertions(+), 1 deletion(-)
--+ frontend/src/App.js                  |   2 +-
--+ frontend/src/pages/SafetyHomePage.js |  15 +-
--+ review.txt                           | 699 +----------------------------------
--+ 3 files changed, 9 insertions(+), 707 deletions(-)
-++  // Refetch documents whenever the filter changes (skipped before initial load
-++  // and when the page is in a forbidden / flag-off / loading terminal state).
-++  useEffect(() => {
-++    if (!projectId || loading || flagOff || forbidden) return;
-++    let cancelled = false;
-++    (async () => {
-++      try {
-++        const params = { limit: 50 };
-++        Object.entries(filter).forEach(([k, v]) => {
-++          if (v != null && v !== '') params[k] = v;
-++        });
-++        const resp = await safetyService.listDocuments(projectId, params);
-++        if (!cancelled) setDocs(resp || { items: [], total: 0 });
-++      } catch (err) {
-++        if (!cancelled) toast.error('שגיאה בטעינת ליקויים מסוננים');
-++      }
-++    })();
-++    return () => { cancelled = true; };
-++  }, [projectId, filter, loading, flagOff, forbidden]);
- +
--+=== VERIFY OUTPUT ===
--+(a) allowedRoles on safety route:
--+            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
-++  // Clear selection whenever the filter changes or the active tab leaves documents.
-++  useEffect(() => { setSelectedIds(new Set()); }, [filter]);
-++  useEffect(() => {
-++    if (activeTab !== 'documents') setSelectedIds(new Set());
-++  }, [activeTab]);
-++
-+   if (loading) return <SafetySkeleton />;
-+   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
-+   if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
-+@@ -102,9 +173,53 @@ export default function SafetyHomePage() {
-+   const incidentsTotal = b.incidents_last_90d?.total ?? 0;
-+   const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
-+ 
-++  const activeFilterCount = countActiveFilters(filter);
-++  const hasActiveFilter = activeFilterCount > 0;
- +
--+(b) no incidents state/setIncidents/eslint-disable: (empty = pass)
--+  (none — pass)
-++  const docItems = docs.items || [];
-++  const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
-++
-++  const toggleOne = (id) => {
-++    setSelectedIds((prev) => {
-++      const next = new Set(prev);
-++      if (next.has(id)) next.delete(id); else next.add(id);
-++      return next;
-++    });
-++  };
-++
-++  const toggleSelectAll = () => {
-++    if (allSelected) {
-++      setSelectedIds(new Set());
-++    } else {
-++      setSelectedIds(new Set(docItems.map((d) => d.id)));
-++    }
-++  };
-++
-++  const clearFilter = () => setFilter(EMPTY_FILTER);
-++
-++  const handleBulkDelete = async () => {
-++    if (selectedIds.size === 0) return;
-++    setBulkConfirmOpen(false);
-++    setBulkDeleting(true);
-++    const ids = Array.from(selectedIds);
-++    const results = await Promise.allSettled(
-++      ids.map((id) => safetyService.deleteDocument(projectId, id))
-++    );
-++    const failed = results.filter((r) => r.status === 'rejected').length;
-++    setBulkDeleting(false);
-++    setSelectedIds(new Set());
-++    if (failed > 0) {
-++      toast.error(`${failed} מתוך ${ids.length} לא נמחקו`);
-++    } else {
-++      toast.success(`${ids.length} ליקויים נמחקו`);
-++    }
-++    // Re-trigger the documents refetch effect with the same filter object.
-++    setFilter((f) => ({ ...f }));
-++  };
-++
-+   return (
-+     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
-+-      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
-++      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
-+         <button
-+           onClick={() => navigate(`/projects/${projectId}/dashboard`)}
-+           className="p-2 rounded-lg hover:bg-slate-100"
-+@@ -117,8 +232,31 @@ export default function SafetyHomePage() {
-+           <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
-+           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
-+         </div>
-++
-++        <SafetyExportMenu
-++          projectId={projectId}
-++          currentFilter={filter}
-++          hasActiveFilter={hasActiveFilter}
-++        />
-++
-++        <button
-++          type="button"
-++          onClick={() => setFilterOpen(true)}
-++          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
-++        >
-++          <Filter className="w-4 h-4" />
-++          סינון
-++          {activeFilterCount > 0 && (
-++            <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
-++              {activeFilterCount}
-++            </span>
-++          )}
-++        </button>
-++
-+         {cacheAge > 0 && (
-+-          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
-++          <p className="hidden sm:block text-[11px] text-slate-400 ml-1">
-++            עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳
-++          </p>
-+         )}
-+       </div>
-+ 
-+@@ -207,7 +345,15 @@ export default function SafetyHomePage() {
-+             </TabsList>
-+ 
-+             <TabsContent value="documents" className="p-0 m-0">
-+-              <DocumentsList items={docs.items} />
-++              <DocumentsList
-++                items={docItems}
-++                selectedIds={selectedIds}
-++                onToggle={toggleOne}
-++                onSelectAll={toggleSelectAll}
-++                allSelected={allSelected}
-++                hasActiveFilter={hasActiveFilter}
-++                onClearFilter={clearFilter}
-++              />
-+             </TabsContent>
-+             <TabsContent value="tasks" className="p-0 m-0">
-+               <TasksList items={tasks.items} />
-+@@ -218,6 +364,45 @@ export default function SafetyHomePage() {
-+           </Tabs>
-+         </Card>
-+       </div>
- +
--+(c) no listIncidents on Home page: (empty = pass)
--+  (none — pass)
-++      <SafetyFilterSheet
-++        open={filterOpen}
-++        onOpenChange={setFilterOpen}
-++        value={filter}
-++        onApply={(next) => { setFilter(next); setFilterOpen(false); }}
-++        onClear={clearFilter}
-++        companies={companies}
-++        users={users}
-++      />
- +
--+(d) listIncidents still exported from api.js:
--+212:  async listIncidents(projectId, params = {}) {
-++      {activeTab === 'documents' && selectedIds.size > 0 && (
-++        <SafetyBulkActionBar
-++          count={selectedIds.size}
-++          onDelete={() => setBulkConfirmOpen(true)}
-++          onClear={() => setSelectedIds(new Set())}
-++          deleting={bulkDeleting}
-++        />
-++      )}
- +
--+(e) no numeric severity keys: (empty = pass)
--+  (none — pass)
-++      <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
-++        <AlertDialogContent dir="rtl">
-++          <AlertDialogHeader>
-++            <AlertDialogTitle>מחיקת ליקויים</AlertDialogTitle>
-++            <AlertDialogDescription>
-++              האם למחוק {selectedIds.size} ליקויים נבחרים? לא ניתן לבטל את הפעולה.
-++            </AlertDialogDescription>
-++          </AlertDialogHeader>
-++          <AlertDialogFooter>
-++            <AlertDialogCancel>ביטול</AlertDialogCancel>
-++            <AlertDialogAction
-++              onClick={handleBulkDelete}
-++              className="bg-red-600 hover:bg-red-700 text-white"
-++            >
-++              מחק
-++            </AlertDialogAction>
-++          </AlertDialogFooter>
-++        </AlertDialogContent>
-++      </AlertDialog>
-+     </div>
-+   );
-+ }
-+@@ -239,30 +424,76 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
-+   );
-+ }
-  
-- === FULL UNIFIED DIFF ===
+-@@ -1,820 +1,415 @@
+--=== TASK #404a — SAFETY PHASE 1 PART 4a (PATCH) ===
+--=== Role guard + code cleanup ===
+-+=== TASK #408 (was #405) — SAFETY PHASE 1 PART 5 ===
+-+=== Frontend Polish: Filter + Bulk + Export ===
+- 
+--=== git diff --stat ===
+-- frontend/src/App.js                  |   2 +-
+-- frontend/src/pages/SafetyHomePage.js |  15 +-
+-- review.txt                           | 699 +----------------------------------
+-- 3 files changed, 9 insertions(+), 707 deletions(-)
+-+=== Files changed ===
+-+ frontend/src/i18n/he.json            |  32 +-
+-+ frontend/src/pages/SafetyHomePage.js | 285 ++++++++++--
+-+ frontend/src/services/api.js         |  34 ++
+-+ review.txt                           | 822 +----------------------------------
+-+ 4 files changed, 326 insertions(+), 847 deletions(-)
+- 
+--=== VERIFY OUTPUT ===
+--(a) allowedRoles on safety route:
+--            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
+-+=== New untracked files ===
+-+frontend/src/components/safety/SafetyBulkActionBar.js
+-+frontend/src/components/safety/SafetyExportMenu.js
+-+frontend/src/components/safety/SafetyFilterSheet.js
+- 
+--(b) no incidents state/setIncidents/eslint-disable: (empty = pass)
+--  (none — pass)
+-+=== Verify checks ===
+-+(a) no @/ alias in new files: 0 (expect 0)
+-+(b) backend untouched: 0 (expect 0)
+-+(c) deps untouched: 0 (expect 0)
+-+(d) safety components: 5 (expect 5)
+-+(e) safety i18n keys: 73 (expect 73 = 43 + 30)
+-+(f) bulk bar tab-scoped: 1 (expect 1)
+-+(g) selection cleared on tab leave: 1 (expect 1)
+-+(h) Promise.allSettled used: 1 (expect 1)
+-+(i) AlertDialog (not window.confirm): 0 (expect 0); 16 AlertDialog refs
+- 
+--(c) no listIncidents on Home page: (empty = pass)
+--  (none — pass)
+--
+--(d) listIncidents still exported from api.js:
+--212:  async listIncidents(projectId, params = {}) {
+--
+--(e) no numeric severity keys: (empty = pass)
+--  (none — pass)
+--
+--=== FULL UNIFIED DIFF ===
 --diff --git a/frontend/src/App.js b/frontend/src/App.js
---index adb9373..e4634b6 100644
+--index e4634b6..824ce38 100644
 ----- a/frontend/src/App.js
 --+++ b/frontend/src/App.js
---@@ -68,6 +68,7 @@ const HandoverOverviewPage = React.lazy(() => import('./pages/HandoverOverviewPa
--- const HandoverTabPage = React.lazy(() => import('./pages/HandoverTabPage'));
--- const HandoverProtocolPage = React.lazy(() => import('./pages/HandoverProtocolPage'));
--- const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage'));
---+const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
--- 
--- const INTENDED_PATH_KEY = 'intendedPath';
--- 
---@@ -320,6 +321,14 @@ const AppRoutes = () => {
+--@@ -324,7 +324,7 @@ const AppRoutes = () => {
+--         <Route
+--           path="/projects/:projectId/safety"
+--           element={
+---            <ProtectedRoute>
+--+            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
+--               <SafetyHomePage />
 --             </ProtectedRoute>
 --           }
---         />
---+        <Route
---+          path="/projects/:projectId/safety"
---+          element={
---+            <ProtectedRoute>
---+              <SafetyHomePage />
---+            </ProtectedRoute>
---+          }
---+        />
---         <Route path="/" element={<Navigate to="/projects" replace />} />
---         <Route
---           path="/projects/:projectId/plans/archive"
---diff --git a/frontend/src/components/safety/SafetyKpiCard.js b/frontend/src/components/safety/SafetyKpiCard.js
---new file mode 100644
---index 0000000..2aeb09f
------ /dev/null
---+++ b/frontend/src/components/safety/SafetyKpiCard.js
---@@ -0,0 +1,41 @@
---+import React from 'react';
---+
---+/**
---+ * KPI tile for safety home.
---+ * @param {Component} icon        lucide-react icon component
---+ * @param {string} label          Hebrew label
---+ * @param {number|string} value   big number or text
---+ * @param {string} sub            small sub-line (e.g., "מתוך 12")
---+ * @param {string} tone           'neutral' | 'info' | 'warning' | 'danger' | 'success'
---+ * @param {function} onClick      optional — click to switch tab or open drawer
---+ */
---+export default function SafetyKpiCard({ icon: Icon, label, value, sub, tone = 'neutral', onClick }) {
---+  const toneMap = {
---+    neutral: { bg: 'bg-white',      border: 'border-slate-200',   iconBg: 'bg-slate-100',    iconFg: 'text-slate-600',  num: 'text-slate-900' },
---+    info:    { bg: 'bg-blue-50',    border: 'border-blue-200',    iconBg: 'bg-blue-100',     iconFg: 'text-blue-700',   num: 'text-blue-900' },
---+    warning: { bg: 'bg-amber-50',   border: 'border-amber-200',   iconBg: 'bg-amber-100',    iconFg: 'text-amber-700',  num: 'text-amber-900' },
---+    danger:  { bg: 'bg-red-50',     border: 'border-red-200',     iconBg: 'bg-red-100',      iconFg: 'text-red-700',    num: 'text-red-900' },
---+    success: { bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-100',  iconFg: 'text-emerald-700', num: 'text-emerald-900' },
---+  };
---+  const t = toneMap[tone] || toneMap.neutral;
---+
---+  return (
---+    <button
---+      type="button"
---+      onClick={onClick}
---+      className={`text-right ${t.bg} ${t.border} border rounded-xl p-4 shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-60 min-h-[96px] w-full`}
---+      disabled={!onClick}
---+    >
---+      <div className="flex items-start gap-3">
---+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${t.iconBg}`}>
---+          {Icon && <Icon className={`w-5 h-5 ${t.iconFg}`} />}
---+        </div>
---+        <div className="flex-1 min-w-0">
---+          <p className={`text-2xl font-black ${t.num} leading-none`}>{value ?? '—'}</p>
---+          <p className="text-xs text-slate-600 mt-1 font-medium truncate">{label}</p>
---+          {sub && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sub}</p>}
---+        </div>
---+      </div>
---+    </button>
---+  );
---+}
---diff --git a/frontend/src/components/safety/SafetyScoreGauge.js b/frontend/src/components/safety/SafetyScoreGauge.js
---new file mode 100644
---index 0000000..5dd3bb8
------ /dev/null
---+++ b/frontend/src/components/safety/SafetyScoreGauge.js
---@@ -0,0 +1,78 @@
---+import React from 'react';
---+
---+/**
---+ * 0-100 donut gauge. RTL-safe (no direction-specific markup).
---+ * @param {number} score       0..100
---+ * @param {number} size        px, default 180
---+ * @param {number} stroke      px, default 14
---+ * @param {string} label       optional Hebrew label under the number
---+ */
---+export default function SafetyScoreGauge({ score = 0, size = 180, stroke = 14, label }) {
---+  const radius = (size - stroke) / 2;
---+  const circumference = 2 * Math.PI * radius;
---+  const clamped = Math.max(0, Math.min(100, Math.round(score)));
---+  const offset = circumference * (1 - clamped / 100);
---+
---+  let color = '#ef4444';
---+  let tierHe = 'דורש תיקון';
---+  if (clamped >= 85) { color = '#10b981'; tierHe = 'מצוין'; }
---+  else if (clamped >= 70) { color = '#3b82f6'; tierHe = 'טוב'; }
---+  else if (clamped >= 50) { color = '#f59e0b'; tierHe = 'תקין'; }
---+
---+  return (
---+    <div className="flex flex-col items-center justify-center">
---+      <svg
---+        width={size}
---+        height={size}
---+        viewBox={`0 0 ${size} ${size}`}
---+        aria-label={`ציון בטיחות ${clamped} מתוך 100`}
---+        role="img"
---+      >
---+        <circle
---+          cx={size / 2}
---+          cy={size / 2}
---+          r={radius}
---+          stroke="#e5e7eb"
---+          strokeWidth={stroke}
---+          fill="none"
---+        />
---+        <circle
---+          cx={size / 2}
---+          cy={size / 2}
---+          r={radius}
---+          stroke={color}
---+          strokeWidth={stroke}
---+          fill="none"
---+          strokeDasharray={circumference}
---+          strokeDashoffset={offset}
---+          strokeLinecap="round"
---+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
---+          style={{ transition: 'stroke-dashoffset 400ms ease-out, stroke 400ms ease-out' }}
---+        />
---+        <text
---+          x="50%"
---+          y="47%"
---+          textAnchor="middle"
---+          dominantBaseline="central"
---+          fontSize={size * 0.28}
---+          fontWeight="800"
---+          fill="#0f172a"
---+        >
---+          {clamped}
---+        </text>
---+        <text
---+          x="50%"
---+          y="62%"
---+          textAnchor="middle"
---+          dominantBaseline="central"
---+          fontSize={size * 0.08}
---+          fontWeight="600"
---+          fill="#64748b"
---+        >
---+          {tierHe}
---+        </text>
---+      </svg>
---+      {label && <p className="text-sm text-slate-600 mt-2 font-medium">{label}</p>}
---+    </div>
---+  );
---+}
---diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
---index c3895cd..3ecb53c 100644
------ a/frontend/src/i18n/he.json
---+++ b/frontend/src/i18n/he.json
---@@ -607,5 +607,50 @@
---     "err_company_required": "יש לבחור חברה",
---     "toast_registered": "הרשמה בוצעה בהצלחה! ממתין לאישור",
---     "err_register": "שגיאה בהרשמה"
---+  },
---+  "safety": {
---+    "title": "בטיחות",
---+    "score_label": "ציון בטיחות",
---+    "tier_excellent": "מצוין",
---+    "tier_good": "טוב",
---+    "tier_ok": "תקין",
---+    "tier_fix": "דורש תיקון",
---+    "breakdown_docs": "ליקויים",
---+    "breakdown_tasks": "משימות באיחור",
---+    "breakdown_training": "הדרכות",
---+    "breakdown_incidents": "אירועים (90 יום)",
---+    "kpi_open_docs": "ליקויים פתוחים",
---+    "kpi_overdue_tasks": "משימות באיחור",
---+    "kpi_untrained": "עובדים ללא הדרכה",
---+    "kpi_incidents_90d": "אירועים (90 יום)",
---+    "kpi_total_workers": "סך עובדים באתר",
---+    "kpi_score_percent": "ציון מצטבר",
---+    "tab_documents": "ליקויים",
---+    "tab_tasks": "משימות",
---+    "tab_workers": "עובדים",
---+    "empty_docs": "אין ליקויים פתוחים",
---+    "empty_tasks": "אין משימות בטיחות פתוחות",
---+    "empty_workers": "אין עובדים רשומים",
---+    "sev_1": "נמוכה",
---+    "sev_2": "בינונית",
---+    "sev_3": "גבוהה",
---+    "doc_status_open": "פתוח",
---+    "doc_status_in_progress": "בביצוע",
---+    "doc_status_resolved": "נפתר",
---+    "doc_status_verified": "אומת",
---+    "task_status_open": "פתוח",
---+    "task_status_in_progress": "בביצוע",
---+    "task_status_completed": "הושלם",
---+    "task_status_cancelled": "בוטל",
---+    "overdue_badge": "באיחור",
---+    "forbidden_title": "אין הרשאה לצפייה בנתוני בטיחות",
---+    "forbidden_sub": "מודול הבטיחות זמין לניהול פרויקט בלבד.",
---+    "flag_off_title": "מודול הבטיחות אינו פעיל בארגון זה",
---+    "flag_off_sub": "צור קשר עם התמיכה להפעלה.",
---+    "updated_ago": "עודכן לפני",
---+    "minutes_short": "דק׳",
---+    "no_location": "ללא מיקום",
---+    "no_profession": "ללא מקצוע",
---+    "coming_soon": "בקרוב"
---   }
--- }
---diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
---index f445395..ad24cb5 100644
------ a/frontend/src/pages/ProjectControlPage.js
---+++ b/frontend/src/pages/ProjectControlPage.js
---@@ -23,7 +23,7 @@ import {
---   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
---   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
---   Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
----  Package
---+  Package, ShieldAlert
--- } from 'lucide-react';
--- import { Button } from '../components/ui/button';
--- import { Card } from '../components/ui/card';
---@@ -3500,6 +3500,7 @@ const ProjectControlPage = () => {
---     { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
---     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
---     { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
---+    { id: 'safety', label: 'בטיחות', icon: ShieldAlert, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
---     { id: 'plans', label: 'תוכניות', icon: FileText },
---   ].filter(t => !t.hidden);
--- 
---@@ -3507,6 +3508,7 @@ const ProjectControlPage = () => {
---     if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`); return; }
---     if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
---     if (id === 'handover') { navigate(`/projects/${projectId}/handover`); return; }
---+    if (id === 'safety') { navigate(`/projects/${projectId}/safety`); return; }
---     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
---     setWorkMode(id);
---     if (id !== 'structure') setActiveTab('');
---diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
---new file mode 100644
---index 0000000..9ef4a7f
------ /dev/null
---+++ b/frontend/src/pages/SafetyHomePage.js
---@@ -0,0 +1,370 @@
---+import React, { useEffect, useState } from 'react';
---+import { useParams, useNavigate } from 'react-router-dom';
---+import {
---+  ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
---+  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
---+} from 'lucide-react';
---+import { toast } from 'sonner';
---+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
---+import { Card } from '../components/ui/card';
---+import { Badge } from '../components/ui/badge';
---+import { safetyService, projectService } from '../services/api';
---+import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
---+import SafetyKpiCard from '../components/safety/SafetyKpiCard';
---+
---+const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה', 1: 'נמוכה', 2: 'בינונית', 3: 'גבוהה' };
---+const SEVERITY_COLOR = {
---+  '1': 'bg-blue-100 text-blue-800', '2': 'bg-amber-100 text-amber-800', '3': 'bg-red-100 text-red-800',
---+  1: 'bg-blue-100 text-blue-800', 2: 'bg-amber-100 text-amber-800', 3: 'bg-red-100 text-red-800',
---+};
---+const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
---+const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
---+
---+export default function SafetyHomePage() {
---+  const { projectId } = useParams();
---+  const navigate = useNavigate();
---+
---+  const [project, setProject] = useState(null);
---+  const [scoreData, setScoreData] = useState(null);
---+  const [docs, setDocs] = useState({ items: [], total: 0 });
---+  const [tasks, setTasks] = useState({ items: [], total: 0 });
---+  const [workers, setWorkers] = useState({ items: [], total: 0 });
---+  // eslint-disable-next-line no-unused-vars
---+  const [incidents, setIncidents] = useState({ items: [], total: 0 });
---+  const [flagOff, setFlagOff] = useState(false);
---+  const [forbidden, setForbidden] = useState(false);
---+  const [loading, setLoading] = useState(true);
---+  const [activeTab, setActiveTab] = useState('documents');
---+
---+  useEffect(() => {
---+    let cancelled = false;
---+    (async () => {
---+      try {
---+        let proj = null;
---+        try {
---+          proj = await projectService.get(projectId);
---+        } catch (e) {
---+          // Fall through — safety endpoints will surface their own status
---+        }
---+        if (cancelled) return;
---+        if (proj) setProject(proj);
---+
---+        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
---+          safetyService.getScore(projectId).catch((e) => ({ __err: e })),
---+          safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
---+          safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
---+          safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
---+          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
---+        ]);
---+        if (cancelled) return;
---+
---+        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
---+        const has404 = responses.some((r) => r?.__err?.response?.status === 404);
---+        const has403 = responses.some((r) => r?.__err?.response?.status === 403);
---+
---+        if (has404) { setFlagOff(true); setLoading(false); return; }
---+        if (has403) { setForbidden(true); setLoading(false); return; }
---+
---+        const otherErr = responses.find((r) => r?.__err);
---+        if (otherErr) {
---+          toast.error('שגיאה בטעינת נתוני בטיחות');
---+          setLoading(false);
---+          return;
---+        }
---+
---+        setScoreData(scoreResp);
---+        setDocs(docsResp || { items: [], total: 0 });
---+        setTasks(tasksResp || { items: [], total: 0 });
---+        setWorkers(workersResp || { items: [], total: 0 });
---+        setIncidents(incidentsResp || { items: [], total: 0 });
---+      } catch (err) {
---+        if (!cancelled) toast.error('שגיאה בטעינת נתונים');
---+      } finally {
---+        if (!cancelled) setLoading(false);
---+      }
---+    })();
---+    return () => { cancelled = true; };
---+  }, [projectId]);
---+
---+  if (loading) return <SafetySkeleton />;
---+  if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
---+  if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
---+
---+  const b = scoreData?.breakdown || {};
---+  const caps = b.caps || {};
---+  const cacheAge = scoreData?.cache_age_seconds ?? 0;
---+
---+  const sev3 = b.doc_counts?.sev3 ?? 0;
---+  const sev2 = b.doc_counts?.sev2 ?? 0;
---+  const sev1 = b.doc_counts?.sev1 ?? 0;
---+  const openDocs = sev3 + sev2 + sev1;
---+  const overdueTotal = b.overdue_task_counts?.total ?? 0;
---+  const overdueSev3 = b.overdue_task_counts?.sev3 ?? 0;
---+  const untrained = b.workers_without_training ?? 0;
---+  const totalWorkers = b.total_workers ?? 0;
---+  const incidentsTotal = b.incidents_last_90d?.total ?? 0;
---+  const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
---+
---+  return (
---+    <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
---+      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
---+        <button
---+          onClick={() => navigate(`/projects/${projectId}/dashboard`)}
---+          className="p-2 rounded-lg hover:bg-slate-100"
---+          aria-label="חזור"
---+          type="button"
---+        >
---+          <ArrowRight className="w-5 h-5 text-slate-700" />
---+        </button>
---+        <div className="flex-1 min-w-0">
---+          <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
---+          {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
---+        </div>
---+        {cacheAge > 0 && (
---+          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
---+        )}
---+      </div>
---+
---+      <div className="max-w-6xl mx-auto px-4 py-5 space-y-6">
---+        <Card className="p-5 bg-white shadow-sm">
---+          <div className="flex flex-col md:flex-row items-center gap-6">
---+            <SafetyScoreGauge score={scoreData?.score ?? 0} label="ציון בטיחות" />
---+            <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
---+              <BreakdownBar label="ליקויים" value={b.doc_penalty} max={caps.doc_max} color="bg-red-500" />
---+              <BreakdownBar label="משימות באיחור" value={b.task_penalty} max={caps.task_max} color="bg-amber-500" />
---+              <BreakdownBar label="הדרכות" value={b.training_penalty} max={caps.training_max} color="bg-blue-500" />
---+              <BreakdownBar label="אירועים (90 יום)" value={b.incident_penalty} max={caps.incident_max} color="bg-fuchsia-500" />
---+            </div>
---+          </div>
---+        </Card>
---+
---+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
---+          <SafetyKpiCard
---+            icon={ShieldAlert}
---+            label="ליקויים פתוחים"
---+            value={openDocs}
---+            sub={`חמור: ${sev3}`}
---+            tone={sev3 > 0 ? 'danger' : 'neutral'}
---+            onClick={() => setActiveTab('documents')}
---+          />
---+          <SafetyKpiCard
---+            icon={Clock}
---+            label="משימות באיחור"
---+            value={overdueTotal}
---+            sub={`חמור: ${overdueSev3}`}
---+            tone={overdueTotal > 0 ? 'warning' : 'neutral'}
---+            onClick={() => setActiveTab('tasks')}
---+          />
---+          <SafetyKpiCard
---+            icon={GraduationCap}
---+            label="עובדים ללא הדרכה"
---+            value={untrained}
---+            sub={`מתוך ${totalWorkers} עובדים`}
---+            tone={untrained > 0 ? 'warning' : 'success'}
---+            onClick={() => setActiveTab('workers')}
---+          />
---+          <SafetyKpiCard
---+            icon={AlertCircle}
---+            label="אירועים (90 יום)"
---+            value={incidentsTotal}
---+            sub={`פציעות: ${incidentsInjury}`}
---+            tone={incidentsInjury > 0 ? 'danger' : 'neutral'}
---+          />
---+          <SafetyKpiCard
---+            icon={Users}
---+            label="סך עובדים באתר"
---+            value={totalWorkers}
---+            tone="info"
---+            onClick={() => setActiveTab('workers')}
---+          />
---+          <SafetyKpiCard
---+            icon={TrendingUp}
---+            label="ציון מצטבר"
---+            value={`${scoreData?.score ?? 0}%`}
---+            sub="מעודכן כל 5 דק׳"
---+            tone="info"
---+          />
---+        </div>
---+
---+        <Card className="p-0 overflow-hidden bg-white shadow-sm">
---+          <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
---+            <TabsList className="w-full justify-start rounded-none border-b bg-slate-50 p-0 h-auto overflow-x-auto flex">
---+              <TabsTrigger
---+                value="documents"
---+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
---+              >
---+                ליקויים ({docs.total})
---+              </TabsTrigger>
---+              <TabsTrigger
---+                value="tasks"
---+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
---+              >
---+                משימות ({tasks.total})
---+              </TabsTrigger>
---+              <TabsTrigger
---+                value="workers"
---+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
---+              >
---+                עובדים ({workers.total})
---+              </TabsTrigger>
---+            </TabsList>
---+
---+            <TabsContent value="documents" className="p-0 m-0">
---+              <DocumentsList items={docs.items} />
---+            </TabsContent>
---+            <TabsContent value="tasks" className="p-0 m-0">
---+              <TasksList items={tasks.items} />
---+            </TabsContent>
---+            <TabsContent value="workers" className="p-0 m-0">
---+              <WorkersList items={workers.items} />
---+            </TabsContent>
---+          </Tabs>
---+        </Card>
---+      </div>
---+    </div>
---+  );
---+}
---+
---+function BreakdownBar({ label, value = 0, max = 1, color }) {
---+  const safeMax = Number(max) > 0 ? Number(max) : 1;
---+  const safeVal = Math.max(0, Number(value) || 0);
---+  const pct = Math.min(100, (safeVal / safeMax) * 100);
---+  return (
---+    <div>
---+      <div className="flex items-center justify-between mb-1">
---+        <span className="text-xs font-medium text-slate-600">{label}</span>
---+        <span className="text-xs text-slate-500">{safeVal.toFixed(1)} / {safeMax}</span>
---+      </div>
---+      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
---+        <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
---+      </div>
---+    </div>
---+  );
---+}
---+
---+function DocumentsList({ items }) {
---+  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
---+  return (
---+    <ul className="divide-y divide-slate-100">
---+      {items.map((d) => (
---+        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
---+          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
---+            {SEVERITY_HE[d.severity] || '—'}
---+          </Badge>
---+          <div className="flex-1 min-w-0">
---+            <p className="font-medium text-slate-900 truncate">{d.title}</p>
---+            <div className="flex items-center gap-2 mt-1 flex-wrap">
---+              <Badge className="bg-slate-100 text-slate-700 font-normal">
---+                {DOC_STATUS_HE[d.status] || d.status}
---+              </Badge>
---+              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
---+            </div>
---+          </div>
---+          <time className="text-xs text-slate-400 shrink-0">
---+            {(d.found_at || '').slice(0, 10)}
---+          </time>
---+        </li>
---+      ))}
---+    </ul>
---+  );
---+}
---+
---+function TasksList({ items }) {
---+  if (!items?.length) return <EmptyState icon={Wrench} text="אין משימות בטיחות פתוחות" />;
---+  const nowIso = new Date().toISOString();
---+  return (
---+    <ul className="divide-y divide-slate-100">
---+      {items.map((tk) => {
---+        const overdue = tk.due_at && tk.due_at < nowIso && !['completed', 'cancelled'].includes(tk.status);
---+        return (
---+          <li key={tk.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
---+            <Badge className={SEVERITY_COLOR[tk.severity] || 'bg-slate-100 text-slate-700'}>
---+              {SEVERITY_HE[tk.severity] || '—'}
---+            </Badge>
---+            <div className="flex-1 min-w-0">
---+              <p className="font-medium text-slate-900 truncate">{tk.title}</p>
---+              <div className="flex items-center gap-2 mt-1 flex-wrap">
---+                <Badge className="bg-slate-100 text-slate-700 font-normal">
---+                  {TASK_STATUS_HE[tk.status] || tk.status}
---+                </Badge>
---+                {tk.due_at && (
---+                  <span className="text-xs text-slate-500">יעד {tk.due_at.slice(0, 10)}</span>
---+                )}
---+              </div>
---+            </div>
---+            {overdue && <Badge className="bg-red-100 text-red-800 shrink-0">באיחור</Badge>}
---+          </li>
---+        );
---+      })}
---+    </ul>
---+  );
---+}
---+
---+function WorkersList({ items }) {
---+  if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
---+  return (
---+    <ul className="divide-y divide-slate-100">
---+      {items.map((w) => (
---+        <li key={w.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50">
---+          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
---+            <Hammer className="w-5 h-5 text-slate-500" />
---+          </div>
---+          <div className="flex-1 min-w-0">
---+            <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
---+            <p className="text-xs text-slate-500 truncate">
---+              {w.profession || 'ללא מקצוע'}{w.phone && ` · ${w.phone}`}
---+            </p>
---+          </div>
---+        </li>
---+      ))}
---+    </ul>
---+  );
---+}
---+
---+function EmptyState({ icon: Icon, text }) {
---+  return (
---+    <div className="flex flex-col items-center justify-center py-12 text-slate-400">
---+      <Icon className="w-10 h-10 mb-2" />
---+      <p className="text-sm font-medium">{text}</p>
---+    </div>
---+  );
---+}
---+
---+function SafetySkeleton() {
---+  return (
---+    <div dir="rtl" className="min-h-screen bg-slate-50 p-4 space-y-4 animate-pulse">
---+      <div className="h-12 bg-white rounded" />
---+      <div className="h-48 bg-white rounded" />
---+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
---+        {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-white rounded" />)}
---+      </div>
---+      <div className="h-64 bg-white rounded" />
---+    </div>
---+  );
---+}
---+
---+function SafetyForbidden({ onBack }) {
---+  return (
---+    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
---+      <AlertTriangle className="w-12 h-12 text-amber-500 mb-3" />
---+      <h2 className="text-lg font-bold text-slate-900">אין הרשאה לצפייה בנתוני בטיחות</h2>
---+      <p className="text-sm text-slate-600 mt-2">מודול הבטיחות זמין לניהול פרויקט בלבד.</p>
---+      <button onClick={onBack} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm" type="button">
---+        חזור לדאשבורד
---+      </button>
---+    </div>
---+  );
---+}
---+
---+function SafetyFlagOff({ onBack }) {
---+  return (
---+    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
---+      <ShieldAlert className="w-12 h-12 text-slate-400 mb-3" />
---+      <h2 className="text-lg font-bold text-slate-900">מודול הבטיחות אינו פעיל בארגון זה</h2>
---+      <p className="text-sm text-slate-600 mt-2">צור קשר עם התמיכה להפעלה.</p>
---+      <button onClick={onBack} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm" type="button">
---+        חזור לדאשבורד
---+      </button>
---+    </div>
---+  );
---+}
---diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
---index 3e0003f..f29b4aa 100644
------ a/frontend/src/services/api.js
---+++ b/frontend/src/services/api.js
---@@ -167,6 +167,62 @@ export const projectService = {
---   },
+-+=== UNIFIED DIFF (excluding untracked) ===
+-+diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
+-+index 3ecb53c..44047d8 100644
+-+--- a/frontend/src/i18n/he.json
+-++++ b/frontend/src/i18n/he.json
+-+@@ -651,6 +651,36 @@
+-+     "minutes_short": "דק׳",
+-+     "no_location": "ללא מיקום",
+-+     "no_profession": "ללא מקצוע",
+-+-    "coming_soon": "בקרוב"
+-++    "coming_soon": "בקרוב",
+-++    "filter_title": "סינון ליקויים",
+-++    "filter_category": "קטגוריה",
+-++    "filter_severity": "חומרה",
+-++    "filter_status": "סטטוס",
+-++    "filter_company": "חברה",
+-++    "filter_assignee": "אחראי",
+-++    "filter_reporter": "מדווח",
+-++    "filter_date_from": "מתאריך",
+-++    "filter_date_to": "עד תאריך",
+-++    "filter_apply": "החל",
+-++    "filter_clear": "נקה",
+-++    "filter_all": "הכל",
+-++    "filter_none": "ללא סינון פעיל",
+-++    "filter_active_count": "פילטרים פעילים",
+-++    "no_results_filtered": "לא נמצאו ליקויים המתאימים לסינון",
+-++    "export_label": "ייצוא",
+-++    "export_excel": "ייצוא Excel כללי",
+-++    "export_filtered": "ייצוא לפי סינון",
+-++    "export_pdf": "פנקס כללי PDF",
+-++    "export_no_filter": "אין סינון פעיל",
+-++    "export_in_progress": "מייצא...",
+-++    "export_success": "הקובץ הורד בהצלחה",
+-++    "export_error": "שגיאה בייצוא — נסה שוב",
+-++    "bulk_select_all": "בחר הכל",
+-++    "bulk_selection": "בחירה",
+-++    "bulk_delete": "מחק",
+-++    "bulk_clear": "נקה",
+-++    "bulk_confirm": "למחוק {{count}} ליקויים?",
+-++    "bulk_partial_failure": "{{failed}} מתוך {{total}} לא נמחקו",
+-++    "bulk_success": "{{count}} ליקויים נמחקו"
+-+   }
+-+ }
+- diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
+--index 9ef4a7f..96918a2 100644
+-+index 96918a2..0457d06 100644
+- --- a/frontend/src/pages/SafetyHomePage.js
+- +++ b/frontend/src/pages/SafetyHomePage.js
+--@@ -12,10 +12,11 @@ import { safetyService, projectService } from '../services/api';
+-+@@ -2,15 +2,22 @@ import React, { useEffect, useState } from 'react';
+-+ import { useParams, useNavigate } from 'react-router-dom';
+-+ import {
+-+   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
+-+-  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
+-++  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter,
+-+ } from 'lucide-react';
+-+ import { toast } from 'sonner';
+-+ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+-+ import { Card } from '../components/ui/card';
+-+ import { Badge } from '../components/ui/badge';
+-+-import { safetyService, projectService } from '../services/api';
+-++import {
+-++  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+-++  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+-++} from '../components/ui/alert-dialog';
+-++import { safetyService, projectService, projectCompanyService } from '../services/api';
+-  import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
+-  import SafetyKpiCard from '../components/safety/SafetyKpiCard';
+-++import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
+-++import SafetyExportMenu from '../components/safety/SafetyExportMenu';
+-++import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
+-  
+---const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה', 1: 'נמוכה', 2: 'בינונית', 3: 'גבוהה' };
+--+const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
+-+ const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
+-  const SEVERITY_COLOR = {
+---  '1': 'bg-blue-100 text-blue-800', '2': 'bg-amber-100 text-amber-800', '3': 'bg-red-100 text-red-800',
+---  1: 'bg-blue-100 text-blue-800', 2: 'bg-amber-100 text-amber-800', 3: 'bg-red-100 text-red-800',
+--+  '1': 'bg-blue-100 text-blue-800',
+--+  '2': 'bg-amber-100 text-amber-800',
+--+  '3': 'bg-red-100 text-red-800',
 -- };
+-- const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
+-- const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
+--@@ -29,8 +30,6 @@ export default function SafetyHomePage() {
+--   const [docs, setDocs] = useState({ items: [], total: 0 });
+--   const [tasks, setTasks] = useState({ items: [], total: 0 });
+--   const [workers, setWorkers] = useState({ items: [], total: 0 });
+---  // eslint-disable-next-line no-unused-vars
+---  const [incidents, setIncidents] = useState({ items: [], total: 0 });
+--   const [flagOff, setFlagOff] = useState(false);
+--   const [forbidden, setForbidden] = useState(false);
+-+@@ -35,6 +42,16 @@ export default function SafetyHomePage() {
+-    const [loading, setLoading] = useState(true);
+--@@ -49,16 +48,15 @@ export default function SafetyHomePage() {
+--         if (cancelled) return;
+--         if (proj) setProject(proj);
+-+   const [activeTab, setActiveTab] = useState('documents');
+-  
+---        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
+--+        const [scoreResp, docsResp, tasksResp, workersResp] = await Promise.all([
+--           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
+--           safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+--           safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+--           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+---          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+--         ]);
+--         if (cancelled) return;
 -- 
---+export const safetyService = {
---+  async getScore(projectId, refresh = false) {
---+    const params = refresh ? { refresh: 'true' } : {};
---+    const response = await axios.get(
---+      `${API}/safety/${projectId}/score`,
---+      { headers: getAuthHeader(), params }
---+    );
---+    return response.data;
---+  },
---+
---+  async listDocuments(projectId, params = {}) {
---+    const response = await axios.get(
---+      `${API}/safety/${projectId}/documents`,
---+      { headers: getAuthHeader(), params }
---+    );
---+    return response.data;
---+  },
---+
---+  async listTasks(projectId, params = {}) {
---+    const response = await axios.get(
---+      `${API}/safety/${projectId}/tasks`,
---+      { headers: getAuthHeader(), params }
---+    );
---+    return response.data;
---+  },
---+
---+  async listWorkers(projectId, params = {}) {
---+    const response = await axios.get(
---+      `${API}/safety/${projectId}/workers`,
---+      { headers: getAuthHeader(), params }
---+    );
---+    return response.data;
---+  },
---+
---+  async listTrainings(projectId, params = {}) {
---+    const response = await axios.get(
---+      `${API}/safety/${projectId}/trainings`,
---+      { headers: getAuthHeader(), params }
---+    );
---+    return response.data;
---+  },
---+
---+  async listIncidents(projectId, params = {}) {
---+    const response = await axios.get(
---+      `${API}/safety/${projectId}/incidents`,
---+      { headers: getAuthHeader(), params }
---+    );
---+    return response.data;
---+  },
---+
---+  async healthz() {
---+    const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
---+    return response.data;
---+  },
---+};
---+
--- export const buildingService = {
---   async getFloors(buildingId) {
---     const response = await axios.get(`${API}/buildings/${buildingId}/floors`, { headers: getAuthHeader() });
-+-function DocumentsList({ items }) {
-+-  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
-++function DocumentsList({
-++  items, selectedIds, onToggle, onSelectAll, allSelected,
-++  hasActiveFilter, onClearFilter,
-++}) {
-++  if (!items?.length) {
-++    return (
-++      <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-++        <ShieldAlert className="w-10 h-10 mb-2" />
-++        <p className="text-sm font-medium">
-++          {hasActiveFilter ? 'לא נמצאו ליקויים המתאימים לסינון' : 'אין ליקויים פתוחים'}
-++        </p>
-++        {hasActiveFilter && (
-++          <button
-++            type="button"
-++            onClick={onClearFilter}
-++            className="mt-3 text-sm text-blue-600 hover:underline"
-++          >
-++            נקה סינון
-++          </button>
-++        )}
-++      </div>
-++    );
-++  }
-+   return (
-+-    <ul className="divide-y divide-slate-100">
-+-      {items.map((d) => (
-+-        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
-+-          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
-+-            {SEVERITY_HE[d.severity] || '—'}
-+-          </Badge>
-+-          <div className="flex-1 min-w-0">
-+-            <p className="font-medium text-slate-900 truncate">{d.title}</p>
-+-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-+-              <Badge className="bg-slate-100 text-slate-700 font-normal">
-+-                {DOC_STATUS_HE[d.status] || d.status}
-+-              </Badge>
-+-              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
-++    <>
-++      <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center gap-3">
-++        <input
-++          type="checkbox"
-++          aria-label="בחר הכל"
-++          checked={allSelected}
-++          onChange={onSelectAll}
-++          className="w-5 h-5 cursor-pointer accent-blue-600"
-++        />
-++        <span className="text-xs text-slate-600">בחר הכל</span>
-++        {selectedIds.size > 0 && (
-++          <span className="text-xs text-slate-500 mr-auto">
-++            נבחרו {selectedIds.size} מתוך {items.length}
-++          </span>
-++        )}
-++      </div>
-++      <ul className="divide-y divide-slate-100">
-++        {items.map((d) => (
-++          <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
-++            <input
-++              type="checkbox"
-++              aria-label={`בחר ליקוי ${d.title || ''}`}
-++              checked={selectedIds.has(d.id)}
-++              onChange={(e) => { e.stopPropagation(); onToggle(d.id); }}
-++              onClick={(e) => e.stopPropagation()}
-++              className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
-++            />
-++            <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
-++              {SEVERITY_HE[d.severity] || '—'}
-++            </Badge>
-++            <div className="flex-1 min-w-0">
-++              <p className="font-medium text-slate-900 truncate">{d.title}</p>
-++              <div className="flex items-center gap-2 mt-1 flex-wrap">
-++                <Badge className="bg-slate-100 text-slate-700 font-normal">
-++                  {DOC_STATUS_HE[d.status] || d.status}
-++                </Badge>
-++                <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
-++              
+---        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
+--+        const responses = [scoreResp, docsResp, tasksResp, workersResp];
+--         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
+--         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
+-- 
+--@@ -76,7 +74,6 @@ export default function SafetyHomePage() {
+-++  // Part 5 — filter / selection / bulk state
+-++  const [filter, setFilter] = useState(EMPTY_FILTER);
+-++  const [filterOpen, setFilterOpen] = useState(false);
+-++  const [selectedIds, setSelectedIds] = useState(new Set());
+-++  const [bulkDeleting, setBulkDeleting] = useState(false);
+-++  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+-++  const [companies, setCompanies] = useState([]);
+-++  const [users, setUsers] = useState([]);
+-++
+-++  // Initial load: project + safety data + best-effort companies/memberships.
+-+   useEffect(() => {
+-+     let cancelled = false;
+-+     (async () => {
+-+@@ -74,6 +91,34 @@ export default function SafetyHomePage() {
+-          setDocs(docsResp || { items: [], total: 0 });
+-          setTasks(tasksResp || { items: [], total: 0 });
+-          setWorkers(workersResp || { items: [], total: 0 });
+---        setIncidents(incidentsResp || { items: [], total: 0 });
+-++
+-++        // Best-effort fetch for filter dropdowns. Failures are silent —
+-++        // dropdowns degrade to a disabled "טוען..." option.
+-++        const [membershipsResp, companiesResp] = await Promise.all([
+-++          projectService.getMemberships(projectId).catch(() => null),
+-++          projectCompanyService.list(projectId).catch(() => null),
+-++        ]);
+-++        if (cancelled) return;
+-++
+-++        const memberList = Array.isArray(membershipsResp)
+-++          ? membershipsResp
+-++          : (membershipsResp?.items || []);
+-++        const userMap = new Map();
+-++        memberList.forEach((m) => {
+-++          const uid = m.user_id || m.id;
+-++          if (uid && !userMap.has(uid)) {
+-++            userMap.set(uid, {
+-++              id: uid,
+-++              name: m.user_name || m.name || m.full_name || m.email || uid,
+-++            });
+-++          }
+-++        });
+-++        setUsers(Array.from(userMap.values()));
+-++
+-++        const companyList = Array.isArray(companiesResp)
+-++          ? companiesResp
+-++          : (companiesResp?.items || []);
+-++        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
+-        } catch (err) {
+-          if (!cancelled) toast.error('שגיאה בטעינת נתונים');
+-        } finally {
+--diff --git a/review.txt b/review.txt
+--index 70ef1ef..2a32461 100644
+----- a/review.txt
+--+++ b/review.txt
+--@@ -1,699 +1,26 @@
+---=== TASK #404 — SAFETY PHASE 1 PART 4 (FRONTEND CORE) ===
+---=== COMMIT: bd4ef73 + e7970cc (squashed view) ===
+--+=== TASK #404a — SAFETY PHASE 1 PART 4a (PATCH) ===
+--+=== Role guard + code cleanup ===
+-+@@ -83,6 +128,32 @@ export default function SafetyHomePage() {
+-+     return () => { cancelled = true; };
+-+   }, [projectId]);
+-  
+-- === git diff --stat ===
+--- frontend/src/App.js                                |   9 +
+--- frontend/src/components/safety/SafetyKpiCard.js    |  41 +++
+--- frontend/src/components/safety/SafetyScoreGauge.js |  78 +++++
+--- frontend/src/i18n/he.json                          |  45 +++
+--- frontend/src/pages/ProjectControlPage.js           |   4 +-
+--- frontend/src/pages/SafetyHomePage.js               | 370 +++++++++++++++++++++
+--- frontend/src/services/api.js                       |  56 ++++
+--- 7 files changed, 602 insertions(+), 1 deletion(-)
+--+ frontend/src/App.js                  |   2 +-
+--+ frontend/src/pages/SafetyHomePage.js |  15 +-
+--+ review.txt                           | 699 +----------------------------------
+--+ 3 files changed, 9 insertions(+), 707 deletions(-)
+-++  // Refetch documents whenever the filter changes (skipped before initial load
+-++  // and when the page is in a forbidden / flag-off / loading terminal state).
+-++  useEffect(() => {
+-++    if (!projectId || loading || flagOff || forbidden) return;
+-++    let cancelled = false;
+-++    (async () => {
+-++      try {
+-++        const params = { limit: 50 };
+-++        Object.entries(filter).forEach(([k, v]) => {
+-++          if (v != null && v !== '') params[k] = v;
+-++        });
+-++        const resp = await safetyService.listDocuments(projectId, params);
+-++        if (!cancelled) setDocs(resp || { items: [], total: 0 });
+-++      } catch (err) {
+-++        if (!cancelled) toast.error('שגיאה בטעינת ליקויים מסוננים');
+-++      }
+-++    })();
+-++    return () => { cancelled = true; };
+-++  }, [projectId, filter, loading, flagOff, forbidden]);
+- +
+--+=== VERIFY OUTPUT ===
+--+(a) allowedRoles on safety route:
+--+            <ProtectedRoute allowedRoles={['project_manager', 'management_team', 'owner', 'admin']}>
+-++  // Clear selection whenever the filter changes or the active tab leaves documents.
+-++  useEffect(() => { setSelectedIds(new Set()); }, [filter]);
+-++  useEffect(() => {
+-++    if (activeTab !== 'documents') setSelectedIds(new Set());
+-++  }, [activeTab]);
+-++
+-+   if (loading) return <SafetySkeleton />;
+-+   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+-+   if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+-+@@ -102,9 +173,53 @@ export default function SafetyHomePage() {
+-+   const incidentsTotal = b.incidents_last_90d?.total ?? 0;
+-+   const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
+-+ 
+-++  const activeFilterCount = countActiveFilters(filter);
+-++  const hasActiveFilter = activeFilterCount > 0;
+- +
+--+(b) no incidents state/setIncidents/eslint-disable: (empty = pass)
+--+  (none — pass)
+-++  const docItems = docs.items || [];
+-++  const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
+-++
+-++  const toggleOne = (id) => {
+-++    setSelectedIds((prev) => {
+-++      const next = new Set(prev);
+-++      if (next.has(id)) next.delete(id); else next.add(id);
+-++      return next;
+-++    });
+-++  };
+-++
+-++  const toggleSelectAll = () => {
+-++    if (allSelected) {
+-++      setSelectedIds(new Set());
+-++    } else {
+-++      setSelectedIds(new Set(docItems.map((d) => d.id)));
+-++    }
+-++  };
+-++
+-++  const clearFilter = () => setFilter(EMPTY_FILTER);
+-++
+-++  const handleBulkDelete = async () => {
+-++    if (selectedIds.size === 0) return;
+-++    setBulkConfirmOpen(false);
+-++    setBulkDeleting(true);
+-++    const ids = Array.from(selectedIds);
+-++    const results = await Promise.allSettled(
+-++      ids.map((id) => safetyService.deleteDocument(projectId, id))
+-++    );
+-++    const failed = results.filter((r) => r.status === 'rejected').length;
+-++    setBulkDeleting(false);
+-++    setSelectedIds(new Set());
+-++    if (failed > 0) {
+-++      toast.error(`${failed} מתוך ${ids.length} לא נמחקו`);
+-++    } else {
+-++      toast.success(`${ids.length} ליקויים נמחקו`);
+-++    }
+-++    // Re-trigger the documents refetch effect with the same filter object.
+-++    setFilter((f) => ({ ...f }));
+-++  };
+-++
+-+   return (
+-+     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
+-+-      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
+-++      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
+-+         <button
+-+           onClick={() => navigate(`/projects/${projectId}/dashboard`)}
+-+           className="p-2 rounded-lg hover:bg-slate-100"
+-+@@ -117,8 +232,31 @@ export default function SafetyHomePage() {
+-+           <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
+-+           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
+-+         </div>
+-++
+-++        <SafetyExportMenu
+-++          projectId={projectId}
+-++          currentFilter={filter}
+-++          hasActiveFilter={hasActiveFilter}
+-++        />
+-++
+-++        <button
+-++          type="button"
+-++          onClick={() => setFilterOpen(true)}
+-++          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
+-++        >
+-++          <Filter className="w-4 h-4" />
+-++          סינון
+-++          {activeFilterCount > 0 && (
+-++            <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+-++              {activeFilterCount}
+-++            </span>
+-++          )}
+-++        </button>
+-++
+-+         {cacheAge > 0 && (
+-+-          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
+-++          <p className="hidden sm:block text-[11px] text-slate-400 ml-1">
+-++            עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳
+-++          </p>
+-+         )}
+-+       </div>
+-+ 
+-+@@ -207,7 +345,15 @@ export default function SafetyHomePage() {
+-+             </TabsList>
+-+ 
+-+             <TabsContent value="documents" className="p-0 m-0">
+-+-              <DocumentsList items={docs.items} />
+-++              <DocumentsList
+-++                items={docItems}
+-++                selectedIds={selectedIds}
+-++                onToggle={toggleOne}
+-++                onSelectAll={toggleSelectAll}
+-++                allSelected={allSelected}
+-++                hasActiveFilter={hasActiveFilter}
+-++                onClearFilter={clearFilter}
+-++              />
+-+             </TabsContent>
+-+             <TabsContent value="tasks" className="p-0 m-0">
+-+               <TasksList items={tasks.items} />
+-+@@ -218,6 +364,45 @@ export default function SafetyHomePage() {
+-+           </Tabs>
+-+         </Card>
+-+       </div>
+- +
+--+(c) no listIncidents on Home page: (empty = pass)
+--+  (none — pass)
+-++      <SafetyFilterSheet
+-++        open={filterOpen}
+-++        onOpenChange={setFilterOpen}
+-++        value={filter}
+-++        onApply={(next) => { setFilter(next); setFilterOpen(false); }}
+-++        onClear={clearFilter}
+-++        companies={companies}
+-++        users={users}
+-++      />
+- +
+--+(d) listIncidents still exported from api.js:
+--+212:  async listIncidents(projectId, params = {}) {
+-++      {activeTab === 'documents' && selectedIds.size > 0 && (
+-++        <SafetyBulkActionBar
+-++          count={selectedIds.size}
+-++          onDelete={() => setBulkConfirmOpen(true)}
+-++          onClear={() => setSelectedIds(new Set())}
+-++          deleting={bulkDeleting}
+-++        />
+-++      )}
+- +
+--+(e) no numeric severity keys: (empty = pass)
+--+  (none — pass)
+-++      <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
+-++        <AlertDialogContent dir="rtl">
+-++          <AlertDialogHeader>
+-++            <AlertDialogTitle>מחיקת ליקויים</AlertDialogTitle>
+-++            <AlertDialogDescription>
+-++              האם למחוק {selectedIds.size} ליקויים נבחרים? לא ניתן לבטל את הפעולה.
+-++            </AlertDialogDescription>
+-++          </AlertDialogHeader>
+-++          <AlertDialogFooter>
+-++            <AlertDialogCancel>ביטול</AlertDialogCancel>
+-++            <AlertDialogAction
+-++              onClick={handleBulkDelete}
+-++              className="bg-red-600 hover:bg-red-700 text-white"
+-++            >
+-++              מחק
+-++            </AlertDialogAction>
+-++          </AlertDialogFooter>
+-++        </AlertDialogContent>
+-++      </AlertDialog>
+-+     </div>
+-+   );
+-+ }
+-+@@ -239,30 +424,76 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
+-+   );
+-+ }
+-  
+-- === FULL UNIFIED DIFF ===
+---diff --git a/frontend/src/App.js b/frontend/src/App.js
+---index adb9373..e4634b6 100644
+------ a/frontend/src/App.js
+---+++ b/frontend/src/App.js
+---@@ -68,6 +68,7 @@ const HandoverOverviewPage = React.lazy(() => import('./pages/HandoverOverviewPa
+--- const HandoverTabPage = React.lazy(() => import('./pages/HandoverTabPage'));
+--- const HandoverProtocolPage = React.lazy(() => import('./pages/HandoverProtocolPage'));
+--- const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage'));
+---+const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
+--- 
+--- const INTENDED_PATH_KEY = 'intendedPath';
+--- 
+---@@ -320,6 +321,14 @@ const AppRoutes = () => {
+---             </ProtectedRoute>
+---           }
+---         />
+---+        <Route
+---+          path="/projects/:projectId/safety"
+---+          element={
+---+            <ProtectedRoute>
+---+              <SafetyHomePage />
+---+            </ProtectedRoute>
+---+          }
+---+        />
+---         <Route path="/" element={<Navigate to="/projects" replace />} />
+---         <Route
+---           path="/projects/:projectId/plans/archive"
+---diff --git a/frontend/src/components/safety/SafetyKpiCard.js b/frontend/src/components/safety/SafetyKpiCard.js
+---new file mode 100644
+---index 0000000..2aeb09f
+------ /dev/null
+---+++ b/frontend/src/components/safety/SafetyKpiCard.js
+---@@ -0,0 +1,41 @@
+---+import React from 'react';
+---+
+---+/**
+---+ * KPI tile for safety home.
+---+ * @param {Component} icon        lucide-react icon component
+---+ * @param {string} label          Hebrew label
+---+ * @param {number|string} value   big number or text
+---+ * @param {string} sub            small sub-line (e.g., "מתוך 12")
+---+ * @param {string} tone           'neutral' | 'info' | 'warning' | 'danger' | 'success'
+---+ * @param {function} onClick      optional — click to switch tab or open drawer
+---+ */
+---+export default function SafetyKpiCard({ icon: Icon, label, value, sub, tone = 'neutral', onClick }) {
+---+  const toneMap = {
+---+    neutral: { bg: 'bg-white',      border: 'border-slate-200',   iconBg: 'bg-slate-100',    iconFg: 'text-slate-600',  num: 'text-slate-900' },
+---+    info:    { bg: 'bg-blue-50',    border: 'border-blue-200',    iconBg: 'bg-blue-100',     iconFg: 'text-blue-700',   num: 'text-blue-900' },
+---+    warning: { bg: 'bg-amber-50',   border: 'border-amber-200',   iconBg: 'bg-amber-100',    iconFg: 'text-amber-700',  num: 'text-amber-900' },
+---+    danger:  { bg: 'bg-red-50',     border: 'border-red-200',     iconBg: 'bg-red-100',      iconFg: 'text-red-700',    num: 'text-red-900' },
+---+    success: { bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-100',  iconFg: 'text-emerald-700', num: 'text-emerald-900' },
+---+  };
+---+  const t = toneMap[tone] || toneMap.neutral;
+---+
+---+  return (
+---+    <button
+---+      type="button"
+---+      onClick={onClick}
+---+      className={`text-right ${t.bg} ${t.border} border rounded-xl p-4 shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-60 min-h-[96px] w-full`}
+---+      disabled={!onClick}
+---+    >
+---+      <div className="flex items-start gap-3">
+---+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${t.iconBg}`}>
+---+          {Icon && <Icon className={`w-5 h-5 ${t.iconFg}`} />}
+---+        </div>
+---+        <div className="flex-1 min-w-0">
+---+          <p className={`text-2xl font-black ${t.num} leading-none`}>{value ?? '—'}</p>
+---+          <p className="text-xs text-slate-600 mt-1 font-medium truncate">{label}</p>
+---+          {sub && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sub}</p>}
+---+        </div>
+---+      </div>
+---+    </button>
+---+  );
+---+}
+---diff --git a/frontend/src/components/safety/SafetyScoreGauge.js b/frontend/src/components/safety/SafetyScoreGauge.js
+---new file mode 100644
+---index 0000000..5dd3bb8
+------ /dev/null
+---+++ b/frontend/src/components/safety/SafetyScoreGauge.js
+---@@ -0,0 +1,78 @@
+---+import React from 'react';
+---+
+---+/**
+---+ * 0-100 donut gauge. RTL-safe (no direction-specific markup).
+---+ * @param {number} score       0..100
+---+ * @param {number} size        px, default 180
+---+ * @param {number} stroke      px, default 14
+---+ * @param {string} label       optional Hebrew label under the number
+---+ */
+---+export default function SafetyScoreGauge({ score = 0, size = 180, stroke = 14, label }) {
+---+  const radius = (size - stroke) / 2;
+---+  const circumference = 2 * Math.PI * radius;
+---+  const clamped = Math.max(0, Math.min(100, Math.round(score)));
+---+  const offset = circumference * (1 - clamped / 100);
+---+
+---+  let color = '#ef4444';
+---+  let tierHe = 'דורש תיקון';
+---+  if (clamped >= 85) { color = '#10b981'; tierHe = 'מצוין'; }
+---+  else if (clamped >= 70) { color = '#3b82f6'; tierHe = 'טוב'; }
+---+  else if (clamped >= 50) { color = '#f59e0b'; tierHe = 'תקין'; }
+---+
+---+  return (
+---+    <div className="flex flex-col items-center justify-center">
+---+      <svg
+---+        width={size}
+---+        height={size}
+---+        viewBox={`0 0 ${size} ${size}`}
+---+        aria-label={`ציון בטיחות ${clamped} מתוך 100`}
+---+        role="img"
+---+      >
+---+        <circle
+---+          cx={size / 2}
+---+          cy={size / 2}
+---+          r={radius}
+---+          stroke="#e5e7eb"
+---+          strokeWidth={stroke}
+---+          fill="none"
+---+        />
+---+        <circle
+---+          cx={size / 2}
+---+          cy={size / 2}
+---+          r={radius}
+---+          stroke={color}
+---+          strokeWidth={stroke}
+---+          fill="none"
+---+          strokeDasharray={circumference}
+---+          strokeDashoffset={offset}
+---+          strokeLinecap="round"
+---+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+---+          style={{ transition: 'stroke-dashoffset 400ms ease-out, stroke 400ms ease-out' }}
+---+        />
+---+        <text
+---+          x="50%"
+---+          y="47%"
+---+          textAnchor="middle"
+---+          dominantBaseline="central"
+---+          fontSize={size * 0.28}
+---+          fontWeight="800"
+---+          fill="#0f172a"
+---+        >
+---+          {clamped}
+---+        </text>
+---+        <text
+---+          x="50%"
+---+          y="62%"
+---+          textAnchor="middle"
+---+          dominantBaseline="central"
+---+          fontSize={size * 0.08}
+---+          fontWeight="600"
+---+          fill="#64748b"
+---+        >
+---+          {tierHe}
+---+        </text>
+---+      </svg>
+---+      {label && <p className="text-sm text-slate-600 mt-2 font-medium">{label}</p>}
+---+    </div>
+---+  );
+---+}
+---diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
+---index c3895cd..3ecb53c 100644
+------ a/frontend/src/i18n/he.json
+---+++ b/frontend/src/i18n/he.json
+---@@ -607,5 +607,50 @@
+---     "err_company_required": "יש לבחור חברה",
+---     "toast_registered": "הרשמה בוצעה בהצלחה! ממתין לאישור",
+---     "err_register": "שגיאה בהרשמה"
+---+  },
+---+  "safety": {
+---+    "title": "בטיחות",
+---+    "score_label": "ציון בטיחות",
+---+    "tier_excellent": "מצוין",
+---+    "tier_good": "טוב",
+---+    "tier_ok": "תקין",
+---+    "tier_fix": "דורש תיקון",
+---+    "breakdown_docs": "ליקויים",
+---+    "breakdown_tasks": "משימות באיחור",
+---+    "breakdown_training": "הדרכות",
+---+    "breakdown_incidents": "אירועים (90 יום)",
+---+    "kpi_open_docs": "ליקויים פתוחים",
+---+    "kpi_overdue_tasks": "משימות באיחור",
+---+    "kpi_untrained": "עובדים ללא הדרכה",
+---+    "kpi_incidents_90d": "אירועים (90 יום)",
+---+    "kpi_total_workers": "סך עובדים באתר",
+---+    "kpi_score_percent": "ציון מצטבר",
+---+    "tab_documents": "ליקויים",
+---+    "tab_tasks": "משימות",
+---+    "tab_workers": "עובדים",
+---+    "empty_docs": "אין ליקויים פתוחים",
+---+    "empty_tasks": "אין משימות בטיחות פתוחות",
+---+    "empty_workers": "אין עובדים רשומים",
+---+    "sev_1": "נמוכה",
+---+    "sev_2": "בינונית",
+---+    "sev_3": "גבוהה",
+---+    "doc_status_open": "פתוח",
+---+    "doc_status_in_progress": "בביצוע",
+---+    "doc_status_resolved": "נפתר",
+---+    "doc_status_verified": "אומת",
+---+    "task_status_open": "פתוח",
+---+    "task_status_in_progress": "בביצוע",
+---+    "task_status_completed": "הושלם",
+---+    "task_status_cancelled": "בוטל",
+---+    "overdue_badge": "באיחור",
+---+    "forbidden_title": "אין הרשאה לצפייה בנתוני בטיחות",
+---+    "forbidden_sub": "מודול הבטיחות זמין לניהול פרויקט בלבד.",
+---+    "flag_off_title": "מודול הבטיחות אינו פעיל בארגון זה",
+---+    "flag_off_sub": "צור קשר עם התמיכה להפעלה.",
+---+    "updated_ago": "עודכן לפני",
+---+    "minutes_short": "דק׳",
+---+    "no_location": "ללא מיקום",
+---+    "no_profession": "ללא מקצוע",
+---+    "coming_soon": "בקרוב"
+---   }
+--- }
+---diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+---index f445395..ad24cb5 100644
+------ a/frontend/src/pages/ProjectControlPage.js
+---+++ b/frontend/src/pages/ProjectControlPage.js
+---@@ -23,7 +23,7 @@ import {
+---   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
+---   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
+---   Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
+----  Package
+---+  Package, ShieldAlert
+--- } from 'lucide-react';
+--- import { Button } from '../components/ui/button';
+--- import { Card } from '../components/ui/card';
+---@@ -3500,6 +3500,7 @@ const ProjectControlPage = () => {
+---     { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+---     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
+---     { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
+---+    { id: 'safety', label: 'בטיחות', icon: ShieldAlert, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+---     { id: 'plans', label: 'תוכניות', icon: FileText },
+---   ].filter(t => !t.hidden);
+--- 
+---@@ -3507,6 +3508,7 @@ const ProjectControlPage = () => {
+---     if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`); return; }
+---     if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
+---     if (id === 'handover') { navigate(`/projects/${projectId}/handover`); return; }
+---+    if (id === 'safety') { navigate(`/projects/${projectId}/safety`); return; }
+---     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
+---     setWorkMode(id);
+---     if (id !== 'structure') setActiveTab('');
+---diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
+---new file mode 100644
+---index 0000000..9ef4a7f
+------ /dev/null
+---+++ b/frontend/src/pages/SafetyHomePage.js
+---@@ -0,0 +1,370 @@
+---+import React, { useEffect, useState } from 'react';
+---+import { useParams, useNavigate } from 'react-router-dom';
+---+import {
+---+  ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
+---+  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
+---+} from 'lucide-react';
+---+import { toast } from 'sonner';
+---+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+---+import { Card } from '../components/ui/card';
+---+import { Badge } from '../components/ui/badge';
+---+import { safetyService, projectService } from '../services/api';
+---+import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
+---+import SafetyKpiCard from '../components/safety/SafetyKpiCard';
+---+
+---+const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה', 1: 'נמוכה', 2: 'בינונית', 3: 'גבוהה' };
+---+const SEVERITY_COLOR = {
+---+  '1': 'bg-blue-100 text-blue-800', '2': 'bg-amber-100 text-amber-800', '3': 'bg-red-100 text-red-800',
+---+  1: 'bg-blue-100 text-blue-800', 2: 'bg-amber-100 text-amber-800', 3: 'bg-red-100 text-red-800',
+---+};
+---+const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
+---+const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
+---+
+---+export default function SafetyHomePage() {
+---+  const { projectId } = useParams();
+---+  const navigate = useNavigate();
+---+
+---+  const [project, setProject] = useState(null);
+---+  const [scoreData, setScoreData] = useState(null);
+---+  const [docs, setDocs] = useState({ items: [], total: 0 });
+---+  const [tasks, setTasks] = useState({ items: [], total: 0 });
+---+  const [workers, setWorkers] = useState({ items: [], total: 0 });
+---+  // eslint-disable-next-line no-unused-vars
+---+  const [incidents, setIncidents] = useState({ items: [], total: 0 });
+---+  const [flagOff, setFlagOff] = useState(false);
+---+  const [forbidden, setForbidden] = useState(false);
+---+  const [loading, setLoading] = useState(true);
+---+  const [activeTab, setActiveTab] = useState('documents');
+---+
+---+  useEffect(() => {
+---+    let cancelled = false;
+---+    (async () => {
+---+      try {
+---+        let proj = null;
+---+        try {
+---+          proj = await projectService.get(projectId);
+---+        } catch (e) {
+---+          // Fall through — safety endpoints will surface their own status
+---+        }
+---+        if (cancelled) return;
+---+        if (proj) setProject(proj);
+---+
+---+        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
+---+          safetyService.getScore(projectId).catch((e) => ({ __err: e })),
+---+          safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+---+          safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+---+          safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+---+          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+---+        ]);
+---+        if (cancelled) return;
+---+
+---+        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
+---+        const has404 = responses.some((r) => r?.__err?.response?.status === 404);
+---+        const has403 = responses.some((r) => r?.__err?.response?.status === 403);
+---+
+---+        if (has404) { setFlagOff(true); setLoading(false); return; }
+---+        if (has403) { setForbidden(true); setLoading(false); return; }
+---+
+---+        const otherErr = responses.find((r) => r?.__err);
+---+        if (otherErr) {
+---+          toast.error('שגיאה בטעינת נתוני בטיחות');
+---+          setLoading(false);
+---+          return;
+---+        }
+---+
+---+        setScoreData(scoreResp);
+---+        setDocs(docsResp || { items: [], total: 0 });
+---+        setTasks(tasksResp || { items: [], total: 0 });
+---+        setWorkers(workersResp || { items: [], total: 0 });
+---+        setIncidents(incidentsResp || { items: [], total: 0 });
+---+      } catch (err) {
+---+        if (!cancelled) toast.error('שגיאה בטעינת נתונים');
+---+      } finally {
+---+        if (!cancelled) setLoading(false);
+---+      }
+---+    })();
+---+    return () => { cancelled = true; };
+---+  }, [projectId]);
+---+
+---+  if (loading) return <SafetySkeleton />;
+---+  if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+---+  if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
+---+
+---+  const b = scoreData?.breakdown || {};
+---+  const caps = b.caps || {};
+---+  const cacheAge = scoreData?.cache_age_seconds ?? 0;
+---+
+---+  const sev3 = b.doc_counts?.sev3 ?? 0;
+---+  const sev2 = b.doc_counts?.sev2 ?? 0;
+---+  const sev1 = b.doc_counts?.sev1 ?? 0;
+---+  const openDocs = sev3 + sev2 + sev1;
+---+  const overdueTotal = b.overdue_task_counts?.total ?? 0;
+---+  const overdueSev3 = b.overdue_task_counts?.sev3 ?? 0;
+---+  const untrained = b.workers_without_training ?? 0;
+---+  const totalWorkers = b.total_workers ?? 0;
+---+  const incidentsTotal = b.incidents_last_90d?.total ?? 0;
+---+  const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
+---+
+---+  return (
+---+    <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
+---+      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
+---+        <button
+---+          onClick={() => navigate(`/projects/${projectId}/dashboard`)}
+---+          className="p-2 rounded-lg hover:bg-slate-100"
+---+          aria-label="חזור"
+---+          type="button"
+---+        >
+---+          <ArrowRight className="w-5 h-5 text-slate-700" />
+---+        </button>
+---+        <div className="flex-1 min-w-0">
+---+          <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
+---+          {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
+---+        </div>
+---+        {cacheAge > 0 && (
+---+          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
+---+        )}
+---+      </div>
+---+
+---+      <div className="max-w-6xl mx-auto px-4 py-5 space-y-6">
+---+        <Card className="p-5 bg-white shadow-sm">
+---+          <div className="flex flex-col md:flex-row items-center gap-6">
+---+            <SafetyScoreGauge score={scoreData?.score ?? 0} label="ציון בטיחות" />
+---+            <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
+---+              <BreakdownBar label="ליקויים" value={b.doc_penalty} max={caps.doc_max} color="bg-red-500" />
+---+              <BreakdownBar label="משימות באיחור" value={b.task_penalty} max={caps.task_max} color="bg-amber-500" />
+---+              <BreakdownBar label="הדרכות" value={b.training_penalty} max={caps.training_max} color="bg-blue-500" />
+---+              <BreakdownBar label="אירועים (90 יום)" value={b.incident_penalty} max={caps.incident_max} color="bg-fuchsia-500" />
+---+            </div>
+---+          </div>
+---+        </Card>
+---+
+---+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+---+          <SafetyKpiCard
+---+            icon={ShieldAlert}
+---+            label="ליקויים פתוחים"
+---+            value={openDocs}
+---+            sub={`חמור: ${sev3}`}
+---+            tone={sev3 > 0 ? 'danger' : 'neutral'}
+---+            onClick={() => setActiveTab('documents')}
+---+          />
+---+          <SafetyKpiCard
+---+            icon={Clock}
+---+            label="משימות באיחור"
+---+            value={overdueTotal}
+---+            sub={`חמור: ${overdueSev3}`}
+---+            tone={overdueTotal > 0 ? 'warning' : 'neutral'}
+---+            onClick={() => setActiveTab('tasks')}
+---+          />
+---+          <SafetyKpiCard
+---+            icon={GraduationCap}
+---+            label="עובדים ללא הדרכה"
+---+            value={untrained}
+---+            sub={`מתוך ${totalWorkers} עובדים`}
+---+            tone={untrained > 0 ? 'warning' : 'success'}
+---+            onClick={() => setActiveTab('workers')}
+---+          />
+---+          <SafetyKpiCard
+---+            icon={AlertCircle}
+---+            label="אירועים (90 יום)"
+---+            value={incidentsTotal}
+---+            sub={`פציעות: ${incidentsInjury}`}
+---+            tone={incidentsInjury > 0 ? 'danger' : 'neutral'}
+---+          />
+---+          <SafetyKpiCard
+---+            icon={Users}
+---+            label="סך עובדים באתר"
+---+            value={totalWorkers}
+---+            tone="info"
+---+            onClick={() => setActiveTab('workers')}
+---+          />
+---+          <SafetyKpiCard
+---+            icon={TrendingUp}
+---+            label="ציון מצטבר"
+---+            value={`${scoreData?.score ?? 0}%`}
+---+            sub="מעודכן כל 5 דק׳"
+---+            tone="info"
+---+          />
+---+        </div>
+---+
+---+        <Card className="p-0 overflow-hidden bg-white shadow-sm">
+---+          <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+---+            <TabsList className="w-full justify-start rounded-none border-b bg-slate-50 p-0 h-auto overflow-x-auto flex">
+---+              <TabsTrigger
+---+                value="documents"
+---+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+---+              >
+---+                ליקויים ({docs.total})
+---+              </TabsTrigger>
+---+              <TabsTrigger
+---+                value="tasks"
+---+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+---+              >
+---+                משימות ({tasks.total})
+---+              </TabsTrigger>
+---+              <TabsTrigger
+---+                value="workers"
+---+                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
+---+              >
+---+                עובדים ({workers.total})
+---+              </TabsTrigger>
+---+            </TabsList>
+---+
+---+            <TabsContent value="documents" className="p-0 m-0">
+---+              <DocumentsList items={docs.items} />
+---+            </TabsContent>
+---+            <TabsContent value="tasks" className="p-0 m-0">
+---+              <TasksList items={tasks.items} />
+---+            </TabsContent>
+---+            <TabsContent value="workers" className="p-0 m-0">
+---+              <WorkersList items={workers.items} />
+---+            </TabsContent>
+---+          </Tabs>
+---+        </Card>
+---+      </div>
+---+    </div>
+---+  );
+---+}
+---+
+---+function BreakdownBar({ label, value = 0, max = 1, color }) {
+---+  const safeMax = Number(max) > 0 ? Number(max) : 1;
+---+  const safeVal = Math.max(0, Number(value) || 0);
+---+  const pct = Math.min(100, (safeVal / safeMax) * 100);
+---+  return (
+---+    <div>
+---+      <div className="flex items-center justify-between mb-1">
+---+        <span className="text-xs font-medium text-slate-600">{label}</span>
+---+        <span className="text-xs text-slate-500">{safeVal.toFixed(1)} / {safeMax}</span>
+---+      </div>
+---+      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+---+        <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
+---+      </div>
+---+    </div>
+---+  );
+---+}
+---+
+---+function DocumentsList({ items }) {
+---+  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
+---+  return (
+---+    <ul className="divide-y divide-slate-100">
+---+      {items.map((d) => (
+---+        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+---+          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
+---+            {SEVERITY_HE[d.severity] || '—'}
+---+          </Badge>
+---+          <div className="flex-1 min-w-0">
+---+            <p className="font-medium text-slate-900 truncate">{d.title}</p>
+---+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+---+              <Badge className="bg-slate-100 text-slate-700 font-normal">
+---+                {DOC_STATUS_HE[d.status] || d.status}
+---+              </Badge>
+---+              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+---+            </div>
+---+          </div>
+---+          <time className="text-xs text-slate-400 shrink-0">
+---+            {(d.found_at || '').slice(0, 10)}
+---+          </time>
+---+        </li>
+---+      ))}
+---+    </ul>
+---+  );
+---+}
+---+
+---+function TasksList({ items }) {
+---+  if (!items?.length) return <EmptyState icon={Wrench} text="אין משימות בטיחות פתוחות" />;
+---+  const nowIso = new Date().toISOString();
+---+  return (
+---+    <ul className="divide-y divide-slate-100">
+---+      {items.map((tk) => {
+---+        const overdue = tk.due_at && tk.due_at < nowIso && !['completed', 'cancelled'].includes(tk.status);
+---+        return (
+---+          <li key={tk.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+---+            <Badge className={SEVERITY_COLOR[tk.severity] || 'bg-slate-100 text-slate-700'}>
+---+              {SEVERITY_HE[tk.severity] || '—'}
+---+            </Badge>
+---+            <div className="flex-1 min-w-0">
+---+              <p className="font-medium text-slate-900 truncate">{tk.title}</p>
+---+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+---+                <Badge className="bg-slate-100 text-slate-700 font-normal">
+---+                  {TASK_STATUS_HE[tk.status] || tk.status}
+---+                </Badge>
+---+                {tk.due_at && (
+---+                  <span className="text-xs text-slate-500">יעד {tk.due_at.slice(0, 10)}</span>
+---+                )}
+---+              </div>
+---+            </div>
+---+            {overdue && <Badge className="bg-red-100 text-red-800 shrink-0">באיחור</Badge>}
+---+          </li>
+---+        );
+---+      })}
+---+    </ul>
+---+  );
+---+}
+---+
+---+function WorkersList({ items }) {
+---+  if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
+---+  return (
+---+    <ul className="divide-y divide-slate-100">
+---+      {items.map((w) => (
+---+        <li key={w.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50">
+---+          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+---+            <Hammer className="w-5 h-5 text-slate-500" />
+---+          </div>
+---+          <div className="flex-1 min-w-0">
+---+            <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
+---+            <p className="text-xs text-slate-500 truncate">
+---+              {w.profession || 'ללא מקצוע'}{w.phone && ` · ${w.phone}`}
+---+            </p>
+---+          </div>
+---+        </li>
+---+      ))}
+---+    </ul>
+---+  );
+---+}
+---+
+---+function EmptyState({ icon: Icon, text }) {
+---+  return (
+---+    <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+---+      <Icon className="w-10 h-10 mb-2" />
+---+      <p className="text-sm font-medium">{text}</p>
+---+    </div>
+---+  );
+---+}
+---+
+---+function SafetySkeleton() {
+---+  return (
+---+    <div dir="rtl" className="min-h-screen bg-slate-50 p-4 space-y-4 animate-pulse">
+---+      <div className="h-12 bg-white rounded" />
+---+      <div className="h-48 bg-white rounded" />
+---+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+---+        {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-white rounded" />)}
+---+      </div>
+---+      <div className="h-64 bg-white rounded" />
+---+    </div>
+---+  );
+---+}
+---+
+---+function SafetyForbidden({ onBack }) {
+---+  return (
+---+    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
+---+      <AlertTriangle className="w-12 h-12 text-amber-500 mb-3" />
+---+      <h2 className="text-lg font-bold text-slate-900">אין הרשאה לצפייה בנתוני בטיחות</h2>
+---+      <p className="text-sm text-slate-600 mt-2">מודול הבטיחות זמין לניהול פרויקט בלבד.</p>
+---+      <button onClick={onBack} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm" type="button">
+---+        חזור לדאשבורד
+---+      </button>
+---+    </div>
+---+  );
+---+}
+---+
+---+function SafetyFlagOff({ onBack }) {
+---+  return (
+---+    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
+---+      <ShieldAlert className="w-12 h-12 text-slate-400 mb-3" />
+---+      <h2 className="text-lg font-bold text-slate-900">מודול הבטיחות אינו פעיל בארגון זה</h2>
+---+      <p className="text-sm text-slate-600 mt-2">צור קשר עם התמיכה להפעלה.</p>
+---+      <button onClick={onBack} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm" type="button">
+---+        חזור לדאשבורד
+---+      </button>
+---+    </div>
+---+  );
+---+}
+---diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+---index 3e0003f..f29b4aa 100644
+------ a/frontend/src/services/api.js
+---+++ b/frontend/src/services/api.js
+---@@ -167,6 +167,62 @@ export const projectService = {
+---   },
+--- };
+--- 
+---+export const safetyService = {
+---+  async getScore(projectId, refresh = false) {
+---+    const params = refresh ? { refresh: 'true' } : {};
+---+    const response = await axios.get(
+---+      `${API}/safety/${projectId}/score`,
+---+      { headers: getAuthHeader(), params }
+---+    );
+---+    return response.data;
+---+  },
+---+
+---+  async listDocuments(projectId, params = {}) {
+---+    const response = await axios.get(
+---+      `${API}/safety/${projectId}/documents`,
+---+      { headers: getAuthHeader(), params }
+---+    );
+---+    return response.data;
+---+  },
+---+
+---+  async listTasks(projectId, params = {}) {
+---+    const response = await axios.get(
+---+      `${API}/safety/${projectId}/tasks`,
+---+      { headers: getAuthHeader(), params }
+---+    );
+---+    return response.data;
+---+  },
+---+
+---+  async listWorkers(projectId, params = {}) {
+---+    const response = await axios.get(
+---+      `${API}/safety/${projectId}/workers`,
+---+      { headers: getAuthHeader(), params }
+---+    );
+---+    return response.data;
+---+  },
+---+
+---+  async listTrainings(projectId, params = {}) {
+---+    const response = await axios.get(
+---+      `${API}/safety/${projectId}/trainings`,
+---+      { headers: getAuthHeader(), params }
+---+    );
+---+    return response.data;
+---+  },
+---+
+---+  async listIncidents(projectId, params = {}) {
+---+    const response = await axios.get(
+---+      `${API}/safety/${projectId}/incidents`,
+---+      { headers: getAuthHeader(), params }
+---+    );
+---+    return response.data;
+---+  },
+---+
+---+  async healthz() {
+---+    const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
+---+    return response.data;
+---+  },
+---+};
+---+
+--- export const buildingService = {
+---   async getFloors(buildingId) {
+---     const response = await axios.get(`${API}/buildings/${buildingId}/floors`, { headers: getAuthHeader() });
+-+-function DocumentsList({ items }) {
+-+-  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
+-++function DocumentsList({
+-++  items, selectedIds, onToggle, onSelectAll, allSelected,
+-++  hasActiveFilter, onClearFilter,
+-++}) {
+-++  if (!items?.length) {
+-++    return (
+-++      <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+-++        <ShieldAlert className="w-10 h-10 mb-2" />
+-++        <p className="text-sm font-medium">
+-++          {hasActiveFilter ? 'לא נמצאו ליקויים המתאימים לסינון' : 'אין ליקויים פתוחים'}
+-++        </p>
+-++        {hasActiveFilter && (
+-++          <button
+-++            type="button"
+-++            onClick={onClearFilter}
+-++            className="mt-3 text-sm text-blue-600 hover:underline"
+-++          >
+-++            נקה סינון
+-++          </button>
+-++        )}
+-++      </div>
+-++    );
+-++  }
+-+   return (
+-+-    <ul className="divide-y divide-slate-100">
+-+-      {items.map((d) => (
+-+-        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+-+-          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
+-+-            {SEVERITY_HE[d.severity] || '—'}
+-+-          </Badge>
+-+-          <div className="flex-1 min-w-0">
+-+-            <p className="font-medium text-slate-900 truncate">{d.title}</p>
+-+-            <div className="flex items-center gap-2 mt-1 flex-wrap">
+-+-              <Badge className="bg-slate-100 text-slate-700 font-normal">
+-+-                {DOC_STATUS_HE[d.status] || d.status}
+-+-              </Badge>
+-+-              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+-++    <>
+-++      <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center gap-3">
+-++        <input
+-++          type="checkbox"
+-++          aria-label="בחר הכל"
+-++          checked={allSelected}
+-++          onChange={onSelectAll}
+-++          className="w-5 h-5 cursor-pointer accent-blue-600"
+-++        />
+-++        <span className="text-xs text-slate-600">בחר הכל</span>
+-++        {selectedIds.size > 0 && (
+-++          <span className="text-xs text-slate-500 mr-auto">
+-++            נבחרו {selectedIds.size} מתוך {items.length}
+-++          </span>
+-++        )}
+-++      </div>
+-++      <ul className="divide-y divide-slate-100">
+-++        {items.map((d) => (
+-++          <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+-++            <input
+-++              type="checkbox"
+-++              aria-label={`בחר ליקוי ${d.title || ''}`}
+-++              checked={selectedIds.has(d.id)}
+-++              onChange={(e) => { e.stopPropagation(); onToggle(d.id); }}
+-++              onClick={(e) => e.stopPropagation()}
+-++              className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
+-++            />
+-++            <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
+-++              {SEVERITY_HE[d.severity] || '—'}
+-++            </Badge>
+-++            <div className="flex-1 min-w-0">
+-++              <p className="font-medium text-slate-900 truncate">{d.title}</p>
+-++              <div className="flex items-center gap-2 mt-1 flex-wrap">
+-++                <Badge className="bg-slate-100 text-slate-700 font-normal">
+-++                  {DOC_STATUS_HE[d.status] || d.status}
+-++                </Badge>
+-++                <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+-++              
+-\ No newline at end of file
+-
+-=== NEW FILE: SafetyFilterSheet.js ===
+-import React, { useEffect, useState } from 'react';
+-import {
+-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+-} from '../ui/sheet';
+-
+-const CATEGORY_OPTIONS = [
+-  { value: 'scaffolding',         label: 'פיגומים' },
+-  { value: 'heights',             label: 'עבודה בגובה' },
+-  { value: 'electrical_safety',   label: 'בטיחות חשמל' },
+-  { value: 'lifting',             label: 'הרמה וציוד' },
+-  { value: 'excavation',          label: 'חפירות' },
+-  { value: 'fire_safety',         label: 'אש ובטיחות אש' },
+-  { value: 'ppe',                 label: 'ציוד מגן אישי' },
+-  { value: 'site_housekeeping',   label: 'סדר וניקיון' },
+-  { value: 'hazardous_materials', label: 'חומרים מסוכנים' },
+-  { value: 'other',               label: 'אחר' },
+-];
+-
+-const SEVERITY_OPTIONS = [
+-  { value: '3', label: 'גבוהה' },
+-  { value: '2', label: 'בינונית' },
+-  { value: '1', label: 'נמוכה' },
+-];
+-
+-const DOC_STATUS_OPTIONS = [
+-  { value: 'open',        label: 'פתוח' },
+-  { value: 'in_progress', label: 'בביצוע' },
+-  { value: 'resolved',    label: 'נפתר' },
+-  { value: 'verified',    label: 'אומת' },
+-];
+-
+-export const EMPTY_FILTER = {
+-  category: null,
+-  severity: null,
+-  status: null,
+-  company_id: null,
+-  assignee_id: null,
+-  reporter_id: null,
+-  date_from: null,
+-  date_to: null,
+-};
+-
+-export function countActiveFilters(filter) {
+-  if (!filter) return 0;
+-  return Object.values(filter).filter((v) => v != null && v !== '').length;
+-}
+-
+-const fieldLabel = 'block text-xs font-medium text-slate-700 mb-1';
+-const fieldInput =
+-  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 ' +
+-  'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-h-[44px]';
+-
+-export default function SafetyFilterSheet({
+-  open,
+-  onOpenChange,
+-  value,
+-  onApply,
+-  onClear,
+-  companies,
+-  users,
+-}) {
+-  const [local, setLocal] = useState(value || EMPTY_FILTER);
+-
+-  useEffect(() => {
+-    if (open) setLocal(value || EMPTY_FILTER);
+-  }, [open, value]);
+-
+-  const set = (k, v) => setLocal((s) => ({ ...s, [k]: v === '' ? null : v }));
+-
+-  const handleApply = () => {
+-    onApply && onApply(local);
+-  };
+-
+-  const handleClear = () => {
+-    setLocal(EMPTY_FILTER);
+-    onClear && onClear();
+-  };
+-
+-  const renderSelect = (k, options, placeholderLabel) => (
+-    <select
+-      className={fieldInput}
+-      value={local[k] ?? ''}
+-      onChange={(e) => set(k, e.target.value)}
+-    >
+-      <option value="">{placeholderLabel}</option>
+-      {options.map((o) => (
+-        <option key={o.value} value={o.value}>{o.label}</option>
+-      ))}
+-    </select>
+-  );
+-
+-  const renderEntitySelect = (k, list, placeholderLabel, loadingLabel) => {
+-    if (!list || list.length === 0) {
+-      return (
+-        <select className={fieldInput} disabled value="">
+-          <option value="">{loadingLabel}</option>
+-        </select>
+-      );
+-    }
+-    return (
+-      <select
+-        className={fieldInput}
+-        value={local[k] ?? ''}
+-        onChange={(e) => set(k, e.target.value)}
+-      >
+-        <option value="">{placeholderLabel}</option>
+-        {list.map((it) => (
+-          <option key={it.id} value={it.id}>{it.name}</option>
+-        ))}
+-      </select>
+-    );
+-  };
+-
+-  return (
+-    <Sheet open={open} onOpenChange={onOpenChange}>
+-      <SheetContent
+-        side="left"
+-        dir="rtl"
+-        className="w-full sm:max-w-md flex flex-col gap-0 p-0"
+-      >
+-        <SheetHeader className="px-5 pt-5 pb-3 border-b border-slate-100 text-right">
+-          <SheetTitle className="text-right">סינון ליקויים</SheetTitle>
+-          <SheetDescription className="text-right">
+-            בחר ערכים והקש על "החל". ניתן לאפס בכל עת.
+-          </SheetDescription>
+-        </SheetHeader>
+-
+-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+-          <div>
+-            <label className={fieldLabel}>קטגוריה</label>
+-            {renderSelect('category', CATEGORY_OPTIONS, 'הכל')}
+-          </div>
+-          <div>
+-            <label className={fieldLabel}>חומרה</label>
+-            {renderSelect('severity', SEVERITY_OPTIONS, 'הכל')}
+-          </div>
+-          <div>
+-            <label className={fieldLabel}>סטטוס</label>
+-            {renderSelect('status', DOC_STATUS_OPTIONS, 'הכל')}
+-          </div>
+-          <div>
+-            <label className={fieldLabel}>חברה</label>
+-            {renderEntitySelect('company_id', companies, 'הכל', 'טוען...')}
+-          </div>
+-          <div>
+-            <label className={fieldLabel}>אחראי</label>
+-            {renderEntitySelect('assignee_id', users, 'הכל', 'טוען...')}
+-          </div>
+-          <div>
+-            <label className={fieldLabel}>מדווח</label>
+-            {renderEntitySelect('reporter_id', users, 'הכל', 'טוען...')}
+-          </div>
+-          <div className="grid grid-cols-2 gap-3">
+-            <div>
+-              <label className={fieldLabel}>מתאריך</label>
+-              <input
+-                type="date"
+-                className={fieldInput}
+-                value={local.date_from ?? ''}
+-                onChange={(e) => set('date_from', e.target.value)}
+-              />
+-            </div>
+-            <div>
+-              <label className={fieldLabel}>עד תאריך</label>
+-              <input
+-                type="date"
+-                className={fieldInput}
+-                value={local.date_to ?? ''}
+-                onChange={(e) => set('date_to', e.target.value)}
+-              />
+-            </div>
+-          </div>
+-        </div>
+-
+-        <div className="px-5 py-4 border-t border-slate-100 flex items-center gap-3 bg-white">
+-          <button
+-            type="button"
+-            onClick={handleApply}
+-            className="flex-1 min-h-[44px] px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+-          >
+-            החל
+-          </button>
+-          <button
+-            type="button"
+-            onClick={handleClear}
+-            className="flex-1 min-h-[44px] px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50"
+-          >
+-            נקה
+-          </button>
+-        </div>
+-      </SheetContent>
+-    </Sheet>
+-  );
+-}
+-
+-=== NEW FILE: SafetyExportMenu.js ===
+-import React, { useState } from 'react';
+-import { Download, ChevronDown, Loader2 } from 'lucide-react';
+-import { toast } from 'sonner';
+-import {
+-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+-} from '../ui/dropdown-menu';
+-import { safetyService } from '../../services/api';
+-
+-function yyyymmdd() {
+-  const d = new Date();
+-  const m = String(d.getMonth() + 1).padStart(2, '0');
+-  const day = String(d.getDate()).padStart(2, '0');
+-  return `${d.getFullYear()}${m}${day}`;
+-}
+-
+-function downloadBlob(response, fallbackName) {
+-  const disp = response?.headers?.['content-disposition'] || '';
+-  const match = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+-  const filename = match ? decodeURIComponent(match[1]) : fallbackName;
+-  const url = window.URL.createObjectURL(new Blob([response.data]));
+-  const a = document.createElement('a');
+-  a.href = url;
+-  a.download = filename;
+-  document.body.appendChild(a);
+-  a.click();
+-  a.remove();
+-  window.URL.revokeObjectURL(url);
+-}
+-
+-export default function SafetyExportMenu({
+-  projectId,
+-  currentFilter,
+-  hasActiveFilter,
+-}) {
+-  const [busy, setBusy] = useState(false);
+-
+-  const stamp = yyyymmdd();
+-  const shortId = (projectId || '').slice(0, 8);
+-
+-  const run = async (type) => {
+-    if (busy) return;
+-    setBusy(true);
+-    try {
+-      let response;
+-      let fallback;
+-      if (type === 'excel') {
+-        response = await safetyService.exportExcel(projectId);
+-        fallback = `safety_${shortId}_${stamp}.xlsx`;
+-      } else if (type === 'filtered') {
+-        const params = {};
+-        if (currentFilter) {
+-          Object.entries(currentFilter).forEach(([k, v]) => {
+-            if (v != null && v !== '') params[k] = v;
+-          });
+-        }
+-        response = await safetyService.exportFiltered(projectId, params);
+-        fallback = `safety_filtered_${shortId}_${stamp}.xlsx`;
+-      } else {
+-        response = await safetyService.exportPdfRegister(projectId);
+-        fallback = `safety_register_${shortId}_${stamp}.pdf`;
+-      }
+-      downloadBlob(response, fallback);
+-      toast.success('הקובץ הורד בהצלחה');
+-    } catch (err) {
+-      toast.error('שגיאה בייצוא — נסה שוב');
+-    } finally {
+-      setTimeout(() => setBusy(false), 500);
+-    }
+-  };
+-
+-  return (
+-    <DropdownMenu>
+-      <DropdownMenuTrigger asChild>
+-        <button
+-          type="button"
+-          disabled={busy}
+-          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px] disabled:opacity-60"
+-        >
+-          {busy ? (
+-            <Loader2 className="w-4 h-4 animate-spin" />
+-          ) : (
+-            <Download className="w-4 h-4" />
+-          )}
+-          ייצוא
+-          <ChevronDown className="w-3 h-3 opacity-60" />
+-        </button>
+-      </DropdownMenuTrigger>
+-      <DropdownMenuContent align="end" dir="rtl" className="min-w-[200px]">
+-        <DropdownMenuItem onSelect={() => run('excel')} disabled={busy}>
+-          ייצוא Excel כללי
+-        </DropdownMenuItem>
+-        <DropdownMenuItem
+-          onSelect={() => hasActiveFilter && run('filtered')}
+-          disabled={busy || !hasActiveFilter}
+-          title={!hasActiveFilter ? 'אין סינון פעיל' : undefined}
+-        >
+-          ייצוא לפי סינון
+-        </DropdownMenuItem>
+-        <DropdownMenuItem onSelect={() => run('pdf')} disabled={busy}>
+-          פנקס כללי PDF
+-        </DropdownMenuItem>
+-      </DropdownMenuContent>
+-    </DropdownMenu>
+-  );
+-}
+-
+-=== NEW FILE: SafetyBulkActionBar.js ===
+-import React from 'react';
+-import { Trash2, X, Loader2 } from 'lucide-react';
+-
+-export default function SafetyBulkActionBar({ count, onDelete, onClear, deleting }) {
+-  return (
+-    <div
+-      dir="rtl"
+-      className="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 shadow-lg"
+-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+-    >
+-      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+-        <button
+-          type="button"
+-          onClick={onClear}
+-          disabled={deleting}
+-          className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 flex items-center gap-1 disabled:opacity-60"
+-        >
+-          <X className="w-4 h-4" />
+-          נקה
+-        </button>
+-
+-        <div className="flex-1 text-center text-sm font-medium text-slate-900">
+-          בחירה: {count}
+-        </div>
+-
+-        <button
+-          type="button"
+-          onClick={onDelete}
+-          disabled={deleting}
+-          className="min-h-[44px] px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 flex items-center gap-1 disabled:opacity-60"
+-        >
+-          {deleting ? (
+-            <Loader2 className="w-4 h-4 animate-spin" />
+-          ) : (
+-            <Trash2 className="w-4 h-4" />
+-          )}
+-          מחק
+-        </button>
+-      </div>
+-    </div>
+-  );
+-}
+++      const [membershipsResp, companiesResp] = await Promise.all([
+++        projectServ
 \ No newline at end of file
-
-=== NEW FILE: SafetyFilterSheet.js ===
-import React, { useEffect, useState } from 'react';
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
-} from '../ui/sheet';
-
-const CATEGORY_OPTIONS = [
-  { value: 'scaffolding',         label: 'פיגומים' },
-  { value: 'heights',             label: 'עבודה בגובה' },
-  { value: 'electrical_safety',   label: 'בטיחות חשמל' },
-  { value: 'lifting',             label: 'הרמה וציוד' },
-  { value: 'excavation',          label: 'חפירות' },
-  { value: 'fire_safety',         label: 'אש ובטיחות אש' },
-  { value: 'ppe',                 label: 'ציוד מגן אישי' },
-  { value: 'site_housekeeping',   label: 'סדר וניקיון' },
-  { value: 'hazardous_materials', label: 'חומרים מסוכנים' },
-  { value: 'other',               label: 'אחר' },
-];
-
-const SEVERITY_OPTIONS = [
-  { value: '3', label: 'גבוהה' },
-  { value: '2', label: 'בינונית' },
-  { value: '1', label: 'נמוכה' },
-];
-
-const DOC_STATUS_OPTIONS = [
-  { value: 'open',        label: 'פתוח' },
-  { value: 'in_progress', label: 'בביצוע' },
-  { value: 'resolved',    label: 'נפתר' },
-  { value: 'verified',    label: 'אומת' },
-];
-
-export const EMPTY_FILTER = {
-  category: null,
-  severity: null,
-  status: null,
-  company_id: null,
-  assignee_id: null,
-  reporter_id: null,
-  date_from: null,
-  date_to: null,
-};
-
-export function countActiveFilters(filter) {
-  if (!filter) return 0;
-  return Object.values(filter).filter((v) => v != null && v !== '').length;
-}
-
-const fieldLabel = 'block text-xs font-medium text-slate-700 mb-1';
-const fieldInput =
-  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 ' +
-  'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-h-[44px]';
-
-export default function SafetyFilterSheet({
-  open,
-  onOpenChange,
-  value,
-  onApply,
-  onClear,
-  companies,
-  users,
-}) {
-  const [local, setLocal] = useState(value || EMPTY_FILTER);
-
-  useEffect(() => {
-    if (open) setLocal(value || EMPTY_FILTER);
-  }, [open, value]);
-
-  const set = (k, v) => setLocal((s) => ({ ...s, [k]: v === '' ? null : v }));
-
-  const handleApply = () => {
-    onApply && onApply(local);
-  };
-
-  const handleClear = () => {
-    setLocal(EMPTY_FILTER);
-    onClear && onClear();
-  };
-
-  const renderSelect = (k, options, placeholderLabel) => (
-    <select
-      className={fieldInput}
-      value={local[k] ?? ''}
-      onChange={(e) => set(k, e.target.value)}
-    >
-      <option value="">{placeholderLabel}</option>
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>{o.label}</option>
-      ))}
-    </select>
-  );
-
-  const renderEntitySelect = (k, list, placeholderLabel, loadingLabel) => {
-    if (!list || list.length === 0) {
-      return (
-        <select className={fieldInput} disabled value="">
-          <option value="">{loadingLabel}</option>
-        </select>
-      );
-    }
-    return (
-      <select
-        className={fieldInput}
-        value={local[k] ?? ''}
-        onChange={(e) => set(k, e.target.value)}
-      >
-        <option value="">{placeholderLabel}</option>
-        {list.map((it) => (
-          <option key={it.id} value={it.id}>{it.name}</option>
-        ))}
-      </select>
-    );
-  };
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="left"
-        dir="rtl"
-        className="w-full sm:max-w-md flex flex-col gap-0 p-0"
-      >
-        <SheetHeader className="px-5 pt-5 pb-3 border-b border-slate-100 text-right">
-          <SheetTitle className="text-right">סינון ליקויים</SheetTitle>
-          <SheetDescription className="text-right">
-            בחר ערכים והקש על "החל". ניתן לאפס בכל עת.
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          <div>
-            <label className={fieldLabel}>קטגוריה</label>
-            {renderSelect('category', CATEGORY_OPTIONS, 'הכל')}
-          </div>
-          <div>
-            <label className={fieldLabel}>חומרה</label>
-            {renderSelect('severity', SEVERITY_OPTIONS, 'הכל')}
-          </div>
-          <div>
-            <label className={fieldLabel}>סטטוס</label>
-            {renderSelect('status', DOC_STATUS_OPTIONS, 'הכל')}
-          </div>
-          <div>
-            <label className={fieldLabel}>חברה</label>
-            {renderEntitySelect('company_id', companies, 'הכל', 'טוען...')}
-          </div>
-          <div>
-            <label className={fieldLabel}>אחראי</label>
-            {renderEntitySelect('assignee_id', users, 'הכל', 'טוען...')}
-          </div>
-          <div>
-            <label className={fieldLabel}>מדווח</label>
-            {renderEntitySelect('reporter_id', users, 'הכל', 'טוען...')}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={fieldLabel}>מתאריך</label>
-              <input
-                type="date"
-                className={fieldInput}
-                value={local.date_from ?? ''}
-                onChange={(e) => set('date_from', e.target.value)}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>עד תאריך</label>
-              <input
-                type="date"
-                className={fieldInput}
-                value={local.date_to ?? ''}
-                onChange={(e) => set('date_to', e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="px-5 py-4 border-t border-slate-100 flex items-center gap-3 bg-white">
-          <button
-            type="button"
-            onClick={handleApply}
-            className="flex-1 min-h-[44px] px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
-          >
-            החל
-          </button>
-          <button
-            type="button"
-            onClick={handleClear}
-            className="flex-1 min-h-[44px] px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50"
-          >
-            נקה
-          </button>
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-=== NEW FILE: SafetyExportMenu.js ===
-import React, { useState } from 'react';
-import { Download, ChevronDown, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
-} from '../ui/dropdown-menu';
-import { safetyService } from '../../services/api';
-
-function yyyymmdd() {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}${m}${day}`;
-}
-
-function downloadBlob(response, fallbackName) {
-  const disp = response?.headers?.['content-disposition'] || '';
-  const match = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
-  const filename = match ? decodeURIComponent(match[1]) : fallbackName;
-  const url = window.URL.createObjectURL(new Blob([response.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(url);
-}
-
-export default function SafetyExportMenu({
-  projectId,
-  currentFilter,
-  hasActiveFilter,
-}) {
-  const [busy, setBusy] = useState(false);
-
-  const stamp = yyyymmdd();
-  const shortId = (projectId || '').slice(0, 8);
-
-  const run = async (type) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      let response;
-      let fallback;
-      if (type === 'excel') {
-        response = await safetyService.exportExcel(projectId);
-        fallback = `safety_${shortId}_${stamp}.xlsx`;
-      } else if (type === 'filtered') {
-        const params = {};
-        if (currentFilter) {
-          Object.entries(currentFilter).forEach(([k, v]) => {
-            if (v != null && v !== '') params[k] = v;
-          });
-        }
-        response = await safetyService.exportFiltered(projectId, params);
-        fallback = `safety_filtered_${shortId}_${stamp}.xlsx`;
-      } else {
-        response = await safetyService.exportPdfRegister(projectId);
-        fallback = `safety_register_${shortId}_${stamp}.pdf`;
-      }
-      downloadBlob(response, fallback);
-      toast.success('הקובץ הורד בהצלחה');
-    } catch (err) {
-      toast.error('שגיאה בייצוא — נסה שוב');
-    } finally {
-      setTimeout(() => setBusy(false), 500);
-    }
-  };
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={busy}
-          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px] disabled:opacity-60"
-        >
-          {busy ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Download className="w-4 h-4" />
-          )}
-          ייצוא
-          <ChevronDown className="w-3 h-3 opacity-60" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" dir="rtl" className="min-w-[200px]">
-        <DropdownMenuItem onSelect={() => run('excel')} disabled={busy}>
-          ייצוא Excel כללי
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => hasActiveFilter && run('filtered')}
-          disabled={busy || !hasActiveFilter}
-          title={!hasActiveFilter ? 'אין סינון פעיל' : undefined}
-        >
-          ייצוא לפי סינון
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => run('pdf')} disabled={busy}>
-          פנקס כללי PDF
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-=== NEW FILE: SafetyBulkActionBar.js ===
-import React from 'react';
-import { Trash2, X, Loader2 } from 'lucide-react';
-
-export default function SafetyBulkActionBar({ count, onDelete, onClear, deleting }) {
-  return (
-    <div
-      dir="rtl"
-      className="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 shadow-lg"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-    >
-      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onClear}
-          disabled={deleting}
-          className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 flex items-center gap-1 disabled:opacity-60"
-        >
-          <X className="w-4 h-4" />
-          נקה
-        </button>
-
-        <div className="flex-1 text-center text-sm font-medium text-slate-900">
-          בחירה: {count}
-        </div>
-
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={deleting}
-          className="min-h-[44px] px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 flex items-center gap-1 disabled:opacity-60"
-        >
-          {deleting ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Trash2 className="w-4 h-4" />
-          )}
-          מחק
-        </button>
-      </div>
-    </div>
-  );
-}

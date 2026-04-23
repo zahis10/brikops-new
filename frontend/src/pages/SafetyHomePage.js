@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
@@ -51,6 +51,10 @@ export default function SafetyHomePage() {
   const [companies, setCompanies] = useState([]);
   const [users, setUsers] = useState([]);
 
+  // Skip the filter useEffect's initial run — main useEffect's Promise.all
+  // already fetched documents. The ref flips to false after the first real run.
+  const filterFetchFirstRun = useRef(true);
+
   // Initial load: project + safety data + best-effort companies/memberships.
   useEffect(() => {
     let cancelled = false;
@@ -91,34 +95,6 @@ export default function SafetyHomePage() {
         setDocs(docsResp || { items: [], total: 0 });
         setTasks(tasksResp || { items: [], total: 0 });
         setWorkers(workersResp || { items: [], total: 0 });
-
-        // Best-effort fetch for filter dropdowns. Failures are silent —
-        // dropdowns degrade to a disabled "טוען..." option.
-        const [membershipsResp, companiesResp] = await Promise.all([
-          projectService.getMemberships(projectId).catch(() => null),
-          projectCompanyService.list(projectId).catch(() => null),
-        ]);
-        if (cancelled) return;
-
-        const memberList = Array.isArray(membershipsResp)
-          ? membershipsResp
-          : (membershipsResp?.items || []);
-        const userMap = new Map();
-        memberList.forEach((m) => {
-          const uid = m.user_id || m.id;
-          if (uid && !userMap.has(uid)) {
-            userMap.set(uid, {
-              id: uid,
-              name: m.user_name || m.name || m.full_name || m.email || uid,
-            });
-          }
-        });
-        setUsers(Array.from(userMap.values()));
-
-        const companyList = Array.isArray(companiesResp)
-          ? companiesResp
-          : (companiesResp?.items || []);
-        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {
@@ -128,10 +104,54 @@ export default function SafetyHomePage() {
     return () => { cancelled = true; };
   }, [projectId]);
 
-  // Refetch documents whenever the filter changes (skipped before initial load
-  // and when the page is in a forbidden / flag-off / loading terminal state).
+  // Best-effort enrichment for filter dropdowns — runs once the page is
+  // interactive, NOT during the loading gate. Dropdowns render "טוען..."
+  // until this completes. Failures are silent.
   useEffect(() => {
     if (!projectId || loading || flagOff || forbidden) return;
+    let cancelled = false;
+    (async () => {
+      const [membershipsResp, companiesResp] = await Promise.all([
+        projectService.getMemberships(projectId).catch(() => null),
+        projectCompanyService.list(projectId).catch(() => null),
+      ]);
+      if (cancelled) return;
+
+      const memberList = Array.isArray(membershipsResp)
+        ? membershipsResp
+        : (membershipsResp?.items || []);
+      const userMap = new Map();
+      memberList.forEach((m) => {
+        const uid = m.user_id || m.id;
+        if (uid && !userMap.has(uid)) {
+          userMap.set(uid, {
+            id: uid,
+            name: m.user_name || m.name || m.full_name || m.email || uid,
+          });
+        }
+      });
+      setUsers(Array.from(userMap.values()));
+
+      const companyList = Array.isArray(companiesResp)
+        ? companiesResp
+        : (companiesResp?.items || []);
+      setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, loading, flagOff, forbidden]);
+
+  // Refetch documents whenever the filter changes. Skipped on the first run
+  // (main useEffect's Promise.all already fetched documents with no filter)
+  // and on forbidden / flag-off / loading terminal states.
+  useEffect(() => {
+    if (!projectId || loading || flagOff || forbidden) return;
+
+    // First run after the page finishes loading: skip — docs already fetched.
+    if (filterFetchFirstRun.current) {
+      filterFetchFirstRun.current = false;
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {

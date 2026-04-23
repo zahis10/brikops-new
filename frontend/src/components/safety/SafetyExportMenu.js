@@ -16,7 +16,15 @@ function yyyymmdd() {
 function downloadBlob(response, fallbackName) {
   const disp = response?.headers?.['content-disposition'] || '';
   const match = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
-  const filename = match ? decodeURIComponent(match[1]) : fallbackName;
+  let filename = fallbackName;
+  if (match) {
+    try {
+      filename = decodeURIComponent(match[1]);
+    } catch (e) {
+      // Malformed % in header — use the raw captured group as-is.
+      filename = match[1];
+    }
+  }
   const url = window.URL.createObjectURL(new Blob([response.data]));
   const a = document.createElement('a');
   a.href = url;
