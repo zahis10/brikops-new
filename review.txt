@@ -1,5 +1,18 @@
+diff --git a/.agents/agent_assets_metadata.toml b/.agents/agent_assets_metadata.toml
+index 2662e11..920459f 100644
+--- a/.agents/agent_assets_metadata.toml
++++ b/.agents/agent_assets_metadata.toml
+@@ -77,7 +77,7 @@ title = "review-94.txt"
+ id = "ocdrZig6YPfAjD1XCgrbr"
+ uri = "file://review.txt"
+ type = "text"
+-title = "Task #409 — Full diff (10 files, 204 lines)"
++title = "Batch 2a — Full Diff (review.txt)"
+ 
+ [[outputs]]
+ id = "WdwtqNCiZpAAlX9e9Sq9Z"
 diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
-index 74d354a..b9b789b 100644
+index 74d354a..e6dea49 100644
 --- a/frontend/src/components/NewDefectModal.js
 +++ b/frontend/src/components/NewDefectModal.js
 @@ -15,6 +15,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -18,7 +31,15 @@ index 74d354a..b9b789b 100644
    const [submitting, setSubmitting] = useState(false);
    const [submitStep, setSubmitStep] = useState(null);
    const [errors, setErrors] = useState({});
-@@ -806,7 +808,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+@@ -654,6 +656,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+         <DialogPrimitive.Content
+           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
+           onPointerDownOutside={(e) => e.preventDefault()}
++          onInteractOutside={(e) => e.preventDefault()}
+         >
+           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
+           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>
+@@ -806,7 +809,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                  <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
                  <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה.</p>
                  <Button
@@ -27,7 +48,7 @@ index 74d354a..b9b789b 100644
                    className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
                    disabled={!projectId}
                  >
-@@ -819,7 +821,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+@@ -819,7 +822,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                  <p className="text-sm text-amber-800 font-medium">אין חברות המשויכות לתחום {tCategory(category)}</p>
                  <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
                  <Button
@@ -36,7 +57,7 @@ index 74d354a..b9b789b 100644
                    className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
                    disabled={!projectId}
                  >
-@@ -846,8 +848,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+@@ -846,8 +849,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                    {category && (
                      <button
                        type="button"
@@ -48,7 +69,7 @@ index 74d354a..b9b789b 100644
                      >
                        <Plus className="w-3 h-3" />
                        הוסף חברה
-@@ -1008,6 +1011,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+@@ -1008,6 +1012,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
        </Suspense>
      )}
  
@@ -264,3 +285,473 @@ index b1ed3a8..ae5ca17 100644
    } else if (role === 'contractor') {
      navigate('/projects');
    } else {
+diff --git a/review.txt b/review.txt
+index 885d129..c7e0422 100644
+--- a/review.txt
++++ b/review.txt
+@@ -1,204 +1,266 @@
+-diff --git a/frontend/src/components/HamburgerMenu.js b/frontend/src/components/HamburgerMenu.js
+-index 87c8749..087db38 100644
+---- a/frontend/src/components/HamburgerMenu.js
+-+++ b/frontend/src/components/HamburgerMenu.js
+-@@ -10,7 +10,7 @@ const MENU_ITEMS = [
+-   { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, type: 'tab', billingOnly: true },
+-   { id: 'divider-1', type: 'divider' },
+-   { id: 'account-settings', label: 'הגדרות חשבון', icon: Settings, type: 'navigate', path: '/settings/account' },
+--  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account' },
+-+  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account#language' },
+-   { id: 'divider-2', type: 'divider' },
+-   { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
+- ];
+-diff --git a/frontend/src/components/NotificationBell.js b/frontend/src/components/NotificationBell.js
+-index 881f42d..176e914 100644
+---- a/frontend/src/components/NotificationBell.js
+-+++ b/frontend/src/components/NotificationBell.js
+-@@ -97,6 +97,7 @@ export default function NotificationBell() {
+-         className="w-80 p-0 rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
+-         align="end"
+-         sideOffset={8}
+-+        collisionPadding={16}
+-       >
+-         <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-100 bg-slate-50">
+-           <h3 className="text-sm font-bold text-slate-700">התראות</h3>
+-diff --git a/frontend/src/components/TrialBanner.js b/frontend/src/components/TrialBanner.js
+-index 178b2f7..80d65ce 100644
+---- a/frontend/src/components/TrialBanner.js
+-+++ b/frontend/src/components/TrialBanner.js
+-@@ -7,6 +7,7 @@ import { toast } from 'sonner';
+- import { buildOrgBillingUrl } from '../utils/billingHub';
++diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
++index 74d354a..b9b789b 100644
++--- a/frontend/src/components/NewDefectModal.js
+++++ b/frontend/src/components/NewDefectModal.js
++@@ -15,6 +15,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
++ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
++ import * as SheetPrimitive from '@radix-ui/react-dialog';
++ import { SelectField } from './BottomSheetSelect';
+++import QuickAddCompanyModal from './QuickAddCompanyModal';
+  
+- const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/onboarding', '/forgot-password', '/reset-password'];
+-+const PROJECTS_LIST_PAGES = ['/', '/projects'];
+- 
+- function getOwnerBannerText(reason) {
+-   switch (reason) {
+-@@ -38,6 +39,7 @@ const TrialBanner = () => {
+-   });
+- 
+-   if (AUTH_PAGES.includes(location.pathname)) return null;
+-+  if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
+-   if (!user || loading || !billing) return null;
+- 
+-   const isSuperAdmin = user.platform_role === 'super_admin';
+-@@ -108,7 +110,7 @@ const TrialBanner = () => {
+-       );
+-     }
+- 
+--    if (isReadOnly) {
+-+    if (isReadOnly && (canManageBilling || isOwner)) {
+-       if (billing.subscription_status === 'active') return null;
+- 
+-       const reason = billing.read_only_reason;
+-diff --git a/frontend/src/pages/AccountSettingsPage.js b/frontend/src/pages/AccountSettingsPage.js
+-index e5cf410..9acbe69 100644
+---- a/frontend/src/pages/AccountSettingsPage.js
+-+++ b/frontend/src/pages/AccountSettingsPage.js
+-@@ -443,6 +443,15 @@ const AccountSettingsPage = () => {
+-     }
+-   }, [showReminderPrefs]);
++ const normalizeList = (data) => {
++   if (Array.isArray(data)) return data;
++@@ -97,6 +98,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++   const [projectMembers, setProjectMembers] = useState([]);
++   const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
++   const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
+++  const [showQuickAddCompany, setShowQuickAddCompany] = useState(false);
++   const [submitting, setSubmitting] = useState(false);
++   const [submitStep, setSubmitStep] = useState(null);
++   const [errors, setErrors] = useState({});
++@@ -806,7 +808,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++                 <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
++                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה.</p>
++                 <Button
++-                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+++                  onClick={() => setShowQuickAddCompany(true)}
++                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
++                   disabled={!projectId}
++                 >
++@@ -819,7 +821,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++                 <p className="text-sm text-amber-800 font-medium">אין חברות המשויכות לתחום {tCategory(category)}</p>
++                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
++                 <Button
++-                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+++                  onClick={() => setShowQuickAddCompany(true)}
++                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
++                   disabled={!projectId}
++                 >
++@@ -846,8 +848,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++                   {category && (
++                     <button
++                       type="button"
++-                      onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
++-                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+++                      onClick={() => setShowQuickAddCompany(true)}
+++                      disabled={!projectId}
+++                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
++                     >
++                       <Plus className="w-3 h-3" />
++                       הוסף חברה
++@@ -1008,6 +1011,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++       </Suspense>
++     )}
+  
+++    <QuickAddCompanyModal
+++      open={showQuickAddCompany}
+++      onOpenChange={setShowQuickAddCompany}
+++      projectId={projectId}
+++      categories={CATEGORIES}
+++      initialTrade={category}
+++      onSuccess={(newCompany) => {
+++        setCompanies(prev => [...prev, newCompany]);
+++        setCompanyId(newCompany.id);
+++        setShowQuickAddCompany(false);
+++      }}
+++    />
+++
++   </>
++   );
++ };
++diff --git a/frontend/src/components/QuickAddCompanyModal.js b/frontend/src/components/QuickAddCompanyModal.js
++new file mode 100644
++index 0000000..809cee4
++--- /dev/null
+++++ b/frontend/src/components/QuickAddCompanyModal.js
++@@ -0,0 +1,177 @@
+++import React, { useState, useEffect } from 'react';
+++import * as DialogPrimitive from '@radix-ui/react-dialog';
+++import { X, Loader2 } from 'lucide-react';
+++import { toast } from 'sonner';
+++import { projectCompanyService } from '../services/api';
+++
+++export default function QuickAddCompanyModal({
+++  open,
+++  onOpenChange,
+++  projectId,
+++  categories = [],
+++  initialTrade = '',
+++  onSuccess,
+++}) {
+++  const [name, setName] = useState('');
+++  const [tradeValue, setTradeValue] = useState('');
+++  const [contactName, setContactName] = useState('');
+++  const [contactPhone, setContactPhone] = useState('');
+++  const [saving, setSaving] = useState(false);
+++
+ +  useEffect(() => {
+-+    if (location.hash !== '#language') return;
+-+    const timer = setTimeout(() => {
+-+      const el = document.getElementById('language');
+-+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+-+    }, 100);
+-+    return () => clearTimeout(timer);
+-+  }, [location.hash]);
+++    if (open) {
+++      setName('');
+++      setTradeValue(initialTrade || '');
+++      setContactName('');
+++      setContactPhone('');
+++      setSaving(false);
+++    }
+++  }, [open, initialTrade]);
+ +
+-   const updateReminderPref = async (type, field, value) => {
+-     const prev = reminderPrefs;
+-     const updated = { ...reminderPrefs, [type]: { ...reminderPrefs[type], [field]: value } };
+-@@ -719,7 +728,7 @@ const AccountSettingsPage = () => {
+-           </Button>
+-         </div>
+- 
+--        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+-+        <section id="language" className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+-           <div className="flex items-center gap-2 mb-4">
+-             <MessageCircle className="w-5 h-5 text-amber-500" />
+-             <h2 className="text-lg font-semibold text-slate-900">{t('settings', 'wa_language_title')}</h2>
+-@@ -760,7 +769,7 @@ const AccountSettingsPage = () => {
+-               <span>{t('settings', 'saving')}</span>
+-             </div>
+-           )}
+--        </div>
+-+        </section>
+- 
+-         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+-           <div className="flex items-center gap-2 mb-4">
+-diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+-index f1f73a1..8357519 100644
+---- a/frontend/src/pages/ApartmentDashboardPage.js
+-+++ b/frontend/src/pages/ApartmentDashboardPage.js
+-@@ -692,7 +692,7 @@ const ApartmentDashboardPage = () => {
+-             <SlidersHorizontal className="w-4 h-4" />
+-             סינון
+-             {activeFilterCount > 0 && (
+--              <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+-+              <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+-                 {activeFilterCount}
+-               </span>
+-             )}
+-diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
+-index 638175b..fb73c03 100644
+---- a/frontend/src/pages/BuildingDefectsPage.js
+-+++ b/frontend/src/pages/BuildingDefectsPage.js
+-@@ -460,7 +460,7 @@ const BuildingDefectsPage = () => {
+-               <SlidersHorizontal className="w-4 h-4" />
+-               סינון
+-               {activeFilterCount > 0 && (
+--                <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+-+                <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+-                   {activeFilterCount}
+-                 </span>
+-               )}
+-@@ -562,7 +562,7 @@ const BuildingDefectsPage = () => {
+-                                   <div className="relative">
+-                                     <Home className={`w-8 h-8 ${getUnitIconColor(unit)}`} />
+-                                     {badgeCount > 0 && (
+--                                      <span className={`absolute -top-1.5 -left-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
+-+                                      <span className={`absolute -top-1.5 -start-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
+-                                         {badgeCount}
+-                                       </span>
+-                                     )}
+-diff --git a/frontend/src/pages/HandoverOverviewPage.js b/frontend/src/pages/HandoverOverviewPage.js
+-index 5c717de..ed81162 100644
+---- a/frontend/src/pages/HandoverOverviewPage.js
+-+++ b/frontend/src/pages/HandoverOverviewPage.js
+-@@ -472,7 +472,7 @@ export default function HandoverOverviewPage() {
+-                                   }}
+-                                 >
+-                                   {unit.open_defects > 0 && (
+--                                    <span className="absolute -top-1 -left-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+-+                                    <span className="absolute -top-1 -start-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+-                                       {unit.open_defects > 9 ? '9+' : unit.open_defects}
+-                                     </span>
+-                                   )}
+-diff --git a/frontend/src/pages/InnerBuildingPage.js b/frontend/src/pages/InnerBuildingPage.js
+-index 9b50d2a..e083a6a 100644
+---- a/frontend/src/pages/InnerBuildingPage.js
+-+++ b/frontend/src/pages/InnerBuildingPage.js
+-@@ -554,7 +554,7 @@ const InnerBuildingPage = () => {
+-                                       <span className="mt-0.5 text-[10px] text-slate-400 truncate max-w-[120px]">{unit.unit_note}</span>
+-                                     )}
+-                                     {openCount > 0 && (
+--                                      <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+-+                                      <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+-                                         {openCount}
+-                                       </span>
+-                                     )}
+-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+-index ad24cb5..7fb47f4 100644
+---- a/frontend/src/pages/ProjectControlPage.js
+-+++ b/frontend/src/pages/ProjectControlPage.js
+-@@ -3547,7 +3547,7 @@ const ProjectControlPage = () => {
+-         </header>
+++  const trimmedName = name.trim();
+++  const canSave = trimmedName.length > 0 && !saving;
+++
+++  const handleSave = async () => {
+++    if (!canSave) return;
+++    if (!projectId) {
+++      toast.error('פרויקט לא זוהה');
+++      return;
+++    }
+++    setSaving(true);
+++    try {
+++      const payload = { name: trimmedName };
+++      if (tradeValue) payload.trade = tradeValue;
+++      if (contactName.trim()) payload.contact_name = contactName.trim();
+++      if (contactPhone.trim()) payload.contact_phone = contactPhone.trim();
+++      const newCompany = await projectCompanyService.create(projectId, payload);
+++      toast.success('החברה נוספה');
+++      if (onSuccess) onSuccess(newCompany);
+++    } catch (err) {
+++      toast.error(err.response?.data?.detail || 'שגיאה בהוספת חברה');
+++    } finally {
+++      setSaving(false);
+++    }
+++  };
+++
+++  return (
+++    <DialogPrimitive.Root
+++      open={open}
+++      onOpenChange={(next) => {
+++        if (saving) return;
+++        onOpenChange(next);
+++      }}
+++    >
+++      <DialogPrimitive.Portal>
+++        <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-[9999]" />
+++        <DialogPrimitive.Content
+++          className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-[9999] bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto max-h-[90vh] flex flex-col outline-none"
+++          dir="rtl"
+++          onEscapeKeyDown={(e) => { if (saving) e.preventDefault(); }}
+++          onPointerDownOutside={(e) => { if (saving) e.preventDefault(); }}
+++          onInteractOutside={(e) => { if (saving) e.preventDefault(); }}
+++        >
+++          <DialogPrimitive.Title className="sr-only">הוספת חברה מהירה</DialogPrimitive.Title>
+++          <DialogPrimitive.Description className="sr-only">טופס מקוצר להוספת חברה חדשה לפרויקט</DialogPrimitive.Description>
+++
+++          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+++            <h3 className="font-bold text-slate-800 text-sm">הוסף חברה</h3>
+++            <button
+++              type="button"
+++              onClick={() => { if (!saving) onOpenChange(false); }}
+++              disabled={saving}
+++              className="p-1 hover:bg-slate-100 rounded-lg disabled:opacity-50"
+++              aria-label="סגור"
+++            >
+++              <X className="w-5 h-5 text-slate-400" />
+++            </button>
+++          </div>
+++
+++          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+++            <div>
+++              <label className="block text-xs font-bold text-slate-600 mb-1.5">
+++                שם חברה <span className="text-red-500">*</span>
+++              </label>
+++              <input
+++                type="text"
+++                value={name}
+++                onChange={(e) => setName(e.target.value)}
+++                disabled={saving}
+++                placeholder="הזן שם חברה"
+++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
+++                dir="rtl"
+++                autoFocus
+++              />
+++            </div>
+++
+++            <div>
+++              <label className="block text-xs font-bold text-slate-600 mb-1.5">תחום</label>
+++              <select
+++                value={tradeValue}
+++                onChange={(e) => setTradeValue(e.target.value)}
+++                disabled={saving}
+++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
+++                dir="rtl"
+++              >
+++                <option value="">בחר תחום</option>
+++                {categories.map((c) => (
+++                  <option key={c.value} value={c.value}>{c.label}</option>
+++                ))}
+++              </select>
+++            </div>
+++
+++            <div>
+++              <label className="block text-xs font-bold text-slate-600 mb-1.5">שם איש קשר</label>
+++              <input
+++                type="text"
+++                value={contactName}
+++                onChange={(e) => setContactName(e.target.value)}
+++                disabled={saving}
+++                placeholder="(אופציונלי)"
+++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
+++                dir="rtl"
+++              />
+++            </div>
+++
+++            <div>
+++              <label className="block text-xs font-bold text-slate-600 mb-1.5">טלפון</label>
+++              <input
+++                type="tel"
+++                inputMode="tel"
+++                value={contactPhone}
+++                onChange={(e) => setContactPhone(e.target.value)}
+++                disabled={saving}
+++                placeholder="(אופציונלי)"
+++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
+++                dir="ltr"
+++              />
+++            </div>
+++          </div>
+++
+++          <div className="px-4 py-3 border-t border-slate-100 flex gap-2 flex-shrink-0">
+++            <button
+++              type="button"
+++              onClick={() => { if (!saving) onOpenChange(false); }}
+++              disabled={saving}
+++              className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px] disabled:opacity-50"
+++            >
+++              בטל
+++            </button>
+++            <button
+++              type="button"
+++              onClick={handleSave}
+++              disabled={!canSave}
+++              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
+++                canSave
+++                  ? 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white'
+++                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+++              }`}
+++            >
+++              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+++              {saving ? 'שומר...' : 'שמור'}
+++            </button>
+++          </div>
+++        </DialogPrimitive.Content>
+++      </DialogPrimitive.Portal>
+++    </DialogPrimitive.Root>
+++  );
+++}
++diff --git a/frontend/src/utils/navigation.js b/frontend/src/utils/navigation.js
++index b1ed3a8..ae5ca17 100644
++--- a/frontend/src/utils/navigation.js
+++++ b/frontend/src/utils/navigation.js
++@@ -6,7 +6,7 @@ export function navigateToProject(project, navigate) {
++   localStorage.setItem('lastProjectId', id);
+  
+-         <div className="bg-white border-b border-slate-200">
+--          <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
+-+          <div className="max-w-[1100px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
+-             {workTabs.map(wt => {
+-               const Icon = wt.icon;
+-               const isActive = workMode === wt.id;
+-diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
+-index 3757a71..30bddde 100644
+---- a/frontend/src/pages/TaskDetailPage.js
+-+++ b/frontend/src/pages/TaskDetailPage.js
+-@@ -7,7 +7,7 @@ import { toast } from 'sonner';
+- import { compressImage } from '../utils/imageCompress';
+- import {
+-   ChevronRight, Building2, Layers, DoorOpen, Clock, User, Briefcase,
+--  MessageSquare, Paperclip, ArrowRight, Send, HardHat, Image as ImageIcon,
+-+  MessageSquare, Paperclip, ArrowRight, Send, Image as ImageIcon,
+-   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
+-   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
+-   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
+-@@ -775,9 +775,8 @@ const TaskDetailPage = () => {
+-       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
+-       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
+-       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
+--        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+-+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between" dir="rtl">
+-           <div className="flex items-center gap-2">
+--            <HardHat className="w-5 h-5 text-amber-500" />
+-             <span className="font-bold text-slate-800">BrikOps</span>
+-           </div>
+-           <button
+-@@ -796,12 +795,12 @@ const TaskDetailPage = () => {
+-             }}
+-             className="flex items-center gap-1 text-sm text-slate-500 hover:text-amber-600 transition-colors"
+-           >
+-+            <ArrowRight className="w-4 h-4" />
+-             {(() => {
+-               const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+-               if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects');
+-               return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list');
+-             })()}
+--            <ArrowRight className="w-4 h-4" />
+-           </button>
+-         </div>
+-       </div>
++   if (MANAGEMENT_ROLES.includes(role)) {
++-    navigate(`/projects/${id}/control`);
+++    navigate(`/projects/${id}/control?workMode=structure`);
++   } else if (role === 'contractor') {
++     navigate('/projects');
++   } else {
