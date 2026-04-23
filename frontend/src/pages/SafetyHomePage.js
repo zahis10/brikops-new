@@ -12,10 +12,11 @@ import { safetyService, projectService } from '../services/api';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 
-const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה', 1: 'נמוכה', 2: 'בינונית', 3: 'גבוהה' };
+const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
 const SEVERITY_COLOR = {
-  '1': 'bg-blue-100 text-blue-800', '2': 'bg-amber-100 text-amber-800', '3': 'bg-red-100 text-red-800',
-  1: 'bg-blue-100 text-blue-800', 2: 'bg-amber-100 text-amber-800', 3: 'bg-red-100 text-red-800',
+  '1': 'bg-blue-100 text-blue-800',
+  '2': 'bg-amber-100 text-amber-800',
+  '3': 'bg-red-100 text-red-800',
 };
 const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
 const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
@@ -29,8 +30,6 @@ export default function SafetyHomePage() {
   const [docs, setDocs] = useState({ items: [], total: 0 });
   const [tasks, setTasks] = useState({ items: [], total: 0 });
   const [workers, setWorkers] = useState({ items: [], total: 0 });
-  // eslint-disable-next-line no-unused-vars
-  const [incidents, setIncidents] = useState({ items: [], total: 0 });
   const [flagOff, setFlagOff] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -49,16 +48,15 @@ export default function SafetyHomePage() {
         if (cancelled) return;
         if (proj) setProject(proj);
 
-        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
+        const [scoreResp, docsResp, tasksResp, workersResp] = await Promise.all([
           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
-          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
         ]);
         if (cancelled) return;
 
-        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
+        const responses = [scoreResp, docsResp, tasksResp, workersResp];
         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 
@@ -76,7 +74,6 @@ export default function SafetyHomePage() {
         setDocs(docsResp || { items: [], total: 0 });
         setTasks(tasksResp || { items: [], total: 0 });
         setWorkers(workersResp || { items: [], total: 0 });
-        setIncidents(incidentsResp || { items: [], total: 0 });
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {

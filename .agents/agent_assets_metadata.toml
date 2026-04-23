@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Task #404 — Full Diff (Safety Phase 1 Part 4)"
+title = "Task #404a — Patch diff (role guard + cleanup)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
