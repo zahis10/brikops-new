@@ -656,6 +656,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <DialogPrimitive.Content
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
           onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
         >
           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>
