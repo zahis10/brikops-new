@@ -167,6 +167,62 @@ export const projectService = {
   },
 };
 
+export const safetyService = {
+  async getScore(projectId, refresh = false) {
+    const params = refresh ? { refresh: 'true' } : {};
+    const response = await axios.get(
+      `${API}/safety/${projectId}/score`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+
+  async listDocuments(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/documents`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+
+  async listTasks(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/tasks`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+
+  async listWorkers(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/workers`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+
+  async listTrainings(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/trainings`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+
+  async listIncidents(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/incidents`,
+      { headers: getAuthHeader(), params }
+    );
+    return response.data;
+  },
+
+  async healthz() {
+    const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
+    return response.data;
+  },
+};
+
 export const buildingService = {
   async getFloors(buildingId) {
     const response = await axios.get(`${API}/buildings/${buildingId}/floors`, { headers: getAuthHeader() });

@@ -68,6 +68,7 @@ const HandoverOverviewPage = React.lazy(() => import('./pages/HandoverOverviewPa
 const HandoverTabPage = React.lazy(() => import('./pages/HandoverTabPage'));
 const HandoverProtocolPage = React.lazy(() => import('./pages/HandoverProtocolPage'));
 const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage'));
+const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
 
 const INTENDED_PATH_KEY = 'intendedPath';
 
@@ -317,6 +318,14 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute>
               <QCFloorSelectionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/safety"
+          element={
+            <ProtectedRoute allowedRoles={['project_manager', 'management_team']}>
+              <SafetyHomePage />
             </ProtectedRoute>
           }
         />
