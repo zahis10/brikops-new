@@ -221,6 +221,40 @@ export const safetyService = {
     const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
     return response.data;
   },
+
+  // ---- exports (binary blob) + single-doc delete ----
+
+  async exportExcel(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/export/excel`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response;
+  },
+
+  async exportFiltered(projectId, params = {}) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/export/filtered`,
+      { headers: getAuthHeader(), responseType: 'blob', params }
+    );
+    return response;
+  },
+
+  async exportPdfRegister(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/export/pdf-register`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response;
+  },
+
+  async deleteDocument(projectId, documentId) {
+    const response = await axios.delete(
+      `${API}/safety/${projectId}/documents/${documentId}`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
 };
 
 export const buildingService = {

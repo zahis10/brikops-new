@@ -2,15 +2,22 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
-  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
+  Users, TrendingUp, ShieldAlert, Wrench, Hammer, Filter,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { safetyService, projectService } from '../services/api';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '../components/ui/alert-dialog';
+import { safetyService, projectService, projectCompanyService } from '../services/api';
 import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
 import SafetyKpiCard from '../components/safety/SafetyKpiCard';
+import SafetyFilterSheet, { countActiveFilters, EMPTY_FILTER } from '../components/safety/SafetyFilterSheet';
+import SafetyExportMenu from '../components/safety/SafetyExportMenu';
+import SafetyBulkActionBar from '../components/safety/SafetyBulkActionBar';
 
 const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה' };
 const SEVERITY_COLOR = {
@@ -35,6 +42,16 @@ export default function SafetyHomePage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('documents');
 
+  // Part 5 — filter / selection / bulk state
+  const [filter, setFilter] = useState(EMPTY_FILTER);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [users, setUsers] = useState([]);
+
+  // Initial load: project + safety data + best-effort companies/memberships.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -74,6 +91,34 @@ export default function SafetyHomePage() {
         setDocs(docsResp || { items: [], total: 0 });
         setTasks(tasksResp || { items: [], total: 0 });
         setWorkers(workersResp || { items: [], total: 0 });
+
+        // Best-effort fetch for filter dropdowns. Failures are silent —
+        // dropdowns degrade to a disabled "טוען..." option.
+        const [membershipsResp, companiesResp] = await Promise.all([
+          projectService.getMemberships(projectId).catch(() => null),
+          projectCompanyService.list(projectId).catch(() => null),
+        ]);
+        if (cancelled) return;
+
+        const memberList = Array.isArray(membershipsResp)
+          ? membershipsResp
+          : (membershipsResp?.items || []);
+        const userMap = new Map();
+        memberList.forEach((m) => {
+          const uid = m.user_id || m.id;
+          if (uid && !userMap.has(uid)) {
+            userMap.set(uid, {
+              id: uid,
+              name: m.user_name || m.name || m.full_name || m.email || uid,
+            });
+          }
+        });
+        setUsers(Array.from(userMap.values()));
+
+        const companyList = Array.isArray(companiesResp)
+          ? companiesResp
+          : (companiesResp?.items || []);
+        setCompanies(companyList.map((c) => ({ id: c.id, name: c.name || c.id })));
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {
@@ -82,6 +127,32 @@ export default function SafetyHomePage() {
     })();
     return () => { cancelled = true; };
   }, [projectId]);
+
+  // Refetch documents whenever the filter changes (skipped before initial load
+  // and when the page is in a forbidden / flag-off / loading terminal state).
+  useEffect(() => {
+    if (!projectId || loading || flagOff || forbidden) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = { limit: 50 };
+        Object.entries(filter).forEach(([k, v]) => {
+          if (v != null && v !== '') params[k] = v;
+        });
+        const resp = await safetyService.listDocuments(projectId, params);
+        if (!cancelled) setDocs(resp || { items: [], total: 0 });
+      } catch (err) {
+        if (!cancelled) toast.error('שגיאה בטעינת ליקויים מסוננים');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, filter, loading, flagOff, forbidden]);
+
+  // Clear selection whenever the filter changes or the active tab leaves documents.
+  useEffect(() => { setSelectedIds(new Set()); }, [filter]);
+  useEffect(() => {
+    if (activeTab !== 'documents') setSelectedIds(new Set());
+  }, [activeTab]);
 
   if (loading) return <SafetySkeleton />;
   if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
@@ -102,9 +173,53 @@ export default function SafetyHomePage() {
   const incidentsTotal = b.incidents_last_90d?.total ?? 0;
   const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
 
+  const activeFilterCount = countActiveFilters(filter);
+  const hasActiveFilter = activeFilterCount > 0;
+
+  const docItems = docs.items || [];
+  const allSelected = docItems.length > 0 && docItems.every((d) => selectedIds.has(d.id));
+
+  const toggleOne = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(docItems.map((d) => d.id)));
+    }
+  };
+
+  const clearFilter = () => setFilter(EMPTY_FILTER);
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkConfirmOpen(false);
+    setBulkDeleting(true);
+    const ids = Array.from(selectedIds);
+    const results = await Promise.allSettled(
+      ids.map((id) => safetyService.deleteDocument(projectId, id))
+    );
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    setBulkDeleting(false);
+    setSelectedIds(new Set());
+    if (failed > 0) {
+      toast.error(`${failed} מתוך ${ids.length} לא נמחקו`);
+    } else {
+      toast.success(`${ids.length} ליקויים נמחקו`);
+    }
+    // Re-trigger the documents refetch effect with the same filter object.
+    setFilter((f) => ({ ...f }));
+  };
+
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
-      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
+      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 sticky top-0 z-20">
         <button
           onClick={() => navigate(`/projects/${projectId}/dashboard`)}
           className="p-2 rounded-lg hover:bg-slate-100"
@@ -117,8 +232,31 @@ export default function SafetyHomePage() {
           <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
           {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
         </div>
+
+        <SafetyExportMenu
+          projectId={projectId}
+          currentFilter={filter}
+          hasActiveFilter={hasActiveFilter}
+        />
+
+        <button
+          type="button"
+          onClick={() => setFilterOpen(true)}
+          className="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1 min-h-[44px]"
+        >
+          <Filter className="w-4 h-4" />
+          סינון
+          {activeFilterCount > 0 && (
+            <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
+
         {cacheAge > 0 && (
-          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
+          <p className="hidden sm:block text-[11px] text-slate-400 ml-1">
+            עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳
+          </p>
         )}
       </div>
 
@@ -207,7 +345,15 @@ export default function SafetyHomePage() {
             </TabsList>
 
             <TabsContent value="documents" className="p-0 m-0">
-              <DocumentsList items={docs.items} />
+              <DocumentsList
+                items={docItems}
+                selectedIds={selectedIds}
+                onToggle={toggleOne}
+                onSelectAll={toggleSelectAll}
+                allSelected={allSelected}
+                hasActiveFilter={hasActiveFilter}
+                onClearFilter={clearFilter}
+              />
             </TabsContent>
             <TabsContent value="tasks" className="p-0 m-0">
               <TasksList items={tasks.items} />
@@ -218,6 +364,45 @@ export default function SafetyHomePage() {
           </Tabs>
         </Card>
       </div>
+
+      <SafetyFilterSheet
+        open={filterOpen}
+        onOpenChange={setFilterOpen}
+        value={filter}
+        onApply={(next) => { setFilter(next); setFilterOpen(false); }}
+        onClear={clearFilter}
+        companies={companies}
+        users={users}
+      />
+
+      {activeTab === 'documents' && selectedIds.size > 0 && (
+        <SafetyBulkActionBar
+          count={selectedIds.size}
+          onDelete={() => setBulkConfirmOpen(true)}
+          onClear={() => setSelectedIds(new Set())}
+          deleting={bulkDeleting}
+        />
+      )}
+
+      <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>מחיקת ליקויים</AlertDialogTitle>
+            <AlertDialogDescription>
+              האם למחוק {selectedIds.size} ליקויים נבחרים? לא ניתן לבטל את הפעולה.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              מחק
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -239,30 +424,76 @@ function BreakdownBar({ label, value = 0, max = 1, color }) {
   );
 }
 
-function DocumentsList({ items }) {
-  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
+function DocumentsList({
+  items, selectedIds, onToggle, onSelectAll, allSelected,
+  hasActiveFilter, onClearFilter,
+}) {
+  if (!items?.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+        <ShieldAlert className="w-10 h-10 mb-2" />
+        <p className="text-sm font-medium">
+          {hasActiveFilter ? 'לא נמצאו ליקויים המתאימים לסינון' : 'אין ליקויים פתוחים'}
+        </p>
+        {hasActiveFilter && (
+          <button
+            type="button"
+            onClick={onClearFilter}
+            className="mt-3 text-sm text-blue-600 hover:underline"
+          >
+            נקה סינון
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
-    <ul className="divide-y divide-slate-100">
-      {items.map((d) => (
-        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
-          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
-            {SEVERITY_HE[d.severity] || '—'}
-          </Badge>
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-slate-900 truncate">{d.title}</p>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <Badge className="bg-slate-100 text-slate-700 font-normal">
-                {DOC_STATUS_HE[d.status] || d.status}
-              </Badge>
-              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+    <>
+      <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center gap-3">
+        <input
+          type="checkbox"
+          aria-label="בחר הכל"
+          checked={allSelected}
+          onChange={onSelectAll}
+          className="w-5 h-5 cursor-pointer accent-blue-600"
+        />
+        <span className="text-xs text-slate-600">בחר הכל</span>
+        {selectedIds.size > 0 && (
+          <span className="text-xs text-slate-500 mr-auto">
+            נבחרו {selectedIds.size} מתוך {items.length}
+          </span>
+        )}
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {items.map((d) => (
+          <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+            <input
+              type="checkbox"
+              aria-label={`בחר ליקוי ${d.title || ''}`}
+              checked={selectedIds.has(d.id)}
+              onChange={(e) => { e.stopPropagation(); onToggle(d.id); }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
+            />
+            <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
+              {SEVERITY_HE[d.severity] || '—'}
+            </Badge>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-slate-900 truncate">{d.title}</p>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <Badge className="bg-slate-100 text-slate-700 font-normal">
+                  {DOC_STATUS_HE[d.status] || d.status}
+                </Badge>
+                <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+              </div>
             </div>
-          </div>
-          <time className="text-xs text-slate-400 shrink-0">
-            {(d.found_at || '').slice(0, 10)}
-          </time>
-        </li>
-      ))}
-    </ul>
+            <time className="text-xs text-slate-400 shrink-0">
+              {(d.found_at || '').slice(0, 10)}
+            </time>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
