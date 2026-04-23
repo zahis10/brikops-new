@@ -97,6 +97,7 @@ export default function NotificationBell() {
         className="w-80 p-0 rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
         align="end"
         sideOffset={8}
+        collisionPadding={16}
       >
         <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-100 bg-slate-50">
           <h3 className="text-sm font-bold text-slate-700">התראות</h3>

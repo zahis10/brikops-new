@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { buildOrgBillingUrl } from '../utils/billingHub';
 
 const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/onboarding', '/forgot-password', '/reset-password'];
+const PROJECTS_LIST_PAGES = ['/', '/projects'];
 
 function getOwnerBannerText(reason) {
   switch (reason) {
@@ -38,6 +39,7 @@ const TrialBanner = () => {
   });
 
   if (AUTH_PAGES.includes(location.pathname)) return null;
+  if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
   if (!user || loading || !billing) return null;
 
   const isSuperAdmin = user.platform_role === 'super_admin';
@@ -108,7 +110,7 @@ const TrialBanner = () => {
       );
     }
 
-    if (isReadOnly) {
+    if (isReadOnly && (canManageBilling || isOwner)) {
       if (billing.subscription_status === 'active') return null;
 
       const reason = billing.read_only_reason;

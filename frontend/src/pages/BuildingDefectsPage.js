@@ -460,7 +460,7 @@ const BuildingDefectsPage = () => {
               <SlidersHorizontal className="w-4 h-4" />
               סינון
               {activeFilterCount > 0 && (
-                <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
                   {activeFilterCount}
                 </span>
               )}
@@ -562,7 +562,7 @@ const BuildingDefectsPage = () => {
                                   <div className="relative">
                                     <Home className={`w-8 h-8 ${getUnitIconColor(unit)}`} />
                                     {badgeCount > 0 && (
-                                      <span className={`absolute -top-1.5 -left-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
+                                      <span className={`absolute -top-1.5 -start-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
                                         {badgeCount}
                                       </span>
                                     )}

@@ -554,7 +554,7 @@ const InnerBuildingPage = () => {
                                       <span className="mt-0.5 text-[10px] text-slate-400 truncate max-w-[120px]">{unit.unit_note}</span>
                                     )}
                                     {openCount > 0 && (
-                                      <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                                      <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
                                         {openCount}
                                       </span>
                                     )}

@@ -10,7 +10,7 @@ const MENU_ITEMS = [
   { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, type: 'tab', billingOnly: true },
   { id: 'divider-1', type: 'divider' },
   { id: 'account-settings', label: 'הגדרות חשבון', icon: Settings, type: 'navigate', path: '/settings/account' },
-  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account' },
+  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account#language' },
   { id: 'divider-2', type: 'divider' },
   { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
 ];

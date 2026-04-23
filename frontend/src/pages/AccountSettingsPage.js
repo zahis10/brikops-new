@@ -443,6 +443,15 @@ const AccountSettingsPage = () => {
     }
   }, [showReminderPrefs]);
 
+  useEffect(() => {
+    if (location.hash === '#language') {
+      setTimeout(() => {
+        const el = document.getElementById('language');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [location.hash]);
+
   const updateReminderPref = async (type, field, value) => {
     const prev = reminderPrefs;
     const updated = { ...reminderPrefs, [type]: { ...reminderPrefs[type], [field]: value } };
@@ -719,7 +728,7 @@ const AccountSettingsPage = () => {
           </Button>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+        <section id="language" className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">
             <MessageCircle className="w-5 h-5 text-amber-500" />
             <h2 className="text-lg font-semibold text-slate-900">{t('settings', 'wa_language_title')}</h2>
@@ -760,7 +769,7 @@ const AccountSettingsPage = () => {
               <span>{t('settings', 'saving')}</span>
             </div>
           )}
-        </div>
+        </section>
 
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
           <div className="flex items-center gap-2 mb-4">

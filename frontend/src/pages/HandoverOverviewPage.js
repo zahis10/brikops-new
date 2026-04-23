@@ -472,7 +472,7 @@ export default function HandoverOverviewPage() {
                                   }}
                                 >
                                   {unit.open_defects > 0 && (
-                                    <span className="absolute -top-1 -left-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                                    <span className="absolute -top-1 -start-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
                                       {unit.open_defects > 9 ? '9+' : unit.open_defects}
                                     </span>
                                   )}

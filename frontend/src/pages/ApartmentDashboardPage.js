@@ -692,7 +692,7 @@ const ApartmentDashboardPage = () => {
             <SlidersHorizontal className="w-4 h-4" />
             סינון
             {activeFilterCount > 0 && (
-              <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
                 {activeFilterCount}
               </span>
             )}
