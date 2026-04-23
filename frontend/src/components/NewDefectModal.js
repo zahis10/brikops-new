@@ -15,6 +15,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
 import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { SelectField } from './BottomSheetSelect';
+import QuickAddCompanyModal from './QuickAddCompanyModal';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -97,6 +98,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [projectMembers, setProjectMembers] = useState([]);
   const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
   const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
+  const [showQuickAddCompany, setShowQuickAddCompany] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitStep, setSubmitStep] = useState(null);
   const [errors, setErrors] = useState({});
@@ -806,7 +808,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                 <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה.</p>
                 <Button
-                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                  onClick={() => setShowQuickAddCompany(true)}
                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
                   disabled={!projectId}
                 >
@@ -819,7 +821,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                 <p className="text-sm text-amber-800 font-medium">אין חברות המשויכות לתחום {tCategory(category)}</p>
                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
                 <Button
-                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                  onClick={() => setShowQuickAddCompany(true)}
                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
                   disabled={!projectId}
                 >
@@ -846,7 +848,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                   {category && (
                     <button
                       type="button"
-                      onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                      onClick={() => setShowQuickAddCompany(true)}
                       className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
                     >
                       <Plus className="w-3 h-3" />
@@ -1007,6 +1009,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         />
       </Suspense>
     )}
+
+    <QuickAddCompanyModal
+      open={showQuickAddCompany}
+      onOpenChange={setShowQuickAddCompany}
+      projectId={projectId}
+      categories={CATEGORIES}
+      initialTrade={category}
+      onSuccess={(newCompany) => {
+        setCompanies(prev => [...prev, newCompany]);
+        setCompanyId(newCompany.id);
+        setShowQuickAddCompany(false);
+      }}
+    />
 
   </>
   );

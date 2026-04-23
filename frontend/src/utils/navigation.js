@@ -6,7 +6,7 @@ export function navigateToProject(project, navigate) {
   localStorage.setItem('lastProjectId', id);
 
   if (MANAGEMENT_ROLES.includes(role)) {
-    navigate(`/projects/${id}/control`);
+    navigate(`/projects/${id}/control?workMode=structure`);
   } else if (role === 'contractor') {
     navigate('/projects');
   } else {
