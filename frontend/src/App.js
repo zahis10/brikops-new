@@ -324,7 +324,7 @@ const AppRoutes = () => {
         <Route
           path="/projects/:projectId/safety"
           element={
-            <ProtectedRoute allowedRoles={['project_manager', 'management_team']}>
+            <ProtectedRoute>
               <SafetyHomePage />
             </ProtectedRoute>
           }

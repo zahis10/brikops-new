@@ -29,6 +29,8 @@ export default function SafetyHomePage() {
   const [docs, setDocs] = useState({ items: [], total: 0 });
   const [tasks, setTasks] = useState({ items: [], total: 0 });
   const [workers, setWorkers] = useState({ items: [], total: 0 });
+  // eslint-disable-next-line no-unused-vars
+  const [incidents, setIncidents] = useState({ items: [], total: 0 });
   const [flagOff, setFlagOff] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -47,15 +49,16 @@ export default function SafetyHomePage() {
         if (cancelled) return;
         if (proj) setProject(proj);
 
-        const [scoreResp, docsResp, tasksResp, workersResp] = await Promise.all([
+        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
           safetyService.getScore(projectId).catch((e) => ({ __err: e })),
           safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
           safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
+          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
         ]);
         if (cancelled) return;
 
-        const responses = [scoreResp, docsResp, tasksResp, workersResp];
+        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
         const has404 = responses.some((r) => r?.__err?.response?.status === 404);
         const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 
@@ -73,6 +76,7 @@ export default function SafetyHomePage() {
         setDocs(docsResp || { items: [], total: 0 });
         setTasks(tasksResp || { items: [], total: 0 });
         setWorkers(workersResp || { items: [], total: 0 });
+        setIncidents(incidentsResp || { items: [], total: 0 });
       } catch (err) {
         if (!cancelled) toast.error('שגיאה בטעינת נתונים');
       } finally {
@@ -249,9 +253,12 @@ function DocumentsList({ items }) {
           </Badge>
           <div className="flex-1 min-w-0">
             <p className="font-medium text-slate-900 truncate">{d.title}</p>
-            <p className="text-xs text-slate-500 truncate">
-              {DOC_STATUS_HE[d.status] || d.status} · {d.location || 'ללא מיקום'}
-            </p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <Badge className="bg-slate-100 text-slate-700 font-normal">
+                {DOC_STATUS_HE[d.status] || d.status}
+              </Badge>
+              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
+            </div>
           </div>
           <time className="text-xs text-slate-400 shrink-0">
             {(d.found_at || '').slice(0, 10)}
@@ -276,10 +283,14 @@ function TasksList({ items }) {
             </Badge>
             <div className="flex-1 min-w-0">
               <p className="font-medium text-slate-900 truncate">{tk.title}</p>
-              <p className="text-xs text-slate-500 truncate">
-                {TASK_STATUS_HE[tk.status] || tk.status}
-                {tk.due_at && <> · יעד {tk.due_at.slice(0, 10)}</>}
-              </p>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <Badge className="bg-slate-100 text-slate-700 font-normal">
+                  {TASK_STATUS_HE[tk.status] || tk.status}
+                </Badge>
+                {tk.due_at && (
+                  <span className="text-xs text-slate-500">יעד {tk.due_at.slice(0, 10)}</span>
+                )}
+              </div>
             </div>
             {overdue && <Badge className="bg-red-100 text-red-800 shrink-0">באיחור</Badge>}
           </li>
