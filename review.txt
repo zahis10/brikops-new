@@ -1,408 +1,699 @@
-commit 3ddf103c73760588ecdf282b739ff0a44ebceef7
-Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Thu Apr 23 05:21:34 2026 +0000
+=== TASK #404 — SAFETY PHASE 1 PART 4 (FRONTEND CORE) ===
+=== COMMIT: bd4ef73 + e7970cc (squashed view) ===
 
-    fix(safety): Part 3a — port spec score formulas, add PDF management
-    section, flatten $-keys in audit payload
-    
-    1) _compute_safety_score: tasks/incidents/training buckets now use
-       severity- and type-weighted sums (spec §Steps.1) instead of flat
-       weights. Tasks: sev3=6, sev2=3, sev1=1.5 (cap 25). Incidents:
-       injury=5, property_damage=3, near_miss=1 (cap 15). Training:
-       per-worker per-required-type — 4 pts per expired required type, 5
-       pts for workers with no training record at all (cap 20). Added
-       REQUIRED_TRAINING_TYPES module-level frozenset.
-    
-       Breakdown response shape aligned with the Part 4 frontend contract:
-       doc_counts, overdue_task_counts, incidents_last_90d,
-       workers_with_expired_training, workers_without_training,
-       total_workers, caps, and per-bucket *_penalty + computed_at.
-       /score endpoint, cache (TTL 300s), and audit signature unchanged.
-    
-    2) generate_safety_register: inserted new section "2. צוות ניהולי"
-       between project metadata and workers list. Pulls
-       project_memberships matching role in {project_manager,
-       management_team} OR sub_role == safety_officer, then renders
-       name/role/phone/email via existing _table helper. Downstream
-       sections renumbered consecutively 3 → 9. The 30-day audit-trail
-       block lost its standalone "8." heading and now lives as a
-       sub-paragraph under section 8 (statistical summary). Section 9
-       (declaration + signatures) unchanged.
-    
-    3) export_safety_filtered: flattened $gte/$lte from `extra` into plain
-       date_from/date_to keys before logging to audit_events. MongoDB
-       rejects $-prefixed field names on insert, which previously caused a
-       500 on every filtered export with a date range.
-    
-    No new deps, no schema changes, no new endpoints, no changes to
-    requirements.txt / pdf_service.py / handover_pdf_service.py /
-    server.py. Feature flag ENABLE_SAFETY_MODULE stays off in prod.
-    
-    Verified via /tmp/verify_part3a.py: all five formula scenarios
-    (a-e) match expected breakdowns, PDF generates cleanly with the new
-    management section, filtered export returns 200 and writes an audit
-    row with `payload.filters = {date_from, date_to}` and no $-keys.
-    Code review APPROVED with no issues.
-    
-    Follow-ups proposed: #402 (Phase 1 Part 4 frontend dashboard), #403
-    (automated tests for the score formulas).
+=== git diff --stat ===
+ frontend/src/App.js                                |   9 +
+ frontend/src/components/safety/SafetyKpiCard.js    |  41 +++
+ frontend/src/components/safety/SafetyScoreGauge.js |  78 +++++
+ frontend/src/i18n/he.json                          |  45 +++
+ frontend/src/pages/ProjectControlPage.js           |   4 +-
+ frontend/src/pages/SafetyHomePage.js               | 370 +++++++++++++++++++++
+ frontend/src/services/api.js                       |  56 ++++
+ 7 files changed, 602 insertions(+), 1 deletion(-)
 
- backend/contractor_ops/safety_router.py | 165 ++++++++++++++++++++++----------
- backend/services/safety_pdf.py          |  70 ++++++++++++--
- 2 files changed, 175 insertions(+), 60 deletions(-)
-
-===== UNIFIED DIFF =====
-
-diff --git a/backend/contractor_ops/safety_router.py b/backend/contractor_ops/safety_router.py
-index 52c0dc9..0cd8332 100644
---- a/backend/contractor_ops/safety_router.py
-+++ b/backend/contractor_ops/safety_router.py
-@@ -1152,6 +1152,9 @@ _SCORE_TASKS_MAX = 25
- _SCORE_TRAINING_MAX = 20
- _SCORE_INCIDENTS_MAX = 15
+=== FULL UNIFIED DIFF ===
+diff --git a/frontend/src/App.js b/frontend/src/App.js
+index adb9373..e4634b6 100644
+--- a/frontend/src/App.js
++++ b/frontend/src/App.js
+@@ -68,6 +68,7 @@ const HandoverOverviewPage = React.lazy(() => import('./pages/HandoverOverviewPa
+ const HandoverTabPage = React.lazy(() => import('./pages/HandoverTabPage'));
+ const HandoverProtocolPage = React.lazy(() => import('./pages/HandoverProtocolPage'));
+ const HandoverSectionPage = React.lazy(() => import('./pages/HandoverSectionPage'));
++const SafetyHomePage = React.lazy(() => import('./pages/SafetyHomePage'));
  
-+# Safety score — required training types per worker (spec §Steps.1)
-+REQUIRED_TRAINING_TYPES = frozenset({"safety_induction", "height_work", "electrical"})
+ const INTENDED_PATH_KEY = 'intendedPath';
+ 
+@@ -320,6 +321,14 @@ const AppRoutes = () => {
+             </ProtectedRoute>
+           }
+         />
++        <Route
++          path="/projects/:projectId/safety"
++          element={
++            <ProtectedRoute>
++              <SafetyHomePage />
++            </ProtectedRoute>
++          }
++        />
+         <Route path="/" element={<Navigate to="/projects" replace />} />
+         <Route
+           path="/projects/:projectId/plans/archive"
+diff --git a/frontend/src/components/safety/SafetyKpiCard.js b/frontend/src/components/safety/SafetyKpiCard.js
+new file mode 100644
+index 0000000..2aeb09f
+--- /dev/null
++++ b/frontend/src/components/safety/SafetyKpiCard.js
+@@ -0,0 +1,41 @@
++import React from 'react';
 +
- 
- async def _compute_safety_score(db, project_id: str) -> dict:
-     """
-@@ -1176,7 +1179,7 @@ async def _compute_safety_score(db, project_id: str) -> dict:
-     now_iso = now.isoformat()
-     cutoff_90d = (now - timedelta(days=90)).isoformat()
- 
--    # Documents bucket — single $group with $cond per severity
-+    # Documents bucket — single $group with $cond per severity (unchanged)
-     docs_agg = await db.safety_documents.aggregate([
-         {"$match": {
-             "project_id": project_id,
-@@ -1190,81 +1193,132 @@ async def _compute_safety_score(db, project_id: str) -> dict:
-             "sev1": {"$sum": {"$cond": [{"$eq": ["$severity", "1"]}, 1, 0]}},
-         }},
-     ]).to_list(length=1)
--    if docs_agg:
--        sev3 = docs_agg[0].get("sev3", 0)
--        sev2 = docs_agg[0].get("sev2", 0)
--        sev1 = docs_agg[0].get("sev1", 0)
--    else:
--        sev3 = sev2 = sev1 = 0
-+    sev3 = docs_agg[0].get("sev3", 0) if docs_agg else 0
-+    sev2 = docs_agg[0].get("sev2", 0) if docs_agg else 0
-+    sev1 = docs_agg[0].get("sev1", 0) if docs_agg else 0
-     docs_raw = sev3 * 10 + sev2 * 5 + sev1 * 2
-     docs_penalty = min(docs_raw, _SCORE_DOCS_MAX)
- 
--    # Tasks bucket — overdue count via $group/$cond
-+    # Tasks bucket — overdue tasks grouped by severity (spec §Steps.1)
-+    # Weights: sev3=6, sev2=3, sev1=1.5. Sum capped at _SCORE_TASKS_MAX (25).
-     tasks_agg = await db.safety_tasks.aggregate([
--        {"$match": {"project_id": project_id, "deletedAt": None}},
-+        {"$match": {
-+            "project_id": project_id,
-+            "deletedAt": None,
-+            "due_at": {"$ne": None, "$lt": now_iso},
-+            "status": {"$nin": ["completed", "cancelled"]},
-+        }},
-         {"$group": {
-             "_id": None,
--            "overdue": {"$sum": {"$cond": [
--                {"$and": [
--                    {"$ne": ["$due_at", None]},
--                    {"$lt": ["$due_at", now_iso]},
--                    {"$not": {"$in": ["$status", ["completed", "cancelled"]]}},
--                ]}, 1, 0,
--            ]}},
-+            "sev3": {"$sum": {"$cond": [{"$eq": ["$severity", "3"]}, 1, 0]}},
-+            "sev2": {"$sum": {"$cond": [{"$eq": ["$severity", "2"]}, 1, 0]}},
-+            "sev1": {"$sum": {"$cond": [{"$eq": ["$severity", "1"]}, 1, 0]}},
-         }},
-     ]).to_list(length=1)
--    overdue_tasks = tasks_agg[0]["overdue"] if tasks_agg else 0
--    tasks_penalty = min(overdue_tasks * 5, _SCORE_TASKS_MAX)
--
--    # Incidents bucket — last 90 days
--    recent_incidents = await db.safety_incidents.count_documents({
--        "project_id": project_id,
--        "deletedAt": None,
--        "occurred_at": {"$gte": cutoff_90d},
--    })
--    incidents_penalty = min(recent_incidents * 8, _SCORE_INCIDENTS_MAX)
--
--    # Training bucket — workers with no in-force training
-+    t_sev3 = tasks_agg[0].get("sev3", 0) if tasks_agg else 0
-+    t_sev2 = tasks_agg[0].get("sev2", 0) if tasks_agg else 0
-+    t_sev1 = tasks_agg[0].get("sev1", 0) if tasks_agg else 0
-+    tasks_raw = t_sev3 * 6 + t_sev2 * 3 + t_sev1 * 1.5
-+    tasks_penalty = min(tasks_raw, _SCORE_TASKS_MAX)
-+    overdue_tasks_total = t_sev3 + t_sev2 + t_sev1
++/**
++ * KPI tile for safety home.
++ * @param {Component} icon        lucide-react icon component
++ * @param {string} label          Hebrew label
++ * @param {number|string} value   big number or text
++ * @param {string} sub            small sub-line (e.g., "מתוך 12")
++ * @param {string} tone           'neutral' | 'info' | 'warning' | 'danger' | 'success'
++ * @param {function} onClick      optional — click to switch tab or open drawer
++ */
++export default function SafetyKpiCard({ icon: Icon, label, value, sub, tone = 'neutral', onClick }) {
++  const toneMap = {
++    neutral: { bg: 'bg-white',      border: 'border-slate-200',   iconBg: 'bg-slate-100',    iconFg: 'text-slate-600',  num: 'text-slate-900' },
++    info:    { bg: 'bg-blue-50',    border: 'border-blue-200',    iconBg: 'bg-blue-100',     iconFg: 'text-blue-700',   num: 'text-blue-900' },
++    warning: { bg: 'bg-amber-50',   border: 'border-amber-200',   iconBg: 'bg-amber-100',    iconFg: 'text-amber-700',  num: 'text-amber-900' },
++    danger:  { bg: 'bg-red-50',     border: 'border-red-200',     iconBg: 'bg-red-100',      iconFg: 'text-red-700',    num: 'text-red-900' },
++    success: { bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-100',  iconFg: 'text-emerald-700', num: 'text-emerald-900' },
++  };
++  const t = toneMap[tone] || toneMap.neutral;
 +
-+    # Incidents bucket — last 90d grouped by type (spec §Steps.1)
-+    # Weights: injury=5, property_damage=3, near_miss=1. Cap _SCORE_INCIDENTS_MAX (15).
-+    inc_agg = await db.safety_incidents.aggregate([
-+        {"$match": {
-+            "project_id": project_id,
-+            "deletedAt": None,
-+            "occurred_at": {"$gte": cutoff_90d},
-+        }},
-+        {"$group": {
-+            "_id": None,
-+            "injury":          {"$sum": {"$cond": [{"$eq": ["$incident_type", "injury"]}, 1, 0]}},
-+            "property_damage": {"$sum": {"$cond": [{"$eq": ["$incident_type", "property_damage"]}, 1, 0]}},
-+            "near_miss":       {"$sum": {"$cond": [{"$eq": ["$incident_type", "near_miss"]}, 1, 0]}},
-+        }},
-+    ]).to_list(length=1)
-+    inc_injury   = inc_agg[0].get("injury", 0) if inc_agg else 0
-+    inc_property = inc_agg[0].get("property_damage", 0) if inc_agg else 0
-+    inc_near     = inc_agg[0].get("near_miss", 0) if inc_agg else 0
-+    incidents_raw = inc_injury * 5 + inc_property * 3 + inc_near * 1
-+    incidents_penalty = min(incidents_raw, _SCORE_INCIDENTS_MAX)
-+    recent_incidents_total = inc_injury + inc_property + inc_near
++  return (
++    <button
++      type="button"
++      onClick={onClick}
++      className={`text-right ${t.bg} ${t.border} border rounded-xl p-4 shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-60 min-h-[96px] w-full`}
++      disabled={!onClick}
++    >
++      <div className="flex items-start gap-3">
++        <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${t.iconBg}`}>
++          {Icon && <Icon className={`w-5 h-5 ${t.iconFg}`} />}
++        </div>
++        <div className="flex-1 min-w-0">
++          <p className={`text-2xl font-black ${t.num} leading-none`}>{value ?? '—'}</p>
++          <p className="text-xs text-slate-600 mt-1 font-medium truncate">{label}</p>
++          {sub && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sub}</p>}
++        </div>
++      </div>
++    </button>
++  );
++}
+diff --git a/frontend/src/components/safety/SafetyScoreGauge.js b/frontend/src/components/safety/SafetyScoreGauge.js
+new file mode 100644
+index 0000000..5dd3bb8
+--- /dev/null
++++ b/frontend/src/components/safety/SafetyScoreGauge.js
+@@ -0,0 +1,78 @@
++import React from 'react';
 +
-+    # Training bucket — per worker, check each REQUIRED_TRAINING_TYPE has in-force record
-+    # (spec §Steps.1: 4pts per expired-required-training, 5pts for workers with NO training record)
-     worker_ids_docs = await db.safety_workers.find(
-         {"project_id": project_id, "deletedAt": None}, {"_id": 0, "id": 1}
-     ).to_list(length=10000)
-     worker_ids = [w["id"] for w in worker_ids_docs]
--    untrained_workers = 0
++/**
++ * 0-100 donut gauge. RTL-safe (no direction-specific markup).
++ * @param {number} score       0..100
++ * @param {number} size        px, default 180
++ * @param {number} stroke      px, default 14
++ * @param {string} label       optional Hebrew label under the number
++ */
++export default function SafetyScoreGauge({ score = 0, size = 180, stroke = 14, label }) {
++  const radius = (size - stroke) / 2;
++  const circumference = 2 * Math.PI * radius;
++  const clamped = Math.max(0, Math.min(100, Math.round(score)));
++  const offset = circumference * (1 - clamped / 100);
 +
-+    workers_with_expired_training = 0
-+    workers_without_training = 0
-+    expired_required_count = 0
++  let color = '#ef4444';
++  let tierHe = 'דורש תיקון';
++  if (clamped >= 85) { color = '#10b981'; tierHe = 'מצוין'; }
++  else if (clamped >= 70) { color = '#3b82f6'; tierHe = 'טוב'; }
++  else if (clamped >= 50) { color = '#f59e0b'; tierHe = 'תקין'; }
 +
-     if worker_ids:
--        in_force = await db.safety_trainings.aggregate([
--            {"$match": {
-+        in_force = await db.safety_trainings.find(
-+            {
-                 "project_id": project_id,
-                 "deletedAt": None,
-                 "worker_id": {"$in": worker_ids},
-+                "training_type": {"$in": list(REQUIRED_TRAINING_TYPES)},
-                 "$or": [{"expires_at": None}, {"expires_at": {"$gte": today_iso}}],
--            }},
--            {"$group": {"_id": "$worker_id"}},
--        ]).to_list(length=10000)
--        trained_set = {row["_id"] for row in in_force}
--        untrained_workers = sum(1 for wid in worker_ids if wid not in trained_set)
--    training_penalty = min(untrained_workers * 4, _SCORE_TRAINING_MAX)
-+            },
-+            {"_id": 0, "worker_id": 1, "training_type": 1},
-+        ).to_list(length=100000)
++  return (
++    <div className="flex flex-col items-center justify-center">
++      <svg
++        width={size}
++        height={size}
++        viewBox={`0 0 ${size} ${size}`}
++        aria-label={`ציון בטיחות ${clamped} מתוך 100`}
++        role="img"
++      >
++        <circle
++          cx={size / 2}
++          cy={size / 2}
++          r={radius}
++          stroke="#e5e7eb"
++          strokeWidth={stroke}
++          fill="none"
++        />
++        <circle
++          cx={size / 2}
++          cy={size / 2}
++          r={radius}
++          stroke={color}
++          strokeWidth={stroke}
++          fill="none"
++          strokeDasharray={circumference}
++          strokeDashoffset={offset}
++          strokeLinecap="round"
++          transform={`rotate(-90 ${size / 2} ${size / 2})`}
++          style={{ transition: 'stroke-dashoffset 400ms ease-out, stroke 400ms ease-out' }}
++        />
++        <text
++          x="50%"
++          y="47%"
++          textAnchor="middle"
++          dominantBaseline="central"
++          fontSize={size * 0.28}
++          fontWeight="800"
++          fill="#0f172a"
++        >
++          {clamped}
++        </text>
++        <text
++          x="50%"
++          y="62%"
++          textAnchor="middle"
++          dominantBaseline="central"
++          fontSize={size * 0.08}
++          fontWeight="600"
++          fill="#64748b"
++        >
++          {tierHe}
++        </text>
++      </svg>
++      {label && <p className="text-sm text-slate-600 mt-2 font-medium">{label}</p>}
++    </div>
++  );
++}
+diff --git a/frontend/src/i18n/he.json b/frontend/src/i18n/he.json
+index c3895cd..3ecb53c 100644
+--- a/frontend/src/i18n/he.json
++++ b/frontend/src/i18n/he.json
+@@ -607,5 +607,50 @@
+     "err_company_required": "יש לבחור חברה",
+     "toast_registered": "הרשמה בוצעה בהצלחה! ממתין לאישור",
+     "err_register": "שגיאה בהרשמה"
++  },
++  "safety": {
++    "title": "בטיחות",
++    "score_label": "ציון בטיחות",
++    "tier_excellent": "מצוין",
++    "tier_good": "טוב",
++    "tier_ok": "תקין",
++    "tier_fix": "דורש תיקון",
++    "breakdown_docs": "ליקויים",
++    "breakdown_tasks": "משימות באיחור",
++    "breakdown_training": "הדרכות",
++    "breakdown_incidents": "אירועים (90 יום)",
++    "kpi_open_docs": "ליקויים פתוחים",
++    "kpi_overdue_tasks": "משימות באיחור",
++    "kpi_untrained": "עובדים ללא הדרכה",
++    "kpi_incidents_90d": "אירועים (90 יום)",
++    "kpi_total_workers": "סך עובדים באתר",
++    "kpi_score_percent": "ציון מצטבר",
++    "tab_documents": "ליקויים",
++    "tab_tasks": "משימות",
++    "tab_workers": "עובדים",
++    "empty_docs": "אין ליקויים פתוחים",
++    "empty_tasks": "אין משימות בטיחות פתוחות",
++    "empty_workers": "אין עובדים רשומים",
++    "sev_1": "נמוכה",
++    "sev_2": "בינונית",
++    "sev_3": "גבוהה",
++    "doc_status_open": "פתוח",
++    "doc_status_in_progress": "בביצוע",
++    "doc_status_resolved": "נפתר",
++    "doc_status_verified": "אומת",
++    "task_status_open": "פתוח",
++    "task_status_in_progress": "בביצוע",
++    "task_status_completed": "הושלם",
++    "task_status_cancelled": "בוטל",
++    "overdue_badge": "באיחור",
++    "forbidden_title": "אין הרשאה לצפייה בנתוני בטיחות",
++    "forbidden_sub": "מודול הבטיחות זמין לניהול פרויקט בלבד.",
++    "flag_off_title": "מודול הבטיחות אינו פעיל בארגון זה",
++    "flag_off_sub": "צור קשר עם התמיכה להפעלה.",
++    "updated_ago": "עודכן לפני",
++    "minutes_short": "דק׳",
++    "no_location": "ללא מיקום",
++    "no_profession": "ללא מקצוע",
++    "coming_soon": "בקרוב"
+   }
+ }
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index f445395..ad24cb5 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -23,7 +23,7 @@ import {
+   Plus, ArrowRight, Users, Briefcase, AlertTriangle, Settings, Phone, Send, MessageSquare,
+   RotateCcw, XCircle, Trash2, Edit3, Download, Upload, Eye, BarChart3, Search, FileText,
+   Zap, Check, CheckCircle, Archive, Undo2, ClipboardCheck, FileSignature, Clock, ListTodo,
+-  Package
++  Package, ShieldAlert
+ } from 'lucide-react';
+ import { Button } from '../components/ui/button';
+ import { Card } from '../components/ui/card';
+@@ -3500,6 +3500,7 @@ const ProjectControlPage = () => {
+     { id: 'qc', label: 'בקרת ביצוע', icon: ClipboardCheck, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+     { id: 'defects', label: 'ליקויים', icon: AlertTriangle },
+     { id: 'handover', label: 'מסירות', icon: FileSignature, hidden: !['owner', 'admin', 'project_manager', 'management_team', 'contractor'].includes(myRole) },
++    { id: 'safety', label: 'בטיחות', icon: ShieldAlert, hidden: !['owner', 'admin', 'project_manager', 'management_team'].includes(myRole) },
+     { id: 'plans', label: 'תוכניות', icon: FileText },
+   ].filter(t => !t.hidden);
+ 
+@@ -3507,6 +3508,7 @@ const ProjectControlPage = () => {
+     if (id === 'dashboard') { navigate(`/projects/${projectId}/dashboard`); return; }
+     if (id === 'qc') { navigate(`/projects/${projectId}/qc`); return; }
+     if (id === 'handover') { navigate(`/projects/${projectId}/handover`); return; }
++    if (id === 'safety') { navigate(`/projects/${projectId}/safety`); return; }
+     if (id === 'plans') { navigate(`/projects/${projectId}/plans`); return; }
+     setWorkMode(id);
+     if (id !== 'structure') setActiveTab('');
+diff --git a/frontend/src/pages/SafetyHomePage.js b/frontend/src/pages/SafetyHomePage.js
+new file mode 100644
+index 0000000..9ef4a7f
+--- /dev/null
++++ b/frontend/src/pages/SafetyHomePage.js
+@@ -0,0 +1,370 @@
++import React, { useEffect, useState } from 'react';
++import { useParams, useNavigate } from 'react-router-dom';
++import {
++  ArrowRight, AlertTriangle, Clock, GraduationCap, AlertCircle,
++  Users, TrendingUp, ShieldAlert, Wrench, Hammer,
++} from 'lucide-react';
++import { toast } from 'sonner';
++import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
++import { Card } from '../components/ui/card';
++import { Badge } from '../components/ui/badge';
++import { safetyService, projectService } from '../services/api';
++import SafetyScoreGauge from '../components/safety/SafetyScoreGauge';
++import SafetyKpiCard from '../components/safety/SafetyKpiCard';
 +
-+        any_training_worker_ids = set(
-+            r["worker_id"] for r in await db.safety_trainings.find(
-+                {"project_id": project_id, "deletedAt": None, "worker_id": {"$in": worker_ids}},
-+                {"_id": 0, "worker_id": 1},
-+            ).to_list(length=100000)
-+        )
++const SEVERITY_HE = { '1': 'נמוכה', '2': 'בינונית', '3': 'גבוהה', 1: 'נמוכה', 2: 'בינונית', 3: 'גבוהה' };
++const SEVERITY_COLOR = {
++  '1': 'bg-blue-100 text-blue-800', '2': 'bg-amber-100 text-amber-800', '3': 'bg-red-100 text-red-800',
++  1: 'bg-blue-100 text-blue-800', 2: 'bg-amber-100 text-amber-800', 3: 'bg-red-100 text-red-800',
++};
++const DOC_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', resolved: 'נפתר', verified: 'אומת' };
++const TASK_STATUS_HE = { open: 'פתוח', in_progress: 'בביצוע', completed: 'הושלם', cancelled: 'בוטל' };
 +
-+        worker_inforce: dict = {wid: set() for wid in worker_ids}
-+        for r in in_force:
-+            worker_inforce[r["worker_id"]].add(r["training_type"])
++export default function SafetyHomePage() {
++  const { projectId } = useParams();
++  const navigate = useNavigate();
 +
-+        for wid in worker_ids:
-+            if wid not in any_training_worker_ids:
-+                workers_without_training += 1
-+                continue
-+            missing_types = REQUIRED_TRAINING_TYPES - worker_inforce[wid]
-+            if missing_types:
-+                workers_with_expired_training += 1
-+                expired_required_count += len(missing_types)
++  const [project, setProject] = useState(null);
++  const [scoreData, setScoreData] = useState(null);
++  const [docs, setDocs] = useState({ items: [], total: 0 });
++  const [tasks, setTasks] = useState({ items: [], total: 0 });
++  const [workers, setWorkers] = useState({ items: [], total: 0 });
++  // eslint-disable-next-line no-unused-vars
++  const [incidents, setIncidents] = useState({ items: [], total: 0 });
++  const [flagOff, setFlagOff] = useState(false);
++  const [forbidden, setForbidden] = useState(false);
++  const [loading, setLoading] = useState(true);
++  const [activeTab, setActiveTab] = useState('documents');
 +
-+    training_raw = expired_required_count * 4 + workers_without_training * 5
-+    training_penalty = min(training_raw, _SCORE_TRAINING_MAX)
- 
-     total_penalty = docs_penalty + tasks_penalty + training_penalty + incidents_penalty
--    score = max(0, 100 - total_penalty)
-+    score = max(0, int(round(100 - total_penalty)))
- 
-     return {
-         "score": score,
-         "breakdown": {
--            "documents": {
--                "open_sev3": sev3, "open_sev2": sev2, "open_sev1": sev1,
--                "raw": docs_raw, "penalty": docs_penalty, "max": _SCORE_DOCS_MAX,
--            },
--            "tasks": {
--                "overdue": overdue_tasks,
--                "penalty": tasks_penalty, "max": _SCORE_TASKS_MAX,
-+            "doc_penalty": round(docs_penalty, 2),
-+            "task_penalty": round(tasks_penalty, 2),
-+            "training_penalty": round(training_penalty, 2),
-+            "incident_penalty": round(incidents_penalty, 2),
-+            "doc_counts": {"sev3": sev3, "sev2": sev2, "sev1": sev1},
-+            "overdue_task_counts": {
-+                "sev3": t_sev3, "sev2": t_sev2, "sev1": t_sev1,
-+                "total": overdue_tasks_total,
-             },
--            "training": {
--                "untrained_workers": untrained_workers, "total_workers": len(worker_ids),
--                "penalty": training_penalty, "max": _SCORE_TRAINING_MAX,
-+            "workers_with_expired_training": workers_with_expired_training,
-+            "workers_without_training": workers_without_training,
-+            "total_workers": len(worker_ids),
-+            "incidents_last_90d": {
-+                "injury": inc_injury,
-+                "property_damage": inc_property,
-+                "near_miss": inc_near,
-+                "total": recent_incidents_total,
-             },
--            "incidents": {
--                "recent_90d": recent_incidents,
--                "penalty": incidents_penalty, "max": _SCORE_INCIDENTS_MAX,
-+            "caps": {
-+                "doc_max": _SCORE_DOCS_MAX,
-+                "task_max": _SCORE_TASKS_MAX,
-+                "training_max": _SCORE_TRAINING_MAX,
-+                "incident_max": _SCORE_INCIDENTS_MAX,
-             },
-         },
-         "computed_at": now_iso,
-@@ -1649,7 +1703,14 @@ async def export_safety_filtered(
- 
-     buf = _build_filtered_documents_excel(documents, company_map, user_map)
- 
--    applied = {k: (v if not isinstance(v, dict) else v) for k, v in extra.items()}
-+    # Flatten the $gte/$lte range into plain date_from/date_to keys so the audit
-+    # payload never contains $-prefixed field names (MongoDB rejects those on insert).
-+    applied = {k: v for k, v in extra.items() if k != "found_at"}
-+    if date_from:
-+        applied["date_from"] = date_from
-+    if date_to:
-+        applied["date_to"] = date_to
++  useEffect(() => {
++    let cancelled = false;
++    (async () => {
++      try {
++        let proj = null;
++        try {
++          proj = await projectService.get(projectId);
++        } catch (e) {
++          // Fall through — safety endpoints will surface their own status
++        }
++        if (cancelled) return;
++        if (proj) setProject(proj);
 +
-     await _audit("safety_export", project_id, "filtered_exported", user["id"], {
-         "project_id": project_id,
-         "filters": applied,
-diff --git a/backend/services/safety_pdf.py b/backend/services/safety_pdf.py
-index 44e4df9..5445023 100644
---- a/backend/services/safety_pdf.py
-+++ b/backend/services/safety_pdf.py
-@@ -190,6 +190,28 @@ async def generate_safety_register(db, project_id: str) -> bytes:
- 
-     worker_name_map = {w["id"]: w.get("full_name", "") for w in workers}
- 
-+    # Management team: PM role + safety_officer sub_role (Part 3a)
-+    memberships = await db.project_memberships.find(
-+        {
-+            "project_id": project_id,
-+            "deletedAt": None,
-+            "$or": [
-+                {"role": {"$in": ["project_manager", "management_team"]}},
-+                {"sub_role": "safety_officer"},
-+            ],
-+        },
-+        {"_id": 0, "user_id": 1, "role": 1, "sub_role": 1},
-+    ).to_list(length=100)
++        const [scoreResp, docsResp, tasksResp, workersResp, incidentsResp] = await Promise.all([
++          safetyService.getScore(projectId).catch((e) => ({ __err: e })),
++          safetyService.listDocuments(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
++          safetyService.listTasks(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
++          safetyService.listWorkers(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
++          safetyService.listIncidents(projectId, { limit: 50 }).catch((e) => ({ __err: e })),
++        ]);
++        if (cancelled) return;
 +
-+    mgmt_user_ids = list({m["user_id"] for m in memberships if m.get("user_id")})
-+    mgmt_users: dict = {}
-+    if mgmt_user_ids:
-+        for u in await db.users.find(
-+            {"id": {"$in": mgmt_user_ids}},
-+            {"_id": 0, "id": 1, "name": 1, "phone": 1, "email": 1},
-+        ).to_list(length=100):
-+            mgmt_users[u["id"]] = u
++        const responses = [scoreResp, docsResp, tasksResp, workersResp, incidentsResp];
++        const has404 = responses.some((r) => r?.__err?.response?.status === 404);
++        const has403 = responses.some((r) => r?.__err?.response?.status === 403);
 +
-     SLATE_700 = colors.HexColor("#334155")
-     SLATE_500 = colors.HexColor("#64748B")
-     SLATE_200 = colors.HexColor("#E2E8F0")
-@@ -273,8 +295,35 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-     elems.append(_table(["שדה", "ערך"], meta_rows, [5 * cm, 11 * cm]))
-     elems.append(Spacer(1, 6 * mm))
- 
-+    # Section 2: Management Team (Part 3a)
-+    elems.append(Paragraph(hebrew("2. צוות ניהולי"), h2))
-+    MGMT_ROLE_HE = {
-+        "project_manager": "מנהל פרויקט",
-+        "management_team": "צוות ניהולי",
-+    }
-+    if memberships:
-+        mgmt_rows = []
-+        for m in memberships:
-+            u = mgmt_users.get(m.get("user_id", ""), {})
-+            role_label = MGMT_ROLE_HE.get(m.get("role", ""), m.get("role", ""))
-+            if m.get("sub_role") == "safety_officer":
-+                role_label = "ממונה בטיחות"
-+            mgmt_rows.append([
-+                u.get("name", "") or "—",
-+                role_label,
-+                u.get("phone", "") or "—",
-+                u.get("email", "") or "—",
-+            ])
-+        elems.append(_table(
-+            ["שם", "תפקיד", "טלפון", "אימייל"],
-+            mgmt_rows, [4 * cm, 4 * cm, 3.5 * cm, 4.5 * cm],
-+        ))
-+    else:
-+        elems.append(Paragraph(hebrew("אין צוות ניהולי רשום לפרויקט."), body))
-+    elems.append(Spacer(1, 6 * mm))
++        if (has404) { setFlagOff(true); setLoading(false); return; }
++        if (has403) { setForbidden(true); setLoading(false); return; }
 +
-     # Section 3: Workers (NO id_number)
--    elems.append(Paragraph(hebrew("2. רשימת עובדים"), h2))
-+    elems.append(Paragraph(hebrew("3. רשימת עובדים"), h2))
-     if workers:
-         rows = []
-         for w in workers:
-@@ -294,7 +343,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-     elems.append(Spacer(1, 6 * mm))
++        const otherErr = responses.find((r) => r?.__err);
++        if (otherErr) {
++          toast.error('שגיאה בטעינת נתוני בטיחות');
++          setLoading(false);
++          return;
++        }
++
++        setScoreData(scoreResp);
++        setDocs(docsResp || { items: [], total: 0 });
++        setTasks(tasksResp || { items: [], total: 0 });
++        setWorkers(workersResp || { items: [], total: 0 });
++        setIncidents(incidentsResp || { items: [], total: 0 });
++      } catch (err) {
++        if (!cancelled) toast.error('שגיאה בטעינת נתונים');
++      } finally {
++        if (!cancelled) setLoading(false);
++      }
++    })();
++    return () => { cancelled = true; };
++  }, [projectId]);
++
++  if (loading) return <SafetySkeleton />;
++  if (forbidden) return <SafetyForbidden onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
++  if (flagOff) return <SafetyFlagOff onBack={() => navigate(`/projects/${projectId}/dashboard`)} />;
++
++  const b = scoreData?.breakdown || {};
++  const caps = b.caps || {};
++  const cacheAge = scoreData?.cache_age_seconds ?? 0;
++
++  const sev3 = b.doc_counts?.sev3 ?? 0;
++  const sev2 = b.doc_counts?.sev2 ?? 0;
++  const sev1 = b.doc_counts?.sev1 ?? 0;
++  const openDocs = sev3 + sev2 + sev1;
++  const overdueTotal = b.overdue_task_counts?.total ?? 0;
++  const overdueSev3 = b.overdue_task_counts?.sev3 ?? 0;
++  const untrained = b.workers_without_training ?? 0;
++  const totalWorkers = b.total_workers ?? 0;
++  const incidentsTotal = b.incidents_last_90d?.total ?? 0;
++  const incidentsInjury = b.incidents_last_90d?.injury ?? 0;
++
++  return (
++    <div dir="rtl" className="min-h-screen bg-slate-50 pb-16">
++      <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-20">
++        <button
++          onClick={() => navigate(`/projects/${projectId}/dashboard`)}
++          className="p-2 rounded-lg hover:bg-slate-100"
++          aria-label="חזור"
++          type="button"
++        >
++          <ArrowRight className="w-5 h-5 text-slate-700" />
++        </button>
++        <div className="flex-1 min-w-0">
++          <h1 className="text-lg font-bold text-slate-900 truncate">בטיחות</h1>
++          {project?.name && <p className="text-xs text-slate-500 truncate">{project.name}</p>}
++        </div>
++        {cacheAge > 0 && (
++          <p className="text-[11px] text-slate-400">עודכן לפני {Math.max(1, Math.round(cacheAge / 60))} דק׳</p>
++        )}
++      </div>
++
++      <div className="max-w-6xl mx-auto px-4 py-5 space-y-6">
++        <Card className="p-5 bg-white shadow-sm">
++          <div className="flex flex-col md:flex-row items-center gap-6">
++            <SafetyScoreGauge score={scoreData?.score ?? 0} label="ציון בטיחות" />
++            <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
++              <BreakdownBar label="ליקויים" value={b.doc_penalty} max={caps.doc_max} color="bg-red-500" />
++              <BreakdownBar label="משימות באיחור" value={b.task_penalty} max={caps.task_max} color="bg-amber-500" />
++              <BreakdownBar label="הדרכות" value={b.training_penalty} max={caps.training_max} color="bg-blue-500" />
++              <BreakdownBar label="אירועים (90 יום)" value={b.incident_penalty} max={caps.incident_max} color="bg-fuchsia-500" />
++            </div>
++          </div>
++        </Card>
++
++        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
++          <SafetyKpiCard
++            icon={ShieldAlert}
++            label="ליקויים פתוחים"
++            value={openDocs}
++            sub={`חמור: ${sev3}`}
++            tone={sev3 > 0 ? 'danger' : 'neutral'}
++            onClick={() => setActiveTab('documents')}
++          />
++          <SafetyKpiCard
++            icon={Clock}
++            label="משימות באיחור"
++            value={overdueTotal}
++            sub={`חמור: ${overdueSev3}`}
++            tone={overdueTotal > 0 ? 'warning' : 'neutral'}
++            onClick={() => setActiveTab('tasks')}
++          />
++          <SafetyKpiCard
++            icon={GraduationCap}
++            label="עובדים ללא הדרכה"
++            value={untrained}
++            sub={`מתוך ${totalWorkers} עובדים`}
++            tone={untrained > 0 ? 'warning' : 'success'}
++            onClick={() => setActiveTab('workers')}
++          />
++          <SafetyKpiCard
++            icon={AlertCircle}
++            label="אירועים (90 יום)"
++            value={incidentsTotal}
++            sub={`פציעות: ${incidentsInjury}`}
++            tone={incidentsInjury > 0 ? 'danger' : 'neutral'}
++          />
++          <SafetyKpiCard
++            icon={Users}
++            label="סך עובדים באתר"
++            value={totalWorkers}
++            tone="info"
++            onClick={() => setActiveTab('workers')}
++          />
++          <SafetyKpiCard
++            icon={TrendingUp}
++            label="ציון מצטבר"
++            value={`${scoreData?.score ?? 0}%`}
++            sub="מעודכן כל 5 דק׳"
++            tone="info"
++          />
++        </div>
++
++        <Card className="p-0 overflow-hidden bg-white shadow-sm">
++          <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
++            <TabsList className="w-full justify-start rounded-none border-b bg-slate-50 p-0 h-auto overflow-x-auto flex">
++              <TabsTrigger
++                value="documents"
++                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
++              >
++                ליקויים ({docs.total})
++              </TabsTrigger>
++              <TabsTrigger
++                value="tasks"
++                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
++              >
++                משימות ({tasks.total})
++              </TabsTrigger>
++              <TabsTrigger
++                value="workers"
++                className="rounded-none data-[state=active]:bg-white data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 px-5 py-3"
++              >
++                עובדים ({workers.total})
++              </TabsTrigger>
++            </TabsList>
++
++            <TabsContent value="documents" className="p-0 m-0">
++              <DocumentsList items={docs.items} />
++            </TabsContent>
++            <TabsContent value="tasks" className="p-0 m-0">
++              <TasksList items={tasks.items} />
++            </TabsContent>
++            <TabsContent value="workers" className="p-0 m-0">
++              <WorkersList items={workers.items} />
++            </TabsContent>
++          </Tabs>
++        </Card>
++      </div>
++    </div>
++  );
++}
++
++function BreakdownBar({ label, value = 0, max = 1, color }) {
++  const safeMax = Number(max) > 0 ? Number(max) : 1;
++  const safeVal = Math.max(0, Number(value) || 0);
++  const pct = Math.min(100, (safeVal / safeMax) * 100);
++  return (
++    <div>
++      <div className="flex items-center justify-between mb-1">
++        <span className="text-xs font-medium text-slate-600">{label}</span>
++        <span className="text-xs text-slate-500">{safeVal.toFixed(1)} / {safeMax}</span>
++      </div>
++      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
++        <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
++      </div>
++    </div>
++  );
++}
++
++function DocumentsList({ items }) {
++  if (!items?.length) return <EmptyState icon={ShieldAlert} text="אין ליקויים פתוחים" />;
++  return (
++    <ul className="divide-y divide-slate-100">
++      {items.map((d) => (
++        <li key={d.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
++          <Badge className={SEVERITY_COLOR[d.severity] || 'bg-slate-100 text-slate-700'}>
++            {SEVERITY_HE[d.severity] || '—'}
++          </Badge>
++          <div className="flex-1 min-w-0">
++            <p className="font-medium text-slate-900 truncate">{d.title}</p>
++            <div className="flex items-center gap-2 mt-1 flex-wrap">
++              <Badge className="bg-slate-100 text-slate-700 font-normal">
++                {DOC_STATUS_HE[d.status] || d.status}
++              </Badge>
++              <span className="text-xs text-slate-500 truncate">{d.location || 'ללא מיקום'}</span>
++            </div>
++          </div>
++          <time className="text-xs text-slate-400 shrink-0">
++            {(d.found_at || '').slice(0, 10)}
++          </time>
++        </li>
++      ))}
++    </ul>
++  );
++}
++
++function TasksList({ items }) {
++  if (!items?.length) return <EmptyState icon={Wrench} text="אין משימות בטיחות פתוחות" />;
++  const nowIso = new Date().toISOString();
++  return (
++    <ul className="divide-y divide-slate-100">
++      {items.map((tk) => {
++        const overdue = tk.due_at && tk.due_at < nowIso && !['completed', 'cancelled'].includes(tk.status);
++        return (
++          <li key={tk.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
++            <Badge className={SEVERITY_COLOR[tk.severity] || 'bg-slate-100 text-slate-700'}>
++              {SEVERITY_HE[tk.severity] || '—'}
++            </Badge>
++            <div className="flex-1 min-w-0">
++              <p className="font-medium text-slate-900 truncate">{tk.title}</p>
++              <div className="flex items-center gap-2 mt-1 flex-wrap">
++                <Badge className="bg-slate-100 text-slate-700 font-normal">
++                  {TASK_STATUS_HE[tk.status] || tk.status}
++                </Badge>
++                {tk.due_at && (
++                  <span className="text-xs text-slate-500">יעד {tk.due_at.slice(0, 10)}</span>
++                )}
++              </div>
++            </div>
++            {overdue && <Badge className="bg-red-100 text-red-800 shrink-0">באיחור</Badge>}
++          </li>
++        );
++      })}
++    </ul>
++  );
++}
++
++function WorkersList({ items }) {
++  if (!items?.length) return <EmptyState icon={Users} text="אין עובדים רשומים" />;
++  return (
++    <ul className="divide-y divide-slate-100">
++      {items.map((w) => (
++        <li key={w.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50">
++          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
++            <Hammer className="w-5 h-5 text-slate-500" />
++          </div>
++          <div className="flex-1 min-w-0">
++            <p className="font-medium text-slate-900 truncate">{w.full_name}</p>
++            <p className="text-xs text-slate-500 truncate">
++              {w.profession || 'ללא מקצוע'}{w.phone && ` · ${w.phone}`}
++            </p>
++          </div>
++        </li>
++      ))}
++    </ul>
++  );
++}
++
++function EmptyState({ icon: Icon, text }) {
++  return (
++    <div className="flex flex-col items-center justify-center py-12 text-slate-400">
++      <Icon className="w-10 h-10 mb-2" />
++      <p className="text-sm font-medium">{text}</p>
++    </div>
++  );
++}
++
++function SafetySkeleton() {
++  return (
++    <div dir="rtl" className="min-h-screen bg-slate-50 p-4 space-y-4 animate-pulse">
++      <div className="h-12 bg-white rounded" />
++      <div className="h-48 bg-white rounded" />
++      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
++        {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-white rounded" />)}
++      </div>
++      <div className="h-64 bg-white rounded" />
++    </div>
++  );
++}
++
++function SafetyForbidden({ onBack }) {
++  return (
++    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
++      <AlertTriangle className="w-12 h-12 text-amber-500 mb-3" />
++      <h2 className="text-lg font-bold text-slate-900">אין הרשאה לצפייה בנתוני בטיחות</h2>
++      <p className="text-sm text-slate-600 mt-2">מודול הבטיחות זמין לניהול פרויקט בלבד.</p>
++      <button onClick={onBack} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm" type="button">
++        חזור לדאשבורד
++      </button>
++    </div>
++  );
++}
++
++function SafetyFlagOff({ onBack }) {
++  return (
++    <div dir="rtl" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
++      <ShieldAlert className="w-12 h-12 text-slate-400 mb-3" />
++      <h2 className="text-lg font-bold text-slate-900">מודול הבטיחות אינו פעיל בארגון זה</h2>
++      <p className="text-sm text-slate-600 mt-2">צור קשר עם התמיכה להפעלה.</p>
++      <button onClick={onBack} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm" type="button">
++        חזור לדאשבורד
++      </button>
++    </div>
++  );
++}
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 3e0003f..f29b4aa 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -167,6 +167,62 @@ export const projectService = {
+   },
+ };
  
-     # Section 4: Trainings
--    elems.append(Paragraph(hebrew("3. הדרכות בטיחות"), h2))
-+    elems.append(Paragraph(hebrew("4. הדרכות בטיחות"), h2))
-     if trainings:
-         rows = []
-         for t in trainings:
-@@ -314,7 +363,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-     elems.append(PageBreak())
- 
-     # Section 5: Open documents
--    elems.append(Paragraph(hebrew("4. ליקויי בטיחות פתוחים"), h2))
-+    elems.append(Paragraph(hebrew("5. ליקויי בטיחות פתוחים"), h2))
-     open_docs = [d for d in documents if d.get("status") in ("open", "in_progress")]
-     if open_docs:
-         rows = []
-@@ -336,7 +385,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-     elems.append(Spacer(1, 6 * mm))
- 
-     # Section 6: Corrective tasks
--    elems.append(Paragraph(hebrew("5. משימות מתקנות"), h2))
-+    elems.append(Paragraph(hebrew("6. משימות מתקנות"), h2))
-     if tasks:
-         rows = []
-         for tk in tasks:
-@@ -357,7 +406,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-     elems.append(PageBreak())
- 
-     # Section 7: Incidents
--    elems.append(Paragraph(hebrew("6. אירועי בטיחות"), h2))
-+    elems.append(Paragraph(hebrew("7. אירועי בטיחות"), h2))
-     if incidents:
-         rows = []
-         for inc in incidents:
-@@ -378,7 +427,7 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-     elems.append(Spacer(1, 6 * mm))
- 
-     # Section 8: Statistical summary
--    elems.append(Paragraph(hebrew("7. סיכום סטטיסטי"), h2))
-+    elems.append(Paragraph(hebrew("8. סיכום סטטיסטי"), h2))
-     by_category = {}
-     for d in documents:
-         cat = d.get("category", "other")
-@@ -402,8 +451,13 @@ async def generate_safety_register(db, project_id: str) -> bytes:
-         elems.append(Paragraph(hebrew(line), body))
-     elems.append(Spacer(1, 6 * mm))
- 
--    # Section 8b: Audit trail (last 30 days)
--    elems.append(Paragraph(hebrew("8. תיעוד פעולות (30 ימים אחרונים)"), h2))
-+    # Section 8b: Audit trail (last 30 days) — sub-block under section 8 (Part 3a)
-+    sub_h = ParagraphStyle(
-+        "RH3", fontName="Rubik-Bold", fontSize=11,
-+        alignment=TA_RIGHT, textColor=SLATE_700, leading=15,
-+        spaceBefore=6, spaceAfter=3,
-+    )
-+    elems.append(Paragraph(hebrew("תיעוד פעולות (30 ימים אחרונים)"), sub_h))
-     cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-     audit_events = await db.audit_events.find(
-         {"entity_type": {"$regex": "^safety"}, "created_at": {"$gte": cutoff_30d},
++export const safetyService = {
++  async getScore(projectId, refresh = false) {
++    const params = refresh ? { refresh: 'true' } : {};
++    const response = await axios.get(
++      `${API}/safety/${projectId}/score`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++
++  async listDocuments(projectId, params = {}) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/documents`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++
++  async listTasks(projectId, params = {}) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/tasks`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++
++  async listWorkers(projectId, params = {}) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/workers`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++
++  async listTrainings(projectId, params = {}) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/trainings`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++
++  async listIncidents(projectId, params = {}) {
++    const response = await axios.get(
++      `${API}/safety/${projectId}/incidents`,
++      { headers: getAuthHeader(), params }
++    );
++    return response.data;
++  },
++
++  async healthz() {
++    const response = await axios.get(`${API}/safety/healthz`, { headers: getAuthHeader() });
++    return response.data;
++  },
++};
++
+ export const buildingService = {
+   async getFloors(buildingId) {
+     const response = await axios.get(`${API}/buildings/${buildingId}/floors`, { headers: getAuthHeader() });
