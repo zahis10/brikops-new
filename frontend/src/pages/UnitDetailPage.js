@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { unitService, taskService, projectCompanyService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import {
   CheckCircle2, ChevronDown, X
 } from 'lucide-react';
 import { tCategory } from '../i18n';
+import { FEATURES } from '../config/features';
 
 const STATUS_LABELS = {
   open: { label: 'פתוח', color: 'bg-red-100 text-red-700' },
@@ -50,6 +51,7 @@ const CATEGORY_FILTER_OPTIONS = [
 const UnitDetailPage = () => {
   const { projectId, unitId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
 
   const [unitData, setUnitData] = useState(null);
@@ -60,6 +62,21 @@ const UnitDetailPage = () => {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [showDefectModal, setShowDefectModal] = useState(false);
+
+  // Auto-open NewDefectModal when arriving with ?reopenDefect=1 (from the
+  // "add contractor and return" flow). Clears the param so back/refresh
+  // doesn't reopen the modal indefinitely. Gated on the same flag as Fix A.
+  useEffect(() => {
+    if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
+    if (searchParams.get('reopenDefect') === '1') {
+      setShowDefectModal(true);
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('reopenDefect');
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const canCreateDefect = user && user.role === 'project_manager';
 

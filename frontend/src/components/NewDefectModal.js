@@ -16,6 +16,8 @@ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescript
 import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { SelectField } from './BottomSheetSelect';
 import QuickAddCompanyModal from './QuickAddCompanyModal';
+import { FEATURES } from '../config/features';
+import { saveDefectDraft, loadDefectDraft, clearDefectDraft } from '../utils/defectDraft';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -147,6 +149,27 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       }
     }
   }, [isOpen, hasPrefill, prefillData, loadProjects, loadCompanies]);
+
+  // Restore in-progress draft from the "+ הוסף קבלן" → add contractor → return flow.
+  // Gated on FEATURES.DEFECT_DRAFT_PRESERVATION; off = no-op (matches pre-batch).
+  // Runs after the prefill effect above so the unit-match guard sees the right values.
+  useEffect(() => {
+    if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
+    if (!isOpen) return;
+    const draft = loadDefectDraft();
+    if (!draft) return;
+    if (hasPrefill && draft.unitId && prefillData?.unit_id && draft.unitId !== prefillData.unit_id) {
+      return;
+    }
+    if (draft.category) setCategory(draft.category);
+    if (draft.title) setTitle(draft.title);
+    if (draft.description) setDescription(draft.description);
+    if (draft.priority) setPriority(draft.priority);
+    if (draft.companyId) setCompanyId(draft.companyId);
+    if (draft.assigneeId) setAssigneeId(draft.assigneeId);
+    clearDefectDraft();
+    toast.info('הטיוטה שוחזרה. יש לצרף תמונות מחדש.');
+  }, [isOpen, hasPrefill, prefillData]);
 
   const loadBuildings = useCallback((pid) => {
     if (!pid) return;
@@ -877,7 +900,35 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                       <p className="text-xs text-amber-700">אין קבלנים משויכים לחברה זו</p>
                       <button
                         type="button"
-                        onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
+                        onClick={() => {
+                          if (!FEATURES.DEFECT_DRAFT_PRESERVATION) {
+                            onClose();
+                            if (projectId) navigate(`/projects/${projectId}/control?tab=companies`);
+                            return;
+                          }
+                          if (!projectId) { onClose(); return; }
+                          saveDefectDraft({
+                            projectId,
+                            buildingId,
+                            floorId,
+                            unitId,
+                            category,
+                            title,
+                            description,
+                            priority,
+                            companyId,
+                            assigneeId,
+                            prefillData: prefillData || null,
+                          });
+                          onClose();
+                          const params = new URLSearchParams({
+                            tab: 'team',
+                            openInvite: '1',
+                            returnToDefect: '1',
+                          });
+                          if (category) params.set('prefillTrade', category);
+                          navigate(`/projects/${projectId}/control?${params.toString()}`);
+                        }}
                         className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
                       >
                         <Plus className="w-3 h-3" />

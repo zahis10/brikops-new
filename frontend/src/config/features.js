@@ -1,0 +1,4 @@
+export const FEATURES = {
+  DEFECT_DRAFT_PRESERVATION: true,
+  TRADE_SORT_IN_TEAM_FORM: true,
+};

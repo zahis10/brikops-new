@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from '../components/ui/sheet';
@@ -36,6 +36,10 @@ import HamburgerMenu from '../components/HamburgerMenu';
 import OfflineState from '../components/OfflineState';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { SelectField } from '../components/BottomSheetSelect';
+import GroupedSelectField from '../components/GroupedSelectField';
+import { FEATURES } from '../config/features';
+import { getBucketForTrade, getBucketLabel } from '../utils/categoryBuckets';
+import { loadDefectDraft } from '../utils/defectDraft';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -1214,7 +1218,8 @@ const EditCompanyForm = ({ projectId, company, onClose, onSuccess }) => {
   );
 };
 
-const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTrade, onRefreshCompanies }) => {
+const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTrade, returnToDefect, onRefreshCompanies }) => {
+  const navigate = useNavigate();
   const [phone, setPhone] = useState('');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('contractor');
@@ -1278,7 +1283,32 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
     { value: 'work_manager', label: 'מנהל עבודה' },
     { value: 'safety_officer', label: 'ממונה בטיחות' },
   ];
-  const companyOptions = companies.map(c => ({ value: c.id, label: c.name }));
+  const companyOptions = useMemo(() => {
+    const base = companies.map(c => ({ value: c.id, label: c.name, trade: c.trade }));
+    if (!FEATURES.TRADE_SORT_IN_TEAM_FORM) return base.map(c => ({ value: c.value, label: c.label }));
+    const activeKey = (tradeKey || prefillTrade || '').trim();
+    if (!activeKey || base.length === 0) return base.map(c => ({ value: c.value, label: c.label }));
+    const targetBucket = getBucketForTrade(activeKey);
+    if (!targetBucket) return base.map(c => ({ value: c.value, label: c.label }));
+    const matching = [];
+    const other = [];
+    for (const opt of base) {
+      const bucket = opt.trade ? getBucketForTrade(opt.trade) : null;
+      if (bucket && bucket === targetBucket) matching.push(opt);
+      else other.push(opt);
+    }
+    if (matching.length === 0) return base.map(c => ({ value: c.value, label: c.label }));
+    const bucketLabel = getBucketLabel(targetBucket) || activeKey;
+    const result = [
+      { value: `__header_match_${targetBucket}`, label: `תחום: ${bucketLabel}`, isHeader: true },
+      ...matching.map(m => ({ value: m.value, label: m.label })),
+    ];
+    if (other.length > 0) {
+      result.push({ value: '__header_other', label: 'חברות אחרות', isHeader: true, muted: true });
+      other.forEach(o => result.push({ value: o.value, label: o.label, muted: true }));
+    }
+    return result;
+  }, [companies, tradeKey, prefillTrade]);
 
   const fetchTrades = useCallback(() => {
     tradeService.listForProject(projectId)
@@ -1333,16 +1363,38 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
       if (role === 'contractor' && companyId) payload.company_id = companyId;
       const result = await teamInviteService.create(projectId, payload);
       const ns = result?.notification_status;
+      const shouldOfferReturn = !!returnToDefect && FEATURES.DEFECT_DRAFT_PRESERVATION;
+      const returnAction = shouldOfferReturn ? {
+        label: 'חזור לליקוי',
+        onClick: () => {
+          try {
+            const draft = loadDefectDraft();
+            if (!draft) {
+              toast.info('הטיוטה פגה או לא נמצאה');
+              return;
+            }
+            if (!draft.projectId || !draft.unitId) {
+              toast.info('חסר מידע לחזרה לליקוי');
+              return;
+            }
+            navigate(`/projects/${draft.projectId}/units/${draft.unitId}?reopenDefect=1`);
+          } catch (err) {
+            console.warn('[AddTeamMemberForm] return-to-defect failed', err);
+            toast.error('שגיאה בחזרה לליקוי');
+          }
+        },
+      } : undefined;
+      const toastOpts = returnAction ? { action: returnAction, duration: 10000 } : undefined;
       if (ns?.channel_used === 'sms' && ns?.wa_skipped) {
-        toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)');
+        toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)', toastOpts);
       } else if (ns?.channel_used === 'sms') {
-        toast.success('הזמנה נשלחה בהצלחה ב-SMS');
+        toast.success('הזמנה נשלחה בהצלחה ב-SMS', toastOpts);
       } else if (ns?.channel_used === 'whatsapp') {
-        toast.success('הזמנה נשלחה בהצלחה ב-WhatsApp');
+        toast.success('הזמנה נשלחה בהצלחה ב-WhatsApp', toastOpts);
       } else if (ns?.channel_used === 'none' && ns?.reason) {
-        toast.warning(`הזמנה נוצרה, אך שליחת ההודעה נכשלה: ${ns.reason}`);
+        toast.warning(`הזמנה נוצרה, אך שליחת ההודעה נכשלה: ${ns.reason}`, toastOpts);
       } else {
-        toast.success('הזמנה נוצרה בהצלחה');
+        toast.success('הזמנה נוצרה בהצלחה', toastOpts);
       }
       onSuccess();
       onClose();
@@ -1389,7 +1441,11 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
               </div>
             </div>
           )}
-          <SelectField label="חברה *" value={companyId} onChange={setCompanyId} options={companyOptions} error={errors.companyId} emptyMessage="אין חברות – הוסף חברה למטה" />
+          {FEATURES.TRADE_SORT_IN_TEAM_FORM ? (
+            <GroupedSelectField label="חברה *" value={companyId} onChange={setCompanyId} options={companyOptions} error={errors.companyId} emptyMessage="אין חברות – הוסף חברה למטה" />
+          ) : (
+            <SelectField label="חברה *" value={companyId} onChange={setCompanyId} options={companyOptions} error={errors.companyId} emptyMessage="אין חברות – הוסף חברה למטה" />
+          )}
           {!showNewCompany && (
             <button
               type="button"
@@ -2415,7 +2471,7 @@ const TEAM_FILTERS = [
   { key: 'project_manager', labelKey: 'filterPM' },
 ];
 
-const TeamTab = ({ projectId, companies, prefillTrade, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
+const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
   const { user: currentUser } = useAuth();
   const [invites, setInvites] = useState([]);
   const [members, setMembers] = useState([]);
@@ -2683,7 +2739,7 @@ const TeamTab = ({ projectId, companies, prefillTrade, myRole, isOrgOwner, trade
       )}
 
       {showAddForm && (
-        <AddTeamMemberForm projectId={projectId} companies={companies} onClose={() => setShowAddForm(false)} onSuccess={loadData} prefillTrade={prefillTrade} onRefreshCompanies={onRefreshCompanies} />
+        <AddTeamMemberForm projectId={projectId} companies={companies} onClose={() => setShowAddForm(false)} onSuccess={loadData} prefillTrade={prefillTrade} returnToDefect={returnToDefect} onRefreshCompanies={onRefreshCompanies} />
       )}
 
       <UserDrawer
@@ -3588,7 +3644,7 @@ const ProjectControlPage = () => {
 
       {activeTab && (
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
-          {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
+          {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} returnToDefect={searchParams.get('returnToDefect') === '1'} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
 
           {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
 

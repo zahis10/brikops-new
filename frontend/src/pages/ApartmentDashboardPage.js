@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { unitService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import CategoryPill from '../components/CategoryPill';
 import Breadcrumbs from '../components/Breadcrumbs';
 import TaskCardSkeleton from '../components/TaskCardSkeleton';
 import { arraysEqualAsSets } from '../utils/filterHelpers';
+import { FEATURES } from '../config/features';
 import {
   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
@@ -83,6 +84,7 @@ const ApartmentDashboardPage = () => {
   const { projectId, unitId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, features } = useAuth();
 
   const [unitData, setUnitData] = useState(null);
@@ -97,6 +99,22 @@ const ApartmentDashboardPage = () => {
   const [blockingOpen, setBlockingOpen] = useState(false);
   const [editingUnit, setEditingUnit] = useState(null);
   const [showDefectModal, setShowDefectModal] = useState(false);
+
+  // Auto-open NewDefectModal when arriving with ?reopenDefect=1 (from the
+  // "add contractor and return" flow). Clears the param so back/refresh
+  // doesn't reopen the modal indefinitely. Gated on the same flag as Fix A.
+  useEffect(() => {
+    if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
+    if (searchParams.get('reopenDefect') === '1') {
+      setShowDefectModal(true);
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('reopenDefect');
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const [spareTilesOpen, setSpareTilesOpen] = useState(false);
   const [spareTilesEditing, setSpareTilesEditing] = useState(false);
   const [spareTilesEntries, setSpareTilesEntries] = useState([]);

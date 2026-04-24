@@ -1,0 +1,55 @@
+import React, { useMemo } from 'react';
+import { SelectField } from './BottomSheetSelect';
+
+// SelectField (BottomSheetSelect.js) reads `opt.value` and `opt.label` only.
+// `opt.label` is rendered directly inside JSX, so React nodes are accepted.
+// SelectField has NO per-option `disabled` support, so header rows are made
+// inert by intercepting onChange in this wrapper and ignoring header values.
+//
+// Input option shape:
+//   - Normal:  { value, label }
+//   - Header:  { value: '__header_X', label: 'תחום: מיזוג', isHeader: true, muted?: true }
+//   - Muted:   { value, label, muted: true }
+
+const GroupedSelectField = ({ options = [], onChange, value, ...rest }) => {
+  const { transformed, headerValues } = useMemo(() => {
+    const headers = new Set();
+    const out = options.map(opt => {
+      if (opt?.isHeader) {
+        headers.add(opt.value);
+        return {
+          value: opt.value,
+          label: (
+            <span className={`text-xs font-medium ${opt.muted ? 'text-slate-400' : 'text-slate-500'} pointer-events-none`}>
+              {opt.label}
+            </span>
+          ),
+        };
+      }
+      if (opt?.muted) {
+        return {
+          value: opt.value,
+          label: <span className="opacity-70">{opt.label}</span>,
+        };
+      }
+      return { value: opt.value, label: opt.label };
+    });
+    return { transformed: out, headerValues: headers };
+  }, [options]);
+
+  const handleChange = (val) => {
+    if (headerValues.has(val)) return;
+    if (typeof onChange === 'function') onChange(val);
+  };
+
+  return (
+    <SelectField
+      {...rest}
+      value={value}
+      options={transformed}
+      onChange={handleChange}
+    />
+  );
+};
+
+export default GroupedSelectField;
