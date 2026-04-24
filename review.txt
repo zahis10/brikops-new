@@ -17,13 +17,22 @@ caller wasn't a member of (silent leak — pentest pulled ~30 tasks across 4
 test orgs with title/description/assignee/company/building/floor/unit IDs).
 
 FIX: Added a 12-line scope block at the top of `list_tasks` immediately after
-`db = get_db()`. Three cases:
+`db = get_db()`. Logic precedence (super-admin first, then explicit project_id
+check, then memberships fallback):
   1. Super-admin → bypass scope (unchanged platform-wide behavior).
-  2. Caller has no project_memberships → return empty paginated envelope.
-  3. project_id param passed → 403 'אין לך גישה לפרויקט זה' if caller not a
-     member; otherwise fall through to existing handler logic unchanged.
-  4. project_id param omitted → inject query['project_id'] = {'$in':
-     member_project_ids} so the aggregation pipeline naturally filters.
+  2. project_id param passed → 403 'אין לך גישה לפרויקט זה' if caller not in
+     member_project_ids (covers both zero-membership AND foreign-project cases
+     uniformly — explicit unauthorized requests always 403, never silent
+     empty). Otherwise fall through to existing handler logic unchanged.
+  3. project_id omitted + zero memberships → empty paginated envelope.
+  4. project_id omitted + has memberships → inject query['project_id'] =
+     {'$in': member_project_ids} so the aggregation pipeline filters.
+
+Precedence note: An earlier draft had the no-memberships early-return BEFORE
+the explicit-project_id check, which meant a zero-membership caller passing
+project_id=foo got a 200 empty envelope instead of 403. Architect flagged
+this as semantically inconsistent (not a bypass, but inconsistent contract).
+Reordered so explicit unauthorized project requests always return 403.
 
 Architectural consistency: uses the same `project_memberships` collection +
 filter key (`{'user_id': ..., 'project_id': ...}`) as the canonical
@@ -68,7 +77,7 @@ DIFF
 ================================================================================
 
 diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
-index 115cbaf..ddadd39 100644
+index 115cbaf..6a474ae 100644
 --- a/backend/contractor_ops/tasks_router.py
 +++ b/backend/contractor_ops/tasks_router.py
 @@ -196,6 +196,18 @@ async def list_tasks(
@@ -80,11 +89,11 @@ index 115cbaf..ddadd39 100644
 +        member_project_ids = await db.project_memberships.distinct(
 +            'project_id', {'user_id': user['id']}
 +        )
-+        if not member_project_ids:
-+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
 +        if project_id is not None:
 +            if project_id not in member_project_ids:
 +                raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
++        elif not member_project_ids:
++            return {"items": [], "total": 0, "limit": limit, "offset": offset}
 +        else:
 +            query['project_id'] = {'$in': member_project_ids}
      if project_id:
@@ -106,10 +115,11 @@ index 115cbaf..ddadd39 100644
     (1240 is pre-existing in another handler — not touched)
 
 (d) Empty-envelope return matches handler's actual return shape (line 327):
-    205:            return {"items": [], "total": 0, "limit": limit, "offset": offset}
+    208:            return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
-(e) Hebrew 403 for cross-tenant project_id requests:
-    208:                raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
+(e) Hebrew 403 for cross-tenant project_id requests (now also covers
+    zero-membership + explicit project_id case after precedence reorder):
+    206:                raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
 
 (f) member_project_ids inject for omitted-project_id case:
     210:            query['project_id'] = {'$in': member_project_ids}

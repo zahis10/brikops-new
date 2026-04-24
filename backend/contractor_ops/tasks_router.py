@@ -201,11 +201,11 @@ async def list_tasks(
         member_project_ids = await db.project_memberships.distinct(
             'project_id', {'user_id': user['id']}
         )
-        if not member_project_ids:
-            return {"items": [], "total": 0, "limit": limit, "offset": offset}
         if project_id is not None:
             if project_id not in member_project_ids:
                 raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
+        elif not member_project_ids:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
         else:
             query['project_id'] = {'$in': member_project_ids}
     if project_id:
