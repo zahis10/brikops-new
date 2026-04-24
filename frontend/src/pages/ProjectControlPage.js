@@ -1384,7 +1384,7 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
           }
         },
       } : undefined;
-      const toastOpts = returnAction ? { action: returnAction, duration: 10000 } : undefined;
+      const toastOpts = returnAction ? { action: returnAction, duration: 15000 } : undefined;
       if (ns?.channel_used === 'sms' && ns?.wa_skipped) {
         toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)', toastOpts);
       } else if (ns?.channel_used === 'sms') {

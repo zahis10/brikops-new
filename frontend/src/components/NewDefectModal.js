@@ -158,6 +158,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (!isOpen) return;
     const draft = loadDefectDraft();
     if (!draft) return;
+    // Project-scope guard: if the draft was saved for a different project than
+    // the one this modal is currently opened for, bail out. Covers the case
+    // where NewDefectModal is opened from ProjectTasksPage (no unit_id in
+    // prefillData, so the unit-match guard below can't fire).
+    if (draft.projectId && prefillData?.project_id && draft.projectId !== prefillData.project_id) {
+      return;
+    }
     if (hasPrefill && draft.unitId && prefillData?.unit_id && draft.unitId !== prefillData.unit_id) {
       return;
     }
