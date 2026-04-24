@@ -1,757 +1,597 @@
-diff --git a/.agents/agent_assets_metadata.toml b/.agents/agent_assets_metadata.toml
-index 2662e11..920459f 100644
---- a/.agents/agent_assets_metadata.toml
-+++ b/.agents/agent_assets_metadata.toml
-@@ -77,7 +77,7 @@ title = "review-94.txt"
- id = "ocdrZig6YPfAjD1XCgrbr"
- uri = "file://review.txt"
- type = "text"
--title = "Task #409 — Full diff (10 files, 204 lines)"
-+title = "Batch 2a — Full Diff (review.txt)"
- 
- [[outputs]]
- id = "WdwtqNCiZpAAlX9e9Sq9Z"
-diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
-index 74d354a..e6dea49 100644
---- a/frontend/src/components/NewDefectModal.js
-+++ b/frontend/src/components/NewDefectModal.js
-@@ -15,6 +15,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
- import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
- import * as SheetPrimitive from '@radix-ui/react-dialog';
- import { SelectField } from './BottomSheetSelect';
-+import QuickAddCompanyModal from './QuickAddCompanyModal';
- 
- const normalizeList = (data) => {
-   if (Array.isArray(data)) return data;
-@@ -97,6 +98,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-   const [projectMembers, setProjectMembers] = useState([]);
-   const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
-   const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
-+  const [showQuickAddCompany, setShowQuickAddCompany] = useState(false);
-   const [submitting, setSubmitting] = useState(false);
-   const [submitStep, setSubmitStep] = useState(null);
-   const [errors, setErrors] = useState({});
-@@ -654,6 +656,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-         <DialogPrimitive.Content
-           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
-           onPointerDownOutside={(e) => e.preventDefault()}
-+          onInteractOutside={(e) => e.preventDefault()}
-         >
-           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
-           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>
-@@ -806,7 +809,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-                 <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
-                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה.</p>
-                 <Button
--                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
-+                  onClick={() => setShowQuickAddCompany(true)}
-                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
-                   disabled={!projectId}
-                 >
-@@ -819,7 +822,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-                 <p className="text-sm text-amber-800 font-medium">אין חברות המשויכות לתחום {tCategory(category)}</p>
-                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
-                 <Button
--                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
-+                  onClick={() => setShowQuickAddCompany(true)}
-                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
-                   disabled={!projectId}
-                 >
-@@ -846,8 +849,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-                   {category && (
-                     <button
-                       type="button"
--                      onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
--                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
-+                      onClick={() => setShowQuickAddCompany(true)}
-+                      disabled={!projectId}
-+                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                     >
-                       <Plus className="w-3 h-3" />
-                       הוסף חברה
-@@ -1008,6 +1012,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-       </Suspense>
-     )}
- 
-+    <QuickAddCompanyModal
-+      open={showQuickAddCompany}
-+      onOpenChange={setShowQuickAddCompany}
-+      projectId={projectId}
-+      categories={CATEGORIES}
-+      initialTrade={category}
-+      onSuccess={(newCompany) => {
-+        setCompanies(prev => [...prev, newCompany]);
-+        setCompanyId(newCompany.id);
-+        setShowQuickAddCompany(false);
-+      }}
-+    />
-+
-   </>
-   );
- };
-diff --git a/frontend/src/components/QuickAddCompanyModal.js b/frontend/src/components/QuickAddCompanyModal.js
+================================================================================
+TASK #411 — Closed-Beta Batch 2b — Contractor add flow + trade-sort
+Generated: 2026-04-24 11:45:43 UTC
+Commit: 1cd675141ba4bb9a8c4e3eeef3ebb27baee71fcd feat(beta): Batch 2b — defect-draft preservation + trade-sort (#411)
+================================================================================
+
+FILES CHANGED:
+ frontend/src/components/GroupedSelectField.js | 55 ++++++++++++++++++
+ frontend/src/components/NewDefectModal.js     | 53 +++++++++++++++++-
+ frontend/src/config/features.js               |  4 ++
+ frontend/src/pages/ApartmentDashboardPage.js  | 20 ++++++-
+ frontend/src/pages/ProjectControlPage.js      | 80 +++++++++++++++++++++++----
+ frontend/src/pages/UnitDetailPage.js          | 19 ++++++-
+ frontend/src/utils/categoryBuckets.js         | 54 ++++++++++++++++++
+ frontend/src/utils/defectDraft.js             | 39 +++++++++++++
+ 8 files changed, 309 insertions(+), 15 deletions(-)
+
+================================================================================
+FULL DIFF (before/after, unified context = 5 lines)
+================================================================================
+
+diff --git a/frontend/src/components/GroupedSelectField.js b/frontend/src/components/GroupedSelectField.js
 new file mode 100644
-index 0000000..809cee4
+index 0000000..6a8cdcb
 --- /dev/null
-+++ b/frontend/src/components/QuickAddCompanyModal.js
-@@ -0,0 +1,177 @@
-+import React, { useState, useEffect } from 'react';
-+import * as DialogPrimitive from '@radix-ui/react-dialog';
-+import { X, Loader2 } from 'lucide-react';
-+import { toast } from 'sonner';
-+import { projectCompanyService } from '../services/api';
++++ b/frontend/src/components/GroupedSelectField.js
+@@ -0,0 +1,55 @@
++import React, { useMemo } from 'react';
++import { SelectField } from './BottomSheetSelect';
 +
-+export default function QuickAddCompanyModal({
-+  open,
-+  onOpenChange,
-+  projectId,
-+  categories = [],
-+  initialTrade = '',
-+  onSuccess,
-+}) {
-+  const [name, setName] = useState('');
-+  const [tradeValue, setTradeValue] = useState('');
-+  const [contactName, setContactName] = useState('');
-+  const [contactPhone, setContactPhone] = useState('');
-+  const [saving, setSaving] = useState(false);
++// SelectField (BottomSheetSelect.js) reads `opt.value` and `opt.label` only.
++// `opt.label` is rendered directly inside JSX, so React nodes are accepted.
++// SelectField has NO per-option `disabled` support, so header rows are made
++// inert by intercepting onChange in this wrapper and ignoring header values.
++//
++// Input option shape:
++//   - Normal:  { value, label }
++//   - Header:  { value: '__header_X', label: 'תחום: מיזוג', isHeader: true, muted?: true }
++//   - Muted:   { value, label, muted: true }
 +
-+  useEffect(() => {
-+    if (open) {
-+      setName('');
-+      setTradeValue(initialTrade || '');
-+      setContactName('');
-+      setContactPhone('');
-+      setSaving(false);
-+    }
-+  }, [open, initialTrade]);
++const GroupedSelectField = ({ options = [], onChange, value, ...rest }) => {
++  const { transformed, headerValues } = useMemo(() => {
++    const headers = new Set();
++    const out = options.map(opt => {
++      if (opt?.isHeader) {
++        headers.add(opt.value);
++        return {
++          value: opt.value,
++          label: (
++            <span className={`text-xs font-medium ${opt.muted ? 'text-slate-400' : 'text-slate-500'} pointer-events-none`}>
++              {opt.label}
++            </span>
++          ),
++        };
++      }
++      if (opt?.muted) {
++        return {
++          value: opt.value,
++          label: <span className="opacity-70">{opt.label}</span>,
++        };
++      }
++      return { value: opt.value, label: opt.label };
++    });
++    return { transformed: out, headerValues: headers };
++  }, [options]);
 +
-+  const trimmedName = name.trim();
-+  const canSave = trimmedName.length > 0 && !saving;
-+
-+  const handleSave = async () => {
-+    if (!canSave) return;
-+    if (!projectId) {
-+      toast.error('פרויקט לא זוהה');
-+      return;
-+    }
-+    setSaving(true);
-+    try {
-+      const payload = { name: trimmedName };
-+      if (tradeValue) payload.trade = tradeValue;
-+      if (contactName.trim()) payload.contact_name = contactName.trim();
-+      if (contactPhone.trim()) payload.contact_phone = contactPhone.trim();
-+      const newCompany = await projectCompanyService.create(projectId, payload);
-+      toast.success('החברה נוספה');
-+      if (onSuccess) onSuccess(newCompany);
-+    } catch (err) {
-+      toast.error(err.response?.data?.detail || 'שגיאה בהוספת חברה');
-+    } finally {
-+      setSaving(false);
-+    }
++  const handleChange = (val) => {
++    if (headerValues.has(val)) return;
++    if (typeof onChange === 'function') onChange(val);
 +  };
 +
 +  return (
-+    <DialogPrimitive.Root
-+      open={open}
-+      onOpenChange={(next) => {
-+        if (saving) return;
-+        onOpenChange(next);
-+      }}
-+    >
-+      <DialogPrimitive.Portal>
-+        <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-[9999]" />
-+        <DialogPrimitive.Content
-+          className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-[9999] bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto max-h-[90vh] flex flex-col outline-none"
-+          dir="rtl"
-+          onEscapeKeyDown={(e) => { if (saving) e.preventDefault(); }}
-+          onPointerDownOutside={(e) => { if (saving) e.preventDefault(); }}
-+          onInteractOutside={(e) => { if (saving) e.preventDefault(); }}
-+        >
-+          <DialogPrimitive.Title className="sr-only">הוספת חברה מהירה</DialogPrimitive.Title>
-+          <DialogPrimitive.Description className="sr-only">טופס מקוצר להוספת חברה חדשה לפרויקט</DialogPrimitive.Description>
-+
-+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
-+            <h3 className="font-bold text-slate-800 text-sm">הוסף חברה</h3>
-+            <button
-+              type="button"
-+              onClick={() => { if (!saving) onOpenChange(false); }}
-+              disabled={saving}
-+              className="p-1 hover:bg-slate-100 rounded-lg disabled:opacity-50"
-+              aria-label="סגור"
-+            >
-+              <X className="w-5 h-5 text-slate-400" />
-+            </button>
-+          </div>
-+
-+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-+            <div>
-+              <label className="block text-xs font-bold text-slate-600 mb-1.5">
-+                שם חברה <span className="text-red-500">*</span>
-+              </label>
-+              <input
-+                type="text"
-+                value={name}
-+                onChange={(e) => setName(e.target.value)}
-+                disabled={saving}
-+                placeholder="הזן שם חברה"
-+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-+                dir="rtl"
-+                autoFocus
-+              />
-+            </div>
-+
-+            <div>
-+              <label className="block text-xs font-bold text-slate-600 mb-1.5">תחום</label>
-+              <select
-+                value={tradeValue}
-+                onChange={(e) => setTradeValue(e.target.value)}
-+                disabled={saving}
-+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-+                dir="rtl"
-+              >
-+                <option value="">בחר תחום</option>
-+                {categories.map((c) => (
-+                  <option key={c.value} value={c.value}>{c.label}</option>
-+                ))}
-+              </select>
-+            </div>
-+
-+            <div>
-+              <label className="block text-xs font-bold text-slate-600 mb-1.5">שם איש קשר</label>
-+              <input
-+                type="text"
-+                value={contactName}
-+                onChange={(e) => setContactName(e.target.value)}
-+                disabled={saving}
-+                placeholder="(אופציונלי)"
-+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-+                dir="rtl"
-+              />
-+            </div>
-+
-+            <div>
-+              <label className="block text-xs font-bold text-slate-600 mb-1.5">טלפון</label>
-+              <input
-+                type="tel"
-+                inputMode="tel"
-+                value={contactPhone}
-+                onChange={(e) => setContactPhone(e.target.value)}
-+                disabled={saving}
-+                placeholder="(אופציונלי)"
-+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-+                dir="ltr"
-+              />
-+            </div>
-+          </div>
-+
-+          <div className="px-4 py-3 border-t border-slate-100 flex gap-2 flex-shrink-0">
-+            <button
-+              type="button"
-+              onClick={() => { if (!saving) onOpenChange(false); }}
-+              disabled={saving}
-+              className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px] disabled:opacity-50"
-+            >
-+              בטל
-+            </button>
-+            <button
-+              type="button"
-+              onClick={handleSave}
-+              disabled={!canSave}
-+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
-+                canSave
-+                  ? 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white'
-+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-+              }`}
-+            >
-+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-+              {saving ? 'שומר...' : 'שמור'}
-+            </button>
-+          </div>
-+        </DialogPrimitive.Content>
-+      </DialogPrimitive.Portal>
-+    </DialogPrimitive.Root>
++    <SelectField
++      {...rest}
++      value={value}
++      options={transformed}
++      onChange={handleChange}
++    />
 +  );
-+}
-diff --git a/frontend/src/utils/navigation.js b/frontend/src/utils/navigation.js
-index b1ed3a8..ae5ca17 100644
---- a/frontend/src/utils/navigation.js
-+++ b/frontend/src/utils/navigation.js
-@@ -6,7 +6,7 @@ export function navigateToProject(project, navigate) {
-   localStorage.setItem('lastProjectId', id);
++};
++
++export default GroupedSelectField;
+diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
+index e6dea49..f71ef05 100644
+--- a/frontend/src/components/NewDefectModal.js
++++ b/frontend/src/components/NewDefectModal.js
+@@ -14,10 +14,12 @@ import { compressImage } from '../utils/imageCompress';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
+ import * as SheetPrimitive from '@radix-ui/react-dialog';
+ import { SelectField } from './BottomSheetSelect';
+ import QuickAddCompanyModal from './QuickAddCompanyModal';
++import { FEATURES } from '../config/features';
++import { saveDefectDraft, loadDefectDraft, clearDefectDraft } from '../utils/defectDraft';
  
-   if (MANAGEMENT_ROLES.includes(role)) {
--    navigate(`/projects/${id}/control`);
-+    navigate(`/projects/${id}/control?workMode=structure`);
-   } else if (role === 'contractor') {
-     navigate('/projects');
-   } else {
-diff --git a/review.txt b/review.txt
-index 885d129..c7e0422 100644
---- a/review.txt
-+++ b/review.txt
-@@ -1,204 +1,266 @@
--diff --git a/frontend/src/components/HamburgerMenu.js b/frontend/src/components/HamburgerMenu.js
--index 87c8749..087db38 100644
----- a/frontend/src/components/HamburgerMenu.js
--+++ b/frontend/src/components/HamburgerMenu.js
--@@ -10,7 +10,7 @@ const MENU_ITEMS = [
--   { id: 'billing', label: 'מנוי ותשלום', icon: CreditCard, type: 'tab', billingOnly: true },
--   { id: 'divider-1', type: 'divider' },
--   { id: 'account-settings', label: 'הגדרות חשבון', icon: Settings, type: 'navigate', path: '/settings/account' },
---  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account' },
--+  { id: 'language', label: 'שפה', icon: Globe, type: 'navigate', path: '/settings/account#language' },
--   { id: 'divider-2', type: 'divider' },
--   { id: 'logout', label: 'התנתקות', icon: LogOut, type: 'action', action: 'logout' },
-- ];
--diff --git a/frontend/src/components/NotificationBell.js b/frontend/src/components/NotificationBell.js
--index 881f42d..176e914 100644
----- a/frontend/src/components/NotificationBell.js
--+++ b/frontend/src/components/NotificationBell.js
--@@ -97,6 +97,7 @@ export default function NotificationBell() {
--         className="w-80 p-0 rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
--         align="end"
--         sideOffset={8}
--+        collisionPadding={16}
--       >
--         <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-100 bg-slate-50">
--           <h3 className="text-sm font-bold text-slate-700">התראות</h3>
--diff --git a/frontend/src/components/TrialBanner.js b/frontend/src/components/TrialBanner.js
--index 178b2f7..80d65ce 100644
----- a/frontend/src/components/TrialBanner.js
--+++ b/frontend/src/components/TrialBanner.js
--@@ -7,6 +7,7 @@ import { toast } from 'sonner';
-- import { buildOrgBillingUrl } from '../utils/billingHub';
-+diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
-+index 74d354a..b9b789b 100644
-+--- a/frontend/src/components/NewDefectModal.js
-++++ b/frontend/src/components/NewDefectModal.js
-+@@ -15,6 +15,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
-+ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from './ui/sheet';
-+ import * as SheetPrimitive from '@radix-ui/react-dialog';
-+ import { SelectField } from './BottomSheetSelect';
-++import QuickAddCompanyModal from './QuickAddCompanyModal';
-  
-- const AUTH_PAGES = ['/login', '/register', '/register-management', '/phone-login', '/pending', '/onboarding', '/forgot-password', '/reset-password'];
--+const PROJECTS_LIST_PAGES = ['/', '/projects'];
-- 
-- function getOwnerBannerText(reason) {
--   switch (reason) {
--@@ -38,6 +39,7 @@ const TrialBanner = () => {
--   });
-- 
--   if (AUTH_PAGES.includes(location.pathname)) return null;
--+  if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
--   if (!user || loading || !billing) return null;
-- 
--   const isSuperAdmin = user.platform_role === 'super_admin';
--@@ -108,7 +110,7 @@ const TrialBanner = () => {
--       );
--     }
-- 
---    if (isReadOnly) {
--+    if (isReadOnly && (canManageBilling || isOwner)) {
--       if (billing.subscription_status === 'active') return null;
-- 
--       const reason = billing.read_only_reason;
--diff --git a/frontend/src/pages/AccountSettingsPage.js b/frontend/src/pages/AccountSettingsPage.js
--index e5cf410..9acbe69 100644
----- a/frontend/src/pages/AccountSettingsPage.js
--+++ b/frontend/src/pages/AccountSettingsPage.js
--@@ -443,6 +443,15 @@ const AccountSettingsPage = () => {
--     }
--   }, [showReminderPrefs]);
-+ const normalizeList = (data) => {
-+   if (Array.isArray(data)) return data;
-+@@ -97,6 +98,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+   const [projectMembers, setProjectMembers] = useState([]);
-+   const [autoSelectedCompany, setAutoSelectedCompany] = useState(false);
-+   const [autoSelectedAssignee, setAutoSelectedAssignee] = useState(false);
-++  const [showQuickAddCompany, setShowQuickAddCompany] = useState(false);
-+   const [submitting, setSubmitting] = useState(false);
-+   const [submitStep, setSubmitStep] = useState(null);
-+   const [errors, setErrors] = useState({});
-+@@ -806,7 +808,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+                 <p className="text-sm text-amber-800 font-medium">אין חברות בפרויקט</p>
-+                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה.</p>
-+                 <Button
-+-                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
-++                  onClick={() => setShowQuickAddCompany(true)}
-+                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
-+                   disabled={!projectId}
-+                 >
-+@@ -819,7 +821,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+                 <p className="text-sm text-amber-800 font-medium">אין חברות המשויכות לתחום {tCategory(category)}</p>
-+                 <p className="text-xs text-amber-600">כדי להקצות ליקוי לקבלן יש להוסיף חברה בתחום המתאים.</p>
-+                 <Button
-+-                  onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
-++                  onClick={() => setShowQuickAddCompany(true)}
-+                   className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg"
-+                   disabled={!projectId}
-+                 >
-+@@ -846,8 +848,9 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+                   {category && (
-+                     <button
-+                       type="button"
-+-                      onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
-+-                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
-++                      onClick={() => setShowQuickAddCompany(true)}
-++                      disabled={!projectId}
-++                      className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-+                     >
-+                       <Plus className="w-3 h-3" />
-+                       הוסף חברה
-+@@ -1008,6 +1011,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+       </Suspense>
-+     )}
-  
-++    <QuickAddCompanyModal
-++      open={showQuickAddCompany}
-++      onOpenChange={setShowQuickAddCompany}
-++      projectId={projectId}
-++      categories={CATEGORIES}
-++      initialTrade={category}
-++      onSuccess={(newCompany) => {
-++        setCompanies(prev => [...prev, newCompany]);
-++        setCompanyId(newCompany.id);
-++        setShowQuickAddCompany(false);
-++      }}
-++    />
-++
-+   </>
-+   );
-+ };
-+diff --git a/frontend/src/components/QuickAddCompanyModal.js b/frontend/src/components/QuickAddCompanyModal.js
-+new file mode 100644
-+index 0000000..809cee4
-+--- /dev/null
-++++ b/frontend/src/components/QuickAddCompanyModal.js
-+@@ -0,0 +1,177 @@
-++import React, { useState, useEffect } from 'react';
-++import * as DialogPrimitive from '@radix-ui/react-dialog';
-++import { X, Loader2 } from 'lucide-react';
-++import { toast } from 'sonner';
-++import { projectCompanyService } from '../services/api';
-++
-++export default function QuickAddCompanyModal({
-++  open,
-++  onOpenChange,
-++  projectId,
-++  categories = [],
-++  initialTrade = '',
-++  onSuccess,
-++}) {
-++  const [name, setName] = useState('');
-++  const [tradeValue, setTradeValue] = useState('');
-++  const [contactName, setContactName] = useState('');
-++  const [contactPhone, setContactPhone] = useState('');
-++  const [saving, setSaving] = useState(false);
-++
- +  useEffect(() => {
--+    if (location.hash !== '#language') return;
--+    const timer = setTimeout(() => {
--+      const el = document.getElementById('language');
--+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
--+    }, 100);
--+    return () => clearTimeout(timer);
--+  }, [location.hash]);
-++    if (open) {
-++      setName('');
-++      setTradeValue(initialTrade || '');
-++      setContactName('');
-++      setContactPhone('');
-++      setSaving(false);
-++    }
-++  }, [open, initialTrade]);
- +
--   const updateReminderPref = async (type, field, value) => {
--     const prev = reminderPrefs;
--     const updated = { ...reminderPrefs, [type]: { ...reminderPrefs[type], [field]: value } };
--@@ -719,7 +728,7 @@ const AccountSettingsPage = () => {
--           </Button>
--         </div>
-- 
---        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
--+        <section id="language" className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
--           <div className="flex items-center gap-2 mb-4">
--             <MessageCircle className="w-5 h-5 text-amber-500" />
--             <h2 className="text-lg font-semibold text-slate-900">{t('settings', 'wa_language_title')}</h2>
--@@ -760,7 +769,7 @@ const AccountSettingsPage = () => {
--               <span>{t('settings', 'saving')}</span>
--             </div>
--           )}
---        </div>
--+        </section>
-- 
--         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
--           <div className="flex items-center gap-2 mb-4">
--diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
--index f1f73a1..8357519 100644
----- a/frontend/src/pages/ApartmentDashboardPage.js
--+++ b/frontend/src/pages/ApartmentDashboardPage.js
--@@ -692,7 +692,7 @@ const ApartmentDashboardPage = () => {
--             <SlidersHorizontal className="w-4 h-4" />
--             סינון
--             {activeFilterCount > 0 && (
---              <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
--+              <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
--                 {activeFilterCount}
--               </span>
--             )}
--diff --git a/frontend/src/pages/BuildingDefectsPage.js b/frontend/src/pages/BuildingDefectsPage.js
--index 638175b..fb73c03 100644
----- a/frontend/src/pages/BuildingDefectsPage.js
--+++ b/frontend/src/pages/BuildingDefectsPage.js
--@@ -460,7 +460,7 @@ const BuildingDefectsPage = () => {
--               <SlidersHorizontal className="w-4 h-4" />
--               סינון
--               {activeFilterCount > 0 && (
---                <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
--+                <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
--                   {activeFilterCount}
--                 </span>
--               )}
--@@ -562,7 +562,7 @@ const BuildingDefectsPage = () => {
--                                   <div className="relative">
--                                     <Home className={`w-8 h-8 ${getUnitIconColor(unit)}`} />
--                                     {badgeCount > 0 && (
---                                      <span className={`absolute -top-1.5 -left-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
--+                                      <span className={`absolute -top-1.5 -start-1.5 text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${getUnitBadgeColor(unit)}`}>
--                                         {badgeCount}
--                                       </span>
--                                     )}
--diff --git a/frontend/src/pages/HandoverOverviewPage.js b/frontend/src/pages/HandoverOverviewPage.js
--index 5c717de..ed81162 100644
----- a/frontend/src/pages/HandoverOverviewPage.js
--+++ b/frontend/src/pages/HandoverOverviewPage.js
--@@ -472,7 +472,7 @@ export default function HandoverOverviewPage() {
--                                   }}
--                                 >
--                                   {unit.open_defects > 0 && (
---                                    <span className="absolute -top-1 -left-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
--+                                    <span className="absolute -top-1 -start-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
--                                       {unit.open_defects > 9 ? '9+' : unit.open_defects}
--                                     </span>
--                                   )}
--diff --git a/frontend/src/pages/InnerBuildingPage.js b/frontend/src/pages/InnerBuildingPage.js
--index 9b50d2a..e083a6a 100644
----- a/frontend/src/pages/InnerBuildingPage.js
--+++ b/frontend/src/pages/InnerBuildingPage.js
--@@ -554,7 +554,7 @@ const InnerBuildingPage = () => {
--                                       <span className="mt-0.5 text-[10px] text-slate-400 truncate max-w-[120px]">{unit.unit_note}</span>
--                                     )}
--                                     {openCount > 0 && (
---                                      <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
--+                                      <span className="absolute -top-1.5 -start-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
--                                         {openCount}
--                                       </span>
--                                     )}
--diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
--index ad24cb5..7fb47f4 100644
----- a/frontend/src/pages/ProjectControlPage.js
--+++ b/frontend/src/pages/ProjectControlPage.js
--@@ -3547,7 +3547,7 @@ const ProjectControlPage = () => {
--         </header>
-++  const trimmedName = name.trim();
-++  const canSave = trimmedName.length > 0 && !saving;
-++
-++  const handleSave = async () => {
-++    if (!canSave) return;
-++    if (!projectId) {
-++      toast.error('פרויקט לא זוהה');
-++      return;
-++    }
-++    setSaving(true);
-++    try {
-++      const payload = { name: trimmedName };
-++      if (tradeValue) payload.trade = tradeValue;
-++      if (contactName.trim()) payload.contact_name = contactName.trim();
-++      if (contactPhone.trim()) payload.contact_phone = contactPhone.trim();
-++      const newCompany = await projectCompanyService.create(projectId, payload);
-++      toast.success('החברה נוספה');
-++      if (onSuccess) onSuccess(newCompany);
-++    } catch (err) {
-++      toast.error(err.response?.data?.detail || 'שגיאה בהוספת חברה');
-++    } finally {
-++      setSaving(false);
-++    }
-++  };
-++
-++  return (
-++    <DialogPrimitive.Root
-++      open={open}
-++      onOpenChange={(next) => {
-++        if (saving) return;
-++        onOpenChange(next);
-++      }}
-++    >
-++      <DialogPrimitive.Portal>
-++        <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-[9999]" />
-++        <DialogPrimitive.Content
-++          className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-[9999] bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto max-h-[90vh] flex flex-col outline-none"
-++          dir="rtl"
-++          onEscapeKeyDown={(e) => { if (saving) e.preventDefault(); }}
-++          onPointerDownOutside={(e) => { if (saving) e.preventDefault(); }}
-++          onInteractOutside={(e) => { if (saving) e.preventDefault(); }}
-++        >
-++          <DialogPrimitive.Title className="sr-only">הוספת חברה מהירה</DialogPrimitive.Title>
-++          <DialogPrimitive.Description className="sr-only">טופס מקוצר להוספת חברה חדשה לפרויקט</DialogPrimitive.Description>
-++
-++          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
-++            <h3 className="font-bold text-slate-800 text-sm">הוסף חברה</h3>
-++            <button
-++              type="button"
-++              onClick={() => { if (!saving) onOpenChange(false); }}
-++              disabled={saving}
-++              className="p-1 hover:bg-slate-100 rounded-lg disabled:opacity-50"
-++              aria-label="סגור"
-++            >
-++              <X className="w-5 h-5 text-slate-400" />
-++            </button>
-++          </div>
-++
-++          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-++            <div>
-++              <label className="block text-xs font-bold text-slate-600 mb-1.5">
-++                שם חברה <span className="text-red-500">*</span>
-++              </label>
-++              <input
-++                type="text"
-++                value={name}
-++                onChange={(e) => setName(e.target.value)}
-++                disabled={saving}
-++                placeholder="הזן שם חברה"
-++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-++                dir="rtl"
-++                autoFocus
-++              />
-++            </div>
-++
-++            <div>
-++              <label className="block text-xs font-bold text-slate-600 mb-1.5">תחום</label>
-++              <select
-++                value={tradeValue}
-++                onChange={(e) => setTradeValue(e.target.value)}
-++                disabled={saving}
-++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-++                dir="rtl"
-++              >
-++                <option value="">בחר תחום</option>
-++                {categories.map((c) => (
-++                  <option key={c.value} value={c.value}>{c.label}</option>
-++                ))}
-++              </select>
-++            </div>
-++
-++            <div>
-++              <label className="block text-xs font-bold text-slate-600 mb-1.5">שם איש קשר</label>
-++              <input
-++                type="text"
-++                value={contactName}
-++                onChange={(e) => setContactName(e.target.value)}
-++                disabled={saving}
-++                placeholder="(אופציונלי)"
-++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-++                dir="rtl"
-++              />
-++            </div>
-++
-++            <div>
-++              <label className="block text-xs font-bold text-slate-600 mb-1.5">טלפון</label>
-++              <input
-++                type="tel"
-++                inputMode="tel"
-++                value={contactPhone}
-++                onChange={(e) => setContactPhone(e.target.value)}
-++                disabled={saving}
-++                placeholder="(אופציונלי)"
-++                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300 disabled:opacity-50"
-++                dir="ltr"
-++              />
-++            </div>
-++          </div>
-++
-++          <div className="px-4 py-3 border-t border-slate-100 flex gap-2 flex-shrink-0">
-++            <button
-++              type="button"
-++              onClick={() => { if (!saving) onOpenChange(false); }}
-++              disabled={saving}
-++              className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px] disabled:opacity-50"
-++            >
-++              בטל
-++            </button>
-++            <button
-++              type="button"
-++              onClick={handleSave}
-++              disabled={!canSave}
-++              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
-++                canSave
-++                  ? 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white'
-++                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-++              }`}
-++            >
-++              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-++              {saving ? 'שומר...' : 'שמור'}
-++            </button>
-++          </div>
-++        </DialogPrimitive.Content>
-++      </DialogPrimitive.Portal>
-++    </DialogPrimitive.Root>
-++  );
-++}
-+diff --git a/frontend/src/utils/navigation.js b/frontend/src/utils/navigation.js
-+index b1ed3a8..ae5ca17 100644
-+--- a/frontend/src/utils/navigation.js
-++++ b/frontend/src/utils/navigation.js
-+@@ -6,7 +6,7 @@ export function navigateToProject(project, navigate) {
-+   localStorage.setItem('lastProjectId', id);
-  
--         <div className="bg-white border-b border-slate-200">
---          <div className="max-w-[560px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
--+          <div className="max-w-[1100px] mx-auto flex gap-1 px-3 py-2 overflow-x-auto" dir="rtl">
--             {workTabs.map(wt => {
--               const Icon = wt.icon;
--               const isActive = workMode === wt.id;
--diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
--index 3757a71..30bddde 100644
----- a/frontend/src/pages/TaskDetailPage.js
--+++ b/frontend/src/pages/TaskDetailPage.js
--@@ -7,7 +7,7 @@ import { toast } from 'sonner';
-- import { compressImage } from '../utils/imageCompress';
-- import {
--   ChevronRight, Building2, Layers, DoorOpen, Clock, User, Briefcase,
---  MessageSquare, Paperclip, ArrowRight, Send, HardHat, Image as ImageIcon,
--+  MessageSquare, Paperclip, ArrowRight, Send, Image as ImageIcon,
--   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
--   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
--   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
--@@ -775,9 +775,8 @@ const TaskDetailPage = () => {
--       <input ref={uploadCameraRef} type="file" accept="image/*" capture="environment" onChange={handleAddPhoto} className="hidden" />
--       <input ref={uploadGalleryRef} type="file" accept="image/*" onChange={handleAddPhoto} className="hidden" />
--       <div className="bg-white border-b shadow-sm sticky top-0 z-10">
---        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
--+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between" dir="rtl">
--           <div className="flex items-center gap-2">
---            <HardHat className="w-5 h-5 text-amber-500" />
--             <span className="font-bold text-slate-800">BrikOps</span>
--           </div>
--           <button
--@@ -796,12 +795,12 @@ const TaskDetailPage = () => {
--             }}
--             className="flex items-center gap-1 text-sm text-slate-500 hover:text-amber-600 transition-colors"
--           >
--+            <ArrowRight className="w-4 h-4" />
--             {(() => {
--               const rt = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
--               if (externalEntry && !location.state?.returnTo) return t('taskDetail', 'back_to_my_defects');
--               return rt && rt.includes('/dashboard') ? t('taskDetail', 'back_to_dashboard') : t('taskDetail', 'back_to_defects_list');
--             })()}
---            <ArrowRight className="w-4 h-4" />
--           </button>
--         </div>
--       </div>
-+   if (MANAGEMENT_ROLES.includes(role)) {
-+-    navigate(`/projects/${id}/control`);
-++    navigate(`/projects/${id}/control?workMode=structure`);
-+   } else if (role === 'contractor') {
-+     navigate('/projects');
-+   } else {
+ const normalizeList = (data) => {
+   if (Array.isArray(data)) return data;
+   if (data && Array.isArray(data.items)) return data.items;
+   if (data && typeof data === 'object') {
+@@ -146,10 +148,31 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+         loadProjects();
+       }
+     }
+   }, [isOpen, hasPrefill, prefillData, loadProjects, loadCompanies]);
+ 
++  // Restore in-progress draft from the "+ הוסף קבלן" → add contractor → return flow.
++  // Gated on FEATURES.DEFECT_DRAFT_PRESERVATION; off = no-op (matches pre-batch).
++  // Runs after the prefill effect above so the unit-match guard sees the right values.
++  useEffect(() => {
++    if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
++    if (!isOpen) return;
++    const draft = loadDefectDraft();
++    if (!draft) return;
++    if (hasPrefill && draft.unitId && prefillData?.unit_id && draft.unitId !== prefillData.unit_id) {
++      return;
++    }
++    if (draft.category) setCategory(draft.category);
++    if (draft.title) setTitle(draft.title);
++    if (draft.description) setDescription(draft.description);
++    if (draft.priority) setPriority(draft.priority);
++    if (draft.companyId) setCompanyId(draft.companyId);
++    if (draft.assigneeId) setAssigneeId(draft.assigneeId);
++    clearDefectDraft();
++    toast.info('הטיוטה שוחזרה. יש לצרף תמונות מחדש.');
++  }, [isOpen, hasPrefill, prefillData]);
++
+   const loadBuildings = useCallback((pid) => {
+     if (!pid) return;
+     setLoading(l => ({ ...l, buildings: true }));
+     setLoadError(e => ({ ...e, buildings: false }));
+     projectService.getBuildings(pid)
+@@ -875,11 +898,39 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+                   {companyId && !loading.contractors && contractors.length === 0 && (
+                     <div className="space-y-1">
+                       <p className="text-xs text-amber-700">אין קבלנים משויכים לחברה זו</p>
+                       <button
+                         type="button"
+-                        onClick={() => { onClose(); if (projectId) navigate(`/projects/${projectId}/control?tab=companies`); }}
++                        onClick={() => {
++                          if (!FEATURES.DEFECT_DRAFT_PRESERVATION) {
++                            onClose();
++                            if (projectId) navigate(`/projects/${projectId}/control?tab=companies`);
++                            return;
++                          }
++                          if (!projectId) { onClose(); return; }
++                          saveDefectDraft({
++                            projectId,
++                            buildingId,
++                            floorId,
++                            unitId,
++                            category,
++                            title,
++                            description,
++                            priority,
++                            companyId,
++                            assigneeId,
++                            prefillData: prefillData || null,
++                          });
++                          onClose();
++                          const params = new URLSearchParams({
++                            tab: 'team',
++                            openInvite: '1',
++                            returnToDefect: '1',
++                          });
++                          if (category) params.set('prefillTrade', category);
++                          navigate(`/projects/${projectId}/control?${params.toString()}`);
++                        }}
+                         className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                       >
+                         <Plus className="w-3 h-3" />
+                         הוסף קבלן
+                       </button>
+diff --git a/frontend/src/config/features.js b/frontend/src/config/features.js
+new file mode 100644
+index 0000000..0c8e315
+--- /dev/null
++++ b/frontend/src/config/features.js
+@@ -0,0 +1,4 @@
++export const FEATURES = {
++  DEFECT_DRAFT_PRESERVATION: true,
++  TRADE_SORT_IN_TEAM_FORM: true,
++};
+diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+index 8357519..05b9f1b 100644
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -1,7 +1,7 @@
+ import React, { useState, useEffect, useCallback, useMemo } from 'react';
+-import { useParams, useNavigate, useLocation } from 'react-router-dom';
++import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+ import { unitService } from '../services/api';
+ import { useAuth } from '../contexts/AuthContext';
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+ import { tCategory } from '../i18n';
+@@ -13,10 +13,11 @@ import StatCard from '../components/StatCard';
+ import StatusPill from '../components/StatusPill';
+ import CategoryPill from '../components/CategoryPill';
+ import Breadcrumbs from '../components/Breadcrumbs';
+ import TaskCardSkeleton from '../components/TaskCardSkeleton';
+ import { arraysEqualAsSets } from '../utils/filterHelpers';
++import { FEATURES } from '../config/features';
+ import {
+   ArrowRight, Loader2, AlertTriangle, CheckCircle2,
+   ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Plus,
+   SlidersHorizontal, Search, X, Download, Pencil, Save, Info, Trash2
+ } from 'lucide-react';
+@@ -81,10 +82,11 @@ const getApartmentActivePresetId = (draft) => {
+ 
+ const ApartmentDashboardPage = () => {
+   const { projectId, unitId } = useParams();
+   const navigate = useNavigate();
+   const location = useLocation();
++  const [searchParams, setSearchParams] = useSearchParams();
+   const { user, features } = useAuth();
+ 
+   const [unitData, setUnitData] = useState(null);
+   const [tasks, setTasks] = useState([]);
+   const [loading, setLoading] = useState(true);
+@@ -95,10 +97,26 @@ const ApartmentDashboardPage = () => {
+   const [exportModalOpen, setExportModalOpen] = useState(false);
+   const [summaryOpen, setSummaryOpen] = useState(true);
+   const [blockingOpen, setBlockingOpen] = useState(false);
+   const [editingUnit, setEditingUnit] = useState(null);
+   const [showDefectModal, setShowDefectModal] = useState(false);
++
++  // Auto-open NewDefectModal when arriving with ?reopenDefect=1 (from the
++  // "add contractor and return" flow). Clears the param so back/refresh
++  // doesn't reopen the modal indefinitely. Gated on the same flag as Fix A.
++  useEffect(() => {
++    if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
++    if (searchParams.get('reopenDefect') === '1') {
++      setShowDefectModal(true);
++      setSearchParams(prev => {
++        const next = new URLSearchParams(prev);
++        next.delete('reopenDefect');
++        return next;
++      }, { replace: true });
++    }
++  }, [searchParams, setSearchParams]);
++
+   const [spareTilesOpen, setSpareTilesOpen] = useState(false);
+   const [spareTilesEditing, setSpareTilesEditing] = useState(false);
+   const [spareTilesEntries, setSpareTilesEntries] = useState([]);
+   const [spareTilesSaving, setSpareTilesSaving] = useState(false);
+   const canCreateDefect = user && (user.role === 'project_manager' || user.role === 'management_team');
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index 7fb47f4..2709291 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -1,6 +1,6 @@
+-import React, { useState, useEffect, useCallback, useRef } from 'react';
++import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
+ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescription } from '../components/ui/sheet';
+ import * as SheetPrimitive from '@radix-ui/react-dialog';
+ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+@@ -34,10 +34,14 @@ import UserDrawer from '../components/UserDrawer';
+ import { MoreVertical } from 'lucide-react';
+ import HamburgerMenu from '../components/HamburgerMenu';
+ import OfflineState from '../components/OfflineState';
+ import { useOnlineStatus } from '../hooks/useOnlineStatus';
+ import { SelectField } from '../components/BottomSheetSelect';
++import GroupedSelectField from '../components/GroupedSelectField';
++import { FEATURES } from '../config/features';
++import { getBucketForTrade, getBucketLabel } from '../utils/categoryBuckets';
++import { loadDefectDraft } from '../utils/defectDraft';
+ 
+ const normalizeList = (data) => {
+   if (Array.isArray(data)) return data;
+   if (data && Array.isArray(data.items)) return data.items;
+   if (data && typeof data === 'object') {
+@@ -1212,11 +1216,12 @@ const EditCompanyForm = ({ projectId, company, onClose, onSuccess }) => {
+       </Button>
+     </BottomSheetModal>
+   );
+ };
+ 
+-const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTrade, onRefreshCompanies }) => {
++const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTrade, returnToDefect, onRefreshCompanies }) => {
++  const navigate = useNavigate();
+   const [phone, setPhone] = useState('');
+   const [fullName, setFullName] = useState('');
+   const [role, setRole] = useState('contractor');
+   const [subRole, setSubRole] = useState('');
+   const [tradeKey, setTradeKey] = useState(prefillTrade || '');
+@@ -1276,11 +1281,36 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
+     { value: 'execution_engineer', label: 'מהנדס ביצוע' },
+     { value: 'safety_assistant', label: 'עוזר בטיחות' },
+     { value: 'work_manager', label: 'מנהל עבודה' },
+     { value: 'safety_officer', label: 'ממונה בטיחות' },
+   ];
+-  const companyOptions = companies.map(c => ({ value: c.id, label: c.name }));
++  const companyOptions = useMemo(() => {
++    const base = companies.map(c => ({ value: c.id, label: c.name, trade: c.trade }));
++    if (!FEATURES.TRADE_SORT_IN_TEAM_FORM) return base.map(c => ({ value: c.value, label: c.label }));
++    const activeKey = (tradeKey || prefillTrade || '').trim();
++    if (!activeKey || base.length === 0) return base.map(c => ({ value: c.value, label: c.label }));
++    const targetBucket = getBucketForTrade(activeKey);
++    if (!targetBucket) return base.map(c => ({ value: c.value, label: c.label }));
++    const matching = [];
++    const other = [];
++    for (const opt of base) {
++      const bucket = opt.trade ? getBucketForTrade(opt.trade) : null;
++      if (bucket && bucket === targetBucket) matching.push(opt);
++      else other.push(opt);
++    }
++    if (matching.length === 0) return base.map(c => ({ value: c.value, label: c.label }));
++    const bucketLabel = getBucketLabel(targetBucket) || activeKey;
++    const result = [
++      { value: `__header_match_${targetBucket}`, label: `תחום: ${bucketLabel}`, isHeader: true },
++      ...matching.map(m => ({ value: m.value, label: m.label })),
++    ];
++    if (other.length > 0) {
++      result.push({ value: '__header_other', label: 'חברות אחרות', isHeader: true, muted: true });
++      other.forEach(o => result.push({ value: o.value, label: o.label, muted: true }));
++    }
++    return result;
++  }, [companies, tradeKey, prefillTrade]);
+ 
+   const fetchTrades = useCallback(() => {
+     tradeService.listForProject(projectId)
+       .then(data => {
+         const opts = (data.trades || []).map(t => ({ value: t.key, label: t.label_he }));
+@@ -1331,20 +1361,42 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
+       if (role === 'management_team' && subRole) payload.sub_role = subRole;
+       if (role === 'contractor' && tradeKey) payload.trade_key = tradeKey;
+       if (role === 'contractor' && companyId) payload.company_id = companyId;
+       const result = await teamInviteService.create(projectId, payload);
+       const ns = result?.notification_status;
++      const shouldOfferReturn = !!returnToDefect && FEATURES.DEFECT_DRAFT_PRESERVATION;
++      const returnAction = shouldOfferReturn ? {
++        label: 'חזור לליקוי',
++        onClick: () => {
++          try {
++            const draft = loadDefectDraft();
++            if (!draft) {
++              toast.info('הטיוטה פגה או לא נמצאה');
++              return;
++            }
++            if (!draft.projectId || !draft.unitId) {
++              toast.info('חסר מידע לחזרה לליקוי');
++              return;
++            }
++            navigate(`/projects/${draft.projectId}/units/${draft.unitId}?reopenDefect=1`);
++          } catch (err) {
++            console.warn('[AddTeamMemberForm] return-to-defect failed', err);
++            toast.error('שגיאה בחזרה לליקוי');
++          }
++        },
++      } : undefined;
++      const toastOpts = returnAction ? { action: returnAction, duration: 10000 } : undefined;
+       if (ns?.channel_used === 'sms' && ns?.wa_skipped) {
+-        toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)');
++        toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)', toastOpts);
+       } else if (ns?.channel_used === 'sms') {
+-        toast.success('הזמנה נשלחה בהצלחה ב-SMS');
++        toast.success('הזמנה נשלחה בהצלחה ב-SMS', toastOpts);
+       } else if (ns?.channel_used === 'whatsapp') {
+-        toast.success('הזמנה נשלחה בהצלחה ב-WhatsApp');
++        toast.success('הזמנה נשלחה בהצלחה ב-WhatsApp', toastOpts);
+       } else if (ns?.channel_used === 'none' && ns?.reason) {
+-        toast.warning(`הזמנה נוצרה, אך שליחת ההודעה נכשלה: ${ns.reason}`);
++        toast.warning(`הזמנה נוצרה, אך שליחת ההודעה נכשלה: ${ns.reason}`, toastOpts);
+       } else {
+-        toast.success('הזמנה נוצרה בהצלחה');
++        toast.success('הזמנה נוצרה בהצלחה', toastOpts);
+       }
+       onSuccess();
+       onClose();
+     } catch (err) {
+       toast.error(err.response?.data?.detail || 'שגיאה');
+@@ -1387,11 +1439,15 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
+                   ביטול
+                 </Button>
+               </div>
+             </div>
+           )}
+-          <SelectField label="חברה *" value={companyId} onChange={setCompanyId} options={companyOptions} error={errors.companyId} emptyMessage="אין חברות – הוסף חברה למטה" />
++          {FEATURES.TRADE_SORT_IN_TEAM_FORM ? (
++            <GroupedSelectField label="חברה *" value={companyId} onChange={setCompanyId} options={companyOptions} error={errors.companyId} emptyMessage="אין חברות – הוסף חברה למטה" />
++          ) : (
++            <SelectField label="חברה *" value={companyId} onChange={setCompanyId} options={companyOptions} error={errors.companyId} emptyMessage="אין חברות – הוסף חברה למטה" />
++          )}
+           {!showNewCompany && (
+             <button
+               type="button"
+               onClick={() => setShowNewCompany(true)}
+               className="w-full mb-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-lg border border-dashed border-amber-300 text-amber-700 hover:bg-amber-50 active:bg-amber-100 transition-colors"
+@@ -2413,11 +2469,11 @@ const TEAM_FILTERS = [
+   { key: 'management_team', labelKey: 'filterManagement' },
+   { key: 'contractor', labelKey: 'filterContractors' },
+   { key: 'project_manager', labelKey: 'filterPM' },
+ ];
+ 
+-const TeamTab = ({ projectId, companies, prefillTrade, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
++const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
+   const { user: currentUser } = useAuth();
+   const [invites, setInvites] = useState([]);
+   const [members, setMembers] = useState([]);
+   const [loading, setLoading] = useState(true);
+   const [showAddForm, setShowAddForm] = useState(!!prefillTrade);
+@@ -2681,11 +2737,11 @@ const TeamTab = ({ projectId, companies, prefillTrade, myRole, isOrgOwner, trade
+           </div>
+         </Card>
+       )}
+ 
+       {showAddForm && (
+-        <AddTeamMemberForm projectId={projectId} companies={companies} onClose={() => setShowAddForm(false)} onSuccess={loadData} prefillTrade={prefillTrade} onRefreshCompanies={onRefreshCompanies} />
++        <AddTeamMemberForm projectId={projectId} companies={companies} onClose={() => setShowAddForm(false)} onSuccess={loadData} prefillTrade={prefillTrade} returnToDefect={returnToDefect} onRefreshCompanies={onRefreshCompanies} />
+       )}
+ 
+       <UserDrawer
+         open={!!drawerMember}
+         onClose={() => setDrawerMember(null)}
+@@ -3586,11 +3642,11 @@ const ProjectControlPage = () => {
+         </div>
+       </div>
+ 
+       {activeTab && (
+         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
+-          {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
++          {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} returnToDefect={searchParams.get('returnToDefect') === '1'} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
+ 
+           {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
+ 
+           {activeTab === 'data-export' && (
+             <ProjectDataExportTab projectId={projectId} projectName={project?.name || ''} />
+diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
+index 645edd6..8da9f64 100644
+--- a/frontend/src/pages/UnitDetailPage.js
++++ b/frontend/src/pages/UnitDetailPage.js
+@@ -1,7 +1,7 @@
+ import React, { useState, useEffect, useCallback } from 'react';
+-import { useParams, useNavigate } from 'react-router-dom';
++import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+ import { unitService, taskService, projectCompanyService } from '../services/api';
+ import { useAuth } from '../contexts/AuthContext';
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+ import NewDefectModal from '../components/NewDefectModal';
+@@ -13,10 +13,11 @@ import TaskCardSkeleton from '../components/TaskCardSkeleton';
+ import {
+   ArrowRight, Loader2, Plus, Filter, Building2, Layers, DoorOpen,
+   CheckCircle2, ChevronDown, X
+ } from 'lucide-react';
+ import { tCategory } from '../i18n';
++import { FEATURES } from '../config/features';
+ 
+ const STATUS_LABELS = {
+   open: { label: 'פתוח', color: 'bg-red-100 text-red-700' },
+   assigned: { label: 'שויך', color: 'bg-orange-100 text-orange-700' },
+   in_progress: { label: 'בביצוע', color: 'bg-blue-100 text-blue-700' },
+@@ -48,10 +49,11 @@ const CATEGORY_FILTER_OPTIONS = [
+ ];
+ 
+ const UnitDetailPage = () => {
+   const { projectId, unitId } = useParams();
+   const navigate = useNavigate();
++  const [searchParams, setSearchParams] = useSearchParams();
+   const { user } = useAuth();
+ 
+   const [unitData, setUnitData] = useState(null);
+   const [tasks, setTasks] = useState([]);
+   const [loading, setLoading] = useState(true);
+@@ -59,10 +61,25 @@ const UnitDetailPage = () => {
+   const [statusFilter, setStatusFilter] = useState('');
+   const [categoryFilter, setCategoryFilter] = useState('');
+   const [showFilters, setShowFilters] = useState(false);
+   const [showDefectModal, setShowDefectModal] = useState(false);
+ 
++  // Auto-open NewDefectModal when arriving with ?reopenDefect=1 (from the
++  // "add contractor and return" flow). Clears the param so back/refresh
++  // doesn't reopen the modal indefinitely. Gated on the same flag as Fix A.
++  useEffect(() => {
++    if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
++    if (searchParams.get('reopenDefect') === '1') {
++      setShowDefectModal(true);
++      setSearchParams(prev => {
++        const next = new URLSearchParams(prev);
++        next.delete('reopenDefect');
++        return next;
++      }, { replace: true });
++    }
++  }, [searchParams, setSearchParams]);
++
+   const canCreateDefect = user && user.role === 'project_manager';
+ 
+   const loadUnit = useCallback(async () => {
+     try {
+       setLoading(true);
+diff --git a/frontend/src/utils/categoryBuckets.js b/frontend/src/utils/categoryBuckets.js
+new file mode 100644
+index 0000000..652d4fb
+--- /dev/null
++++ b/frontend/src/utils/categoryBuckets.js
+@@ -0,0 +1,54 @@
++export const CATEGORY_TO_BUCKET = {
++  electrical: 'electrical',
++  plumbing: 'plumbing',
++  painting: 'painting',
++  carpentry: 'carpentry_kitchen',
++  carpentry_kitchen: 'carpentry_kitchen',
++  bathroom_cabinets: 'bathroom_cabinets',
++  finishes: 'finishes',
++  structural: 'structural',
++  masonry: 'structural',
++  aluminum: 'aluminum',
++  metalwork: 'metalwork',
++  flooring: 'flooring',
++  hvac: 'hvac',
++  glazing: 'glazing',
++  windows: 'glazing',
++  doors: 'doors',
++  general: 'general',
++};
++
++export const BUCKET_LABELS = {
++  electrical: 'חשמלאי',
++  plumbing: 'אינסטלטור',
++  painting: 'צבעי',
++  carpentry_kitchen: 'נגרות/מטבח',
++  bathroom_cabinets: 'ארונות אמבטיה',
++  finishes: 'גמרים',
++  structural: 'שלד',
++  aluminum: 'אלומיניום',
++  metalwork: 'מסגרות',
++  flooring: 'ריצוף',
++  hvac: 'מיזוג',
++  glazing: 'חלונות/זכוכית',
++  doors: 'דלתות',
++  general: 'כללי',
++};
++
++export function getBucketForTrade(keyOrCategory) {
++  if (!keyOrCategory) return null;
++  const k = String(keyOrCategory).trim();
++  if (!k) return null;
++  return CATEGORY_TO_BUCKET[k] || k;
++}
++
++export function getBucketLabel(bucket) {
++  if (!bucket) return '';
++  return BUCKET_LABELS[bucket] || bucket;
++}
++
++export function isSameTradeBucket(a, b) {
++  const ba = getBucketForTrade(a);
++  const bb = getBucketForTrade(b);
++  return !!ba && !!bb && ba === bb;
++}
+diff --git a/frontend/src/utils/defectDraft.js b/frontend/src/utils/defectDraft.js
+new file mode 100644
+index 0000000..8a6d68e
+--- /dev/null
++++ b/frontend/src/utils/defectDraft.js
+@@ -0,0 +1,39 @@
++const STORAGE_KEY = 'brikops_defect_draft_v1';
++const MAX_AGE_MS = 30 * 60 * 1000;
++
++export function saveDefectDraft(state) {
++  try {
++    const payload = { ...state, createdAt: Date.now() };
++    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
++  } catch (err) {
++    console.warn('[defectDraft] save failed', err);
++  }
++}
++
++export function loadDefectDraft() {
++  try {
++    const raw = window.sessionStorage.getItem(STORAGE_KEY);
++    if (!raw) return null;
++    const parsed = JSON.parse(raw);
++    if (!parsed || typeof parsed !== 'object') return null;
++    const age = Date.now() - (parsed.createdAt || 0);
++    if (age > MAX_AGE_MS) {
++      window.sessionStorage.removeItem(STORAGE_KEY);
++      return null;
++    }
++    return parsed;
++  } catch (err) {
++    console.warn('[defectDraft] load failed', err);
++    return null;
++  }
++}
++
++export function clearDefectDraft() {
++  try {
++    window.sessionStorage.removeItem(STORAGE_KEY);
++  } catch {}
++}
++
++export function hasDefectDraft() {
++  return !!loadDefectDraft();
++}
