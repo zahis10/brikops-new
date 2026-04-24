@@ -1,392 +1,78 @@
-=== Task #415 — Auth expiry UX (401 interceptor + auto-logout) ===
-=== Commit: e68b1b8 fix(auth): auto-logout on mid-session 401 + redirect to /login ===
-=== File changed: frontend/src/contexts/AuthContext.js (+24 lines, 0 deletions effective) ===
+=== Task #417 — Pentest S1 — CRIT-1 + CRIT-2 emergency fix ===
+=== Rollback anchor (pre-S1 HEAD): 2fb3fd2b810f50e48dd91cee38e1cb2ede0c7d7a Add automatic logout when session expires unexpectedly ===
+=== Started: 2026-04-24T18:18:35Z ===
+=== Status: AWAITING ZAHI APPROVAL — NO DEPLOY YET ===
 
 ================================================================
-FULL DIFF — before/after (git show e68b1b8)
+FILES CHANGED (exactly 2 backend files + this review.txt log)
+================================================================
+ backend/contractor_ops/companies_router.py |  7 ++++++-
+ backend/contractor_ops/invites_router.py   | 16 ++++++++++++++++
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+================================================================
+FULL DIFF — backend/contractor_ops/invites_router.py
 ================================================================
 
-commit e68b1b894810253473c784ddb9f451ac91a130a2
-Author: zahis10 <54837571-zahis10@users.noreply.replit.com>
-Date:   Fri Apr 24 13:42:56 2026 +0000
+diff --git a/backend/contractor_ops/invites_router.py b/backend/contractor_ops/invites_router.py
+index 9e3a20d..0606a41 100644
+--- a/backend/contractor_ops/invites_router.py
++++ b/backend/contractor_ops/invites_router.py
+@@ -9,6 +9,7 @@ from contractor_ops.router import (
+     _get_project_membership, _audit, _now, _is_super_admin,
+     get_notification_engine, get_public_base_url, logger,
+ )
++from contractor_ops.billing import get_user_org
+ from contractor_ops.schemas import InviteCreate
+ from contractor_ops.phone_utils import normalize_israeli_phone
+ from contractor_ops.bucket_utils import BUCKET_LABELS
+@@ -107,7 +108,22 @@ async def list_users(
+     user: dict = Depends(require_roles('project_manager')),
+ ):
+     db = get_db()
++
++    # Security: auto-scope the list to the caller's organization.
++    # Super-admins bypass the scope (they see all users platform-wide).
++    # Fix for pentest 2026-04-22 CRIT-1.
+     query = {}
++    if not _is_super_admin(user):
++        org = await get_user_org(user['id'])
++        if not org:
++            return []
++        member_user_ids = await db.organization_memberships.distinct(
++            'user_id', {'org_id': org['id']}
++        )
++        if not member_user_ids:
++            return []
++        query['id'] = {'$in': member_user_ids}
++
+     if role:
+         query['role'] = role
+     if company_id:
 
-    fix(auth): auto-logout on mid-session 401 + redirect to /login
-    
-    When a user's JWT expires mid-session, every subsequent API call
-    returns 401 with no global handler. The UI shows a cascade of
-    "לא נמצא" / "שגיאה בטעינה" errors and users don't realize they're
-    logged out.
-    
-    Fix: a second response interceptor inside AuthProvider catches 401
-    on non-auth endpoints while a token exists. Clears token + cookie +
-    user state, shows "החיבור פג, אנא התחבר מחדש" toast, redirects to
-    /login via full page reload (AuthProvider is outside BrowserRouter
-    so useNavigate isn't available — reload also guarantees clean
-    post-session state).
-    
-    Guards: skips /auth/ URLs (failed login/OTP legitimately 401),
-    skips when no token, debounced via ref so concurrent 401s fire the
-    flow exactly once. Respects #171 (no 401 handling in api.js).
-    Existing pending_deletion 403 handler, fetchCurrentUser, and
-    _isAuthError untouched.
-    
-    Deviation: spec wrapped the logic in try/catch with console.warn
-    and a 17-line rationale comment. Code review flagged both as
-    inconsistent with the neighboring pending_deletion interceptor's
-    style. Refactored to match — same logic, same guards, same redirect.
-    
-    One file changed (frontend/src/contexts/AuthContext.js, +24 lines).
-    No deps, no backend changes.
+================================================================
+FULL DIFF — backend/contractor_ops/companies_router.py
+================================================================
 
-diff --git a/frontend/src/contexts/AuthContext.js b/frontend/src/contexts/AuthContext.js
-index 41e606f..5abdba8 100644
---- a/frontend/src/contexts/AuthContext.js
-+++ b/frontend/src/contexts/AuthContext.js
-@@ -75,62 +75,24 @@ export const AuthProvider = ({ children }) => {
-     return () => axios.interceptors.response.eject(interceptorId);
-   }, []);
+diff --git a/backend/contractor_ops/companies_router.py b/backend/contractor_ops/companies_router.py
+index b9ff80b..51eb4f8 100644
+--- a/backend/contractor_ops/companies_router.py
++++ b/backend/contractor_ops/companies_router.py
+@@ -31,7 +31,12 @@ async def create_company(company: Company, user: dict = Depends(require_roles('p
+ @router.get("/companies", response_model=List[Company])
+ async def list_companies(user: dict = Depends(get_current_user)):
+     db = get_db()
+-    companies = await db.companies.find({}, {'_id': 0}).to_list(1000)
++    # Security: sanitize response to remove PII (contact_name, contact_phone,
++    # contact_email, phone_e164, specialties). Only return non-PII metadata
++    # (id, name, trade). Fix for pentest 2026-04-22 CRIT-2. Callers that need
++    # full company details must use /api/projects/{id}/companies (project-scoped).
++    projection = {'_id': 0, 'id': 1, 'name': 1, 'trade': 1}
++    companies = await db.companies.find({}, projection).to_list(1000)
+     return [Company(**c) for c in companies]
  
--  // Global 401 handler for mid-session token expiry.
--  //
--  // Fires when ANY API call returns 401 on a non-auth endpoint while the user
--  // has a token. Clears the token, notifies the user, and redirects to /login.
--  //
--  // Why this lives here (not in api.js):
--  //   See the comment in services/api.js line 47-50 — auth handling must
--  //   stay in AuthContext to avoid breaking the network-error resilience
--  //   logic in fetchCurrentUser.
--  //
--  // Why full-page reload (window.location.href):
--  //   AuthProvider is rendered OUTSIDE BrowserRouter (App.js:520), so we
--  //   can't use useNavigate() here. Full reload also guarantees clean
--  //   state after session end — safer than trying to reset piece-by-piece.
--  //
--  // Debounce:
--  //   If 5 concurrent API calls all return 401, we only want to fire the
--  //   flow once. The ref guards against double-firing within a short window.
-+  // Mid-session 401: clear session + redirect to /login. Lives here (not in
-+  // api.js) per the #171 guidance. AuthProvider is outside BrowserRouter so
-+  // we use a full page reload instead of useNavigate.
-   useEffect(() => {
-     const interceptorId = axios.interceptors.response.use(undefined, (error) => {
--      try {
--        const status = error?.response?.status;
--        if (status !== 401) return Promise.reject(error);
--
--        // Skip auth endpoints — failed login/OTP/register legitimately return 401.
--        const url = error.config?.url || '';
--        if (url.includes('/auth/')) return Promise.reject(error);
--
--        // Skip if user has no token — no session to expire.
--        const currentToken = localStorage.getItem('token');
--        if (!currentToken) return Promise.reject(error);
--
--        // Debounce: fire once per expiry event.
--        if (sessionExpiredRef.current) return Promise.reject(error);
--        sessionExpiredRef.current = true;
--
--        // Clear session state (without triggering another logout-related re-render).
--        setToken(null);
--        setUser(null);
--        setNetworkError(false);
--        localStorage.removeItem('token');
--        _clearBrikopsCookie();
--
--        // Notify and redirect.
--        toast.info('החיבור פג, אנא התחבר מחדש');
--        // 1500ms gives the user enough time to actually READ the Hebrew toast
--        // before the page reloads. Concurrent 401s during this window are
--        // caught by the sessionExpiredRef debounce above (they Promise.reject
--        // without re-triggering the flow — API calls to backend still fire,
--        // but are harmless 401 responses).
--        setTimeout(() => {
--          window.location.href = '/login';
--        }, 1500);
--      } catch (e) {
--        console.warn('[AUTH] 401 interceptor failure', e);
--      }
-+      if (error?.response?.status !== 401) return Promise.reject(error);
-+      const url = error.config?.url || '';
-+      if (url.includes('/auth/')) return Promise.reject(error);
-+      if (!localStorage.getItem('token')) return Promise.reject(error);
-+      if (sessionExpiredRef.current) return Promise.reject(error);
-+      sessionExpiredRef.current = true;
-+      setToken(null);
-+      setUser(null);
-+      setNetworkError(false);
-+      localStorage.removeItem('token');
-+      _clearBrikopsCookie();
-+      toast.info('החיבור פג, אנא התחבר מחדש');
-+      setTimeout(() => { window.location.href = '/login'; }, 1500);
-       return Promise.reject(error);
-     });
-     return () => axios.interceptors.response.eject(interceptorId);
+ 
 
 ================================================================
-FULL POST-PATCH FILE — frontend/src/contexts/AuthContext.js
+VERIFICATION RESULTS — 11 grep checks
 ================================================================
-
-     1	import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-     2	import axios from 'axios';
-     3	import { toast } from 'sonner';
-     4	import { BACKEND_URL, configService } from '../services/api';
-     5	import { setLanguage } from '../i18n';
-     6	
-     7	const AuthContext = createContext(null);
-     8	
-     9	const API = `${BACKEND_URL}/api`;
-    10	
-    11	const RETRY_DELAY_MS = 5000;
-    12	
-    13	const _setBrikopsCookie = () => {
-    14	  document.cookie = 'brikops_logged_in=1; domain=.brikops.com; path=/; max-age=2592000; SameSite=Lax; Secure';
-    15	};
-    16	const _clearBrikopsCookie = () => {
-    17	  document.cookie = 'brikops_logged_in=; domain=.brikops.com; path=/; max-age=0';
-    18	};
-    19	
-    20	const _isAuthError = (error) => {
-    21	  const status = error?.response?.status;
-    22	  if (status === 403 && error?.response?.data?.detail?.code === 'pending_deletion') return false;
-    23	  return status === 401 || status === 403;
-    24	};
-    25	
-    26	export const useAuth = () => {
-    27	  const context = useContext(AuthContext);
-    28	  if (!context) {
-    29	    throw new Error('useAuth must be used within AuthProvider');
-    30	  }
-    31	  return context;
-    32	};
-    33	
-    34	export const AuthProvider = ({ children }) => {
-    35	  const [user, setUser] = useState(null);
-    36	  const [features, setFeatures] = useState(null);
-    37	  const [networkError, setNetworkError] = useState(false);
-    38	  const [token, setToken] = useState(() => {
-    39	    const hash = window.location.hash;
-    40	    if (hash) {
-    41	      const hashParams = new URLSearchParams(hash.substring(1));
-    42	      const hashToken = hashParams.get('token');
-    43	      if (hashToken) {
-    44	        localStorage.setItem('token', hashToken);
-    45	        _setBrikopsCookie();
-    46	        window.history.replaceState({}, '', window.location.pathname + window.location.search);
-    47	        return hashToken;
-    48	      }
-    49	    }
-    50	    return localStorage.getItem('token');
-    51	  });
-    52	  const [loading, setLoading] = useState(true);
-    53	  const retryTimerRef = useRef(null);
-    54	  const toastShownRef = useRef(false);
-    55	  const sessionExpiredRef = useRef(false);
-    56	
-    57	  useEffect(() => {
-    58	    return () => {
-    59	      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    60	    };
-    61	  }, []);
-    62	
-    63	  useEffect(() => {
-    64	    const interceptorId = axios.interceptors.response.use(undefined, (error) => {
-    65	      if (
-    66	        error.response?.status === 403 &&
-    67	        error.response?.data?.detail?.code === 'pending_deletion'
-    68	      ) {
-    69	        error._pendingDeletion = true;
-    70	        setUser(prev => prev ? { ...prev, user_status: 'pending_deletion' } : prev);
-    71	        toast.dismiss();
-    72	      }
-    73	      return Promise.reject(error);
-    74	    });
-    75	    return () => axios.interceptors.response.eject(interceptorId);
-    76	  }, []);
-    77	
-    78	  // Mid-session 401: clear session + redirect to /login. Lives here (not in
-    79	  // api.js) per the #171 guidance. AuthProvider is outside BrowserRouter so
-    80	  // we use a full page reload instead of useNavigate.
-    81	  useEffect(() => {
-    82	    const interceptorId = axios.interceptors.response.use(undefined, (error) => {
-    83	      if (error?.response?.status !== 401) return Promise.reject(error);
-    84	      const url = error.config?.url || '';
-    85	      if (url.includes('/auth/')) return Promise.reject(error);
-    86	      if (!localStorage.getItem('token')) return Promise.reject(error);
-    87	      if (sessionExpiredRef.current) return Promise.reject(error);
-    88	      sessionExpiredRef.current = true;
-    89	      setToken(null);
-    90	      setUser(null);
-    91	      setNetworkError(false);
-    92	      localStorage.removeItem('token');
-    93	      _clearBrikopsCookie();
-    94	      toast.info('החיבור פג, אנא התחבר מחדש');
-    95	      setTimeout(() => { window.location.href = '/login'; }, 1500);
-    96	      return Promise.reject(error);
-    97	    });
-    98	    return () => axios.interceptors.response.eject(interceptorId);
-    99	  }, []);
-   100	
-   101	  const fetchCurrentUser = useCallback(async (isRetry = false) => {
-   102	    try {
-   103	      const response = await axios.get(`${API}/auth/me`, {
-   104	        headers: { Authorization: `Bearer ${token}` }
-   105	      });
-   106	      const userData = response.data;
-   107	      if (userData.role === 'contractor' && userData.preferred_language) {
-   108	        setLanguage(userData.preferred_language);
-   109	      }
-   110	      setUser(userData);
-   111	      setNetworkError(false);
-   112	      toastShownRef.current = false;
-   113	      if (retryTimerRef.current) {
-   114	        clearTimeout(retryTimerRef.current);
-   115	        retryTimerRef.current = null;
-   116	      }
-   117	    } catch (error) {
-   118	      if (_isAuthError(error)) {
-   119	        setToken(null);
-   120	        setUser(null);
-   121	        setNetworkError(false);
-   122	        localStorage.removeItem('token');
-   123	        _clearBrikopsCookie();
-   124	        if (retryTimerRef.current) {
-   125	          clearTimeout(retryTimerRef.current);
-   126	          retryTimerRef.current = null;
-   127	        }
-   128	      } else {
-   129	        setNetworkError(true);
-   130	        if (isRetry && !toastShownRef.current) {
-   131	          toast.error('בעיית חיבור');
-   132	          toastShownRef.current = true;
-   133	        }
-   134	        const savedToken = token;
-   135	        retryTimerRef.current = setTimeout(() => {
-   136	          retryTimerRef.current = null;
-   137	          if (savedToken === localStorage.getItem('token')) {
-   138	            fetchCurrentUser(true);
-   139	          }
-   140	        }, RETRY_DELAY_MS);
-   141	      }
-   142	    } finally {
-   143	      setLoading(false);
-   144	    }
-   145	  }, [token]);
-   146	
-   147	  const fetchFeatures = useCallback(async () => {
-   148	    try {
-   149	      const data = await configService.getFeatures();
-   150	      setFeatures(data?.feature_flags || {});
-   151	    } catch {
-   152	      setFeatures({});
-   153	    }
-   154	  }, []);
-   155	
-   156	  useEffect(() => {
-   157	    if (token) {
-   158	      toastShownRef.current = false;
-   159	      fetchCurrentUser(false);
-   160	      fetchFeatures();
-   161	    } else {
-   162	      setLoading(false);
-   163	    }
-   164	  }, [token, fetchCurrentUser, fetchFeatures]);
-   165	
-   166	  const login = async (email, password) => {
-   167	    try {
-   168	      const response = await axios.post(`${API}/auth/login`, { email, password });
-   169	      const data = response.data;
-   170	      if (!data || !data.token) {
-   171	        console.error('[AUTH] Login response missing token', { status: response.status, hasData: !!data });
-   172	        return { success: false, error: 'תגובה לא תקינה מהשרת' };
-   173	      }
-   174	      const { token: newToken, user: userData, platform_role } = data;
-   175	      if (userData?.role === 'contractor' && userData?.preferred_language) {
-   176	        setLanguage(userData.preferred_language);
-   177	      }
-   178	      setToken(newToken);
-   179	      setUser({ ...userData, platform_role: platform_role || 'none' });
-   180	      try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
-   181	      try { _setBrikopsCookie(); } catch (e) { /* ignore cookie errors */ }
-   182	      return { success: true };
-   183	    } catch (error) {
-   184	      console.error('[AUTH] Login error', error?.message, error?.response?.status, error?.stack);
-   185	      const detail = error.response?.data?.detail;
-   186	      return {
-   187	        success: false,
-   188	        error: detail || (error.message ? `שגיאה טכנית: ${error.message}` : 'Login failed')
-   189	      };
-   190	    }
-   191	  };
-   192	
-   193	  const loginWithOtp = (newToken, userData, platformRole) => {
-   194	    if (userData?.role === 'contractor' && userData?.preferred_language) {
-   195	      setLanguage(userData.preferred_language);
-   196	    }
-   197	    setToken(newToken);
-   198	    setUser({ ...userData, platform_role: platformRole || userData?.platform_role || 'none' });
-   199	    try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
-   200	    try { _setBrikopsCookie(); } catch (e) { /* ignore */ }
-   201	  };
-   202	
-   203	  const register = async (userData) => {
-   204	    try {
-   205	      await axios.post(`${API}/auth/register`, userData);
-   206	      return await login(userData.email, userData.password);
-   207	    } catch (error) {
-   208	      return {
-   209	        success: false,
-   210	        error: error.response?.data?.detail || 'Registration failed'
-   211	      };
-   212	    }
-   213	  };
-   214	
-   215	  const logout = () => {
-   216	    if (retryTimerRef.current) {
-   217	      clearTimeout(retryTimerRef.current);
-   218	      retryTimerRef.current = null;
-   219	    }
-   220	    setToken(null);
-   221	    setUser(null);
-   222	    setNetworkError(false);
-   223	    localStorage.removeItem('token');
-   224	    _clearBrikopsCookie();
-   225	  };
-   226	
-   227	  const refreshUser = useCallback(async () => {
-   228	    if (!token) return;
-   229	    try {
-   230	      const response = await axios.get(`${API}/auth/me`, {
-   231	        headers: { Authorization: `Bearer ${token}` }
-   232	      });
-   233	      setUser(response.data);
-   234	    } catch {}
-   235	  }, [token]);
-   236	
-   237	  const forceUserStatus = useCallback((status) => {
-   238	    setUser(prev => prev ? { ...prev, user_status: status } : prev);
-   239	  }, []);
-   240	
-   241	  const replaceToken = useCallback((newToken) => {
-   242	    if (!newToken) return;
-   243	    setToken(newToken);
-   244	    try { localStorage.setItem('token', newToken); } catch (e) { console.warn('[AUTH] localStorage write failed', e); }
-   245	  }, []);
-   246	
-   247	  const value = {
-   248	    user,
-   249	    token,
-   250	    loading,
-   251	    features,
-   252	    networkError,
-   253	    login,
-   254	    loginWithOtp,
-   255	    register,
-   256	    logout,
-   257	    refreshUser,
-   258	    forceUserStatus,
-   259	    replaceToken,
-   260	    isAuthenticated: !!token && !!user
-   261	  };
-   262	
-   263	  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-   264	};

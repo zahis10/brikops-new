@@ -9,6 +9,7 @@ from contractor_ops.router import (
     _get_project_membership, _audit, _now, _is_super_admin,
     get_notification_engine, get_public_base_url, logger,
 )
+from contractor_ops.billing import get_user_org
 from contractor_ops.schemas import InviteCreate
 from contractor_ops.phone_utils import normalize_israeli_phone
 from contractor_ops.bucket_utils import BUCKET_LABELS
@@ -107,7 +108,22 @@ async def list_users(
     user: dict = Depends(require_roles('project_manager')),
 ):
     db = get_db()
+
+    # Security: auto-scope the list to the caller's organization.
+    # Super-admins bypass the scope (they see all users platform-wide).
+    # Fix for pentest 2026-04-22 CRIT-1.
     query = {}
+    if not _is_super_admin(user):
+        org = await get_user_org(user['id'])
+        if not org:
+            return []
+        member_user_ids = await db.organization_memberships.distinct(
+            'user_id', {'org_id': org['id']}
+        )
+        if not member_user_ids:
+            return []
+        query['id'] = {'$in': member_user_ids}
+
     if role:
         query['role'] = role
     if company_id:

@@ -31,7 +31,12 @@ async def create_company(company: Company, user: dict = Depends(require_roles('p
 @router.get("/companies", response_model=List[Company])
 async def list_companies(user: dict = Depends(get_current_user)):
     db = get_db()
-    companies = await db.companies.find({}, {'_id': 0}).to_list(1000)
+    # Security: sanitize response to remove PII (contact_name, contact_phone,
+    # contact_email, phone_e164, specialties). Only return non-PII metadata
+    # (id, name, trade). Fix for pentest 2026-04-22 CRIT-2. Callers that need
+    # full company details must use /api/projects/{id}/companies (project-scoped).
+    projection = {'_id': 0, 'id': 1, 'name': 1, 'trade': 1}
+    companies = await db.companies.find({}, projection).to_list(1000)
     return [Company(**c) for c in companies]
 
 
