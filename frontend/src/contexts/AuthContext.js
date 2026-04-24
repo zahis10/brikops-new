@@ -75,62 +75,24 @@ export const AuthProvider = ({ children }) => {
     return () => axios.interceptors.response.eject(interceptorId);
   }, []);
 
-  // Global 401 handler for mid-session token expiry.
-  //
-  // Fires when ANY API call returns 401 on a non-auth endpoint while the user
-  // has a token. Clears the token, notifies the user, and redirects to /login.
-  //
-  // Why this lives here (not in api.js):
-  //   See the comment in services/api.js line 47-50 — auth handling must
-  //   stay in AuthContext to avoid breaking the network-error resilience
-  //   logic in fetchCurrentUser.
-  //
-  // Why full-page reload (window.location.href):
-  //   AuthProvider is rendered OUTSIDE BrowserRouter (App.js:520), so we
-  //   can't use useNavigate() here. Full reload also guarantees clean
-  //   state after session end — safer than trying to reset piece-by-piece.
-  //
-  // Debounce:
-  //   If 5 concurrent API calls all return 401, we only want to fire the
-  //   flow once. The ref guards against double-firing within a short window.
+  // Mid-session 401: clear session + redirect to /login. Lives here (not in
+  // api.js) per the #171 guidance. AuthProvider is outside BrowserRouter so
+  // we use a full page reload instead of useNavigate.
   useEffect(() => {
     const interceptorId = axios.interceptors.response.use(undefined, (error) => {
-      try {
-        const status = error?.response?.status;
-        if (status !== 401) return Promise.reject(error);
-
-        // Skip auth endpoints — failed login/OTP/register legitimately return 401.
-        const url = error.config?.url || '';
-        if (url.includes('/auth/')) return Promise.reject(error);
-
-        // Skip if user has no token — no session to expire.
-        const currentToken = localStorage.getItem('token');
-        if (!currentToken) return Promise.reject(error);
-
-        // Debounce: fire once per expiry event.
-        if (sessionExpiredRef.current) return Promise.reject(error);
-        sessionExpiredRef.current = true;
-
-        // Clear session state (without triggering another logout-related re-render).
-        setToken(null);
-        setUser(null);
-        setNetworkError(false);
-        localStorage.removeItem('token');
-        _clearBrikopsCookie();
-
-        // Notify and redirect.
-        toast.info('החיבור פג, אנא התחבר מחדש');
-        // 1500ms gives the user enough time to actually READ the Hebrew toast
-        // before the page reloads. Concurrent 401s during this window are
-        // caught by the sessionExpiredRef debounce above (they Promise.reject
-        // without re-triggering the flow — API calls to backend still fire,
-        // but are harmless 401 responses).
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
-      } catch (e) {
-        console.warn('[AUTH] 401 interceptor failure', e);
-      }
+      if (error?.response?.status !== 401) return Promise.reject(error);
+      const url = error.config?.url || '';
+      if (url.includes('/auth/')) return Promise.reject(error);
+      if (!localStorage.getItem('token')) return Promise.reject(error);
+      if (sessionExpiredRef.current) return Promise.reject(error);
+      sessionExpiredRef.current = true;
+      setToken(null);
+      setUser(null);
+      setNetworkError(false);
+      localStorage.removeItem('token');
+      _clearBrikopsCookie();
+      toast.info('החיבור פג, אנא התחבר מחדש');
+      setTimeout(() => { window.location.href = '/login'; }, 1500);
       return Promise.reject(error);
     });
     return () => axios.interceptors.response.eject(interceptorId);
