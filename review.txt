@@ -1,79 +1,46 @@
 ================================================================================
 TASK #418 — Pentest S2 — fix /api/tasks cross-tenant list leak (HIGH-1)
+COMPLETE DIFF — all changes from rollback anchor to HEAD
 ================================================================================
 
 ROLLBACK ANCHOR (pre-edit SHA): 27780881236058a716018ce53891964ef7a09fa1
-To revert this task: `git reset --hard 27780881236058a716018ce53891964ef7a09fa1`
+HEAD (post-edit SHA):           f2d5673
+To revert this entire task:     git reset --hard 27780881236058a716018ce53891964ef7a09fa1
 
 ================================================================================
-SUMMARY
+COMMITS (since rollback anchor)
 ================================================================================
 
-Pre-launch security fix from the 2026-04-22 pentest.
+f2d5673  fix(security): scope GET /api/tasks to caller's project memberships (HIGH-1)
+15f1604  fix(security): scope GET /api/tasks to caller's project memberships (HIGH-1)
 
-HIGH-1: GET /api/tasks returned tasks from ALL projects platform-wide when
-called without a project_id query param, OR when called with a project_id the
-caller wasn't a member of (silent leak — pentest pulled ~30 tasks across 4
-test orgs with title/description/assignee/company/building/floor/unit IDs).
-
-FIX: Added a 12-line scope block at the top of `list_tasks` immediately after
-`db = get_db()`. Logic precedence (super-admin first, then explicit project_id
-check, then memberships fallback):
-  1. Super-admin → bypass scope (unchanged platform-wide behavior).
-  2. project_id param passed → 403 'אין לך גישה לפרויקט זה' if caller not in
-     member_project_ids (covers both zero-membership AND foreign-project cases
-     uniformly — explicit unauthorized requests always 403, never silent
-     empty). Otherwise fall through to existing handler logic unchanged.
-  3. project_id omitted + zero memberships → empty paginated envelope.
-  4. project_id omitted + has memberships → inject query['project_id'] =
-     {'$in': member_project_ids} so the aggregation pipeline filters.
-
-Precedence note: An earlier draft had the no-memberships early-return BEFORE
-the explicit-project_id check, which meant a zero-membership caller passing
-project_id=foo got a 200 empty envelope instead of 403. Architect flagged
-this as semantically inconsistent (not a bypass, but inconsistent contract).
-Reordered so explicit unauthorized project requests always return 403.
-
-Architectural consistency: uses the same `project_memberships` collection +
-filter key (`{'user_id': ..., 'project_id': ...}`) as the canonical
-`_check_project_read_access` (router.py:328) and `_check_project_access`
-(router.py:341). Our `distinct('project_id', {'user_id': ...})` is the
-inverse query on the same index.
+(Two commits because the platform auto-committed after the architect's first
+review (APPROVED_WITH_COMMENTS); a second commit captured the precedence
+reorder addressing that non-blocking comment. Net effect = single 12-line
+addition. No file is touched twice in opposing directions.)
 
 ================================================================================
-BEHAVIOR CHANGE TO COMMUNICATE
+FILES CHANGED — net effect from rollback anchor
 ================================================================================
 
-Contractor "All projects" view in ContractorDashboard.js:141 currently calls
-GET /api/tasks WITHOUT project_id (intentional — line 137-139 sets project_id
-only when the filter is not 'all'). Today this leaks every task on the
-platform to that contractor. After this fix, the same UI correctly shows
-only tasks from projects the contractor is a member of.
+ backend/contractor_ops/tasks_router.py   |  +12  -0     (security fix)
+ review.txt                               | rewritten    (this log file)
 
-This is the desired security outcome and matches user expectation, but flagged
-here for transparency in case a contractor mentions "I see fewer tasks now in
-the All view" — that's the fix working, not a regression.
-
-ProjectTasksPage.js:186 always passes project_id (line 157) — no behavior
-change for the project-scoped view.
-
-================================================================================
-FILES CHANGED — exactly 1
-================================================================================
-
-  backend/contractor_ops/tasks_router.py   +12  -0
+  - 1 source file changed (the security fix)
+  - 1 log file rewritten (this review.txt itself — process artifact)
 
 ZERO changes to:
   - backend/contractor_ops/schemas.py
   - backend/contractor_ops/billing.py
   - backend/contractor_ops/router.py
+  - All other backend files
   - frontend/* (entire tree)
   - backend/requirements.txt
   - frontend/package.json / yarn.lock
-  - DB schema (no migration)
+  - DB schema (no migration, no data backfill)
 
 ================================================================================
-DIFF
+SOURCE-CODE DIFF — backend/contractor_ops/tasks_router.py
 ================================================================================
 
 diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
@@ -101,7 +68,150 @@ index 115cbaf..6a474ae 100644
      if building_id:
 
 ================================================================================
-11 VERIFICATIONS — all PASS
+BEFORE — list_tasks (rollback-anchor version, lines 179-205)
+================================================================================
+
+@router.get("/tasks")
+async def list_tasks(
+    project_id: Optional[str] = Query(None),
+    building_id: Optional[str] = Query(None),
+    floor_id: Optional[str] = Query(None),
+    unit_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    status_in: Optional[str] = Query(None),
+    assignee_id: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    unassigned: Optional[bool] = Query(None),
+    bucket_key: Optional[str] = Query(None),
+    overdue: Optional[bool] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    query = {}
+    if project_id:
+        query['project_id'] = project_id
+    if building_id:
+        query['building_id'] = building_id
+    ...
+
+(The leak: `query = {}` then `if project_id: query['project_id'] = project_id`
+— when project_id was omitted, the aggregation pipeline ran fully unscoped
+across all tasks platform-wide, returning every task to any authenticated
+caller.)
+
+================================================================================
+AFTER — list_tasks (post-fix version, lines 179-217)
+================================================================================
+
+@router.get("/tasks")
+async def list_tasks(
+    project_id: Optional[str] = Query(None),
+    building_id: Optional[str] = Query(None),
+    floor_id: Optional[str] = Query(None),
+    unit_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    status_in: Optional[str] = Query(None),
+    assignee_id: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    unassigned: Optional[bool] = Query(None),
+    bucket_key: Optional[str] = Query(None),
+    overdue: Optional[bool] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    query = {}
+    # Pentest 2026-04-22 HIGH-1: scope to caller's project memberships.
+    if not _is_super_admin(user):
+        member_project_ids = await db.project_memberships.distinct(
+            'project_id', {'user_id': user['id']}
+        )
+        if project_id is not None:
+            if project_id not in member_project_ids:
+                raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
+        elif not member_project_ids:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
+        else:
+            query['project_id'] = {'$in': member_project_ids}
+    if project_id:
+        query['project_id'] = project_id
+    if building_id:
+        query['building_id'] = building_id
+    ...
+
+================================================================================
+LOGIC PRECEDENCE EXPLAINED
+================================================================================
+
+Super-admin → bypass entire scope block (unchanged platform-wide visibility).
+
+Non-super-admin:
+
+  Case A — `project_id` query param IS passed:
+    → If caller is NOT in member_project_ids → 403 'אין לך גישה לפרויקט זה'
+      (covers BOTH "foreign project" AND "zero memberships + explicit
+       project_id" — both are explicit unauthorized requests, both return
+       403, never silent 200-empty)
+    → If caller IS in member_project_ids → fall through; the existing
+      `if project_id: query['project_id'] = project_id` line below sets
+      the filter; aggregation proceeds normally.
+
+  Case B — `project_id` query param is OMITTED:
+    → If caller has zero memberships → return empty paginated envelope
+      `{"items": [], "total": 0, "limit": limit, "offset": offset}`.
+    → If caller has memberships → inject
+      `query['project_id'] = {'$in': member_project_ids}` so the
+      aggregation pipeline naturally filters to only the caller's
+      accessible projects.
+
+The existing `if project_id: query['project_id'] = project_id` line BELOW
+the new block is intentionally preserved. It is now a no-op for non-super-
+admins reaching it (because the scope already validated membership), but it
+preserves super-admin's ability to filter to a specific project when they
+choose to.
+
+================================================================================
+ARCHITECTURAL CONSISTENCY
+================================================================================
+
+Uses the same `project_memberships` collection + same filter key
+(`{'user_id': ..., 'project_id': ...}`) as the canonical access checks:
+
+  - _check_project_read_access (router.py:328)
+  - _check_project_access      (router.py:341)
+
+Both use `find_one({'user_id': ..., 'project_id': ...})`.
+Our `distinct('project_id', {'user_id': user['id']})` is the inverse
+query on the same index — architecturally equivalent to "list all
+projects the caller can read".
+
+================================================================================
+BEHAVIOR CHANGE TO COMMUNICATE TO THE TEAM
+================================================================================
+
+ContractorDashboard.js:141 calls GET /api/tasks WITHOUT project_id when the
+contractor selects the "all projects" filter (line 137-139 sets project_id
+ONLY when the filter is not 'all').
+
+  - BEFORE this fix: that view leaked every task on the platform to that
+    contractor (the silent-leak path the pentest exploited).
+  - AFTER this fix: the same UI correctly shows only tasks from projects
+    the contractor is a member of.
+
+This is the desired security outcome. Flagged here so that if a contractor
+mentions "I see fewer tasks now in the All view" — that's the fix working
+as intended, not a regression.
+
+ProjectTasksPage.js:186 always passes project_id (line 157) — no behavior
+change for the project-scoped view.
+
+================================================================================
+11 GREP VERIFICATIONS — all PASS
 ================================================================================
 
 (a) Handler still at line 179 — UNCHANGED:
@@ -112,7 +222,7 @@ index 115cbaf..6a474ae 100644
 
 (c) project_memberships.distinct call added at top of list_tasks:
     201:        member_project_ids = await db.project_memberships.distinct(
-    (1240 is pre-existing in another handler — not touched)
+    (line 1240 is pre-existing in another handler — not touched)
 
 (d) Empty-envelope return matches handler's actual return shape (line 327):
     208:            return {"items": [], "total": 0, "limit": limit, "offset": offset}
@@ -127,27 +237,27 @@ index 115cbaf..6a474ae 100644
 (g) Auth decorator UNCHANGED — still get_current_user (line 195):
     195:    user: dict = Depends(get_current_user),
 
-(h) Existing `if project_id: query['project_id'] = project_id` block
-    PRESERVED at lines 211-212 — sits BELOW the new scope block:
+(h) Existing `if project_id:` block PRESERVED at lines 211-212 — sits
+    BELOW the new scope block:
     211:    if project_id:
     212:        query['project_id'] = project_id
 
-(i) Exactly 1 file modified:
+(i) Exactly 1 source file modified:
     backend/contractor_ops/tasks_router.py   (+12, -0)
 
 (j) Zero diff to schemas / billing / router (untouched files):
     git diff HEAD -- schemas.py billing.py router.py | wc -l → 0
 
-(k) Zero diff to deps (no package.json / requirements.txt / yarn.lock):
+(k) Zero diff to deps:
     git diff HEAD -- requirements.txt package.json yarn.lock | wc -l → 0
 
 ================================================================================
 PYTHON IMPORT CHECK
 ================================================================================
 
-$ python -c "from contractor_ops.tasks_router import list_tasks"
+$ python -c "from contractor_ops.tasks_router import list_tasks; print('OK')"
 [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
-OK list_tasks imports cleanly
+OK
 
 ================================================================================
 NPM BUILD CHECK
@@ -157,7 +267,7 @@ $ cd frontend && REACT_APP_BACKEND_URL=https://example.com CI=true npm run build
 The project was built assuming it is hosted at /.
 The build folder is ready to be deployed.
 
-(zero new warnings; only pre-existing 3 apple-sign-in source-map warnings
+(zero new warnings; only pre-existing 3 apple-sign-in source-map warnings,
 shared with #414/#415/#416/#417 builds)
 
 ================================================================================
@@ -165,29 +275,50 @@ BACKEND RESTART
 ================================================================================
 
 [STARTUP] BrikOps starting — APP_ID=contractor-ops-001, MODE=dev
+[STARTUP] WhatsApp=True SMS=True OTP=mock
+[INDEXES] All MongoDB indexes created successfully
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:5000
 [REQ] GET / status=200 duration=3.8ms
-[REQ] GET /static/css/main.527d9955.css status=200
-[REQ] GET /static/js/main.5ca03fbd.js status=200
 
 No errors. No import failures. Healthy and serving requests.
 
 ================================================================================
-OPERATIONAL FOLLOW-UP (NOT IN THIS TASK)
+ARCHITECT CODE REVIEW
+================================================================================
+
+First pass:  APPROVED_WITH_COMMENTS — non-blocking note on precedence
+             (zero-membership + explicit project_id returned 200-empty
+             instead of 403; secure but inconsistent contract).
+Action:      Reordered the three case checks. Explicit unauthorized
+             project_id requests now ALWAYS return 403, regardless of
+             whether the caller has zero or some memberships.
+Second pass: APPROVED — "The diff correctly implements the HIGH-1 fix
+             ... without introducing blocking regressions ... Three
+             required cases are implemented with correct precedence."
+
+================================================================================
+OPERATIONAL FOLLOW-UPS (NOT IN THIS TASK)
 ================================================================================
 
 1. Add index on project_memberships.user_id before public launch (currently
-   missing per STEP 0 grep (d)). Acceptable at current ~41-user scale, worth
-   indexing before wider release. Will propose as a follow-up task.
+   missing — verified via grep: zero create_index/ensure_index calls reference
+   user_id on this collection). Acceptable at current ~41-user scale; worth
+   indexing before wider release. Suggested compound index:
+   {user_id: 1, project_id: 1} which also speeds the canonical
+   _check_project_read_access lookups.
 
-2. Pull API access logs for the past 7 days. Look for unusual /api/tasks call
-   volume — high volume = potential data harvesting before our fix landed.
-   Internal-tester scope makes this low-risk but worth checking.
+2. Pull API access logs for the past 7-14 days. Look for unusual /api/tasks
+   call volume from a single user/IP — high volume = potential data
+   harvesting before our fix landed. Internal-tester scope makes this
+   low-risk but worth confirming.
+
+(Both follow-up tasks were created (#419, #420) and then cancelled by Zahi —
+he'll handle these operationally.)
 
 ================================================================================
 AWAITING ZAHI APPROVAL
 ================================================================================
 
 Run `./deploy.sh --prod` from the Replit shell when ready.
-Replit Agent will not deploy.
+Replit Agent does not deploy.
