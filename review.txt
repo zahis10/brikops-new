@@ -1,54 +1,318 @@
 ================================================================================
-TASK #414 — Closed-Beta Batch 2b Patch — Cross-project draft guard + toast
-Generated: 2026-04-24 12:09:56 UTC
-Commit: 3cf9c75c68c3e2ce6c4921513f007367af5ac7c7 fix(defect-flow): add project-scope guard + bump return-toast duration (#414 patch)
+TASK #416 — Closed-Beta Batch 2b Patch 2 — Correct return URL + cancel banner
+Generated: 2026-04-24 12:45:01 UTC
 ================================================================================
 
 FILES CHANGED:
- frontend/src/components/NewDefectModal.js | 7 +++++++
- frontend/src/pages/ProjectControlPage.js  | 2 +-
- 2 files changed, 8 insertions(+), 1 deletion(-)
+ frontend/src/components/NewDefectModal.js |  4 ++-
+ frontend/src/pages/ProjectControlPage.js  | 45 ++++++++++++++++++++++++--
+ frontend/src/utils/defectDraft.js         |  7 +++++
+ review.txt                                | 52 ++-----------------------------
+ 4 files changed, 54 insertions(+), 54 deletions(-)
 
 ================================================================================
 FULL DIFF (before/after, unified context = 5 lines)
 ================================================================================
 
 diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
-index f71ef05..9974a32 100644
+index 9974a32..f409ea8 100644
 --- a/frontend/src/components/NewDefectModal.js
 +++ b/frontend/src/components/NewDefectModal.js
-@@ -156,10 +156,17 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-   useEffect(() => {
-     if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
-     if (!isOpen) return;
-     const draft = loadDefectDraft();
-     if (!draft) return;
-+    // Project-scope guard: if the draft was saved for a different project than
-+    // the one this modal is currently opened for, bail out. Covers the case
-+    // where NewDefectModal is opened from ProjectTasksPage (no unit_id in
-+    // prefillData, so the unit-match guard below can't fire).
-+    if (draft.projectId && prefillData?.project_id && draft.projectId !== prefillData.project_id) {
-+      return;
-+    }
-     if (hasPrefill && draft.unitId && prefillData?.unit_id && draft.unitId !== prefillData.unit_id) {
-       return;
-     }
-     if (draft.category) setCategory(draft.category);
-     if (draft.title) setTitle(draft.title);
+@@ -1,7 +1,7 @@
+ import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
+-import { useNavigate } from 'react-router-dom';
++import { useNavigate, useLocation } from 'react-router-dom';
+ import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
+ import { toast } from 'sonner';
+ import { formatUnitLabel } from '../utils/formatters';
+ import {
+   X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil
+@@ -43,10 +43,11 @@ const PRIORITIES = [
+   { value: 'critical', label: 'קריטי', color: 'text-red-600' },
+ ];
+ 
+ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+   const navigate = useNavigate();
++  const location = useLocation();
+   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
+ 
+   const isOpenRef = useRef(isOpen);
+   isOpenRef.current = isOpen;
+ 
+@@ -924,10 +925,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+                             description,
+                             priority,
+                             companyId,
+                             assigneeId,
+                             prefillData: prefillData || null,
++                            returnUrl: location.pathname,
+                           });
+                           onClose();
+                           const params = new URLSearchParams({
+                             tab: 'team',
+                             openInvite: '1',
 diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
-index 2709291..75c2cec 100644
+index 75c2cec..ff6c52d 100644
 --- a/frontend/src/pages/ProjectControlPage.js
 +++ b/frontend/src/pages/ProjectControlPage.js
-@@ -1382,11 +1382,11 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
+@@ -37,11 +37,11 @@ import OfflineState from '../components/OfflineState';
+ import { useOnlineStatus } from '../hooks/useOnlineStatus';
+ import { SelectField } from '../components/BottomSheetSelect';
+ import GroupedSelectField from '../components/GroupedSelectField';
+ import { FEATURES } from '../config/features';
+ import { getBucketForTrade, getBucketLabel } from '../utils/categoryBuckets';
+-import { loadDefectDraft } from '../utils/defectDraft';
++import { loadDefectDraft, buildReturnToDefectUrl } from '../utils/defectDraft';
+ 
+ const normalizeList = (data) => {
+   if (Array.isArray(data)) return data;
+   if (data && Array.isArray(data.items)) return data.items;
+   if (data && typeof data === 'object') {
+@@ -1371,15 +1371,16 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
+             const draft = loadDefectDraft();
+             if (!draft) {
+               toast.info('הטיוטה פגה או לא נמצאה');
+               return;
+             }
+-            if (!draft.projectId || !draft.unitId) {
++            const url = buildReturnToDefectUrl(draft);
++            if (!url) {
+               toast.info('חסר מידע לחזרה לליקוי');
+               return;
+             }
+-            navigate(`/projects/${draft.projectId}/units/${draft.unitId}?reopenDefect=1`);
++            navigate(url);
+           } catch (err) {
              console.warn('[AddTeamMemberForm] return-to-defect failed', err);
              toast.error('שגיאה בחזרה לליקוי');
            }
          },
-       } : undefined;
--      const toastOpts = returnAction ? { action: returnAction, duration: 10000 } : undefined;
-+      const toastOpts = returnAction ? { action: returnAction, duration: 15000 } : undefined;
-       if (ns?.channel_used === 'sms' && ns?.wa_skipped) {
-         toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)', toastOpts);
-       } else if (ns?.channel_used === 'sms') {
-         toast.success('הזמנה נשלחה בהצלחה ב-SMS', toastOpts);
-       } else if (ns?.channel_used === 'whatsapp') {
+@@ -2471,10 +2472,11 @@ const TEAM_FILTERS = [
+   { key: 'project_manager', labelKey: 'filterPM' },
+ ];
+ 
+ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
+   const { user: currentUser } = useAuth();
++  const navigate = useNavigate();
+   const [invites, setInvites] = useState([]);
+   const [members, setMembers] = useState([]);
+   const [loading, setLoading] = useState(true);
+   const [showAddForm, setShowAddForm] = useState(!!prefillTrade);
+   const [filter, setFilter] = useState('all');
+@@ -2503,10 +2505,29 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
+     } finally {
+       setLoading(false);
+     }
+   }, [projectId]);
+ 
++  const handleReturnToDefectCancel = useCallback(() => {
++    try {
++      const draft = loadDefectDraft();
++      if (!draft) {
++        toast.info('הטיוטה פגה או לא נמצאה');
++        return;
++      }
++      const url = buildReturnToDefectUrl(draft);
++      if (!url) {
++        toast.info('חסר מידע לחזרה לליקוי');
++        return;
++      }
++      navigate(url);
++    } catch (err) {
++      console.warn('[TeamTab] return-to-defect-cancel failed', err);
++      toast.error('שגיאה בחזרה לליקוי');
++    }
++  }, [navigate]);
++
+   const silentRefresh = useCallback(async () => {
+     try {
+       const [invRes, memRes] = await Promise.all([
+         teamInviteService.list(projectId),
+         projectService.getMemberships(projectId),
+@@ -2607,10 +2628,28 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
+     return true;
+   });
+ 
+   return (
+     <div className="space-y-4">
++      {returnToDefect && (
++        <div
++          className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
++          dir="rtl"
++        >
++          <span className="flex-1">
++            חזרת מהליקוי כדי להוסיף חבר צוות. אם התחרטת, אפשר לחזור לליקוי בלי לשמור.
++          </span>
++          <Button
++            variant="outline"
++            size="sm"
++            onClick={handleReturnToDefectCancel}
++            className="border-amber-300 bg-white text-amber-700 hover:bg-amber-100 active:bg-amber-200 whitespace-nowrap"
++          >
++            חזור לליקוי
++          </Button>
++        </div>
++      )}
+       <Button onClick={() => setShowAddForm(true)} className="bg-amber-500 hover:bg-amber-600 text-white text-sm" size="sm">
+         <Plus className="w-4 h-4 ml-1" />{t('teamTab', 'addMember')}
+       </Button>
+ 
+       <div className="flex gap-2 flex-wrap">
+diff --git a/frontend/src/utils/defectDraft.js b/frontend/src/utils/defectDraft.js
+index 8a6d68e..8d1aed7 100644
+--- a/frontend/src/utils/defectDraft.js
++++ b/frontend/src/utils/defectDraft.js
+@@ -35,5 +35,12 @@ export function clearDefectDraft() {
+ }
+ 
+ export function hasDefectDraft() {
+   return !!loadDefectDraft();
+ }
++
++export function buildReturnToDefectUrl(draft) {
++  if (!draft || !draft.projectId || !draft.unitId) return null;
++  const base = draft.returnUrl || `/projects/${draft.projectId}/units/${draft.unitId}/defects`;
++  const separator = base.includes('?') ? '&' : '?';
++  return `${base}${separator}reopenDefect=1`;
++}
+diff --git a/review.txt b/review.txt
+index 69c7e3b..2ca0a08 100644
+--- a/review.txt
++++ b/review.txt
+@@ -1,54 +1,100 @@
+ ================================================================================
+-TASK #414 — Closed-Beta Batch 2b Patch — Cross-project draft guard + toast
+-Generated: 2026-04-24 12:09:56 UTC
+-Commit: 3cf9c75c68c3e2ce6c4921513f007367af5ac7c7 fix(defect-flow): add project-scope guard + bump return-toast duration (#414 patch)
++TASK #416 — Closed-Beta Batch 2b Patch 2 — Correct return URL + cancel banner
++Generated: 2026-04-24 12:45:01 UTC
+ ================================================================================
+ 
+ FILES CHANGED:
+- frontend/src/components/NewDefectModal.js | 7 +++++++
+- frontend/src/pages/ProjectControlPage.js  | 2 +-
+- 2 files changed, 8 insertions(+), 1 deletion(-)
++ frontend/src/components/NewDefectModal.js |  4 ++-
++ frontend/src/pages/ProjectControlPage.js  | 45 ++++++++++++++++++++++++--
++ frontend/src/utils/defectDraft.js         |  7 +++++
++ review.txt                                | 52 ++-----------------------------
++ 4 files changed, 54 insertions(+), 54 deletions(-)
+ 
+ ================================================================================
+ FULL DIFF (before/after, unified context = 5 lines)
+ ================================================================================
+ 
+ diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
+-index f71ef05..9974a32 100644
++index 9974a32..f409ea8 100644
+ --- a/frontend/src/components/NewDefectModal.js
+ +++ b/frontend/src/components/NewDefectModal.js
+-@@ -156,10 +156,17 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-   useEffect(() => {
+-     if (!FEATURES.DEFECT_DRAFT_PRESERVATION) return;
+-     if (!isOpen) return;
+-     const draft = loadDefectDraft();
+-     if (!draft) return;
+-+    // Project-scope guard: if the draft was saved for a different project than
+-+    // the one this modal is currently opened for, bail out. Covers the case
+-+    // where NewDefectModal is opened from ProjectTasksPage (no unit_id in
+-+    // prefillData, so the unit-match guard below can't fire).
+-+    if (draft.projectId && prefillData?.project_id && draft.projectId !== prefillData.project_id) {
+-+      return;
+-+    }
+-     if (hasPrefill && draft.unitId && prefillData?.unit_id && draft.unitId !== prefillData.unit_id) {
+-       return;
+-     }
+-     if (draft.category) setCategory(draft.category);
+-     if (draft.title) setTitle(draft.title);
++@@ -1,7 +1,7 @@
++ import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
++-import { useNavigate } from 'react-router-dom';
+++import { useNavigate, useLocation } from 'react-router-dom';
++ import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
++ import { toast } from 'sonner';
++ import { formatUnitLabel } from '../utils/formatters';
++ import {
++   X, Upload, ChevronDown, Camera, Loader2, Building2, Layers, DoorOpen, AlertTriangle, RefreshCw, Check, ImagePlus, Plus, Pencil
++@@ -43,10 +43,11 @@ const PRIORITIES = [
++   { value: 'critical', label: 'קריטי', color: 'text-red-600' },
++ ];
++ 
++ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++   const navigate = useNavigate();
+++  const location = useLocation();
++   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
++ 
++   const isOpenRef = useRef(isOpen);
++   isOpenRef.current = isOpen;
++ 
++@@ -924,10 +925,11 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
++                             description,
++                             priority,
++                             companyId,
++                             assigneeId,
++                             prefillData: prefillData || null,
+++                            returnUrl: location.pathname,
++                           });
++                           onClose();
++                           const params = new URLSearchParams({
++                             tab: 'team',
++                             openInvite: '1',
+ diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+-index 2709291..75c2cec 100644
++index 75c2cec..ff6c52d 100644
+ --- a/frontend/src/pages/ProjectControlPage.js
+ +++ b/frontend/src/pages/ProjectControlPage.js
+-@@ -1382,11 +1382,11 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
++@@ -37,11 +37,11 @@ import OfflineState from '../components/OfflineState';
++ import { useOnlineStatus } from '../hooks/useOnlineStatus';
++ import { SelectField } from '../components/BottomSheetSelect';
++ import GroupedSelectField from '../components/GroupedSelectField';
++ import { FEATURES } from '../config/features';
++ import { getBucketForTrade, getBucketLabel } from '../utils/categoryBuckets';
++-import { loadDefectDraft } from '../utils/defectDraft';
+++import { loadDefectDraft, buildReturnToDefectUrl } from '../utils/defectDraft';
++ 
++ const normalizeList = (data) => {
++   if (Array.isArray(data)) return data;
++   if (data && Array.isArray(data.items)) return data.items;
++   if (data && typeof data === 'object') {
++@@ -1371,15 +1371,16 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
++             const draft = loadDefectDraft();
++             if (!draft) {
++               toast.info('הטיוטה פגה או לא נמצאה');
++               return;
++             }
++-            if (!draft.projectId || !draft.unitId) {
+++            const url = buildReturnToDefectUrl(draft);
+++            if (!url) {
++               toast.info('חסר מידע לחזרה לליקוי');
++               return;
++             }
++-            navigate(`/projects/${draft.projectId}/units/${draft.unitId}?reopenDefect=1`);
+++            navigate(url);
++           } catch (err) {
+              console.warn('[AddTeamMemberForm] return-to-defect failed', err);
+              toast.error('שגיאה בחזרה לליקוי');
+            }
+          },
+-       } : undefined;
+--      const toastOpts = returnAction ? { action: returnAction, duration: 10000 } : undefined;
+-+      const toastOpts = returnAction ? { action: returnAction, duration: 15000 } : undefined;
+-       if (ns?.channel_used === 'sms' && ns?.wa_skipped) {
+-         toast.success('הזמנה נשלחה ב-SMS (WhatsApp לא זמין כרגע)', toastOpts);
+-       } else if (ns?.channel_used === 'sms') {
+-         toast.success('הזמנה נשלחה בהצלחה ב-SMS', toastOpts);
+-       } else if (ns?.channel_used === 'whatsapp') {
++@@ -2471,10 +2472,11 @@ const TEAM_FILTERS = [
++   { key: 'project_manager', labelKey: 'filterPM' },
++ ];
++ 
++ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
++   const { user: currentUser } = useAuth();
+++  const navigate = useNavigate();
++   const [invites, setInvites] = useState([]);
++   const [members, setMembers] = useState([]);
++   const [loading, setLoading] = useState(true);
++   const [showAddForm, setShowAddForm] = useS
+\ No newline at end of file

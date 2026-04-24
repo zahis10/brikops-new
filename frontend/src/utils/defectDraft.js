@@ -37,3 +37,10 @@ export function clearDefectDraft() {
 export function hasDefectDraft() {
   return !!loadDefectDraft();
 }
+
+export function buildReturnToDefectUrl(draft) {
+  if (!draft || !draft.projectId || !draft.unitId) return null;
+  const base = draft.returnUrl || `/projects/${draft.projectId}/units/${draft.unitId}/defects`;
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}reopenDefect=1`;
+}

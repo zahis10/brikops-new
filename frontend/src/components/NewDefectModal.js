@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { projectService, buildingService, floorService, projectCompanyService, BACKEND_URL } from '../services/api';
 import { toast } from 'sonner';
 import { formatUnitLabel } from '../utils/formatters';
@@ -45,6 +45,7 @@ const PRIORITIES = [
 
 const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
 
   const isOpenRef = useRef(isOpen);
@@ -926,6 +927,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                             companyId,
                             assigneeId,
                             prefillData: prefillData || null,
+                            returnUrl: location.pathname,
                           });
                           onClose();
                           const params = new URLSearchParams({

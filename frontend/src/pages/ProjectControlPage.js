@@ -39,7 +39,7 @@ import { SelectField } from '../components/BottomSheetSelect';
 import GroupedSelectField from '../components/GroupedSelectField';
 import { FEATURES } from '../config/features';
 import { getBucketForTrade, getBucketLabel } from '../utils/categoryBuckets';
-import { loadDefectDraft } from '../utils/defectDraft';
+import { loadDefectDraft, buildReturnToDefectUrl } from '../utils/defectDraft';
 
 const normalizeList = (data) => {
   if (Array.isArray(data)) return data;
@@ -1373,11 +1373,12 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
               toast.info('הטיוטה פגה או לא נמצאה');
               return;
             }
-            if (!draft.projectId || !draft.unitId) {
+            const url = buildReturnToDefectUrl(draft);
+            if (!url) {
               toast.info('חסר מידע לחזרה לליקוי');
               return;
             }
-            navigate(`/projects/${draft.projectId}/units/${draft.unitId}?reopenDefect=1`);
+            navigate(url);
           } catch (err) {
             console.warn('[AddTeamMemberForm] return-to-defect failed', err);
             toast.error('שגיאה בחזרה לליקוי');
@@ -2473,6 +2474,7 @@ const TEAM_FILTERS = [
 
 const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, isOrgOwner, trades, onRefreshCompanies }) => {
   const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const [invites, setInvites] = useState([]);
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2504,6 +2506,25 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
       setLoading(false);
     }
   }, [projectId]);
+
+  const handleReturnToDefectCancel = useCallback(() => {
+    try {
+      const draft = loadDefectDraft();
+      if (!draft) {
+        toast.info('הטיוטה פגה או לא נמצאה');
+        return;
+      }
+      const url = buildReturnToDefectUrl(draft);
+      if (!url) {
+        toast.info('חסר מידע לחזרה לליקוי');
+        return;
+      }
+      navigate(url);
+    } catch (err) {
+      console.warn('[TeamTab] return-to-defect-cancel failed', err);
+      toast.error('שגיאה בחזרה לליקוי');
+    }
+  }, [navigate]);
 
   const silentRefresh = useCallback(async () => {
     try {
@@ -2609,6 +2630,24 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
 
   return (
     <div className="space-y-4">
+      {returnToDefect && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          dir="rtl"
+        >
+          <span className="flex-1">
+            חזרת מהליקוי כדי להוסיף חבר צוות. אם התחרטת, אפשר לחזור לליקוי בלי לשמור.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReturnToDefectCancel}
+            className="border-amber-300 bg-white text-amber-700 hover:bg-amber-100 active:bg-amber-200 whitespace-nowrap"
+          >
+            חזור לליקוי
+          </Button>
+        </div>
+      )}
       <Button onClick={() => setShowAddForm(true)} className="bg-amber-500 hover:bg-amber-600 text-white text-sm" size="sm">
         <Plus className="w-4 h-4 ml-1" />{t('teamTab', 'addMember')}
       </Button>
