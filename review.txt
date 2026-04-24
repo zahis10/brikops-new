@@ -1,78 +1,183 @@
-=== Task #417 — Pentest S1 — CRIT-1 + CRIT-2 emergency fix ===
-=== Rollback anchor (pre-S1 HEAD): 2fb3fd2b810f50e48dd91cee38e1cb2ede0c7d7a Add automatic logout when session expires unexpectedly ===
-=== Started: 2026-04-24T18:18:35Z ===
-=== Status: AWAITING ZAHI APPROVAL — NO DEPLOY YET ===
+================================================================================
+TASK #418 — Pentest S2 — fix /api/tasks cross-tenant list leak (HIGH-1)
+================================================================================
 
-================================================================
-FILES CHANGED (exactly 2 backend files + this review.txt log)
-================================================================
- backend/contractor_ops/companies_router.py |  7 ++++++-
- backend/contractor_ops/invites_router.py   | 16 ++++++++++++++++
- 2 files changed, 22 insertions(+), 1 deletion(-)
+ROLLBACK ANCHOR (pre-edit SHA): 27780881236058a716018ce53891964ef7a09fa1
+To revert this task: `git reset --hard 27780881236058a716018ce53891964ef7a09fa1`
 
-================================================================
-FULL DIFF — backend/contractor_ops/invites_router.py
-================================================================
+================================================================================
+SUMMARY
+================================================================================
 
-diff --git a/backend/contractor_ops/invites_router.py b/backend/contractor_ops/invites_router.py
-index 9e3a20d..0606a41 100644
---- a/backend/contractor_ops/invites_router.py
-+++ b/backend/contractor_ops/invites_router.py
-@@ -9,6 +9,7 @@ from contractor_ops.router import (
-     _get_project_membership, _audit, _now, _is_super_admin,
-     get_notification_engine, get_public_base_url, logger,
- )
-+from contractor_ops.billing import get_user_org
- from contractor_ops.schemas import InviteCreate
- from contractor_ops.phone_utils import normalize_israeli_phone
- from contractor_ops.bucket_utils import BUCKET_LABELS
-@@ -107,7 +108,22 @@ async def list_users(
-     user: dict = Depends(require_roles('project_manager')),
+Pre-launch security fix from the 2026-04-22 pentest.
+
+HIGH-1: GET /api/tasks returned tasks from ALL projects platform-wide when
+called without a project_id query param, OR when called with a project_id the
+caller wasn't a member of (silent leak — pentest pulled ~30 tasks across 4
+test orgs with title/description/assignee/company/building/floor/unit IDs).
+
+FIX: Added a 12-line scope block at the top of `list_tasks` immediately after
+`db = get_db()`. Three cases:
+  1. Super-admin → bypass scope (unchanged platform-wide behavior).
+  2. Caller has no project_memberships → return empty paginated envelope.
+  3. project_id param passed → 403 'אין לך גישה לפרויקט זה' if caller not a
+     member; otherwise fall through to existing handler logic unchanged.
+  4. project_id param omitted → inject query['project_id'] = {'$in':
+     member_project_ids} so the aggregation pipeline naturally filters.
+
+Architectural consistency: uses the same `project_memberships` collection +
+filter key (`{'user_id': ..., 'project_id': ...}`) as the canonical
+`_check_project_read_access` (router.py:328) and `_check_project_access`
+(router.py:341). Our `distinct('project_id', {'user_id': ...})` is the
+inverse query on the same index.
+
+================================================================================
+BEHAVIOR CHANGE TO COMMUNICATE
+================================================================================
+
+Contractor "All projects" view in ContractorDashboard.js:141 currently calls
+GET /api/tasks WITHOUT project_id (intentional — line 137-139 sets project_id
+only when the filter is not 'all'). Today this leaks every task on the
+platform to that contractor. After this fix, the same UI correctly shows
+only tasks from projects the contractor is a member of.
+
+This is the desired security outcome and matches user expectation, but flagged
+here for transparency in case a contractor mentions "I see fewer tasks now in
+the All view" — that's the fix working, not a regression.
+
+ProjectTasksPage.js:186 always passes project_id (line 157) — no behavior
+change for the project-scoped view.
+
+================================================================================
+FILES CHANGED — exactly 1
+================================================================================
+
+  backend/contractor_ops/tasks_router.py   +12  -0
+
+ZERO changes to:
+  - backend/contractor_ops/schemas.py
+  - backend/contractor_ops/billing.py
+  - backend/contractor_ops/router.py
+  - frontend/* (entire tree)
+  - backend/requirements.txt
+  - frontend/package.json / yarn.lock
+  - DB schema (no migration)
+
+================================================================================
+DIFF
+================================================================================
+
+diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
+index 115cbaf..ddadd39 100644
+--- a/backend/contractor_ops/tasks_router.py
++++ b/backend/contractor_ops/tasks_router.py
+@@ -196,6 +196,18 @@ async def list_tasks(
  ):
      db = get_db()
-+
-+    # Security: auto-scope the list to the caller's organization.
-+    # Super-admins bypass the scope (they see all users platform-wide).
-+    # Fix for pentest 2026-04-22 CRIT-1.
      query = {}
++    # Pentest 2026-04-22 HIGH-1: scope to caller's project memberships.
 +    if not _is_super_admin(user):
-+        org = await get_user_org(user['id'])
-+        if not org:
-+            return []
-+        member_user_ids = await db.organization_memberships.distinct(
-+            'user_id', {'org_id': org['id']}
++        member_project_ids = await db.project_memberships.distinct(
++            'project_id', {'user_id': user['id']}
 +        )
-+        if not member_user_ids:
-+            return []
-+        query['id'] = {'$in': member_user_ids}
-+
-     if role:
-         query['role'] = role
-     if company_id:
++        if not member_project_ids:
++            return {"items": [], "total": 0, "limit": limit, "offset": offset}
++        if project_id is not None:
++            if project_id not in member_project_ids:
++                raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
++        else:
++            query['project_id'] = {'$in': member_project_ids}
+     if project_id:
+         query['project_id'] = project_id
+     if building_id:
 
-================================================================
-FULL DIFF — backend/contractor_ops/companies_router.py
-================================================================
+================================================================================
+11 VERIFICATIONS — all PASS
+================================================================================
 
-diff --git a/backend/contractor_ops/companies_router.py b/backend/contractor_ops/companies_router.py
-index b9ff80b..51eb4f8 100644
---- a/backend/contractor_ops/companies_router.py
-+++ b/backend/contractor_ops/companies_router.py
-@@ -31,7 +31,12 @@ async def create_company(company: Company, user: dict = Depends(require_roles('p
- @router.get("/companies", response_model=List[Company])
- async def list_companies(user: dict = Depends(get_current_user)):
-     db = get_db()
--    companies = await db.companies.find({}, {'_id': 0}).to_list(1000)
-+    # Security: sanitize response to remove PII (contact_name, contact_phone,
-+    # contact_email, phone_e164, specialties). Only return non-PII metadata
-+    # (id, name, trade). Fix for pentest 2026-04-22 CRIT-2. Callers that need
-+    # full company details must use /api/projects/{id}/companies (project-scoped).
-+    projection = {'_id': 0, 'id': 1, 'name': 1, 'trade': 1}
-+    companies = await db.companies.find({}, projection).to_list(1000)
-     return [Company(**c) for c in companies]
- 
- 
+(a) Handler still at line 179 — UNCHANGED:
+    179:@router.get("/tasks")
 
-================================================================
-VERIFICATION RESULTS — 11 grep checks
-================================================================
+(b) Super-admin guard added (1 new in list_tasks):
+    200:    if not _is_super_admin(user):
+
+(c) project_memberships.distinct call added at top of list_tasks:
+    201:        member_project_ids = await db.project_memberships.distinct(
+    (1240 is pre-existing in another handler — not touched)
+
+(d) Empty-envelope return matches handler's actual return shape (line 327):
+    205:            return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+(e) Hebrew 403 for cross-tenant project_id requests:
+    208:                raise HTTPException(status_code=403, detail='אין לך גישה לפרויקט זה')
+
+(f) member_project_ids inject for omitted-project_id case:
+    210:            query['project_id'] = {'$in': member_project_ids}
+
+(g) Auth decorator UNCHANGED — still get_current_user (line 195):
+    195:    user: dict = Depends(get_current_user),
+
+(h) Existing `if project_id: query['project_id'] = project_id` block
+    PRESERVED at lines 211-212 — sits BELOW the new scope block:
+    211:    if project_id:
+    212:        query['project_id'] = project_id
+
+(i) Exactly 1 file modified:
+    backend/contractor_ops/tasks_router.py   (+12, -0)
+
+(j) Zero diff to schemas / billing / router (untouched files):
+    git diff HEAD -- schemas.py billing.py router.py | wc -l → 0
+
+(k) Zero diff to deps (no package.json / requirements.txt / yarn.lock):
+    git diff HEAD -- requirements.txt package.json yarn.lock | wc -l → 0
+
+================================================================================
+PYTHON IMPORT CHECK
+================================================================================
+
+$ python -c "from contractor_ops.tasks_router import list_tasks"
+[SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
+OK list_tasks imports cleanly
+
+================================================================================
+NPM BUILD CHECK
+================================================================================
+
+$ cd frontend && REACT_APP_BACKEND_URL=https://example.com CI=true npm run build
+The project was built assuming it is hosted at /.
+The build folder is ready to be deployed.
+
+(zero new warnings; only pre-existing 3 apple-sign-in source-map warnings
+shared with #414/#415/#416/#417 builds)
+
+================================================================================
+BACKEND RESTART
+================================================================================
+
+[STARTUP] BrikOps starting — APP_ID=contractor-ops-001, MODE=dev
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:5000
+[REQ] GET / status=200 duration=3.8ms
+[REQ] GET /static/css/main.527d9955.css status=200
+[REQ] GET /static/js/main.5ca03fbd.js status=200
+
+No errors. No import failures. Healthy and serving requests.
+
+================================================================================
+OPERATIONAL FOLLOW-UP (NOT IN THIS TASK)
+================================================================================
+
+1. Add index on project_memberships.user_id before public launch (currently
+   missing per STEP 0 grep (d)). Acceptable at current ~41-user scale, worth
+   indexing before wider release. Will propose as a follow-up task.
+
+2. Pull API access logs for the past 7 days. Look for unusual /api/tasks call
+   volume — high volume = potential data harvesting before our fix landed.
+   Internal-tester scope makes this low-risk but worth checking.
+
+================================================================================
+AWAITING ZAHI APPROVAL
+================================================================================
+
+Run `./deploy.sh --prod` from the Replit shell when ready.
+Replit Agent will not deploy.
