@@ -354,6 +354,16 @@ set_engine(notification_engine)
 set_wa_verify_token(WA_WEBHOOK_VERIFY_TOKEN)
 set_meta_app_secret(META_APP_SECRET)
 
+# S5b — Startup guard: refuse to boot if WhatsApp is enabled but secret missing.
+# Prevents silent misconfiguration where webhook signature verification is
+# effectively disabled until the first webhook arrives and returns 503.
+# Code-audit fix 2026-04-24.
+if WHATSAPP_ENABLED and not META_APP_SECRET:
+    raise RuntimeError(
+        "Configuration error: WHATSAPP_ENABLED=true but META_APP_SECRET is not set. "
+        "Set META_APP_SECRET env var or set WHATSAPP_ENABLED=false. Refusing to start."
+    )
+
 from contractor_ops.router import set_notification_engine
 set_notification_engine(notification_engine)
 
@@ -1407,17 +1417,39 @@ if _allowed_hosts_raw and APP_MODE == 'prod':
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
+# S5b — CORS defaults: explicit safe origins per env, NEVER wildcard with credentials.
+# Code-audit fix 2026-04-24. Prod default mirrors AWS EB CORS_ORIGINS exactly
+# (web + Cloudflare Pages preview + Capacitor mobile WebView).
 _cors_default = (
     'https://app.brikops.com,'
+    'https://brikops-new.pages.dev,'
     'https://www.brikops.com,'
     'capacitor://localhost,'
     'ionic://localhost,'
     'https://localhost'
-) if APP_MODE == 'prod' else '*'
+) if APP_MODE == 'prod' else 'http://localhost:3000,http://localhost:5173'
+_cors_origins_raw = os.environ.get('CORS_ORIGINS', _cors_default)
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(',') if o.strip()]
+
+# Validators: refuse to boot on invalid CORS configuration.
+# allow_origins=['*'] with allow_credentials=True is invalid per CORS spec
+# (RFC 6454) and leaks cookies in error responses.
+if not _cors_origins:
+    raise RuntimeError(
+        "Configuration error: CORS_ORIGINS resolved to empty list. "
+        "Set CORS_ORIGINS env var to explicit comma-separated origins. Refusing to start."
+    )
+if '*' in _cors_origins:
+    raise RuntimeError(
+        "Configuration error: CORS_ORIGINS contains '*' (wildcard) while "
+        "allow_credentials=True. This is invalid per CORS spec and leaks cookies. "
+        "Set CORS_ORIGINS to explicit comma-separated origins. Refusing to start."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', _cors_default).split(','),
+    allow_origins=_cors_origins,
     allow_methods=['*'],
     allow_headers=['*'],
     expose_headers=['x-request-id', 'x-response-time-ms'],
