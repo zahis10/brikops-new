@@ -180,6 +180,7 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
         entries = body.get('entry', [])
         processed = []
         events_saved = 0
+        duplicates_skipped = 0
 
         for entry in entries:
             entry_id = entry.get('id', '')
@@ -211,10 +212,26 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
                         'raw_payload': status_update,
                     }
                     try:
-                        await db.whatsapp_events.insert_one(event_doc)
+                        # Atomic upsert — race-safe dedup.
+                        # Matches audit recommendation: (wa_message_id, event_type, status) is the unique key.
+                        # See Batch S5a fix for code-audit CRITICAL finding 2026-04-24.
+                        result = await db.whatsapp_events.update_one(
+                            {
+                                'wa_message_id': provider_id,
+                                'event_type': 'status',
+                                'status': wa_status,
+                            },
+                            {'$setOnInsert': event_doc},
+                            upsert=True,
+                        )
+                        if result.upserted_id is None:
+                            duplicates_skipped += 1
+                            logger.info(f"[WA] duplicate status event skipped: {provider_id}/{wa_status}")
+                            continue
                         events_saved += 1
                     except Exception as e:
                         logger.error(f"[WA] failed to save status event: {e}")
+                        continue
 
                     masked_recipient = (recipient[:3] + '****' + recipient[-4:]) if len(recipient) > 8 else '****'
                     logger.info(f"[WA] status_update wa_id={provider_id} status={wa_status} to={masked_recipient}")
@@ -257,15 +274,52 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn: 
                         'raw_payload': msg,
                     }
                     try:
-                        await db.whatsapp_events.insert_one(event_doc)
+                        result = await db.whatsapp_events.update_one(
+                            {
+                                'wa_message_id': msg_id,
+                                'event_type': 'message',
+                                'status': '',
+                            },
+                            {'$setOnInsert': event_doc},
+                            upsert=True,
+                        )
+                        if result.upserted_id is None:
+                            duplicates_skipped += 1
+                            logger.info(f"[WA] duplicate message event skipped: {msg_id}")
+                            continue
                         events_saved += 1
                     except Exception as e:
                         logger.error(f"[WA] failed to save message event: {e}")
+                        continue
 
                     masked_from = (from_phone[:3] + '****' + from_phone[-4:]) if len(from_phone) > 8 else '****'
                     logger.info(f"[WA] incoming_message from={masked_from} wa_id={msg_id} type={msg_type} text={msg_text[:80]}")
 
-        logger.info(f"[WA] webhook processed: {len(processed)} status updates linked, {events_saved} events saved to DB")
-        return {'processed': len(processed), 'events_saved': events_saved, 'results': processed}
+        logger.info(f"[WA] webhook processed: {len(processed)} status updates linked, {events_saved} events saved to DB, {duplicates_skipped} duplicates skipped")
+        return {
+            'processed': len(processed),
+            'events_saved': events_saved,
+            'duplicates_skipped': duplicates_skipped,
+            'results': processed,
+        }
 
     return router
+
+
+async def ensure_indexes(db):
+    """Create unique compound index on whatsapp_events for atomic upsert dedup.
+
+    Per Batch S5a fix (code-audit 2026-04-24): the (wa_message_id, event_type, status)
+    tuple is the idempotency key for WhatsApp webhook events. This index makes the
+    upsert in whatsapp_webhook_receive race-safe at the DB level.
+    """
+    try:
+        await db.whatsapp_events.create_index(
+            [('wa_message_id', 1), ('event_type', 1), ('status', 1)],
+            unique=True,
+            name='wa_message_id_event_type_status_unique',
+            background=True,
+        )
+        logger.info("WhatsApp events indexes ensured")
+    except Exception as e:
+        logger.warning(f"WhatsApp events index creation: {e}")

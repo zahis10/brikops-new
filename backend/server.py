@@ -1128,6 +1128,8 @@ async def _deferred_db_init():
         from contractor_ops.invoicing import ensure_indexes as invoicing_ensure_indexes
         await invoicing_ensure_indexes()
         await ensure_reminder_indexes()
+        from contractor_ops.notification_router import ensure_indexes as notification_ensure_indexes
+        await notification_ensure_indexes(db)
         # Safety module indices (guarded by feature flag)
         if ENABLE_SAFETY_MODULE:
             from contractor_ops.safety_router import ensure_safety_indexes

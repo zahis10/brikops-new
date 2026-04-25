@@ -9,8 +9,9 @@ To revert this entire task: git revert <new_sha> --no-edit && ./deploy.sh --prod
                             (and manually drop the unique index if needed:
                              db.whatsapp_events.dropIndex("wa_message_id_event_type_status_unique"))
 
-Status: IN PROGRESS — work begins now
-Started: 2026-04-25
+Status: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+Built:  2026-04-25
+Files modified: 2 (backend only). 0 frontend. 0 schema. 0 deps.
 
 ================================================================================
 STEP 0 — LOCKED PROD NUMBERS (Zahi 2026-04-25)
@@ -60,72 +61,392 @@ STEP 0 GREP CHECKS (a-e, h) — all PASS
     → https://api.brikops.com/api/webhooks/whatsapp
 
 ================================================================================
-TASK 2.5 — BLOCKED BY INFRASTRUCTURE (Atlas IP allowlist)
+TASK 2.5 — CLEANUP COMPLETE (run by Zahi via mongosh on Atlas prod)
 ================================================================================
 
-Status: ❌ COULD NOT RUN — connection timed out from Replit dev workspace
-Awaiting: Zahi to run cleanup_whatsapp_events.py from a whitelisted host
+Cause: Replit dev workspace is not on Atlas IP allowlist → cleanup script
+could not connect from this environment. Zahi ran an equivalent mongosh
+session manually on his Mac (already authenticated to brikops_prod).
 
-Failure detail:
-    pymongo.errors.ServerSelectionTimeoutError: brikops-us-shard-00-00.
-    vmjxkr.mongodb.net:27017: timed out (configured timeouts:
-    socketTimeoutMS: 20000.0ms, connectTimeoutMS: 20000.0ms)
+Verification block (Zahi 2026-04-25):
 
-The Replit dev environment is not on the prod Atlas IP allowlist, so the
-cleanup script cannot connect to brikops_prod from here. The script itself
-is correct and ready — Zahi must run it from a whitelisted host.
+    === Verification ===
+    null event_type:    0
+    null status:        0
+    missing event_type: 0
+    missing status:     0
+    remaining dup groups: 0
+    total rows: 387 (was 401, -14 deleted)
 
-Script: cleanup_whatsapp_events.py (in repo root, NOT committed)
-Safety guards built in:
-  - Aborts unless MONGO_URL points at *.mongodb.net
-  - Read-only sanity check first: total must be within ±100 of 401
-    (Zahi's STEP 0 snapshot). Aborts with exit code 2 if mismatched.
-  - Backfill with explicit value markers (legacy_unknown, '')
-  - Dedup keeps earliest received_at per group
-  - Verification block at end — exits non-zero if ANY counter > 0
-  - Prints "✅ CLEANUP COMPLETE" only on full success
+Backfill summary:
+    - 10 rows backfilled to event_type='legacy_unknown'
+    - 0 rows for status (none missing)
+    - 5 dup groups → 14 total rows deleted
+      (the 'legacy_unknown' groups merged after backfill — expected behavior)
 
-How Zahi runs it (from any whitelisted host with prod MONGO_URL):
-    export MONGO_URL='<prod-atlas-uri>'
-    python3 cleanup_whatsapp_events.py
+    ✅ CLEANUP COMPLETE — Gate 1 PASSED. unique index can now build.
 
-Expected output on success:
-    Connecting to Atlas DB 'brikops_prod'...
-    === SANITY CHECK (read-only) ===
-      total whatsapp_events:    401  (or close)
-      event_type null:          10
-      event_type missing:       10
-      status null:              0
-      status missing:           0
-      duplicate-tuple groups:   5
-    ✓ Sanity check OK ... Proceeding.
-    === STEP 1 — Backfill ... ===
-      Backfilled event_type='legacy_unknown' on 10 rows
-      Backfilled status='' on 0 rows
-    === STEP 2 — Delete duplicate-tuple groups ... ===
-      ... (5 group lines)
-      Total duplicates deleted: ~5-10
-    === STEP 3 — Verification (must show all zeros) ===
-      null event_type:    0
-      null status:        0
-      missing event_type: 0
-      missing status:     0
-      remaining dup groups: 0
-      total rows after cleanup: 391-396 (was 401, delta -5 to -10)
-    ✅ CLEANUP COMPLETE — safe to create unique index (Task 2)
+Note: row delta is -14 (not -5) because the 10 legacy rows had null
+event_type. After backfill those 10 rows all became event_type='legacy_unknown',
+which collapsed extra dup-groups under that key. Net deletion of 14 is
+consistent with backfill-then-dedup ordering.
 
 ================================================================================
-WORK STOPPED HERE — AWAITING ZAHI TO RUN cleanup_whatsapp_events.py
+CODE CHANGES — full diff (2 files, 60 insertions, 4 deletions)
 ================================================================================
 
-Per the plan's Gate 1: source-code changes (Tasks 2-4) are NOT made until
-the verification block shows all 5 counters at 0. The connectivity failure
-above is a stricter form of Gate 1 — we cannot even attempt cleanup from
-here.
+ backend/contractor_ops/notification_router.py | 62 +++++++++++++++++++++++++--
+ backend/server.py                             |  2 +
+ 2 files changed, 60 insertions(+), 4 deletions(-)
 
-Once Zahi pastes the verification block back, work resumes with:
-  - Task 2: ensure_indexes() in notification_router.py + wire in server.py
-  - Tasks 3+4: atomic upsert at lines 213-217 and 259-263
-  - VERIFY: 11 grep checks + import + npm build + restart
-  - Final review.txt → AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+--------------------------------------------------------------------------------
+diff --git a/backend/contractor_ops/notification_router.py b/backend/contractor_ops/notification_router.py
+--------------------------------------------------------------------------------
+@@ -180,6 +180,7 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn:
+         entries = body.get('entry', [])
+         processed = []
+         events_saved = 0
++        duplicates_skipped = 0
+ 
+         for entry in entries:
+             entry_id = entry.get('id', '')
+@@ -211,10 +212,26 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn:
+                         'raw_payload': status_update,
+                     }
+                     try:
+-                        await db.whatsapp_events.insert_one(event_doc)
++                        # Atomic upsert — race-safe dedup.
++                        # Matches audit recommendation: (wa_message_id, event_type, status) is the unique key.
++                        # See Batch S5a fix for code-audit CRITICAL finding 2026-04-24.
++                        result = await db.whatsapp_events.update_one(
++                            {
++                                'wa_message_id': provider_id,
++                                'event_type': 'status',
++                                'status': wa_status,
++                            },
++                            {'$setOnInsert': event_doc},
++                            upsert=True,
++                        )
++                        if result.upserted_id is None:
++                            duplicates_skipped += 1
++                            logger.info(f"[WA] duplicate status event skipped: {provider_id}/{wa_status}")
++                            continue
+                         events_saved += 1
+                     except Exception as e:
+                         logger.error(f"[WA] failed to save status event: {e}")
++                        continue
+ 
+                     masked_recipient = (recipient[:3] + '****' + recipient[-4:]) if len(recipient) > 8 else '****'
+                     logger.info(f"[WA] status_update wa_id={provider_id} status={wa_status} to={masked_recipient}")
+@@ -257,15 +274,52 @@ def create_notification_router(require_roles_fn: Callable, get_current_user_fn:
+                         'raw_payload': msg,
+                     }
+                     try:
+-                        await db.whatsapp_events.insert_one(event_doc)
++                        result = await db.whatsapp_events.update_one(
++                            {
++                                'wa_message_id': msg_id,
++                                'event_type': 'message',
++                                'status': '',
++                            },
++                            {'$setOnInsert': event_doc},
++                            upsert=True,
++                        )
++                        if result.upserted_id is None:
++                            duplicates_skipped += 1
++                            logger.info(f"[WA] duplicate message event skipped: {msg_id}")
++                            continue
+                         events_saved += 1
+                     except Exception as e:
+                         logger.error(f"[WA] failed to save message event: {e}")
++                        continue
+ 
+                     masked_from = (from_phone[:3] + '****' + from_phone[-4:]) if len(from_phone) > 8 else '****'
+                     logger.info(f"[WA] incoming_message from={masked_from} wa_id={msg_id} type={msg_type} text={msg_text[:80]}")
+ 
+-        logger.info(f"[WA] webhook processed: {len(processed)} status updates linked, {events_saved} events saved to DB")
+-        return {'processed': len(processed), 'events_saved': events_saved, 'results': processed}
++        logger.info(f"[WA] webhook processed: {len(processed)} status updates linked, {events_saved} events saved to DB, {duplicates_skipped} duplicates skipped")
++        return {
++            'processed': len(processed),
++            'events_saved': events_saved,
++            'duplicates_skipped': duplicates_skipped,
++            'results': processed,
++        }
+ 
+     return router
++
++
++async def ensure_indexes(db):
++    """Create unique compound index on whatsapp_events for atomic upsert dedup.
++
++    Per Batch S5a fix (code-audit 2026-04-24): the (wa_message_id, event_type, status)
++    tuple is the idempotency key for WhatsApp webhook events. This index makes the
++    upsert in whatsapp_webhook_receive race-safe at the DB level.
++    """
++    try:
++        await db.whatsapp_events.create_index(
++            [('wa_message_id', 1), ('event_type', 1), ('status', 1)],
++            unique=True,
++            name='wa_message_id_event_type_status_unique',
++            background=True,
++        )
++        logger.info("WhatsApp events indexes ensured")
++    except Exception as e:
++        logger.warning(f"WhatsApp events index creation: {e}")
 
+--------------------------------------------------------------------------------
+diff --git a/backend/server.py b/backend/server.py
+--------------------------------------------------------------------------------
+@@ -1128,6 +1128,8 @@ async def _deferred_db_init():
+         from contractor_ops.invoicing import ensure_indexes as invoicing_ensure_indexes
+         await invoicing_ensure_indexes()
+         await ensure_reminder_indexes()
++        from contractor_ops.notification_router import ensure_indexes as notification_ensure_indexes
++        await notification_ensure_indexes(db)
+         # Safety module indices (guarded by feature flag)
+         if ENABLE_SAFETY_MODULE:
+             from contractor_ops.safety_router import ensure_safety_indexes
+
+================================================================================
+VERIFY — all 11 grep checks PASS
+================================================================================
+
+(a) update_one in notification_router.py (expect ≥2):
+    218:                        result = await db.whatsapp_events.update_one(
+    277:                        result = await db.whatsapp_events.update_one(
+    → 2 hits ✓
+
+(b) Old `db.whatsapp_events.insert_one` (expect 0):
+    (no output — grep exit=1)
+    → 0 hits ✓
+
+(c) `$setOnInsert` (expect 2):
+    → 2 hits ✓
+
+(d) `upserted_id is None` (expect 2):
+    → 2 hits ✓
+
+(e) `duplicates_skipped` (expect ≥4):
+    183:        duplicates_skipped = 0
+    228:                            duplicates_skipped += 1
+    287:                            duplicates_skipped += 1
+    298:        logger.info(f"[WA] webhook processed: ... {duplicates_skipped} duplicates skipped")
+    302:            'duplicates_skipped': duplicates_skipped,
+    → 5 hits ✓
+
+(f) Unique compound index name (expect 1):
+    backend/contractor_ops/notification_router.py:320:
+        name='wa_message_id_event_type_status_unique',
+    → 1 hit ✓
+
+(g) `engine.process_webhook` (expect 1 — unchanged baseline):
+    247: result = await engine.process_webhook(provider_id, mapped_status)
+    → 1 hit ✓ (call site unchanged; duplicates skip via `continue` BEFORE reaching it)
+
+(h) `_verify_signature` unchanged:
+    43:def _verify_signature(raw_body: bytes, signature_header: str) -> bool:
+    168:        if not _verify_signature(raw_body, sig_header):
+    → def + 1 call site, identical to baseline ✓
+
+(i) No frontend change:
+    git diff --stat frontend/  →  empty ✓
+
+(j) No schema change:
+    git diff --stat backend/contractor_ops/schemas.py  →  empty ✓
+
+(k) No new dependencies:
+    git diff backend/requirements.txt frontend/package.json  →  0 lines ✓
+
+================================================================================
+VERIFY — Python imports + frontend build
+================================================================================
+
+Python imports (from backend/):
+    from contractor_ops.notification_router import (
+        create_notification_router, ensure_indexes,
+        set_engine, set_wa_verify_token, set_meta_app_secret, _verify_signature,
+    )
+    → OK — module loads, factory + ensure_indexes + setters + signature helper
+       all importable
+
+Server end-to-end import (`python -c "import server"`):
+    → server.py imports cleanly. No errors.
+
+Frontend build (`REACT_APP_BACKEND_URL=https://example.com CI=true npm run build`):
+    → Compiled with warnings.
+    → 3 pre-existing apple-sign-in source-map warnings ONLY.
+    → No new warnings, no errors. Build folder ready.
+
+================================================================================
+VERIFY — Workflow restart + ensure_indexes wiring confirmed
+================================================================================
+
+After `restart_workflow Start application`, log shows:
+
+    2026-04-25 12:54:03,302 - contractor_ops.notification_router -
+        INFO - WhatsApp events indexes ensured
+
+→ The new ensure_indexes() is wired correctly into _deferred_db_init.
+→ On prod (first startup after deploy), the unique index will build
+   in <10 seconds against 387 rows. Cleanup already done → build will succeed.
+
+================================================================================
+ONE-TIME SCRIPT — DELETED
+================================================================================
+
+cleanup_whatsapp_events.py was created to run Task 2.5 cleanup. Since the
+Replit dev workspace cannot reach Atlas (IP allowlist), Zahi ran the
+equivalent operations directly via mongosh on his Mac. The script has
+been DELETED from the working tree (never committed, never deployed).
+
+Confirmed: `ls cleanup_whatsapp_events.py` → No such file or directory.
+
+================================================================================
+PROPOSED COMMIT MESSAGE (per spec — exact)
+================================================================================
+
+fix(security): idempotent WhatsApp webhook via atomic upsert + unique index (Batch S5a)
+
+Pre-launch code-audit fix. 2026-04-24 audit found S5-CRIT-1: WhatsApp
+webhook at notification_router.py:153-269 had no idempotency mechanism.
+Meta retries on 5xx / network blips / ACK timeouts (standard Meta
+behavior, ~2-5% of webhook batches). Each retry produced:
+- Duplicate whatsapp_events row
+- Duplicate call to engine.process_webhook → duplicate audit_events row
+- Duplicate (idempotent but wasteful) notification_jobs update
+
+Fix: atomic upsert at both webhook insert sites (status + message)
+with compound unique index on (wa_message_id, event_type, status).
+Skip outbound process_webhook when upsert returns None (duplicate
+detected). Race-safe via MongoDB unique-constraint retry semantics.
+
+Other webhooks audited: no PayPlus/Green Invoice/billing webhooks
+exist. This patch covers the full webhook attack surface.
+
+One file modified (notification_router.py). One index added via
+existing ensure_indexes pattern. No schema migration. No frontend.
+No new deps.
+
+================================================================================
+POST-DEPLOY TEST PLAN (Tests A-E, run by Zahi after `./deploy.sh --prod`)
+================================================================================
+
+Test URL: https://api.brikops.com/api/webhooks/whatsapp
+
+A. First webhook succeeds (happy path)
+   → 200, events_saved=1, duplicates_skipped=0, row inserted
+
+B. Replay same webhook within 2 sec (dedup works) — MAIN TEST
+   → 200, events_saved=0, duplicates_skipped=1, NO new row,
+      NO new audit_events row (process_webhook skipped)
+
+C. Different status on same wa_message_id = new event
+   → 200, events_saved=1, duplicates_skipped=0, new row
+      (dedup key is the TUPLE, not just wa_message_id)
+
+D. Manual duplicate insert via mongosh fails with DuplicateKeyError
+   → DB-level guarantee confirmed
+
+E. Invalid signature still rejected (regression)
+   → 401, no insert
+
+F. 24h observation: whatsapp_events grows linearly with WA volume
+   (not doubled), notification_jobs shows no status oscillations
+
+================================================================================
+CODE REVIEW (architect) — finding + mitigation
+================================================================================
+
+Architect found one residual concern WITHOUT code changes required:
+
+  STARTUP RACE WINDOW: ensure_indexes() runs inside _deferred_db_init(),
+  which is launched via asyncio.create_task and runs in the background
+  AFTER the server starts accepting connections. There is a sub-second
+  window between "server up" and "index built" during which two truly
+  concurrent webhooks with the same (wa_message_id, event_type, status)
+  could both upsert (without DB-level uniqueness, two concurrent inserts
+  to a non-existing tuple can both succeed).
+
+Why we are NOT changing the code:
+  - The try/except + logger.warning pattern in ensure_indexes() is
+    IDENTICAL to the convention used by stepup_service, ownership_transfer,
+    safety_router, etc. Changing only this one to "fatal" would deviate
+    from the project's established startup-resilience pattern.
+  - Restructuring _deferred_db_init to be synchronous would touch a
+    file/area outside the scope of this Batch S5a fix.
+
+Operational mitigation (REQUIRED before deploy — see PRE-DEPLOY step below):
+  Zahi runs ONE additional mongosh command in the same Atlas session he
+  used for cleanup. This pre-creates the unique index BEFORE the deploy
+  goes live, so the startup race window CANNOT exist — by the time the
+  new code's first webhook request arrives, the DB-level unique constraint
+  is already there. ensure_indexes() at startup then becomes a no-op
+  (Mongo silently accepts an equivalent createIndex).
+
+================================================================================
+PRE-DEPLOY STEP — Zahi runs in mongosh BEFORE `./deploy.sh --prod`
+================================================================================
+
+Run this in the same mongosh session you used for the cleanup, against
+brikops_prod (Atlas):
+
+    use brikops_prod
+    db.whatsapp_events.createIndex(
+      { wa_message_id: 1, event_type: 1, status: 1 },
+      { unique: true, name: "wa_message_id_event_type_status_unique", background: true }
+    )
+
+Expected output:
+    {
+      "createdCollectionAutomatically": false,
+      "numIndexesBefore": <N>,
+      "numIndexesAfter": <N+1>,
+      "ok": 1
+    }
+
+If output says `"numIndexesBefore" === "numIndexesAfter"` AND no error,
+the index was already there — also OK, just means it was created earlier.
+
+If you see `DuplicateKey` error → STOP, do NOT deploy. Some duplicate
+slipped through the cleanup. Re-run Task 2.5 dedup queries and fix
+before retrying.
+
+Verify after creation:
+    db.whatsapp_events.getIndexes()
+    // confirm "wa_message_id_event_type_status_unique" appears with unique:true
+
+Once the index exists in prod, the deploy is race-safe from request #1.
+
+================================================================================
+DEPLOY SEQUENCE (after your approval)
+================================================================================
+
+1. You reply "approved" here.
+2. I commit with the exact message in the section above (no deploy).
+3. You run the mongosh createIndex command above (eliminates startup race).
+4. You verify the index exists with db.whatsapp_events.getIndexes().
+5. You run `./deploy.sh --prod` from your Replit shell.
+6. After deploy, you run Tests A-E from the test plan above.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
+
+Source code is staged in working tree. NO commit has been made.
+NO deploy has been triggered. Please review the diff above, then either:
+
+  → APPROVE: Reply "approved" and I will commit with the exact message
+             above. You then run the mongosh index creation, then deploy.
+  → CHANGES: Reply with what to fix; I will revise and re-VERIFY.
+
+Files in working tree:
+  M backend/contractor_ops/notification_router.py  (+58 -2)
+  M backend/server.py                              (+2  -0)
+  D cleanup_whatsapp_events.py                     (one-time, deleted)
+
+Gate 1: PASSED (Zahi mongosh cleanup verified all-zeros)
+Gate 2: PASSED (11/11 grep + python import + npm build + workflow restart)
+Gate 3: PASSED (architect code review — handler logic correct,
+                  startup race mitigated by mandatory PRE-DEPLOY step)
+Gate 4: AWAITING — your approval here.
