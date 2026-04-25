@@ -1,84 +1,14 @@
 ================================================================================
-BATCH S5b — TOCTOU + CORS fail-fast (Task #422)
-Pre-launch security hardening — code-audit 2026-04-24 HIGH severity
+COMPLETE DIFF — Batch S5b — TOCTOU + CORS fail-fast (Task #422)
+Commit: f38a538  "fix(security): startup fail-fast for missing META_APP_SECRET + invalid CORS (Batch S5b)"
 ================================================================================
 
-ROLLBACK ANCHOR (capture BEFORE deploy):
-    HEAD before this commit:
-    65bee9d8269f6e00d7d7041d9f2d3a7cd74c5032 Add atomic upserts and duplicate skipping for incoming events
-
-    Revert is one command:
-        git revert <new_S5b_SHA> --no-edit
-        ./deploy.sh --prod
-
-NOTE on upstream commit: 65bee9d8 above is the S5a (#421) checkpoint commit
-created by the platform when transitioning from Plan to Build. It contains
-the S5a working-tree changes (notification_router.py atomic upserts +
-ensure_indexes wiring). #422's diff is layered cleanly on top with NO
-overlap in line ranges. See "Co-pending diff context" below.
+Files changed in this task:
+  1. backend/server.py    (+30 -2)   — committed in f38a538
+  2. backend/.env         (local)    — gitignored, NOT in commit (dev workflow only)
 
 ================================================================================
-WHAT CHANGED — Two startup-time fail-fast guards in backend/server.py
-================================================================================
-
-S5-HIGH-1 — TOCTOU startup guard (server.py:360-368)
-    Refuse to boot if WHATSAPP_ENABLED=true but META_APP_SECRET is empty.
-    Mirrors fail-closed pattern from services/object_storage.py:180-182.
-    Webhook handler check at notification_router.py:162-164 (existing 503
-    response) is UNCHANGED — this is a startup-time addition only.
-
-S5-HIGH-2 — CORS fail-fast (server.py:1423-1459)
-    1. Replaced non-prod fallback `'*'` with safe localhost defaults:
-       'http://localhost:3000,http://localhost:5173'
-    2. Added `https://brikops-new.pages.dev` as 2nd origin in prod default
-       (per Zahi's AWS EB inspection — exact match to the production
-       CORS_ORIGINS env var). Now 6 origins, in this exact order:
-           https://app.brikops.com
-           https://brikops-new.pages.dev
-           https://www.brikops.com
-           capacitor://localhost
-           ionic://localhost
-           https://localhost
-    3. Extracted resolved list into stripped/filtered local variable.
-    4. Added 2 validators that raise RuntimeError:
-         - if list is empty
-         - if list contains '*'
-    5. allow_credentials=True / allow_methods=['*'] / allow_headers=['*'] /
-       expose_headers=[...] all UNCHANGED.
-
-================================================================================
-DEVIATIONS FROM ORIGINAL SPEC (mid-flight Zahi clarification)
-================================================================================
-
-1. PROD CORS LIST — 6 origins, NOT 2 as the original spec suggested.
-   The spec's "Replace with" code had only `https://app.brikops.com,
-   https://www.brikops.com` for prod. Following that literally would have
-   broken the iOS/Android Capacitor app AND the Cloudflare Pages preview.
-   Zahi inspected the actual AWS EB env var and confirmed 6 origins, with
-   `https://brikops-new.pages.dev` being the one missing from the original
-   spec snapshot. The committed code uses the canonical 6-origin list.
-
-2. LINE-NUMBER DRIFT (after S5a) — set_meta_app_secret is at line 358 (not
-   354 as the spec said), and the CORS block is at lines 1426+ (not 1376
-   as the spec said). The patterns themselves are intact; the drift is
-   from prior batches. Functionally identical placement.
-
-================================================================================
-LOCAL-ONLY ANCILLARY CHANGE — backend/.env (gitignored, NOT in commit)
-================================================================================
-
-backend/.env had `CORS_ORIGINS=*` for the dev workflow. The new validators
-correctly rejected this on `python -c "import server"` (the FEATURE working
-as designed). To allow the dev workflow to boot, .env was updated to:
-    CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:5000,http://localhost:8000
-
-backend/.env is gitignored (.gitignore:35), so this change is local to
-the Replit dev container ONLY. Production env var on AWS EB is untouched.
-Confirmed via `git check-ignore -v backend/.env` and `git status` showing
-only `backend/server.py` modified.
-
-================================================================================
-FULL DIFF (backend/server.py — only file changed)
+FILE 1 of 2 — backend/server.py — UNIFIED DIFF (from commit f38a538)
 ================================================================================
 
 diff --git a/backend/server.py b/backend/server.py
@@ -88,7 +18,7 @@ index cc7b695..06fff5e 100644
 @@ -354,6 +354,16 @@ set_engine(notification_engine)
  set_wa_verify_token(WA_WEBHOOK_VERIFY_TOKEN)
  set_meta_app_secret(META_APP_SECRET)
-
+ 
 +# S5b — Startup guard: refuse to boot if WhatsApp is enabled but secret missing.
 +# Prevents silent misconfiguration where webhook signature verification is
 +# effectively disabled until the first webhook arrives and returns 503.
@@ -101,11 +31,11 @@ index cc7b695..06fff5e 100644
 +
  from contractor_ops.router import set_notification_engine
  set_notification_engine(notification_engine)
-
+ 
 @@ -1407,17 +1417,39 @@ if _allowed_hosts_raw and APP_MODE == 'prod':
-
+ 
  app.add_middleware(GZipMiddleware, minimum_size=500)
-
+ 
 +# S5b — CORS defaults: explicit safe origins per env, NEVER wildcard with credentials.
 +# Code-audit fix 2026-04-24. Prod default mirrors AWS EB CORS_ORIGINS exactly
 +# (web + Cloudflare Pages preview + Capacitor mobile WebView).
@@ -146,277 +76,154 @@ index cc7b695..06fff5e 100644
      expose_headers=['x-request-id', 'x-response-time-ms'],
 
 ================================================================================
-VERIFY — 10 grep checks (all pass)
+FILE 1 of 2 — backend/server.py — BEFORE (the two affected regions, full code)
 ================================================================================
 
-(a) TOCTOU guard added:
-    grep -n "WHATSAPP_ENABLED and not META_APP_SECRET" backend/server.py
-    → 361:if WHATSAPP_ENABLED and not META_APP_SECRET:
-    Expected 1 hit ✓
+------ Region A: lines 354-358 BEFORE (5 lines) ------
 
-(b) RuntimeError text exact:
-    grep -n "WHATSAPP_ENABLED=true but META_APP_SECRET is not set" backend/server.py
-    → 363: "Configuration error: WHATSAPP_ENABLED=true but META_APP_SECRET is not set. "
-    Expected 1 hit ✓
+set_engine(notification_engine)
+set_wa_verify_token(WA_WEBHOOK_VERIFY_TOKEN)
+set_meta_app_secret(META_APP_SECRET)
 
-(c) CORS validator for empty list:
-    grep -n "CORS_ORIGINS resolved to empty list" backend/server.py
-    → 1439: "Configuration error: CORS_ORIGINS resolved to empty list. "
-    Expected 1 hit ✓
+from contractor_ops.router import set_notification_engine
 
-(d) CORS validator for wildcard:
-    grep -n "CORS_ORIGINS contains '\*'" backend/server.py
-    → 1444: "Configuration error: CORS_ORIGINS contains '*' (wildcard) while "
-    Expected 1 hit ✓
+------ Region B: lines 1407-1425 BEFORE (19 lines) ------
 
-(e) Safe non-prod default:
-    grep -n "http://localhost:3000,http://localhost:5173" backend/server.py
-    → 1430:) if APP_MODE == 'prod' else 'http://localhost:3000,http://localhost:5173'
-    Expected 1 hit ✓
+if _allowed_hosts_raw and APP_MODE == 'prod':
 
-(f) OLD wildcard fallback gone:
-    grep -n "if APP_MODE == 'prod' else '\*'" backend/server.py
-    → (empty)
-    Expected 0 hits ✓
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
-(g) Webhook handler logic unchanged:
-    git diff --stat backend/contractor_ops/notification_router.py
-    → (empty in this batch's diff — no changes by #422)
-    Note: #421's S5a hunks already in HEAD via auto-checkpoint, not in #422's diff.
-    Expected: no #422 changes ✓
-
-(h) Only one file changed in this batch:
-    git diff --name-only
-    → backend/server.py
-    Expected ✓
-
-(i) No frontend change:
-    git diff --stat frontend/
-    → (empty)
-    Expected ✓
-
-(j) No deps change:
-    git diff backend/requirements.txt
-    → (empty)
-    Expected ✓
-
-BONUS check — brikops-new.pages.dev (Cloudflare Pages preview) added:
-    grep -c "brikops-new.pages.dev" backend/server.py
-    → 1 ✓
+_cors_default = (
+    'https://app.brikops.com,'
+    'https://www.brikops.com,'
+    'capacitor://localhost,'
+    'ionic://localhost,'
+    'https://localhost'
+) if APP_MODE == 'prod' else '*'
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', _cors_default).split(','),
+    allow_methods=['*'],
+    allow_headers=['*'],
+    expose_headers=['x-request-id', 'x-response-time-ms'],
 
 ================================================================================
-VERIFY — Python import + workflow boot (PASS)
+FILE 1 of 2 — backend/server.py — AFTER (the two affected regions, full code)
 ================================================================================
 
-> cd backend && python -c "import server; print('IMPORT OK')"
-    [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
-    [STARTUP] SMS_MODE=stub APP_MODE=dev SMS_ENABLED=True SMS_CLIENT_ENABLED=True
-    Safety module disabled (ENABLE_SAFETY_MODULE=false)
-    [SPA] S3 mode — skipping /reports StaticFiles mount
-    [SPA] Serving frontend from /home/runner/workspace/frontend/build
-    IMPORT OK
+------ Region A: lines 354-368 AFTER (15 lines) ------
 
-NOTE: First run of `python -c "import server"` correctly raised the new
-RuntimeError because backend/.env had the legacy `CORS_ORIGINS=*` value
-(this is the FEATURE working as designed). Updated .env to safe localhost
-defaults; second run passes. Same will happen on prod deploy IF AWS EB
-env var is misconfigured — see PRE-DEPLOY checklist below.
+set_engine(notification_engine)
+set_wa_verify_token(WA_WEBHOOK_VERIFY_TOKEN)
+set_meta_app_secret(META_APP_SECRET)
 
-> Workflow restart (Start application):
-    [STARTUP] BrikOps starting — APP_ID=contractor-ops-001, MODE=dev
-    [STARTUP] WhatsApp=True SMS=True OTP=mock
-    [STARTUP] Server accepting connections — DB init running in background.
-    INFO:     Application startup complete.
-    INFO:     Uvicorn running on http://0.0.0.0:5000
-    [STARTUP] Deferred DB init completed.
-    [REQ] rid=4c0984b8 GET / status=200 duration=4.6ms
+# S5b — Startup guard: refuse to boot if WhatsApp is enabled but secret missing.
+# Prevents silent misconfiguration where webhook signature verification is
+# effectively disabled until the first webhook arrives and returns 503.
+# Code-audit fix 2026-04-24.
+if WHATSAPP_ENABLED and not META_APP_SECRET:
+    raise RuntimeError(
+        "Configuration error: WHATSAPP_ENABLED=true but META_APP_SECRET is not set. "
+        "Set META_APP_SECRET env var or set WHATSAPP_ENABLED=false. Refusing to start."
+    )
 
-No RuntimeError. No "Refusing to start". App accepts traffic. ✓
+from contractor_ops.router import set_notification_engine
 
-================================================================================
-VERIFY — Frontend build (PASS — no changes)
-================================================================================
+------ Region B: lines 1417-1459 AFTER (43 lines) ------
 
-> cd frontend && REACT_APP_BACKEND_URL=https://example.com CI=true npm run build
-    [...build output truncated...]
-    The build folder is ready to be deployed.
+if _allowed_hosts_raw and APP_MODE == 'prod':
 
-No new warnings. No changes to frontend. ✓
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
-================================================================================
-ARCHITECT CODE REVIEW (evaluate_task) — PASS
-================================================================================
+# S5b — CORS defaults: explicit safe origins per env, NEVER wildcard with credentials.
+# Code-audit fix 2026-04-24. Prod default mirrors AWS EB CORS_ORIGINS exactly
+# (web + Cloudflare Pages preview + Capacitor mobile WebView).
+_cors_default = (
+    'https://app.brikops.com,'
+    'https://brikops-new.pages.dev,'
+    'https://www.brikops.com,'
+    'capacitor://localhost,'
+    'ionic://localhost,'
+    'https://localhost'
+) if APP_MODE == 'prod' else 'http://localhost:3000,http://localhost:5173'
+_cors_origins_raw = os.environ.get('CORS_ORIGINS', _cors_default)
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(',') if o.strip()]
 
-Verdict: PASS — Batch S5b implementation meets the stated pre-launch
-security objective and correctly enforces startup-time fail-fast for both
-WhatsApp secret presence and CORS wildcard/empty misconfiguration.
+# Validators: refuse to boot on invalid CORS configuration.
+# allow_origins=['*'] with allow_credentials=True is invalid per CORS spec
+# (RFC 6454) and leaks cookies in error responses.
+if not _cors_origins:
+    raise RuntimeError(
+        "Configuration error: CORS_ORIGINS resolved to empty list. "
+        "Set CORS_ORIGINS env var to explicit comma-separated origins. Refusing to start."
+    )
+if '*' in _cors_origins:
+    raise RuntimeError(
+        "Configuration error: CORS_ORIGINS contains '*' (wildcard) while "
+        "allow_credentials=True. This is invalid per CORS spec and leaks cookies. "
+        "Set CORS_ORIGINS to explicit comma-separated origins. Refusing to start."
+    )
 
-Confirmed correct:
-  • TOCTOU guard correctly placed after set_meta_app_secret call.
-  • RuntimeError text matches canonical spec block (operator-facing
-    error clarity is good — includes remediation guidance).
-  • CORS validators in sound order (empty-list check first, wildcard second).
-  • Trailing commas and whitespace handled correctly via strip+filter.
-  • Middleware uses validated _cors_origins instead of raw split.
-  • Mobile + Cloudflare Pages preview origins preserved.
-
-Non-blocking observation (not changing this batch):
-  • If a deployment tool wraps CORS_ORIGINS in literal quotes (e.g.
-    `"http://a,http://b"` as one raw string), the value won't be unquoted
-    and may silently fail CORS matching. Not a security regression. Worth
-    documenting if it ever occurs in practice.
-
-Architect's nice-to-haves (out of scope for this batch):
-  • Add a startup config test matrix for CORS_ORIGINS parsing edge cases.
-  • Add one startup test for WHATSAPP_ENABLED=true + missing secret.
-  • Re-evaluate brikops-new.pages.dev once Cloudflare Pages role is
-    confirmed long-term.
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_methods=['*'],
+    allow_headers=['*'],
+    expose_headers=['x-request-id', 'x-response-time-ms'],
 
 ================================================================================
-CO-PENDING DIFF CONTEXT (#421 S5a + #422 S5b)
+FILE 2 of 2 — backend/.env — gitignored, dev workflow only, NOT in commit
 ================================================================================
 
-When the platform transitioned the project from Plan to Build mode for
-#422, it auto-checkpointed the working tree, which included S5a's
-uncommitted changes. So git HEAD now contains:
+------ BEFORE (full file, 16 lines) ------
 
-  HEAD (3966756)   "Transitioned from Plan to Build mode" (empty)
-  HEAD~1 (65bee9d) "Add atomic upserts and duplicate skipping for incoming events"  ← S5a
-  HEAD~2 (bfdebf7) "Address WhatsApp webhook issues and prepare for data cleanup"
+APP_ID=contractor-ops-001
+APP_MODE=dev
+MONGO_URL=mongodb://localhost:27017
+DB_NAME=contractor_ops
+CORS_ORIGINS=*
+JWT_SECRET=PLACEHOLDER_set_real_secret_in_replit_secrets_panel
+JWT_SECRET_VERSION=v1
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_S3_BUCKET=bedekpro-media
+AWS_REGION=us-east-1
 
-The S5a code (#421) is now in HEAD. #422's diff (this review.txt) is
-layered cleanly on top — no overlap in line ranges:
-  • #421 → notification_router.py (full file) + server.py:1128-1135
-  • #422 → server.py:358-368 + server.py:1417-1459
+# === WhatsApp Notifications ===
+# Set to 'true' ONLY in production with valid Meta credentials
+WHATSAPP_ENABLED=false
 
-PRACTICAL IMPLICATION: When you commit #422, the tree on prod will get
-BOTH #421 (S5a — atomic upsert + index) AND #422 (S5b — fail-fast guards)
-in this single deploy. That is acceptable since both passed independent
-review and architect sign-off. If you'd rather ship them separately,
-let me know and I'll help split the commit.
+------ AFTER (full file, 16 lines) ------
 
-If shipping together, the PRE-DEPLOY mongosh step from review.txt for
-#421 (createIndex on whatsapp_events) STILL APPLIES — see PRE-DEPLOY
-checklist below.
+APP_ID=contractor-ops-001
+APP_MODE=dev
+MONGO_URL=mongodb://localhost:27017
+DB_NAME=contractor_ops
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:5000,http://localhost:8000
+JWT_SECRET=PLACEHOLDER_set_real_secret_in_replit_secrets_panel
+JWT_SECRET_VERSION=v1
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_S3_BUCKET=bedekpro-media
+AWS_REGION=us-east-1
 
-================================================================================
-PRE-DEPLOY CHECKLIST (Zahi to verify in AWS Console BEFORE `./deploy.sh --prod`)
-================================================================================
+# === WhatsApp Notifications ===
+# Set to 'true' ONLY in production with valid Meta credentials
+WHATSAPP_ENABLED=false
 
-1. AWS EB → Configuration → Environment properties — verify ALL of:
-   ✓ META_APP_SECRET is SET with a non-empty value
-   ✓ WHATSAPP_ENABLED matches reality (true if WhatsApp Cloud API is in use)
-   ✓ CORS_ORIGINS is either:
-        (a) explicitly set with the canonical 6-origin list, OR
-        (b) unset (in which case the new prod hardcoded default applies — same 6 origins)
-        IT MUST NOT contain '*' anywhere in the value.
+------ ONLY ONE LINE CHANGED ------
 
-2. (Carry-over from #421 review.txt — STILL REQUIRED if shipping #421+#422 together)
-   Run in mongosh on Atlas (brikops_prod):
-       use brikops_prod
-       db.whatsapp_events.createIndex(
-         { wa_message_id: 1, event_type: 1, status: 1 },
-         { unique: true, name: "wa_message_id_event_type_status_unique", background: true }
-       )
-       db.whatsapp_events.getIndexes()
+Line 5:
+  BEFORE:  CORS_ORIGINS=*
+  AFTER:   CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:5000,http://localhost:8000
 
-If any of #1's vars are misconfigured, the deploy will fail to boot with
-a clear RuntimeError in EB logs — that is the FEATURE. Fix the env var
-per the message, redeploy.
-
-================================================================================
-POST-DEPLOY TESTS
-================================================================================
-
-Test A — Normal boot
-   • EB health check turns green within ~5 minutes
-   • Logs do NOT contain "RuntimeError" or "Refusing to start"
-   • App accepts traffic normally
-
-Test B — Webhook regression (S5a + S5b combined)
-   • Send a Meta-signed webhook → returns 200 with events_saved=1
-   • Replay same payload → events_saved=0, duplicates_skipped=1
-   • If META_APP_SECRET were missing, the boot would have failed
-
-Test C — CORS headers correct
-   curl -i -H "Origin: https://app.brikops.com" \
-        https://api.brikops.com/api/health
-   • Response includes: Access-Control-Allow-Origin: https://app.brikops.com (NOT '*')
-   • Response includes: Access-Control-Allow-Credentials: true
-
-Test C2 — Cloudflare Pages preview origin
-   curl -i -H "Origin: https://brikops-new.pages.dev" \
-        https://api.brikops.com/api/health
-   • Response includes: Access-Control-Allow-Origin: https://brikops-new.pages.dev
-
-Test D — Disallowed origin rejected
-   curl -i -H "Origin: https://evil.com" \
-        https://api.brikops.com/api/health
-   • Response does NOT include Access-Control-Allow-Origin: https://evil.com
+Reason: the new CORS validators in server.py (FILE 1 above) refuse to boot
+when CORS_ORIGINS contains '*'. Updated dev .env so the local workflow can
+boot. backend/.env is in .gitignore (line 35) — production env on AWS EB
+is untouched.
 
 ================================================================================
-EXACT COMMIT MESSAGE (already written to .local/.commit_message)
+END OF DIFF
 ================================================================================
-
-fix(security): startup fail-fast for missing META_APP_SECRET + invalid CORS (Batch S5b)
-
-Pre-launch code-audit fix. 2026-04-24 audit found 2 HIGH-severity
-configuration safety gaps:
-
-S5-HIGH-1: server.py boots silently when WHATSAPP_ENABLED=true but
-META_APP_SECRET is unset. The webhook handler at notification_router.py:162
-correctly returns 503 when this happens, but the misconfiguration goes
-unnoticed until the first webhook arrives. Add a startup guard that
-raises RuntimeError if WhatsApp is enabled but the secret is missing,
-forcing the engineer to notice the error in EB logs immediately.
-
-S5-HIGH-2: server.py CORS configuration falls back to allow_origins=['*']
-with allow_credentials=True when APP_MODE != 'prod' AND CORS_ORIGINS is
-unset. This combo is invalid per CORS spec (RFC 6454) and leaks cookies
-in error responses. Replace the wildcard fallback with safe localhost
-defaults (http://localhost:3000, http://localhost:5173) and add explicit
-validators that raise RuntimeError if the final list contains '*' or is
-empty. Also add https://brikops-new.pages.dev to the prod default to
-exactly mirror the AWS EB CORS_ORIGINS env var (Cloudflare Pages preview).
-
-Both fixes follow the existing fail-closed pattern from
-services/object_storage.py:180-182 and config.py:29-36 (_require()).
-
-One file modified (server.py). Webhook runtime logic unchanged. CORS
-runtime behavior unchanged for prod and properly-configured dev. No
-schema, no migration, no frontend, no new deps.
-
-================================================================================
-DEPLOY SEQUENCE
-================================================================================
-
-1. You reply "approved" here.
-2. The platform commits with the exact message above.
-3. (If #421 not yet committed separately) You run the mongosh createIndex
-   command from #421's review.txt.
-4. You verify AWS EB env vars per the PRE-DEPLOY checklist above.
-5. You run `./deploy.sh --prod` from your shell.
-6. After EB green, you run Tests A + C + C2.
-
-================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
-
-Source code is staged in working tree. NO commit has been made by me.
-NO deploy has been triggered. Please review the diff above, then either:
-
-  → APPROVE: Reply "approved" and the commit will land with the exact
-             message above. You then verify EB env vars and deploy.
-  → CHANGES: Reply with what to fix; I will revise and re-VERIFY.
-
-Files in working tree:
-  M backend/server.py    (+30 -2)   — committable
-  M backend/.env         (local)    — gitignored, NOT in commit
-
-Gates passed:
-  Gate 1: STEP 0 grep checks (6/6) ✓
-  Gate 2: VERIFY grep checks (10/10) ✓
-  Gate 3: Python import + workflow restart (clean boot) ✓
-  Gate 4: Frontend build (clean) ✓
-  Gate 5: Architect code review (PASS) ✓
-  Gate 6: AWAITING — your approval here.
