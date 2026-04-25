@@ -99,3 +99,4 @@ backend/reports/
 
 # Claude Code local state — never commit worktrees or agent scratch
 .claude/
+secrets/
