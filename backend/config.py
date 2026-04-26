@@ -48,7 +48,7 @@ def _require_choice(key: str, choices: tuple) -> str:
 
 APP_ID = _require('APP_ID')
 APP_MODE = os.environ.get('APP_MODE', 'prod').strip()
-if APP_MODE not in ('dev', 'prod'):
+if APP_MODE not in ('dev', 'prod', 'staging'):
     logger.warning(f"[CONFIG] APP_MODE='{APP_MODE}' invalid, defaulting to 'prod'")
     APP_MODE = 'prod'
 JWT_SECRET = _require('JWT_SECRET', min_length=32)
