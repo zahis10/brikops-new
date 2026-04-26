@@ -588,3 +588,5 @@ The rollback SHA you can also reset to directly (with --force if needed):
 ================================================================================
 END OF REVIEW
 ================================================================================
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
