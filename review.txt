@@ -370,20 +370,31 @@ deploy.sh runs in production. Zahi can re-run `./deploy.sh` on the actual
 `staging` branch from his shell to confirm.
 
 ================================================================================
-VERIFY 6 — git diff --stat → exactly two files changed
+VERIFY 6 — exactly two files changed (1 modified + 1 new)
 ================================================================================
+
+PRIMARY PROOF — `git status --porcelain` (covers BOTH tracked-modified AND
+new untracked files; this is the authoritative scope check):
 
 > git status --porcelain
      M deploy.sh
     ?? .github/workflows/deploy-backend-staging.yml
 
+    Line count: 2  →  exactly 2 files in the working-tree change set:
+      • M  deploy.sh                                       (modified)
+      • ?? .github/workflows/deploy-backend-staging.yml    (new, untracked)
+
+SECONDARY (informational only) — `git diff --stat` shows the byte-level
+diff stats for already-tracked files. By design it does NOT list new
+untracked files, so the "1 file changed" here refers ONLY to deploy.sh.
+This is expected; the new yml is captured by the porcelain check above.
+
 > git diff --stat
      deploy.sh | 62 +++++++++++++++++++++++++++++++++++++++++++++++---------------
      1 file changed, 47 insertions(+), 15 deletions(-)
 
-> file count: 2  (deploy.sh modified, .github/workflows/deploy-backend-staging.yml new)
-
-✓ Scope locked: only deploy.sh + the new staging workflow file.
+✓ Scope locked: only deploy.sh + the new staging workflow file. Nothing
+  else in backend/, frontend/, .env, secrets, or other workflows changed.
 
 ================================================================================
 VERIFY 7 — YAML lint of new workflow file
