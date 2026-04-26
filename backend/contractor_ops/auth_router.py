@@ -166,7 +166,13 @@ async def register(user: UserCreate):
         if existing_phone:
             raise HTTPException(status_code=400, detail='Phone already registered')
     user_id = str(uuid.uuid4())
-    resolved_role = user.role.value if isinstance(user.role, Role) else user.role
+    requested = user.role.value if isinstance(user.role, Role) else user.role
+    if requested != "viewer":
+        logger.warning(
+            "[AUTH-REGISTER] Client requested role=%s for email=%s — coerced to viewer (S6 fix)",
+            requested, user.email,
+        )
+    resolved_role = "viewer"
     user_doc = {
         'id': user_id,
         'password_hash': (await _hash_password(user.password)) if user.password else None,

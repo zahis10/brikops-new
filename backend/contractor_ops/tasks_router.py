@@ -787,6 +787,9 @@ async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_
         raise HTTPException(status_code=404, detail='Task not found')
     if task['status'] not in ('closed', 'approved'):
         raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
+    project_role = await _get_project_role(user, task['project_id'])
+    if project_role not in ('project_manager', 'management_team'):
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לפתוח מחדש משימה זו')
     ts = _now()
     prev_status = task['status']
     await db.tasks.update_one({'id': task_id}, {
@@ -1143,6 +1146,10 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     if not task:
         raise HTTPException(status_code=404, detail='Task not found')
+    membership = await _get_project_membership(user, task['project_id'])
+    is_assignee = task.get('assignee_id') == user['id']
+    if membership['role'] == 'none' and not is_assignee:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה להעלות קבצים למשימה זו')
     logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
 
     validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)

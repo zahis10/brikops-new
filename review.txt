@@ -1,1064 +1,590 @@
 ================================================================================
-TASK #425 — COMPLETE DIFF (deploy.sh --stag flag + staging GitHub workflow)
+TASK #426 — S6 SECURITY HARDENING (role escalation + 2 IDOR fixes)
 ================================================================================
 
-This file contains EVERYTHING I changed for Task #425:
+This file contains EVERYTHING I changed for Task #426:
   • A high-level summary
-  • The unified diff for the modified file
-  • The FULL BEFORE content of every modified file
-  • The FULL AFTER content of every modified file
-  • The FULL content of every new file
+  • The unified diff for every modified file
+  • The FULL BEFORE content of every modified function
+  • The FULL AFTER content of every modified function
+  • All 6 verification gate outputs
+  • Coverage audit (11/11 mutation endpoints)
+  • Deploy checklist for Zahi (./deploy.sh --stag → curl health → ./deploy.sh --prod)
 
 ================================================================================
 SUMMARY OF CHANGES
 ================================================================================
 
-Files changed (against rollback SHA 33ffd0b3996b6a93c891e32568adb7be93a9751e):
+Files changed (against rollback SHA 023df1cc0a23b9ac51bb44daff58b3856786c164):
 
-A	.github/workflows/deploy-backend-staging.yml
-M	deploy.sh
+M       backend/contractor_ops/auth_router.py        (+7 -1 lines)
+M       backend/contractor_ops/tasks_router.py       (+7  0 lines)
 
-  • deploy.sh                                     MODIFIED (+47 -15 lines)
-  • .github/workflows/deploy-backend-staging.yml  NEW      (83 lines)
+  Total: 2 files, 14 insertions, 1 deletion. Backend only — no frontend touched.
 
-Rollback SHA (commit before my work):  33ffd0b3996b6a93c891e32568adb7be93a9751e
-Build commit (my work):                2175a9e  ("feat(deploy): add --stag flag + staging GitHub workflow")
-File generated at:                     2026-04-26 12:02:59 UTC
+Rollback SHA (commit before my work):  023df1cc0a23b9ac51bb44daff58b3856786c164
+Current HEAD (still rollback — I commit AFTER you approve this review):
+                                       023df1cc0a23b9ac51bb44daff58b3856786c164
+File generated at:                     2026-04-26 (after work, before commit)
+
+THREE VULNERABILITIES CLOSED
+----------------------------
+
+(1) CRIT-A — Role escalation at POST /api/auth/register
+    Before: any unauthenticated client could POST a `role` field of their
+            choosing (e.g. "project_manager", "admin", "management_team")
+            and the server would persist whatever was sent. The schema
+            default of `Role.viewer` was a weak hint, not an enforcement.
+    After:  the server now hardcodes `resolved_role = "viewer"` for every
+            new account regardless of what the client sends. If a client
+            ever requests a role other than "viewer", a WARNING is logged
+            with the requested role and email so we can spot abuse.
+            Track upgrade for legitimate users still happens through the
+            existing `register-with-phone` + PM-approval flow, which is
+            untouched.
+
+(2) CRIT-B — IDOR at POST /api/tasks/{task_id}/reopen
+    Before: the route was protected by the global Role check
+            (`require_roles('project_manager', 'management_team')`), but
+            this is a PLATFORM role check — it does NOT verify that the
+            caller has any role on THE SPECIFIC PROJECT the task belongs
+            to. A user with the global PM role on project A could reopen
+            a closed task on project B that they have no business touching.
+    After:  after the existing 404/status checks and BEFORE any DB mutation,
+            the route now resolves the caller's role on `task.project_id`
+            via `_get_project_role(...)` and rejects with 403 if the role
+            is not `project_manager` or `management_team` on that project.
+            Hebrew error message: 'אין לך הרשאה לפתוח מחדש משימה זו'.
+
+(3) CRIT-C — IDOR at POST /api/tasks/{task_id}/attachments
+    Before: the route only checked the caller's GLOBAL role != 'viewer'.
+            Any non-viewer in the system could upload attachments to any
+            task — even tasks on projects they had no membership in and
+            were not assignees of. This was inconsistent with the
+            `/updates` endpoint right above it (which already enforced
+            project membership OR assignee).
+    After:  the route now mirrors the `/updates` guard exactly — resolves
+            project membership via `_get_project_membership(...)`, checks
+            `is_assignee = task.assignee_id == user.id`, and rejects with
+            403 if membership is 'none' AND user is not the assignee.
+            Hebrew error message: 'אין לך הרשאה להעלות קבצים למשימה זו'.
+
+WHAT THIS DOES NOT TOUCH
+------------------------
+  • No frontend code (`git diff --stat frontend/` is empty — verified).
+  • No schemas, no migrations, no env vars, no secrets, no GitHub workflows,
+    no Capgo workflow, no deploy.sh, no Mongo indexes.
+  • No changes to legitimate user flows: /api/auth/register-with-phone (the
+    real registration path) and PM-approval flows are untouched.
+  • No changes to any GET endpoint or to any of the 8 other mutation
+    endpoints in tasks_router.py — all 11 already had project-scoped guards
+    (see Coverage Audit below); only /reopen and /attachments were missing
+    them.
 
 ================================================================================
-SECTION 1 — UNIFIED DIFF (deploy.sh)
+SECTION 1 — UNIFIED DIFF (against rollback SHA 023df1c)
 ================================================================================
 The same diff you would get from:
-    git diff 33ffd0b3996b6a93c891e32568adb7be93a9751e..HEAD -- deploy.sh
+    git diff 023df1cc0a23b9ac51bb44daff58b3856786c164 -- \
+        backend/contractor_ops/auth_router.py \
+        backend/contractor_ops/tasks_router.py
 
-diff --git a/deploy.sh b/deploy.sh
-index a826421..de1392f 100755
---- a/deploy.sh
-+++ b/deploy.sh
-@@ -6,24 +6,34 @@ cd "$(dirname "$0")"
- MODE="dry"
- YES="0"
- SKIP_CHECKS="${SKIP_CHECKS:-0}"
--FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api.brikops.com}"
- RUN_LINT="${RUN_LINT:-0}"
- MSG=""
+diff --git a/backend/contractor_ops/auth_router.py b/backend/contractor_ops/auth_router.py
+index a600b72..35d33b3 100644
+--- a/backend/contractor_ops/auth_router.py
++++ b/backend/contractor_ops/auth_router.py
+@@ -166,7 +166,13 @@ async def register(user: UserCreate):
+         if existing_phone:
+             raise HTTPException(status_code=400, detail='Phone already registered')
+     user_id = str(uuid.uuid4())
+-    resolved_role = user.role.value if isinstance(user.role, Role) else user.role
++    requested = user.role.value if isinstance(user.role, Role) else user.role
++    if requested != "viewer":
++        logger.warning(
++            "[AUTH-REGISTER] Client requested role=%s for email=%s — coerced to viewer (S6 fix)",
++            requested, user.email,
++        )
++    resolved_role = "viewer"
+     user_doc = {
+         'id': user_id,
+         'password_hash': (await _hash_password(user.password)) if user.password else None,
+diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
+index 6a474ae..2075c6d 100644
+--- a/backend/contractor_ops/tasks_router.py
++++ b/backend/contractor_ops/tasks_router.py
+@@ -787,6 +787,9 @@ async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_
+         raise HTTPException(status_code=404, detail='Task not found')
+     if task['status'] not in ('closed', 'approved'):
+         raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
++    project_role = await _get_project_role(user, task['project_id'])
++    if project_role not in ('project_manager', 'management_team'):
++        raise HTTPException(status_code=403, detail='אין לך הרשאה לפתוח מחדש משימה זו')
+     ts = _now()
+     prev_status = task['status']
+     await db.tasks.update_one({'id': task_id}, {
+@@ -1143,6 +1146,10 @@ async def upload_task_attachment(task_id: str, request: Request, file: UploadFil
+     task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+     if not task:
+         raise HTTPException(status_code=404, detail='Task not found')
++    membership = await _get_project_membership(user, task['project_id'])
++    is_assignee = task.get('assignee_id') == user['id']
++    if membership['role'] == 'none' and not is_assignee:
++        raise HTTPException(status_code=403, detail='אין לך הרשאה להעלות קבצים למשימה זו')
+     logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
  
- while [[ $# -gt 0 ]]; do
-   case "$1" in
--    --prod|--force) MODE="prod"; shift ;;
--    --yes)          YES="1"; shift ;;
--    --skip-checks)  SKIP_CHECKS=1; shift ;;
--    *)              MSG="${MSG:+$MSG }$1"; shift ;;
-+    --prod|--force)   MODE="prod"; shift ;;
-+    --stag|--staging) MODE="stag"; shift ;;
-+    --yes)            YES="1"; shift ;;
-+    --skip-checks)    SKIP_CHECKS=1; shift ;;
-+    *)                MSG="${MSG:+$MSG }$1"; shift ;;
-   esac
- done
- 
-+if [[ "$MODE" == "stag" ]]; then
-+  FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api-staging.brikops.com}"
-+else
-+  FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api.brikops.com}"
-+fi
-+
- branch="$(git rev-parse --abbrev-ref HEAD)"
- if [[ "$MODE" == "prod" && "$branch" != "main" ]]; then
-   echo "ERROR: You are on branch '$branch'. Switch to 'main' to deploy."
-   exit 1
- fi
-+if [[ "$MODE" == "stag" && "$branch" != "staging" ]]; then
-+  echo "ERROR: You are on branch '$branch'. Switch to 'staging' to deploy to staging."
-+  exit 1
-+fi
- 
- has_uncommitted=0
- if [[ -n "$(git status --porcelain)" ]]; then
-@@ -135,8 +145,20 @@ if [[ "$ahead" -gt 0 ]]; then
- fi
- 
- echo "What will deploy:"
--if [[ $frontend_changed -eq 1 ]]; then echo "  - Frontend (Cloudflare Pages -> https://app.brikops.com)"; fi
--if [[ $backend_changed -eq 1 ]]; then echo "  - Backend  (GitHub Actions -> https://api.brikops.com)"; fi
-+if [[ $frontend_changed -eq 1 ]]; then
-+  if [[ "$MODE" == "stag" ]]; then
-+    echo "  - Frontend (Cloudflare Pages -> https://staging.brikops-new.pages.dev)"
-+  else
-+    echo "  - Frontend (Cloudflare Pages -> https://app.brikops.com)"
-+  fi
-+fi
-+if [[ $backend_changed -eq 1 ]]; then
-+  if [[ "$MODE" == "stag" ]]; then
-+    echo "  - Backend  (GitHub Actions -> https://api-staging.brikops.com)"
-+  else
-+    echo "  - Backend  (GitHub Actions -> https://api.brikops.com)"
-+  fi
-+fi
- if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then echo "  - Config/docs only (no pipeline trigger)"; fi
- echo
- 
-@@ -152,12 +174,13 @@ if [[ $native_changed -eq 1 ]]; then
-   echo
- fi
- 
--if [[ "$MODE" != "prod" ]]; then
-+if [[ "$MODE" != "prod" && "$MODE" != "stag" ]]; then
-   echo "Dry-run only. To deploy:"
--  echo "  ./deploy.sh --prod"
--  echo "  ./deploy.sh --prod \"my commit message\""
--  echo "  ./deploy.sh --prod --yes          # skip confirmation"
--  echo "  ./deploy.sh --prod --skip-checks  # skip preflight"
-+  echo "  ./deploy.sh --prod              # production (must be on main branch)"
-+  echo "  ./deploy.sh --stag              # staging    (must be on staging branch)"
-+  echo "  ./deploy.sh --prod \"my message\"  # with commit message"
-+  echo "  ./deploy.sh --prod --yes         # skip confirmation"
-+  echo "  ./deploy.sh --prod --skip-checks # skip preflight"
-   exit 0
- fi
- 
-@@ -207,7 +230,11 @@ else
- fi
- 
- if [[ "$YES" != "1" ]]; then
--  read -rp "Deploy to production? (y/N): " confirm
-+  if [[ "$MODE" == "stag" ]]; then
-+    read -rp "Deploy to STAGING? (y/N): " confirm
-+  else
-+    read -rp "Deploy to production? (y/N): " confirm
-+  fi
-   if [[ "${confirm,,}" != "y" ]]; then
-     echo "Cancelled."
-     exit 0
-@@ -266,8 +293,13 @@ fi
- echo
- echo " Where to check:"
- echo "   Backend:   https://github.com/zahis10/brikops-new/actions"
--echo "   Frontend:  Cloudflare Pages dashboard → app.brikops.com"
--echo "   Health:    https://api.brikops.com/health"
-+if [[ "$MODE" == "stag" ]]; then
-+  echo "   Frontend:  https://staging.brikops-new.pages.dev"
-+  echo "   Health:    https://api-staging.brikops.com/health"
-+else
-+  echo "   Frontend:  https://app.brikops.com (Cloudflare Pages)"
-+  echo "   Health:    https://api.brikops.com/health"
-+fi
- echo
- echo "═══════════════════════════════════════════════════"
- summary_line="✓ Push completed ($SHA)"
+     validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
 
 ================================================================================
-SECTION 2 — deploy.sh — FULL BEFORE CONTENT (299 lines)
+SECTION 2 — auth_router.py — register() FUNCTION, BEFORE
 ================================================================================
-This is the file as it stood at rollback SHA 33ffd0b — i.e. before my edits.
-═══════════════════════════════ BEGIN deploy.sh (BEFORE) ═══════════════════════════════
-#!/usr/bin/env bash
-set -euo pipefail
+This is the relevant slice as it stood at rollback SHA 023df1c.
 
-cd "$(dirname "$0")"
-
-MODE="dry"
-YES="0"
-SKIP_CHECKS="${SKIP_CHECKS:-0}"
-FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api.brikops.com}"
-RUN_LINT="${RUN_LINT:-0}"
-MSG=""
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --prod|--force) MODE="prod"; shift ;;
-    --yes)          YES="1"; shift ;;
-    --skip-checks)  SKIP_CHECKS=1; shift ;;
-    *)              MSG="${MSG:+$MSG }$1"; shift ;;
-  esac
-done
-
-branch="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "$MODE" == "prod" && "$branch" != "main" ]]; then
-  echo "ERROR: You are on branch '$branch'. Switch to 'main' to deploy."
-  exit 1
-fi
-
-has_uncommitted=0
-if [[ -n "$(git status --porcelain)" ]]; then
-  has_uncommitted=1
-fi
-
-ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
-
-if [[ $has_uncommitted -eq 0 && "$ahead" -eq 0 ]]; then
-  echo "Nothing to deploy (no changes, nothing to push)."
-  exit 0
-fi
-
-frontend_changed=0
-backend_changed=0
-native_changed=0
-
-check_files() {
-  local f
-  while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    if [[ "$f" == frontend/* ]]; then frontend_changed=1; fi
-    if [[ "$f" == backend/* || "$f" == .platform/* ]]; then backend_changed=1; fi
-    if [[ "$f" == frontend/capacitor.config.json || "$f" == frontend/ios/* || "$f" == frontend/android/* ]]; then
-      native_changed=1
-    fi
-    if [[ "$f" == frontend/package.json ]]; then
-      if git diff -- frontend/package.json frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo' \
-         || git diff --cached -- frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo' \
-         || git diff "origin/$branch..HEAD" -- frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo'; then
-        native_changed=1
-      fi
-    fi
-  done
-}
-
-if [[ $has_uncommitted -eq 1 ]]; then
-  check_files < <({ git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u)
-fi
-if [[ "$ahead" -gt 0 ]]; then
-  check_files < <(git diff --name-only "origin/$branch..HEAD")
-fi
-
-check_frontend_staleness() {
-  local bundle
-  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
-  if [[ -z "$bundle" ]]; then
-    echo "[STALE BUILD] No frontend bundle found — will rebuild"
-    frontend_changed=1
-    return
-  fi
-  local bundle_ts
-  bundle_ts=$(stat -c "%Y" "$bundle" 2>/dev/null || echo 0)
-
-  local newest_src=0
-  local inputs=(
-    "frontend/src"
-    "frontend/public"
-  )
-  local input_files=(
-    "frontend/package.json"
-    "frontend/yarn.lock"
-    "frontend/craco.config.js"
-    "frontend/tailwind.config.js"
-    "frontend/postcss.config.js"
-  )
-
-  for dir in "${inputs[@]}"; do
-    if [[ -d "$dir" ]]; then
-      local dir_newest
-      dir_newest=$(find "$dir" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1)
-      if [[ -n "$dir_newest" ]] && (( dir_newest > newest_src )); then
-        newest_src=$dir_newest
-      fi
-    fi
-  done
-
-  for f in "${input_files[@]}"; do
-    if [[ -f "$f" ]]; then
-      local f_ts
-      f_ts=$(stat -c "%Y" "$f" 2>/dev/null || echo 0)
-      if (( f_ts > newest_src )); then
-        newest_src=$f_ts
-      fi
-    fi
-  done
-
-  if (( newest_src > bundle_ts )); then
-    local src_date bundle_date
-    src_date=$(date -d "@$newest_src" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$newest_src")
-    bundle_date=$(date -d "@$bundle_ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$bundle_ts")
-    echo "[STALE BUILD] Frontend source ($src_date) is newer than build ($bundle_date) — will rebuild"
-    frontend_changed=1
-  fi
-}
-
-check_frontend_staleness
-
-echo "=== Deploy Status ==="
-if [[ $has_uncommitted -eq 1 ]]; then
-  echo "Uncommitted changes:"
-  git status --short
-  echo
-fi
-if [[ "$ahead" -gt 0 ]]; then
-  echo "Commits ahead of origin: $ahead"
-  git log --oneline "origin/$branch..HEAD"
-  echo
-fi
-
-echo "What will deploy:"
-if [[ $frontend_changed -eq 1 ]]; then echo "  - Frontend (Cloudflare Pages -> https://app.brikops.com)"; fi
-if [[ $backend_changed -eq 1 ]]; then echo "  - Backend  (GitHub Actions -> https://api.brikops.com)"; fi
-if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then echo "  - Config/docs only (no pipeline trigger)"; fi
-echo
-
-if [[ $native_changed -eq 1 ]]; then
-  echo "⚠️  ═══════════════════════════════════════════════════"
-  echo "   NATIVE CHANGES DETECTED"
-  echo "   Files touched: capacitor.config.json / ios / android / capacitor plugins"
-  echo "   ./deploy.sh --prod alone will NOT deliver these to the"
-  echo "   installed iPhone/Android apps. After this deploy, you"
-  echo "   MUST also run ./ship.sh on the Mac to rebuild the native"
-  echo "   app and push to TestFlight / Play Store."
-  echo "   ═══════════════════════════════════════════════════"
-  echo
-fi
-
-if [[ "$MODE" != "prod" ]]; then
-  echo "Dry-run only. To deploy:"
-  echo "  ./deploy.sh --prod"
-  echo "  ./deploy.sh --prod \"my commit message\""
-  echo "  ./deploy.sh --prod --yes          # skip confirmation"
-  echo "  ./deploy.sh --prod --skip-checks  # skip preflight"
-  exit 0
-fi
-
-if [[ $has_uncommitted -eq 1 ]]; then
-  if [[ -z "$MSG" ]]; then
-    if [[ $frontend_changed -eq 1 && $backend_changed -eq 1 ]]; then
-      MSG="deploy: update frontend and backend"
-    elif [[ $frontend_changed -eq 1 ]]; then
-      MSG="deploy: update frontend"
-    elif [[ $backend_changed -eq 1 ]]; then
-      MSG="deploy: update backend"
-    else
-      MSG="deploy: update config/docs"
-    fi
-  fi
-fi
-
-if [[ $SKIP_CHECKS -eq 0 ]]; then
-  echo "Preflight checks..."
-  if [[ $backend_changed -eq 1 ]]; then
-    echo "[backend] python3 -m compileall backend/ -q"
-    python3 -m compileall backend/ -q
-    echo "[backend] OK"
-  fi
-  if [[ $frontend_changed -eq 1 ]]; then
-    if [[ "$RUN_LINT" == "1" ]]; then
-      echo "[frontend] eslint"
-      (cd frontend && npx eslint src/ --quiet)
-      echo "[frontend] eslint OK"
-    fi
-    echo "[frontend] yarn build (REACT_APP_BACKEND_URL=$FRONTEND_BACKEND_URL)"
-    (cd frontend && REACT_APP_BACKEND_URL="$FRONTEND_BACKEND_URL" yarn build)
-    new_bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
-    if [[ -z "$new_bundle" ]]; then
-      echo "[frontend] ERROR: build produced no bundle — aborting"
-      exit 1
-    fi
-    bundle_name=$(basename "$new_bundle")
-    bundle_size=$(( $(stat -c "%s" "$new_bundle") / 1024 ))
-    bundle_time=$(date -d "@$(stat -c '%Y' "$new_bundle")" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || stat -c '%Y' "$new_bundle")
-    echo "[frontend] Build verified: ${bundle_name} (${bundle_size}KB) at ${bundle_time}"
-  fi
-  echo
-else
-  echo "Preflight checks skipped."
-  echo
-fi
-
-if [[ "$YES" != "1" ]]; then
-  read -rp "Deploy to production? (y/N): " confirm
-  if [[ "${confirm,,}" != "y" ]]; then
-    echo "Cancelled."
-    exit 0
-  fi
-fi
-
-echo
-echo "Deploying..."
-
-if [[ $has_uncommitted -eq 1 ]]; then
-  git add -A
-  git commit -m "${MSG:-deploy: $(date '+%Y-%m-%d %H:%M')}" || true
-fi
-
-git push origin "$branch"
-
-SHA="$(git rev-parse --short HEAD)"
-
-if [[ $frontend_changed -eq 1 ]]; then
-  echo
-  echo "[dev] Restoring local dev build (REACT_APP_BACKEND_URL=\"\")..."
-  (cd frontend && REACT_APP_BACKEND_URL="" npx craco build 2>&1 | tail -3)
-  echo "[dev] Dev preview restored — local build now uses relative URLs"
-fi
-
-echo
-echo "═══════════════════════════════════════════════════"
-echo " DEPLOY SUMMARY  (commit: $SHA)"
-echo "═══════════════════════════════════════════════════"
-echo
-echo " Changes detected:"
-if [[ $backend_changed -eq 1 ]]; then
-  echo "   Backend  (backend/** .platform/**):  YES"
-else
-  echo "   Backend  (backend/** .platform/**):  NO"
-fi
-if [[ $frontend_changed -eq 1 ]]; then
-  echo "   Frontend (frontend/**):              YES"
-else
-  echo "   Frontend (frontend/**):              NO"
-fi
-echo
-echo " Deploy status:"
-if [[ $backend_changed -eq 1 ]]; then
-  echo "   Backend  (GitHub Actions → EB):      EXPECTED (~2 min)"
-else
-  echo "   Backend  (GitHub Actions → EB):      NOT EXPECTED"
-  echo "     → no changes under backend/** or .platform/** — path filter skips"
-fi
-if [[ $frontend_changed -eq 1 ]]; then
-  echo "   Frontend (Cloudflare Pages):         EXPECTED (~1 min)"
-else
-  echo "   Frontend (Cloudflare Pages):         NOT EXPECTED"
-  echo "     → no changes under frontend/**"
-fi
-echo
-echo " Where to check:"
-echo "   Backend:   https://github.com/zahis10/brikops-new/actions"
-echo "   Frontend:  Cloudflare Pages dashboard → app.brikops.com"
-echo "   Health:    https://api.brikops.com/health"
-echo
-echo "═══════════════════════════════════════════════════"
-summary_line="✓ Push completed ($SHA)"
-if [[ $frontend_changed -eq 1 ]]; then
-  summary_line="$summary_line · Frontend → Cloudflare Pages"
-else
-  summary_line="$summary_line · Frontend → no deploy needed"
-fi
-if [[ $backend_changed -eq 1 ]]; then
-  summary_line="$summary_line · Backend → GitHub Actions"
-else
-  summary_line="$summary_line · Backend → no deploy needed"
-fi
-if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then
-  summary_line="✓ Push completed ($SHA) — no deploys expected (config/docs only)"
-fi
-echo " $summary_line"
-echo "═══════════════════════════════════════════════════"
-
-if [[ $native_changed -eq 1 ]]; then
-  echo
-  echo "⚠️  ═══════════════════════════════════════════════════"
-  echo "   NATIVE CHANGES DETECTED — ./ship.sh STILL REQUIRED"
-  echo "   This push touched capacitor.config.json / ios / android /"
-  echo "   capacitor plugins. Capgo OTA cannot deliver native changes."
-  echo "   Now run on the Mac:"
-  echo "     cd ~/brikops-new && ./ship.sh"
-  echo "   ═══════════════════════════════════════════════════"
-fi
-════════════════════════════════ END deploy.sh (BEFORE) ════════════════════════════════
+═══════════════════════ BEGIN auth_router.py register() (BEFORE) ═══════════════════════
+@router.post("/auth/register", response_model=UserResponse)
+async def register(user: UserCreate):
+    db = get_db()
+    if user.email:
+        existing = await db.users.find_one({'email': user.email})
+        if existing:
+            raise HTTPException(status_code=400, detail='Email already registered')
+    if user.phone_e164:
+        try:
+            phone_norm = normalize_israeli_phone(user.phone_e164)
+            user.phone_e164 = phone_norm['phone_e164']
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        existing_phone = await db.users.find_one({'phone_e164': user.phone_e164})
+        if existing_phone:
+            raise HTTPException(status_code=400, detail='Phone already registered')
+    user_id = str(uuid.uuid4())
+    resolved_role = user.role.value if isinstance(user.role, Role) else user.role
+    user_doc = {
+        'id': user_id,
+        'password_hash': (await _hash_password(user.password)) if user.password else None,
+        'name': user.name,
+        'phone': user.phone,
+        'role': resolved_role,
+        'company_id': user.company_id,
+        'specialties': user.specialties,
+        'user_status': 'active',
+        'created_at': _now(),
+    }
+    if user.email:
+        user_doc['email'] = user.email
+    if user.phone_e164:
+        user_doc['phone_e164'] = user.phone_e164
+    if ENABLE_COMPLETE_ACCOUNT_GATE != 'off' and resolved_role in MANAGEMENT_ROLES:
+        user_doc['account_complete'] = False
+    await db.users.insert_one(user_doc)
+    ...
+═══════════════════════ END auth_router.py register() (BEFORE) ═══════════════════════
 
 ================================================================================
-SECTION 3 — deploy.sh — FULL AFTER CONTENT (331 lines)
+SECTION 3 — auth_router.py — register() FUNCTION, AFTER
 ================================================================================
-This is the file as it stands now, after all 7 edits (a–g) applied.
-═══════════════════════════════ BEGIN deploy.sh (AFTER) ════════════════════════════════
-#!/usr/bin/env bash
-set -euo pipefail
+The same slice after my edit (the ONLY difference is the `resolved_role` block).
 
-cd "$(dirname "$0")"
+═══════════════════════ BEGIN auth_router.py register() (AFTER) ═══════════════════════
+@router.post("/auth/register", response_model=UserResponse)
+async def register(user: UserCreate):
+    db = get_db()
+    if user.email:
+        existing = await db.users.find_one({'email': user.email})
+        if existing:
+            raise HTTPException(status_code=400, detail='Email already registered')
+    if user.phone_e164:
+        try:
+            phone_norm = normalize_israeli_phone(user.phone_e164)
+            user.phone_e164 = phone_norm['phone_e164']
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        existing_phone = await db.users.find_one({'phone_e164': user.phone_e164})
+        if existing_phone:
+            raise HTTPException(status_code=400, detail='Phone already registered')
+    user_id = str(uuid.uuid4())
+    requested = user.role.value if isinstance(user.role, Role) else user.role
+    if requested != "viewer":
+        logger.warning(
+            "[AUTH-REGISTER] Client requested role=%s for email=%s — coerced to viewer (S6 fix)",
+            requested, user.email,
+        )
+    resolved_role = "viewer"
+    user_doc = {
+        'id': user_id,
+        'password_hash': (await _hash_password(user.password)) if user.password else None,
+        'name': user.name,
+        'phone': user.phone,
+        'role': resolved_role,
+        'company_id': user.company_id,
+        'specialties': user.specialties,
+        'user_status': 'active',
+        'created_at': _now(),
+    }
+    if user.email:
+        user_doc['email'] = user.email
+    if user.phone_e164:
+        user_doc['phone_e164'] = user.phone_e164
+    if ENABLE_COMPLETE_ACCOUNT_GATE != 'off' and resolved_role in MANAGEMENT_ROLES:
+        user_doc['account_complete'] = False
+    await db.users.insert_one(user_doc)
+    ...
+═══════════════════════ END auth_router.py register() (AFTER) ═══════════════════════
 
-MODE="dry"
-YES="0"
-SKIP_CHECKS="${SKIP_CHECKS:-0}"
-RUN_LINT="${RUN_LINT:-0}"
-MSG=""
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --prod|--force)   MODE="prod"; shift ;;
-    --stag|--staging) MODE="stag"; shift ;;
-    --yes)            YES="1"; shift ;;
-    --skip-checks)    SKIP_CHECKS=1; shift ;;
-    *)                MSG="${MSG:+$MSG }$1"; shift ;;
-  esac
-done
-
-if [[ "$MODE" == "stag" ]]; then
-  FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api-staging.brikops.com}"
-else
-  FRONTEND_BACKEND_URL="${FRONTEND_BACKEND_URL:-https://api.brikops.com}"
-fi
-
-branch="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "$MODE" == "prod" && "$branch" != "main" ]]; then
-  echo "ERROR: You are on branch '$branch'. Switch to 'main' to deploy."
-  exit 1
-fi
-if [[ "$MODE" == "stag" && "$branch" != "staging" ]]; then
-  echo "ERROR: You are on branch '$branch'. Switch to 'staging' to deploy to staging."
-  exit 1
-fi
-
-has_uncommitted=0
-if [[ -n "$(git status --porcelain)" ]]; then
-  has_uncommitted=1
-fi
-
-ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
-
-if [[ $has_uncommitted -eq 0 && "$ahead" -eq 0 ]]; then
-  echo "Nothing to deploy (no changes, nothing to push)."
-  exit 0
-fi
-
-frontend_changed=0
-backend_changed=0
-native_changed=0
-
-check_files() {
-  local f
-  while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    if [[ "$f" == frontend/* ]]; then frontend_changed=1; fi
-    if [[ "$f" == backend/* || "$f" == .platform/* ]]; then backend_changed=1; fi
-    if [[ "$f" == frontend/capacitor.config.json || "$f" == frontend/ios/* || "$f" == frontend/android/* ]]; then
-      native_changed=1
-    fi
-    if [[ "$f" == frontend/package.json ]]; then
-      if git diff -- frontend/package.json frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo' \
-         || git diff --cached -- frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo' \
-         || git diff "origin/$branch..HEAD" -- frontend/package.json 2>/dev/null | grep -qE '@capacitor|@capgo'; then
-        native_changed=1
-      fi
-    fi
-  done
-}
-
-if [[ $has_uncommitted -eq 1 ]]; then
-  check_files < <({ git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u)
-fi
-if [[ "$ahead" -gt 0 ]]; then
-  check_files < <(git diff --name-only "origin/$branch..HEAD")
-fi
-
-check_frontend_staleness() {
-  local bundle
-  bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
-  if [[ -z "$bundle" ]]; then
-    echo "[STALE BUILD] No frontend bundle found — will rebuild"
-    frontend_changed=1
-    return
-  fi
-  local bundle_ts
-  bundle_ts=$(stat -c "%Y" "$bundle" 2>/dev/null || echo 0)
-
-  local newest_src=0
-  local inputs=(
-    "frontend/src"
-    "frontend/public"
-  )
-  local input_files=(
-    "frontend/package.json"
-    "frontend/yarn.lock"
-    "frontend/craco.config.js"
-    "frontend/tailwind.config.js"
-    "frontend/postcss.config.js"
-  )
-
-  for dir in "${inputs[@]}"; do
-    if [[ -d "$dir" ]]; then
-      local dir_newest
-      dir_newest=$(find "$dir" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1)
-      if [[ -n "$dir_newest" ]] && (( dir_newest > newest_src )); then
-        newest_src=$dir_newest
-      fi
-    fi
-  done
-
-  for f in "${input_files[@]}"; do
-    if [[ -f "$f" ]]; then
-      local f_ts
-      f_ts=$(stat -c "%Y" "$f" 2>/dev/null || echo 0)
-      if (( f_ts > newest_src )); then
-        newest_src=$f_ts
-      fi
-    fi
-  done
-
-  if (( newest_src > bundle_ts )); then
-    local src_date bundle_date
-    src_date=$(date -d "@$newest_src" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$newest_src")
-    bundle_date=$(date -d "@$bundle_ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$bundle_ts")
-    echo "[STALE BUILD] Frontend source ($src_date) is newer than build ($bundle_date) — will rebuild"
-    frontend_changed=1
-  fi
-}
-
-check_frontend_staleness
-
-echo "=== Deploy Status ==="
-if [[ $has_uncommitted -eq 1 ]]; then
-  echo "Uncommitted changes:"
-  git status --short
-  echo
-fi
-if [[ "$ahead" -gt 0 ]]; then
-  echo "Commits ahead of origin: $ahead"
-  git log --oneline "origin/$branch..HEAD"
-  echo
-fi
-
-echo "What will deploy:"
-if [[ $frontend_changed -eq 1 ]]; then
-  if [[ "$MODE" == "stag" ]]; then
-    echo "  - Frontend (Cloudflare Pages -> https://staging.brikops-new.pages.dev)"
-  else
-    echo "  - Frontend (Cloudflare Pages -> https://app.brikops.com)"
-  fi
-fi
-if [[ $backend_changed -eq 1 ]]; then
-  if [[ "$MODE" == "stag" ]]; then
-    echo "  - Backend  (GitHub Actions -> https://api-staging.brikops.com)"
-  else
-    echo "  - Backend  (GitHub Actions -> https://api.brikops.com)"
-  fi
-fi
-if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then echo "  - Config/docs only (no pipeline trigger)"; fi
-echo
-
-if [[ $native_changed -eq 1 ]]; then
-  echo "⚠️  ═══════════════════════════════════════════════════"
-  echo "   NATIVE CHANGES DETECTED"
-  echo "   Files touched: capacitor.config.json / ios / android / capacitor plugins"
-  echo "   ./deploy.sh --prod alone will NOT deliver these to the"
-  echo "   installed iPhone/Android apps. After this deploy, you"
-  echo "   MUST also run ./ship.sh on the Mac to rebuild the native"
-  echo "   app and push to TestFlight / Play Store."
-  echo "   ═══════════════════════════════════════════════════"
-  echo
-fi
-
-if [[ "$MODE" != "prod" && "$MODE" != "stag" ]]; then
-  echo "Dry-run only. To deploy:"
-  echo "  ./deploy.sh --prod              # production (must be on main branch)"
-  echo "  ./deploy.sh --stag              # staging    (must be on staging branch)"
-  echo "  ./deploy.sh --prod \"my message\"  # with commit message"
-  echo "  ./deploy.sh --prod --yes         # skip confirmation"
-  echo "  ./deploy.sh --prod --skip-checks # skip preflight"
-  exit 0
-fi
-
-if [[ $has_uncommitted -eq 1 ]]; then
-  if [[ -z "$MSG" ]]; then
-    if [[ $frontend_changed -eq 1 && $backend_changed -eq 1 ]]; then
-      MSG="deploy: update frontend and backend"
-    elif [[ $frontend_changed -eq 1 ]]; then
-      MSG="deploy: update frontend"
-    elif [[ $backend_changed -eq 1 ]]; then
-      MSG="deploy: update backend"
-    else
-      MSG="deploy: update config/docs"
-    fi
-  fi
-fi
-
-if [[ $SKIP_CHECKS -eq 0 ]]; then
-  echo "Preflight checks..."
-  if [[ $backend_changed -eq 1 ]]; then
-    echo "[backend] python3 -m compileall backend/ -q"
-    python3 -m compileall backend/ -q
-    echo "[backend] OK"
-  fi
-  if [[ $frontend_changed -eq 1 ]]; then
-    if [[ "$RUN_LINT" == "1" ]]; then
-      echo "[frontend] eslint"
-      (cd frontend && npx eslint src/ --quiet)
-      echo "[frontend] eslint OK"
-    fi
-    echo "[frontend] yarn build (REACT_APP_BACKEND_URL=$FRONTEND_BACKEND_URL)"
-    (cd frontend && REACT_APP_BACKEND_URL="$FRONTEND_BACKEND_URL" yarn build)
-    new_bundle=$(ls -t frontend/build/static/js/main*.js 2>/dev/null | head -1)
-    if [[ -z "$new_bundle" ]]; then
-      echo "[frontend] ERROR: build produced no bundle — aborting"
-      exit 1
-    fi
-    bundle_name=$(basename "$new_bundle")
-    bundle_size=$(( $(stat -c "%s" "$new_bundle") / 1024 ))
-    bundle_time=$(date -d "@$(stat -c '%Y' "$new_bundle")" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || stat -c '%Y' "$new_bundle")
-    echo "[frontend] Build verified: ${bundle_name} (${bundle_size}KB) at ${bundle_time}"
-  fi
-  echo
-else
-  echo "Preflight checks skipped."
-  echo
-fi
-
-if [[ "$YES" != "1" ]]; then
-  if [[ "$MODE" == "stag" ]]; then
-    read -rp "Deploy to STAGING? (y/N): " confirm
-  else
-    read -rp "Deploy to production? (y/N): " confirm
-  fi
-  if [[ "${confirm,,}" != "y" ]]; then
-    echo "Cancelled."
-    exit 0
-  fi
-fi
-
-echo
-echo "Deploying..."
-
-if [[ $has_uncommitted -eq 1 ]]; then
-  git add -A
-  git commit -m "${MSG:-deploy: $(date '+%Y-%m-%d %H:%M')}" || true
-fi
-
-git push origin "$branch"
-
-SHA="$(git rev-parse --short HEAD)"
-
-if [[ $frontend_changed -eq 1 ]]; then
-  echo
-  echo "[dev] Restoring local dev build (REACT_APP_BACKEND_URL=\"\")..."
-  (cd frontend && REACT_APP_BACKEND_URL="" npx craco build 2>&1 | tail -3)
-  echo "[dev] Dev preview restored — local build now uses relative URLs"
-fi
-
-echo
-echo "═══════════════════════════════════════════════════"
-echo " DEPLOY SUMMARY  (commit: $SHA)"
-echo "═══════════════════════════════════════════════════"
-echo
-echo " Changes detected:"
-if [[ $backend_changed -eq 1 ]]; then
-  echo "   Backend  (backend/** .platform/**):  YES"
-else
-  echo "   Backend  (backend/** .platform/**):  NO"
-fi
-if [[ $frontend_changed -eq 1 ]]; then
-  echo "   Frontend (frontend/**):              YES"
-else
-  echo "   Frontend (frontend/**):              NO"
-fi
-echo
-echo " Deploy status:"
-if [[ $backend_changed -eq 1 ]]; then
-  echo "   Backend  (GitHub Actions → EB):      EXPECTED (~2 min)"
-else
-  echo "   Backend  (GitHub Actions → EB):      NOT EXPECTED"
-  echo "     → no changes under backend/** or .platform/** — path filter skips"
-fi
-if [[ $frontend_changed -eq 1 ]]; then
-  echo "   Frontend (Cloudflare Pages):         EXPECTED (~1 min)"
-else
-  echo "   Frontend (Cloudflare Pages):         NOT EXPECTED"
-  echo "     → no changes under frontend/**"
-fi
-echo
-echo " Where to check:"
-echo "   Backend:   https://github.com/zahis10/brikops-new/actions"
-if [[ "$MODE" == "stag" ]]; then
-  echo "   Frontend:  https://staging.brikops-new.pages.dev"
-  echo "   Health:    https://api-staging.brikops.com/health"
-else
-  echo "   Frontend:  https://app.brikops.com (Cloudflare Pages)"
-  echo "   Health:    https://api.brikops.com/health"
-fi
-echo
-echo "═══════════════════════════════════════════════════"
-summary_line="✓ Push completed ($SHA)"
-if [[ $frontend_changed -eq 1 ]]; then
-  summary_line="$summary_line · Frontend → Cloudflare Pages"
-else
-  summary_line="$summary_line · Frontend → no deploy needed"
-fi
-if [[ $backend_changed -eq 1 ]]; then
-  summary_line="$summary_line · Backend → GitHub Actions"
-else
-  summary_line="$summary_line · Backend → no deploy needed"
-fi
-if [[ $frontend_changed -eq 0 && $backend_changed -eq 0 ]]; then
-  summary_line="✓ Push completed ($SHA) — no deploys expected (config/docs only)"
-fi
-echo " $summary_line"
-echo "═══════════════════════════════════════════════════"
-
-if [[ $native_changed -eq 1 ]]; then
-  echo
-  echo "⚠️  ═══════════════════════════════════════════════════"
-  echo "   NATIVE CHANGES DETECTED — ./ship.sh STILL REQUIRED"
-  echo "   This push touched capacitor.config.json / ios / android /"
-  echo "   capacitor plugins. Capgo OTA cannot deliver native changes."
-  echo "   Now run on the Mac:"
-  echo "     cd ~/brikops-new && ./ship.sh"
-  echo "   ═══════════════════════════════════════════════════"
-fi
-════════════════════════════════ END deploy.sh (AFTER) ═════════════════════════════════
+NOTE: Because `resolved_role` is now always "viewer", the existing
+`ENABLE_COMPLETE_ACCOUNT_GATE` branch (`if ... and resolved_role in
+MANAGEMENT_ROLES`) is statically unreachable from this endpoint. That branch
+exists for any future call sites that may set resolved_role differently and
+is harmless dead-code on this path. I deliberately did NOT touch it because:
+  (a) It's defensive — leaves the gate logic intact for refactor safety.
+  (b) The spec is "minimal change" — touch only what closes the CVE.
+  (c) `viewer` is not in MANAGEMENT_ROLES, so the branch is correctly skipped
+      at runtime; behaviour is identical.
 
 ================================================================================
-SECTION 4 — .github/workflows/deploy-backend-staging.yml — FULL NEW FILE (83 lines)
+SECTION 4 — tasks_router.py — reopen_task() FUNCTION, BEFORE
 ================================================================================
-This file did not exist before this task. There is no "before" version.
-════════════════════ BEGIN deploy-backend-staging.yml (NEW FILE) ════════════════════
-name: Deploy Backend to Elastic Beanstalk (Staging)
+═══════════════════════ BEGIN tasks_router.py reopen_task() (BEFORE) ═══════════════════════
+@router.post("/tasks/{task_id}/reopen", response_model=Task)
+async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):
+    db = get_db()
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    if task['status'] not in ('closed', 'approved'):
+        raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
+    ts = _now()
+    prev_status = task['status']
+    await db.tasks.update_one({'id': task_id}, {
+        '$set': {'status': 'reopened', 'updated_at': ts},
+        '$unset': {'force_closed_by': '', 'force_closed_reason': '', 'force_closed_at': '', 'force_closed_type': ''},
+    })
+    await db.task_status_history.insert_one({
+        'id': str(uuid.uuid4()), 'task_id': task_id,
+        'old_status': prev_status, 'new_status': 'reopened',
+        'changed_by': user['id'], 'note': 'Task reopened', 'created_at': ts,
+    })
+    await db.task_updates.insert_one({
+        'id': str(uuid.uuid4()), 'task_id': task_id, 'user_id': user['id'],
+        'user_name': user.get('name', ''), 'content': 'Task reopened',
+        'update_type': 'status_change', 'old_status': prev_status,
+        'new_status': 'reopened', 'created_at': ts,
+    })
+    await _audit('task', task_id, 'reopen', user['id'], {})
+    updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    return Task(**updated)
+═══════════════════════ END tasks_router.py reopen_task() (BEFORE) ═══════════════════════
 
-on:
-  push:
-    branches: [staging]
-    paths:
-      - 'backend/**'
-      - '.platform/**'
+================================================================================
+SECTION 5 — tasks_router.py — reopen_task() FUNCTION, AFTER
+================================================================================
+═══════════════════════ BEGIN tasks_router.py reopen_task() (AFTER) ═══════════════════════
+@router.post("/tasks/{task_id}/reopen", response_model=Task)
+async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):
+    db = get_db()
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    if task['status'] not in ('closed', 'approved'):
+        raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
+    project_role = await _get_project_role(user, task['project_id'])
+    if project_role not in ('project_manager', 'management_team'):
+        raise HTTPException(status_code=403, detail='אין לך הרשאה לפתוח מחדש משימה זו')
+    ts = _now()
+    prev_status = task['status']
+    await db.tasks.update_one({'id': task_id}, {
+        '$set': {'status': 'reopened', 'updated_at': ts},
+        '$unset': {'force_closed_by': '', 'force_closed_reason': '', 'force_closed_at': '', 'force_closed_type': ''},
+    })
+    await db.task_status_history.insert_one({
+        'id': str(uuid.uuid4()), 'task_id': task_id,
+        'old_status': prev_status, 'new_status': 'reopened',
+        'changed_by': user['id'], 'note': 'Task reopened', 'created_at': ts,
+    })
+    await db.task_updates.insert_one({
+        'id': str(uuid.uuid4()), 'task_id': task_id, 'user_id': user['id'],
+        'user_name': user.get('name', ''), 'content': 'Task reopened',
+        'update_type': 'status_change', 'old_status': prev_status,
+        'new_status': 'reopened', 'created_at': ts,
+    })
+    await _audit('task', task_id, 'reopen', user['id'], {})
+    updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    return Task(**updated)
+═══════════════════════ END tasks_router.py reopen_task() (AFTER) ═══════════════════════
 
-permissions:
-  id-token: write
-  contents: read
+The new check sits AFTER the 404 lookup and the status-validity check
+(so a 400 "wrong status" still fires before a 403, preserving the original
+error semantics for legitimate PMs hitting an already-open task) and
+BEFORE any of the four DB writes (`tasks.update_one`, `task_status_history.
+insert_one`, `task_updates.insert_one`, `_audit`). No mutation can happen
+without the project-scoped guard passing.
 
-env:
-  AWS_REGION: eu-central-1
-  ECR_REPO: brikops-api
-  EB_APP: brikops-api
-  EB_ENV: Brikops-api-staging-env
+================================================================================
+SECTION 6 — tasks_router.py — upload_task_attachment() FUNCTION, BEFORE
+================================================================================
+═══════════════════════ BEGIN tasks_router.py upload_task_attachment() (BEFORE) ═══════════════════════
+@router.post("/tasks/{task_id}/attachments")
+async def upload_task_attachment(task_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    check_upload_rate_limit(user['id'])
+    import time as _time
+    t_start = _time.time()
+    ct = request.headers.get('content-type', '')
+    has_boundary = 'boundary=' in ct
+    logger.info(f"[ATTACH:ENTER] task={task_id} filename={file.filename} ct_has_boundary={has_boundary} ct={ct[:120]}")
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    db = get_db()
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers cannot upload attachments')
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
+    ...
+═══════════════════════ END tasks_router.py upload_task_attachment() (BEFORE) ═══════════════════════
 
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
+================================================================================
+SECTION 7 — tasks_router.py — upload_task_attachment() FUNCTION, AFTER
+================================================================================
+═══════════════════════ BEGIN tasks_router.py upload_task_attachment() (AFTER) ═══════════════════════
+@router.post("/tasks/{task_id}/attachments")
+async def upload_task_attachment(task_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    check_upload_rate_limit(user['id'])
+    import time as _time
+    t_start = _time.time()
+    ct = request.headers.get('content-type', '')
+    has_boundary = 'boundary=' in ct
+    logger.info(f"[ATTACH:ENTER] task={task_id} filename={file.filename} ct_has_boundary={has_boundary} ct={ct[:120]}")
 
-      - name: Build and push Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPO:staging-latest backend/
-          docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPO:staging-latest
+    db = get_db()
+    if user['role'] == 'viewer':
+        raise HTTPException(status_code=403, detail='Viewers cannot upload attachments')
+    task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    membership = await _get_project_membership(user, task['project_id'])
+    is_assignee = task.get('assignee_id') == user['id']
+    if membership['role'] == 'none' and not is_assignee:
+        raise HTTPException(status_code=403, detail='אין לך הרשאה להעלות קבצים למשימה זו')
+    logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
 
-      - name: Generate Dockerrun.aws.json
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          cat > Dockerrun.aws.json <<EOF
-          {
-            "AWSEBDockerrunVersion": "1",
-            "Image": {
-              "Name": "$ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG",
-              "Update": "true"
-            },
-            "Ports": [
-              {
-                "ContainerPort": 8080
-              }
-            ]
-          }
-          EOF
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
+    ...
+═══════════════════════ END tasks_router.py upload_task_attachment() (AFTER) ═══════════════════════
 
-      - name: Create deploy bundle
-        run: zip -r deploy.zip Dockerrun.aws.json .platform/
+The new check sits AFTER the 404 lookup and BEFORE `validate_upload(...)`,
+so file content is not even validated (let alone uploaded to S3) for an
+unauthorized caller. The pattern (`membership['role'] == 'none' and not
+is_assignee`) is byte-for-byte identical to the existing guard in
+`add_task_update` / `list_task_updates` (lines 1093-1096 and 1120-1123),
+so behaviour is consistent across `/updates` and `/attachments`.
 
-      - name: Deploy to Elastic Beanstalk (Staging)
-        env:
-          VERSION_LABEL: staging-${{ github.sha }}
-        run: |
-          BUCKET=$(aws elasticbeanstalk create-storage-location --query S3Bucket --output text)
-          aws s3 cp deploy.zip s3://$BUCKET/$EB_APP/deploy-$VERSION_LABEL.zip
-          aws elasticbeanstalk create-application-version \
-            --application-name $EB_APP \
-            --version-label $VERSION_LABEL \
-            --source-bundle S3Bucket=$BUCKET,S3Key=$EB_APP/deploy-$VERSION_LABEL.zip
-          aws elasticbeanstalk update-environment \
-            --application-name $EB_APP \
-            --environment-name $EB_ENV \
-            --version-label $VERSION_LABEL
-          echo "Staging deployment started: $VERSION_LABEL"
-═════════════════════ END deploy-backend-staging.yml (NEW FILE) ═════════════════════
+================================================================================
+SECTION 8 — VERIFICATION GATES (6/6 GREEN)
+================================================================================
+
+------------------------------------------------------------------
+GATE 1: auth_router.py shows new viewer hardcode + warning
+------------------------------------------------------------------
+Command:  sed -n '171,180p' backend/contractor_ops/auth_router.py
+Output:
+    user_id = str(uuid.uuid4())
+    requested = user.role.value if isinstance(user.role, Role) else user.role
+    if requested != "viewer":
+        logger.warning(
+            "[AUTH-REGISTER] Client requested role=%s for email=%s — coerced to viewer (S6 fix)",
+            requested, user.email,
+        )
+    resolved_role = "viewer"
+    user_doc = {
+        'id': user_id,
+RESULT: ✓  resolved_role hardcoded to "viewer", warning logged on escalation attempt.
+
+------------------------------------------------------------------
+GATE 2: tasks_router.py grep count (must be 16; was 14 pre-fix; +2)
+------------------------------------------------------------------
+Command:  grep -c '_get_project_role\|_get_project_membership' backend/contractor_ops/tasks_router.py
+Output:
+    16
+Pre-fix count (from rollback SHA): 14
+Delta:                              +2 (one for /reopen, one for /attachments)
+RESULT: ✓  Exactly the expected 2 new project-scoped guards added.
+
+------------------------------------------------------------------
+GATE 3: tasks_router.py /reopen new lines visible in context
+------------------------------------------------------------------
+Command:  sed -n '785,800p' backend/contractor_ops/tasks_router.py
+Output:
+    @router.post("/tasks/{task_id}/reopen", response_model=Task)
+    async def reopen_task(task_id: str, user: dict = Depends(require_roles('project_manager', 'management_team'))):
+        db = get_db()
+        task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+        if not task:
+            raise HTTPException(status_code=404, detail='Task not found')
+        if task['status'] not in ('closed', 'approved'):
+            raise HTTPException(status_code=400, detail='Only closed tasks can be reopened')
+        project_role = await _get_project_role(user, task['project_id'])
+        if project_role not in ('project_manager', 'management_team'):
+            raise HTTPException(status_code=403, detail='אין לך הרשאה לפתוח מחדש משימה זו')
+        ts = _now()
+        prev_status = task['status']
+        await db.tasks.update_one({'id': task_id}, {
+            '$set': {'status': 'reopened', 'updated_at': ts},
+            '$unset': {...},
+        })
+RESULT: ✓  Project-scoped role check sits between the existing 400/404 checks
+            and the first DB mutation.
+
+------------------------------------------------------------------
+GATE 4: tasks_router.py /attachments new lines visible in context
+------------------------------------------------------------------
+Command:  sed -n '1135,1158p' backend/contractor_ops/tasks_router.py
+Output:
+    @router.post("/tasks/{task_id}/attachments")
+    async def upload_task_attachment(task_id: str, request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+        check_upload_rate_limit(user['id'])
+        import time as _time
+        t_start = _time.time()
+        ct = request.headers.get('content-type', '')
+        has_boundary = 'boundary=' in ct
+        logger.info(f"[ATTACH:ENTER] task={task_id} filename={file.filename} ct_has_boundary={has_boundary} ct={ct[:120]}")
+
+        db = get_db()
+        if user['role'] == 'viewer':
+            raise HTTPException(status_code=403, detail='Viewers cannot upload attachments')
+        task = await db.tasks.find_one({'id': task_id}, {'_id': 0})
+        if not task:
+            raise HTTPException(status_code=404, detail='Task not found')
+        membership = await _get_project_membership(user, task['project_id'])
+        is_assignee = task.get('assignee_id') == user['id']
+        if membership['role'] == 'none' and not is_assignee:
+            raise HTTPException(status_code=403, detail='אין לך הרשאה להעלות קבצים למשימה זו')
+        logger.info(f"[ATTACH:TASK_FOUND] task={task_id} elapsed={_time.time()-t_start:.2f}s")
+
+        validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
+RESULT: ✓  Membership-or-assignee check sits between 404 and validate_upload.
+
+------------------------------------------------------------------
+GATE 5: Python compile-import sanity
+------------------------------------------------------------------
+Command:  cd backend && python3 -c "from contractor_ops import auth_router, tasks_router; print('OK')"
+Output:
+    [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****0001,****9991
+    OK
+Exit code: 0
+RESULT: ✓  Both modules import cleanly, no syntax/name errors.
+
+------------------------------------------------------------------
+GATE 6: Workflow `Start application` clean restart
+------------------------------------------------------------------
+Action:   restart_workflow("Start application")
+Key log lines (Start_application_20260426_200911_222.log):
+    INFO:     Started server process [810]
+    INFO:     Waiting for application startup.
+    [STARTUP] BrikOps starting — APP_ID=contractor-ops-001, MODE=dev, DB=contractor_ops
+    [STARTUP] Reminder scheduler started
+    [STARTUP] Server accepting connections — DB init running in background.
+    INFO:     Application startup complete.
+    INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+    [DB-IDENTITY] is_set=True ... users=27 projects=13 mode=dev
+    [INDEXES] All MongoDB indexes created successfully
+    [STARTUP] Deferred DB init completed.
+    [REQ] rid=c5348d14 GET / status=200 duration=6.8ms
+    [REQ] rid=7ce5775a GET /static/css/main.527d9955.css status=200 duration=3.4ms
+    [REQ] rid=2e53c467 GET /static/js/main.ba762ae8.js status=200 duration=3.7ms
+RESULT: ✓  No errors, no exceptions, server serves 200s. The schema-import
+            warning ("equivalent index already exists with the same name but
+            different options" on stepup_service) is pre-existing dev-DB
+            noise, present at the rollback SHA too — NOT introduced by my
+            changes.
+
+------------------------------------------------------------------
+GATE 7 (bonus): Frontend git diff (must be empty)
+------------------------------------------------------------------
+Command:  git diff --stat frontend/
+Output:
+    (empty)
+RESULT: ✓  No frontend code touched, exactly as scoped.
+
+================================================================================
+SECTION 9 — COVERAGE AUDIT (11/11 mutation endpoints in tasks_router.py)
+================================================================================
+
+I scripted a coverage check that walks every @router.post/put/patch/delete
+in tasks_router.py and verifies each function body contains AT LEAST ONE of:
+  • _get_project_role(...)
+  • _get_project_membership(...)
+  • _check_project_access(...)
+(These three are the project-scoped access primitives — `require_roles` is a
+PLATFORM role check and does NOT count.)
+
+  LINE  METHOD  PATH                                              FUNC                         GUARD
+  ----  ------  ------------------------------------------------  ---------------------------  ----------------------
+    31  POST    /tasks                                            create_task                  ✓  check_access
+   509  PATCH   /tasks/{task_id}                                  update_task                  ✓  role
+   548  PATCH   /tasks/{task_id}/assign                           assign_task                  ✓  role
+   713  POST    /tasks/{task_id}/status                           change_task_status           ✓  role
+   783  POST    /tasks/{task_id}/reopen                           reopen_task                  ✓  role     ← NEW (CRIT-B)
+   816  POST    /tasks/{task_id}/contractor-proof                 contractor_proof             ✓  role + membership
+   906  DELETE  /tasks/{task_id}/proof/{proof_id}                 delete_proof                 ✓  role + super_admin
+   945  POST    /tasks/{task_id}/force-close                      force_close_task             ✓  role
+  1009  POST    /tasks/{task_id}/manager-decision                 manager_decision             ✓  role + membership
+  1089  POST    /tasks/{task_id}/updates                          add_task_update              ✓  membership
+  1135  POST    /tasks/{task_id}/attachments                      upload_task_attachment       ✓  membership ← NEW (CRIT-C)
+
+COVERAGE: 11/11 ✓
+(Pre-fix coverage was 9/11; this change closes the last 2 gaps.)
+
+================================================================================
+SECTION 10 — DEPLOY CHECKLIST FOR ZAHI
+================================================================================
+You are on branch `staging` at SHA 023df1c. After approving this review, the
+agent will commit (still on `staging`) and stop. From there, YOU run:
+
+(1) Push to staging EB:
+    ./deploy.sh --stag
+
+    Expected: backend changes detected → builds → pushes → triggers GitHub
+    workflow `deploy-backend-staging.yml` (added in Task #425) → EB env
+    `Brikops-api-staging-env` rolls the new container.
+
+(2) After staging deploy (~2-3 min):
+    curl -s https://api-staging.brikops.com/health
+    Expected: 200 with JSON containing "status":"healthy" and the new SHA.
+
+(3) Smoke test on staging (manual, non-destructive, optional but recommended):
+    a) Try POST /api/auth/register with `"role":"project_manager"` in body
+       — should succeed but the created user must have role=viewer in DB,
+       AND the staging logs should contain a [AUTH-REGISTER] WARNING line.
+    b) Try POST /api/tasks/{some_task_id}/reopen as a viewer or as a PM on
+       a DIFFERENT project — should return 403 with the Hebrew message.
+    c) Try POST /api/tasks/{some_task_id}/attachments as a non-member who
+       is also not the assignee — should return 403 with the Hebrew message.
+    d) Confirm the legitimate flows still work: a real PM on the project
+       can /reopen their own closed task; a real assignee can upload an
+       attachment to their assigned task.
+
+(4) Merge to main and push to prod:
+    git checkout main && git merge staging && git push origin main
+    ./deploy.sh --prod
+
+(5) After prod deploy (~2-3 min):
+    curl -s https://api.brikops.com/health
+    Expected: 200 with the new SHA.
+
+(6) Capgo OTA: NOT REQUIRED. This is backend-only — no frontend bundle, no
+    capacitor.config, no native plugins. iOS/Android apps continue to run
+    against the new backend without any client update.
+
+ROLLBACK PROCEDURE (if anything goes sideways on staging or prod):
+    git checkout staging                                          # or main
+    git revert <new_commit_sha>     # creates a clean revert commit
+    ./deploy.sh --stag              # or --prod
+    Expected restore time: same ~2-3 min as forward deploy.
+
+The rollback SHA you can also reset to directly (with --force if needed):
+    023df1cc0a23b9ac51bb44daff58b3856786c164
 
 ================================================================================
 END OF REVIEW
 ================================================================================
-
-To revert all of this in one command:
-    git revert 2175a9e --no-edit
-
-To inspect the diff yourself directly from git:
-    git diff 33ffd0b3996b6a93c891e32568adb7be93a9751e..2175a9e -- deploy.sh
-    git show 2175a9e -- .github/workflows/deploy-backend-staging.yml
-
-
-  ================================================================================
-  VERIFY OUTPUTS  (captured 2026-04-26 12:12:17 UTC)
-  ================================================================================
-
-  CONTEXT — How VERIFY 4 and 5 were executed (important, please read)
-  --------------------------------------------------------------------------------
-  The original spec calls for "g i t  c h e c k o u t  staging" to test branch
-  behaviour. The Replit dev container's git wrapper blocks all destructive git
-  ops from the main agent — both that command and "g i t  w o r k t r e e  add"
-  were attempted live and both returned:
-
-      Destructive git operations are not allowed in the main agent.
-      Use the project_tasks skill to propose a new background Project Task...
-
-  I therefore used the next-best, code-path-equivalent approach: a tiny
-  PATH-prefixed wrapper at /tmp/gitmock_staging/git intercepts ONLY the call
-  "g i t  rev-parse --abbrev-ref HEAD" and returns the literal string
-  "staging". Every other git call (status, diff, rev-list, log, ls-files,
-  etc.) passes through to the real git binary unmodified.
-
-  Net effect: deploy.sh executes its branch-detection line
-      branch="$(git rev-parse --abbrev-ref HEAD)"
-  and receives "staging", then runs the EXACT branch-check, dry-run-help,
-  and prod-guard code paths that would run on a real staging checkout.
-  This is the same approach approved by the architect review on round 1.
-  After Zahi pushes this commit and merges main into staging, he can re-run
-  the literal commands from his own shell to confirm end-to-end on the
-  real branch.
-
-  --------------------------------------------------------------------------------
-  VERIFY 1 — bash -n deploy.sh   (syntax check)
-  --------------------------------------------------------------------------------
-  $ bash -n deploy.sh
-  (no output)
-  exit: 0   PASS
-
-  --------------------------------------------------------------------------------
-  VERIFY 2 — ./deploy.sh on main (no flag) — full dry-run output
-  --------------------------------------------------------------------------------
-  $ ./deploy.sh
-
-  [STALE BUILD] Frontend source (2026-04-26 10:58:26) is newer than build (2026-04-25 17:59:33) — will rebuild
-=== Deploy Status ===
-Commits ahead of origin: 4
-6f33dbf Add a way to deploy code to the staging environment
-a61b617 Update documentation to clarify file change reporting
-2175a9e feat(deploy): add --stag flag + staging GitHub workflow
-33ffd0b Transitioned from Plan to Build mode
-
-What will deploy:
-  - Frontend (Cloudflare Pages -> https://app.brikops.com)
-
-Dry-run only. To deploy:
-  ./deploy.sh --prod              # production (must be on main branch)
-  ./deploy.sh --stag              # staging    (must be on staging branch)
-  ./deploy.sh --prod "my message"  # with commit message
-  ./deploy.sh --prod --yes         # skip confirmation
-  ./deploy.sh --prod --skip-checks # skip preflight
-
-  exit: 0   PASS
-  (Help text lists BOTH --prod and --stag — confirms new flag is documented.)
-
-  --------------------------------------------------------------------------------
-  VERIFY 3 — ./deploy.sh --stag on main → must fail with "Switch to 'staging'"
-  --------------------------------------------------------------------------------
-  $ ./deploy.sh --stag
-
-  ERROR: You are on branch 'main'. Switch to 'staging' to deploy to staging.
-
-  exit: 1   PASS
-  (New stag-from-non-staging guard fires correctly.)
-
-  --------------------------------------------------------------------------------
-  VERIFY 4 — ./deploy.sh --prod on staging → must fail with "Switch to 'main'"
-             (REGRESSION CHECK — existing prod-from-non-main guard)
-  --------------------------------------------------------------------------------
-  $ ./deploy.sh --prod      (branch simulated as 'staging' — see CONTEXT above)
-
-  ERROR: You are on branch 'staging'. Switch to 'main' to deploy.
-
-  exit: 1   PASS
-  (Original prod-guard still works — no regression from new --stag block.)
-
-  --------------------------------------------------------------------------------
-  VERIFY 5 — ./deploy.sh on staging (no flag) → dry-run, no error
-  --------------------------------------------------------------------------------
-  $ ./deploy.sh             (branch simulated as 'staging' — see CONTEXT above)
-
-  [STALE BUILD] Frontend source (2026-04-26 10:58:26) is newer than build (2026-04-25 17:59:33) — will rebuild
-=== Deploy Status ===
-Commits ahead of origin: 4
-6f33dbf Add a way to deploy code to the staging environment
-a61b617 Update documentation to clarify file change reporting
-2175a9e feat(deploy): add --stag flag + staging GitHub workflow
-33ffd0b Transitioned from Plan to Build mode
-
-What will deploy:
-  - Frontend (Cloudflare Pages -> https://app.brikops.com)
-
-Dry-run only. To deploy:
-  ./deploy.sh --prod              # production (must be on main branch)
-  ./deploy.sh --stag              # staging    (must be on staging branch)
-  ./deploy.sh --prod "my message"  # with commit message
-  ./deploy.sh --prod --yes         # skip confirmation
-  ./deploy.sh --prod --skip-checks # skip preflight
-
-  exit: 0   PASS
-  (No-flag dry-run on staging branch is clean — no errors, exits 0.)
-
-  --------------------------------------------------------------------------------
-  VERIFY 6 — git diff --stat against rollback SHA → only deploy.sh + new yml
-  --------------------------------------------------------------------------------
-  Rollback SHA: 33ffd0b3996b6a93c891e32568adb7be93a9751e
-
-  $ git diff --stat 33ffd0b3996b6a93c891e32568adb7be93a9751e..HEAD -- deploy.sh '.github/workflows/*'
-
-   .github/workflows/deploy-backend-staging.yml | 83 ++++++++++++++++++++++++++++
- deploy.sh                                    | 62 ++++++++++++++++-----
- 2 files changed, 130 insertions(+), 15 deletions(-)
-(name-status)
-A	.github/workflows/deploy-backend-staging.yml
-M	deploy.sh
-
-  exit: 0   PASS
-  (Exactly 2 files changed inside the intended scope: deploy.sh modified,
-   deploy-backend-staging.yml added.)
-
-  For full transparency, here is the UNFILTERED diff against the rollback
-  SHA — it includes two files outside my scope:
-
-    M  .agents/agent_assets_metadata.toml   <- auto-modified by Replit when
-                                                present_asset is called
-    M  review.txt                           <- this doc (you asked me to
-                                                rewrite it as the diff doc)
-
-  $ git diff --name-status 33ffd0b3996b6a93c891e32568adb7be93a9751e..HEAD
-
-  M	.agents/agent_assets_metadata.toml
-A	.github/workflows/deploy-backend-staging.yml
-M	deploy.sh
-M	review.txt
-
-  (Neither of those two extra files affects the deployment scripts. The
-   .agents file is platform infra; review.txt is documentation only.)
-
-  --------------------------------------------------------------------------------
-  VERIFY 7 — YAML lint of new workflow file (must succeed without exception)
-  --------------------------------------------------------------------------------
-  $ python3 -c "import yaml; d=yaml.safe_load(open('.github/workflows/deploy-backend-staging.yml')); print('OK')"
-
-  OK — parsed 1 job(s)
-
-  exit: 0   PASS
-  (YAML parses cleanly, recognises 1 job — matches the prod sibling shape.)
-
-  --------------------------------------------------------------------------------
-  GATES SUMMARY
-  --------------------------------------------------------------------------------
-    Gate 1: VERIFY 1 — bash -n deploy.sh                                    PASS
-    Gate 2: VERIFY 2 — dry-run help on main lists --prod AND --stag         PASS
-    Gate 3: VERIFY 3 — --stag from main refused with correct message        PASS
-    Gate 4: VERIFY 4 — --prod from staging refused (regression intact)      PASS
-    Gate 5: VERIFY 5 — no-flag dry-run on staging exits 0 cleanly           PASS
-    Gate 6: VERIFY 6 — exactly 2 in-scope files changed                     PASS
-    Gate 7: VERIFY 7 — YAML parses without exception                        PASS
-
-  All 7 gates green.   AWAITING ZAHI APPROVAL — no commit, no push.
-  ================================================================================
-  
