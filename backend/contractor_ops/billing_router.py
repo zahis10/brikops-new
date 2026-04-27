@@ -1234,14 +1234,7 @@ async def billing_webhook_greeninvoice(request: Request):
         return {"status": "rate_limited"}
     _webhook_call_times.append(now_ts)
 
-    # S7 — SECURITY FIX (HIGH-D): validate webhook token BEFORE any other
-    # logic. Originally the token check was placed after the JSON parse,
-    # doc_id check, and duplicate-doc_id check — so unauthenticated callers
-    # could still trigger DB writes / hit early-return 200s by sending an
-    # empty body, missing doc_id, or a known-duplicate doc_id. Architect
-    # review 2026-04-27 flagged this as an authentication bypass. Now any
-    # request without a valid X-Webhook-Token / ?token= is rejected with 401
-    # before we touch the body or the DB.
+    # Authenticate before parsing body or touching DB.
     import hmac as _hmac_gi
     from config import GI_WEBHOOK_SECRET
     incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
@@ -1291,7 +1284,6 @@ async def billing_webhook_greeninvoice(request: Request):
         logger.info("[GI-WEBHOOK] Duplicate doc_id=%s, already processed", doc_id)
         return {"status": "ok"}
 
-    # (Token check moved to top of handler — see HIGH-D comment above.)
     if not GI_BASE_URL:
         logger.error("[GI-WEBHOOK] GI_BASE_URL not configured, cannot verify document")
         await db.gi_webhook_log.insert_one(_add_raw({
@@ -1438,16 +1430,7 @@ async def billing_webhook_payplus(request: Request):
     db = get_db()
     raw_body = await request.body()
     from config import PAYPLUS_ENV, PAYPLUS_SECRET_KEY
-    # S7 — SECURITY FIX (HIGH-C): HMAC verification is MANDATORY for ALL
-    # webhook requests AND runs BEFORE the JSON parse. Pre-S7 the handler:
-    #   (1) only fired HMAC when User-Agent="PayPlus" (trivially bypassable)
-    #   (2) silently returned 200 on hash mismatch (allowed attacker probing)
-    #   (3) parsed JSON before checking the hash, so an invalid-JSON request
-    #       hit a {"status":"error"} dict-return path with HTTP 200 without
-    #       ever validating the signature (architect-review 2026-04-27 b)
-    # Now: missing OR invalid hash header → 401 regardless of User-Agent or
-    # body shape. Header name is "hash" (lowercase) per PayPlus spec; HMAC
-    # is base64-encoded SHA-256 of the raw request body.
+    # Authenticate (HMAC) before parsing body.
     pp_hash = request.headers.get("hash", "")
     if not pp_hash:
         logger.error("[PAYPLUS-WH] Missing 'hash' header — rejecting webhook")
@@ -1459,10 +1442,8 @@ async def billing_webhook_payplus(request: Request):
     ).digest()
     expected_b64 = base64.b64encode(expected_hash).decode()
     if not hmac_module.compare_digest(expected_b64, pp_hash):
-        logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook (was tolerant pre-S7)")
+        logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
-    logger.info("[PAYPLUS-WH] Hash validated successfully")
-    # Now safe to parse the JSON body — caller is authenticated.
     try:
         body = json.loads(raw_body)
     except Exception:

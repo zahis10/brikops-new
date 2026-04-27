@@ -564,14 +564,6 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
     @router.post("/auth/login-phone")
     async def login_with_phone(req: PhoneLoginRequest, request: Request):
-        # S7 — SECURITY FIXES:
-        #   HIGH-B: per-(identifier, IP) brute-force lockout (identifier = phone_e164).
-        #   MED-A:  collapse Hebrew enumeration messages
-        #             ('מספר טלפון לא רשום', 'סיסמה שגויה') into one generic 401.
-        #   Decision #7 (Zahi 2026-04-27): also fold the prior 400
-        #             'לא הוגדרה סיסמה. יש להתחבר עם OTP.' into the same 401 — the
-        #             login screen already exposes an OTP button so the UX hint
-        #             is redundant; keeping it would leak account existence.
         from contractor_ops.auth_lockout import (
             check_lockout, record_auth_failure_and_raise, clear_auth_failures, _resolve_client_ip,
         )

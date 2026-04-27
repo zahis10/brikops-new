@@ -859,9 +859,6 @@ async def contractor_proof(
     storage = StorageService()
     proof_urls = []
     for i, upload_file in enumerate(all_files):
-        # S7 — SECURITY FIX (HIGH-A): validate file type to block stored XSS via
-        # HTML/JS upload masquerading as a proof attachment. Accepts images +
-        # PDFs (per ALLOWED_PROOF_*); rejects everything else with 422.
         validate_upload(upload_file, ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES)
         result = await storage.upload_file_with_details(upload_file, f"proof_{task_id}_{i}")
         proof_urls.append(result.file_url)

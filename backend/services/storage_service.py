@@ -66,9 +66,7 @@ class StorageService:
             checksum = self._compute_checksum(content)
             logger.info(f"[UPLOAD:STAGE2:CHECKSUM] checksum={checksum}, size={file_size}")
             
-            # S7 — SECURITY FIX (HIGH-A): derive S3 key extension from validated
-            # content-type via whitelist, NOT from the user-supplied filename
-            # (which is attacker-controlled and was the XSS root cause).
+            # Derive extension from validated content-type, not from filename.
             EXT_BY_MIME = {
                 'image/jpeg': 'jpg',
                 'image/png': 'png',
