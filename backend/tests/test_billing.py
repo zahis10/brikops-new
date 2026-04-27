@@ -216,3 +216,83 @@ class TestAccessGate:
             "note": "should fail",
         }, headers=headers)
         assert r.status_code in [403, 401]
+
+
+def test_get_billable_amount_plan_override_returns_founder_price():
+    """Regression test for the founder-checkout hotfix.
+
+    Bug: /billing/org/{id}/checkout with {plan:'founder'} was returning
+    the calculated amount (e.g. ₪5,700 from project units) instead of
+    ₪499 because get_billable_amount read sub.plan_id from DB ('standard')
+    instead of the plan being selected. Real customer was charged the
+    wrong amount.
+
+    Note: written as a sync test that calls asyncio.run() per call rather
+    than using @pytest.mark.asyncio, because pytest-asyncio is not in
+    requirements.txt. Same pattern as the existing async tests in
+    test_billing_v1.py — wire up Motor + set_billing_db inside the async
+    block, then await the unit under test.
+    """
+    import asyncio
+    import sys
+    sys.path.insert(0, "/home/runner/workspace/backend")
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from contractor_ops.billing import get_billable_amount, set_billing_db
+
+    sync_db = MongoClient("mongodb://127.0.0.1:27017")["contractor_ops"]
+    test_org_id = "regression-test-billing-plan-override"
+    test_pb_id = f"pb-{test_org_id}"
+
+    # Setup: org on 'standard' plan with active project_billing producing ≠499
+    sync_db.subscriptions.update_one(
+        {"org_id": test_org_id},
+        {"$set": {
+            "org_id": test_org_id,
+            "plan_id": "standard",
+            "status": "active",
+        }},
+        upsert=True,
+    )
+    sync_db.project_billing.update_one(
+        {"id": test_pb_id},
+        {"$set": {
+            "id": test_pb_id,
+            "org_id": test_org_id,
+            "project_id": f"proj-{test_org_id}",
+            "status": "active",
+            "plan_id": "standard",
+            "contracted_units": 50,
+            "monthly_total": 1500,
+        }},
+        upsert=True,
+    )
+
+    async def run():
+        client = AsyncIOMotorClient("mongodb://127.0.0.1:27017")
+        mdb = client["contractor_ops"]
+        set_billing_db(mdb)
+
+        # Without override: should return calculated amount (NOT 499)
+        baseline = await get_billable_amount(test_org_id, 'monthly')
+        assert baseline['amount'] != 499, \
+            f"Test setup wrong: baseline should NOT be 499, got {baseline['amount']}"
+
+        # With override='founder_6m': MUST return 499 (the bug)
+        with_override = await get_billable_amount(
+            test_org_id, 'monthly', plan_override='founder_6m'
+        )
+        assert with_override['amount'] == 499, \
+            f"plan_override='founder_6m' must return 499, got {with_override['amount']}"
+        assert with_override['source'] == 'founder_plan'
+
+        # Sanity: 'standard' override = calculated (not 499)
+        with_std_override = await get_billable_amount(
+            test_org_id, 'monthly', plan_override='standard'
+        )
+        assert with_std_override['amount'] != 499
+
+    try:
+        asyncio.run(run())
+    finally:
+        sync_db.subscriptions.delete_one({"org_id": test_org_id})
+        sync_db.project_billing.delete_one({"id": test_pb_id})

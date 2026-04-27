@@ -204,7 +204,7 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         pending_plan_id = 'standard'
 
     from contractor_ops.billing import get_billable_amount
-    billing_info = await get_billable_amount(org_id, cycle)
+    billing_info = await get_billable_amount(org_id, cycle, plan_override=pending_plan_id)
     amount = billing_info['amount']
 
     if not amount or amount <= 0:
@@ -1568,7 +1568,11 @@ async def billing_webhook_payplus(request: Request):
 
     try:
         from contractor_ops.billing import get_billable_amount
-        expected_info = await get_billable_amount(org_id, pending_cycle or 'monthly')
+        expected_info = await get_billable_amount(
+            org_id,
+            pending_cycle or 'monthly',
+            plan_override=pending_plan_id,
+        )
         expected_amount = expected_info['amount']
         actual_amount = verified_tx.get('amount', 0)
         if expected_amount and actual_amount and abs(actual_amount - expected_amount) > 1:

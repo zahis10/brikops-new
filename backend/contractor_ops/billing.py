@@ -1643,7 +1643,7 @@ async def compute_org_billing_amount(org_id: str, cycle: str = 'monthly') -> dic
     }
 
 
-async def get_billable_amount(org_id: str, cycle: str = 'monthly') -> dict:
+async def get_billable_amount(org_id: str, cycle: str = 'monthly', plan_override: str = None) -> dict:
     """Single source of truth for how much to charge an org.
     Returns dict with:
         'amount': int,          # Amount in ILS (VAT inclusive — total the customer pays)
@@ -1651,6 +1651,14 @@ async def get_billable_amount(org_id: str, cycle: str = 'monthly') -> dict:
         'plan_id': str,
         'org_id': str,
         'cycle': str
+
+    Args:
+        plan_override: Optional plan_id to use INSTEAD of sub.plan_id.
+                       Use this during checkout when the user is selecting
+                       a plan that hasn't been activated in the DB yet
+                       (e.g. upgrading FROM standard TO founder_6m). Without
+                       this, the function reads sub.plan_id and would price
+                       the user's CURRENT plan, not the one they're buying.
     Priority: manual_override > founder_plan (499) > calculated.
     Raises ValueError if no subscription exists.
     """
@@ -1664,7 +1672,7 @@ async def get_billable_amount(org_id: str, cycle: str = 'monthly') -> dict:
         logger.warning("BILLING_AMOUNT org=%s — no subscription found", org_id)
         raise ValueError(f"No subscription found for org {org_id}")
 
-    plan_id = sub.get('plan_id', 'standard')
+    plan_id = plan_override or sub.get('plan_id', 'standard')
 
     override = sub.get('manual_override', {})
     override_amount = override.get('total_monthly')
