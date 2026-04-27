@@ -200,6 +200,8 @@ async def billing_checkout(org_id: str, request: Request, user: dict = Depends(g
         if active_projects > 1:
             raise HTTPException(status_code=400, detail='מוגבלת לפרויקט אחד')
         pending_plan_id = 'founder_6m'
+        if cycle != 'monthly':
+            raise HTTPException(status_code=400, detail='תוכנית מייסדים זמינה רק במחזור חודשי')
     else:
         pending_plan_id = 'standard'
 

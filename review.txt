@@ -1,4 +1,55 @@
 ================================================================================
+  AMENDMENT — FOUNDER+YEARLY GUARD ADDED (2026-04-27, post-architect-review)
+  ================================================================================
+  Per Zahi's approval, the SEVERE finding from the architect review has been
+  folded into THIS commit. Two changes since the original review below:
+
+    1. backend/contractor_ops/billing_router.py +2 lines (line 206-207):
+         if cycle != 'monthly':
+             raise HTTPException(status_code=400,
+                 detail='תוכנית מייסדים זמינה רק במחזור חודשי')
+       Placed inside the `if plan == 'founder':` branch, right after
+       pending_plan_id = 'founder_6m', so it only blocks the founder path.
+
+    2. backend/tests/test_billing.py +101 lines:
+         test_billing_checkout_rejects_founder_yearly(monkeypatch)
+       In-process test using asyncio.run() + StubRequest + monkeypatched
+       PayPlus config + super_admin user dict to call billing_checkout
+       directly. Two cases:
+         (A) plan='founder', cycle='yearly' MUST raise HTTPException(400)
+             with the Hebrew detail string — PASS
+         (B) plan='standard', cycle='yearly' MUST NOT trigger the
+             founder-monthly-only message — PASS (any other downstream
+             failure tolerated since standard path may fail at PayPlus
+             stub or elsewhere).
+
+  Verifications for the amendment:
+    - py_compile on both files: OK
+    - Both new tests pass:
+        tests/test_billing.py::test_billing_checkout_rejects_founder_yearly PASSED
+        tests/test_billing.py::test_get_billable_amount_plan_override_returns_founder_price PASSED
+    - Full billing suite (test_billing.py + test_billing_v1.py):
+        25 failed, 20 passed, 7 skipped, 6 errors
+        — identical baseline to the original hotfix run, no regressions.
+
+  Updated diff stat for THIS commit (the prior commit 75dc287 is already
+  in the tree from the original hotfix):
+        backend/contractor_ops/billing_router.py |   2 +
+        backend/tests/test_billing.py            | 101 +++++++++++
+        2 files changed, 103 insertions(+)
+
+  Updated commit message in .local/.commit_message:
+        fix(billing): reject founder plan with non-monthly cycle to prevent
+        +1 year of access for ₪499
+
+  Recommend Zahi run a real end-to-end test against staging before flipping
+  prod: POST /billing/org/<org>/checkout with {"plan":"founder","cycle":"yearly"}
+  should return HTTP 400 with the Hebrew detail.
+
+  ORIGINAL REVIEW (kept for audit trail) follows below.
+  ================================================================================
+
+================================================================================
   HOTFIX REVIEW — Founder plan checkout charges wrong amount (P0)
   ================================================================================
   Date:        2026-04-27
@@ -345,22 +396,30 @@ the spec might not have caught. Verdict: core P0 fix is correct, backwards
 compat is intact, but two pre-existing risks intersect with this code path.
 Surfacing here so you can decide whether to widen this hotfix or split:
 
-[SEVERE — pre-existing, NOT introduced by this hotfix, but newly reachable]
+[SEVERE — RESOLVED in follow-up commit 2026-04-27]
   Founder + cycle=yearly undercharge.
-  • billing_checkout does not validate cycle when plan=='founder'.
+  • billing_checkout did not validate cycle when plan=='founder'.
   • get_billable_amount returns fixed 499 for founder regardless of cycle.
-  • Webhook then applies pending_cycle when computing paid_until
+  • Webhook then applied pending_cycle when computing paid_until
     (cycle='yearly' => +1 year), while the founder plan is intended as
     6 months (founder_6m).
-  • A user POSTing {"plan":"founder","cycle":"yearly"} would pay ₪499
-    and receive a year of access instead of 6 months.
-  • This bug exists in the unfixed code too, but pre-fix it was masked
-    because checkout fell through to calculated pricing (charging the
-    full amount) for standard-plan orgs. The fix removes that masking
-    and makes the undercharge cleanly reachable on the founder path.
-  • Recommendation: Either (a) extend this hotfix with a 1-line guard
-    (`if plan=='founder' and cycle!='monthly': raise 400`) before
-    committing, or (b) split into a follow-up — see proposed task.
+  • A user POSTing {"plan":"founder","cycle":"yearly"} would have paid
+    ₪499 and received a year of access instead of 6 months.
+  • This bug existed in the unfixed code too, but pre-hotfix it was
+    masked because checkout fell through to calculated pricing
+    (charging the full amount) for standard-plan orgs. The first hotfix
+    removed that masking and made the undercharge cleanly reachable on
+    the founder path.
+  • RESOLUTION: Per Zahi's approval, folded into the follow-up commit:
+        backend/contractor_ops/billing_router.py +2 lines:
+            pending_plan_id = 'founder_6m'
+            if cycle != 'monthly':
+                raise HTTPException(
+                    status_code=400,
+                    detail='תוכנית מייסדים זמינה רק במחזור חודשי')
+    Regression test added at
+    backend/tests/test_billing.py::test_billing_checkout_rejects_founder_yearly
+    Test PASSES; no regressions in the rest of the billing suite.
 
 [IMPORTANT — pre-existing, orthogonal to this fix]
   Webhook correlation drift: when page_request_uid lookup misses and

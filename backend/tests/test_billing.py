@@ -296,3 +296,104 @@ def test_get_billable_amount_plan_override_returns_founder_price():
     finally:
         sync_db.subscriptions.delete_one({"org_id": test_org_id})
         sync_db.project_billing.delete_one({"id": test_pb_id})
+
+
+def test_billing_checkout_rejects_founder_yearly(monkeypatch):
+    """Regression test for the founder+yearly undercharge guard.
+
+    Bug: POST /billing/org/{id}/checkout with {"plan":"founder","cycle":"yearly"}
+    would charge ₪499 (founder is fixed-price) but the webhook would set
+    paid_until based on cycle=yearly (+1 year), giving the user a year
+    of access for the 6-month price. Architect review flagged this as
+    SEVERE during the founder-checkout hotfix code review.
+
+    The guard rejects any non-monthly cycle on the founder plan with HTTP 400.
+
+    Pattern: same asyncio.run() approach as the prior regression test.
+    Constructs a minimal stub Request and a super_admin user dict to
+    bypass the billing_role check, monkeypatches PayPlus config to get
+    past the 501 gate, and seeds a clean org so the founder branch is
+    reachable.
+    """
+    import asyncio
+    import sys
+    sys.path.insert(0, "/home/runner/workspace/backend")
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from fastapi import HTTPException
+    from contractor_ops import billing_router as br
+    from contractor_ops.billing import set_billing_db
+    from contractor_ops.router import set_db as set_router_db
+    from contractor_ops import billing as billing_module
+    import config as cfg
+
+    monkeypatch.setattr(cfg, "PAYPLUS_API_KEY", "test_key", raising=False)
+    monkeypatch.setattr(cfg, "PAYPLUS_SECRET_KEY", "test_secret", raising=False)
+    monkeypatch.setattr(cfg, "PAYPLUS_PAYMENT_PAGE_UID", "test_page_uid", raising=False)
+    monkeypatch.setattr(billing_module, "BILLING_V1_ENABLED", True, raising=False)
+
+    sync_db = MongoClient("mongodb://127.0.0.1:27017")["contractor_ops"]
+    test_org_id = "regression-test-founder-yearly-guard"
+    sync_db.subscriptions.delete_many({"org_id": test_org_id})
+    sync_db.project_billing.delete_many({"org_id": test_org_id})
+    sync_db.organizations.update_one(
+        {"id": test_org_id},
+        {"$set": {"id": test_org_id, "name": "Test Org", "billing": {}, "tax_id": ""}},
+        upsert=True,
+    )
+    sync_db.feature_flags.update_one(
+        {"key": "founder_plan_enabled"},
+        {"$set": {"key": "founder_plan_enabled", "value": True}},
+        upsert=True,
+    )
+
+    class StubRequest:
+        def __init__(self, body_dict):
+            self._body = body_dict
+
+        async def json(self):
+            return self._body
+
+    super_admin_user = {
+        "id": "test-super-admin-id",
+        "email": "test-super-admin@local",
+        "platform_role": "super_admin",
+        "role": "super_admin",
+    }
+
+    async def run():
+        client = AsyncIOMotorClient("mongodb://127.0.0.1:27017")
+        mdb = client["contractor_ops"]
+        set_billing_db(mdb)
+        set_router_db(mdb)
+
+        # Case A: plan='founder', cycle='yearly' MUST raise 400 with the Hebrew detail
+        req_yearly = StubRequest({"plan": "founder", "cycle": "yearly"})
+        try:
+            await br.billing_checkout(test_org_id, req_yearly, user=super_admin_user)
+        except HTTPException as e:
+            assert e.status_code == 400, f"Expected 400 got {e.status_code} ({e.detail!r})"
+            assert e.detail == 'תוכנית מייסדים זמינה רק במחזור חודשי', \
+                f"Expected Hebrew founder-monthly-only message, got {e.detail!r}"
+        else:
+            raise AssertionError(
+                "Founder + yearly MUST raise HTTPException(400) — guard is missing"
+            )
+
+        # Case B: plan='standard', cycle='yearly' MUST NOT be blocked by this guard
+        # (it may fail later for other reasons — PayPlus stub, missing project_billing, etc.
+        # what matters is it does NOT raise 400 with the founder-monthly-only message).
+        req_std_yearly = StubRequest({"plan": "standard", "cycle": "yearly"})
+        try:
+            await br.billing_checkout(test_org_id, req_std_yearly, user=super_admin_user)
+        except HTTPException as e:
+            assert not (e.status_code == 400 and e.detail == 'תוכנית מייסדים זמינה רק במחזור חודשי'), \
+                "Standard plan must not trigger the founder-monthly-only guard"
+        except Exception:
+            pass  # Any other downstream failure (PayPlus stub etc.) is fine for this test
+
+    try:
+        asyncio.run(run())
+    finally:
+        sync_db.subscriptions.delete_many({"org_id": test_org_id})
+        sync_db.project_billing.delete_many({"org_id": test_org_id})
+        sync_db.organizations.delete_one({"id": test_org_id})
