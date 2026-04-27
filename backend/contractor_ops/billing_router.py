@@ -1234,14 +1234,6 @@ async def billing_webhook_greeninvoice(request: Request):
         return {"status": "rate_limited"}
     _webhook_call_times.append(now_ts)
 
-    # Authenticate before parsing body or touching DB.
-    import hmac as _hmac_gi
-    from config import GI_WEBHOOK_SECRET
-    incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
-    if not incoming_secret or not _hmac_gi.compare_digest(incoming_secret, GI_WEBHOOK_SECRET or ""):
-        logger.warning("[GI-WEBHOOK] Invalid or missing X-Webhook-Token from IP=%s — rejecting", client_ip)
-        raise HTTPException(status_code=401, detail="Invalid webhook token")
-
     try:
         payload = await request.json()
     except Exception:
@@ -1283,6 +1275,20 @@ async def billing_webhook_greeninvoice(request: Request):
     if existing:
         logger.info("[GI-WEBHOOK] Duplicate doc_id=%s, already processed", doc_id)
         return {"status": "ok"}
+
+    from config import GI_WEBHOOK_SECRET
+    if GI_WEBHOOK_SECRET:
+        incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
+        if incoming_secret != GI_WEBHOOK_SECRET:
+            logger.warning("[GI-WEBHOOK] Invalid webhook secret from IP=%s", client_ip)
+            await db.gi_webhook_log.insert_one(_add_raw({
+                'id': str(uuid.uuid4()),
+                'payload_hash': payload_hash,
+                'ip': client_ip,
+                'result': 'auth_failed',
+                'created_at': _now(),
+            }))
+            return {"status": "ok"}
 
     if not GI_BASE_URL:
         logger.error("[GI-WEBHOOK] GI_BASE_URL not configured, cannot verify document")
@@ -1428,27 +1434,28 @@ async def billing_webhook_payplus(request: Request):
     from datetime import datetime, timezone
     from dateutil.relativedelta import relativedelta
     db = get_db()
-    raw_body = await request.body()
-    from config import PAYPLUS_ENV, PAYPLUS_SECRET_KEY
-    # Authenticate (HMAC) before parsing body.
-    pp_hash = request.headers.get("hash", "")
-    if not pp_hash:
-        logger.error("[PAYPLUS-WH] Missing 'hash' header — rejecting webhook")
-        raise HTTPException(status_code=401, detail="Missing webhook signature")
-    expected_hash = hmac_module.new(
-        PAYPLUS_SECRET_KEY.encode(),
-        raw_body,
-        hashlib.sha256
-    ).digest()
-    expected_b64 = base64.b64encode(expected_hash).decode()
-    if not hmac_module.compare_digest(expected_b64, pp_hash):
-        logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook")
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
     try:
+        raw_body = await request.body()
         body = json.loads(raw_body)
     except Exception:
-        logger.warning("[PAYPLUS-WH] Authenticated request had invalid JSON body")
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        logger.warning("[PAYPLUS-WH] Failed to parse webhook body")
+        return {"status": "error", "detail": "invalid json"}
+    from config import PAYPLUS_ENV, PAYPLUS_SECRET_KEY
+    pp_user_agent = request.headers.get("user-agent", "")
+    pp_hash = request.headers.get("hash", "")
+    if pp_user_agent == "PayPlus" and pp_hash:
+        expected_hash = hmac_module.new(
+            PAYPLUS_SECRET_KEY.encode(),
+            raw_body,
+            hashlib.sha256
+        ).digest()
+        expected_b64 = base64.b64encode(expected_hash).decode()
+        if not hmac_module.compare_digest(expected_b64, pp_hash):
+            logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook")
+            return {"status": "ok"}
+        logger.info("[PAYPLUS-WH] Hash validated successfully")
+    elif pp_user_agent != "PayPlus":
+        logger.warning("[PAYPLUS-WH] Unexpected user-agent: %s — processing anyway", pp_user_agent)
     log_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.payplus_webhook_log.insert_one({

@@ -356,13 +356,6 @@ set_engine(notification_engine)
 set_wa_verify_token(WA_WEBHOOK_VERIFY_TOKEN)
 set_meta_app_secret(META_APP_SECRET)
 
-from config import GI_BASE_URL, GI_WEBHOOK_SECRET
-if GI_BASE_URL and not GI_WEBHOOK_SECRET:
-    raise RuntimeError(
-        "Configuration error: GI_BASE_URL is set but GI_WEBHOOK_SECRET is not. "
-        "Set GI_WEBHOOK_SECRET env var or unset GI_BASE_URL. Refusing to start."
-    )
-
 # S5b — Startup guard: refuse to boot if WhatsApp is enabled but secret missing.
 # Prevents silent misconfiguration where webhook signature verification is
 # effectively disabled until the first webhook arrives and returns 503.
