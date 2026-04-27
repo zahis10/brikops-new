@@ -1436,19 +1436,18 @@ async def billing_webhook_payplus(request: Request):
     from datetime import datetime, timezone
     from dateutil.relativedelta import relativedelta
     db = get_db()
-    try:
-        raw_body = await request.body()
-        body = json.loads(raw_body)
-    except Exception:
-        logger.warning("[PAYPLUS-WH] Failed to parse webhook body")
-        return {"status": "error", "detail": "invalid json"}
+    raw_body = await request.body()
     from config import PAYPLUS_ENV, PAYPLUS_SECRET_KEY
     # S7 — SECURITY FIX (HIGH-C): HMAC verification is MANDATORY for ALL
-    # webhook requests. Previously only fired when User-Agent="PayPlus"
-    # (trivially bypassable by spoofing the header) and silently returned 200
-    # on hash mismatch (allowing attacker probing). Now: missing OR invalid
-    # hash header → 401, regardless of User-Agent. Header name is "hash"
-    # (lowercase) per PayPlus spec; HMAC is base64-encoded SHA-256.
+    # webhook requests AND runs BEFORE the JSON parse. Pre-S7 the handler:
+    #   (1) only fired HMAC when User-Agent="PayPlus" (trivially bypassable)
+    #   (2) silently returned 200 on hash mismatch (allowed attacker probing)
+    #   (3) parsed JSON before checking the hash, so an invalid-JSON request
+    #       hit a {"status":"error"} dict-return path with HTTP 200 without
+    #       ever validating the signature (architect-review 2026-04-27 b)
+    # Now: missing OR invalid hash header → 401 regardless of User-Agent or
+    # body shape. Header name is "hash" (lowercase) per PayPlus spec; HMAC
+    # is base64-encoded SHA-256 of the raw request body.
     pp_hash = request.headers.get("hash", "")
     if not pp_hash:
         logger.error("[PAYPLUS-WH] Missing 'hash' header — rejecting webhook")
@@ -1463,6 +1462,12 @@ async def billing_webhook_payplus(request: Request):
         logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook (was tolerant pre-S7)")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
     logger.info("[PAYPLUS-WH] Hash validated successfully")
+    # Now safe to parse the JSON body — caller is authenticated.
+    try:
+        body = json.loads(raw_body)
+    except Exception:
+        logger.warning("[PAYPLUS-WH] Authenticated request had invalid JSON body")
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
     log_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.payplus_webhook_log.insert_one({

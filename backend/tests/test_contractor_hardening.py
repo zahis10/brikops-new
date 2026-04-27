@@ -126,15 +126,41 @@ class TestContractorTaskDetailHardening:
         if not other_task:
             pytest.skip('All tasks assigned to contractor1')
         r = httpx.get(f'{BASE}/api/tasks/{other_task["id"]}', headers=_auth(contractor1['token']))
-        assert r.status_code == 404
-        assert 'לא נמצא' in r.json().get('detail', '')
+        # The handler returns either 404 ('הליקוי לא נמצא') or 403 ('אין לך
+        # הרשאה...') depending on whether the user has any project membership.
+        # Both are valid "denied" responses for the security guarantee under
+        # test (contractor cannot read another user's task). See tasks_router
+        # lines 448-467.
+        assert r.status_code in (403, 404), f'Expected denied, got {r.status_code}'
+        detail = r.json().get('detail', '')
+        assert ('לא נמצא' in detail) or ('הרשאה' in detail), f'Expected denial detail, got: {detail}'
 
 
 class TestContractorProofWorkflow:
     """Tests proof submission + manager visibility as a single ordered workflow.
     Uses a fixture to reset one contractor task to in_progress before each test,
     and cleans up test artifacts afterward.
+
+    Paywall note: contractors don't have a billing org of their own, so the
+    paywall middleware would block all POSTs with 402. The class-scope fixture
+    `_grant_paywall_bypass` temporarily promotes contractor1 to platform_role
+    'super_admin' for the duration of this class only — billing.py line 313-315
+    fast-paths super_admin to FULL_ACCESS. This ONLY bypasses the paywall;
+    role-based authorization (assignee check, role=='contractor' gate) is
+    unaffected because those are based on the regular `role` field, not
+    `platform_role`. State is reverted in teardown.
     """
+
+    @pytest.fixture(scope='class', autouse=True)
+    def _grant_paywall_bypass(self, contractor1):
+        db = _get_db()
+        original = db.users.find_one({'id': contractor1['id']}, {'platform_role': 1}).get('platform_role')
+        db.users.update_one({'id': contractor1['id']}, {'$set': {'platform_role': 'super_admin'}})
+        yield
+        if original is None:
+            db.users.update_one({'id': contractor1['id']}, {'$unset': {'platform_role': ''}})
+        else:
+            db.users.update_one({'id': contractor1['id']}, {'$set': {'platform_role': original}})
 
     @pytest.fixture(autouse=True)
     def _setup_proofable_task(self, contractor1, project_id):
