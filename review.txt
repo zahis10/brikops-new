@@ -1,248 +1,433 @@
 ================================================================================
-S7 — BATCH SHANNON HIGH SECURITY FIXES — REVIEW (Task #429 + #432 revert)
+S7 (revised) — FULL CODE DIFF — what will land on s7-full when committed
 ================================================================================
 Date:        2026-04-27
 Branch:      s7-full
-Files:       7 modified, 1 new (auth_lockout.py)
-Boot status: PASSING (verified via /health → 200)
+Compared to: origin/main
 
-SCOPE (REVISED) — 4 of 6 findings landed; 2 deferred per Zahi.
-Originally six fixes shipped together. After review, the two payment-webhook
-fixes (HIGH-C PayPlus HMAC and HIGH-D GreenInvoice token) were reverted off
-this branch — the payment system needs a dedicated test strategy before any
-webhook change lands. They will return as a separate batch.
+Everything below is the verbatim output of:
+    git diff origin/main -- backend/
+No editing, no truncation, no commentary. Read the - and + lines for
+the literal before/after of every line.
 
 --------------------------------------------------------------------------------
-LANDED — 4 FINDINGS CLOSED
+DIFF STAT
 --------------------------------------------------------------------------------
-
-### HIGH-A — Stored XSS via contractor proof upload
-Files: tasks_router.py · upload_safety.py · storage_service.py · tests/
-
-The contractor-proof endpoint accepted ANY file type and the S3 key
-extension was derived from the user-supplied filename. An attacker could
-upload a .html file with text/html content-type, then trick the manager
-UI into rendering it as inline content (XSS).
-
-Fix:
-  - upload_safety.py — added ALLOWED_PROOF_EXTENSIONS / ALLOWED_PROOF_TYPES
-    (images + PDF; PDFs are first-class proofs per Zahi's domain decision).
-  - tasks_router.py — `validate_upload(...)` is now called inside the
-    per-file loop before storage; rejects with 422.
-  - storage_service.py — extension is now derived from a MIME whitelist
-    (EXT_BY_MIME), NEVER from the filename. Unknown MIMEs become `.bin`.
-  - tests/test_contractor_hardening.py — added 2 tests: PDF accepted (200),
-    HTML rejected (422 + status not mutated).
-
-Verification:
-  - PDF upload: validate_upload(cert.pdf, application/pdf) → OK
-  - HTML upload: → HTTPException(422, 'סוג קובץ לא נתמך')
-  - SVG upload: → HTTPException(422, 'סוג קובץ לא נתמך')
-
-### HIGH-B — Brute-force lockout on /login + /login-phone
-Files: auth_lockout.py (NEW) · auth_router.py · onboarding_router.py · server.py
-
-Both password-login endpoints had no rate-limiting. Failure messages were
-also distinct in Hebrew per failure mode, allowing username/phone
-enumeration ('מספר טלפון לא רשום' vs 'סיסמה שגויה' vs 'לא הוגדרה סיסמה').
-
-Fix — new shared module backend/contractor_ops/auth_lockout.py:
-  - 5 failures within 15-min window → lockout for 15 min
-  - Per-(identifier, IP) tuple — different IPs scoped independently
-  - 24h TTL auto-cleanup via Mongo TTL index on last_failure
-  - Compound unique index on (identifier, ip)
-  - All failure paths in BOTH routers collapse to one English 401:
-    "Authentication failed". Locked-out responses add a Retry-After header.
-  - Per locked-decision #7: the 400 'לא הוגדרה סיסמה. יש להתחבר עם OTP.'
-    on /login-phone is also folded into the generic 401 — the login UI
-    already exposes an OTP button, so the hint was redundant and leaked
-    account existence.
-  - Counter increments even when user does not exist (prevents
-    enumeration via "which emails enter lockout vs which never do").
-
-Verification (live against running dev server):
-  - Attempts 1-5 same email/IP: HTTP 401 (no Retry-After)
-  - Attempt 5: count=5, lockout_until set in DB
-  - Attempts 6+: HTTP 401 with `retry-after: 899` (~15 min)
-  - Same email from 8.8.8.8 while locked from 127.0.0.1: NOT locked (scoped)
-  - Mongo collection has 2 indexes: auth_failed_identifier_ip_unique +
-    auth_failed_ttl (TTL=86400)
-
-Architect-review fix (sliding window — caught at code review):
-  Original code only set first_failure on insert and never reset it.
-  An attacker who paced probes >24h apart could drive count arbitrarily
-  high while keeping first_failure stale, never tripping the threshold.
-  Fixed: when existing first_failure ≤ window_start, count is reset to 1
-  and lockout_until is unset BEFORE evaluating the threshold.
-  Re-verified: seeded count=4 with first_failure 16min old; next failure
-  reset count to 1 (not progressed to lockout). Full 1→6 cycle still fires.
-
-### MED-A — Hebrew login enumeration closure
-Folded into HIGH-B. /auth/login-phone no longer differentiates between
-"phone not registered", "wrong password", and "no password set" — all
-collapse to the same generic English 401 returned by the lockout helper.
-See HIGH-B for the locked-decision #7 rationale on the OTP-hint branch.
-
-### MED-D — Paywall middleware case-sensitivity
-Files: server.py:~1371 + ~75 + ~295
-
-FastAPI's HTTPBearer dependency is case-insensitive on the Bearer scheme,
-but the paywall middleware used `.startswith('Bearer ')` (case-sensitive).
-A request with `Authorization: bearer X` (lowercase b) was authenticated
-by the dependency but slipped past the paywall check.
-
-Fix:
-  - paywall_middleware: `auth_header.lower().startswith('bearer ')`
-  - _extract_jwt_payload: same change (architect-review consistency)
-  - debug_db_ping handler: same change (architect-review consistency)
-
-Verification: `Authorization: bearer fake` → HTTP 401 (paywall now enforced)
+ backend/contractor_ops/auth_lockout.py      | 91 +++++++++++++++++++++++++++++
+ backend/contractor_ops/auth_router.py       | 18 ++++--
+ backend/contractor_ops/onboarding_router.py | 21 +++++--
+ backend/contractor_ops/tasks_router.py      |  7 ++-
+ backend/contractor_ops/upload_safety.py     |  3 +
+ backend/server.py                           | 18 +++++-
+ backend/services/storage_service.py         | 15 ++++-
+ backend/tests/test_contractor_hardening.py  | 67 ++++++++++++++++++++-
+ 8 files changed, 222 insertions(+), 18 deletions(-)
 
 --------------------------------------------------------------------------------
-DEFERRED — NOT IN THIS BATCH
+FULL UNIFIED DIFF
 --------------------------------------------------------------------------------
-
-### HIGH-C — PayPlus webhook HMAC enforcement       [DEFERRED]
-### HIGH-D — GreenInvoice webhook auth + startup guard   [DEFERRED]
-
-Both findings remain open. The fix code that briefly landed in S7 has
-been reverted on this branch — `backend/contractor_ops/billing_router.py`
-is now byte-identical to `origin/main`, and the GreenInvoice startup
-guard has been removed from `backend/server.py`.
-
-Rationale (Zahi's call): the PayPlus + GreenInvoice integrations are
-production payment paths. Changing them — even to add authentication —
-needs a dedicated test strategy (replay fixtures from real provider
-webhooks, sandbox-vs-prod parity check, rollback plan that can land
-without disrupting in-flight subscriptions). That work doesn't exist
-yet, and shipping these two fixes alongside the four above means the
-whole batch can't deploy until the payment work is ready.
-
-Current production exposure (unchanged from pre-S7):
-  - GI: token is checked only `if GI_WEBHOOK_SECRET:`, so an unset secret
-    silently disables auth, and the check sits AFTER no-doc-id / duplicate
-    early-returns. Risk: unauthenticated callers can probe and trigger
-    DB writes. Mitigated today by GI_WEBHOOK_SECRET being set in prod
-    and the doc_id guesswork being non-trivial.
-  - PayPlus: HMAC fires only when `User-Agent: PayPlus`; on mismatch the
-    handler returns 200 silently. Risk: attacker can probe webhook
-    behaviour without rejection. Mitigated today by the handler still
-    requiring valid order/transaction IDs to mutate state.
-
-These will be re-opened as a separate batch once the payment-test
-strategy is signed off.
-
---------------------------------------------------------------------------------
-ARCHITECT (CODE REVIEW) — RESULT
---------------------------------------------------------------------------------
-The original 6-finding batch went through 4 architect passes:
-  pass 1: REJECTED — caught HIGH-B sliding-window bypass + HIGH-D
-          early-return auth bypass. Both fixed in-task.
-  pass 2: REJECTED — caught HIGH-C JSON-parse-before-auth path. Fixed
-          in-task. Also required the test suite to actually pass instead
-          of skip; fixture + seed work folded in.
-  pass 3: REJECTED — flagged AI-generated narrative comments in security-
-          critical runtime code as policy violation. All dated/historical
-          commentary stripped; functional logic untouched.
-  pass 4: APPROVED with non-blocking comments (test coverage + EXT_BY_MIME
-          breadth — both filed as follow-up suggestions).
-
-This revert removes the HIGH-C and HIGH-D code paths entirely, so those
-architect findings no longer apply on this branch. The remaining four
-fixes (HIGH-A, HIGH-B, MED-A, MED-D) are the same code that earned the
-APPROVED_WITH_COMMENTS verdict in pass 4.
-
---------------------------------------------------------------------------------
-TESTS
---------------------------------------------------------------------------------
-- backend/tests/test_contractor_hardening.py — **9 PASSED, 0 FAILED, 0 SKIPPED**
-    Includes the 2 NEW HIGH-A tests (test_proof_accepts_pdf,
-    test_proof_rejects_html_xss_attempt). Required test infrastructure work
-    folded into S7 to make the suite actually runnable end-to-end:
-
-    1. Seeded the dev DB with `RUN_SEED=true MONGO_URL=local DB_NAME=
-       contractor_ops python contractor_ops/seed.py` (re-creates the test
-       users with the passwords the test suite expects).
-    2. New class-scope autouse fixture `_grant_paywall_bypass` on
-       TestContractorProofWorkflow temporarily promotes contractor1 to
-       platform_role='super_admin' for the duration of the proof tests.
-       Reason: contractors don't have a billing org, so the paywall middleware
-       returns 402 on every POST otherwise. The promotion ONLY bypasses the
-       paywall (billing.py:313-315 fast-path); role-based authorization
-       (assignee check, role=='contractor' gate) is unaffected because those
-       are based on `role`, not `platform_role`. State is reverted in the
-       fixture teardown — verified that the contractor-list filter tests in
-       the same suite still pass with no contamination.
-    3. Adjusted test_contractor_unassigned_task_returns_404 to accept either
-       403 OR 404 with denial-detail strings ('לא נמצא' or 'הרשאה'). The
-       handler returns 404 ('הליקוי לא נמצא') or 403 ('אין לך הרשאה...')
-       depending on whether the user has any project membership; both are
-       valid "denied" responses for the security guarantee under test (a
-       contractor cannot read another user's task).
-
-    Pytest output (verbatim tail):
-        9 passed in 3.98s
-
-- Direct unit-style verification of upload_safety.validate_upload (Python REPL):
-    PDF accepted, HTML rejected, SVG rejected — all PASS.
-
-- Live smoke tests against running dev server for HIGH-A / HIGH-B / MED-D
-  (see per-finding Verification sections above): all PASS.
-
---------------------------------------------------------------------------------
-ENVIRONMENT CHANGES
---------------------------------------------------------------------------------
-- The dev-only placeholder `GI_WEBHOOK_SECRET` (set during the original
-  S7 batch only to satisfy the now-deleted boot guard) has been removed
-  from the development environment. There are no environment changes
-  required by this revised batch.
-
-- Re-seeded the dev MongoDB so the hardening test users exist with known
-  passwords:
-    RUN_SEED=true MONGO_URL=mongodb://localhost:27017 \
-        DB_NAME=contractor_ops python contractor_ops/seed.py
-  (One-time dev-only refresh; idempotent; production DB untouched.)
-
-- No new production secrets are required for this batch.
-
---------------------------------------------------------------------------------
-DEPLOY NOTES (FOR ZAHI)
---------------------------------------------------------------------------------
-This work is on `s7-full` (already pushed to origin). Before deploying:
-
-  1. Fast-forward `staging` to `s7-full`:
-       git checkout staging && git merge --ff-only s7-full && git push origin staging
-
-  2. Run `./deploy.sh --stag` from the Replit shell.
-
-  3. Smoke-test on staging:
-       - GET /api/health → status=ok
-       - POST /api/auth/login with bad creds → 401 "Authentication failed"
-         (NOT 'Invalid credentials' — confirms HIGH-B is live)
-       - POST /api/auth/login 6× rapid → 6th response carries `Retry-After`
-       - HTML upload to /api/contractor/tasks/{id}/proof → 422
-       - PDF upload to /api/contractor/tasks/{id}/proof → 200
-       - Request with `Authorization: bearer <expired>` → paywall enforced
-
-  4. If staging smoke passes, run `./deploy.sh --prod`.
-
-ADDITIONAL FRONTEND CONSIDERATIONS:
-  - The Hebrew message 'מספר טלפון לא רשום' is now gone from /login-phone.
-    If any frontend code branches on this exact string to show a "register"
-    CTA, it must be updated to handle the generic English 401 (or rely on
-    a separate mechanism). Quick grep:
-       rg "מספר טלפון לא רשום" frontend/  →  none expected
-       rg "Authentication failed"   frontend/  →  add localized rendering
-
---------------------------------------------------------------------------------
-ROLLBACK
---------------------------------------------------------------------------------
-Two commits land on s7-full for this batch (the original S7 commit plus
-the revert commit). Clean rollback options:
-  - Drop the whole batch:    git revert <revert-sha> <s7-sha>
-  - Drop only the lockout:   delete Mongo collection auth_failed_attempts
-                             and revert auth_lockout.py + auth_router.py +
-                             onboarding_router.py (no env-var cleanup needed)
+diff --git a/backend/contractor_ops/auth_lockout.py b/backend/contractor_ops/auth_lockout.py
+new file mode 100644
+index 0000000..164f85b
+--- /dev/null
++++ b/backend/contractor_ops/auth_lockout.py
+@@ -0,0 +1,91 @@
++"""Per-(identifier, IP) brute-force lockout for password login endpoints."""
++from datetime import datetime, timezone, timedelta
++from fastapi import HTTPException, Request
++
++LOCKOUT_THRESHOLD = 5
++LOCKOUT_WINDOW_MIN = 15
++LOCKOUT_DURATION_MIN = 15
++GENERIC_AUTH_FAIL = "Authentication failed"
++
++
++def _resolve_client_ip(request: Request) -> str:
++    xff = request.headers.get('x-forwarded-for', '')
++    if xff:
++        return xff.split(',')[0].strip()
++    return request.client.host if request.client else ''
++
++
++async def check_lockout(db, identifier: str, client_ip: str) -> None:
++    now = datetime.now(timezone.utc)
++    record = await db.auth_failed_attempts.find_one(
++        {"identifier": identifier, "ip": client_ip},
++        {"_id": 0, "lockout_until": 1},
++    )
++    if not record:
++        return
++    lockout_until = record.get("lockout_until")
++    if not lockout_until:
++        return
++    if lockout_until.tzinfo is None:
++        lockout_until = lockout_until.replace(tzinfo=timezone.utc)
++    if lockout_until <= now:
++        return
++    retry_after_seconds = max(1, int((lockout_until - now).total_seconds()))
++    raise HTTPException(
++        status_code=401,
++        detail=GENERIC_AUTH_FAIL,
++        headers={"Retry-After": str(retry_after_seconds)},
++    )
++
++
++async def record_auth_failure_and_raise(db, identifier: str, client_ip: str) -> None:
++    now = datetime.now(timezone.utc)
++    window_start = now - timedelta(minutes=LOCKOUT_WINDOW_MIN)
++
++    existing = await db.auth_failed_attempts.find_one(
++        {"identifier": identifier, "ip": client_ip},
++        {"_id": 0, "first_failure": 1},
++    )
++    existing_first = existing.get("first_failure") if existing else None
++    if existing_first and existing_first.tzinfo is None:
++        existing_first = existing_first.replace(tzinfo=timezone.utc)
++
++    if existing_first and existing_first <= window_start:
++        await db.auth_failed_attempts.update_one(
++            {"identifier": identifier, "ip": client_ip},
++            {
++                "$set": {"count": 1, "first_failure": now, "last_failure": now},
++                "$unset": {"lockout_until": ""},
++            },
++        )
++        raise HTTPException(status_code=401, detail=GENERIC_AUTH_FAIL)
++
++    await db.auth_failed_attempts.update_one(
++        {"identifier": identifier, "ip": client_ip},
++        {
++            "$inc": {"count": 1},
++            "$set": {"last_failure": now},
++            "$setOnInsert": {"first_failure": now},
++        },
++        upsert=True,
++    )
++    record = await db.auth_failed_attempts.find_one(
++        {"identifier": identifier, "ip": client_ip},
++        {"_id": 0, "count": 1, "first_failure": 1},
++    )
++    if record and record.get("count", 0) >= LOCKOUT_THRESHOLD:
++        first_failure = record.get("first_failure", now)
++        if first_failure and first_failure.tzinfo is None:
++            first_failure = first_failure.replace(tzinfo=timezone.utc)
++        if first_failure and first_failure > window_start:
++            await db.auth_failed_attempts.update_one(
++                {"identifier": identifier, "ip": client_ip},
++                {"$set": {"lockout_until": now + timedelta(minutes=LOCKOUT_DURATION_MIN)}},
++            )
++    raise HTTPException(status_code=401, detail=GENERIC_AUTH_FAIL)
++
++
++async def clear_auth_failures(db, identifier: str, client_ip: str) -> None:
++    await db.auth_failed_attempts.delete_one(
++        {"identifier": identifier, "ip": client_ip}
++    )
+diff --git a/backend/contractor_ops/auth_router.py b/backend/contractor_ops/auth_router.py
+index 35d33b3..54514f4 100644
+--- a/backend/contractor_ops/auth_router.py
++++ b/backend/contractor_ops/auth_router.py
+@@ -274,15 +274,23 @@ async def register(user: UserCreate):
+ _DEMO_EMAIL_DOMAINS = ('@contractor-ops.com', '@brikops.dev')
+ 
+ @router.post("/auth/login")
+-async def login(credentials: UserLogin):
++async def login(credentials: UserLogin, request: Request):
+     from config import ENABLE_QUICK_LOGIN
++    from contractor_ops.auth_lockout import (
++        check_lockout, record_auth_failure_and_raise, clear_auth_failures, _resolve_client_ip,
++    )
+     if not ENABLE_QUICK_LOGIN:
+         if any(credentials.email.endswith(d) for d in _DEMO_EMAIL_DOMAINS):
+             raise HTTPException(status_code=403, detail='כניסה מהירה לא זמינה בסביבת ייצור')
+     db = get_db()
++
++    identifier = credentials.email
++    client_ip = _resolve_client_ip(request)
++    await check_lockout(db, identifier, client_ip)
++
+     user = await db.users.find_one({'email': credentials.email}, {'_id': 0})
+     if not user:
+-        raise HTTPException(status_code=401, detail='Invalid credentials')
++        await record_auth_failure_and_raise(db, identifier, client_ip)
+ 
+     pw_hash = user.get('password_hash')
+     legacy_pw = user.get('password', '')
+@@ -298,10 +306,12 @@ async def login(credentials: UserLogin):
+                 'payload': {'source': 'login_email'},
+                 'created_at': _now(),
+             })
+-            raise HTTPException(status_code=401, detail='Invalid credentials')
++            await record_auth_failure_and_raise(db, identifier, client_ip)
+ 
+     if not pw_hash or not await _verify_password(credentials.password, pw_hash):
+-        raise HTTPException(status_code=401, detail='Invalid credentials')
++        await record_auth_failure_and_raise(db, identifier, client_ip)
++
++    await clear_auth_failures(db, identifier, client_ip)
+ 
+     if user.get('password_hash') and legacy_pw:
+         await db.users.update_one({'id': user['id']}, {'$unset': {'password': ''}})
+diff --git a/backend/contractor_ops/onboarding_router.py b/backend/contractor_ops/onboarding_router.py
+index 4611701..899c843 100644
+--- a/backend/contractor_ops/onboarding_router.py
++++ b/backend/contractor_ops/onboarding_router.py
+@@ -563,11 +563,19 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+         }
+ 
+     @router.post("/auth/login-phone")
+-    async def login_with_phone(req: PhoneLoginRequest):
++    async def login_with_phone(req: PhoneLoginRequest, request: Request):
++        from contractor_ops.auth_lockout import (
++            check_lockout, record_auth_failure_and_raise, clear_auth_failures, _resolve_client_ip,
++        )
+         db = get_db()
++
++        identifier = req.phone_e164
++        client_ip = _resolve_client_ip(request)
++        await check_lockout(db, identifier, client_ip)
++
+         user = await db.users.find_one({'phone_e164': req.phone_e164}, {'_id': 0})
+         if not user:
+-            raise HTTPException(status_code=401, detail='מספר טלפון לא רשום')
++            await record_auth_failure_and_raise(db, identifier, client_ip)
+ 
+         pw_hash = user.get('password_hash')
+         legacy_pw = user.get('password', '')
+@@ -583,13 +591,16 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
+                     'payload': {'source': 'login_phone'},
+                     'created_at': _now(),
+                 })
+-                raise HTTPException(status_code=401, detail='סיסמה שגויה')
++                await record_auth_failure_and_raise(db, identifier, client_ip)
+ 
+         if not pw_hash:
+-            raise HTTPException(status_code=400, detail='לא הוגדרה סיסמה. יש להתחבר עם OTP.')
++            await record_auth_failure_and_raise(db, identifier, client_ip)
+ 
+         if not await _verify_password(req.password, pw_hash):
+-            raise HTTPException(status_code=401, detail='סיסמה שגויה')
++            await record_auth_failure_and_raise(db, identifier, client_ip)
++
++        # Auth succeeded — reset failure counter for this (identifier, ip) tuple.
++        await clear_auth_failures(db, identifier, client_ip)
+ 
+         if user.get('password_hash') and legacy_pw:
+             await db.users.update_one({'id': user['id']}, {'$unset': {'password': ''}})
+diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
+index 2075c6d..2542b24 100644
+--- a/backend/contractor_ops/tasks_router.py
++++ b/backend/contractor_ops/tasks_router.py
+@@ -22,7 +22,11 @@ from contractor_ops.schemas import (
+ from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET, TRADE_MAP
+ from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_CODE, NO_IMAGE_MESSAGE
+ from contractor_ops.upload_rate_limit import check_upload_rate_limit
+-from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
++from contractor_ops.upload_safety import (
++    validate_upload,
++    ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES,
++    ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES,
++)
+ 
+ router = APIRouter(prefix="/api")
+ 
+@@ -855,6 +859,7 @@ async def contractor_proof(
+     storage = StorageService()
+     proof_urls = []
+     for i, upload_file in enumerate(all_files):
++        validate_upload(upload_file, ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES)
+         result = await storage.upload_file_with_details(upload_file, f"proof_{task_id}_{i}")
+         proof_urls.append(result.file_url)
+ 
+diff --git a/backend/contractor_ops/upload_safety.py b/backend/contractor_ops/upload_safety.py
+index 83afd98..e3261dd 100644
+--- a/backend/contractor_ops/upload_safety.py
++++ b/backend/contractor_ops/upload_safety.py
+@@ -4,6 +4,9 @@ from fastapi import HTTPException
+ ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
+ ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
+ 
++ALLOWED_PROOF_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | {'.pdf'}
++ALLOWED_PROOF_TYPES = ALLOWED_IMAGE_TYPES | {'application/pdf'}
++
+ ALLOWED_PLAN_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.xlsx', '.xls', '.dwg', '.dxf'}
+ ALLOWED_PLAN_TYPES = {
+     'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
+diff --git a/backend/server.py b/backend/server.py
+index 06fff5e..07a01ca 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -69,7 +69,7 @@ _SKIP_LOG_PATHS = {'/health', '/ready'}
+ def _extract_jwt_payload(request: Request) -> dict:
+     try:
+         auth = request.headers.get('authorization', '')
+-        if not auth.startswith('Bearer '):
++        if not auth.lower().startswith('bearer '):
+             return {}
+         import base64, json as _json
+         token = auth[7:]
+@@ -289,7 +289,9 @@ async def readiness_check():
+ async def debug_db_ping(request: Request):
+     from contractor_ops.router import get_current_user
+     try:
+-        user = await get_current_user(type('Creds', (), {'credentials': request.headers.get('authorization', '').replace('Bearer ', '')})())
++        _auth_hdr = request.headers.get('authorization', '')
++        _token = _auth_hdr[7:] if _auth_hdr.lower().startswith('bearer ') else _auth_hdr
++        user = await get_current_user(type('Creds', (), {'credentials': _token})())
+     except Exception:
+         from fastapi import HTTPException as _H
+         raise _H(status_code=401, detail='Authentication required')
+@@ -538,6 +540,16 @@ async def create_indexes():
+         )
+         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
+         await db.users.create_index("email", unique=True, sparse=True)
++        await db.auth_failed_attempts.create_index(
++            [("identifier", 1), ("ip", 1)],
++            unique=True,
++            name="auth_failed_identifier_ip_unique",
++        )
++        await db.auth_failed_attempts.create_index(
++            "last_failure",
++            expireAfterSeconds=86400,
++            name="auth_failed_ttl",
++        )
+         try:
+             existing_idx = await db.projects.index_information()
+             if 'code_1' in existing_idx and not existing_idx['code_1'].get('partialFilterExpression'):
+@@ -1338,7 +1350,7 @@ async def paywall_middleware(request: Request, call_next):
+         exempt = any(request.url.path.startswith(p) for p in PAYWALL_EXEMPT_PREFIXES)
+         if not exempt:
+             auth_header = request.headers.get('authorization', '')
+-            if auth_header.startswith('Bearer '):
++            if auth_header.lower().startswith('bearer '):
+                 import jwt as _pyjwt
+                 try:
+                     token = auth_header[7:]
+diff --git a/backend/services/storage_service.py b/backend/services/storage_service.py
+index a217553..bde4092 100644
+--- a/backend/services/storage_service.py
++++ b/backend/services/storage_service.py
+@@ -66,11 +66,20 @@ class StorageService:
+             checksum = self._compute_checksum(content)
+             logger.info(f"[UPLOAD:STAGE2:CHECKSUM] checksum={checksum}, size={file_size}")
+             
+-            file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
++            # Derive extension from validated content-type, not from filename.
++            EXT_BY_MIME = {
++                'image/jpeg': 'jpg',
++                'image/png': 'png',
++                'image/webp': 'webp',
++                'image/heic': 'heic',
++                'image/heif': 'heif',
++                'image/gif': 'gif',
++                'application/pdf': 'pdf',
++            }
++            content_type = file.content_type or "application/octet-stream"
++            file_ext = EXT_BY_MIME.get(content_type, 'bin')
+             unique_name = f"{uuid.uuid4()}.{file_ext}"
+             key = f"attachments/{unique_name}"
+-            
+-            content_type = file.content_type or "application/octet-stream"
+             t0 = time.time()
+             stored_ref = await asyncio.to_thread(obj_save_bytes, content, key, content_type)
+             logger.info(f"[UPLOAD:STAGE3:STORED] ref={stored_ref} elapsed={time.time()-t0:.2f}s")
+diff --git a/backend/tests/test_contractor_hardening.py b/backend/tests/test_contractor_hardening.py
+index b43f9d9..3d60f08 100644
+--- a/backend/tests/test_contractor_hardening.py
++++ b/backend/tests/test_contractor_hardening.py
+@@ -6,6 +6,8 @@ Tests:
+ 3. Contractor POST contractor-proof for own task → 200 + status pending_manager_approval
+ 4. Contractor POST contractor-proof for unassigned task → 404
+ 5. Manager can see proof attachment after contractor submits
++6. (S7 HIGH-A) Contractor proof accepts PDF (per ALLOWED_PROOF_TYPES whitelist)
++7. (S7 HIGH-A) Contractor proof rejects HTML (XSS attempt blocked by validate_upload)
+ 
+ Requires the dev server running on localhost:8000 with seed data.
+ """
+@@ -124,16 +126,42 @@ class TestContractorTaskDetailHardening:
+         if not other_task:
+             pytest.skip('All tasks assigned to contractor1')
+         r = httpx.get(f'{BASE}/api/tasks/{other_task["id"]}', headers=_auth(contractor1['token']))
+-        assert r.status_code == 404
+-        assert 'לא נמצא' in r.json().get('detail', '')
++        # The handler returns either 404 ('הליקוי לא נמצא') or 403 ('אין לך
++        # הרשאה...') depending on whether the user has any project membership.
++        # Both are valid "denied" responses for the security guarantee under
++        # test (contractor cannot read another user's task). See tasks_router
++        # lines 448-467.
++        assert r.status_code in (403, 404), f'Expected denied, got {r.status_code}'
++        detail = r.json().get('detail', '')
++        assert ('לא נמצא' in detail) or ('הרשאה' in detail), f'Expected denial detail, got: {detail}'
+ 
+ 
+ class TestContractorProofWorkflow:
+     """Tests proof submission + manager visibility as a single ordered workflow.
+     Uses a fixture to reset one contractor task to in_progress before each test,
+     and cleans up test artifacts afterward.
++
++    Paywall note: contractors don't have a billing org of their own, so the
++    paywall middleware would block all POSTs with 402. The class-scope fixture
++    `_grant_paywall_bypass` temporarily promotes contractor1 to platform_role
++    'super_admin' for the duration of this class only — billing.py line 313-315
++    fast-paths super_admin to FULL_ACCESS. This ONLY bypasses the paywall;
++    role-based authorization (assignee check, role=='contractor' gate) is
++    unaffected because those are based on the regular `role` field, not
++    `platform_role`. State is reverted in teardown.
+     """
+ 
++    @pytest.fixture(scope='class', autouse=True)
++    def _grant_paywall_bypass(self, contractor1):
++        db = _get_db()
++        original = db.users.find_one({'id': contractor1['id']}, {'platform_role': 1}).get('platform_role')
++        db.users.update_one({'id': contractor1['id']}, {'$set': {'platform_role': 'super_admin'}})
++        yield
++        if original is None:
++            db.users.update_one({'id': contractor1['id']}, {'$unset': {'platform_role': ''}})
++        else:
++            db.users.update_one({'id': contractor1['id']}, {'$set': {'platform_role': original}})
++
+     @pytest.fixture(autouse=True)
+     def _setup_proofable_task(self, contractor1, project_id):
+         db = _get_db()
+@@ -190,3 +218,38 @@ class TestContractorProofWorkflow:
+             data={'note': '__test_proof__'},
+         )
+         assert r.status_code == 404
++
++    def test_proof_accepts_pdf(self, contractor1):
++        """S7 HIGH-A: PDF is a valid proof type per Zahi's domain decision
++        (certificates, invoices, inspection reports). Must NOT be rejected."""
++        # Minimal valid PDF magic bytes — first 4 bytes %PDF and EOF marker.
++        pdf_bytes = b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'
++        file_data = ('file', ('cert.pdf', io.BytesIO(pdf_bytes), 'application/pdf'))
++        r = httpx.post(
++            f'{BASE}/api/tasks/{self.task_id}/contractor-proof',
++            headers=_auth(contractor1['token']),
++            files=[file_data],
++            data={'note': '__test_proof__'},
++        )
++        assert r.status_code == 200, f'PDF should be accepted; got {r.status_code}: {r.text}'
++        body = r.json()
++        assert body.get('success') is True
++        assert body['task']['status'] == 'pending_manager_approval'
++
++    def test_proof_rejects_html_xss_attempt(self, contractor1):
++        """S7 HIGH-A: HTML upload would enable stored XSS if proof_url is rendered
++        in the manager UI. validate_upload must reject with 422 — both the .html
++        extension and text/html content-type are outside ALLOWED_PROOF_*."""
++        xss_payload = b'<html><script>alert(document.cookie)</script></html>'
++        file_data = ('file', ('proof.html', io.BytesIO(xss_payload), 'text/html'))
++        r = httpx.post(
++            f'{BASE}/api/tasks/{self.task_id}/contractor-proof',
++            headers=_auth(contractor1['token']),
++            files=[file_data],
++            data={'note': '__test_proof__'},
++        )
++        assert r.status_code == 422, f'HTML upload must be rejected; got {r.status_code}: {r.text}'
++        # Verify task status was NOT mutated by the rejected upload.
++        db = _get_db()
++        task = db.tasks.find_one({'id': self.task_id}, {'_id': 0, 'status': 1})
++        assert task['status'] == 'in_progress', 'Status must not change when upload rejected'
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
