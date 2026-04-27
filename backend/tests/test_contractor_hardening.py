@@ -6,6 +6,8 @@ Tests:
 3. Contractor POST contractor-proof for own task → 200 + status pending_manager_approval
 4. Contractor POST contractor-proof for unassigned task → 404
 5. Manager can see proof attachment after contractor submits
+6. (S7 HIGH-A) Contractor proof accepts PDF (per ALLOWED_PROOF_TYPES whitelist)
+7. (S7 HIGH-A) Contractor proof rejects HTML (XSS attempt blocked by validate_upload)
 
 Requires the dev server running on localhost:8000 with seed data.
 """
@@ -190,3 +192,38 @@ class TestContractorProofWorkflow:
             data={'note': '__test_proof__'},
         )
         assert r.status_code == 404
+
+    def test_proof_accepts_pdf(self, contractor1):
+        """S7 HIGH-A: PDF is a valid proof type per Zahi's domain decision
+        (certificates, invoices, inspection reports). Must NOT be rejected."""
+        # Minimal valid PDF magic bytes — first 4 bytes %PDF and EOF marker.
+        pdf_bytes = b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'
+        file_data = ('file', ('cert.pdf', io.BytesIO(pdf_bytes), 'application/pdf'))
+        r = httpx.post(
+            f'{BASE}/api/tasks/{self.task_id}/contractor-proof',
+            headers=_auth(contractor1['token']),
+            files=[file_data],
+            data={'note': '__test_proof__'},
+        )
+        assert r.status_code == 200, f'PDF should be accepted; got {r.status_code}: {r.text}'
+        body = r.json()
+        assert body.get('success') is True
+        assert body['task']['status'] == 'pending_manager_approval'
+
+    def test_proof_rejects_html_xss_attempt(self, contractor1):
+        """S7 HIGH-A: HTML upload would enable stored XSS if proof_url is rendered
+        in the manager UI. validate_upload must reject with 422 — both the .html
+        extension and text/html content-type are outside ALLOWED_PROOF_*."""
+        xss_payload = b'<html><script>alert(document.cookie)</script></html>'
+        file_data = ('file', ('proof.html', io.BytesIO(xss_payload), 'text/html'))
+        r = httpx.post(
+            f'{BASE}/api/tasks/{self.task_id}/contractor-proof',
+            headers=_auth(contractor1['token']),
+            files=[file_data],
+            data={'note': '__test_proof__'},
+        )
+        assert r.status_code == 422, f'HTML upload must be rejected; got {r.status_code}: {r.text}'
+        # Verify task status was NOT mutated by the rejected upload.
+        db = _get_db()
+        task = db.tasks.find_one({'id': self.task_id}, {'_id': 0, 'status': 1})
+        assert task['status'] == 'in_progress', 'Status must not change when upload rejected'

@@ -4,6 +4,12 @@ from fastapi import HTTPException
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
 ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
 
+# S7 — contractor proof uploads accept images AND PDFs (certificates, invoices,
+# inspection reports). Used by tasks_router.py contractor-proof handler.
+# Construction-domain decision (Zahi 2026-04-27): PDFs are first-class proofs.
+ALLOWED_PROOF_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | {'.pdf'}
+ALLOWED_PROOF_TYPES = ALLOWED_IMAGE_TYPES | {'application/pdf'}
+
 ALLOWED_PLAN_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.xlsx', '.xls', '.dwg', '.dxf'}
 ALLOWED_PLAN_TYPES = {
     'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',

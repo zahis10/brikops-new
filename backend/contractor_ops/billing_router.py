@@ -1234,6 +1234,21 @@ async def billing_webhook_greeninvoice(request: Request):
         return {"status": "rate_limited"}
     _webhook_call_times.append(now_ts)
 
+    # S7 — SECURITY FIX (HIGH-D): validate webhook token BEFORE any other
+    # logic. Originally the token check was placed after the JSON parse,
+    # doc_id check, and duplicate-doc_id check — so unauthenticated callers
+    # could still trigger DB writes / hit early-return 200s by sending an
+    # empty body, missing doc_id, or a known-duplicate doc_id. Architect
+    # review 2026-04-27 flagged this as an authentication bypass. Now any
+    # request without a valid X-Webhook-Token / ?token= is rejected with 401
+    # before we touch the body or the DB.
+    import hmac as _hmac_gi
+    from config import GI_WEBHOOK_SECRET
+    incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
+    if not incoming_secret or not _hmac_gi.compare_digest(incoming_secret, GI_WEBHOOK_SECRET or ""):
+        logger.warning("[GI-WEBHOOK] Invalid or missing X-Webhook-Token from IP=%s — rejecting", client_ip)
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+
     try:
         payload = await request.json()
     except Exception:
@@ -1276,20 +1291,7 @@ async def billing_webhook_greeninvoice(request: Request):
         logger.info("[GI-WEBHOOK] Duplicate doc_id=%s, already processed", doc_id)
         return {"status": "ok"}
 
-    from config import GI_WEBHOOK_SECRET
-    if GI_WEBHOOK_SECRET:
-        incoming_secret = request.headers.get("X-Webhook-Token", "") or request.query_params.get("token", "")
-        if incoming_secret != GI_WEBHOOK_SECRET:
-            logger.warning("[GI-WEBHOOK] Invalid webhook secret from IP=%s", client_ip)
-            await db.gi_webhook_log.insert_one(_add_raw({
-                'id': str(uuid.uuid4()),
-                'payload_hash': payload_hash,
-                'ip': client_ip,
-                'result': 'auth_failed',
-                'created_at': _now(),
-            }))
-            return {"status": "ok"}
-
+    # (Token check moved to top of handler — see HIGH-D comment above.)
     if not GI_BASE_URL:
         logger.error("[GI-WEBHOOK] GI_BASE_URL not configured, cannot verify document")
         await db.gi_webhook_log.insert_one(_add_raw({
@@ -1441,21 +1443,26 @@ async def billing_webhook_payplus(request: Request):
         logger.warning("[PAYPLUS-WH] Failed to parse webhook body")
         return {"status": "error", "detail": "invalid json"}
     from config import PAYPLUS_ENV, PAYPLUS_SECRET_KEY
-    pp_user_agent = request.headers.get("user-agent", "")
+    # S7 — SECURITY FIX (HIGH-C): HMAC verification is MANDATORY for ALL
+    # webhook requests. Previously only fired when User-Agent="PayPlus"
+    # (trivially bypassable by spoofing the header) and silently returned 200
+    # on hash mismatch (allowing attacker probing). Now: missing OR invalid
+    # hash header → 401, regardless of User-Agent. Header name is "hash"
+    # (lowercase) per PayPlus spec; HMAC is base64-encoded SHA-256.
     pp_hash = request.headers.get("hash", "")
-    if pp_user_agent == "PayPlus" and pp_hash:
-        expected_hash = hmac_module.new(
-            PAYPLUS_SECRET_KEY.encode(),
-            raw_body,
-            hashlib.sha256
-        ).digest()
-        expected_b64 = base64.b64encode(expected_hash).decode()
-        if not hmac_module.compare_digest(expected_b64, pp_hash):
-            logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook")
-            return {"status": "ok"}
-        logger.info("[PAYPLUS-WH] Hash validated successfully")
-    elif pp_user_agent != "PayPlus":
-        logger.warning("[PAYPLUS-WH] Unexpected user-agent: %s — processing anyway", pp_user_agent)
+    if not pp_hash:
+        logger.error("[PAYPLUS-WH] Missing 'hash' header — rejecting webhook")
+        raise HTTPException(status_code=401, detail="Missing webhook signature")
+    expected_hash = hmac_module.new(
+        PAYPLUS_SECRET_KEY.encode(),
+        raw_body,
+        hashlib.sha256
+    ).digest()
+    expected_b64 = base64.b64encode(expected_hash).decode()
+    if not hmac_module.compare_digest(expected_b64, pp_hash):
+        logger.warning("[PAYPLUS-WH] Hash mismatch — rejecting webhook (was tolerant pre-S7)")
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    logger.info("[PAYPLUS-WH] Hash validated successfully")
     log_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.payplus_webhook_log.insert_one({

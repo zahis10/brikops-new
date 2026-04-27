@@ -69,7 +69,9 @@ _SKIP_LOG_PATHS = {'/health', '/ready'}
 def _extract_jwt_payload(request: Request) -> dict:
     try:
         auth = request.headers.get('authorization', '')
-        if not auth.startswith('Bearer '):
+        # S7 — case-insensitive Bearer match (matches paywall middleware fix
+        # and FastAPI HTTPBearer behaviour). Architect-review consistency 2026-04-27.
+        if not auth.lower().startswith('bearer '):
             return {}
         import base64, json as _json
         token = auth[7:]
@@ -289,7 +291,10 @@ async def readiness_check():
 async def debug_db_ping(request: Request):
     from contractor_ops.router import get_current_user
     try:
-        user = await get_current_user(type('Creds', (), {'credentials': request.headers.get('authorization', '').replace('Bearer ', '')})())
+        # S7 — case-insensitive Bearer strip. Architect-review consistency 2026-04-27.
+        _auth_hdr = request.headers.get('authorization', '')
+        _token = _auth_hdr[7:] if _auth_hdr.lower().startswith('bearer ') else _auth_hdr
+        user = await get_current_user(type('Creds', (), {'credentials': _token})())
     except Exception:
         from fastapi import HTTPException as _H
         raise _H(status_code=401, detail='Authentication required')
@@ -353,6 +358,18 @@ notification_engine = NotificationEngine(
 set_engine(notification_engine)
 set_wa_verify_token(WA_WEBHOOK_VERIFY_TOKEN)
 set_meta_app_secret(META_APP_SECRET)
+
+# S7 — Startup guard: refuse to boot if GreenInvoice is enabled (GI_BASE_URL set)
+# but GI_WEBHOOK_SECRET is missing. Otherwise the webhook auth check would be
+# silently bypassable. Pattern matches the S5b WhatsApp guard below — fail-fast
+# over silent misconfiguration.
+from config import GI_BASE_URL, GI_WEBHOOK_SECRET
+if GI_BASE_URL and not GI_WEBHOOK_SECRET:
+    raise RuntimeError(
+        "Configuration error: GI_BASE_URL is set but GI_WEBHOOK_SECRET is not. "
+        "GreenInvoice webhook authentication would be silently bypassed. "
+        "Set GI_WEBHOOK_SECRET env var or unset GI_BASE_URL. Refusing to start."
+    )
 
 # S5b — Startup guard: refuse to boot if WhatsApp is enabled but secret missing.
 # Prevents silent misconfiguration where webhook signature verification is
@@ -538,6 +555,19 @@ async def create_indexes():
         )
         await db.audit_events.create_index([("entity_type", 1), ("entity_id", 1), ("created_at", -1)])
         await db.users.create_index("email", unique=True, sparse=True)
+        # S7 — HIGH-B: per-(identifier, IP) brute-force lockout for password login.
+        # Compound unique index makes the upsert in record_auth_failure_and_raise
+        # atomic; TTL auto-cleans rows 24h after last failure to bound collection size.
+        await db.auth_failed_attempts.create_index(
+            [("identifier", 1), ("ip", 1)],
+            unique=True,
+            name="auth_failed_identifier_ip_unique",
+        )
+        await db.auth_failed_attempts.create_index(
+            "last_failure",
+            expireAfterSeconds=86400,
+            name="auth_failed_ttl",
+        )
         try:
             existing_idx = await db.projects.index_information()
             if 'code_1' in existing_idx and not existing_idx['code_1'].get('partialFilterExpression'):
@@ -1338,7 +1368,12 @@ async def paywall_middleware(request: Request, call_next):
         exempt = any(request.url.path.startswith(p) for p in PAYWALL_EXEMPT_PREFIXES)
         if not exempt:
             auth_header = request.headers.get('authorization', '')
-            if auth_header.startswith('Bearer '):
+            # S7 — SECURITY FIX (MED-D): case-insensitive Bearer match. FastAPI's
+            # HTTPBearer is case-insensitive, so a request with
+            # 'Authorization: bearer X' (lowercase b) was authenticated by the
+            # dependency but slipped through the paywall check that ran here
+            # with case-sensitive startswith. Now both forms enforce paywall.
+            if auth_header.lower().startswith('bearer '):
                 import jwt as _pyjwt
                 try:
                     token = auth_header[7:]

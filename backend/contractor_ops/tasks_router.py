@@ -22,7 +22,11 @@ from contractor_ops.schemas import (
 from contractor_ops.bucket_utils import compute_task_bucket, BUCKET_LABELS, CATEGORY_TO_BUCKET, TRADE_MAP
 from contractor_ops.task_image_guard import require_task_image, NO_IMAGE_ERROR_CODE, NO_IMAGE_MESSAGE
 from contractor_ops.upload_rate_limit import check_upload_rate_limit
-from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
+from contractor_ops.upload_safety import (
+    validate_upload,
+    ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES,
+    ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -855,6 +859,10 @@ async def contractor_proof(
     storage = StorageService()
     proof_urls = []
     for i, upload_file in enumerate(all_files):
+        # S7 — SECURITY FIX (HIGH-A): validate file type to block stored XSS via
+        # HTML/JS upload masquerading as a proof attachment. Accepts images +
+        # PDFs (per ALLOWED_PROOF_*); rejects everything else with 422.
+        validate_upload(upload_file, ALLOWED_PROOF_EXTENSIONS, ALLOWED_PROOF_TYPES)
         result = await storage.upload_file_with_details(upload_file, f"proof_{task_id}_{i}")
         proof_urls.append(result.file_url)
 

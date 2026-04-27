@@ -66,11 +66,22 @@ class StorageService:
             checksum = self._compute_checksum(content)
             logger.info(f"[UPLOAD:STAGE2:CHECKSUM] checksum={checksum}, size={file_size}")
             
-            file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+            # S7 — SECURITY FIX (HIGH-A): derive S3 key extension from validated
+            # content-type via whitelist, NOT from the user-supplied filename
+            # (which is attacker-controlled and was the XSS root cause).
+            EXT_BY_MIME = {
+                'image/jpeg': 'jpg',
+                'image/png': 'png',
+                'image/webp': 'webp',
+                'image/heic': 'heic',
+                'image/heif': 'heif',
+                'image/gif': 'gif',
+                'application/pdf': 'pdf',
+            }
+            content_type = file.content_type or "application/octet-stream"
+            file_ext = EXT_BY_MIME.get(content_type, 'bin')
             unique_name = f"{uuid.uuid4()}.{file_ext}"
             key = f"attachments/{unique_name}"
-            
-            content_type = file.content_type or "application/octet-stream"
             t0 = time.time()
             stored_ref = await asyncio.to_thread(obj_save_bytes, content, key, content_type)
             logger.info(f"[UPLOAD:STAGE3:STORED] ref={stored_ref} elapsed={time.time()-t0:.2f}s")

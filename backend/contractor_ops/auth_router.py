@@ -274,15 +274,30 @@ async def register(user: UserCreate):
 _DEMO_EMAIL_DOMAINS = ('@contractor-ops.com', '@brikops.dev')
 
 @router.post("/auth/login")
-async def login(credentials: UserLogin):
+async def login(credentials: UserLogin, request: Request):
     from config import ENABLE_QUICK_LOGIN
+    # S7 — SECURITY FIX (HIGH-B): per-(identifier, IP) brute-force lockout.
+    # Identifier is the email; lockout state lives in auth_failed_attempts.
+    # All auth-failure paths below collapse to a single generic English 401
+    # via record_auth_failure_and_raise() — same status code and detail as
+    # the lockout-active response so attackers cannot enumerate accounts.
+    from contractor_ops.auth_lockout import (
+        check_lockout, record_auth_failure_and_raise, clear_auth_failures, _resolve_client_ip,
+    )
     if not ENABLE_QUICK_LOGIN:
         if any(credentials.email.endswith(d) for d in _DEMO_EMAIL_DOMAINS):
             raise HTTPException(status_code=403, detail='כניסה מהירה לא זמינה בסביבת ייצור')
     db = get_db()
+
+    identifier = credentials.email
+    client_ip = _resolve_client_ip(request)
+    await check_lockout(db, identifier, client_ip)
+
     user = await db.users.find_one({'email': credentials.email}, {'_id': 0})
     if not user:
-        raise HTTPException(status_code=401, detail='Invalid credentials')
+        # Increment counter even for non-existent users to prevent enumeration
+        # via "which emails enter lockout vs which never do".
+        await record_auth_failure_and_raise(db, identifier, client_ip)
 
     pw_hash = user.get('password_hash')
     legacy_pw = user.get('password', '')
@@ -298,10 +313,13 @@ async def login(credentials: UserLogin):
                 'payload': {'source': 'login_email'},
                 'created_at': _now(),
             })
-            raise HTTPException(status_code=401, detail='Invalid credentials')
+            await record_auth_failure_and_raise(db, identifier, client_ip)
 
     if not pw_hash or not await _verify_password(credentials.password, pw_hash):
-        raise HTTPException(status_code=401, detail='Invalid credentials')
+        await record_auth_failure_and_raise(db, identifier, client_ip)
+
+    # Auth succeeded — reset failure counter for this (identifier, ip) tuple.
+    await clear_auth_failures(db, identifier, client_ip)
 
     if user.get('password_hash') and legacy_pw:
         await db.users.update_one({'id': user['id']}, {'$unset': {'password': ''}})

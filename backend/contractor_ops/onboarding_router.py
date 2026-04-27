@@ -563,11 +563,27 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         }
 
     @router.post("/auth/login-phone")
-    async def login_with_phone(req: PhoneLoginRequest):
+    async def login_with_phone(req: PhoneLoginRequest, request: Request):
+        # S7 — SECURITY FIXES:
+        #   HIGH-B: per-(identifier, IP) brute-force lockout (identifier = phone_e164).
+        #   MED-A:  collapse Hebrew enumeration messages
+        #             ('מספר טלפון לא רשום', 'סיסמה שגויה') into one generic 401.
+        #   Decision #7 (Zahi 2026-04-27): also fold the prior 400
+        #             'לא הוגדרה סיסמה. יש להתחבר עם OTP.' into the same 401 — the
+        #             login screen already exposes an OTP button so the UX hint
+        #             is redundant; keeping it would leak account existence.
+        from contractor_ops.auth_lockout import (
+            check_lockout, record_auth_failure_and_raise, clear_auth_failures, _resolve_client_ip,
+        )
         db = get_db()
+
+        identifier = req.phone_e164
+        client_ip = _resolve_client_ip(request)
+        await check_lockout(db, identifier, client_ip)
+
         user = await db.users.find_one({'phone_e164': req.phone_e164}, {'_id': 0})
         if not user:
-            raise HTTPException(status_code=401, detail='מספר טלפון לא רשום')
+            await record_auth_failure_and_raise(db, identifier, client_ip)
 
         pw_hash = user.get('password_hash')
         legacy_pw = user.get('password', '')
@@ -583,13 +599,16 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                     'payload': {'source': 'login_phone'},
                     'created_at': _now(),
                 })
-                raise HTTPException(status_code=401, detail='סיסמה שגויה')
+                await record_auth_failure_and_raise(db, identifier, client_ip)
 
         if not pw_hash:
-            raise HTTPException(status_code=400, detail='לא הוגדרה סיסמה. יש להתחבר עם OTP.')
+            await record_auth_failure_and_raise(db, identifier, client_ip)
 
         if not await _verify_password(req.password, pw_hash):
-            raise HTTPException(status_code=401, detail='סיסמה שגויה')
+            await record_auth_failure_and_raise(db, identifier, client_ip)
+
+        # Auth succeeded — reset failure counter for this (identifier, ip) tuple.
+        await clear_auth_failures(db, identifier, client_ip)
 
         if user.get('password_hash') and legacy_pw:
             await db.users.update_one({'id': user['id']}, {'$unset': {'password': ''}})
