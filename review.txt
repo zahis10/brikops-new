@@ -203,13 +203,48 @@ VERIFY #9 — no accidental edits to cron query or paywall
   (empty)
 
 ================================================================================
-MIGRATION — Zahi runs in mongosh BEFORE deploy (verbatim per spec)
+MIGRATION — Zahi runs in mongosh BEFORE deploy
 ================================================================================
 
-  db.subscriptions.updateMany(
-    { auto_renew: { $exists: false } },
-    { $set: { auto_renew: true } }
-  )
+SPEC-VERBATIM MIGRATION COMMAND (the actual update):
+
+    db.subscriptions.updateMany(
+      { auto_renew: { $exists: false } },
+      { $set: { auto_renew: true } }
+    )
+
+OPERATIONAL PRE-FLIGHT QUERIES (run BEFORE the updateMany above):
+
+    Query A — count documents missing auto_renew (this is the expected
+    matchedCount/modifiedCount of the migration):
+        db.subscriptions.countDocuments({ auto_renew: { $exists: false } })
+
+    Query B — sample 10 docs missing the field for sanity inspection:
+        db.subscriptions.find(
+          { auto_renew: { $exists: false } },
+          { _id: 0, org_id: 1, status: 1, paid_until: 1, plan_id: 1 }
+        ).limit(10)
+
+    Query C — count active (non-cancelled) subs that would be silently
+    excluded from the renewal cron until backfilled:
+        db.subscriptions.countDocuments({
+          auto_renew: { $exists: false },
+          status: 'active',
+          cancelled_at: { $in: [null, undefined] }
+        })
+
+DECISION TREE:
+    A == 0                  → no migration needed; proceed with deploy.
+    A  > 0  AND  C == 0     → run the updateMany, then deploy.
+    A  > 0  AND  C  > 0     → run the updateMany IMMEDIATELY (those orgs
+                              are at risk of missing their next renewal
+                              charge), then deploy.
+
+POST-MIGRATION ASSERTION (mandatory):
+    After the updateMany, verify the returned BulkWriteResult satisfies:
+        result.matchedCount === result.modifiedCount === <value of Query A>
+    If matchedCount !== modifiedCount  → STOP, ping Zahi for review;
+    do NOT proceed with ./deploy.sh --prod.
 
 INFORMATIONAL — DEV DB state (NOT prod, do not act on this):
     9 of 13 subscriptions in dev DB are missing auto_renew.
@@ -301,9 +336,6 @@ FULL UNIFIED DIFF — git diff 301404385620ee9d930c15d11ad3bea8c770eb37 (rollbac
 The cumulative diff covers the original cancellation v1 implementation
 plus the post-staging hotfix and the review-driven cleanup.)
 
-================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
 
 ================================================================================
 APPENDIX A — git diff vs rollback SHA (modified files)
@@ -1468,3 +1500,5 @@ new file mode 100644
 +    finally:
 +        for o in (org_renew, org_cancelled):
 +            _cleanup(sync_db, o)
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
