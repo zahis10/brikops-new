@@ -1059,19 +1059,22 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
     }
   };
 
-  const allFilled = !!name.trim();
+  const allFilled = !!name.trim() && !!trade;
 
   const handleSubmit = async () => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setShowSuggestions(false);
     const errs = {};
     if (!name.trim()) errs.name = 'שדה חובה';
+    if (!trade) errs.trade = 'שדה חובה';
     setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
+    if (Object.keys(errs).length > 0) {
+      if (errs.trade && !errs.name) toast.error('יש לבחור תחום');
+      return;
+    }
     setSubmitting(true);
     try {
-      const payload = { name: name.trim() };
-      if (trade) payload.trade = trade;
+      const payload = { name: name.trim(), trade };
       if (contactName.trim()) payload.contact_name = contactName.trim();
       if (contactPhone.trim()) payload.contact_phone = contactPhone.trim();
       const result = await projectCompanyService.create(projectId, payload);
@@ -1130,7 +1133,7 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
           </div>
         )}
       </div>
-      <SelectField label="תחום" value={trade} onChange={setTrade} options={tradeOptions} isLoading={tradesLoading} />
+      <SelectField label="תחום *" value={trade} onChange={setTrade} options={tradeOptions} isLoading={tradesLoading} error={errors.trade} />
       {!showNewTrade && (
         <button
           type="button"
@@ -1234,6 +1237,7 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
   const [companyId, setCompanyId] = useState('');
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState('');
+  const [newCompanyTrade, setNewCompanyTrade] = useState('');
   const [creatingCompany, setCreatingCompany] = useState(false);
   const tradeSelectRef = useRef(null);
   const focusTradeTimerRef = useRef(null);
@@ -1244,14 +1248,22 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
 
   const handleAddCompany = async () => {
     if (!newCompanyName.trim()) return;
+    if (!newCompanyTrade) {
+      toast.error('יש לבחור תחום');
+      return;
+    }
     setCreatingCompany(true);
     try {
-      const result = await projectCompanyService.create(projectId, { name: newCompanyName.trim() });
+      const result = await projectCompanyService.create(projectId, { name: newCompanyName.trim(), trade: newCompanyTrade });
       toast.success('חברה נוספה בהצלחה');
       setNewCompanyName('');
+      setNewCompanyTrade('');
       setShowNewCompany(false);
       if (onRefreshCompanies) await onRefreshCompanies();
-      if (result?.id) setCompanyId(result.id);
+      if (result?.id) {
+        setCompanyId(result.id);
+        if (!tradeKey) setTradeKey(newCompanyTrade);
+      }
       if (focusTradeTimerRef.current) clearTimeout(focusTradeTimerRef.current);
       focusTradeTimerRef.current = setTimeout(() => {
         const btn = tradeSelectRef.current?.querySelector('button');
@@ -1460,11 +1472,24 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
           {showNewCompany && (
             <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
               <InputField label="שם חברה *" value={newCompanyName} onChange={setNewCompanyName} placeholder="למשל: חברת חשמל" />
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-slate-600">תחום *</label>
+                <select
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  value={newCompanyTrade}
+                  onChange={e => setNewCompanyTrade(e.target.value)}
+                >
+                  <option value="">בחר תחום...</option>
+                  {tradeOptions.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex gap-2">
-                <Button onClick={handleAddCompany} disabled={creatingCompany || !newCompanyName.trim()} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs py-1.5 rounded-lg">
+                <Button onClick={handleAddCompany} disabled={creatingCompany || !newCompanyName.trim() || !newCompanyTrade} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs py-1.5 rounded-lg">
                   {creatingCompany ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : 'שמור'}
                 </Button>
-                <Button onClick={() => { setShowNewCompany(false); setNewCompanyName(''); }} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-1.5 rounded-lg">
+                <Button onClick={() => { setShowNewCompany(false); setNewCompanyName(''); setNewCompanyTrade(''); }} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-1.5 rounded-lg">
                   ביטול
                 </Button>
               </div>

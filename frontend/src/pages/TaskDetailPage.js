@@ -11,7 +11,7 @@ import {
   Phone, RefreshCw, CheckCircle, XCircle, AlertTriangle, Bell,
   Upload, ShieldCheck, ShieldX, Camera, X, Download, Eye,
   Settings, ChevronDown, Lock, Edit3, CircleDot, ArrowDownCircle, ArrowUpCircle,
-  Copy, Smartphone, Loader2
+  Copy, Smartphone, Loader2, RotateCcw
 } from 'lucide-react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Button } from '../components/ui/button';
@@ -202,6 +202,7 @@ const TaskDetailPage = () => {
   const [showForceCloseModal, setShowForceCloseModal] = useState(false);
   const [forceCloseReason, setForceCloseReason] = useState('');
   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
+  const [reopening, setReopening] = useState(false);
   const [forceClosing, setForceClosing] = useState(false);
 
   const [pendingProofFile, setPendingProofFile] = useState(null);
@@ -573,6 +574,23 @@ const TaskDetailPage = () => {
       toast.error(isHebrew ? serverMsg : 'שגיאה בסגירת הליקוי');
     } finally {
       setForceClosing(false);
+    }
+  };
+
+  const handleReopenTask = async () => {
+    if (!window.confirm('לפתוח את הליקוי מחדש?')) return;
+    setReopening(true);
+    try {
+      await taskService.reopen(id);
+      toast.success('הליקוי נפתח מחדש');
+      await loadTask();
+    } catch (err) {
+      const serverMsg = err.response?.data?.detail;
+      const isHebrew = typeof serverMsg === 'string' && /[\u0590-\u05FF]/.test(serverMsg);
+      console.error('[TASK_REOPEN]', err.response?.status, err.response?.data, err.message);
+      toast.error(isHebrew ? serverMsg : 'שגיאה בפתיחת הליקוי מחדש');
+    } finally {
+      setReopening(false);
     }
   };
 
@@ -1092,6 +1110,20 @@ const TaskDetailPage = () => {
                 >
                   <XCircle className="w-4 h-4" />
                   סגור ליקוי
+                </Button>
+              </div>
+            )}
+
+            {taskIsClosed && canManage && (
+              <div className="mt-4 pt-3 border-t border-amber-200">
+                <Button
+                  onClick={handleReopenTask}
+                  variant="outline"
+                  disabled={reopening}
+                  className="w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 gap-2"
+                >
+                  {reopening ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                  {reopening ? 'פותח מחדש...' : 'פתח מחדש'}
                 </Button>
               </div>
             )}

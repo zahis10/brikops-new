@@ -1,186 +1,193 @@
-================================================================================
-HOTFIX — Add cancellation fields to /billing/org/{org_id} response
-Task #436 (P0) — UI shows stale state after cancellation, blocks reactivate
-================================================================================
-Branch:         staging  (NOT main)
-Date:           2026-04-28
-Severity:       P0 — UI shows stale state after cancellation, blocks reactivate
-Files changed:  1 (backend only) — backend/contractor_ops/billing.py (+6 lines)
-Rollback SHA:   6eea5f88c63a3d8a69acf65531dbb4cbda06cc38
+================================================================
+BATCH 5 — UX BUG PACK (PRE-LAUNCH) — REVIEW
+Task: #437  |  Status: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+Rollback SHA (current main, unchanged): a1e0593ba3a828bc46b82195ebf4afdb824c95e1
+================================================================
 
-================================================================================
-PROBLEM (recap of attached spec)
-================================================================================
-After a user cancels via POST /api/billing/org/{id}/cancel, the DB is correctly
-updated (auto_renew=false, cancelled_at, cancelled_reason, expires_at).
-But the response of GET /api/billing/org/{id} did NOT include those 3 new
-fields, so the frontend could not detect the cancelled-active state and
-rendered the green "מנוי פעיל" card instead of the amber "המנוי בוטל" card —
-hiding the "המשך מנוי" reactivate button entirely.
+WHAT YOU GET WITH THIS BATCH
+----------------------------
+3 of 4 BATCH 5 bugs are fixed. 1 bug is deferred pending a screenshot
+from you (details below). 5 frontend files changed, 95 insertions /
+15 deletions, no backend / DB / migration changes.
 
-Verified live in Atlas by Zahi on staging org 715e2420-e4f1-4ebd-81ed-b690e1f7f84d
-right after a real cancel.
+Verification:
+  - All 8 VERIFY greps in the spec PASS (✅).
+  - `cd frontend && yarn build` (with REACT_APP_BACKEND_URL stubbed
+    to staging URL) → success, no new warnings.
+  - No new lucide imports beyond `RotateCcw` (already-paired with
+    existing icon set in TaskDetailPage).
+  - Bug #1 reuses existing `taskService.reopen(id)` service that
+    has been in api.js since the close-task feature shipped. No new
+    API surface.
+  - Bug #2 reuses existing `loadMore(0, isContractor)` reducer with
+    `taskIdsRef.current.clear()` to dedupe — same pattern used by
+    the existing infinite-scroll observer.
 
-================================================================================
-ROOT CAUSE
-================================================================================
-backend/contractor_ops/billing.py — get_billing_for_org() builds the response's
-'subscription' dict with a hard-coded list of fields. The 3 cancellation fields
-added in the cancellation v1 batch (task #435) were never added to this
-response builder, so they were silently dropped.
+================================================================
+BUG #1 — REOPEN BUTTON ON CLOSED DEFECTS  ✅ DONE
+================================================================
+File: frontend/src/pages/TaskDetailPage.js
 
-Two locations needed updating:
-  1. The synthetic_sub fallback (around line 940) — for orgs without a real
-     subscription doc, ensures consistent response shape.
-  2. The 'subscription' response object (around line 1091) — the actual
-     read path used by the frontend after a cancel.
+WHAT: When a defect is closed (status = closed_verified, force_closed,
+or marked done), the management user (project_manager / management_team)
+now sees a green-outlined "פתח מחדש" button at the bottom of the
+sidebar action card.
 
-================================================================================
-FIX
-================================================================================
-Single file: backend/contractor_ops/billing.py
-Total: +6 lines (+3 in synthetic_sub, +3 in subscription response dict).
+HOW:
+  • Added `RotateCcw` to existing lucide-react import.
+  • Added `reopening` boolean state.
+  • Added `handleReopenTask` (lines 583-598):
+      - confirms with native dialog "לפתוח את הליקוי מחדש?"
+      - calls `taskService.reopen(id)` (existing service, api.js:536)
+      - on success: toast "הליקוי נפתח מחדש" + `loadTask()` refresh
+      - on error: prints Hebrew server detail if present, else
+        generic fallback. Console.error scoped with [TASK_REOPEN]
+        prefix matching existing telemetry style.
+  • Added button block (lines 1113-1126) gated `taskIsClosed && canManage`,
+    placed in its own `mt-4 pt-3 border-t border-amber-200` block
+    inside the existing action card. Visually subordinate to the
+    primary close button — emerald outline, not solid.
 
-LOCATION 1 — synthetic_sub fallback (line ~940-955):
-  Added 3 fields with None values:
-    'cancelled_at': None,
-    'cancelled_reason': None,
-    'expires_at': None,
+PERMISSION GATE:
+  • Frontend: `canManage = MGMT_ROLES.includes(projectRole)` →
+    matches MGMT_ROLES = ['project_manager','management_team'].
+  • Backend: tasks_router.py:787 already restricts /reopen to
+    exactly the same two roles. No new backend gate needed.
 
-LOCATION 2 — 'subscription' response dict (line ~1091-1117):
-  Added 3 fields right after auto_renew:
-    'cancelled_at': effective_sub.get('cancelled_at'),
-    'cancelled_reason': effective_sub.get('cancelled_reason'),
-    'expires_at': effective_sub.get('expires_at'),
+CONTRACTORS / inspectors / sub-contractors do NOT see the button.
 
-NOT TOUCHED:
-  - Frontend code (already reads sub.cancelled_at and sub.expires_at correctly).
-  - cancel/reactivate endpoints in billing_router.py (correctly write to DB).
-  - compute_subscription_snapshot() (left as-is; new fields added separately
-    to the response dict).
-  - Any other file.
+================================================================
+BUG #2 — STALE TASKS LIST AFTER NAVIGATION  ✅ DONE
+================================================================
+File: frontend/src/pages/ProjectTasksPage.js
 
-================================================================================
-VERIFY
-================================================================================
+WHAT: When you open a defect, edit it, then click back arrow → the
+tasks list now shows fresh data instead of the stale snapshot.
 
-VERIFY 1 — Compile (PASS)
--------------------------
-$ python3 -m compileall backend/contractor_ops/billing.py -q && echo "COMPILE OK"
-COMPILE OK
+HOW:
+  • Added `useLocation` import.
+  • Added 4 small refs:
+      - `latestLoadMoreRef` / `latestIsContractorRef`: kept in sync
+        with current values via tiny mirror effects (lines 290-291).
+        This avoids stale closures when filters change between
+        navigations.
+      - `lastRefreshAtRef`: 500ms guard so the focus + visibility
+        events that both fire on tab return don't double-fetch.
+      - `didMountRef`: skips the very first run so we don't double-
+        fetch with the existing init effect (L230-273) on first mount.
+  • New useEffect (lines 293-321) that:
+      - Triggers on `location.key` change (SPA back/forward) and
+        `project?.id` change → calls `refresh()` from the second run
+        onward (skipped on initial mount via `didMountRef`).
+      - Listens to `window focus` and `document visibilitychange`
+        events (return-from-tab and return-from-mobile-background).
+      - Refresh fn: clears `taskIdsRef`, resets offset to 0,
+        sets hasMore=true, then calls
+        `latestLoadMoreRef.current(0, latestIsContractorRef.current)`
+        so the call always uses the freshest filter closure.
+      - Cleans up listeners on unmount.
 
-VERIFY 2 — Response shape (PASS)
---------------------------------
-Strategy: dev DB has no subs with cancelled_at set. Temporarily seeded one
-(org 686b8f97-bd44-45b2-803a-a659a8c81691, status=active), invoked
-get_billing_for_org() directly to verify the response shape, then reverted
-(unset all 3 fields). Equivalent to a curl against the running server,
-without auth complexity.
+WHY THIS IS SAFE (no infinite loop, no double-fetch):
+  • Initial mount: `didMountRef.current === false` → only listeners
+    are registered. The init effect at L230-273 does the first load.
+  • Filter change: init effect fires (good). My new effect's deps
+    don't include filters, so it doesn't re-run. The `loadMore`
+    closure used by the listeners is always the latest via ref.
+  • Back-navigation in SPA: `location.key` changes → my effect runs,
+    `didMountRef` is now true, refresh() fires. Init effect deps
+    unchanged → it doesn't fire. Single fetch.
+  • Tab return: focus + visibilitychange both fire within ~ms; the
+    500ms `lastRefreshAtRef` guard collapses them into one fetch.
 
-Test seed:
-  db.subscriptions.updateOne(
-    {org_id: '686b8f97-bd44-45b2-803a-a659a8c81691'},
-    {$set: {
-      cancelled_at: '2026-04-28T10:00:00+00:00',
-      cancelled_reason: 'hotfix shape test',
-      expires_at: '2027-04-28T10:00:00+00:00'
-    }}
-  )
-  → modifiedCount: 1
+================================================================
+BUG #3 — DROPDOWN INSIDE USER DRAWER  ⚠️ DEFERRED
+================================================================
+Per the spec's Decision Tree section 0.3 — DEFERRED PENDING SCREENSHOT.
 
-Direct invocation result:
-  Keys present: {"cancelled_at": true, "cancelled_reason": true, "expires_at": true}
-  Values: {
-    "cancelled_at": "2026-04-28T10:00:00+00:00",
-    "cancelled_reason": "hotfix shape test",
-    "expires_at": "2027-04-28T10:00:00+00:00"
-  }
+REASON: All three dropdowns inside `UserDrawer.js` (role at L291,
+sub-role at L335, trade at L377) are native HTML `<select>` elements,
+not custom popover menus. Native `<select>` cannot be clipped by a
+parent's `overflow:hidden` because the browser renders the option
+list in a separate paint layer outside the DOM. Therefore there is
+no z-index issue I can reproduce by code inspection.
 
-Cleanup (verified):
-  db.subscriptions.updateOne(
-    {org_id: '686b8f97-bd44-45b2-803a-a659a8c81691'},
-    {$unset: {cancelled_at: '', cancelled_reason: '', expires_at: ''}}
-  )
-  → modifiedCount: 1
-  Post-unset state: { status: 'active' }   ← clean
+ASK: Could you please send a screenshot of the dropdown that's being
+clipped, with the drawer open? It might be:
+  (a) the new inline "+ הוסף חברה" form I just touched (now has
+      a native trade <select> too — same architecture)
+  (b) a different overlay I haven't located yet (e.g. the company
+      autocomplete suggestions list, or the trade-add inline form)
 
-VERIFY 3 — Visual smoke test on staging
----------------------------------------
-SKIPPED per spec — Zahi runs this himself after ./deploy.sh --stag against
-the real cancelled org 715e2420-e4f1-4ebd-81ed-b690e1f7f84d.
+Without a visual I cannot confidently identify which overlay is
+clipped, and changing z-index blindly could break unrelated layers.
+Happy to ship a fix as soon as I see the screenshot.
 
-VERIFY (clean boot)
--------------------
-$ curl -s http://localhost:5000/api/health
-  → workflow restarted cleanly post-edit; backend serving (verified during
-    VERIFY 2 invocation, which initialised motor + billing module without
-    errors).
+================================================================
+BUG #4 — TRADE FIELD MUST BE REQUIRED ON COMPANY CREATE  ✅ DONE
+================================================================
+Four call sites that create a company. ALL four now require trade
+on the frontend AND always include `trade` in the POST payload.
 
-================================================================================
-GIT DIFF — backend/contractor_ops/billing.py (vs rollback SHA)
-================================================================================
-$ git diff --stat 6eea5f88c63a3d8a69acf65531dbb4cbda06cc38 -- backend/contractor_ops/billing.py
- backend/contractor_ops/billing.py | 6 ++++++
- 1 file changed, 6 insertions(+)
+(Backend ProjectCompany model already has `trade: Optional[str]` —
+no schema change needed; we're tightening the client contract only.)
 
-$ git diff 6eea5f88c63a3d8a69acf65531dbb4cbda06cc38 -- backend/contractor_ops/billing.py
-diff --git a/backend/contractor_ops/billing.py b/backend/contractor_ops/billing.py
-index f5316fb..ae35efe 100644
---- a/backend/contractor_ops/billing.py
-+++ b/backend/contractor_ops/billing.py
-@@ -947,6 +947,9 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
-             'next_charge_at': None,
-             'grace_until': None,
-             'manual_override': None,
-+            'cancelled_at': None,
-+            'cancelled_reason': None,
-+            'expires_at': None,
-         }
-         logger.warning("Returning default subscription for org %s (no DB record, trial_end=%s)", org_id, trial_end)
-     else:
-@@ -1103,6 +1106,9 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
-             'subscription_status': snapshot['subscription_status'],
-             'billing_cycle': snapshot['billing_cycle'],
-             'auto_renew': snapshot['auto_renew'],
-+            'cancelled_at': effective_sub.get('cancelled_at'),
-+            'cancelled_reason': effective_sub.get('cancelled_reason'),
-+            'expires_at': effective_sub.get('expires_at'),
-             'next_charge_at': snapshot['next_charge_at'],
-             'grace_until': snapshot['grace_until'],
-         },
+4a — frontend/src/components/QuickAddCompanyModal.js
+  • `canSave = trimmedName.length > 0 && !!tradeValue && !saving`
+  • `handleSave` adds explicit `if (!tradeValue) toast + return`
+  • Payload always sets `trade: tradeValue` (no more optional spread)
+  • Label changed: "תחום" → "תחום *" (red asterisk span)
 
-================================================================================
-COMMIT MESSAGE (also written to .local/.commit_message)
-================================================================================
-fix(billing): expose cancelled_at/expires_at/cancelled_reason in /billing/org/{id} response
+4b — frontend/src/components/UserDrawer.js (inline create form)
+  • Added `newCompanyTrade` state.
+  • `handleAddCompanyInDrawer` toasts + early-returns if no trade.
+  • POST body now includes `trade: newCompanyTrade`.
+  • On success: also seeds `editTradeKey` so the company shows up
+    immediately with the right trade in the dropdown below.
+  • Reset on cancel: clears `newCompanyTrade` too.
+  • Added inline `<select>` with `tradeOptions` between name and
+    button row, matching existing styling.
+  • Save button disabled if name OR trade missing.
 
-================================================================================
-ROLLBACK PLAN
-================================================================================
-Backend-only response change. Forward-compatible (adding optional fields,
-not breaking any existing client). Safe to revert:
+4c — frontend/src/pages/ProjectControlPage.js (AddCompanyForm)
+  • `allFilled = !!name.trim() && !!trade`
+  • `handleSubmit` sets `errs.trade = 'שדה חובה'` if missing,
+    early-returns with toast if only trade is missing.
+  • Payload always sets `trade` (dropped `if (trade) ...` conditional).
+  • SelectField label "תחום" → "תחום *", now passes `error={errors.trade}`
+    so the field highlights red when validation fails.
+  • The neighbouring EditCompanyForm at L1166+ is intentionally
+    UNCHANGED — out of scope (this batch is creates only) and
+    EditCompanyForm already enforces trade through its existing
+    edit flow.
 
-    git revert <commit-sha>
-    ./deploy.sh --prod
+4d — frontend/src/pages/ProjectControlPage.js (AddTeamMemberForm
+      inline "+ הוסף חברה חדשה" — caught by code review, the spec
+      mentioned this site too)
+  • Added `newCompanyTrade` state.
+  • `handleAddCompany` toasts + early-returns if trade missing.
+  • POST body always includes `trade: newCompanyTrade`.
+  • On success: also seeds `tradeKey` (the form's trade selector)
+    so the just-created company shows up in the right trade group
+    in the team-member form.
+  • Reset on cancel: clears `newCompanyTrade` too.
+  • Added native `<select>` with `tradeOptions` between the name
+    InputField and the button row. Save button disabled if name OR
+    trade missing.
 
-================================================================================
-POST-DEPLOY MANUAL SMOKE (Zahi runs after ./deploy.sh --stag)
-================================================================================
-1. Pick the already-cancelled staging org (Zahi cancelled it earlier today):
-       org_id = 715e2420-e4f1-4ebd-81ed-b690e1f7f84d
+================================================================
+ROLLBACK
+================================================================
+If anything misbehaves in staging:
+    git reset --hard a1e0593ba3a828bc46b82195ebf4afdb824c95e1
 
-2. curl with super_admin token:
-       curl -s -H "Authorization: Bearer $TOKEN" \
-            https://api-staging.brikops.com/api/billing/org/715e2420-.../ \
-            | jq '.subscription | {cancelled_at, cancelled_reason, expires_at}'
-   Expected: all 3 fields present with their values (NOT undefined).
+No backend touched. No DB/index/migration touched. Pure frontend.
 
-3. Visual: refresh /billing/org/715e2420-... in the staging UI.
-   Expected: amber "המנוי בוטל" card with the "המשך מנוי" reactivate button
-   visible.
-
-If both pass → ./deploy.sh --prod.
-
-================================================================================
+================================================================
+NEXT (when you say go)
+================================================================
+1. You: review staging once deployed.
+2. You: send screenshot of the Bug #3 dropdown clipping so I can
+   ship a targeted fix.
+3. Me (next batch): Bug #3 fix + any UX polish you flag.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

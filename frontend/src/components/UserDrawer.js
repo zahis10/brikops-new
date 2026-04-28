@@ -54,6 +54,7 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
   const [localTrades, setLocalTrades] = useState([]);
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState('');
+  const [newCompanyTrade, setNewCompanyTrade] = useState('');
   const [creatingCompany, setCreatingCompany] = useState(false);
   const tradeSelectRef = useRef(null);
   const focusTradeTimerRef = useRef(null);
@@ -149,14 +150,22 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
 
   const handleAddCompanyInDrawer = async () => {
     if (!newCompanyName.trim()) return;
+    if (!newCompanyTrade) {
+      toast.error('יש לבחור תחום');
+      return;
+    }
     setCreatingCompany(true);
     try {
-      const result = await projectCompanyService.create(projectId, { name: newCompanyName.trim() });
+      const result = await projectCompanyService.create(projectId, { name: newCompanyName.trim(), trade: newCompanyTrade });
       toast.success('חברה נוספה בהצלחה');
       setNewCompanyName('');
+      setNewCompanyTrade('');
       setShowNewCompany(false);
       if (onRefreshCompanies) await onRefreshCompanies();
-      if (result?.id) setEditCompanyId(result.id);
+      if (result?.id) {
+        setEditCompanyId(result.id);
+        if (!editTradeKey) setEditTradeKey(newCompanyTrade);
+      }
       if (focusTradeTimerRef.current) clearTimeout(focusTradeTimerRef.current);
       focusTradeTimerRef.current = setTimeout(() => {
         if (tradeSelectRef.current) {
@@ -319,11 +328,22 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
                             onChange={e => setNewCompanyName(e.target.value)}
                             placeholder="למשל: חברת חשמל"
                           />
+                          <label className="block text-xs font-medium text-slate-600">תחום *</label>
+                          <select
+                            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                            value={newCompanyTrade}
+                            onChange={e => setNewCompanyTrade(e.target.value)}
+                          >
+                            <option value="">בחר תחום...</option>
+                            {tradeOptions.map(t => (
+                              <option key={t.value} value={t.value}>{t.label}</option>
+                            ))}
+                          </select>
                           <div className="flex gap-2">
-                            <Button size="sm" onClick={handleAddCompanyInDrawer} disabled={creatingCompany || !newCompanyName.trim()} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs">
+                            <Button size="sm" onClick={handleAddCompanyInDrawer} disabled={creatingCompany || !newCompanyName.trim() || !newCompanyTrade} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs">
                               {creatingCompany ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'שמור'}
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => { setShowNewCompany(false); setNewCompanyName(''); }} className="flex-1 text-xs">
+                            <Button size="sm" variant="ghost" onClick={() => { setShowNewCompany(false); setNewCompanyName(''); setNewCompanyTrade(''); }} className="flex-1 text-xs">
                               ביטול
                             </Button>
                           </div>

@@ -29,7 +29,7 @@ export default function QuickAddCompanyModal({
   }, [open, initialTrade]);
 
   const trimmedName = name.trim();
-  const canSave = trimmedName.length > 0 && !saving;
+  const canSave = trimmedName.length > 0 && !!tradeValue && !saving;
 
   const handleSave = async () => {
     if (!canSave) return;
@@ -37,10 +37,13 @@ export default function QuickAddCompanyModal({
       toast.error('פרויקט לא זוהה');
       return;
     }
+    if (!tradeValue) {
+      toast.error('יש לבחור תחום');
+      return;
+    }
     setSaving(true);
     try {
-      const payload = { name: trimmedName };
-      if (tradeValue) payload.trade = tradeValue;
+      const payload = { name: trimmedName, trade: tradeValue };
       if (contactName.trim()) payload.contact_name = contactName.trim();
       if (contactPhone.trim()) payload.contact_phone = contactPhone.trim();
       const newCompany = await projectCompanyService.create(projectId, payload);
@@ -104,7 +107,9 @@ export default function QuickAddCompanyModal({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1.5">תחום</label>
+              <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                תחום <span className="text-red-500">*</span>
+              </label>
               <select
                 value={tradeValue}
                 onChange={(e) => setTradeValue(e.target.value)}

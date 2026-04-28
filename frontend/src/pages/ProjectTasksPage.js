@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { taskService, projectService } from '../services/api';
 import { toast } from 'sonner';
@@ -278,6 +278,41 @@ const ProjectTasksPage = () => {
     if (loaderRef.current) observer.observe(loaderRef.current);
     return () => observer.disconnect();
   }, [hasMore, offset, loadingMore, initialLoading, loadMore, isContractor]);
+
+  const location = useLocation();
+  const latestLoadMoreRef = useRef(loadMore);
+  const latestIsContractorRef = useRef(isContractor);
+  const lastRefreshAtRef = useRef(0);
+  const didMountRef = useRef(false);
+  useEffect(() => { latestLoadMoreRef.current = loadMore; }, [loadMore]);
+  useEffect(() => { latestIsContractorRef.current = isContractor; }, [isContractor]);
+
+  useEffect(() => {
+    if (!project) return;
+    const refresh = () => {
+      const now = Date.now();
+      if (now - lastRefreshAtRef.current < 500) return;
+      lastRefreshAtRef.current = now;
+      taskIdsRef.current.clear();
+      setOffset(0);
+      setHasMore(true);
+      latestLoadMoreRef.current(0, latestIsContractorRef.current);
+    };
+    if (didMountRef.current) {
+      refresh();
+    } else {
+      didMountRef.current = true;
+    }
+    const onFocus = () => { refresh(); };
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key, project?.id]);
 
   const hasActiveFilter = statusChip || bucketFilter !== 'all' || searchQuery || overdueFilter;
 
