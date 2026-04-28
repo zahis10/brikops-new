@@ -236,9 +236,12 @@ OPERATIONAL PRE-FLIGHT QUERIES (run BEFORE the updateMany above):
 DECISION TREE:
     A == 0                  → no migration needed; proceed with deploy.
     A  > 0  AND  C == 0     → run the updateMany, then deploy.
-    A  > 0  AND  C  > 0     → run the updateMany IMMEDIATELY (those orgs
-                              are at risk of missing their next renewal
-                              charge), then deploy.
+    A  > 0  AND  C  > 0     → INSPECT each affected org from Query B output
+                              first (to confirm none are deliberately
+                              non-renewing comped/manual subs), THEN run
+                              the updateMany IMMEDIATELY (those orgs are
+                              otherwise at risk of missing their next
+                              renewal charge), then deploy.
 
 POST-MIGRATION ASSERTION (mandatory):
     After the updateMany, verify the returned BulkWriteResult satisfies:
@@ -322,10 +325,10 @@ auto_renew=true backfill stay in the DB but become unused — forward-
 compatible. No DB cleanup required.
 
 ================================================================================
-COMMIT MESSAGE (also written to .local/.commit_message)
+COMMIT MESSAGE (also written to .local/.commit_message — exact spec string)
 ================================================================================
 
-feat(billing): subscription cancellation v1 + comped-sub state-card hotfix
+feat(billing): subscription cancellation v1 — pause auto-renewal, no PayPlus API
 (See .local/.commit_message for full body.)
 
 ================================================================================
@@ -336,15 +339,14 @@ FULL UNIFIED DIFF — git diff 301404385620ee9d930c15d11ad3bea8c770eb37 (rollbac
 The cumulative diff covers the original cancellation v1 implementation
 plus the post-staging hotfix and the review-driven cleanup.)
 
-
 ================================================================================
 APPENDIX A — git diff vs rollback SHA (modified files)
 ================================================================================
 diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index 3c29071..3f91207 100644
+index 3c29071..a66304b 100644
 --- a/backend/contractor_ops/billing_router.py
 +++ b/backend/contractor_ops/billing_router.py
-@@ -1894,3 +1894,170 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
+@@ -1894,3 +1894,172 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
      ).sort('resolved_at', -1).to_list(10)
  
      return {'requests': requests}
@@ -459,7 +461,9 @@ index 3c29071..3f91207 100644
 +            raise HTTPException(status_code=403, detail='אין הרשאת ניהול חיוב')
 +
 +    db = get_db()
-+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
++    sub = await db.subscriptions.find_one(
++        {'org_id': org_id, 'status': 'active'}, {'_id': 0}
++    )
 +    if not sub:
 +        raise HTTPException(status_code=404, detail='לא נמצא מנוי')
 +

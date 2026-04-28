@@ -2005,7 +2005,9 @@ async def billing_reactivate_subscription(org_id: str, request: Request, user: d
             raise HTTPException(status_code=403, detail='אין הרשאת ניהול חיוב')
 
     db = get_db()
-    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+    sub = await db.subscriptions.find_one(
+        {'org_id': org_id, 'status': 'active'}, {'_id': 0}
+    )
     if not sub:
         raise HTTPException(status_code=404, detail='לא נמצא מנוי')
 
