@@ -1,193 +1,459 @@
-================================================================
-BATCH 5 — UX BUG PACK (PRE-LAUNCH) — REVIEW
-Task: #437  |  Status: AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Rollback SHA (current main, unchanged): a1e0593ba3a828bc46b82195ebf4afdb824c95e1
-================================================================
+================================================================================
+BATCH 5B — Pre-launch UX bug pack (frontend-only, 3 bugs)
+Task #439 · April 28, 2026
+================================================================================
 
-WHAT YOU GET WITH THIS BATCH
-----------------------------
-3 of 4 BATCH 5 bugs are fixed. 1 bug is deferred pending a screenshot
-from you (details below). 5 frontend files changed, 95 insertions /
-15 deletions, no backend / DB / migration changes.
+ROLLBACK SHA (HEAD before this batch)
+  92c795776d631210f3b50f4f103f6dd09f0dfce9
 
-Verification:
-  - All 8 VERIFY greps in the spec PASS (✅).
-  - `cd frontend && yarn build` (with REACT_APP_BACKEND_URL stubbed
-    to staging URL) → success, no new warnings.
-  - No new lucide imports beyond `RotateCcw` (already-paired with
-    existing icon set in TaskDetailPage).
-  - Bug #1 reuses existing `taskService.reopen(id)` service that
-    has been in api.js since the close-task feature shipped. No new
-    API surface.
-  - Bug #2 reuses existing `loadMore(0, isContractor)` reducer with
-    `taskIdsRef.current.clear()` to dedupe — same pattern used by
-    the existing infinite-scroll observer.
+Files touched (3, frontend only — backend untouched)
+  frontend/src/pages/TaskDetailPage.js     +60 / -4
+  frontend/src/pages/UnitDetailPage.js     +38 / -2
+  frontend/src/pages/ProjectControlPage.js +28 / -19
+  Total: +126 / -25  (3 files)
 
-================================================================
-BUG #1 — REOPEN BUTTON ON CLOSED DEFECTS  ✅ DONE
-================================================================
-File: frontend/src/pages/TaskDetailPage.js
+Scope
+  Bug A · TaskDetailPage  · replace window.confirm in reopen with branded RTL Radix Dialog
+  Bug B · UnitDetailPage  · add refresh-on-return (focus / visibility / location.key)
+  Bug C · ProjectControlPage · dedupe companies state — parent owns it, CompaniesTab consumes
 
-WHAT: When a defect is closed (status = closed_verified, force_closed,
-or marked done), the management user (project_manager / management_team)
-now sees a green-outlined "פתח מחדש" button at the bottom of the
-sidebar action card.
+================================================================================
+FULL DIFF
+================================================================================
+diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+index 8810ca5..c651a4a 100644
+--- a/frontend/src/pages/ProjectControlPage.js
++++ b/frontend/src/pages/ProjectControlPage.js
+@@ -2824,33 +2824,37 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
+   );
+ };
+ 
+-const CompaniesTab = ({ projectId }) => {
+-  const [companies, setCompanies] = useState([]);
+-  const [loading, setLoading] = useState(true);
++const CompaniesTab = ({ projectId, companies, companiesLoading, onRefreshCompanies }) => {
+   const [showAddForm, setShowAddForm] = useState(false);
+   const [editingCompany, setEditingCompany] = useState(null);
+   const [deleting, setDeleting] = useState(null);
+   const [tradeMap, setTradeMap] = useState({});
++  const [tradeMapLoading, setTradeMapLoading] = useState(true);
+ 
+-  const loadCompanies = useCallback(async () => {
+-    setLoading(true);
++  // Trade labels are local (not used elsewhere). Companies come from
++  // the parent so Team tab + Companies tab share one source of truth.
++  const loadTradeMap = useCallback(async () => {
++    setTradeMapLoading(true);
+     try {
+-      const [data, tradesData] = await Promise.all([
+-        projectCompanyService.list(projectId),
+-        tradeService.listForProject(projectId),
+-      ]);
+-      setCompanies(Array.isArray(data) ? data : []);
++      const tradesData = await tradeService.listForProject(projectId);
+       const map = {};
+       (tradesData.trades || []).forEach(t => { map[t.key] = t.label_he; });
+       setTradeMap(map);
+-    } catch {
+-      toast.error('שגיאה בטעינת חברות');
+-    } finally {
+-      setLoading(false);
++    } catch {} finally {
++      setTradeMapLoading(false);
+     }
+   }, [projectId]);
+ 
+-  useEffect(() => { loadCompanies(); }, [loadCompanies]);
++  useEffect(() => { loadTradeMap(); }, [loadTradeMap]);
++
++  // Spinner shows when EITHER companies OR trade map is loading on
++  // first mount. After that, refreshes don't show the spinner — the
++  // table just reconciles.
++  const loading = (companiesLoading || tradeMapLoading) && companies.length === 0;
++
++  const refreshAll = useCallback(async () => {
++    await Promise.all([onRefreshCompanies(), loadTradeMap()]);
++  }, [onRefreshCompanies, loadTradeMap]);
+ 
+   const handleDelete = async (companyId) => {
+     if (deleting) return;
+@@ -2858,7 +2862,7 @@ const CompaniesTab = ({ projectId }) => {
+     try {
+       await projectCompanyService.remove(projectId, companyId);
+       toast.success('חברה נמחקה');
+-      loadCompanies();
++      refreshAll();
+     } catch (err) {
+       toast.error(err.response?.data?.detail || 'שגיאה');
+     } finally {
+@@ -2910,8 +2914,8 @@ const CompaniesTab = ({ projectId }) => {
+         </div>
+       )}
+ 
+-      {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={loadCompanies} />}
+-      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={loadCompanies} />}
++      {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={refreshAll} />}
++      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={refreshAll} />}
+     </div>
+   );
+ };
+@@ -3198,6 +3202,7 @@ const ProjectControlPage = () => {
+   const [myRole, setMyRole] = useState(null);
+   const [stats, setStats] = useState(null);
+   const [companies, setCompanies] = useState([]);
++  const [companiesLoading, setCompaniesLoading] = useState(false);
+   const [trades, setTrades] = useState([]);
+   const [showAddBuilding, setShowAddBuilding] = useState(false);
+   const [showQuickSetup, setShowQuickSetup] = useState(false);
+@@ -3501,10 +3506,16 @@ const ProjectControlPage = () => {
+   }, [projectId]);
+ 
+   const loadCompanies = useCallback(async () => {
++    setCompaniesLoading(true);
+     try {
+       const data = await projectCompanyService.list(projectId);
+       setCompanies(Array.isArray(data) ? data : []);
+-    } catch {}
++    } catch (err) {
++      console.error('[loadCompanies]', err);
++      toast.error('שגיאה בטעינת חברות');
++    } finally {
++      setCompaniesLoading(false);
++    }
+   }, [projectId]);
+ 
+   const loadTrades = useCallback(async () => {
+@@ -3710,7 +3721,7 @@ const ProjectControlPage = () => {
+         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
+           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} returnToDefect={searchParams.get('returnToDefect') === '1'} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
+ 
+-          {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
++          {activeTab === 'companies' && <CompaniesTab projectId={projectId} companies={companies} companiesLoading={companiesLoading} onRefreshCompanies={loadCompanies} />}
+ 
+           {activeTab === 'data-export' && (
+             <ProjectDataExportTab projectId={projectId} projectName={project?.name || ''} />
+diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
+index 0a7dada..848e257 100644
+--- a/frontend/src/pages/TaskDetailPage.js
++++ b/frontend/src/pages/TaskDetailPage.js
+@@ -203,6 +203,7 @@ const TaskDetailPage = () => {
+   const [forceCloseReason, setForceCloseReason] = useState('');
+   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
+   const [reopening, setReopening] = useState(false);
++  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+   const [forceClosing, setForceClosing] = useState(false);
+ 
+   const [pendingProofFile, setPendingProofFile] = useState(null);
+@@ -577,12 +578,17 @@ const TaskDetailPage = () => {
+     }
+   };
+ 
+-  const handleReopenTask = async () => {
+-    if (!window.confirm('לפתוח את הליקוי מחדש?')) return;
++  const openReopenConfirm = () => {
++    if (reopening) return;
++    setShowReopenConfirm(true);
++  };
++
++  const confirmReopenTask = async () => {
+     setReopening(true);
+     try {
+       await taskService.reopen(id);
+       toast.success('הליקוי נפתח מחדש');
++      setShowReopenConfirm(false);
+       await loadTask();
+     } catch (err) {
+       const serverMsg = err.response?.data?.detail;
+@@ -1117,7 +1123,7 @@ const TaskDetailPage = () => {
+             {taskIsClosed && canManage && (
+               <div className="mt-4 pt-3 border-t border-amber-200">
+                 <Button
+-                  onClick={handleReopenTask}
++                  onClick={openReopenConfirm}
+                   variant="outline"
+                   disabled={reopening}
+                   className="w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 gap-2"
+@@ -1848,6 +1854,54 @@ const TaskDetailPage = () => {
+         </Suspense>
+       )}
+ 
++      {/* Reopen confirm modal */}
++      <DialogPrimitive.Root open={showReopenConfirm} onOpenChange={(next) => {
++        if (reopening) return;
++        setShowReopenConfirm(next);
++      }}>
++        <DialogPrimitive.Portal>
++          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-[9999]" />
++          <DialogPrimitive.Content
++            className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-[9999] bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-sm sm:mx-auto outline-none"
++            dir="rtl"
++            onEscapeKeyDown={(e) => { if (reopening) e.preventDefault(); }}
++            onPointerDownOutside={(e) => { if (reopening) e.preventDefault(); }}
++            onInteractOutside={(e) => { if (reopening) e.preventDefault(); }}
++          >
++            <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
++              <RotateCcw className="w-5 h-5 text-emerald-600" />
++              <DialogPrimitive.Title className="text-base font-bold text-slate-800">
++                פתיחת ליקוי מחדש
++              </DialogPrimitive.Title>
++            </div>
++            <div className="px-5 py-4">
++              <DialogPrimitive.Description className="text-sm text-slate-600">
++                הליקוי יחזור לסטטוס "נפתח מחדש" וניתן יהיה להמשיך לטפל בו. להמשיך?
++              </DialogPrimitive.Description>
++            </div>
++            <div className="px-5 py-3 border-t border-slate-100 flex gap-2">
++              <button
++                type="button"
++                onClick={() => { if (!reopening) setShowReopenConfirm(false); }}
++                disabled={reopening}
++                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px] disabled:opacity-50"
++              >
++                בטל
++              </button>
++              <button
++                type="button"
++                onClick={confirmReopenTask}
++                disabled={reopening}
++                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white disabled:opacity-50"
++              >
++                {reopening && <Loader2 className="w-4 h-4 animate-spin" />}
++                {reopening ? 'פותח מחדש...' : 'פתח מחדש'}
++              </button>
++            </div>
++          </DialogPrimitive.Content>
++        </DialogPrimitive.Portal>
++      </DialogPrimitive.Root>
++
+     </div>
+   );
+ };
+diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
+index 8da9f64..1ce8d63 100644
+--- a/frontend/src/pages/UnitDetailPage.js
++++ b/frontend/src/pages/UnitDetailPage.js
+@@ -1,5 +1,5 @@
+-import React, { useState, useEffect, useCallback } from 'react';
+-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
++import React, { useState, useEffect, useCallback, useRef } from 'react';
++import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+ import { unitService, taskService, projectCompanyService } from '../services/api';
+ import { useAuth } from '../contexts/AuthContext';
+ import { toast } from 'sonner';
+@@ -112,6 +112,42 @@ const UnitDetailPage = () => {
+   useEffect(() => { loadUnit(); }, [loadUnit]);
+   useEffect(() => { loadTasks(); }, [loadTasks]);
+ 
++  // Refresh-on-return — refetch unit + tasks when user navigates back
++  // to this page (location.key changes) or when window regains focus.
++  // Mirrors the pattern in ProjectTasksPage. 500ms debounce to avoid
++  // double-firing when both events fire at once.
++  const location = useLocation();
++  const latestLoadUnitRef = useRef(loadUnit);
++  const latestLoadTasksRef = useRef(loadTasks);
++  const lastRefreshAtRef = useRef(0);
++  const didMountRef = useRef(false);
++  useEffect(() => { latestLoadUnitRef.current = loadUnit; }, [loadUnit]);
++  useEffect(() => { latestLoadTasksRef.current = loadTasks; }, [loadTasks]);
++
++  useEffect(() => {
++    const refresh = () => {
++      const now = Date.now();
++      if (now - lastRefreshAtRef.current < 500) return;
++      lastRefreshAtRef.current = now;
++      latestLoadUnitRef.current();
++      latestLoadTasksRef.current();
++    };
++    if (didMountRef.current) {
++      refresh();
++    } else {
++      didMountRef.current = true;
++    }
++    const onFocus = () => { refresh(); };
++    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
++    window.addEventListener('focus', onFocus);
++    document.addEventListener('visibilitychange', onVisibility);
++    return () => {
++      window.removeEventListener('focus', onFocus);
++      document.removeEventListener('visibilitychange', onVisibility);
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [location.key, unitId]);
++
+   const handleDefectSuccess = (taskId) => {
+     setShowDefectModal(false);
+     loadUnit();
 
-HOW:
-  • Added `RotateCcw` to existing lucide-react import.
-  • Added `reopening` boolean state.
-  • Added `handleReopenTask` (lines 583-598):
-      - confirms with native dialog "לפתוח את הליקוי מחדש?"
-      - calls `taskService.reopen(id)` (existing service, api.js:536)
-      - on success: toast "הליקוי נפתח מחדש" + `loadTask()` refresh
-      - on error: prints Hebrew server detail if present, else
-        generic fallback. Console.error scoped with [TASK_REOPEN]
-        prefix matching existing telemetry style.
-  • Added button block (lines 1113-1126) gated `taskIsClosed && canManage`,
-    placed in its own `mt-4 pt-3 border-t border-amber-200` block
-    inside the existing action card. Visually subordinate to the
-    primary close button — emerald outline, not solid.
+================================================================================
+VERIFY 1 — BUG A (TaskDetailPage)
+================================================================================
+A.1  window.confirm reopen line REMOVED — 0 hits
+     $ grep -n "window.confirm.*לפתוח את הליקוי" frontend/src/pages/TaskDetailPage.js
+     (no output — pass)
 
-PERMISSION GATE:
-  • Frontend: `canManage = MGMT_ROLES.includes(projectRole)` →
-    matches MGMT_ROLES = ['project_manager','management_team'].
-  • Backend: tasks_router.py:787 already restricts /reopen to
-    exactly the same two roles. No new backend gate needed.
+A.2  git diff shows EXACTLY ONE removed window.confirm line — 1 hit
+     $ git diff frontend/src/pages/TaskDetailPage.js | grep "^-.*window.confirm" | wc -l
+     1
 
-CONTRACTORS / inspectors / sub-contractors do NOT see the button.
+A.3  showReopenConfirm appears 6 times (≥4 required) — pass
+     L206  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+     L583  setShowReopenConfirm(true);
+     L591  setShowReopenConfirm(false);
+     L1858 <DialogPrimitive.Root open={showReopenConfirm} onOpenChange=...
+     L1860 setShowReopenConfirm(next);
+     L1885 onClick={() => { if (!reopening) setShowReopenConfirm(false); }}
 
-================================================================
-BUG #2 — STALE TASKS LIST AFTER NAVIGATION  ✅ DONE
-================================================================
-File: frontend/src/pages/ProjectTasksPage.js
+A.4  Both handlers present
+     L581  const openReopenConfirm = () => {
+     L586  const confirmReopenTask = async () => {
+     L1126 onClick={openReopenConfirm}              ← button now opens modal
+     L1893 onClick={confirmReopenTask}              ← modal "Confirm" calls reopen
 
-WHAT: When you open a defect, edit it, then click back arrow → the
-tasks list now shows fresh data instead of the stale snapshot.
+================================================================================
+VERIFY 2 — BUG B (UnitDetailPage)
+================================================================================
+B.1  useLocation imported + location.key used in deps
+     L2    import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+     L119  const location = useLocation();
+     L149  }, [location.key, unitId]);
 
-HOW:
-  • Added `useLocation` import.
-  • Added 4 small refs:
-      - `latestLoadMoreRef` / `latestIsContractorRef`: kept in sync
-        with current values via tiny mirror effects (lines 290-291).
-        This avoids stale closures when filters change between
-        navigations.
-      - `lastRefreshAtRef`: 500ms guard so the focus + visibility
-        events that both fire on tab return don't double-fetch.
-      - `didMountRef`: skips the very first run so we don't double-
-        fetch with the existing init effect (L230-273) on first mount.
-  • New useEffect (lines 293-321) that:
-      - Triggers on `location.key` change (SPA back/forward) and
-        `project?.id` change → calls `refresh()` from the second run
-        onward (skipped on initial mount via `didMountRef`).
-      - Listens to `window focus` and `document visibilitychange`
-        events (return-from-tab and return-from-mobile-background).
-      - Refresh fn: clears `taskIdsRef`, resets offset to 0,
-        sets hasMore=true, then calls
-        `latestLoadMoreRef.current(0, latestIsContractorRef.current)`
-        so the call always uses the freshest filter closure.
-      - Cleans up listeners on unmount.
+B.2  didMountRef + lastRefreshAtRef both declared and used
+     L122  const lastRefreshAtRef = useRef(0);
+     L123  const didMountRef = useRef(false);
+     L130  if (now - lastRefreshAtRef.current < 500) return;   ← debounce
+     L131  lastRefreshAtRef.current = now;
+     L135  if (didMountRef.current) {                          ← skip first run
+     L138  didMountRef.current = true;
 
-WHY THIS IS SAFE (no infinite loop, no double-fetch):
-  • Initial mount: `didMountRef.current === false` → only listeners
-    are registered. The init effect at L230-273 does the first load.
-  • Filter change: init effect fires (good). My new effect's deps
-    don't include filters, so it doesn't re-run. The `loadMore`
-    closure used by the listeners is always the latest via ref.
-  • Back-navigation in SPA: `location.key` changes → my effect runs,
-    `didMountRef` is now true, refresh() fires. Init effect deps
-    unchanged → it doesn't fire. Single fetch.
-  • Tab return: focus + visibilitychange both fire within ~ms; the
-    500ms `lastRefreshAtRef` guard collapses them into one fetch.
+B.3  focus + visibilitychange listeners both registered (and cleaned up)
+     L142  window.addEventListener('focus', onFocus);
+     L143  document.addEventListener('visibilitychange', onVisibility);
+     L146  document.removeEventListener('visibilitychange', onVisibility);
+     (window.removeEventListener('focus', onFocus) on prior line)
 
-================================================================
-BUG #3 — DROPDOWN INSIDE USER DRAWER  ⚠️ DEFERRED
-================================================================
-Per the spec's Decision Tree section 0.3 — DEFERRED PENDING SCREENSHOT.
+================================================================================
+VERIFY 3 — BUG C (ProjectControlPage)
+================================================================================
+C.1  EXACTLY ONE [companies, setCompanies] declaration (was 2 — duped)
+     $ grep -n "const \[companies, setCompanies\]" frontend/src/pages/ProjectControlPage.js | wc -l
+     1
+     L3204  const [companies, setCompanies] = useState([]);   ← parent only
 
-REASON: All three dropdowns inside `UserDrawer.js` (role at L291,
-sub-role at L335, trade at L377) are native HTML `<select>` elements,
-not custom popover menus. Native `<select>` cannot be clipped by a
-parent's `overflow:hidden` because the browser renders the option
-list in a separate paint layer outside the DOM. Therefore there is
-no z-index issue I can reproduce by code inspection.
+C.2  <CompaniesTab receives all 3 new props from parent
+     L3724  {activeTab === 'companies' && <CompaniesTab projectId={projectId}
+            companies={companies} companiesLoading={companiesLoading}
+            onRefreshCompanies={loadCompanies} />}
 
-ASK: Could you please send a screenshot of the dropdown that's being
-clipped, with the drawer open? It might be:
-  (a) the new inline "+ הוסף חברה" form I just touched (now has
-      a native trade <select> too — same architecture)
-  (b) a different overlay I haven't located yet (e.g. the company
-      autocomplete suggestions list, or the trade-add inline form)
+C.3  Parent loadCompanies hardened — was silent `catch {}`, now toasts on failure
+     L3507-3518:
+       const loadCompanies = useCallback(async () => {
+         setCompaniesLoading(true);
+         try {
+           const data = await projectCompanyService.list(projectId);
+           setCompanies(Array.isArray(data) ? data : []);
+         } catch (err) {
+           console.error('[loadCompanies]', err);
+           toast.error('שגיאה בטעינת חברות');
+         } finally {
+           setCompaniesLoading(false);
+         }
+       }, [projectId]);
 
-Without a visual I cannot confidently identify which overlay is
-clipped, and changing z-index blindly could break unrelated layers.
-Happy to ship a fix as soon as I see the screenshot.
+C.4  companiesLoading wired through 4 sites (signature → loading derivation →
+     parent state → JSX prop)
+     L2827  const CompaniesTab = ({ projectId, companies, companiesLoading, onRefreshCompanies }) => {
+     L2853  const loading = (companiesLoading || tradeMapLoading) && companies.length === 0;
+     L3205  const [companiesLoading, setCompaniesLoading] = useState(false);
+     L3724  <CompaniesTab ... companiesLoading={companiesLoading} ... />
 
-================================================================
-BUG #4 — TRADE FIELD MUST BE REQUIRED ON COMPANY CREATE  ✅ DONE
-================================================================
-Four call sites that create a company. ALL four now require trade
-on the frontend AND always include `trade` in the POST payload.
+================================================================================
+VERIFY 4 — BUILD
+================================================================================
+$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://api-staging.brikops.com yarn build
+…
+The project was built assuming it is hosted at /.
+The build folder is ready to be deployed.
+Done in 34.90s.
 
-(Backend ProjectCompany model already has `trade: Optional[str]` —
-no schema change needed; we're tightening the client contract only.)
+(no warnings, no errors, no eslint complaints — clean compile)
 
-4a — frontend/src/components/QuickAddCompanyModal.js
-  • `canSave = trimmedName.length > 0 && !!tradeValue && !saving`
-  • `handleSave` adds explicit `if (!tradeValue) toast + return`
-  • Payload always sets `trade: tradeValue` (no more optional spread)
-  • Label changed: "תחום" → "תחום *" (red asterisk span)
+================================================================================
+COMMIT MESSAGE (also in .local/.commit_message)
+================================================================================
+fix(ui): batch 5b — replace native confirm, refresh UnitDetailPage on focus, dedupe companies state
 
-4b — frontend/src/components/UserDrawer.js (inline create form)
-  • Added `newCompanyTrade` state.
-  • `handleAddCompanyInDrawer` toasts + early-returns if no trade.
-  • POST body now includes `trade: newCompanyTrade`.
-  • On success: also seeds `editTradeKey` so the company shows up
-    immediately with the right trade in the dropdown below.
-  • Reset on cancel: clears `newCompanyTrade` too.
-  • Added inline `<select>` with `tradeOptions` between name and
-    button row, matching existing styling.
-  • Save button disabled if name OR trade missing.
+Frontend-only UX polish (no backend, no schema, no deps).
 
-4c — frontend/src/pages/ProjectControlPage.js (AddCompanyForm)
-  • `allFilled = !!name.trim() && !!trade`
-  • `handleSubmit` sets `errs.trade = 'שדה חובה'` if missing,
-    early-returns with toast if only trade is missing.
-  • Payload always sets `trade` (dropped `if (trade) ...` conditional).
-  • SelectField label "תחום" → "תחום *", now passes `error={errors.trade}`
-    so the field highlights red when validation fails.
-  • The neighbouring EditCompanyForm at L1166+ is intentionally
-    UNCHANGED — out of scope (this batch is creates only) and
-    EditCompanyForm already enforces trade through its existing
-    edit flow.
+Bug A — TaskDetailPage reopen confirm
+  Replaced the native window.confirm() in handleReopenTask with a
+  branded RTL Radix Dialog ("פתיחת ליקוי מחדש"). Split the handler
+  into openReopenConfirm (opens modal) and confirmReopenTask (calls
+  taskService.reopen). Modal sits at z-[9999] — above page modals
+  (z-50) and below the fullscreen photo viewer (z-[10000]).
 
-4d — frontend/src/pages/ProjectControlPage.js (AddTeamMemberForm
-      inline "+ הוסף חברה חדשה" — caught by code review, the spec
-      mentioned this site too)
-  • Added `newCompanyTrade` state.
-  • `handleAddCompany` toasts + early-returns if trade missing.
-  • POST body always includes `trade: newCompanyTrade`.
-  • On success: also seeds `tradeKey` (the form's trade selector)
-    so the just-created company shows up in the right trade group
-    in the team-member form.
-  • Reset on cancel: clears `newCompanyTrade` too.
-  • Added native `<select>` with `tradeOptions` between the name
-    InputField and the button row. Save button disabled if name OR
-    trade missing.
+Bug B — UnitDetailPage refresh on return
+  Added the same refresh-on-return pattern already used in
+  ProjectTasksPage: on focus / visibilitychange / location.key
+  change, refetch the unit and its tasks. 500ms debounce + didMountRef
+  to skip the initial mount run. Fixes a stale-data bug where editing
+  a defect from the unit page and returning showed yesterday's status.
 
-================================================================
-ROLLBACK
-================================================================
-If anything misbehaves in staging:
-    git reset --hard a1e0593ba3a828bc46b82195ebf4afdb824c95e1
+Bug C — ProjectControlPage companies state dedupe
+  Lifted companies + companiesLoading to the parent (single source of
+  truth), passed into CompaniesTab. Add/Edit/Delete now refreshes both
+  parent companies AND local tradeMap, so Team tab + Companies tab
+  stay in sync without a page reload. Hardened parent's loadCompanies
+  (was silent `catch {}`).
 
-No backend touched. No DB/index/migration touched. Pure frontend.
+Refs: task #439 / BATCH 5B
 
-================================================================
-NEXT (when you say go)
-================================================================
-1. You: review staging once deployed.
-2. You: send screenshot of the Bug #3 dropdown clipping so I can
-   ship a targeted fix.
-3. Me (next batch): Bug #3 fix + any UX polish you flag.
+================================================================================
+DEPLOY POSTURE
+================================================================================
+Backend: untouched (no backend/* edits, no schema, no migrations).
+Frontend: 3 files, +126/-25.
+Workflows: NOT restarted by agent (frontend dev workflow auto-reloads;
+           production deploy is Zahi's responsibility).
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+
+================================================================================
+CODE REVIEW (architect, evaluate_task)
+================================================================================
+VERDICT: PASS — safe to ship.
+
+Bug A (TaskDetail reopen modal)
+  Implemented correctly. window.confirm removed; controlled Radix Dialog with
+  proper RTL, all dismissal vectors blocked while reopening, both action
+  buttons disabled with spinner, focus trap inherited from default Radix
+  modal behaviour.
+
+Bug B (UnitDetail refresh-on-return)
+  Pattern correctly mirrored from ProjectTasksPage — useLocation, latest
+  refs, focus + visibility listeners, didMountRef skip-first-run, 500ms
+  debounce. No race with the existing [loadUnit]/[loadTasks] effects.
+  Caveat (non-blocking): because deps include unitId, navigating between
+  unit IDs in-place can trigger one extra refresh on top of the existing
+  loader-dep effects. Worst case = one duplicate fetch, NOT stale data
+  and NOT a functional break. Filed as follow-up.
+
+Bug C (ProjectControl companies dedupe)
+  Correctly fixed. Single source of truth in parent, refreshAll has safe
+  deps with no loop risk. Loading gate
+  '(companiesLoading || tradeMapLoading) && companies.length === 0' is
+  appropriate — prevents full-page spinner during later refreshes.
+
+Regressions / accessibility / Hebrew UX / security: none observed.
+Build: compiles clean.
+
+NON-BLOCKING FOLLOW-UPS (filed as project tasks, not addressed here)
+  1. Tighten UnitDetail refresh-on-return to dedupe the unitId-transition
+     double-fetch (gate by prevUnitIdRef or drop unitId from deps).
+  2. Add lightweight integration tests for the three bug paths.
+  3. Manual mobile spot-check of dialog layering with PhotoAnnotation
+     (z-[10000]) on a real device.
+
+These do NOT block this batch — the prescriptive spec from Zahi was met
+exactly and matches the existing ProjectTasksPage pattern.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

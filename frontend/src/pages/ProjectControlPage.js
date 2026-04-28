@@ -2824,33 +2824,37 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
   );
 };
 
-const CompaniesTab = ({ projectId }) => {
-  const [companies, setCompanies] = useState([]);
-  const [loading, setLoading] = useState(true);
+const CompaniesTab = ({ projectId, companies, companiesLoading, onRefreshCompanies }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCompany, setEditingCompany] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [tradeMap, setTradeMap] = useState({});
+  const [tradeMapLoading, setTradeMapLoading] = useState(true);
 
-  const loadCompanies = useCallback(async () => {
-    setLoading(true);
+  // Trade labels are local (not used elsewhere). Companies come from
+  // the parent so Team tab + Companies tab share one source of truth.
+  const loadTradeMap = useCallback(async () => {
+    setTradeMapLoading(true);
     try {
-      const [data, tradesData] = await Promise.all([
-        projectCompanyService.list(projectId),
-        tradeService.listForProject(projectId),
-      ]);
-      setCompanies(Array.isArray(data) ? data : []);
+      const tradesData = await tradeService.listForProject(projectId);
       const map = {};
       (tradesData.trades || []).forEach(t => { map[t.key] = t.label_he; });
       setTradeMap(map);
-    } catch {
-      toast.error('שגיאה בטעינת חברות');
-    } finally {
-      setLoading(false);
+    } catch {} finally {
+      setTradeMapLoading(false);
     }
   }, [projectId]);
 
-  useEffect(() => { loadCompanies(); }, [loadCompanies]);
+  useEffect(() => { loadTradeMap(); }, [loadTradeMap]);
+
+  // Spinner shows when EITHER companies OR trade map is loading on
+  // first mount. After that, refreshes don't show the spinner — the
+  // table just reconciles.
+  const loading = (companiesLoading || tradeMapLoading) && companies.length === 0;
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([onRefreshCompanies(), loadTradeMap()]);
+  }, [onRefreshCompanies, loadTradeMap]);
 
   const handleDelete = async (companyId) => {
     if (deleting) return;
@@ -2858,7 +2862,7 @@ const CompaniesTab = ({ projectId }) => {
     try {
       await projectCompanyService.remove(projectId, companyId);
       toast.success('חברה נמחקה');
-      loadCompanies();
+      refreshAll();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה');
     } finally {
@@ -2910,8 +2914,8 @@ const CompaniesTab = ({ projectId }) => {
         </div>
       )}
 
-      {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={loadCompanies} />}
-      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={loadCompanies} />}
+      {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={refreshAll} />}
+      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={refreshAll} />}
     </div>
   );
 };
@@ -3198,6 +3202,7 @@ const ProjectControlPage = () => {
   const [myRole, setMyRole] = useState(null);
   const [stats, setStats] = useState(null);
   const [companies, setCompanies] = useState([]);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
   const [trades, setTrades] = useState([]);
   const [showAddBuilding, setShowAddBuilding] = useState(false);
   const [showQuickSetup, setShowQuickSetup] = useState(false);
@@ -3501,10 +3506,16 @@ const ProjectControlPage = () => {
   }, [projectId]);
 
   const loadCompanies = useCallback(async () => {
+    setCompaniesLoading(true);
     try {
       const data = await projectCompanyService.list(projectId);
       setCompanies(Array.isArray(data) ? data : []);
-    } catch {}
+    } catch (err) {
+      console.error('[loadCompanies]', err);
+      toast.error('שגיאה בטעינת חברות');
+    } finally {
+      setCompaniesLoading(false);
+    }
   }, [projectId]);
 
   const loadTrades = useCallback(async () => {
@@ -3710,7 +3721,7 @@ const ProjectControlPage = () => {
         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} returnToDefect={searchParams.get('returnToDefect') === '1'} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
 
-          {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
+          {activeTab === 'companies' && <CompaniesTab projectId={projectId} companies={companies} companiesLoading={companiesLoading} onRefreshCompanies={loadCompanies} />}
 
           {activeTab === 'data-export' && (
             <ProjectDataExportTab projectId={projectId} projectName={project?.name || ''} />

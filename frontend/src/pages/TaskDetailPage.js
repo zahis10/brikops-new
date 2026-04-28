@@ -203,6 +203,7 @@ const TaskDetailPage = () => {
   const [forceCloseReason, setForceCloseReason] = useState('');
   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
   const [reopening, setReopening] = useState(false);
+  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
   const [forceClosing, setForceClosing] = useState(false);
 
   const [pendingProofFile, setPendingProofFile] = useState(null);
@@ -577,12 +578,17 @@ const TaskDetailPage = () => {
     }
   };
 
-  const handleReopenTask = async () => {
-    if (!window.confirm('לפתוח את הליקוי מחדש?')) return;
+  const openReopenConfirm = () => {
+    if (reopening) return;
+    setShowReopenConfirm(true);
+  };
+
+  const confirmReopenTask = async () => {
     setReopening(true);
     try {
       await taskService.reopen(id);
       toast.success('הליקוי נפתח מחדש');
+      setShowReopenConfirm(false);
       await loadTask();
     } catch (err) {
       const serverMsg = err.response?.data?.detail;
@@ -1117,7 +1123,7 @@ const TaskDetailPage = () => {
             {taskIsClosed && canManage && (
               <div className="mt-4 pt-3 border-t border-amber-200">
                 <Button
-                  onClick={handleReopenTask}
+                  onClick={openReopenConfirm}
                   variant="outline"
                   disabled={reopening}
                   className="w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 gap-2"
@@ -1847,6 +1853,54 @@ const TaskDetailPage = () => {
           />
         </Suspense>
       )}
+
+      {/* Reopen confirm modal */}
+      <DialogPrimitive.Root open={showReopenConfirm} onOpenChange={(next) => {
+        if (reopening) return;
+        setShowReopenConfirm(next);
+      }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-[9999]" />
+          <DialogPrimitive.Content
+            className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-[9999] bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-sm sm:mx-auto outline-none"
+            dir="rtl"
+            onEscapeKeyDown={(e) => { if (reopening) e.preventDefault(); }}
+            onPointerDownOutside={(e) => { if (reopening) e.preventDefault(); }}
+            onInteractOutside={(e) => { if (reopening) e.preventDefault(); }}
+          >
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-emerald-600" />
+              <DialogPrimitive.Title className="text-base font-bold text-slate-800">
+                פתיחת ליקוי מחדש
+              </DialogPrimitive.Title>
+            </div>
+            <div className="px-5 py-4">
+              <DialogPrimitive.Description className="text-sm text-slate-600">
+                הליקוי יחזור לסטטוס "נפתח מחדש" וניתן יהיה להמשיך לטפל בו. להמשיך?
+              </DialogPrimitive.Description>
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex gap-2">
+              <button
+                type="button"
+                onClick={() => { if (!reopening) setShowReopenConfirm(false); }}
+                disabled={reopening}
+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px] disabled:opacity-50"
+              >
+                בטל
+              </button>
+              <button
+                type="button"
+                onClick={confirmReopenTask}
+                disabled={reopening}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white disabled:opacity-50"
+              >
+                {reopening && <Loader2 className="w-4 h-4 animate-spin" />}
+                {reopening ? 'פותח מחדש...' : 'פתח מחדש'}
+              </button>
+            </div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
     </div>
   );

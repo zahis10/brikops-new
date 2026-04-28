@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { unitService, taskService, projectCompanyService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -111,6 +111,42 @@ const UnitDetailPage = () => {
 
   useEffect(() => { loadUnit(); }, [loadUnit]);
   useEffect(() => { loadTasks(); }, [loadTasks]);
+
+  // Refresh-on-return — refetch unit + tasks when user navigates back
+  // to this page (location.key changes) or when window regains focus.
+  // Mirrors the pattern in ProjectTasksPage. 500ms debounce to avoid
+  // double-firing when both events fire at once.
+  const location = useLocation();
+  const latestLoadUnitRef = useRef(loadUnit);
+  const latestLoadTasksRef = useRef(loadTasks);
+  const lastRefreshAtRef = useRef(0);
+  const didMountRef = useRef(false);
+  useEffect(() => { latestLoadUnitRef.current = loadUnit; }, [loadUnit]);
+  useEffect(() => { latestLoadTasksRef.current = loadTasks; }, [loadTasks]);
+
+  useEffect(() => {
+    const refresh = () => {
+      const now = Date.now();
+      if (now - lastRefreshAtRef.current < 500) return;
+      lastRefreshAtRef.current = now;
+      latestLoadUnitRef.current();
+      latestLoadTasksRef.current();
+    };
+    if (didMountRef.current) {
+      refresh();
+    } else {
+      didMountRef.current = true;
+    }
+    const onFocus = () => { refresh(); };
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key, unitId]);
 
   const handleDefectSuccess = (taskId) => {
     setShowDefectModal(false);
