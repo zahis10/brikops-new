@@ -413,7 +413,7 @@ async def my_task_stats(
 
     open_count = sum(sc.get(s, 0) for s in open_statuses)
     in_progress = sc.get("in_progress", 0)
-    closed_count = sc.get("closed", 0)
+    closed_count = sc.get("closed", 0) + sc.get("approved", 0)
     resolved = sum(sc.get(s, 0) for s in handled_statuses)
     total_count = facets.get("total", [{}])
     total_count = total_count[0].get("count", 0) if total_count else 0

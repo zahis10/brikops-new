@@ -27,6 +27,7 @@ STATUS_LABEL = {
     'pending_manager_approval': 'ממתין לאישור מנהל',
     'returned_to_contractor': 'הוחזר לקבלן',
     'closed': 'סגור',
+    'approved': 'אושר',
     'reopened': 'נפתח מחדש',
 }
 
@@ -39,6 +40,7 @@ STATUS_COLORS = {
     'pending_manager_approval': '#F59E0B',
     'returned_to_contractor': '#EF4444',
     'closed': '#22C55E',
+    'approved': '#22C55E',
     'reopened': '#EF4444',
 }
 
@@ -49,7 +51,7 @@ OPEN_STATUSES_BUILDING = {'open', 'assigned', 'reopened', 'in_progress',
 IN_PROGRESS_STATUSES = {'in_progress', 'pending_contractor_proof',
                         'pending_manager_approval', 'returned_to_contractor',
                         'waiting_verify'}
-CLOSED_STATUSES = {'closed'}
+CLOSED_STATUSES = {'closed', 'approved'}
 BLOCKING_STATUSES = {'open', 'in_progress'}
 
 
@@ -1166,7 +1168,7 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
         summary_cells.append(Paragraph(heb(str(in_progress)), style_summary_value))
         summary_labels.append(Paragraph(heb('בביצוע'), style_summary_label))
 
-    closed_count = status_counts.get('closed', 0)
+    closed_count = status_counts.get('closed', 0) + status_counts.get('approved', 0)
     if closed_count:
         summary_cells.append(Paragraph(heb(str(closed_count)), style_summary_value))
         summary_labels.append(Paragraph(heb('סגורים'), style_summary_label))

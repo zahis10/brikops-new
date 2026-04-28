@@ -23,6 +23,7 @@ const STATUS_LABELS = {
   in_progress: { label: 'בביצוע', color: 'bg-blue-100 text-blue-700' },
   waiting_verify: { label: 'ממתין לאימות', color: 'bg-purple-100 text-purple-700' },
   closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+  approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
   reopened: { label: 'נפתח מחדש', color: 'bg-amber-100 text-amber-700' },
 };
 
@@ -40,6 +41,7 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'in_progress', label: 'בביצוע' },
   { value: 'waiting_verify', label: 'ממתין לאימות' },
   { value: 'closed', label: 'סגור' },
+  { value: 'approved', label: 'אושר' },
   { value: 'reopened', label: 'נפתח מחדש' },
 ];
 

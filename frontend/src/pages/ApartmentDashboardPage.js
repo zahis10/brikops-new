@@ -39,6 +39,7 @@ const STATUS_LABELS = {
   returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700', key: 'in_progress' },
   waiting_verify: { label: 'ממתין לאימות', color: 'bg-purple-100 text-purple-700', key: 'in_progress' },
   closed: { label: 'סגור', color: 'bg-green-100 text-green-700', key: 'closed' },
+  approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
   reopened: { label: 'נפתח מחדש', color: 'bg-amber-100 text-amber-700', key: 'open' },
 };
 

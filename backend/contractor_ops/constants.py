@@ -1,1 +1,1 @@
-TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}
+TERMINAL_TASK_STATUSES = {"closed", "approved", "done", "cancelled"}

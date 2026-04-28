@@ -45,17 +45,17 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
     invites_count = await db.invites.count_documents({'project_id': project_id, 'status': 'pending'})
     invites_count += await db.team_invites.count_documents({'project_id': project_id, 'status': 'pending'})
     companies_count = await db.project_companies.count_documents({'project_id': project_id})
-    open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed']}})
-    critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed']}})
+    open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed', 'approved']}})
+    critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed', 'approved']}})
     now_str = now.strftime('%Y-%m-%d')
     overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed', 'approved']}})
     building_defects_agg = await db.tasks.aggregate([
         {'$match': {'project_id': project_id, 'building_id': {'$ne': None}}},
         {'$group': {
             '_id': '$building_id',
-            'open': {'$sum': {'$cond': [{'$ne': ['$status', 'closed']}, 1, 0]}},
-            'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$ne': ['$status', 'closed']}]}, 1, 0]}},
-            'closed': {'$sum': {'$cond': [{'$eq': ['$status', 'closed']}, 1, 0]}},
+            'open': {'$sum': {'$cond': [{'$not': {'$in': ['$status', ['closed', 'approved']]}}, 1, 0]}},
+            'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$not': {'$in': ['$status', ['closed', 'approved']]}}]}, 1, 0]}},
+            'closed': {'$sum': {'$cond': [{'$in': ['$status', ['closed', 'approved']]}, 1, 0]}},
             'total': {'$sum': 1},
         }}
     ]).to_list(500)
@@ -129,7 +129,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
             open_count += 1
         if s in in_progress_statuses:
             in_progress_count += 1
-        if s == 'closed':
+        if s in ('closed', 'approved'):
             closed_count += 1
             if t.get('updated_at', '') >= seven_days_ago:
                 closed_last7 += 1
@@ -142,7 +142,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
                 'status': s, 'updated_at': t.get('updated_at', ''),
                 'building_id': t.get('building_id'), 'unit_id': t.get('unit_id'),
             })
-        if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed',):
+        if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed', 'approved'):
             overdue_count += 1
 
         cid = t.get('company_id') or ''
@@ -168,7 +168,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
                 contractor_map[group_key] = {'open': 0, 'closed': 0, 'rework': 0, 'response_times': []}
             if s in active_statuses:
                 contractor_map[group_key]['open'] += 1
-            if s == 'closed':
+            if s in ('closed', 'approved'):
                 contractor_map[group_key]['closed'] += 1
             if s == 'returned_to_contractor':
                 contractor_map[group_key]['rework'] += 1

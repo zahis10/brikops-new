@@ -9,6 +9,7 @@ const STATUS_DOT = {
   returned_to_contractor:     'bg-rose-500',
   waiting_verify:             'bg-purple-500',
   closed:                     'bg-emerald-500',
+  approved:                   'bg-emerald-500',
   reopened:                   'bg-amber-500',
 };
 

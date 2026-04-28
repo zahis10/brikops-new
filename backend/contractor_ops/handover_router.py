@@ -5,6 +5,7 @@ import logging
 import re
 
 from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_project_read_access, _audit, _now, _is_super_admin
+from contractor_ops.constants import TERMINAL_TASK_STATUSES
 from services.object_storage import save_bytes, generate_url
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
 
@@ -1203,7 +1204,6 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
 
 
 VALID_SEVERITIES = {"critical", "normal", "cosmetic"}
-TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
 
 STATUS_LABELS = {
     "defective": "לא תקין",
@@ -2096,7 +2096,7 @@ async def handover_overview(
             {"$match": {
                 "handover_protocol_id": {"$in": all_protocol_ids},
                 "source": {"$in": ["handover_initial", "handover_final"]},
-                "status": {"$nin": ["closed", "done", "cancelled"]},
+                "status": {"$nin": ["closed", "approved", "done", "cancelled"]},
             }},
             {"$group": {"_id": "$handover_protocol_id", "count": {"$sum": 1}}},
         ]
@@ -2333,7 +2333,7 @@ async def handover_summary(project_id: str, user: dict = Depends(get_current_use
     open_handover_defects = await db.tasks.count_documents({
         "project_id": project_id,
         "source": {"$in": ["handover_initial", "handover_final"]},
-        "status": {"$nin": ["closed", "cancelled"]},
+        "status": {"$nin": ["closed", "approved", "cancelled"]},
     })
 
     return {

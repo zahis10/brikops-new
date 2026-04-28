@@ -1445,7 +1445,7 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
     open_statuses = {'open', 'assigned', 'reopened'}
     in_progress_statuses = {'in_progress', 'pending_contractor_proof', 'pending_manager_approval', 'returned_to_contractor'}
     waiting_verify_statuses = {'waiting_verify'}
-    closed_statuses = {'closed'}
+    closed_statuses = {'closed', 'approved'}
 
     def compute_counts(status_map):
         open_count = sum(status_map.get(s, 0) for s in open_statuses)

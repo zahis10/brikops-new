@@ -26,13 +26,14 @@ const STATUS_CONFIG = {
   pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-orange-100 text-orange-700 ring-1 ring-orange-300' },
   returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700' },
   closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+  approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
   reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
 };
 
 const CONTRACTOR_STATUS_CHIPS = [
   { key: 'active', label: 'פעילים', statusIn: 'open,assigned,in_progress,pending_contractor_proof,returned_to_contractor' },
   { key: 'pending_manager_approval', label: 'ממתין לאישור מנהל', status: 'pending_manager_approval' },
-  { key: 'closed', label: 'סגור', status: 'closed' },
+  { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
 ];
 
 const MANAGER_STATUS_CHIPS = [
@@ -43,7 +44,7 @@ const MANAGER_STATUS_CHIPS = [
   { key: 'pending_contractor_proof', label: 'ממתין להוכחת קבלן', status: 'pending_contractor_proof' },
   { key: 'pending_manager_approval', label: 'ממתין לאישור מנהל', status: 'pending_manager_approval' },
   { key: 'returned_to_contractor', label: 'הוחזר לקבלן', status: 'returned_to_contractor' },
-  { key: 'closed', label: 'סגור', status: 'closed' },
+  { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
   { key: 'reopened', label: 'נפתח מחדש', status: 'reopened' },
 ];
 

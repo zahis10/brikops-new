@@ -1,330 +1,1339 @@
-diff --git a/task176_reapplied_diff.patch b/task176_reapplied_diff.patch
-new file mode 100644
-index 0000000..5393f5c
---- /dev/null
-+++ b/task176_reapplied_diff.patch
-@@ -0,0 +1,324 @@
-+diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
-+index 6f9604d..29be747 100644
-+--- a/frontend/src/components/NewDefectModal.js
-++++ b/frontend/src/components/NewDefectModal.js
-+@@ -136,32 +136,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+   const navigate = useNavigate();
-+   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
-+ 
-+-  const [debugLog, setDebugLog] = useState([]);
-+-  const debugLogRef = useRef([]);
-+-  const addLog = useCallback((msg) => {
-+-    const line = new Date().toLocaleTimeString() + ' ' + msg;
-+-    console.log('[DefectModal]', msg);
-+-    debugLogRef.current = [...debugLogRef.current.slice(-15), line];
-+-    setDebugLog([...debugLogRef.current]);
-+-  }, []);
-+-
-+-  useEffect(() => {
-+-    if (!isOpen) return;
-+-    addLog('MODAL OPEN');
-+-    const popHandler = () => addLog('⚠️ POPSTATE (back gesture?)');
-+-    const errHandler = (e) => addLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
-+-    const rejHandler = (e) => addLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
-+-    window.addEventListener('popstate', popHandler);
-+-    window.addEventListener('error', errHandler);
-+-    window.addEventListener('unhandledrejection', rejHandler);
-+-    return () => {
-+-      addLog('MODAL UNMOUNT');
-+-      window.removeEventListener('popstate', popHandler);
-+-      window.removeEventListener('error', errHandler);
-+-      window.removeEventListener('unhandledrejection', rejHandler);
-+-    };
-+-  }, [isOpen, addLog]);
-+-
-+   const [projectId, setProjectId] = useState('');
-+   const [buildingId, setBuildingId] = useState('');
-+   const [floorId, setFloorId] = useState('');
-+@@ -369,17 +343,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+   const cameraInputRef = useRef(null);
-+ 
-+   const handleImageAdd = useCallback(async (e) => {
-+-    addLog('IMAGE ADD: ' + (e.target?.files?.length || 0) + ' files');
-+     try {
-+       const files = Array.from(e.target.files || []);
-+       if (files.length === 0) return;
-+-      for (const f of files) addLog('FILE: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB ' + (f.type || 'no-type'));
-+       const compressed = await Promise.all(files.map(f => compressImage(f)));
-+-      for (const f of compressed) addLog('COMPRESSED: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB');
-+ 
-+       if (compressed.length === 1) {
-+         setPendingFile(compressed[0]);
-+-        addLog('PENDING FILE SET (annotation prompt)');
-+       } else {
-+         const newImages = compressed.map(file => ({
-+           file,
-+@@ -389,9 +359,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+         setImages(prev => [...prev, ...newImages]);
-+         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
-+       }
-+-      addLog('IMAGE ADD DONE');
-+     } catch (err) {
-+-      addLog('❌ IMAGE ADD ERROR: ' + (err?.message || err));
-+       if (err?.code === 'UNSUPPORTED_FORMAT') {
-+         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
-+         console.error('[COMPRESS] HEIC/unsupported:', err.original);
-+@@ -402,7 +370,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+     } finally {
-+       if (e.target) e.target.value = '';
-+     }
-+-  }, [addLog]);
-++  }, []);
-+ 
-+   const removeImage = useCallback((index) => {
-+     setImages(prev => {
-+@@ -477,7 +445,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+   }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
-+ 
-+   const doUploadAndAssign = async (taskId) => {
-+-    addLog('UPLOAD+ASSIGN START taskId=' + taskId + ' images=' + images.length);
-+     setUploadError(null);
-+ 
-+     const { taskService } = await import('../services/api');
-+@@ -639,7 +606,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+   };
-+ 
-+   const handleSubmit = async () => {
-+-    addLog('SUBMIT START images=' + images.length + ' retry=' + !!createdTaskId);
-+     if (createdTaskId && uploadError) {
-+       setSubmitting(true);
-+       setSubmitStep('uploading');
-+@@ -705,7 +671,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+   };
-+ 
-+   const handleClose = () => {
-+-    addLog('CLOSE TRIGGERED stack=' + new Error().stack?.split('\n').slice(1, 4).join(' | '));
-+     if (createdTaskId && uploadError) {
-+       toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
-+     }
-+@@ -721,6 +686,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+         <DialogPrimitive.Content
-+           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
-+           onPointerDownOutside={(e) => e.preventDefault()}
-++          onInteractOutside={(e) => e.preventDefault()}
-+         >
-+           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
-+           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>
-+@@ -1076,29 +1042,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
-+       </Suspense>
-+     )}
-+ 
-+-    {debugLog.length > 0 && (
-+-      <div style={{
-+-        position: 'fixed',
-+-        bottom: 80,
-+-        left: 8,
-+-        right: 8,
-+-        maxHeight: '40vh',
-+-        overflow: 'auto',
-+-        background: 'rgba(0,0,0,0.9)',
-+-        color: '#0f0',
-+-        fontSize: '11px',
-+-        fontFamily: 'monospace',
-+-        padding: 8,
-+-        borderRadius: 8,
-+-        zIndex: 99999,
-+-        direction: 'ltr',
-+-        pointerEvents: 'none',
-+-      }}>
-+-        {debugLog.map((line, i) => (
-+-          <div key={i}>{line}</div>
-+-        ))}
-+-      </div>
-+-    )}
-+   </>
-+   );
-+ };
-+diff --git a/frontend/src/components/PhotoAnnotation.js b/frontend/src/components/PhotoAnnotation.js
-+index fd89d07..7150f05 100644
-+--- a/frontend/src/components/PhotoAnnotation.js
-++++ b/frontend/src/components/PhotoAnnotation.js
-+@@ -41,15 +41,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
-+   const drawingRef = useRef(false);
-+   const currentStrokeRef = useRef(null);
-+ 
-+-  const [annoDebugLog, setAnnoDebugLog] = useState([]);
-+-  const annoDebugRef = useRef([]);
-+-  const addAnnoLog = useCallback((msg) => {
-+-    const line = new Date().toLocaleTimeString() + ' ' + msg;
-+-    console.log('[PhotoAnnotation]', msg);
-+-    annoDebugRef.current = [...annoDebugRef.current.slice(-15), line];
-+-    setAnnoDebugLog([...annoDebugRef.current]);
-+-  }, []);
-+-
-+   useEffect(() => { colorRef.current = color; }, [color]);
-+   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
-+   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
-+@@ -58,27 +49,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
-+   useEffect(() => { savingRef.current = saving; }, [saving]);
-+ 
-+   useEffect(() => {
-+-    addAnnoLog('ANNOTATION OPEN file=' + (imageFile?.name || 'unknown'));
-+     const viewport = document.querySelector('meta[name="viewport"]');
-+     const originalViewport = viewport?.content;
-+     if (viewport) {
-+       viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
-+     }
-+-    const popHandler = () => addAnnoLog('⚠️ POPSTATE (back gesture?)');
-+-    const errHandler = (e) => addAnnoLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
-+-    const rejHandler = (e) => addAnnoLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
-+-    window.addEventListener('popstate', popHandler);
-+-    window.addEventListener('error', errHandler);
-+-    window.addEventListener('unhandledrejection', rejHandler);
-+     return () => {
-+-      window.removeEventListener('popstate', popHandler);
-+-      window.removeEventListener('error', errHandler);
-+-      window.removeEventListener('unhandledrejection', rejHandler);
-+       document.body.style.pointerEvents = '';
-+       document.body.style.overflow = '';
-+       if (viewport && originalViewport !== undefined) viewport.content = originalViewport;
-+     };
-+-  }, [addAnnoLog, imageFile]);
-++  }, []);
-+ 
-+   useEffect(() => {
-+     let cancelled = false;
-+@@ -274,7 +255,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
-+   }, [redraw]);
-+ 
-+   const handleSave = useCallback(() => {
-+-    addAnnoLog('SAVE START strokes=' + strokesRef.current.length);
-+     if (saving) return;
-+     const canvas = canvasRef.current;
-+     if (!canvas) return;
-+@@ -282,7 +262,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
-+ 
-+     const hasAnnotations = strokesRef.current.length > 0;
-+     if (!hasAnnotations) {
-+-      addAnnoLog('SAVE: no annotations, calling onSave(null)');
-+       onSaveRef.current(null, false);
-+       return;
-+     }
-+@@ -290,19 +269,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
-+     canvas.toBlob(
-+       (blob) => {
-+         if (!blob || blob.size === 0) {
-+-          addAnnoLog('❌ SAVE: blob empty/null');
-+           setSaving(false);
-+           return;
-+         }
-+ 
-+-        addAnnoLog('SAVE DONE blob=' + (blob.size / 1024).toFixed(0) + 'KB');
-+         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
-+         onSaveRef.current(file, true);
-+       },
-+       'image/jpeg',
-+       0.70
-+     );
-+-  }, [saving, addAnnoLog]);
-++  }, [saving]);
-+ 
-+   const content = (
-+     <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
-+@@ -361,29 +338,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
-+           בטל
-+         </button>
-+       </div>
-+-      {annoDebugLog.length > 0 && (
-+-        <div style={{
-+-          position: 'fixed',
-+-          bottom: 80,
-+-          left: 8,
-+-          right: 8,
-+-          maxHeight: '40vh',
-+-          overflow: 'auto',
-+-          background: 'rgba(0,0,0,0.9)',
-+-          color: '#0f0',
-+-          fontSize: '11px',
-+-          fontFamily: 'monospace',
-+-          padding: 8,
-+-          borderRadius: 8,
-+-          zIndex: 99999,
-+-          direction: 'ltr',
-+-          pointerEvents: 'none',
-+-        }}>
-+-          {annoDebugLog.map((line, i) => (
-+-            <div key={i}>{line}</div>
-+-          ))}
-+-        </div>
-+-      )}
-+     </div>
-+   );
-+ 
-+diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
-+index c9d597c..aeb0a78 100644
-+--- a/frontend/src/pages/TaskDetailPage.js
-++++ b/frontend/src/pages/TaskDetailPage.js
-+@@ -1653,7 +1653,10 @@ const TaskDetailPage = () => {
-+       <DialogPrimitive.Root modal={false} open={!!tradeMismatchModal} onOpenChange={(v) => { if (!v) setTradeMismatchModal(null); }}>
-+         <DialogPrimitive.Portal>
-+           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
-+-          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
-++          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none"
-++            onPointerDownOutside={(e) => e.preventDefault()}
-++            onInteractOutside={(e) => e.preventDefault()}
-++          >
-+             <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
-+               <div className="flex items-center gap-3 mb-4">
-+                 <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-+@@ -1699,7 +1702,10 @@ const TaskDetailPage = () => {
-+       <DialogPrimitive.Root modal={false} open={!!imageModal} onOpenChange={(v) => { if (!v) setImageModal(null); }}>
-+         <DialogPrimitive.Portal>
-+           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
-+-          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
-++          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none"
-++            onPointerDownOutside={(e) => e.preventDefault()}
-++            onInteractOutside={(e) => e.preventDefault()}
-++          >
-+             <DialogPrimitive.Title className="sr-only">תצוגת תמונה</DialogPrimitive.Title>
-+             <DialogPrimitive.Description className="sr-only">תצוגה מוגדלת של תמונה מצורפת</DialogPrimitive.Description>
-+             <div className="relative max-w-full max-h-full pointer-events-auto">
-+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
-+index 9cbed91..5a8b164 100644
-+--- a/frontend/src/services/api.js
-++++ b/frontend/src/services/api.js
-+@@ -399,7 +399,6 @@ export const taskService = {
-+     return response.data;
-+   },
-+   async uploadAttachment(id, file) {
-+-    console.log('[uploadAttachment] START', { id, fileName: file?.name, fileSize: file?.size, fileType: file?.type });
-+     const fileBytes = await file.arrayBuffer();
-+     const fileName = file.name || 'photo.jpg';
-+     const fileType = file.type || 'image/jpeg';
-+@@ -413,7 +412,6 @@ export const taskService = {
-+           headers: getAuthHeader(),
-+           timeout: 90000,
-+         });
-+-        console.log('[uploadAttachment] SUCCESS', { attempt, fileName });
-+         return response.data;
-+       } catch (err) {
-+         const status = err.response?.status;
-+diff --git a/frontend/src/utils/imageCompress.js b/frontend/src/utils/imageCompress.js
-+index e6feee5..9836dd8 100644
-+--- a/frontend/src/utils/imageCompress.js
-++++ b/frontend/src/utils/imageCompress.js
-+@@ -78,11 +78,9 @@ async function _doCompress(file) {
-+ }
-+ 
-+ export async function compressImage(file) {
-+-  console.log('[compressImage] START', { name: file.name, size: file.size, type: file.type });
-+   const typeLC = (file.type || '').toLowerCase();
-+   const isHeicType = typeLC.includes('heic') || typeLC.includes('heif');
-+   if (file.size <= MAX_SIZE && typeLC.startsWith('image/') && !isHeicType) {
-+-    console.log('[compressImage] SKIP — already small enough', { size: file.size });
-+     return file;
-+   }
-+ 
-+@@ -93,7 +91,6 @@ export async function compressImage(file) {
-+         setTimeout(() => reject(new Error('compression timeout')), COMPRESS_TIMEOUT_MS)
-+       ),
-+     ]);
-+-    console.log('[compressImage] DONE', { inputSize: file.size, outputSize: result.size, outputName: result.name });
-+     return result;
-+   } catch (err) {
-+     if (err?.code === 'UNSUPPORTED_FORMAT') throw err;
+diff --git a/175-diff.txt b/175-diff.txt
+index a15b7f6..e69de29 100644
+--- a/175-diff.txt
++++ b/175-diff.txt
+@@ -1,330 +0,0 @@
+-diff --git a/task176_reapplied_diff.patch b/task176_reapplied_diff.patch
+-new file mode 100644
+-index 0000000..5393f5c
+---- /dev/null
+-+++ b/task176_reapplied_diff.patch
+-@@ -0,0 +1,324 @@
+-+diff --git a/frontend/src/components/NewDefectModal.js b/frontend/src/components/NewDefectModal.js
+-+index 6f9604d..29be747 100644
+-+--- a/frontend/src/components/NewDefectModal.js
+-++++ b/frontend/src/components/NewDefectModal.js
+-+@@ -136,32 +136,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+   const navigate = useNavigate();
+-+   const hasPrefill = !!(prefillData && prefillData.project_id && prefillData.unit_id);
+-+ 
+-+-  const [debugLog, setDebugLog] = useState([]);
+-+-  const debugLogRef = useRef([]);
+-+-  const addLog = useCallback((msg) => {
+-+-    const line = new Date().toLocaleTimeString() + ' ' + msg;
+-+-    console.log('[DefectModal]', msg);
+-+-    debugLogRef.current = [...debugLogRef.current.slice(-15), line];
+-+-    setDebugLog([...debugLogRef.current]);
+-+-  }, []);
+-+-
+-+-  useEffect(() => {
+-+-    if (!isOpen) return;
+-+-    addLog('MODAL OPEN');
+-+-    const popHandler = () => addLog('⚠️ POPSTATE (back gesture?)');
+-+-    const errHandler = (e) => addLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
+-+-    const rejHandler = (e) => addLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
+-+-    window.addEventListener('popstate', popHandler);
+-+-    window.addEventListener('error', errHandler);
+-+-    window.addEventListener('unhandledrejection', rejHandler);
+-+-    return () => {
+-+-      addLog('MODAL UNMOUNT');
+-+-      window.removeEventListener('popstate', popHandler);
+-+-      window.removeEventListener('error', errHandler);
+-+-      window.removeEventListener('unhandledrejection', rejHandler);
+-+-    };
+-+-  }, [isOpen, addLog]);
+-+-
+-+   const [projectId, setProjectId] = useState('');
+-+   const [buildingId, setBuildingId] = useState('');
+-+   const [floorId, setFloorId] = useState('');
+-+@@ -369,17 +343,13 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+   const cameraInputRef = useRef(null);
+-+ 
+-+   const handleImageAdd = useCallback(async (e) => {
+-+-    addLog('IMAGE ADD: ' + (e.target?.files?.length || 0) + ' files');
+-+     try {
+-+       const files = Array.from(e.target.files || []);
+-+       if (files.length === 0) return;
+-+-      for (const f of files) addLog('FILE: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB ' + (f.type || 'no-type'));
+-+       const compressed = await Promise.all(files.map(f => compressImage(f)));
+-+-      for (const f of compressed) addLog('COMPRESSED: ' + f.name + ' ' + (f.size / 1024 / 1024).toFixed(1) + 'MB');
+-+ 
+-+       if (compressed.length === 1) {
+-+         setPendingFile(compressed[0]);
+-+-        addLog('PENDING FILE SET (annotation prompt)');
+-+       } else {
+-+         const newImages = compressed.map(file => ({
+-+           file,
+-+@@ -389,9 +359,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+         setImages(prev => [...prev, ...newImages]);
+-+         toast.info(`${compressed.length} תמונות נוספו. ניתן לסמן כל תמונה בנפרד`);
+-+       }
+-+-      addLog('IMAGE ADD DONE');
+-+     } catch (err) {
+-+-      addLog('❌ IMAGE ADD ERROR: ' + (err?.message || err));
+-+       if (err?.code === 'UNSUPPORTED_FORMAT') {
+-+         toast.error('פורמט תמונה לא נתמך. נסה לצלם מהמצלמה');
+-+         console.error('[COMPRESS] HEIC/unsupported:', err.original);
+-+@@ -402,7 +370,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+     } finally {
+-+       if (e.target) e.target.value = '';
+-+     }
+-+-  }, [addLog]);
+-++  }, []);
+-+ 
+-+   const removeImage = useCallback((index) => {
+-+     setImages(prev => {
+-+@@ -477,7 +445,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+   }, [projectId, buildingId, floorId, unitId, category, title, description, images]);
+-+ 
+-+   const doUploadAndAssign = async (taskId) => {
+-+-    addLog('UPLOAD+ASSIGN START taskId=' + taskId + ' images=' + images.length);
+-+     setUploadError(null);
+-+ 
+-+     const { taskService } = await import('../services/api');
+-+@@ -639,7 +606,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+   };
+-+ 
+-+   const handleSubmit = async () => {
+-+-    addLog('SUBMIT START images=' + images.length + ' retry=' + !!createdTaskId);
+-+     if (createdTaskId && uploadError) {
+-+       setSubmitting(true);
+-+       setSubmitStep('uploading');
+-+@@ -705,7 +671,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+   };
+-+ 
+-+   const handleClose = () => {
+-+-    addLog('CLOSE TRIGGERED stack=' + new Error().stack?.split('\n').slice(1, 4).join(' | '));
+-+     if (createdTaskId && uploadError) {
+-+       toast.info('הליקוי נשמר כטיוטה — ניתן להשלים מדף הליקוי');
+-+     }
+-+@@ -721,6 +686,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+         <DialogPrimitive.Content
+-+           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 outline-none"
+-+           onPointerDownOutside={(e) => e.preventDefault()}
+-++          onInteractOutside={(e) => e.preventDefault()}
+-+         >
+-+           <DialogPrimitive.Title className="sr-only">{hasPrefill ? `ליקוי חדש — ${formatUnitLabel(prefillData.unit_label)}` : 'ליקוי חדש'}</DialogPrimitive.Title>
+-+           <DialogPrimitive.Description className="sr-only">טופס יצירת ליקוי חדש</DialogPrimitive.Description>
+-+@@ -1076,29 +1042,6 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
+-+       </Suspense>
+-+     )}
+-+ 
+-+-    {debugLog.length > 0 && (
+-+-      <div style={{
+-+-        position: 'fixed',
+-+-        bottom: 80,
+-+-        left: 8,
+-+-        right: 8,
+-+-        maxHeight: '40vh',
+-+-        overflow: 'auto',
+-+-        background: 'rgba(0,0,0,0.9)',
+-+-        color: '#0f0',
+-+-        fontSize: '11px',
+-+-        fontFamily: 'monospace',
+-+-        padding: 8,
+-+-        borderRadius: 8,
+-+-        zIndex: 99999,
+-+-        direction: 'ltr',
+-+-        pointerEvents: 'none',
+-+-      }}>
+-+-        {debugLog.map((line, i) => (
+-+-          <div key={i}>{line}</div>
+-+-        ))}
+-+-      </div>
+-+-    )}
+-+   </>
+-+   );
+-+ };
+-+diff --git a/frontend/src/components/PhotoAnnotation.js b/frontend/src/components/PhotoAnnotation.js
+-+index fd89d07..7150f05 100644
+-+--- a/frontend/src/components/PhotoAnnotation.js
+-++++ b/frontend/src/components/PhotoAnnotation.js
+-+@@ -41,15 +41,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
+-+   const drawingRef = useRef(false);
+-+   const currentStrokeRef = useRef(null);
+-+ 
+-+-  const [annoDebugLog, setAnnoDebugLog] = useState([]);
+-+-  const annoDebugRef = useRef([]);
+-+-  const addAnnoLog = useCallback((msg) => {
+-+-    const line = new Date().toLocaleTimeString() + ' ' + msg;
+-+-    console.log('[PhotoAnnotation]', msg);
+-+-    annoDebugRef.current = [...annoDebugRef.current.slice(-15), line];
+-+-    setAnnoDebugLog([...annoDebugRef.current]);
+-+-  }, []);
+-+-
+-+   useEffect(() => { colorRef.current = color; }, [color]);
+-+   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+-+   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+-+@@ -58,27 +49,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
+-+   useEffect(() => { savingRef.current = saving; }, [saving]);
+-+ 
+-+   useEffect(() => {
+-+-    addAnnoLog('ANNOTATION OPEN file=' + (imageFile?.name || 'unknown'));
+-+     const viewport = document.querySelector('meta[name="viewport"]');
+-+     const originalViewport = viewport?.content;
+-+     if (viewport) {
+-+       viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+-+     }
+-+-    const popHandler = () => addAnnoLog('⚠️ POPSTATE (back gesture?)');
+-+-    const errHandler = (e) => addAnnoLog('❌ ERROR: ' + (e.message || e.error?.message || 'unknown'));
+-+-    const rejHandler = (e) => addAnnoLog('❌ REJECTION: ' + (e.reason?.message || e.reason || 'unknown'));
+-+-    window.addEventListener('popstate', popHandler);
+-+-    window.addEventListener('error', errHandler);
+-+-    window.addEventListener('unhandledrejection', rejHandler);
+-+     return () => {
+-+-      window.removeEventListener('popstate', popHandler);
+-+-      window.removeEventListener('error', errHandler);
+-+-      window.removeEventListener('unhandledrejection', rejHandler);
+-+       document.body.style.pointerEvents = '';
+-+       document.body.style.overflow = '';
+-+       if (viewport && originalViewport !== undefined) viewport.content = originalViewport;
+-+     };
+-+-  }, [addAnnoLog, imageFile]);
+-++  }, []);
+-+ 
+-+   useEffect(() => {
+-+     let cancelled = false;
+-+@@ -274,7 +255,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
+-+   }, [redraw]);
+-+ 
+-+   const handleSave = useCallback(() => {
+-+-    addAnnoLog('SAVE START strokes=' + strokesRef.current.length);
+-+     if (saving) return;
+-+     const canvas = canvasRef.current;
+-+     if (!canvas) return;
+-+@@ -282,7 +262,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
+-+ 
+-+     const hasAnnotations = strokesRef.current.length > 0;
+-+     if (!hasAnnotations) {
+-+-      addAnnoLog('SAVE: no annotations, calling onSave(null)');
+-+       onSaveRef.current(null, false);
+-+       return;
+-+     }
+-+@@ -290,19 +269,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
+-+     canvas.toBlob(
+-+       (blob) => {
+-+         if (!blob || blob.size === 0) {
+-+-          addAnnoLog('❌ SAVE: blob empty/null');
+-+           setSaving(false);
+-+           return;
+-+         }
+-+ 
+-+-        addAnnoLog('SAVE DONE blob=' + (blob.size / 1024).toFixed(0) + 'KB');
+-+         const file = new File([blob], 'annotated.jpg', { type: 'image/jpeg' });
+-+         onSaveRef.current(file, true);
+-+       },
+-+       'image/jpeg',
+-+       0.70
+-+     );
+-+-  }, [saving, addAnnoLog]);
+-++  }, [saving]);
+-+ 
+-+   const content = (
+-+     <div className="fixed inset-0 bg-black flex flex-col h-dvh-fallback" dir="rtl"
+-+@@ -361,29 +338,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
+-+           בטל
+-+         </button>
+-+       </div>
+-+-      {annoDebugLog.length > 0 && (
+-+-        <div style={{
+-+-          position: 'fixed',
+-+-          bottom: 80,
+-+-          left: 8,
+-+-          right: 8,
+-+-          maxHeight: '40vh',
+-+-          overflow: 'auto',
+-+-          background: 'rgba(0,0,0,0.9)',
+-+-          color: '#0f0',
+-+-          fontSize: '11px',
+-+-          fontFamily: 'monospace',
+-+-          padding: 8,
+-+-          borderRadius: 8,
+-+-          zIndex: 99999,
+-+-          direction: 'ltr',
+-+-          pointerEvents: 'none',
+-+-        }}>
+-+-          {annoDebugLog.map((line, i) => (
+-+-            <div key={i}>{line}</div>
+-+-          ))}
+-+-        </div>
+-+-      )}
+-+     </div>
+-+   );
+-+ 
+-+diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
+-+index c9d597c..aeb0a78 100644
+-+--- a/frontend/src/pages/TaskDetailPage.js
+-++++ b/frontend/src/pages/TaskDetailPage.js
+-+@@ -1653,7 +1653,10 @@ const TaskDetailPage = () => {
+-+       <DialogPrimitive.Root modal={false} open={!!tradeMismatchModal} onOpenChange={(v) => { if (!v) setTradeMismatchModal(null); }}>
+-+         <DialogPrimitive.Portal>
+-+           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
+-+-          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
+-++          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none"
+-++            onPointerDownOutside={(e) => e.preventDefault()}
+-++            onInteractOutside={(e) => e.preventDefault()}
+-++          >
+-+             <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 pointer-events-auto" dir="rtl">
+-+               <div className="flex items-center gap-3 mb-4">
+-+                 <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+-+@@ -1699,7 +1702,10 @@ const TaskDetailPage = () => {
+-+       <DialogPrimitive.Root modal={false} open={!!imageModal} onOpenChange={(v) => { if (!v) setImageModal(null); }}>
+-+         <DialogPrimitive.Portal>
+-+           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
+-+-          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none">
+-++          <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none pointer-events-none"
+-++            onPointerDownOutside={(e) => e.preventDefault()}
+-++            onInteractOutside={(e) => e.preventDefault()}
+-++          >
+-+             <DialogPrimitive.Title className="sr-only">תצוגת תמונה</DialogPrimitive.Title>
+-+             <DialogPrimitive.Description className="sr-only">תצוגה מוגדלת של תמונה מצורפת</DialogPrimitive.Description>
+-+             <div className="relative max-w-full max-h-full pointer-events-auto">
+-+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+-+index 9cbed91..5a8b164 100644
+-+--- a/frontend/src/services/api.js
+-++++ b/frontend/src/services/api.js
+-+@@ -399,7 +399,6 @@ export const taskService = {
+-+     return response.data;
+-+   },
+-+   async uploadAttachment(id, file) {
+-+-    console.log('[uploadAttachment] START', { id, fileName: file?.name, fileSize: file?.size, fileType: file?.type });
+-+     const fileBytes = await file.arrayBuffer();
+-+     const fileName = file.name || 'photo.jpg';
+-+     const fileType = file.type || 'image/jpeg';
+-+@@ -413,7 +412,6 @@ export const taskService = {
+-+           headers: getAuthHeader(),
+-+           timeout: 90000,
+-+         });
+-+-        console.log('[uploadAttachment] SUCCESS', { attempt, fileName });
+-+         return response.data;
+-+       } catch (err) {
+-+         const status = err.response?.status;
+-+diff --git a/frontend/src/utils/imageCompress.js b/frontend/src/utils/imageCompress.js
+-+index e6feee5..9836dd8 100644
+-+--- a/frontend/src/utils/imageCompress.js
+-++++ b/frontend/src/utils/imageCompress.js
+-+@@ -78,11 +78,9 @@ async function _doCompress(file) {
+-+ }
+-+ 
+-+ export async function compressImage(file) {
+-+-  console.log('[compressImage] START', { name: file.name, size: file.size, type: file.type });
+-+   const typeLC = (file.type || '').toLowerCase();
+-+   const isHeicType = typeLC.includes('heic') || typeLC.includes('heif');
+-+   if (file.size <= MAX_SIZE && typeLC.startsWith('image/') && !isHeicType) {
+-+-    console.log('[compressImage] SKIP — already small enough', { size: file.size });
+-+     return file;
+-+   }
+-+ 
+-+@@ -93,7 +91,6 @@ export async function compressImage(file) {
+-+         setTimeout(() => reject(new Error('compression timeout')), COMPRESS_TIMEOUT_MS)
+-+       ),
+-+     ]);
+-+-    console.log('[compressImage] DONE', { inputSize: file.size, outputSize: result.size, outputName: result.name });
+-+     return result;
+-+   } catch (err) {
+-+     if (err?.code === 'UNSUPPORTED_FORMAT') throw err;
+diff --git a/backend/contractor_ops/constants.py b/backend/contractor_ops/constants.py
+index a31d100..e80d471 100644
+--- a/backend/contractor_ops/constants.py
++++ b/backend/contractor_ops/constants.py
+@@ -1 +1 @@
+-TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}
++TERMINAL_TASK_STATUSES = {"closed", "approved", "done", "cancelled"}
+diff --git a/backend/contractor_ops/export_router.py b/backend/contractor_ops/export_router.py
+index b67c356..d650a02 100644
+--- a/backend/contractor_ops/export_router.py
++++ b/backend/contractor_ops/export_router.py
+@@ -27,6 +27,7 @@ STATUS_LABEL = {
+     'pending_manager_approval': 'ממתין לאישור מנהל',
+     'returned_to_contractor': 'הוחזר לקבלן',
+     'closed': 'סגור',
++    'approved': 'אושר',
+     'reopened': 'נפתח מחדש',
+ }
+ 
+@@ -39,6 +40,7 @@ STATUS_COLORS = {
+     'pending_manager_approval': '#F59E0B',
+     'returned_to_contractor': '#EF4444',
+     'closed': '#22C55E',
++    'approved': '#22C55E',
+     'reopened': '#EF4444',
+ }
+ 
+@@ -49,7 +51,7 @@ OPEN_STATUSES_BUILDING = {'open', 'assigned', 'reopened', 'in_progress',
+ IN_PROGRESS_STATUSES = {'in_progress', 'pending_contractor_proof',
+                         'pending_manager_approval', 'returned_to_contractor',
+                         'waiting_verify'}
+-CLOSED_STATUSES = {'closed'}
++CLOSED_STATUSES = {'closed', 'approved'}
+ BLOCKING_STATUSES = {'open', 'in_progress'}
+ 
+ 
+@@ -1166,7 +1168,7 @@ def _generate_pdf(tasks, project_name, scope_label, scope_type, user_map, compan
+         summary_cells.append(Paragraph(heb(str(in_progress)), style_summary_value))
+         summary_labels.append(Paragraph(heb('בביצוע'), style_summary_label))
+ 
+-    closed_count = status_counts.get('closed', 0)
++    closed_count = status_counts.get('closed', 0) + status_counts.get('approved', 0)
+     if closed_count:
+         summary_cells.append(Paragraph(heb(str(closed_count)), style_summary_value))
+         summary_labels.append(Paragraph(heb('סגורים'), style_summary_label))
+diff --git a/backend/contractor_ops/handover_router.py b/backend/contractor_ops/handover_router.py
+index f624b37..d9a5ca1 100644
+--- a/backend/contractor_ops/handover_router.py
++++ b/backend/contractor_ops/handover_router.py
+@@ -5,6 +5,7 @@ import logging
+ import re
+ 
+ from contractor_ops.router import get_db, get_current_user, require_roles, _check_project_access, _check_project_read_access, _audit, _now, _is_super_admin
++from contractor_ops.constants import TERMINAL_TASK_STATUSES
+ from services.object_storage import save_bytes, generate_url
+ from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
+ 
+@@ -1203,7 +1204,6 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
+ 
+ 
+ VALID_SEVERITIES = {"critical", "normal", "cosmetic"}
+-TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
+ 
+ STATUS_LABELS = {
+     "defective": "לא תקין",
+@@ -2096,7 +2096,7 @@ async def handover_overview(
+             {"$match": {
+                 "handover_protocol_id": {"$in": all_protocol_ids},
+                 "source": {"$in": ["handover_initial", "handover_final"]},
+-                "status": {"$nin": ["closed", "done", "cancelled"]},
++                "status": {"$nin": ["closed", "approved", "done", "cancelled"]},
+             }},
+             {"$group": {"_id": "$handover_protocol_id", "count": {"$sum": 1}}},
+         ]
+@@ -2333,7 +2333,7 @@ async def handover_summary(project_id: str, user: dict = Depends(get_current_use
+     open_handover_defects = await db.tasks.count_documents({
+         "project_id": project_id,
+         "source": {"$in": ["handover_initial", "handover_final"]},
+-        "status": {"$nin": ["closed", "cancelled"]},
++        "status": {"$nin": ["closed", "approved", "cancelled"]},
+     })
+ 
+     return {
+diff --git a/backend/contractor_ops/projects_router.py b/backend/contractor_ops/projects_router.py
+index 5101894..0b66b5e 100644
+--- a/backend/contractor_ops/projects_router.py
++++ b/backend/contractor_ops/projects_router.py
+@@ -1445,7 +1445,7 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
+     open_statuses = {'open', 'assigned', 'reopened'}
+     in_progress_statuses = {'in_progress', 'pending_contractor_proof', 'pending_manager_approval', 'returned_to_contractor'}
+     waiting_verify_statuses = {'waiting_verify'}
+-    closed_statuses = {'closed'}
++    closed_statuses = {'closed', 'approved'}
+ 
+     def compute_counts(status_map):
+         open_count = sum(status_map.get(s, 0) for s in open_statuses)
+diff --git a/backend/contractor_ops/stats_router.py b/backend/contractor_ops/stats_router.py
+index ef44e6c..8fc86ef 100644
+--- a/backend/contractor_ops/stats_router.py
++++ b/backend/contractor_ops/stats_router.py
+@@ -45,17 +45,17 @@ async def get_project_stats(project_id: str, user: dict = Depends(get_current_us
+     invites_count = await db.invites.count_documents({'project_id': project_id, 'status': 'pending'})
+     invites_count += await db.team_invites.count_documents({'project_id': project_id, 'status': 'pending'})
+     companies_count = await db.project_companies.count_documents({'project_id': project_id})
+-    open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed']}})
+-    critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed']}})
++    open_defects = await db.tasks.count_documents({'project_id': project_id, 'status': {'$nin': ['closed', 'approved']}})
++    critical_defects = await db.tasks.count_documents({'project_id': project_id, 'priority': 'critical', 'status': {'$nin': ['closed', 'approved']}})
+     now_str = now.strftime('%Y-%m-%d')
+     overdue_defects = await db.tasks.count_documents({'project_id': project_id, 'due_date': {'$lt': now_str, '$ne': None}, 'status': {'$nin': ['closed', 'approved']}})
+     building_defects_agg = await db.tasks.aggregate([
+         {'$match': {'project_id': project_id, 'building_id': {'$ne': None}}},
+         {'$group': {
+             '_id': '$building_id',
+-            'open': {'$sum': {'$cond': [{'$ne': ['$status', 'closed']}, 1, 0]}},
+-            'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$ne': ['$status', 'closed']}]}, 1, 0]}},
+-            'closed': {'$sum': {'$cond': [{'$eq': ['$status', 'closed']}, 1, 0]}},
++            'open': {'$sum': {'$cond': [{'$not': {'$in': ['$status', ['closed', 'approved']]}}, 1, 0]}},
++            'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority', 'critical']}, {'$not': {'$in': ['$status', ['closed', 'approved']]}}]}, 1, 0]}},
++            'closed': {'$sum': {'$cond': [{'$in': ['$status', ['closed', 'approved']]}, 1, 0]}},
+             'total': {'$sum': 1},
+         }}
+     ]).to_list(500)
+@@ -129,7 +129,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
+             open_count += 1
+         if s in in_progress_statuses:
+             in_progress_count += 1
+-        if s == 'closed':
++        if s in ('closed', 'approved'):
+             closed_count += 1
+             if t.get('updated_at', '') >= seven_days_ago:
+                 closed_last7 += 1
+@@ -142,7 +142,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
+                 'status': s, 'updated_at': t.get('updated_at', ''),
+                 'building_id': t.get('building_id'), 'unit_id': t.get('unit_id'),
+             })
+-        if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed',):
++        if t.get('due_date') and t['due_date'] < now_iso and s not in ('closed', 'approved'):
+             overdue_count += 1
+ 
+         cid = t.get('company_id') or ''
+@@ -168,7 +168,7 @@ async def get_project_dashboard(project_id: str, user: dict = Depends(get_curren
+                 contractor_map[group_key] = {'open': 0, 'closed': 0, 'rework': 0, 'response_times': []}
+             if s in active_statuses:
+                 contractor_map[group_key]['open'] += 1
+-            if s == 'closed':
++            if s in ('closed', 'approved'):
+                 contractor_map[group_key]['closed'] += 1
+             if s == 'returned_to_contractor':
+                 contractor_map[group_key]['rework'] += 1
+diff --git a/backend/contractor_ops/tasks_router.py b/backend/contractor_ops/tasks_router.py
+index 2542b24..87b9dcc 100644
+--- a/backend/contractor_ops/tasks_router.py
++++ b/backend/contractor_ops/tasks_router.py
+@@ -413,7 +413,7 @@ async def my_task_stats(
+ 
+     open_count = sum(sc.get(s, 0) for s in open_statuses)
+     in_progress = sc.get("in_progress", 0)
+-    closed_count = sc.get("closed", 0)
++    closed_count = sc.get("closed", 0) + sc.get("approved", 0)
+     resolved = sum(sc.get(s, 0) for s in handled_statuses)
+     total_count = facets.get("total", [{}])
+     total_count = total_count[0].get("count", 0) if total_count else 0
+diff --git a/frontend/src/components/GroupedSelectField.js b/frontend/src/components/GroupedSelectField.js
+index 6a8cdcb..2b340b4 100644
+--- a/frontend/src/components/GroupedSelectField.js
++++ b/frontend/src/components/GroupedSelectField.js
+@@ -17,10 +17,14 @@ const GroupedSelectField = ({ options = [], onChange, value, ...rest }) => {
+     const out = options.map(opt => {
+       if (opt?.isHeader) {
+         headers.add(opt.value);
++        const isMuted = !!opt.muted;
++        const wrapperCls = isMuted
++          ? 'block w-full px-3 py-1.5 text-sm font-bold text-slate-500 bg-slate-50 border-t border-slate-200 pointer-events-none'
++          : 'block w-full px-3 py-1.5 text-sm font-bold text-slate-700 bg-slate-100 pointer-events-none';
+         return {
+           value: opt.value,
+           label: (
+-            <span className={`text-xs font-medium ${opt.muted ? 'text-slate-400' : 'text-slate-500'} pointer-events-none`}>
++            <span className={wrapperCls}>
+               {opt.label}
+             </span>
+           ),
+diff --git a/frontend/src/components/StatusPill.jsx b/frontend/src/components/StatusPill.jsx
+index 5f000c7..312532d 100644
+--- a/frontend/src/components/StatusPill.jsx
++++ b/frontend/src/components/StatusPill.jsx
+@@ -9,6 +9,7 @@ const STATUS_DOT = {
+   returned_to_contractor:     'bg-rose-500',
+   waiting_verify:             'bg-purple-500',
+   closed:                     'bg-emerald-500',
++  approved:                   'bg-emerald-500',
+   reopened:                   'bg-amber-500',
+ };
+ 
+diff --git a/frontend/src/pages/ApartmentDashboardPage.js b/frontend/src/pages/ApartmentDashboardPage.js
+index 05b9f1b..2d553da 100644
+--- a/frontend/src/pages/ApartmentDashboardPage.js
++++ b/frontend/src/pages/ApartmentDashboardPage.js
+@@ -39,6 +39,7 @@ const STATUS_LABELS = {
+   returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700', key: 'in_progress' },
+   waiting_verify: { label: 'ממתין לאימות', color: 'bg-purple-100 text-purple-700', key: 'in_progress' },
+   closed: { label: 'סגור', color: 'bg-green-100 text-green-700', key: 'closed' },
++  approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
+   reopened: { label: 'נפתח מחדש', color: 'bg-amber-100 text-amber-700', key: 'open' },
+ };
+ 
+diff --git a/frontend/src/pages/ProjectTasksPage.js b/frontend/src/pages/ProjectTasksPage.js
+index 4916eab..06f078d 100644
+--- a/frontend/src/pages/ProjectTasksPage.js
++++ b/frontend/src/pages/ProjectTasksPage.js
+@@ -26,13 +26,14 @@ const STATUS_CONFIG = {
+   pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-orange-100 text-orange-700 ring-1 ring-orange-300' },
+   returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700' },
+   closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
++  approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+   reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
+ };
+ 
+ const CONTRACTOR_STATUS_CHIPS = [
+   { key: 'active', label: 'פעילים', statusIn: 'open,assigned,in_progress,pending_contractor_proof,returned_to_contractor' },
+   { key: 'pending_manager_approval', label: 'ממתין לאישור מנהל', status: 'pending_manager_approval' },
+-  { key: 'closed', label: 'סגור', status: 'closed' },
++  { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
+ ];
+ 
+ const MANAGER_STATUS_CHIPS = [
+@@ -43,7 +44,7 @@ const MANAGER_STATUS_CHIPS = [
+   { key: 'pending_contractor_proof', label: 'ממתין להוכחת קבלן', status: 'pending_contractor_proof' },
+   { key: 'pending_manager_approval', label: 'ממתין לאישור מנהל', status: 'pending_manager_approval' },
+   { key: 'returned_to_contractor', label: 'הוחזר לקבלן', status: 'returned_to_contractor' },
+-  { key: 'closed', label: 'סגור', status: 'closed' },
++  { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
+   { key: 'reopened', label: 'נפתח מחדש', status: 'reopened' },
+ ];
+ 
+diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
+index 1ce8d63..84d2be3 100644
+--- a/frontend/src/pages/UnitDetailPage.js
++++ b/frontend/src/pages/UnitDetailPage.js
+@@ -23,6 +23,7 @@ const STATUS_LABELS = {
+   in_progress: { label: 'בביצוע', color: 'bg-blue-100 text-blue-700' },
+   waiting_verify: { label: 'ממתין לאימות', color: 'bg-purple-100 text-purple-700' },
+   closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
++  approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+   reopened: { label: 'נפתח מחדש', color: 'bg-amber-100 text-amber-700' },
+ };
+ 
+@@ -40,6 +41,7 @@ const STATUS_FILTER_OPTIONS = [
+   { value: 'in_progress', label: 'בביצוע' },
+   { value: 'waiting_verify', label: 'ממתין לאימות' },
+   { value: 'closed', label: 'סגור' },
++  { value: 'approved', label: 'אושר' },
+   { value: 'reopened', label: 'נפתח מחדש' },
+ ];
+ 
+diff --git a/review.txt b/review.txt
+index c5a31ab..3a57430 100644
+--- a/review.txt
++++ b/review.txt
+@@ -1,459 +1,322 @@
+ ================================================================================
+-BATCH 5B — Pre-launch UX bug pack (frontend-only, 3 bugs)
+-Task #439 · April 28, 2026
++BATCH 5C v2 — status='approved' alignment + dropdown polish — REVIEW
+ ================================================================================
++Date:           2026-04-28
++Branch:         staging
++Rollback SHA:   54543b3dc29e
++Scope approved: 14 files (10 spec + 4 STEP 0 gaps) — Zahi confirmed expanded
++                scope before edits began.
++Files edited:   6 backend, 5 frontend = 11 distinct files (14 logical fixes,
++                because stats_router.py contains 5 separate sub-locations and
++                export_router.py contains 4 separate sub-locations)
+ 
+-ROLLBACK SHA (HEAD before this batch)
+-  92c795776d631210f3b50f4f103f6dd09f0dfce9
++================================================================================
++STEP 0 PRE-FLIGHT AUDIT (run in plan mode, before any edits)
++================================================================================
+ 
+-Files touched (3, frontend only — backend untouched)
+-  frontend/src/pages/TaskDetailPage.js     +60 / -4
+-  frontend/src/pages/UnitDetailPage.js     +38 / -2
+-  frontend/src/pages/ProjectControlPage.js +28 / -19
+-  Total: +126 / -25  (3 files)
++0.1 Spec line numbers verified:                  ✅ PASS (all 6 backend lines)
++0.2 Reopen guard accepts both:                   ✅ PASS (tasks_router:792
++    already reads `if task['status'] not in ('closed', 'approved'):`)
++0.3 Frontend status maps surveyed:               14 files containing STATUS_*
++    maps audited; Apartment dashboard flagged as exact-same-bug-class missed
++    by spec → bundled into 5C scope per Zahi's approval.
++0.4 Backend wide grep classified:                4 spec gaps surfaced
++    (export_router:1169 + 29 + 41, handover_router:2099 + 2336) → bundled
++    into 5C scope per Zahi's approval.
++0.5 Audit reported to Zahi → expanded scope approved → proceeded to edits.
++
++================================================================================
++PER-FILE DIFFS (14 logical fixes across 11 files)
++================================================================================
+ 
+-Scope
+-  Bug A · TaskDetailPage  · replace window.confirm in reopen with branded RTL Radix Dialog
+-  Bug B · UnitDetailPage  · add refresh-on-return (focus / visibility / location.key)
+-  Bug C · ProjectControlPage · dedupe companies state — parent owns it, CompaniesTab consumes
++FILE 1/11 — backend/contractor_ops/constants.py:1
++- TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}
+++ TERMINAL_TASK_STATUSES = {"closed", "approved", "done", "cancelled"}
++
++FILE 2/11 — backend/contractor_ops/tasks_router.py:416 (spec FILE 5)
++- closed_count = sc.get("closed", 0)
+++ closed_count = sc.get("closed", 0) + sc.get("approved", 0)
++
++FILE 3/11 — backend/contractor_ops/projects_router.py:1448 (spec FILE 2)
++- closed_statuses = {'closed'}
+++ closed_statuses = {'closed', 'approved'}
++
++FILE 4/11 — backend/contractor_ops/stats_router.py (spec FILE 3, 5 sub-locations)
++4a) line 48-49 — count_documents project-summary filters:
++-     ... 'status': {'$nin': ['closed']}
+++     ... 'status': {'$nin': ['closed', 'approved']}
++4b) line 56-58 — building aggregation pipeline:
++-     'open': {'$sum': {'$cond': [{'$ne': ['$status', 'closed']}, 1, 0]}},
++-     'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority','critical']}, {'$ne': ['$status', 'closed']}]}, 1, 0]}},
++-     'closed': {'$sum': {'$cond': [{'$eq': ['$status', 'closed']}, 1, 0]}},
+++     'open': {'$sum': {'$cond': [{'$not': {'$in': ['$status', ['closed','approved']]}}, 1, 0]}},
+++     'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority','critical']}, {'$not': {'$in': ['$status', ['closed','approved']]}}]}, 1, 0]}},
+++     'closed': {'$sum': {'$cond': [{'$in': ['$status', ['closed','approved']]}, 1, 0]}},
++4c) line 132 — closed_count contractor performance:
++-     if s == 'closed':
+++     if s in ('closed', 'approved'):
++4d) line 145 — overdue exclusion:
++-     ... and s not in ('closed',):
+++     ... and s not in ('closed', 'approved'):
++4e) line 171 — per-contractor closed counter:
++-     if s == 'closed':
+++     if s in ('closed', 'approved'):
++
++FILE 5/11 — backend/contractor_ops/export_router.py (spec FILE 4 + GAP, 4 sub-locations)
++5a) line 32-34 — STATUS_LABELS map (GAP — new line):
+++     'approved': 'אושר',
++5b) line 45-47 — STATUS_COLORS map (GAP — new line):
+++     'approved': '#22C55E',
++5c) line 57 — CLOSED_STATUSES set:
++- CLOSED_STATUSES = {'closed'}
+++ CLOSED_STATUSES = {'closed', 'approved'}
++5d) line 1174 — PDF report summary closed_count (GAP):
++- closed_count = status_counts.get('closed', 0)
+++ closed_count = status_counts.get('closed', 0) + status_counts.get('approved', 0)
++
++FILE 6/11 — backend/contractor_ops/handover_router.py (spec FILE 6 + 2 GAPS)
++6a) line 11 — new import (replaces local TUPLE):
+++ from contractor_ops.constants import TERMINAL_TASK_STATUSES
++6b) line 1206 — local duplicate REMOVED:
++- TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
++6c) line 2102 — per-protocol open-defect $nin (GAP):
++- "status": {"$nin": ["closed", "done", "cancelled"]},
+++ "status": {"$nin": ["closed", "approved", "done", "cancelled"]},
++6d) line 2339 — project-level open_handover_defects $nin (GAP):
++- "status": {"$nin": ["closed", "cancelled"]},
+++ "status": {"$nin": ["closed", "approved", "cancelled"]},
++   NOTE: 'done' missing from this list is a pre-existing inconsistency vs.
++   line 2102 (per-protocol filter) — filed separately as Task #443 (5D).
++
++FILE 7/11 — frontend/src/pages/UnitDetailPage.js (spec FILE 7, 2 sub-locations)
++7a) STATUS_LABELS — new entry below 'closed':
+++ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
++7b) STATUS_FILTER_OPTIONS — new entry below 'closed':
+++ { value: 'approved', label: 'אושר' },
++
++FILE 8/11 — frontend/src/pages/ProjectTasksPage.js (spec FILE 8, 3 sub-locations)
++8a) STATUS_CONFIG — new entry below 'closed':
+++ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
++8b) MANAGER_STATUS_CHIPS closed chip — converted status→statusIn:
++- { key: 'closed', label: 'סגור', status: 'closed' },
+++ { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
++8c) CONTRACTOR_STATUS_CHIPS closed chip — same conversion (parallel fix
++    so contractors also see force-closed defects in their סגור chip):
++- { key: 'closed', label: 'סגור', status: 'closed' },
+++ { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
++
++FILE 9/11 — frontend/src/components/StatusPill.jsx (spec FILE 9)
+++ approved:                   'bg-emerald-500',
++(same green dot as 'closed' — both terminal/done states)
++
++FILE 10/11 — frontend/src/components/GroupedSelectField.js (spec FILE 10 / Bug C)
++Headers branch (lines 17-27) replaced with bold + slate background; muted
++"חברות אחרות" header gains a top border separator. Kept muted non-header
++branch (opacity-70) and headerValues/handleChange/SelectField parts
++untouched per spec.
++
++FILE 11/11 — frontend/src/pages/ApartmentDashboardPage.js (GAP — STEP 0)
++STATUS_LABELS — new entry below 'closed' with key:'closed' so the existing
++KPI bucket + filter chip routing both pick it up (no STATUS_FILTER_OPTIONS
++edit needed because the filter chips key off STATUS_LABELS[t.status]?.key):
+++ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
+ 
+ ================================================================================
+-FULL DIFF
++VERIFY 1 — Backend syntax compile
+ ================================================================================
+-diff --git a/frontend/src/pages/ProjectControlPage.js b/frontend/src/pages/ProjectControlPage.js
+-index 8810ca5..c651a4a 100644
+---- a/frontend/src/pages/ProjectControlPage.js
+-+++ b/frontend/src/pages/ProjectControlPage.js
+-@@ -2824,33 +2824,37 @@ const TeamTab = ({ projectId, companies, prefillTrade, returnToDefect, myRole, i
+-   );
+- };
+- 
+--const CompaniesTab = ({ projectId }) => {
+--  const [companies, setCompanies] = useState([]);
+--  const [loading, setLoading] = useState(true);
+-+const CompaniesTab = ({ projectId, companies, companiesLoading, onRefreshCompanies }) => {
+-   const [showAddForm, setShowAddForm] = useState(false);
+-   const [editingCompany, setEditingCompany] = useState(null);
+-   const [deleting, setDeleting] = useState(null);
+-   const [tradeMap, setTradeMap] = useState({});
+-+  const [tradeMapLoading, setTradeMapLoading] = useState(true);
+- 
+--  const loadCompanies = useCallback(async () => {
+--    setLoading(true);
+-+  // Trade labels are local (not used elsewhere). Companies come from
+-+  // the parent so Team tab + Companies tab share one source of truth.
+-+  const loadTradeMap = useCallback(async () => {
+-+    setTradeMapLoading(true);
+-     try {
+--      const [data, tradesData] = await Promise.all([
+--        projectCompanyService.list(projectId),
+--        tradeService.listForProject(projectId),
+--      ]);
+--      setCompanies(Array.isArray(data) ? data : []);
+-+      const tradesData = await tradeService.listForProject(projectId);
+-       const map = {};
+-       (tradesData.trades || []).forEach(t => { map[t.key] = t.label_he; });
+-       setTradeMap(map);
+--    } catch {
+--      toast.error('שגיאה בטעינת חברות');
+--    } finally {
+--      setLoading(false);
+-+    } catch {} finally {
+-+      setTradeMapLoading(false);
+-     }
+-   }, [projectId]);
+- 
+--  useEffect(() => { loadCompanies(); }, [loadCompanies]);
+-+  useEffect(() => { loadTradeMap(); }, [loadTradeMap]);
+-+
+-+  // Spinner shows when EITHER companies OR trade map is loading on
+-+  // first mount. After that, refreshes don't show the spinner — the
+-+  // table just reconciles.
+-+  const loading = (companiesLoading || tradeMapLoading) && companies.length === 0;
+-+
+-+  const refreshAll = useCallback(async () => {
+-+    await Promise.all([onRefreshCompanies(), loadTradeMap()]);
+-+  }, [onRefreshCompanies, loadTradeMap]);
+- 
+-   const handleDelete = async (companyId) => {
+-     if (deleting) return;
+-@@ -2858,7 +2862,7 @@ const CompaniesTab = ({ projectId }) => {
+-     try {
+-       await projectCompanyService.remove(projectId, companyId);
+-       toast.success('חברה נמחקה');
+--      loadCompanies();
+-+      refreshAll();
+-     } catch (err) {
+-       toast.error(err.response?.data?.detail || 'שגיאה');
+-     } finally {
+-@@ -2910,8 +2914,8 @@ const CompaniesTab = ({ projectId }) => {
+-         </div>
+-       )}
+- 
+--      {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={loadCompanies} />}
+--      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={loadCompanies} />}
+-+      {showAddForm && <AddCompanyForm projectId={projectId} onClose={() => setShowAddForm(false)} onSuccess={refreshAll} />}
+-+      {editingCompany && <EditCompanyForm projectId={projectId} company={editingCompany} onClose={() => setEditingCompany(null)} onSuccess={refreshAll} />}
+-     </div>
+-   );
+- };
+-@@ -3198,6 +3202,7 @@ const ProjectControlPage = () => {
+-   const [myRole, setMyRole] = useState(null);
+-   const [stats, setStats] = useState(null);
+-   const [companies, setCompanies] = useState([]);
+-+  const [companiesLoading, setCompaniesLoading] = useState(false);
+-   const [trades, setTrades] = useState([]);
+-   const [showAddBuilding, setShowAddBuilding] = useState(false);
+-   const [showQuickSetup, setShowQuickSetup] = useState(false);
+-@@ -3501,10 +3506,16 @@ const ProjectControlPage = () => {
+-   }, [projectId]);
+- 
+-   const loadCompanies = useCallback(async () => {
+-+    setCompaniesLoading(true);
+-     try {
+-       const data = await projectCompanyService.list(projectId);
+-       setCompanies(Array.isArray(data) ? data : []);
+--    } catch {}
+-+    } catch (err) {
+-+      console.error('[loadCompanies]', err);
+-+      toast.error('שגיאה בטעינת חברות');
+-+    } finally {
+-+      setCompaniesLoading(false);
+-+    }
+-   }, [projectId]);
+- 
+-   const loadTrades = useCallback(async () => {
+-@@ -3710,7 +3721,7 @@ const ProjectControlPage = () => {
+-         <div className="max-w-[1100px] mx-auto px-4 pt-3 space-y-3">
+-           {activeTab === 'team' && <TeamTab projectId={projectId} companies={companies} trades={trades} prefillTrade={searchParams.get('prefillTrade') || ''} returnToDefect={searchParams.get('returnToDefect') === '1'} myRole={myRole} isOrgOwner={isOrgOwner} onRefreshCompanies={loadCompanies} />}
+- 
+--          {activeTab === 'companies' && <CompaniesTab projectId={projectId} />}
+-+          {activeTab === 'companies' && <CompaniesTab projectId={projectId} companies={companies} companiesLoading={companiesLoading} onRefreshCompanies={loadCompanies} />}
+- 
+-           {activeTab === 'data-export' && (
+-             <ProjectDataExportTab projectId={projectId} projectName={project?.name || ''} />
+-diff --git a/frontend/src/pages/TaskDetailPage.js b/frontend/src/pages/TaskDetailPage.js
+-index 0a7dada..848e257 100644
+---- a/frontend/src/pages/TaskDetailPage.js
+-+++ b/frontend/src/pages/TaskDetailPage.js
+-@@ -203,6 +203,7 @@ const TaskDetailPage = () => {
+-   const [forceCloseReason, setForceCloseReason] = useState('');
+-   const [forceCloseCustomReason, setForceCloseCustomReason] = useState('');
+-   const [reopening, setReopening] = useState(false);
+-+  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+-   const [forceClosing, setForceClosing] = useState(false);
+- 
+-   const [pendingProofFile, setPendingProofFile] = useState(null);
+-@@ -577,12 +578,17 @@ const TaskDetailPage = () => {
+-     }
+-   };
+- 
+--  const handleReopenTask = async () => {
+--    if (!window.confirm('לפתוח את הליקוי מחדש?')) return;
+-+  const openReopenConfirm = () => {
+-+    if (reopening) return;
+-+    setShowReopenConfirm(true);
+-+  };
+-+
+-+  const confirmReopenTask = async () => {
+-     setReopening(true);
+-     try {
+-       await taskService.reopen(id);
+-       toast.success('הליקוי נפתח מחדש');
+-+      setShowReopenConfirm(false);
+-       await loadTask();
+-     } catch (err) {
+-       const serverMsg = err.response?.data?.detail;
+-@@ -1117,7 +1123,7 @@ const TaskDetailPage = () => {
+-             {taskIsClosed && canManage && (
+-               <div className="mt-4 pt-3 border-t border-amber-200">
+-                 <Button
+--                  onClick={handleReopenTask}
+-+                  onClick={openReopenConfirm}
+-                   variant="outline"
+-                   disabled={reopening}
+-                   className="w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 gap-2"
+-@@ -1848,6 +1854,54 @@ const TaskDetailPage = () => {
+-         </Suspense>
+-       )}
+- 
+-+      {/* Reopen confirm modal */}
+-+      <DialogPrimitive.Root open={showReopenConfirm} onOpenChange={(next) => {
+-+        if (reopening) return;
+-+        setShowReopenConfirm(next);
+-+      }}>
+-+        <DialogPrimitive.Portal>
+-+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-[9999]" />
+-+          <DialogPrimitive.Content
+-+            className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:-translate-x-1/2 sm:-translate-y-1/2 z-[9999] bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-sm sm:mx-auto outline-none"
+-+            dir="rtl"
+-+            onEscapeKeyDown={(e) => { if (reopening) e.preventDefault(); }}
+-+            onPointerDownOutside={(e) => { if (reopening) e.preventDefault(); }}
+-+            onInteractOutside={(e) => { if (reopening) e.preventDefault(); }}
+-+          >
+-+            <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+-+              <RotateCcw className="w-5 h-5 text-emerald-600" />
+-+              <DialogPrimitive.Title className="text-base font-bold text-slate-800">
+-+                פתיחת ליקוי מחדש
+-+              </DialogPrimitive.Title>
+-+            </div>
+-+            <div className="px-5 py-4">
+-+              <DialogPrimitive.Description className="text-sm text-slate-600">
+-+                הליקוי יחזור לסטטוס "נפתח מחדש" וניתן יהיה להמשיך לטפל בו. להמשיך?
+-+              </DialogPrimitive.Description>
+-+            </div>
+-+            <div className="px-5 py-3 border-t border-slate-100 flex gap-2">
+-+              <button
+-+                type="button"
+-+                onClick={() => { if (!reopening) setShowReopenConfirm(false); }}
+-+                disabled={reopening}
+-+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px] disabled:opacity-50"
+-+              >
+-+                בטל
+-+              </button>
+-+              <button
+-+                type="button"
+-+                onClick={confirmReopenTask}
+-+                disabled={reopening}
+-+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white disabled:opacity-50"
+-+              >
+-+                {reopening && <Loader2 className="w-4 h-4 animate-spin" />}
+-+                {reopening ? 'פותח מחדש...' : 'פתח מחדש'}
+-+              </button>
+-+            </div>
+-+          </DialogPrimitive.Content>
+-+        </DialogPrimitive.Portal>
+-+      </DialogPrimitive.Root>
+-+
+-     </div>
+-   );
+- };
+-diff --git a/frontend/src/pages/UnitDetailPage.js b/frontend/src/pages/UnitDetailPage.js
+-index 8da9f64..1ce8d63 100644
+---- a/frontend/src/pages/UnitDetailPage.js
+-+++ b/frontend/src/pages/UnitDetailPage.js
+-@@ -1,5 +1,5 @@
+--import React, { useState, useEffect, useCallback } from 'react';
+--import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+-+import React, { useState, useEffect, useCallback, useRef } from 'react';
+-+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+- import { unitService, taskService, projectCompanyService } from '../services/api';
+- import { useAuth } from '../contexts/AuthContext';
+- import { toast } from 'sonner';
+-@@ -112,6 +112,42 @@ const UnitDetailPage = () => {
+-   useEffect(() => { loadUnit(); }, [loadUnit]);
+-   useEffect(() => { loadTasks(); }, [loadTasks]);
+- 
+-+  // Refresh-on-return — refetch unit + tasks when user navigates back
+-+  // to this page (location.key changes) or when window regains focus.
+-+  // Mirrors the pattern in ProjectTasksPage. 500ms debounce to avoid
+-+  // double-firing when both events fire at once.
+-+  const location = useLocation();
+-+  const latestLoadUnitRef = useRef(loadUnit);
+-+  const latestLoadTasksRef = useRef(loadTasks);
+-+  const lastRefreshAtRef = useRef(0);
+-+  const didMountRef = useRef(false);
+-+  useEffect(() => { latestLoadUnitRef.current = loadUnit; }, [loadUnit]);
+-+  useEffect(() => { latestLoadTasksRef.current = loadTasks; }, [loadTasks]);
+-+
+-+  useEffect(() => {
+-+    const refresh = () => {
+-+      const now = Date.now();
+-+      if (now - lastRefreshAtRef.current < 500) return;
+-+      lastRefreshAtRef.current = now;
+-+      latestLoadUnitRef.current();
+-+      latestLoadTasksRef.current();
+-+    };
+-+    if (didMountRef.current) {
+-+      refresh();
+-+    } else {
+-+      didMountRef.current = true;
+-+    }
+-+    const onFocus = () => { refresh(); };
+-+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+-+    window.addEventListener('focus', onFocus);
+-+    document.addEventListener('visibilitychange', onVisibility);
+-+    return () => {
+-+      window.removeEventListener('focus', onFocus);
+-+      document.removeEventListener('visibilitychange', onVisibility);
+-+    };
+-+    // eslint-disable-next-line react-hooks/exhaustive-deps
+-+  }, [location.key, unitId]);
+-+
+-   const handleDefectSuccess = (taskId) => {
+-     setShowDefectModal(false);
+-     loadUnit();
++$ python3 -m compileall backend/contractor_ops/ -q
++✅ COMPILE PASS (no errors, no output)
+ 
+ ================================================================================
+-VERIFY 1 — BUG A (TaskDetailPage)
++VERIFY 1.5 — handover_router post-dedupe safety
+ ================================================================================
+-A.1  window.confirm reopen line REMOVED — 0 hits
+-     $ grep -n "window.confirm.*לפתוח את הליקוי" frontend/src/pages/TaskDetailPage.js
+-     (no output — pass)
+-
+-A.2  git diff shows EXACTLY ONE removed window.confirm line — 1 hit
+-     $ git diff frontend/src/pages/TaskDetailPage.js | grep "^-.*window.confirm" | wc -l
+-     1
+-
+-A.3  showReopenConfirm appears 6 times (≥4 required) — pass
+-     L206  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+-     L583  setShowReopenConfirm(true);
+-     L591  setShowReopenConfirm(false);
+-     L1858 <DialogPrimitive.Root open={showReopenConfirm} onOpenChange=...
+-     L1860 setShowReopenConfirm(next);
+-     L1885 onClick={() => { if (!reopening) setShowReopenConfirm(false); }}
+-
+-A.4  Both handlers present
+-     L581  const openReopenConfirm = () => {
+-     L586  const confirmReopenTask = async () => {
+-     L1126 onClick={openReopenConfirm}              ← button now opens modal
+-     L1893 onClick={confirmReopenTask}              ← modal "Confirm" calls reopen
++$ grep -c "TERMINAL_TASK_STATUSES\[" backend/contractor_ops/handover_router.py
++0  ✅ (no [N] indexing — sets don't support that)
++
++$ grep -cE "TERMINAL_TASK_STATUSES\.(index|count)" backend/contractor_ops/handover_router.py
++0  ✅ (no .index() or .count() — sets don't support those either)
++
++$ grep -n "list(TERMINAL_TASK_STATUSES)\|tuple(TERMINAL_TASK_STATUSES)" backend/contractor_ops/handover_router.py
++1420:                "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
++1456:                    "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
++✅ Both call sites pass `list(...)` to MongoDB `$nin` filter — order-independent,
++   safe regardless of underlying set vs. tuple semantics.
++
++$ grep -n "TERMINAL_TASK_STATUSES" backend/contractor_ops/handover_router.py
++8: from contractor_ops.constants import TERMINAL_TASK_STATUSES   ← new import
++1415: ... existing_defect.get("status") in TERMINAL_TASK_STATUSES   ← `in` membership, safe
++1420: ... "$nin": list(TERMINAL_TASK_STATUSES)                       ← list() wrap, safe
++1423: ... existing_defect.get("status") not in TERMINAL_TASK_STATUSES ← `in` membership, safe
++1456: ... "$nin": list(TERMINAL_TASK_STATUSES)                       ← list() wrap, safe
++✅ All 4 call sites set-safe.
+ 
+ ================================================================================
+-VERIFY 2 — BUG B (UnitDetailPage)
++VERIFY 2 — Backend wide 'closed' grep — every surviving match classified
+ ================================================================================
+-B.1  useLocation imported + location.key used in deps
+-     L2    import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+-     L119  const location = useLocation();
+-     L149  }, [location.key, unitId]);
+-
+-B.2  didMountRef + lastRefreshAtRef both declared and used
+-     L122  const lastRefreshAtRef = useRef(0);
+-     L123  const didMountRef = useRef(false);
+-     L130  if (now - lastRefreshAtRef.current < 500) return;   ← debounce
+-     L131  lastRefreshAtRef.current = now;
+-     L135  if (didMountRef.current) {                          ← skip first run
+-     L138  didMountRef.current = true;
+-
+-B.3  focus + visibilitychange listeners both registered (and cleaned up)
+-     L142  window.addEventListener('focus', onFocus);
+-     L143  document.addEventListener('visibilitychange', onVisibility);
+-     L146  document.removeEventListener('visibilitychange', onVisibility);
+-     (window.removeEventListener('focus', onFocus) on prior line)
++Excluded from this grep (per spec): TERMINAL_TASK_STATUSES refs, paired
++'closed','approved' lines (already correct), audit-field names like
++closed_at/closed_by/closed_today, internal counter names like closed_count/
++closed_defects/closed_statuses/closed_last7.
++
++KEEP — write/seed/test/audit-field/notification-event-name/output-schema-key:
++  test_e2e.py:105,107,114,116        | Test fixtures writing/asserting status
++                                       (test data, not aggregation logic).
++  test_notifications.py:259          | Test fixture writing 'closed'.
++  seed.py:29                         | STATUSES_SEQUENCE seed data.
++  notification_service.py:86         | Notification label map ('closed':'סגור').
++                                       Different concern from task display —
++                                       maps notification event name not
++                                       task aggregation.
++  demo_seed.py:78,79,461             | Demo seed writes status='closed'.
++  snapshot_cron.py:206               | Reads pre-aggregated 'closed' DICT KEY
++                                       produced upstream by stats_router (now
++                                       includes approved). Output schema key
++                                       name, not a status comparison.
++  schemas.py:14                      | TaskStatus.closed = "closed" enum value.
++                                       Write-side, intentional.
++  tasks_router.py:768                | Notification event name mapping
++                                       'closed':'status_closed'. Per spec KEEP.
++  tasks_router.py:1039               | new_status='closed' in normal-flow
++                                       approve branch. Per spec KEEP.
++  projects_router.py:1460            | Output dict key from compute_counts —
++                                       receives the COMBINED closed+approved
++                                       value because closed_statuses set was
++                                       fixed at line 1448. Output key name only.
++  stats_router.py:62                 | per_building dict output key from FIXED
++                                       aggregation pipeline (lines 56-58).
++                                       Output schema key.
++  stats_router.py:168                | contractor_map dict initialization key.
++                                       Output schema key — contractor_map.closed
++                                       is the running counter incremented at
++                                       FIXED line 174-175 (now 'closed','approved').
++  stats_router.py:211, 255           | 'new_status':'closed' write events for
++                                       audit log entries. Write-side, intentional.
++  stats_router.py:329, 337           | Reads contractor_map.closed counter
++                                       (FIXED). Output schema keys.
++  export_router.py:29, 42            | STATUS_LABELS/COLORS map entries for
++                                       'closed' — paired 'approved' entries
++                                       added at lines 33, 46. Already correct.
++  export_router.py:92                | filter routing: `filters.status=='closed'
++                                       and s not in CLOSED_STATUSES` — uses
++                                       FIXED CLOSED_STATUSES set.
++  export_router.py:1241              | status_labels bucket-name map
++                                       ('closed':'סגורים' as a UI bucket label,
++                                       not per-task status). Bucket conceptually
++                                       includes approved tasks via aggregation.
++
++EDIT-MISSED — same bug class as 5C, not in spec, surfaced AFTER edits:
++  ⚠️ projects_router.py:1229         | `'closed': by_status.get('closed', 0)`
++                                       in per-unit KPI block (route returning
++                                       unit + kpi). Same pattern as fixed
++                                       tasks_router:416 and export_router:1169.
++                                       A force-closed task in this unit would
++                                       not appear in kpi.closed.
++                                       → Filed as Task #445 (5E).
++  ⚠️ ProjectControlPage.js:3309      | inline DEFECT_STATUS_CONFIG missing
++                                       'approved' entry — defect rendering in
++                                       ProjectControlPage falls through to
++                                       blank label / undefined color for
++                                       force-closed defects.
++                                       → Filed as Task #445 (5E).
++
++NEEDS-REVIEW: none.
+ 
+ ================================================================================
+-VERIFY 3 — BUG C (ProjectControlPage)
++VERIFY 3 — Frontend build
+ ================================================================================
+-C.1  EXACTLY ONE [companies, setCompanies] declaration (was 2 — duped)
+-     $ grep -n "const \[companies, setCompanies\]" frontend/src/pages/ProjectControlPage.js | wc -l
+-     1
+-     L3204  const [companies, setCompanies] = useState([]);   ← parent only
+-
+-C.2  <CompaniesTab receives all 3 new props from parent
+-     L3724  {activeTab === 'companies' && <CompaniesTab projectId={projectId}
+-            companies={companies} companiesLoading={companiesLoading}
+-            onRefreshCompanies={loadCompanies} />}
+-
+-C.3  Parent loadCompanies hardened — was silent `catch {}`, now toasts on failure
+-     L3507-3518:
+-       const loadCompanies = useCallback(async () => {
+-         setCompaniesLoading(true);
+-         try {
+-           const data = await projectCompanyService.list(projectId);
+-           setCompanies(Array.isArray(data) ? data : []);
+-         } catch (err) {
+-           console.error('[loadCompanies]', err);
+-           toast.error('שגיאה בטעינת חברות');
+-         } finally {
+-           setCompaniesLoading(false);
+-         }
+-       }, [projectId]);
+-
+-C.4  companiesLoading wired through 4 sites (signature → loading derivation →
+-     parent state → JSX prop)
+-     L2827  const CompaniesTab = ({ projectId, companies, companiesLoading, onRefreshCompanies }) => {
+-     L2853  const loading = (companiesLoading || tradeMapLoading) && companies.length === 0;
+-     L3205  const [companiesLoading, setCompaniesLoading] = useState(false);
+-     L3724  <CompaniesTab ... companiesLoading={companiesLoading} ... />
++$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.example.com CI=false yarn build
++✅ BUILD PASS — Done in 34.48s. "The build folder is ready to be deployed."
++   No new warnings introduced. (The bare `yarn build` failed with
++   "REACT_APP_BACKEND_URL is not set" — pre-existing dev-only check in
++   craco.config.js; deploy.sh sets this env var and the staging/prod build
++   succeeds normally.)
+ 
+ ================================================================================
+-VERIFY 4 — BUILD
++VERIFY 4 — Frontend grep — confirm 'approved' added everywhere
+ ================================================================================
+-$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://api-staging.brikops.com yarn build
+-…
+-The project was built assuming it is hosted at /.
+-The build folder is ready to be deployed.
+-Done in 34.90s.
++$ grep -c "approved:\|value: 'approved'" frontend/src/pages/UnitDetailPage.js
++2  ✅ (STATUS_LABELS entry + STATUS_FILTER_OPTIONS entry)
++
++$ grep -c "approved:\|'closed,approved'" frontend/src/pages/ProjectTasksPage.js
++3  ✅ (STATUS_CONFIG entry + 2 statusIn:'closed,approved' chips)
++
++$ grep -c "statusIn: 'closed,approved'" frontend/src/pages/ProjectTasksPage.js
++2  ✅ (CONTRACTOR + MANAGER closed chips both fixed)
++
++$ grep -c "approved:" frontend/src/components/StatusPill.jsx
++1  ✅
+ 
+-(no warnings, no errors, no eslint complaints — clean compile)
++$ grep -c "approved:" frontend/src/pages/ApartmentDashboardPage.js
++1  ✅
+ 
+ ================================================================================
+-COMMIT MESSAGE (also in .local/.commit_message)
++VERIFY 5 — Regression guard — other STATUS maps with 'closed:' but no 'approved:'
+ ================================================================================
+-fix(ui): batch 5b — replace native confirm, refresh UnitDetailPage on focus, dedupe companies state
++$ grep -rn "closed: {" frontend/src/pages/ frontend/src/components/ | head -30
+ 
+-Frontend-only UX polish (no backend, no schema, no deps).
++frontend/src/pages/TaskDetailPage.js:30                 ← FALSE POSITIVE
++   File already has `approved: { color: 'bg-green-100 text-green-700',
++   icon: CheckCircle }` at line 31 — grep just couldn't see it on the same
++   line as `closed:`. Color is bg-green vs bg-emerald (minor visual
++   inconsistency vs. UnitDetail/Apartment/ProjectTasks); acceptable.
++   Decision: KEEP, no edit.
+ 
+-Bug A — TaskDetailPage reopen confirm
+-  Replaced the native window.confirm() in handleReopenTask with a
+-  branded RTL Radix Dialog ("פתיחת ליקוי מחדש"). Split the handler
+-  into openReopenConfirm (opens modal) and confirmReopenTask (calls
+-  taskService.reopen). Modal sits at z-[9999] — above page modals
+-  (z-50) and below the fullscreen photo viewer (z-[10000]).
++frontend/src/pages/ProjectControlPage.js:3309           ← EDIT-MISSED
++   Inline DEFECT_STATUS_CONFIG missing 'approved' entry. Same bug class.
++   Decision: file as Task #445 (5E follow-up). NOT bundled into 5C per
++   spec STEP 0 rule and per Zahi's scope discipline.
+ 
+-Bug B — UnitDetailPage refresh on return
+-  Added the same refresh-on-return pattern already used in
+-  ProjectTasksPage: on focus / visibilitychange / location.key
+-  change, refetch the unit and its tasks. 500ms debounce + didMountRef
+-  to skip the initial mount run. Fixes a stale-data bug where editing
+-  a defect from the unit page and returning showed yesterday's status.
++frontend/src/pages/UnitDetailPage.js:25                 ← FIXED in this batch
++   Line 29 has the new approved entry. ✅
+ 
+-Bug C — ProjectControlPage companies state dedupe
+-  Lifted companies + companiesLoading to the parent (single source of
+-  truth), passed into CompaniesTab. Add/Edit/Delete now refreshes both
+-  parent companies AND local tradeMap, so Team tab + Companies tab
+-  stay in sync without a page reload. Hardened parent's loadCompanies
+-  (was silent `catch {}`).
++frontend/src/pages/ProjectTasksPage.js:28               ← FIXED in this batch
++   Line 32 has the new approved entry. ✅
+ 
+-Refs: task #439 / BATCH 5B
++frontend/src/pages/ApartmentDashboardPage.js:41         ← FIXED in this batch
++   Line 45 has the new approved entry with key:'closed'. ✅
+ 
+ ================================================================================
+-DEPLOY POSTURE
++VERIFY 6, 7 — Manual visual / E2E smoke
+ ================================================================================
+-Backend: untouched (no backend/* edits, no schema, no migrations).
+-Frontend: 3 files, +126/-25.
+-Workflows: NOT restarted by agent (frontend dev workflow auto-reloads;
+-           production deploy is Zahi's responsibility).
++SKIP — Zahi runs visually after staging deploy. Acceptance criteria per spec:
++  6. GroupedSelectField: trade-header row visually pops with bold + slate bg;
++     "חברות אחרות" header gets top border separator.
++  7. Force-close a defect via פאנל ניהול → return to UnitDetailPage:
++     - Badge shows "אושר" (green) NOT "פתוח" (red)
++     - KPI "סגורות" increments by 1
++     - "סגורים" filter count includes the just-closed task
++     Repeat with normal proof→approve flow → "סגור" green badge, also counts.
+ 
+-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
++================================================================================
++VERIFY 2 SURVIVING MATCHES — DECISIONS SUMMARY
++================================================================================
++Total surviving matches: 28
++  KEEP:           26  (audit fields, write-side, output schema keys, paired
++                       closed+approved entries, test/seed fixtures, notification
++                       event maps, bucket-name UI labels)
++  EDIT-MISSED:     2  (filed as Task #445 / 5E follow-up)
++  NEEDS-REVIEW:    0
++
++================================================================================
++COMMIT MESSAGE
++================================================================================
++fix(tasks): treat status=approved as closed-equivalent for display + aggregation; polish dropdown headers
+ 
+ ================================================================================
+-CODE REVIEW (architect, evaluate_task)
++FOLLOW-UPS
+ ================================================================================
+-VERDICT: PASS — safe to ship.
+-
+-Bug A (TaskDetail reopen modal)
+-  Implemented correctly. window.confirm removed; controlled Radix Dialog with
+-  proper RTL, all dismissal vectors blocked while reopening, both action
+-  buttons disabled with spinner, focus trap inherited from default Radix
+-  modal behaviour.
+-
+-Bug B (UnitDetail refresh-on-return)
+-  Pattern correctly mirrored from ProjectTasksPage — useLocation, latest
+-  refs, focus + visibility listeners, didMountRef skip-first-run, 500ms
+-  debounce. No race with the existing [loadUnit]/[loadTasks] effects.
+-  Caveat (non-blocking): because deps include unitId, navigating between
+-  unit IDs in-place can trigger one extra refresh on top of the existing
+-  loader-dep effects. Worst case = one duplicate fetch, NOT stale data
+-  and NOT a functional break. Filed as follow-up.
+-
+-Bug C (ProjectControl companies dedupe)
+-  Correctly fixed. Single source of truth in parent, refreshAll has safe
+-  deps with no loop risk. Loading gate
+-  '(companiesLoading || tradeMapLoading) && companies.length === 0' is
+-  appropriate — prevents full-page spinner during later refreshes.
+-
+-Regressions / accessibility / Hebrew UX / security: none observed.
+-Build: compiles clean.
+-
+-NON-BLOCKING FOLLOW-UPS (filed as project tasks, not addressed here)
+-  1. Tighten UnitDetail refresh-on-return to dedupe the unitId-transition
+-     double-fetch (gate by prevUnitIdRef or drop unitId from deps).
+-  2. Add lightweight integration tests for the three bug paths.
+-  3. Manual mobile spot-check of dialog layering with PhotoAnnotation
+-     (z-[10000]) on a real device.
+-
+-These do NOT block this batch — the prescriptive spec from Zahi was met
+-exactly and matches the existing ProjectTasksPage pattern.
++Already proposed alongside this batch (PENDING, blocked by #442 merge):
++  • Task #443 (5D): handover_router:2336 $nin should also exclude 'done'
++  • Task #444 (P1 BLOCKS LAUNCH): force_close → aggregation → reopen
++    regression tests (4 tests per spec lines 562-610)
++
++NEW follow-up filed during VERIFY 2/5 (this run):
++  • Task #445 (5E): close the same-bug-class gap on 2 surfaces missed by
++    spec AND by STEP 0 — projects_router.py:1229 per-unit KPI underreport,
++    ProjectControlPage.js:3309 DEFECT_STATUS_CONFIG missing 'approved'.
++    Both are HIGH severity (force-closed defects render/count wrong on
++    those surfaces). Surgical 1-3 line fixes each.
+ 
++================================================================================
+ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
++================================================================================

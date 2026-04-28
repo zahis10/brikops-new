@@ -17,10 +17,14 @@ const GroupedSelectField = ({ options = [], onChange, value, ...rest }) => {
     const out = options.map(opt => {
       if (opt?.isHeader) {
         headers.add(opt.value);
+        const isMuted = !!opt.muted;
+        const wrapperCls = isMuted
+          ? 'block w-full px-3 py-1.5 text-sm font-bold text-slate-500 bg-slate-50 border-t border-slate-200 pointer-events-none'
+          : 'block w-full px-3 py-1.5 text-sm font-bold text-slate-700 bg-slate-100 pointer-events-none';
         return {
           value: opt.value,
           label: (
-            <span className={`text-xs font-medium ${opt.muted ? 'text-slate-400' : 'text-slate-500'} pointer-events-none`}>
+            <span className={wrapperCls}>
               {opt.label}
             </span>
           ),
