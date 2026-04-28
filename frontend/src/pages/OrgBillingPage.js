@@ -1419,7 +1419,7 @@ export default function OrgBillingPage() {
             const expiresAtDate = expiresAtRaw ? new Date(expiresAtRaw) : null;
             const isExpired = paidUntilDate && paidUntilDate <= now;
             const isCancelledActive = !!sub?.cancelled_at && expiresAtDate && expiresAtDate > now;
-            const isActiveAutoRenew = subStatus === 'active' && sub?.auto_renew !== false && !sub?.cancelled_at && paidUntilDate && paidUntilDate > now;
+            const isActive = subStatus === 'active' && !sub?.cancelled_at && paidUntilDate && paidUntilDate > now;
 
             if (isExpired) {
               return (
@@ -1463,22 +1463,29 @@ export default function OrgBillingPage() {
                 </div>
               );
             }
-            if (isActiveAutoRenew) {
+            if (isActive) {
+              const isAutoRenewing = sub?.auto_renew === true;
               return (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <CheckCircle className="w-5 h-5 text-emerald-600" />
-                    <span className="text-sm font-medium text-slate-700">חידוש אוטומטי פעיל</span>
+                    <span className="text-sm font-medium text-slate-700">
+                      {isAutoRenewing ? 'חידוש אוטומטי פעיל' : 'מנוי פעיל'}
+                    </span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    המנוי יתחדש אוטומטית ב-{formatDate(subPaidUntil)}
+                    {isAutoRenewing
+                      ? `המנוי יתחדש אוטומטית ב-${formatDate(subPaidUntil)}`
+                      : `בתוקף עד ${formatDate(subPaidUntil)} — לא יחויב אוטומטית`}
                   </p>
-                  <button
-                    onClick={() => { setCancelReason(''); setShowCancelModal(true); }}
-                    className="text-xs text-rose-600 hover:text-rose-700 font-medium"
-                  >
-                    ביטול חידוש אוטומטי
-                  </button>
+                  {isAutoRenewing && (
+                    <button
+                      onClick={() => { setCancelReason(''); setShowCancelModal(true); }}
+                      className="text-xs text-rose-600 hover:text-rose-700 font-medium"
+                    >
+                      ביטול חידוש אוטומטי
+                    </button>
+                  )}
                 </div>
               );
             }
