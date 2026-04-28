@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { billingService, orgMemberService, invoiceService, projectService, handoverService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
-import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle } from 'lucide-react';
+import { ChevronRight, Lock, Loader2, Users, FileText, ChevronDown, ChevronUp, Copy, Info, Upload, Eye, X, ArrowRight, CreditCard, Clock, Pencil, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import ProjectBillingEditModal from '../components/ProjectBillingEditModal';
 import UpgradeWizard from '../components/UpgradeWizard';
 import PlanSelector from '../components/PlanSelector';
@@ -108,7 +108,11 @@ export default function OrgBillingPage() {
 
   const [paymentRequestLoading, setPaymentRequestLoading] = useState(false);
   const [paymentRequestResult, setPaymentRequestResult] = useState(null);
-  const [markPaidLoading, setMarkPaidLoading] = useState(false);
+
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [reactivateLoading, setReactivateLoading] = useState(false);
 
   const [paymentRequests, setPaymentRequests] = useState([]);
   const [paymentRequestsLoading, setPaymentRequestsLoading] = useState(false);
@@ -454,28 +458,53 @@ export default function OrgBillingPage() {
     });
   };
 
-  const handleMarkPaidAction = async () => {
-    setMarkPaidLoading(true);
+  const handleCancelSubscription = async () => {
+    setCancelLoading(true);
     try {
-      const result = await billingService.markPaid(orgId, {
-        requestId: paymentRequestResult?.request_id,
-        cycle: renewalCycle,
-      });
-      const paidUntil = result?.paid_until ? new Date(result.paid_until).toLocaleDateString('he-IL') : '';
-      toast.success(paidUntil ? `התשלום אושר — הרישיון עודכן עד ${paidUntil}.` : 'התשלום אושר — הרישיון עודכן');
-      setPaymentRequestResult(null);
+      const result = await billingService.cancelSubscription(orgId, cancelReason);
+      if (result?.already_cancelled) {
+        toast('המנוי כבר היה מבוטל', { icon: 'ℹ️' });
+      } else {
+        toast.success('המנוי בוטל. אישור נשלח לאימייל שלך.');
+      }
+      setShowCancelModal(false);
+      setCancelReason('');
       const updated = await billingService.orgBilling(orgId);
       setData(updated);
-      loadPaymentRequests(paymentRequestsFilter);
     } catch (err) {
       const detail = err.response?.data?.detail;
       if (err.response?.status === 403) {
         toast.error('אין לך הרשאה לבצע פעולה זו.');
       } else {
-        toast.error(typeof detail === 'string' ? detail : 'שגיאה בסימון תשלום');
+        toast.error(typeof detail === 'string' ? detail : 'שגיאה בביטול המנוי');
       }
     } finally {
-      setMarkPaidLoading(false);
+      setCancelLoading(false);
+    }
+  };
+
+  const handleReactivate = async () => {
+    if (!window.confirm('להפעיל את המנוי מחדש?')) return;
+    setReactivateLoading(true);
+    try {
+      await billingService.reactivateSubscription(orgId);
+      toast.success('המנוי הופעל מחדש');
+      const updated = await billingService.orgBilling(orgId);
+      setData(updated);
+    } catch (err) {
+      if (err.response?.status === 410) {
+        toast.error('המנוי פג, נדרשת רכישה חדשה');
+        try {
+          const updated = await billingService.orgBilling(orgId);
+          setData(updated);
+        } catch {}
+      } else if (err.response?.status === 403) {
+        toast.error('אין לך הרשאה לבצע פעולה זו.');
+      } else {
+        toast.error(err.response?.data?.detail || 'שגיאה בהפעלת המנוי');
+      }
+    } finally {
+      setReactivateLoading(false);
     }
   };
 
@@ -1382,18 +1411,79 @@ export default function OrgBillingPage() {
           )}
           </>)}
 
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-700">חידוש אוטומטי</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">בקרוב</span>
-                <div className="w-10 h-5 bg-slate-300 rounded-full opacity-50 relative">
-                  <div className="w-4 h-4 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm" />
+          {(() => {
+            const subPaidUntil = sub?.paid_until || sub?.access_until;
+            const expiresAtRaw = sub?.expires_at || subPaidUntil;
+            const now = new Date();
+            const paidUntilDate = subPaidUntil ? new Date(subPaidUntil) : null;
+            const expiresAtDate = expiresAtRaw ? new Date(expiresAtRaw) : null;
+            const isExpired = paidUntilDate && paidUntilDate <= now;
+            const isCancelledActive = !!sub?.cancelled_at && expiresAtDate && expiresAtDate > now;
+            const isActiveAutoRenew = subStatus === 'active' && sub?.auto_renew !== false && !sub?.cancelled_at && paidUntilDate && paidUntilDate > now;
+
+            if (isExpired) {
+              return (
+                <div className="bg-rose-50 border border-rose-200 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <XCircle className="w-5 h-5 text-rose-600" />
+                    <span className="text-sm font-medium text-slate-700">המנוי פג</span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    פג ב-{formatDate(subPaidUntil)}. להמשך עבודה, נדרשת רכישת מנוי חדש.
+                  </p>
+                  {renewRef && (
+                    <button
+                      onClick={() => renewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium"
+                    >
+                      רכישת מנוי
+                    </button>
+                  )}
                 </div>
-              </div>
-            </div>
-            <p className="text-xs text-slate-400">בקרוב תוכל להפעיל חידוש אוטומטי באשראי.</p>
-          </div>
+              );
+            }
+            if (isCancelledActive) {
+              return (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    <span className="text-sm font-medium text-slate-700">המנוי בוטל</span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    הגישה תישאר עד {formatDate(expiresAtRaw)}. אחרי תאריך זה לא יבוצעו חיובים נוספים.
+                  </p>
+                  <button
+                    onClick={handleReactivate}
+                    disabled={reactivateLoading}
+                    className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium inline-flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {reactivateLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                    המשך מנוי
+                  </button>
+                </div>
+              );
+            }
+            if (isActiveAutoRenew) {
+              return (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    <span className="text-sm font-medium text-slate-700">חידוש אוטומטי פעיל</span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    המנוי יתחדש אוטומטית ב-{formatDate(subPaidUntil)}
+                  </p>
+                  <button
+                    onClick={() => { setCancelReason(''); setShowCancelModal(true); }}
+                    className="text-xs text-rose-600 hover:text-rose-700 font-medium"
+                  >
+                    ביטול חידוש אוטומטי
+                  </button>
+                </div>
+              );
+            }
+            return null;
+          })()}
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
             <span className="text-sm font-medium text-slate-700">צריך עזרה?</span>
@@ -1416,18 +1506,6 @@ export default function OrgBillingPage() {
             </div>
           </div>
 
-          {isSA && (
-            <div className="border-t border-slate-200 pt-4">
-              <button
-                onClick={handleMarkPaidAction}
-                disabled={markPaidLoading}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {markPaidLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                אשר תשלום
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -2093,6 +2171,55 @@ export default function OrgBillingPage() {
                 className="flex-1 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg text-sm"
               >
                 ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showCancelModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" dir="rtl">
+            <h2 className="text-lg font-bold text-slate-900">בטל חידוש אוטומטי?</h2>
+            <div className="space-y-2 text-sm text-slate-600">
+              <p>
+                המנוי שלך יישאר פעיל עד <strong>{formatDate(sub?.paid_until)}</strong>.
+              </p>
+              <p>
+                אחרי תאריך זה, לא יבוצעו חיובים נוספים והמערכת תהיה לא נגישה.
+              </p>
+              <p className="text-xs text-slate-500">
+                החיוב הזה לא יוחזר כי השירות סופק עד תום התקופה.
+                ניתן להפעיל מחדש בכל עת לפני תאריך הסיום.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-slate-700">
+                סיבה לביטול (לא חובה):
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                maxLength={500}
+                rows={3}
+                className="w-full border border-slate-300 rounded-lg p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-slate-400"
+                placeholder="מה גרם לביטול? (יעזור לנו להשתפר)"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => { setShowCancelModal(false); setCancelReason(''); }}
+                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                disabled={cancelLoading}
+              >
+                חזרה
+              </button>
+              <button
+                onClick={handleCancelSubscription}
+                className="flex-1 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                disabled={cancelLoading}
+              >
+                {cancelLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                אישור ביטול
               </button>
             </div>
           </div>

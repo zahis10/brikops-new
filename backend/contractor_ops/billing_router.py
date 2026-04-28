@@ -1894,3 +1894,179 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
     ).sort('resolved_at', -1).to_list(10)
 
     return {'requests': requests}
+
+
+# ============================================================================
+# SUBSCRIPTION CANCELLATION v1 — Israeli consumer-law compliance (חוק הגנת הצרכן 14ג2)
+# Pure local DB state changes — NO PayPlus API calls.
+# Renewal cron at line ~931 already filters {'auto_renew': True}, so setting
+# auto_renew=False excludes the sub from automatic charging without any cron
+# changes. Paywall middleware (_resolve_access in billing.py) already blocks
+# expired subs based on paid_until, so no paywall changes are needed either.
+# ============================================================================
+
+@router.post("/billing/org/{org_id}/cancel")
+async def billing_cancel_subscription(org_id: str, request: Request, user: dict = Depends(get_current_user)):
+    """Cancel auto-renewal for an org subscription. No PayPlus API calls — purely local DB.
+    The PayPlus token is intentionally KEPT so reactivation/re-checkout works.
+    """
+    import uuid
+    from datetime import datetime, timezone
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+
+    if not _is_super_admin(user):
+        billing_role = await check_org_billing_role(user['id'], org_id)
+        if billing_role not in ('billing_admin', 'org_admin', 'owner'):
+            raise HTTPException(status_code=403, detail='אין הרשאת ניהול חיוב')
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason_raw = body.get('reason') if isinstance(body, dict) else None
+    reason = (reason_raw or '').strip()[:500] if isinstance(reason_raw, str) else ''
+
+    db = get_db()
+    sub = await db.subscriptions.find_one(
+        {'org_id': org_id, 'status': 'active'}, {'_id': 0}
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail='אין מנוי פעיל לביטול')
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Idempotent — already cancelled returns 200 (not an error).
+    if sub.get('auto_renew') is False:
+        return {
+            'already_cancelled': True,
+            'cancelled_at': sub.get('cancelled_at'),
+            'access_until': sub.get('expires_at') or sub.get('paid_until'),
+        }
+
+    paid_until = sub.get('paid_until')
+    if not paid_until:
+        logger.error("[CANCEL] Sub %s for org %s missing paid_until — refusing to cancel without expires_at",
+                     sub.get('id'), org_id)
+        raise HTTPException(status_code=500, detail='שגיאה בנתוני המנוי, צרו קשר עם התמיכה')
+
+    await db.subscriptions.update_one(
+        {'id': sub['id']},
+        {'$set': {
+            'auto_renew': False,
+            'cancelled_at': now_iso,
+            'cancelled_reason': reason or None,
+            'expires_at': paid_until,
+            'updated_at': now_iso,
+        }}
+    )
+
+    try:
+        await db.audit_events.insert_one({
+            'id': str(uuid.uuid4()),
+            'event_type': 'subscription_cancelled',
+            'org_id': org_id,
+            'user_id': user['id'],
+            'created_at': now_iso,
+            'details': {
+                'sub_id': sub['id'],
+                'plan_id': sub.get('plan_id'),
+                'expires_at': paid_until,
+                'reason': reason or None,
+            },
+        })
+    except Exception as e:
+        logger.warning("[CANCEL] Audit event insert failed for org=%s: %s", org_id, e)
+
+    try:
+        from contractor_ops.invoicing import send_cancellation_email_user
+        await send_cancellation_email_user(org_id, sub, user, reason or None)
+    except Exception as e:
+        logger.warning("[CANCEL] User email failed for org=%s: %s", org_id, e)
+    try:
+        from contractor_ops.invoicing import send_cancellation_email_zahi
+        await send_cancellation_email_zahi(org_id, sub, user, reason or None)
+    except Exception as e:
+        logger.warning("[CANCEL] Zahi email failed for org=%s: %s", org_id, e)
+
+    logger.info("[CANCEL] Subscription %s cancelled for org=%s by user=%s expires_at=%s",
+                sub['id'], org_id, user['id'], paid_until)
+
+    return {'cancelled_at': now_iso, 'access_until': paid_until}
+
+
+@router.post("/billing/org/{org_id}/reactivate")
+async def billing_reactivate_subscription(org_id: str, request: Request, user: dict = Depends(get_current_user)):
+    """Reactivate a cancelled subscription before its expiry date.
+    Returns 410 Gone if already expired (frontend redirects to checkout).
+    """
+    import uuid
+    from datetime import datetime, timezone
+    from contractor_ops.billing import BILLING_V1_ENABLED, check_org_billing_role
+    if not BILLING_V1_ENABLED:
+        raise HTTPException(status_code=404, detail='Not found')
+
+    if not _is_super_admin(user):
+        billing_role = await check_org_billing_role(user['id'], org_id)
+        if billing_role not in ('billing_admin', 'org_admin', 'owner'):
+            raise HTTPException(status_code=403, detail='אין הרשאת ניהול חיוב')
+
+    db = get_db()
+    sub = await db.subscriptions.find_one({'org_id': org_id}, {'_id': 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail='לא נמצא מנוי')
+
+    if not sub.get('cancelled_at'):
+        raise HTTPException(status_code=400, detail='המנוי כבר פעיל')
+
+    expires_at_raw = sub.get('expires_at') or sub.get('paid_until')
+    if expires_at_raw:
+        try:
+            expires_at_dt = datetime.fromisoformat(str(expires_at_raw).replace('Z', '+00:00'))
+            if expires_at_dt.tzinfo is None:
+                expires_at_dt = expires_at_dt.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > expires_at_dt:
+                raise HTTPException(status_code=410, detail='המנוי כבר פג, נדרשת רכישה חדשה')
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("[REACTIVATE] Could not parse expires_at=%r for org=%s: %s",
+                           expires_at_raw, org_id, e)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.subscriptions.update_one(
+        {'id': sub['id']},
+        {
+            '$set': {'auto_renew': True, 'updated_at': now_iso},
+            '$unset': {'cancelled_at': '', 'cancelled_reason': '', 'expires_at': ''},
+        }
+    )
+
+    try:
+        await db.audit_events.insert_one({
+            'id': str(uuid.uuid4()),
+            'event_type': 'subscription_reactivated',
+            'org_id': org_id,
+            'user_id': user['id'],
+            'created_at': now_iso,
+            'details': {
+                'sub_id': sub['id'],
+                'plan_id': sub.get('plan_id'),
+                'next_charge_date': sub.get('paid_until'),
+            },
+        })
+    except Exception as e:
+        logger.warning("[REACTIVATE] Audit event insert failed for org=%s: %s", org_id, e)
+
+    try:
+        from contractor_ops.invoicing import send_reactivation_email_user
+        await send_reactivation_email_user(org_id, sub, user)
+    except Exception as e:
+        logger.warning("[REACTIVATE] User email failed for org=%s: %s", org_id, e)
+
+    logger.info("[REACTIVATE] Subscription %s reactivated for org=%s by user=%s next_charge=%s",
+                sub['id'], org_id, user['id'], sub.get('paid_until'))
+
+    return {'reactivated_at': now_iso, 'next_charge_date': sub.get('paid_until')}

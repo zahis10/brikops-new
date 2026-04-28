@@ -288,6 +288,249 @@ async def send_invoice_email(org_id: str, invoice: dict):
         logger.warning("[INVOICE-EMAIL] SMTP failed for org=%s: %s", org_id, e)
 
 
+# ----------------------------------------------------------------------------
+# Subscription cancellation / reactivation emails — mirror send_invoice_email.
+# All three guard on SMTP_USER/SMTP_PASS, resolve the recipient the same way
+# (manager_id user → owner/admin fallback), build MIMEMultipart('alternative')
+# with the same From/Reply-To headers, wrap with email_templates.wrap_email,
+# and try/except on SMTP send (log warning, do not raise).
+# ----------------------------------------------------------------------------
+
+async def _resolve_org_billing_recipient(org_id: str):
+    """Mirror send_invoice_email recipient resolution.
+    Returns (org_doc, owner_email, owner_name) — owner_email is None if no recipient.
+    """
+    db = get_db()
+    org = await db.organizations.find_one(
+        {'id': org_id}, {'_id': 0, 'name': 1, 'manager_id': 1, 'billing': 1}
+    )
+    if not org:
+        return None, None, None
+    manager_id = org.get('manager_id', '')
+    owner = None
+    if manager_id:
+        owner = await db.users.find_one(
+            {'id': manager_id}, {'_id': 0, 'email': 1, 'name': 1}
+        )
+    if not owner:
+        owner = await db.users.find_one(
+            {'org_id': org_id, 'role': {'$in': ['owner', 'admin']}},
+            {'_id': 0, 'email': 1, 'name': 1}
+        )
+    if not owner or not owner.get('email'):
+        return org, None, None
+    return org, owner['email'], owner.get('name', '')
+
+
+def _format_hebrew_date(iso_str) -> str:
+    if not iso_str:
+        return ''
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace('Z', '+00:00'))
+        return f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
+    except Exception:
+        return str(iso_str)
+
+
+def _plan_name_he(plan_id) -> str:
+    plan_names = {'standard': 'רישיון פרויקט', 'founder_6m': 'מייסדים'}
+    return plan_names.get(plan_id, plan_id or 'רגיל')
+
+
+def _smtp_send(msg, from_addr: str, to_addr: str, log_tag: str, org_id: str):
+    """SMTP send helper with the same try/except pattern as send_invoice_email."""
+    from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(from_addr, to_addr, msg.as_string())
+        logger.info("[%s] Sent to %s for org=%s", log_tag, to_addr, org_id)
+    except Exception as e:
+        logger.warning("[%s] SMTP failed for org=%s: %s", log_tag, org_id, e)
+
+
+async def send_cancellation_email_user(org_id: str, sub: dict, user: dict, reason: Optional[str]):
+    """Confirmation email to the org's billing recipient when a subscription is cancelled.
+    Mirrors send_invoice_email infrastructure exactly."""
+    from config import SMTP_USER, SMTP_PASS
+    if not SMTP_USER or not SMTP_PASS:
+        logger.warning("[CANCEL-EMAIL-USER] SMTP not configured — skipping")
+        return
+
+    _org, to_email, owner_name = await _resolve_org_billing_recipient(org_id)
+    if not to_email:
+        logger.warning("[CANCEL-EMAIL-USER] No recipient found for org=%s", org_id)
+        return
+
+    expires_at = sub.get('expires_at') or sub.get('paid_until') or ''
+    formatted_expires = _format_hebrew_date(expires_at)
+
+    subject = "אישור ביטול מנוי — BrikOps"
+
+    html_body = f'''
+    <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; background: #ffffff;">
+        <h2 style="color: #1a1a2e; margin-bottom: 24px;">BrikOps</h2>
+        <p>שלום {owner_name},</p>
+        <p>בוצע ביטול חידוש אוטומטי למנוי שלך ב-BrikOps.</p>
+        <div style="background:#f8f9fa;padding:16px;border-radius:8px;margin:16px 0;">
+            <p style="margin:4px 0;"><strong>הגישה למערכת תישאר פעילה עד:</strong></p>
+            <p style="margin:4px 0;font-size:18px;color:#f57c00;">{formatted_expires}</p>
+        </div>
+        <p>אחרי תאריך זה לא יבוצעו חיובים נוספים.</p>
+        <p style="font-size:13px;color:#666;">
+            החיוב הזה לא יוחזר כי השירות סופק עד תום התקופה,
+            בהתאם לחוק הגנת הצרכן.
+        </p>
+        <p style="font-size:13px;color:#666;">
+            ניתן להפעיל מחדש את המנוי בכל עת לפני תאריך הפקיעה דרך
+            <a href="https://app.brikops.com/billing" style="color:#f57c00;">דף החשבון שלך</a>.
+        </p>
+        <p style="font-size:12px;color:#999;margin-top:24px;">
+            אם הביטול בוצע בטעות או בלי אישורך, פנה אלינו מיד דרך
+            <a href="mailto:billing@brikops.com" style="color:#f57c00;">billing@brikops.com</a>.
+        </p>
+    </div>
+    '''
+
+    text_body = (
+        f"שלום {owner_name},\n"
+        f"בוצע ביטול חידוש אוטומטי למנוי שלך ב-BrikOps.\n"
+        f"הגישה למערכת תישאר פעילה עד: {formatted_expires}\n"
+        f"אחרי תאריך זה לא יבוצעו חיובים נוספים.\n"
+        f"ניתן להפעיל מחדש לפני תאריך הפקיעה: https://app.brikops.com/billing\n"
+    )
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = 'BrikOps <invoice@brikops.com>'
+    msg['To'] = to_email
+    msg['Reply-To'] = 'zahi@brikops.com'
+    msg['Subject'] = subject
+    from contractor_ops.email_templates import wrap_email
+    msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    msg.attach(MIMEText(wrap_email(html_body, 'invoice'), 'html', 'utf-8'))
+
+    _smtp_send(msg, 'invoice@brikops.com', to_email, 'CANCEL-EMAIL-USER', org_id)
+
+
+async def send_cancellation_email_zahi(org_id: str, sub: dict, user: dict, reason: Optional[str]):
+    """Internal alert to zahi@brikops.com when a subscription is cancelled.
+    Hardcoded recipient — Zahi is the BrikOps owner."""
+    from config import SMTP_USER, SMTP_PASS
+    if not SMTP_USER or not SMTP_PASS:
+        logger.warning("[CANCEL-EMAIL-ZAHI] SMTP not configured — skipping")
+        return
+
+    db = get_db()
+    org = await db.organizations.find_one({'id': org_id}, {'_id': 0, 'name': 1})
+    org_name = (org.get('name') if org else None) or org_id
+
+    user_name = user.get('name') or user.get('email') or user.get('id', '')
+    user_email = user.get('email', '')
+    plan_name = _plan_name_he(sub.get('plan_id', ''))
+    expires_at = sub.get('expires_at') or sub.get('paid_until') or ''
+    formatted_expires = _format_hebrew_date(expires_at)
+    reason_display = reason or 'לא צוינה'
+
+    to_email = 'zahi@brikops.com'
+    subject = f"[BrikOps] ביטול מנוי — {org_name}"
+
+    html_body = f'''
+    <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #ffffff;">
+        <h2 style="color: #1a1a2e; margin-bottom: 16px;">BrikOps — התראת ביטול מנוי</h2>
+        <p>לקוח ביטל חידוש אוטומטי. הגישה תפוג בתאריך הסיום.</p>
+        <table style="border-collapse:collapse;width:100%;margin:16px 0;font-size:14px;">
+            <tr><td style="padding:6px 4px;"><strong>ארגון:</strong></td><td style="padding:6px 4px;">{org_name}</td></tr>
+            <tr><td style="padding:6px 4px;"><strong>משתמש:</strong></td><td style="padding:6px 4px;">{user_name} ({user_email})</td></tr>
+            <tr><td style="padding:6px 4px;"><strong>תוכנית:</strong></td><td style="padding:6px 4px;">{plan_name}</td></tr>
+            <tr><td style="padding:6px 4px;"><strong>גישה תפוג:</strong></td><td style="padding:6px 4px;">{formatted_expires}</td></tr>
+            <tr><td style="padding:6px 4px;vertical-align:top;"><strong>סיבה:</strong></td><td style="padding:6px 4px;">{reason_display}</td></tr>
+        </table>
+        <p style="margin-top:24px;">
+            <a href="https://app.brikops.com/admin/orgs/{org_id}"
+               style="background:#f57c00;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;">
+                לארגון
+            </a>
+        </p>
+        <p style="font-size:13px;color:#666;margin-top:16px;">
+            פעולה אפשרית: הצעת save call לפני פקיעת הגישה.
+        </p>
+    </div>
+    '''
+
+    text_body = (
+        f"BrikOps — התראת ביטול מנוי\n"
+        f"ארגון: {org_name}\n"
+        f"משתמש: {user_name} ({user_email})\n"
+        f"תוכנית: {plan_name}\n"
+        f"גישה תפוג: {formatted_expires}\n"
+        f"סיבה: {reason_display}\n"
+        f"לארגון: https://app.brikops.com/admin/orgs/{org_id}\n"
+    )
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = 'BrikOps <invoice@brikops.com>'
+    msg['To'] = to_email
+    msg['Reply-To'] = 'zahi@brikops.com'
+    msg['Subject'] = subject
+    from contractor_ops.email_templates import wrap_email
+    msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    msg.attach(MIMEText(wrap_email(html_body, 'invoice'), 'html', 'utf-8'))
+
+    _smtp_send(msg, 'invoice@brikops.com', to_email, 'CANCEL-EMAIL-ZAHI', org_id)
+
+
+async def send_reactivation_email_user(org_id: str, sub: dict, user: dict):
+    """Confirmation email to the org's billing recipient when a subscription is reactivated."""
+    from config import SMTP_USER, SMTP_PASS
+    if not SMTP_USER or not SMTP_PASS:
+        logger.warning("[REACTIVATE-EMAIL-USER] SMTP not configured — skipping")
+        return
+
+    _org, to_email, owner_name = await _resolve_org_billing_recipient(org_id)
+    if not to_email:
+        logger.warning("[REACTIVATE-EMAIL-USER] No recipient found for org=%s", org_id)
+        return
+
+    paid_until = sub.get('paid_until') or ''
+    formatted_paid = _format_hebrew_date(paid_until)
+
+    subject = "המנוי שלך הופעל מחדש — BrikOps"
+
+    html_body = f'''
+    <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; background: #ffffff;">
+        <h2 style="color: #1a1a2e; margin-bottom: 24px;">BrikOps</h2>
+        <p>שלום {owner_name},</p>
+        <p>המנוי שלך הופעל מחדש בהצלחה.</p>
+        <div style="background:#e8f5e9;padding:16px;border-radius:8px;margin:16px 0;">
+            <p style="margin:4px 0;"><strong>החיוב הבא יבוצע ב:</strong></p>
+            <p style="margin:4px 0;font-size:18px;color:#2e7d32;">{formatted_paid}</p>
+        </div>
+        <p>חידוש אוטומטי שב לפעולה.</p>
+    </div>
+    '''
+
+    text_body = (
+        f"שלום {owner_name},\n"
+        f"המנוי שלך הופעל מחדש בהצלחה.\n"
+        f"החיוב הבא יבוצע ב: {formatted_paid}\n"
+        f"חידוש אוטומטי שב לפעולה.\n"
+    )
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = 'BrikOps <invoice@brikops.com>'
+    msg['To'] = to_email
+    msg['Reply-To'] = 'zahi@brikops.com'
+    msg['Subject'] = subject
+    from contractor_ops.email_templates import wrap_email
+    msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    msg.attach(MIMEText(wrap_email(html_body, 'invoice'), 'html', 'utf-8'))
+
+    _smtp_send(msg, 'invoice@brikops.com', to_email, 'REACTIVATE-EMAIL-USER', org_id)
+
+
 async def generate_invoice(org_id: str, period_ym: str, created_by: str, paid_until: str = "", card_last4: str = "", override_amount: float = None) -> dict:
     year, month = validate_period_ym(period_ym)
     db = get_db()

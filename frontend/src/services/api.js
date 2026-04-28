@@ -1173,6 +1173,22 @@ export const billingService = {
     );
     return response.data;
   },
+  async cancelSubscription(orgId, reason = '') {
+    const response = await axios.post(
+      `${API}/billing/org/${orgId}/cancel`,
+      { reason },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async reactivateSubscription(orgId) {
+    const response = await axios.post(
+      `${API}/billing/org/${orgId}/reactivate`,
+      {},
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
 };
 
 export const invoiceService = {
