@@ -3307,6 +3307,7 @@ const ProjectControlPage = () => {
     pending_manager_approval: { label: 'ממתין לאישור מנהל', color: 'bg-orange-100 text-orange-700 ring-1 ring-orange-300' },
     returned_to_contractor: { label: 'הוחזר לקבלן', color: 'bg-rose-100 text-rose-700' },
     closed: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+    approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
     reopened: { label: 'נפתח מחדש', color: 'bg-red-100 text-red-700' },
   };
   const DEFECT_PRIORITY_CONFIG = {

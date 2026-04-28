@@ -4,11 +4,13 @@ BATCH 5C v2 — status='approved' alignment + dropdown polish — REVIEW
 Date:           2026-04-28
 Branch:         staging
 Rollback SHA:   54543b3dc29e
-Scope approved: 14 files (10 spec + 4 STEP 0 gaps) — Zahi confirmed expanded
-                scope before edits began.
-Files edited:   6 backend, 5 frontend = 11 distinct files (14 logical fixes,
-                because stats_router.py contains 5 separate sub-locations and
-                export_router.py contains 4 separate sub-locations)
+Scope approved: 14 files (10 spec + 4 STEP 0 gaps) initially; expanded to 16
+                fixes after Zahi reviewed VERIFY 2/5 EDIT-MISSED findings and
+                pulled them into 5C (rejecting the 5E follow-up split).
+Files edited:   6 backend, 6 frontend = 12 distinct files (16 logical fixes,
+                because projects_router.py contains 2 sub-locations,
+                stats_router.py contains 5, export_router.py contains 4,
+                handover_router.py contains 4)
 
 ================================================================================
 STEP 0 PRE-FLIGHT AUDIT (run in plan mode, before any edits)
@@ -26,22 +28,30 @@ STEP 0 PRE-FLIGHT AUDIT (run in plan mode, before any edits)
 0.5 Audit reported to Zahi → expanded scope approved → proceeded to edits.
 
 ================================================================================
-PER-FILE DIFFS (14 logical fixes across 11 files)
+PER-FILE DIFFS (16 logical fixes across 12 files)
 ================================================================================
 
-FILE 1/11 — backend/contractor_ops/constants.py:1
+FILE 1/12 — backend/contractor_ops/constants.py:1
 - TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}
 + TERMINAL_TASK_STATUSES = {"closed", "approved", "done", "cancelled"}
 
-FILE 2/11 — backend/contractor_ops/tasks_router.py:416 (spec FILE 5)
+FILE 2/12 — backend/contractor_ops/tasks_router.py:416 (spec FILE 5)
 - closed_count = sc.get("closed", 0)
 + closed_count = sc.get("closed", 0) + sc.get("approved", 0)
 
-FILE 3/11 — backend/contractor_ops/projects_router.py:1448 (spec FILE 2)
+FILE 3/12 — backend/contractor_ops/projects_router.py (spec FILE 2 + GAP, 2 sub-locations)
+3a) line 1451 — closed_statuses set in compute_counts() (project KPI summary):
 - closed_statuses = {'closed'}
 + closed_statuses = {'closed', 'approved'}
+3b) line 1232 — per-unit KPI in @router.get("/units/{unit_id}") (GAP — Zahi
+    pulled this from 5E after reviewing first-pass review.txt):
+-     'closed': by_status.get('closed', 0),
++     'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
+   This is the endpoint feeding UnitDetailPage's KPI cards. The original
+   user-visible symptom Zahi reported (KPI shows "סגורות 0" after force-closing
+   a defect) is fed by this exact line.
 
-FILE 4/11 — backend/contractor_ops/stats_router.py (spec FILE 3, 5 sub-locations)
+FILE 4/12 — backend/contractor_ops/stats_router.py (spec FILE 3, 5 sub-locations)
 4a) line 48-49 — count_documents project-summary filters:
 -     ... 'status': {'$nin': ['closed']}
 +     ... 'status': {'$nin': ['closed', 'approved']}
@@ -62,7 +72,7 @@ FILE 4/11 — backend/contractor_ops/stats_router.py (spec FILE 3, 5 sub-locatio
 -     if s == 'closed':
 +     if s in ('closed', 'approved'):
 
-FILE 5/11 — backend/contractor_ops/export_router.py (spec FILE 4 + GAP, 4 sub-locations)
+FILE 5/12 — backend/contractor_ops/export_router.py (spec FILE 4 + GAP, 4 sub-locations)
 5a) line 32-34 — STATUS_LABELS map (GAP — new line):
 +     'approved': 'אושר',
 5b) line 45-47 — STATUS_COLORS map (GAP — new line):
@@ -74,7 +84,7 @@ FILE 5/11 — backend/contractor_ops/export_router.py (spec FILE 4 + GAP, 4 sub-
 - closed_count = status_counts.get('closed', 0)
 + closed_count = status_counts.get('closed', 0) + status_counts.get('approved', 0)
 
-FILE 6/11 — backend/contractor_ops/handover_router.py (spec FILE 6 + 2 GAPS)
+FILE 6/12 — backend/contractor_ops/handover_router.py (spec FILE 6 + 2 GAPS)
 6a) line 11 — new import (replaces local TUPLE):
 + from contractor_ops.constants import TERMINAL_TASK_STATUSES
 6b) line 1206 — local duplicate REMOVED:
@@ -88,13 +98,13 @@ FILE 6/11 — backend/contractor_ops/handover_router.py (spec FILE 6 + 2 GAPS)
    NOTE: 'done' missing from this list is a pre-existing inconsistency vs.
    line 2102 (per-protocol filter) — filed separately as Task #443 (5D).
 
-FILE 7/11 — frontend/src/pages/UnitDetailPage.js (spec FILE 7, 2 sub-locations)
+FILE 7/12 — frontend/src/pages/UnitDetailPage.js (spec FILE 7, 2 sub-locations)
 7a) STATUS_LABELS — new entry below 'closed':
 + approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
 7b) STATUS_FILTER_OPTIONS — new entry below 'closed':
 + { value: 'approved', label: 'אושר' },
 
-FILE 8/11 — frontend/src/pages/ProjectTasksPage.js (spec FILE 8, 3 sub-locations)
+FILE 8/12 — frontend/src/pages/ProjectTasksPage.js (spec FILE 8, 3 sub-locations)
 8a) STATUS_CONFIG — new entry below 'closed':
 + approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
 8b) MANAGER_STATUS_CHIPS closed chip — converted status→statusIn:
@@ -105,21 +115,29 @@ FILE 8/11 — frontend/src/pages/ProjectTasksPage.js (spec FILE 8, 3 sub-locatio
 - { key: 'closed', label: 'סגור', status: 'closed' },
 + { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
 
-FILE 9/11 — frontend/src/components/StatusPill.jsx (spec FILE 9)
+FILE 9/12 — frontend/src/components/StatusPill.jsx (spec FILE 9)
 + approved:                   'bg-emerald-500',
 (same green dot as 'closed' — both terminal/done states)
 
-FILE 10/11 — frontend/src/components/GroupedSelectField.js (spec FILE 10 / Bug C)
+FILE 10/12 — frontend/src/components/GroupedSelectField.js (spec FILE 10 / Bug C)
 Headers branch (lines 17-27) replaced with bold + slate background; muted
 "חברות אחרות" header gains a top border separator. Kept muted non-header
 branch (opacity-70) and headerValues/handleChange/SelectField parts
 untouched per spec.
 
-FILE 11/11 — frontend/src/pages/ApartmentDashboardPage.js (GAP — STEP 0)
+FILE 11/12 — frontend/src/pages/ApartmentDashboardPage.js (GAP — STEP 0)
 STATUS_LABELS — new entry below 'closed' with key:'closed' so the existing
 KPI bucket + filter chip routing both pick it up (no STATUS_FILTER_OPTIONS
 edit needed because the filter chips key off STATUS_LABELS[t.status]?.key):
 + approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
+
+FILE 12/12 — frontend/src/pages/ProjectControlPage.js:3313 (GAP — Zahi pulled
+this from 5E after reviewing first-pass review.txt)
+DEFECT_STATUS_CONFIG — new entry below 'closed':
++ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
+This is the management-panel page where Zahi force-closes defects. After a
+force-close the page re-renders the defect using this map; without 'approved'
+the badge would fall back to undefined/blank.
 
 ================================================================================
 VERIFY 1 — Backend syntax compile
@@ -204,28 +222,22 @@ KEEP — write/seed/test/audit-field/notification-event-name/output-schema-key:
                                        not per-task status). Bucket conceptually
                                        includes approved tasks via aggregation.
 
-EDIT-MISSED — same bug class as 5C, not in spec, surfaced AFTER edits:
-  ⚠️ projects_router.py:1229         | `'closed': by_status.get('closed', 0)`
-                                       in per-unit KPI block (route returning
-                                       unit + kpi). Same pattern as fixed
-                                       tasks_router:416 and export_router:1169.
-                                       A force-closed task in this unit would
-                                       not appear in kpi.closed.
-                                       → Filed as Task #445 (5E).
-  ⚠️ ProjectControlPage.js:3309      | inline DEFECT_STATUS_CONFIG missing
-                                       'approved' entry — defect rendering in
-                                       ProjectControlPage falls through to
-                                       blank label / undefined color for
-                                       force-closed defects.
-                                       → Filed as Task #445 (5E).
+EDIT-MISSED — none after Zahi pulled the 2 surviving findings into 5C scope:
+  ✅ projects_router.py:1229          | FIXED in FILE 3/12 sub-location 3b.
+                                        Re-grep confirms line now reads
+                                        'closed': by_status.get('closed', 0)
+                                          + by_status.get('approved', 0).
+  ✅ ProjectControlPage.js:3309       | FIXED in FILE 12/12. DEFECT_STATUS_CONFIG
+                                        now has paired 'approved' entry on
+                                        the line directly below 'closed'.
 
 NEEDS-REVIEW: none.
 
 ================================================================================
-VERIFY 3 — Frontend build
+VERIFY 3 — Frontend build (re-run after the 2 added edits)
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.example.com CI=false yarn build
-✅ BUILD PASS — Done in 34.48s. "The build folder is ready to be deployed."
+✅ BUILD PASS — Done in 30.84s. "The build folder is ready to be deployed."
    No new warnings introduced. (The bare `yarn build` failed with
    "REACT_APP_BACKEND_URL is not set" — pre-existing dev-only check in
    craco.config.js; deploy.sh sets this env var and the staging/prod build
@@ -249,6 +261,13 @@ $ grep -c "approved:" frontend/src/components/StatusPill.jsx
 $ grep -c "approved:" frontend/src/pages/ApartmentDashboardPage.js
 1  ✅
 
+$ grep -c "approved:" frontend/src/pages/ProjectControlPage.js
+1  ✅ (DEFECT_STATUS_CONFIG entry at line 3313)
+
+$ grep -n "by_status.get('closed', 0)" backend/contractor_ops/projects_router.py
+1229:            'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
+   ✅ (per-unit KPI now combines both)
+
 ================================================================================
 VERIFY 5 — Regression guard — other STATUS maps with 'closed:' but no 'approved:'
 ================================================================================
@@ -261,10 +280,10 @@ frontend/src/pages/TaskDetailPage.js:30                 ← FALSE POSITIVE
    inconsistency vs. UnitDetail/Apartment/ProjectTasks); acceptable.
    Decision: KEEP, no edit.
 
-frontend/src/pages/ProjectControlPage.js:3309           ← EDIT-MISSED
-   Inline DEFECT_STATUS_CONFIG missing 'approved' entry. Same bug class.
-   Decision: file as Task #445 (5E follow-up). NOT bundled into 5C per
-   spec STEP 0 rule and per Zahi's scope discipline.
+frontend/src/pages/ProjectControlPage.js:3309           ← FIXED in this batch
+   Inline DEFECT_STATUS_CONFIG was missing 'approved' entry. Zahi reviewed
+   the first-pass review.txt, rejected the 5E split, and pulled this fix
+   into 5C. Line 3313 now has the paired approved entry. ✅
 
 frontend/src/pages/UnitDetailPage.js:25                 ← FIXED in this batch
    Line 29 has the new approved entry. ✅
@@ -291,10 +310,12 @@ SKIP — Zahi runs visually after staging deploy. Acceptance criteria per spec:
 VERIFY 2 SURVIVING MATCHES — DECISIONS SUMMARY
 ================================================================================
 Total surviving matches: 28
-  KEEP:           26  (audit fields, write-side, output schema keys, paired
+  KEEP:           28  (audit fields, write-side, output schema keys, paired
                        closed+approved entries, test/seed fixtures, notification
-                       event maps, bucket-name UI labels)
-  EDIT-MISSED:     2  (filed as Task #445 / 5E follow-up)
+                       event maps, bucket-name UI labels — projects_router:1229
+                       AND ProjectControlPage:3309 now both have approved
+                       paired adjacent, classified KEEP under "paired entries")
+  EDIT-MISSED:     0  ✅ (the 2 surfaced in first pass were pulled into 5C)
   NEEDS-REVIEW:    0
 
 ================================================================================
@@ -310,12 +331,12 @@ Already proposed alongside this batch (PENDING, blocked by #442 merge):
   • Task #444 (P1 BLOCKS LAUNCH): force_close → aggregation → reopen
     regression tests (4 tests per spec lines 562-610)
 
-NEW follow-up filed during VERIFY 2/5 (this run):
-  • Task #445 (5E): close the same-bug-class gap on 2 surfaces missed by
-    spec AND by STEP 0 — projects_router.py:1229 per-unit KPI underreport,
-    ProjectControlPage.js:3309 DEFECT_STATUS_CONFIG missing 'approved'.
-    Both are HIGH severity (force-closed defects render/count wrong on
-    those surfaces). Surgical 1-3 line fixes each.
+Task #445 (5E) — CANCELLED. Zahi reviewed the first-pass review.txt and
+correctly pulled both EDIT-MISSED findings into 5C scope rather than splitting
+them out, since (a) projects_router:1229 feeds the exact KPI card whose
+"סגורות 0" symptom triggered this whole batch, and (b) ProjectControlPage:3313
+is the management-panel page where force-close happens. Both are now FIXED
+in this batch (FILE 3 sub-location 3b, and FILE 12).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

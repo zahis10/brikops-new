@@ -1226,7 +1226,7 @@ async def get_unit_detail(unit_id: str, user: dict = Depends(get_current_user)):
             'total': len(tasks),
             'open': by_status.get('open', 0) + by_status.get('assigned', 0) + by_status.get('reopened', 0),
             'in_progress': by_status.get('in_progress', 0) + by_status.get('waiting_verify', 0) + by_status.get('pending_contractor_proof', 0) + by_status.get('pending_manager_approval', 0),
-            'closed': by_status.get('closed', 0),
+            'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
         },
     }
 
