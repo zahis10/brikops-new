@@ -947,6 +947,9 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
             'next_charge_at': None,
             'grace_until': None,
             'manual_override': None,
+            'cancelled_at': None,
+            'cancelled_reason': None,
+            'expires_at': None,
         }
         logger.warning("Returning default subscription for org %s (no DB record, trial_end=%s)", org_id, trial_end)
     else:
@@ -1103,6 +1106,9 @@ async def get_billing_for_org(org_id: str, user_id: Optional[str] = None) -> dic
             'subscription_status': snapshot['subscription_status'],
             'billing_cycle': snapshot['billing_cycle'],
             'auto_renew': snapshot['auto_renew'],
+            'cancelled_at': effective_sub.get('cancelled_at'),
+            'cancelled_reason': effective_sub.get('cancelled_reason'),
+            'expires_at': effective_sub.get('expires_at'),
             'next_charge_at': snapshot['next_charge_at'],
             'grace_until': snapshot['grace_until'],
         },
