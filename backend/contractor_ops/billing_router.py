@@ -1930,7 +1930,10 @@ async def billing_cancel_subscription(org_id: str, request: Request, user: dict 
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Idempotent — already cancelled returns 200 (not an error).
-    if sub.get('auto_renew') is False:
+    # Key on cancelled_at (the formal cancellation marker) rather than
+    # auto_renew alone, so legacy comped/manual subs (auto_renew=False
+    # with no cancellation record) still flow through a real cancel.
+    if sub.get('cancelled_at'):
         return {
             'already_cancelled': True,
             'cancelled_at': sub.get('cancelled_at'),
