@@ -306,7 +306,7 @@ def test_reactivate_before_expiry_works(monkeypatch):
     async def run():
         _wire_mdb(set_billing_db, set_router_db)
         result = await br.billing_reactivate_subscription(
-            org_id, StubRequest({}), user=user
+            org_id, user=user
         )
         assert result.get("reactivated_at"), "reactivated_at missing"
         assert result.get("next_charge_date") == paid_until
@@ -347,7 +347,7 @@ def test_reactivate_after_expiry_returns_410(monkeypatch):
         _wire_mdb(set_billing_db, set_router_db)
         try:
             await br.billing_reactivate_subscription(
-                org_id, StubRequest({}), user=user
+                org_id, user=user
             )
         except HTTPException as e:
             assert e.status_code == 410, f"expected 410, got {e.status_code} ({e.detail!r})"

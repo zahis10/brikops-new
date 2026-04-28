@@ -347,7 +347,7 @@ plus the post-staging hotfix and the review-driven cleanup.)
 APPENDIX A — git diff vs rollback SHA (modified files)
 ================================================================================
 diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index 3c29071..a66304b 100644
+index 3c29071..ae1c6c3 100644
 --- a/backend/contractor_ops/billing_router.py
 +++ b/backend/contractor_ops/billing_router.py
 @@ -1894,3 +1894,172 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
@@ -449,7 +449,7 @@ index 3c29071..a66304b 100644
 +
 +
 +@router.post("/billing/org/{org_id}/reactivate")
-+async def billing_reactivate_subscription(org_id: str, request: Request, user: dict = Depends(get_current_user)):
++async def billing_reactivate_subscription(org_id: str, user: dict = Depends(get_current_user)):
 +    """Reactivate a cancelled subscription before its expiry date.
 +    Returns 410 Gone if already expired (frontend redirects to checkout).
 +    """
@@ -1411,7 +1411,7 @@ new file mode 100644
 +    async def run():
 +        _wire_mdb(set_billing_db, set_router_db)
 +        result = await br.billing_reactivate_subscription(
-+            org_id, StubRequest({}), user=user
++            org_id, user=user
 +        )
 +        assert result.get("reactivated_at"), "reactivated_at missing"
 +        assert result.get("next_charge_date") == paid_until
@@ -1452,7 +1452,7 @@ new file mode 100644
 +        _wire_mdb(set_billing_db, set_router_db)
 +        try:
 +            await br.billing_reactivate_subscription(
-+                org_id, StubRequest({}), user=user
++                org_id, user=user
 +            )
 +        except HTTPException as e:
 +            assert e.status_code == 410, f"expected 410, got {e.status_code} ({e.detail!r})"

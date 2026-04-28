@@ -1989,7 +1989,7 @@ async def billing_cancel_subscription(org_id: str, request: Request, user: dict 
 
 
 @router.post("/billing/org/{org_id}/reactivate")
-async def billing_reactivate_subscription(org_id: str, request: Request, user: dict = Depends(get_current_user)):
+async def billing_reactivate_subscription(org_id: str, user: dict = Depends(get_current_user)):
     """Reactivate a cancelled subscription before its expiry date.
     Returns 410 Gone if already expired (frontend redirects to checkout).
     """
