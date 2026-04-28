@@ -203,48 +203,52 @@ VERIFY #9 — no accidental edits to cron query or paywall
   (empty)
 
 ================================================================================
-MIGRATION — Zahi runs in mongosh BEFORE deploy
+MIGRATION — Zahi runs in mongosh BEFORE ./deploy.sh --prod (Atlas prod)
 ================================================================================
 
-SPEC-VERBATIM MIGRATION COMMAND (the actual update):
+PRE-FLIGHT QUERIES (run in order; record outputs):
+
+    Query A — count of subs missing auto_renew + total subs collection size
+              (the first count is the expected matchedCount/modifiedCount):
+        db.subscriptions.countDocuments({ auto_renew: { $exists: false } })
+        db.subscriptions.countDocuments({})
+
+    Query B — sample of up to 10 affected docs for inspection
+              (org/plan/status + most recent activity):
+        db.subscriptions.find(
+          { auto_renew: { $exists: false } },
+          { _id: 0, org_id: 1, plan_id: 1, status: 1,
+            paid_until: 1, last_payment_at: 1 }
+        ).limit(10)
+
+    Query C — count of subs that would be silently excluded from the
+              renewal cron and have ALREADY expired (highest urgency):
+        db.subscriptions.countDocuments({
+          auto_renew: { $exists: false },
+          paid_until: { $lt: new Date() }
+        })
+
+DECISION TREE:
+    A == 0                  → no migration needed; proceed with deploy.
+    A  > 0  AND  C == 0     → run the updateMany below, verify matched ==
+                              modified == A, then deploy.
+    A  > 0  AND  C  > 0     → INSPECT each affected org from Query B output
+                              first (to confirm none are deliberately
+                              non-renewing comped/manual subs), THEN run
+                              the updateMany IMMEDIATELY (those orgs are
+                              otherwise at risk of missing their next
+                              renewal charge), verify matched == modified
+                              == A, then deploy.
+
+MIGRATION COMMAND (run AFTER the pre-flight queries):
 
     db.subscriptions.updateMany(
       { auto_renew: { $exists: false } },
       { $set: { auto_renew: true } }
     )
 
-OPERATIONAL PRE-FLIGHT QUERIES (run BEFORE the updateMany above):
-
-    Query A — count documents missing auto_renew (this is the expected
-    matchedCount/modifiedCount of the migration):
-        db.subscriptions.countDocuments({ auto_renew: { $exists: false } })
-
-    Query B — sample 10 docs missing the field for sanity inspection:
-        db.subscriptions.find(
-          { auto_renew: { $exists: false } },
-          { _id: 0, org_id: 1, status: 1, paid_until: 1, plan_id: 1 }
-        ).limit(10)
-
-    Query C — count active (non-cancelled) subs that would be silently
-    excluded from the renewal cron until backfilled:
-        db.subscriptions.countDocuments({
-          auto_renew: { $exists: false },
-          status: 'active',
-          cancelled_at: { $in: [null, undefined] }
-        })
-
-DECISION TREE:
-    A == 0                  → no migration needed; proceed with deploy.
-    A  > 0  AND  C == 0     → run the updateMany, then deploy.
-    A  > 0  AND  C  > 0     → INSPECT each affected org from Query B output
-                              first (to confirm none are deliberately
-                              non-renewing comped/manual subs), THEN run
-                              the updateMany IMMEDIATELY (those orgs are
-                              otherwise at risk of missing their next
-                              renewal charge), then deploy.
-
 POST-MIGRATION ASSERTION (mandatory):
-    After the updateMany, verify the returned BulkWriteResult satisfies:
+    Verify the returned BulkWriteResult satisfies:
         result.matchedCount === result.modifiedCount === <value of Query A>
     If matchedCount !== modifiedCount  → STOP, ping Zahi for review;
     do NOT proceed with ./deploy.sh --prod.
