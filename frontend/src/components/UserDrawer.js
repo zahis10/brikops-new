@@ -210,6 +210,7 @@ export default function UserDrawer({ open, onClose, member, projectId, currentUs
     setShowContractorEdit(false);
     setShowNewCompany(false);
     setNewCompanyName('');
+    setNewCompanyTrade('');
     onClose();
   };
 
