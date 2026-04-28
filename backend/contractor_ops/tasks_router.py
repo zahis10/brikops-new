@@ -31,6 +31,21 @@ from contractor_ops.upload_safety import (
 router = APIRouter(prefix="/api")
 
 
+# Status bucket expansion. Maps a "user-facing bucket name" sent by
+# KPI chips / filter UI → all underlying status values that belong
+# to that bucket. Single source of truth for what each chip means.
+# Aligned with the dashboard KPI aggregation in tasks_router.py:363
+# (open_statuses + handled_statuses). Drift-guarded by
+# backend/tests/test_status_buckets.py.
+STATUS_BUCKET_EXPANSION = {
+    'open': ['open', 'assigned', 'reopened'],
+    'in_progress': ['in_progress', 'pending_contractor_proof',
+                    'pending_manager_approval', 'returned_to_contractor',
+                    'waiting_verify'],
+    'closed': ['closed', 'approved'],
+}
+
+
 @router.post("/tasks", response_model=Task)
 async def create_task(task: TaskCreate, user: dict = Depends(require_roles('project_manager', 'management_team'))):
     db = get_db()
@@ -221,7 +236,10 @@ async def list_tasks(
     if unit_id:
         query['unit_id'] = unit_id
     if status:
-        query['status'] = status
+        if status in STATUS_BUCKET_EXPANSION:
+            query['status'] = {'$in': STATUS_BUCKET_EXPANSION[status]}
+        else:
+            query['status'] = status
     elif status_in:
         statuses = [s.strip() for s in status_in.split(',') if s.strip()]
         if len(statuses) == 1:

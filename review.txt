@@ -1,342 +1,284 @@
 ================================================================================
-BATCH 5C v2 — status='approved' alignment + dropdown polish — REVIEW
+BATCH 5F — Status bucket expansion + 'אושר' label cleanup — REVIEW
 ================================================================================
 Date:           2026-04-28
 Branch:         staging
-Rollback SHA:   54543b3dc29e
-Scope approved: 14 files (10 spec + 4 STEP 0 gaps) initially; expanded to 16
-                fixes after Zahi reviewed VERIFY 2/5 EDIT-MISSED findings and
-                pulled them into 5C (rejecting the 5E follow-up split).
-Files edited:   6 backend, 6 frontend = 12 distinct files (16 logical fixes,
-                because projects_router.py contains 2 sub-locations,
-                stats_router.py contains 5, export_router.py contains 4,
-                handover_router.py contains 4)
+Rollback SHA:   3a9d24840c83
+Severity:       P1 — fixes 3 user-visible bugs from one architectural root
+                (KPI count vs. chip-click mismatch + label confusion).
+Files edited:   2 backend + 4 frontend + 1 new test = 7 files / 9 logical edits
+                (tasks_router has 2 sub-locations: dict + branch update;
+                 UnitDetailPage has 2 sub-locations: label + dropdown removal;
+                 ProjectTasksPage has 3 sub-locations: label + 2 chip reverts)
+Mobile:         Capacitor wraps the same React build via WebView. No native
+                status logic. Frontend changes ship via Capgo OTA — no
+                ./ship.sh needed.
 
 ================================================================================
 STEP 0 PRE-FLIGHT AUDIT (run in plan mode, before any edits)
 ================================================================================
 
-0.1 Spec line numbers verified:                  ✅ PASS (all 6 backend lines)
-0.2 Reopen guard accepts both:                   ✅ PASS (tasks_router:792
-    already reads `if task['status'] not in ('closed', 'approved'):`)
-0.3 Frontend status maps surveyed:               14 files containing STATUS_*
-    maps audited; Apartment dashboard flagged as exact-same-bug-class missed
-    by spec → bundled into 5C scope per Zahi's approval.
-0.4 Backend wide grep classified:                4 spec gaps surfaced
-    (export_router:1169 + 29 + 41, handover_router:2099 + 2336) → bundled
-    into 5C scope per Zahi's approval.
-0.5 Audit reported to Zahi → expanded scope approved → proceeded to edits.
+0.1 — Callers passing `status=` to taskService.list / /api/tasks (4 found):
+  $ grep -rn "taskService\.list\|/api/tasks" frontend/src/ | grep -v node_modules
+    ContractorDashboard.js:141  → no status param. Bucket expansion no-op.   SAFE
+    ProjectTasksPage.js:187     → buildTaskParams(...) chip-driven.          SAFE
+    ProjectControlPage.js:3350  → urlStatusChip (a bucket name).             SAFE
+    ProjectControlPage.js:3541  → literal status:'pending_manager_approval'.
+                                  NOT a bucket key → falls through unchanged
+                                  via the new else-branch.                    SAFE
+    NewDefectModal.js:465       → fetch URL only, no status= param.          N/A
+
+  Conclusion: ALL callers safe. Three are bucket-aware (and now match correctly);
+  one is literal-non-bucket and passes through unchanged.
+
+0.2 — Verify line numbers in spec match HEAD:
+  $ grep -n "if status:" backend/contractor_ops/tasks_router.py | head -5
+    223:    if status:                                 ✅ matches spec exactly
+
+  $ grep -rn "approved:.*אושר\|label: 'אושר'\|'אושר'" frontend/src/
+    Spec-relevant (5 task-status hits — to be edited):
+      UnitDetailPage.js:26  — STATUS_LABELS approved
+      UnitDetailPage.js:44  — STATUS_FILTER_OPTIONS approved option (REMOVE)
+      ProjectTasksPage.js:29 — STATUS_CONFIG approved
+      ApartmentDashboardPage.js:42 — STATUS_LABELS approved
+      ProjectControlPage.js:3310 — DEFECT_STATUS_CONFIG approved
+    Not-spec-relevant (7 hits — different domains, KEEP per DO NOT TOUCH):
+      JoinRequestsPage.js:12,47 — JoinRequest status (different entity)
+      StageDetailPage.js:28,475 — QC stage status (different entity)
+      ProjectControlPage.js:2640 — `accepted` status badge (different field name)
+      utils/qcLabels.js:6,14 — QC labels (different domain)
+
+0.3 — Tests asserting literal status filter behavior:
+  $ grep -rn "status.*=.*'closed'\|...'open'\|...'in_progress'" backend/tests/
+    test_m4_hotfix.py:79-80     — asserts on a local _build_query test-helper
+                                  method on the test class itself (mock).
+                                  Does NOT exercise list_tasks source code.   SAFE
+    test_contractor_hardening.py:255 — asserts task.status hasn't changed
+                                  mid-flow. Unrelated to query filtering.     SAFE
+    test_buckets.py             — exists, but tests TRADE bucket
+                                  (bucket_utils.compute_task_bucket), not
+                                  STATUS bucket. No conflict.                 SAFE
+
+  Conclusion: No existing tests need updating. Bucket-drift guard added as a
+  new file (test_status_buckets.py).
+
+0.4 — Persisted/saved-filter usage of 'approved' as a value:
+  $ grep -rn "'approved'\|approved=\|status=approved" frontend/src/ \
+        | grep -v node_modules | grep -iE "session|local|saved|persist|searchParams|getItem|setItem"
+    (no matches)
+  $ Wider scan for `'approved'` in frontend showed all uses are either:
+    - QC stage status (computed_status === 'approved' on QC pages)
+    - TaskDetailPage task.status === 'approved' equality check (already
+      treats both)
+    - i18n string maps (kept unchanged per spec)
+    - The 5C-introduced STATUS map entries that this batch edits
+
+  Conclusion: No persisted task-status filter uses 'approved' as a value.
+  Safe to remove the dropdown option without a migration shim.
+
+0.5 — Audit clean. Proceeded to edits with no scope expansion needed.
 
 ================================================================================
-PER-FILE DIFFS (16 logical fixes across 12 files)
+PER-FILE DIFFS (9 logical edits across 7 files)
 ================================================================================
 
-FILE 1/12 — backend/contractor_ops/constants.py:1
-- TERMINAL_TASK_STATUSES = {"closed", "done", "cancelled"}
-+ TERMINAL_TASK_STATUSES = {"closed", "approved", "done", "cancelled"}
+FILE 1/7 — backend/contractor_ops/tasks_router.py (2 sub-locations)
+1a) Module-level (after `router = APIRouter(...)`, around line 37) — new dict:
++ # Status bucket expansion. Maps a "user-facing bucket name" sent by
++ # KPI chips / filter UI → all underlying status values that belong
++ # to that bucket. Single source of truth for what each chip means.
++ # Aligned with the dashboard KPI aggregation in tasks_router.py:363
++ # (open_statuses + handled_statuses). Drift-guarded by
++ # backend/tests/test_status_buckets.py.
++ STATUS_BUCKET_EXPANSION = {
++     'open': ['open', 'assigned', 'reopened'],
++     'in_progress': ['in_progress', 'pending_contractor_proof',
++                     'pending_manager_approval', 'returned_to_contractor',
++                     'waiting_verify'],
++     'closed': ['closed', 'approved'],
++ }
 
-FILE 2/12 — backend/contractor_ops/tasks_router.py:416 (spec FILE 5)
-- closed_count = sc.get("closed", 0)
-+ closed_count = sc.get("closed", 0) + sc.get("approved", 0)
+1b) list_tasks branch (line 223 → 241 after insertion):
+- if status:
+-     query['status'] = status
++ if status:
++     if status in STATUS_BUCKET_EXPANSION:
++         query['status'] = {'$in': STATUS_BUCKET_EXPANSION[status]}
++     else:
++         query['status'] = status
 
-FILE 3/12 — backend/contractor_ops/projects_router.py (spec FILE 2 + GAP, 2 sub-locations)
-3a) line 1451 — closed_statuses set in compute_counts() (project KPI summary):
-- closed_statuses = {'closed'}
-+ closed_statuses = {'closed', 'approved'}
-3b) line 1232 — per-unit KPI in @router.get("/units/{unit_id}") (GAP — Zahi
-    pulled this from 5E after reviewing first-pass review.txt):
--     'closed': by_status.get('closed', 0),
-+     'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
-   This is the endpoint feeding UnitDetailPage's KPI cards. The original
-   user-visible symptom Zahi reported (KPI shows "סגורות 0" after force-closing
-   a defect) is fed by this exact line.
+   Behavior: bucket names ('open', 'in_progress', 'closed') expand to $in;
+   any other literal status (e.g. 'waiting_verify', 'pending_manager_approval')
+   passes through unchanged. The existing `elif status_in:` branch at line
+   246 is intentionally left in place — supports any future caller that
+   wants to send an explicit comma-separated list.
 
-FILE 4/12 — backend/contractor_ops/stats_router.py (spec FILE 3, 5 sub-locations)
-4a) line 48-49 — count_documents project-summary filters:
--     ... 'status': {'$nin': ['closed']}
-+     ... 'status': {'$nin': ['closed', 'approved']}
-4b) line 56-58 — building aggregation pipeline:
--     'open': {'$sum': {'$cond': [{'$ne': ['$status', 'closed']}, 1, 0]}},
--     'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority','critical']}, {'$ne': ['$status', 'closed']}]}, 1, 0]}},
--     'closed': {'$sum': {'$cond': [{'$eq': ['$status', 'closed']}, 1, 0]}},
-+     'open': {'$sum': {'$cond': [{'$not': {'$in': ['$status', ['closed','approved']]}}, 1, 0]}},
-+     'critical': {'$sum': {'$cond': [{'$and': [{'$eq': ['$priority','critical']}, {'$not': {'$in': ['$status', ['closed','approved']]}}]}, 1, 0]}},
-+     'closed': {'$sum': {'$cond': [{'$in': ['$status', ['closed','approved']]}, 1, 0]}},
-4c) line 132 — closed_count contractor performance:
--     if s == 'closed':
-+     if s in ('closed', 'approved'):
-4d) line 145 — overdue exclusion:
--     ... and s not in ('closed',):
-+     ... and s not in ('closed', 'approved'):
-4e) line 171 — per-contractor closed counter:
--     if s == 'closed':
-+     if s in ('closed', 'approved'):
+FILE 2/7 — backend/contractor_ops/export_router.py:33 (PDF export label)
+- 'approved': 'אושר',
++ 'approved': 'סגור',
+   STATUS_COLORS['approved'] is already '#22C55E' (matches 'closed') — no
+   color edit required. Verified.
 
-FILE 5/12 — backend/contractor_ops/export_router.py (spec FILE 4 + GAP, 4 sub-locations)
-5a) line 32-34 — STATUS_LABELS map (GAP — new line):
-+     'approved': 'אושר',
-5b) line 45-47 — STATUS_COLORS map (GAP — new line):
-+     'approved': '#22C55E',
-5c) line 57 — CLOSED_STATUSES set:
-- CLOSED_STATUSES = {'closed'}
-+ CLOSED_STATUSES = {'closed', 'approved'}
-5d) line 1174 — PDF report summary closed_count (GAP):
-- closed_count = status_counts.get('closed', 0)
-+ closed_count = status_counts.get('closed', 0) + status_counts.get('approved', 0)
+FILE 3/7 — frontend/src/pages/UnitDetailPage.js (2 sub-locations)
+3a) STATUS_LABELS line 26 (label + color unify):
+- approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
++ approved: { label: 'סגור', color: 'bg-green-100 text-green-700' },
 
-FILE 6/12 — backend/contractor_ops/handover_router.py (spec FILE 6 + 2 GAPS)
-6a) line 11 — new import (replaces local TUPLE):
-+ from contractor_ops.constants import TERMINAL_TASK_STATUSES
-6b) line 1206 — local duplicate REMOVED:
-- TERMINAL_TASK_STATUSES = ("closed", "done", "cancelled")
-6c) line 2102 — per-protocol open-defect $nin (GAP):
-- "status": {"$nin": ["closed", "done", "cancelled"]},
-+ "status": {"$nin": ["closed", "approved", "done", "cancelled"]},
-6d) line 2339 — project-level open_handover_defects $nin (GAP):
-- "status": {"$nin": ["closed", "cancelled"]},
-+ "status": {"$nin": ["closed", "approved", "cancelled"]},
-   NOTE: 'done' missing from this list is a pre-existing inconsistency vs.
-   line 2102 (per-protocol filter) — filed separately as Task #443 (5D).
+3b) STATUS_FILTER_OPTIONS — REMOVE the redundant approved option (line 44):
+- { value: 'approved', label: 'אושר' },
+   The remaining `{ value: 'closed', label: 'סגור' }` covers BOTH thanks
+   to the new backend bucket expansion.
 
-FILE 7/12 — frontend/src/pages/UnitDetailPage.js (spec FILE 7, 2 sub-locations)
-7a) STATUS_LABELS — new entry below 'closed':
-+ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
-7b) STATUS_FILTER_OPTIONS — new entry below 'closed':
-+ { value: 'approved', label: 'אושר' },
+FILE 4/7 — frontend/src/pages/ProjectTasksPage.js (3 sub-locations)
+4a) STATUS_CONFIG line 29:
+- approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
++ approved: { label: 'סגור', color: 'bg-green-100 text-green-700' },
 
-FILE 8/12 — frontend/src/pages/ProjectTasksPage.js (spec FILE 8, 3 sub-locations)
-8a) STATUS_CONFIG — new entry below 'closed':
-+ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
-8b) MANAGER_STATUS_CHIPS closed chip — converted status→statusIn:
-- { key: 'closed', label: 'סגור', status: 'closed' },
-+ { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
-8c) CONTRACTOR_STATUS_CHIPS closed chip — same conversion (parallel fix
-    so contractors also see force-closed defects in their סגור chip):
-- { key: 'closed', label: 'סגור', status: 'closed' },
-+ { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
+4b) CONTRACTOR_STATUS_CHIPS closed chip — REVERT 5C statusIn to status:
+- { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
++ { key: 'closed', label: 'סגור', status: 'closed' },
 
-FILE 9/12 — frontend/src/components/StatusPill.jsx (spec FILE 9)
-+ approved:                   'bg-emerald-500',
-(same green dot as 'closed' — both terminal/done states)
+4c) MANAGER_STATUS_CHIPS closed chip — REVERT 5C statusIn to status:
+- { key: 'closed', label: 'סגור', statusIn: 'closed,approved' },
++ { key: 'closed', label: 'סגור', status: 'closed' },
 
-FILE 10/12 — frontend/src/components/GroupedSelectField.js (spec FILE 10 / Bug C)
-Headers branch (lines 17-27) replaced with bold + slate background; muted
-"חברות אחרות" header gains a top border separator. Kept muted non-header
-branch (opacity-70) and headerValues/handleChange/SelectField parts
-untouched per spec.
+   Chip count display logic at lines 398-407 still handles both chip.statusIn
+   and chip.status shapes (verified). bucketData.status_counts.closed already
+   includes approved tasks via the 5C backend fix at projects_router.py:1451.
 
-FILE 11/12 — frontend/src/pages/ApartmentDashboardPage.js (GAP — STEP 0)
-STATUS_LABELS — new entry below 'closed' with key:'closed' so the existing
-KPI bucket + filter chip routing both pick it up (no STATUS_FILTER_OPTIONS
-edit needed because the filter chips key off STATUS_LABELS[t.status]?.key):
-+ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
+FILE 5/7 — frontend/src/pages/ApartmentDashboardPage.js:42
+- approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700', key: 'closed' },
++ approved: { label: 'סגור', color: 'bg-green-100 text-green-700', key: 'closed' },
+   The `key: 'closed'` routing field stays — wires the badge into the closed
+   KPI bucket on this page (per spec FILE 5 NOTE).
 
-FILE 12/12 — frontend/src/pages/ProjectControlPage.js:3313 (GAP — Zahi pulled
-this from 5E after reviewing first-pass review.txt)
-DEFECT_STATUS_CONFIG — new entry below 'closed':
-+ approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
-This is the management-panel page where Zahi force-closes defects. After a
-force-close the page re-renders the defect using this map; without 'approved'
-the badge would fall back to undefined/blank.
+FILE 6/7 — frontend/src/pages/ProjectControlPage.js:3313 (DEFECT_STATUS_CONFIG)
+- approved: { label: 'אושר', color: 'bg-emerald-100 text-emerald-700' },
++ approved: { label: 'סגור', color: 'bg-green-100 text-green-700' },
+   This is the management-panel page where Zahi force-closes defects.
+
+FILE 7/7 — backend/tests/test_status_buckets.py (NEW FILE — drift guard)
+   4 tests:
+   - test_bucket_expansion_open_matches_dashboard
+   - test_bucket_expansion_in_progress_matches_dashboard
+   - test_bucket_expansion_closed_matches_dashboard_handled
+   - test_bucket_union_covers_all_dashboard_statuses
+
+   The 4th test catches the inverse drift (a status added to the dashboard
+   buckets but not added to STATUS_BUCKET_EXPANSION). Allows bucket_union
+   to be a superset, since 'returned_to_contractor' is in our in_progress
+   bucket but lives outside the dashboard's open_statuses literal list.
+
+================================================================================
+DO NOT TOUCH — verified untouched per spec
+================================================================================
+- StatusPill.jsx — approved still maps to bg-emerald-500 dot. (Acceptable;
+  the dot is small, color difference invisible.)
+- TaskDetailPage.js — uses tStatus(...) i18n proxy + literal compare with
+  task.status === 'approved'. Audit-trail surface; "אושר" stays correct here.
+- Backend audit fields, write-side branches, schema enums — unchanged.
+- i18n files (he/en/ar/zh) — "approved":"אושר"/"Approved"/etc. unchanged.
 
 ================================================================================
 VERIFY 1 — Backend syntax compile
 ================================================================================
 $ python3 -m compileall backend/contractor_ops/ -q
-✅ COMPILE PASS (no errors, no output)
+✅ COMPILE PASS
 
 ================================================================================
-VERIFY 1.5 — handover_router post-dedupe safety
+VERIFY 2 — STATUS_BUCKET_EXPANSION presence
 ================================================================================
-$ grep -c "TERMINAL_TASK_STATUSES\[" backend/contractor_ops/handover_router.py
-0  ✅ (no [N] indexing — sets don't support that)
-
-$ grep -cE "TERMINAL_TASK_STATUSES\.(index|count)" backend/contractor_ops/handover_router.py
-0  ✅ (no .index() or .count() — sets don't support those either)
-
-$ grep -n "list(TERMINAL_TASK_STATUSES)\|tuple(TERMINAL_TASK_STATUSES)" backend/contractor_ops/handover_router.py
-1420:                "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
-1456:                    "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
-✅ Both call sites pass `list(...)` to MongoDB `$nin` filter — order-independent,
-   safe regardless of underlying set vs. tuple semantics.
-
-$ grep -n "TERMINAL_TASK_STATUSES" backend/contractor_ops/handover_router.py
-8: from contractor_ops.constants import TERMINAL_TASK_STATUSES   ← new import
-1415: ... existing_defect.get("status") in TERMINAL_TASK_STATUSES   ← `in` membership, safe
-1420: ... "$nin": list(TERMINAL_TASK_STATUSES)                       ← list() wrap, safe
-1423: ... existing_defect.get("status") not in TERMINAL_TASK_STATUSES ← `in` membership, safe
-1456: ... "$nin": list(TERMINAL_TASK_STATUSES)                       ← list() wrap, safe
-✅ All 4 call sites set-safe.
+$ grep -n "STATUS_BUCKET_EXPANSION" backend/contractor_ops/tasks_router.py
+40:STATUS_BUCKET_EXPANSION = {
+239:        if status in STATUS_BUCKET_EXPANSION:
+240:            query['status'] = {'$in': STATUS_BUCKET_EXPANSION[status]}
+✅ 3 hits (≥2 required: 1 declaration + 2 usages in list_tasks).
 
 ================================================================================
-VERIFY 2 — Backend wide 'closed' grep — every surviving match classified
-================================================================================
-Excluded from this grep (per spec): TERMINAL_TASK_STATUSES refs, paired
-'closed','approved' lines (already correct), audit-field names like
-closed_at/closed_by/closed_today, internal counter names like closed_count/
-closed_defects/closed_statuses/closed_last7.
-
-KEEP — write/seed/test/audit-field/notification-event-name/output-schema-key:
-  test_e2e.py:105,107,114,116        | Test fixtures writing/asserting status
-                                       (test data, not aggregation logic).
-  test_notifications.py:259          | Test fixture writing 'closed'.
-  seed.py:29                         | STATUSES_SEQUENCE seed data.
-  notification_service.py:86         | Notification label map ('closed':'סגור').
-                                       Different concern from task display —
-                                       maps notification event name not
-                                       task aggregation.
-  demo_seed.py:78,79,461             | Demo seed writes status='closed'.
-  snapshot_cron.py:206               | Reads pre-aggregated 'closed' DICT KEY
-                                       produced upstream by stats_router (now
-                                       includes approved). Output schema key
-                                       name, not a status comparison.
-  schemas.py:14                      | TaskStatus.closed = "closed" enum value.
-                                       Write-side, intentional.
-  tasks_router.py:768                | Notification event name mapping
-                                       'closed':'status_closed'. Per spec KEEP.
-  tasks_router.py:1039               | new_status='closed' in normal-flow
-                                       approve branch. Per spec KEEP.
-  projects_router.py:1460            | Output dict key from compute_counts —
-                                       receives the COMBINED closed+approved
-                                       value because closed_statuses set was
-                                       fixed at line 1448. Output key name only.
-  stats_router.py:62                 | per_building dict output key from FIXED
-                                       aggregation pipeline (lines 56-58).
-                                       Output schema key.
-  stats_router.py:168                | contractor_map dict initialization key.
-                                       Output schema key — contractor_map.closed
-                                       is the running counter incremented at
-                                       FIXED line 174-175 (now 'closed','approved').
-  stats_router.py:211, 255           | 'new_status':'closed' write events for
-                                       audit log entries. Write-side, intentional.
-  stats_router.py:329, 337           | Reads contractor_map.closed counter
-                                       (FIXED). Output schema keys.
-  export_router.py:29, 42            | STATUS_LABELS/COLORS map entries for
-                                       'closed' — paired 'approved' entries
-                                       added at lines 33, 46. Already correct.
-  export_router.py:92                | filter routing: `filters.status=='closed'
-                                       and s not in CLOSED_STATUSES` — uses
-                                       FIXED CLOSED_STATUSES set.
-  export_router.py:1241              | status_labels bucket-name map
-                                       ('closed':'סגורים' as a UI bucket label,
-                                       not per-task status). Bucket conceptually
-                                       includes approved tasks via aggregation.
-
-EDIT-MISSED — none after Zahi pulled the 2 surviving findings into 5C scope:
-  ✅ projects_router.py:1229          | FIXED in FILE 3/12 sub-location 3b.
-                                        Re-grep confirms line now reads
-                                        'closed': by_status.get('closed', 0)
-                                          + by_status.get('approved', 0).
-  ✅ ProjectControlPage.js:3309       | FIXED in FILE 12/12. DEFECT_STATUS_CONFIG
-                                        now has paired 'approved' entry on
-                                        the line directly below 'closed'.
-
-NEEDS-REVIEW: none.
-
-================================================================================
-VERIFY 3 — Frontend build (re-run after the 2 added edits)
+VERIFY 3 — Frontend build
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.example.com CI=false yarn build
-✅ BUILD PASS — Done in 30.84s. "The build folder is ready to be deployed."
-   No new warnings introduced. (The bare `yarn build` failed with
-   "REACT_APP_BACKEND_URL is not set" — pre-existing dev-only check in
-   craco.config.js; deploy.sh sets this env var and the staging/prod build
-   succeeds normally.)
+✅ BUILD PASS — Done in 31.41s. "The build folder is ready to be deployed."
+   No NEW warnings introduced.
 
 ================================================================================
-VERIFY 4 — Frontend grep — confirm 'approved' added everywhere
+VERIFY 4 — Frontend grep — confirm 'אושר' label removed everywhere user-facing
 ================================================================================
-$ grep -c "approved:\|value: 'approved'" frontend/src/pages/UnitDetailPage.js
-2  ✅ (STATUS_LABELS entry + STATUS_FILTER_OPTIONS entry)
+$ grep -rn "label: 'אושר'\|'אושר'" frontend/src/pages/ frontend/src/components/ \
+    | grep -v ".test." | grep -v i18n
 
-$ grep -c "approved:\|'closed,approved'" frontend/src/pages/ProjectTasksPage.js
-3  ✅ (STATUS_CONFIG entry + 2 statusIn:'closed,approved' chips)
+  5 surviving matches — ALL classified KEEP (different domains, per DO NOT TOUCH):
 
-$ grep -c "statusIn: 'closed,approved'" frontend/src/pages/ProjectTasksPage.js
-2  ✅ (CONTRACTOR + MANAGER closed chips both fixed)
+  JoinRequestsPage.js:12     | { value: 'approved', label: 'אושר' }
+                               JoinRequest entity (membership join requests),
+                               not Task entity. Different domain.        KEEP
+  JoinRequestsPage.js:47     | approved: 'אושר' — same map.              KEEP
+  StageDetailPage.js:28      | approved: { label: 'אושר', ... }
+                               QC stage status (computed_status), not task
+                               status. Different entity.                  KEEP
+  StageDetailPage.js:475     | label: 'אושר' — same QC stage context.    KEEP
+  ProjectControlPage.js:2640 | accepted: { label: 'אושר', ... }
+                               `accepted` status badge (different field name
+                               than `approved`). Out of scope — distinct
+                               handover-related field.                    KEEP
 
-$ grep -c "approved:" frontend/src/components/StatusPill.jsx
-1  ✅
+$ Per-target-file confirmation:
+  UnitDetailPage.js:        'אושר' count = 0  ✅
+  ProjectTasksPage.js:      'אושר' count = 0  ✅
+  ApartmentDashboardPage.js:'אושר' count = 0  ✅
+  ProjectControlPage.js:    'אושר' count = 1  (line 2640 = `accepted`, not the
+                                                DEFECT_STATUS_CONFIG approved
+                                                we edited — that one is now
+                                                'סגור' on line 3313)  ✅
 
-$ grep -c "approved:" frontend/src/pages/ApartmentDashboardPage.js
-1  ✅
-
-$ grep -c "approved:" frontend/src/pages/ProjectControlPage.js
-1  ✅ (DEFECT_STATUS_CONFIG entry at line 3313)
-
-$ grep -n "by_status.get('closed', 0)" backend/contractor_ops/projects_router.py
-1229:            'closed': by_status.get('closed', 0) + by_status.get('approved', 0),
-   ✅ (per-unit KPI now combines both)
-
-================================================================================
-VERIFY 5 — Regression guard — other STATUS maps with 'closed:' but no 'approved:'
-================================================================================
-$ grep -rn "closed: {" frontend/src/pages/ frontend/src/components/ | head -30
-
-frontend/src/pages/TaskDetailPage.js:30                 ← FALSE POSITIVE
-   File already has `approved: { color: 'bg-green-100 text-green-700',
-   icon: CheckCircle }` at line 31 — grep just couldn't see it on the same
-   line as `closed:`. Color is bg-green vs bg-emerald (minor visual
-   inconsistency vs. UnitDetail/Apartment/ProjectTasks); acceptable.
-   Decision: KEEP, no edit.
-
-frontend/src/pages/ProjectControlPage.js:3309           ← FIXED in this batch
-   Inline DEFECT_STATUS_CONFIG was missing 'approved' entry. Zahi reviewed
-   the first-pass review.txt, rejected the 5E split, and pulled this fix
-   into 5C. Line 3313 now has the paired approved entry. ✅
-
-frontend/src/pages/UnitDetailPage.js:25                 ← FIXED in this batch
-   Line 29 has the new approved entry. ✅
-
-frontend/src/pages/ProjectTasksPage.js:28               ← FIXED in this batch
-   Line 32 has the new approved entry. ✅
-
-frontend/src/pages/ApartmentDashboardPage.js:41         ← FIXED in this batch
-   Line 45 has the new approved entry with key:'closed'. ✅
+$ Chip revert confirmation:
+  ProjectTasksPage.js:36: { key: 'closed', label: 'סגור', status: 'closed' }
+  ProjectTasksPage.js:47: { key: 'closed', label: 'סגור', status: 'closed' }
+  ✅ Both reverted to literal status (backend bucket now expands).
 
 ================================================================================
-VERIFY 6, 7 — Manual visual / E2E smoke
+VERIFY 4.5 — Bucket-expansion drift guard (new test file)
 ================================================================================
-SKIP — Zahi runs visually after staging deploy. Acceptance criteria per spec:
-  6. GroupedSelectField: trade-header row visually pops with bold + slate bg;
-     "חברות אחרות" header gets top border separator.
-  7. Force-close a defect via פאנל ניהול → return to UnitDetailPage:
-     - Badge shows "אושר" (green) NOT "פתוח" (red)
-     - KPI "סגורות" increments by 1
-     - "סגורים" filter count includes the just-closed task
-     Repeat with normal proof→approve flow → "סגור" green badge, also counts.
+$ cd backend && python3 -m pytest tests/test_status_buckets.py -v
+
+  tests/test_status_buckets.py::test_bucket_expansion_open_matches_dashboard         PASSED
+  tests/test_status_buckets.py::test_bucket_expansion_in_progress_matches_dashboard  PASSED
+  tests/test_status_buckets.py::test_bucket_expansion_closed_matches_dashboard_handled PASSED
+  tests/test_status_buckets.py::test_bucket_union_covers_all_dashboard_statuses      PASSED
+
+  ============================ 4 passed in 2.70s ============================
+✅ ALL 4 DRIFT-GUARD TESTS PASS.
 
 ================================================================================
-VERIFY 2 SURVIVING MATCHES — DECISIONS SUMMARY
+VERIFY 5 — Behavior smoke (Zahi runs visually on staging — not Replit)
 ================================================================================
-Total surviving matches: 28
-  KEEP:           28  (audit fields, write-side, output schema keys, paired
-                       closed+approved entries, test/seed fixtures, notification
-                       event maps, bucket-name UI labels — projects_router:1229
-                       AND ProjectControlPage:3309 now both have approved
-                       paired adjacent, classified KEEP under "paired entries")
-  EDIT-MISSED:     0  ✅ (the 2 surfaced in first pass were pulled into 5C)
-  NEEDS-REVIEW:    0
+After deploy, Zahi to confirm:
+  a. Project dashboard "פתוחים" KPI: shows N → click → list shows N
+     (includes open + assigned + reopened, no longer just open).
+  b. KPI "נסגרו": click → list includes force-closed tasks (closed + approved).
+  c. KPI "ביצוע": click → list includes all 5 in-progress sub-statuses.
+  d. KPI "לאישורי" (literal pending_manager_approval, not a bucket): click
+     → behavior unchanged (literal pass-through via else-branch).
+  e. UnitDetailPage filter dropdown: ONE "סגור" option (not two). Selecting
+     it returns both proof-approved and force-closed defects.
+  f. Defect badge for a force-closed defect: green "סגור" (not "אושר") on
+     UnitDetailPage / ProjectTasksPage / ApartmentDashboardPage / ProjectControlPage.
 
 ================================================================================
 COMMIT MESSAGE
 ================================================================================
-fix(tasks): treat status=approved as closed-equivalent for display + aggregation; polish dropdown headers
+fix(tasks): expand status query buckets in backend; unify approved/closed UI label
+
+(Full commit message in .local/.commit_message.)
 
 ================================================================================
 FOLLOW-UPS
 ================================================================================
-Already proposed alongside this batch (PENDING, blocked by #442 merge):
-  • Task #443 (5D): handover_router:2336 $nin should also exclude 'done'
-  • Task #444 (P1 BLOCKS LAUNCH): force_close → aggregation → reopen
-    regression tests (4 tests per spec lines 562-610)
-
-Task #445 (5E) — CANCELLED. Zahi reviewed the first-pass review.txt and
-correctly pulled both EDIT-MISSED findings into 5C scope rather than splitting
-them out, since (a) projects_router:1229 feeds the exact KPI card whose
-"סגורות 0" symptom triggered this whole batch, and (b) ProjectControlPage:3313
-is the management-panel page where force-close happens. Both are now FIXED
-in this batch (FILE 3 sub-location 3b, and FILE 12).
+- Task #443 (5D): handover_router:2336 $nin should also exclude 'done'
+- Task #444 (P1 BLOCKS LAUNCH): force_close → aggregation → reopen
+  regression suite (4 tests) — separate follow-up; this batch added a
+  drift-guard suite (4 tests) which is structurally distinct from #444.
+- No new follow-ups filed for 5F — the architectural gap is closed.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

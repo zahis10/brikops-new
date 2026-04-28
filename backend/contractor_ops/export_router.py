@@ -27,7 +27,7 @@ STATUS_LABEL = {
     'pending_manager_approval': 'ממתין לאישור מנהל',
     'returned_to_contractor': 'הוחזר לקבלן',
     'closed': 'סגור',
-    'approved': 'אושר',
+    'approved': 'סגור',
     'reopened': 'נפתח מחדש',
 }
 
