@@ -494,10 +494,7 @@ export default function OrgBillingPage() {
     } catch (err) {
       if (err.response?.status === 410) {
         toast.error('המנוי פג, נדרשת רכישה חדשה');
-        try {
-          const updated = await billingService.orgBilling(orgId);
-          setData(updated);
-        } catch {}
+        navigate(`/billing/org/${orgId}/checkout`);
       } else if (err.response?.status === 403) {
         toast.error('אין לך הרשאה לבצע פעולה זו.');
       } else {
@@ -719,14 +716,15 @@ export default function OrgBillingPage() {
     if (!data || loading) return;
     const params = new URLSearchParams(location.search);
     const focus = params.get('focus');
-    if ((focus === 'renew' || location.hash === '#renew') && renewRef.current) {
+    const isCheckoutPath = location.pathname.endsWith('/checkout');
+    if ((focus === 'renew' || location.hash === '#renew' || isCheckoutPath) && renewRef.current) {
       setTimeout(() => {
         renewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         renewRef.current?.classList.add('renew-highlight');
         setTimeout(() => renewRef.current?.classList.remove('renew-highlight'), 2000);
       }, 400);
     }
-  }, [data, loading, location.search, location.hash]);
+  }, [data, loading, location.search, location.hash, location.pathname]);
 
   useEffect(() => {
     if (data?.payment_config) {

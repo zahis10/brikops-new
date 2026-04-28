@@ -288,14 +288,6 @@ async def send_invoice_email(org_id: str, invoice: dict):
         logger.warning("[INVOICE-EMAIL] SMTP failed for org=%s: %s", org_id, e)
 
 
-# ----------------------------------------------------------------------------
-# Subscription cancellation / reactivation emails — mirror send_invoice_email.
-# All three guard on SMTP_USER/SMTP_PASS, resolve the recipient the same way
-# (manager_id user → owner/admin fallback), build MIMEMultipart('alternative')
-# with the same From/Reply-To headers, wrap with email_templates.wrap_email,
-# and try/except on SMTP send (log warning, do not raise).
-# ----------------------------------------------------------------------------
-
 async def _resolve_org_billing_recipient(org_id: str):
     """Mirror send_invoice_email recipient resolution.
     Returns (org_doc, owner_email, owner_name) — owner_email is None if no recipient.

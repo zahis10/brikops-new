@@ -234,6 +234,14 @@ const AppRoutes = () => {
           }
         />
         <Route
+          path="/billing/org/:orgId/checkout"
+          element={
+            <ProtectedRoute>
+              <OrgBillingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/admin/orgs"
           element={
             <ProtectedRoute requireSuperAdmin>

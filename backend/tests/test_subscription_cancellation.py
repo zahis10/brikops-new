@@ -1,20 +1,4 @@
-"""Subscription cancellation v1 tests — Israeli consumer-law compliance.
-
-8 regression tests for the cancel + reactivate endpoints in billing_router.py.
-The tests verify:
-  1. cancel sets auto_renew=False, cancelled_at, expires_at
-  2. cancel never invokes any PayPlus API (payplus_service mocked to raise)
-  3. cancel inserts a 'subscription_cancelled' audit_event with the reason
-  4. cancel is idempotent — calling on an already-cancelled sub returns 200
-  5. cancel returns 403 for users without billing_admin/org_admin/owner role
-  6. reactivate works while expires_at is in the future
-  7. reactivate returns HTTP 410 Gone when expires_at is in the past
-  8. the existing renewal cron query at billing_router.py:~931 still skips
-     subs with auto_renew=False (byte-identical filter shape).
-
-Pattern: same as test_billing.py:test_billing_checkout_rejects_founder_yearly —
-sync test functions that use asyncio.run() and motor for async DB wiring.
-"""
+"""Tests for subscription cancel + reactivate endpoints."""
 import asyncio
 import sys
 from pymongo import MongoClient
