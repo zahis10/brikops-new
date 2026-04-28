@@ -5,18 +5,22 @@ Task #435 + #436 — Israeli consumer-law compliance (חוק הגנת הצרכן
 Branch:         staging  (NOT main, NOT s7-full)
 Date:           2026-04-28
 Severity:       FEATURE — legal compliance + dead UI removal + comped-sub fix
-Files changed:  5 modified + 1 new  (6 total)
 Rollback SHA:   301404385620ee9d930c15d11ad3bea8c770eb37
-Diff size:      +1035 / -39 across 6 files
 
+Source files changed (6):
   Modified:
-    backend/contractor_ops/billing_router.py     (+168 lines, 2 endpoints)
-    backend/contractor_ops/invoicing.py          (+235 lines, 3 emails + 4 helpers)
-    frontend/src/pages/OrgBillingPage.js         (+210/-39 lines)
-    frontend/src/services/api.js                 (+16 lines)
-    frontend/src/App.js                          (+8 lines, /checkout route)
+    backend/contractor_ops/billing_router.py            (+160 lines, 2 endpoints)
+    backend/contractor_ops/invoicing.py                 (+227 lines, 3 emails + 4 helpers)
+    frontend/src/pages/OrgBillingPage.js                (+210/-39 lines)
+    frontend/src/services/api.js                        (+16 lines)
+    frontend/src/App.js                                 (+8 lines, /checkout route)
   New:
-    backend/tests/test_subscription_cancellation.py  (437 lines, 8 tests)
+    backend/tests/test_subscription_cancellation.py    (~400 lines, 8 tests)
+
+Also touched in git diff (deliverables / metadata):
+    review.txt                                          (this file)
+    .agents/agent_assets_metadata.toml                  (auto-touched by tooling)
+Total: 8 files in `git diff <rollback-sha>`.
 
 ================================================================================
 WHAT THIS REPORT COVERS
@@ -199,46 +203,13 @@ VERIFY #9 — no accidental edits to cron query or paywall
   (empty)
 
 ================================================================================
-MIGRATION — ZAHI MUST RUN BEFORE PROD DEPLOY (mongosh, against Atlas prod)
+MIGRATION — Zahi runs in mongosh BEFORE deploy (verbatim per spec)
 ================================================================================
 
-A — Pre-deploy count (run FIRST so you know the expected match count):
-    db.subscriptions.countDocuments({ auto_renew: { $exists: false } })
-    db.subscriptions.countDocuments({})
-
-B — Sample what's missing the field (sanity check):
-    db.subscriptions.find(
-      { auto_renew: { $exists: false } },
-      { _id: 0, org_id: 1, status: 1, paid_until: 1, plan_id: 1 }
-    ).limit(10)
-
-C — Critical: verify no subs are about to charge with missing auto_renew
-    (these would be silently EXCLUDED from the cron post-deploy if not
-    backfilled — that's exactly the bug the migration prevents):
-    db.subscriptions.find(
-      { auto_renew: { $exists: false }, status: 'active',
-        paid_until: { $lt: new Date(Date.now() + 7*24*60*60*1000).toISOString() } }
-    ).count()
-    → If > 0, those orgs need the migration FIRST or they will not be
-      auto-charged at next renewal.
-
-MIGRATION (the actual update — run AFTER A/B/C):
-    db.subscriptions.updateMany(
-      { auto_renew: { $exists: false } },
-      { $set: { auto_renew: true } }
-    )
-
-EXPECTED:
-    matchedCount === modifiedCount === count from A above.
-    If matched != modified → STOP, investigate, ask before deploying.
-
-DECISION TREE:
-    A == 0  → no migration needed, proceed with deploy.
-    A > 0 AND C == 0 → run the updateMany, then deploy.
-    A > 0 AND C > 0  → run the updateMany IMMEDIATELY (those orgs are at
-                       risk of missing their next renewal charge), verify
-                       matched == modified == A, then deploy.
-    matched != modified at any step → STOP, ping Zahi for review.
+  db.subscriptions.updateMany(
+    { auto_renew: { $exists: false } },
+    { $set: { auto_renew: true } }
+  )
 
 INFORMATIONAL — DEV DB state (NOT prod, do not act on this):
     9 of 13 subscriptions in dev DB are missing auto_renew.
@@ -338,16 +309,15 @@ AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 APPENDIX A — git diff vs rollback SHA (modified files)
 ================================================================================
 diff --git a/backend/contractor_ops/billing_router.py b/backend/contractor_ops/billing_router.py
-index 3c29071..400b198 100644
+index 3c29071..3f91207 100644
 --- a/backend/contractor_ops/billing_router.py
 +++ b/backend/contractor_ops/billing_router.py
-@@ -1894,3 +1894,171 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
+@@ -1894,3 +1894,170 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
      ).sort('resolved_at', -1).to_list(10)
  
      return {'requests': requests}
 +
 +
-+# ============================================================================
 +@router.post("/billing/org/{org_id}/cancel")
 +async def billing_cancel_subscription(org_id: str, request: Request, user: dict = Depends(get_current_user)):
 +    """Cancel auto-renewal for an org subscription. No PayPlus API calls — purely local DB.
@@ -1188,10 +1158,6 @@ new file mode 100644
 +    set_router_db(mdb)
 +    return mdb
 +
-+
-+# ============================================================================
-+# Test 1 — cancel sets auto_renew=False, cancelled_at, expires_at
-+# ============================================================================
 +def test_cancel_sets_auto_renew_to_false_and_expires_at(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from contractor_ops import billing_router as br
@@ -1230,10 +1196,6 @@ new file mode 100644
 +    finally:
 +        _cleanup(sync_db, org_id)
 +
-+
-+# ============================================================================
-+# Test 2 — cancel does NOT call PayPlus API
-+# ============================================================================
 +def test_cancel_does_NOT_call_payplus_api(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from contractor_ops import billing_router as br
@@ -1270,10 +1232,6 @@ new file mode 100644
 +    finally:
 +        _cleanup(sync_db, org_id)
 +
-+
-+# ============================================================================
-+# Test 3 — cancel inserts audit_event with reason
-+# ============================================================================
 +def test_cancel_inserts_audit_event_with_reason(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from contractor_ops import billing_router as br
@@ -1312,10 +1270,6 @@ new file mode 100644
 +    finally:
 +        _cleanup(sync_db, org_id)
 +
-+
-+# ============================================================================
-+# Test 4 — cancel is idempotent on already-cancelled subs
-+# ============================================================================
 +def test_cancel_idempotent_on_already_cancelled(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from contractor_ops import billing_router as br
@@ -1361,10 +1315,6 @@ new file mode 100644
 +    finally:
 +        _cleanup(sync_db, org_id)
 +
-+
-+# ============================================================================
-+# Test 5 — cancel returns 403 for users without billing role
-+# ============================================================================
 +def test_cancel_blocked_for_non_billing_admin(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from fastapi import HTTPException
@@ -1397,10 +1347,6 @@ new file mode 100644
 +        _cleanup(sync_db, org_id)
 +        sync_db.organization_memberships.delete_many({"user_id": user["id"], "org_id": org_id})
 +
-+
-+# ============================================================================
-+# Test 6 — reactivate works before expires_at
-+# ============================================================================
 +def test_reactivate_before_expiry_works(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from contractor_ops import billing_router as br
@@ -1440,10 +1386,6 @@ new file mode 100644
 +    finally:
 +        _cleanup(sync_db, org_id)
 +
-+
-+# ============================================================================
-+# Test 7 — reactivate returns 410 Gone after expires_at
-+# ============================================================================
 +def test_reactivate_after_expiry_returns_410(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from fastapi import HTTPException
@@ -1484,10 +1426,6 @@ new file mode 100644
 +        _cleanup(sync_db, org_id)
 +
 +
-+# ============================================================================
-+# Test 8 — renewal cron query (the existing one at billing_router.py:~931)
-+# still skips cancelled subs (auto_renew=False).
-+# ============================================================================
 +def test_renewal_cron_skips_cancelled_subs(monkeypatch):
 +    _enable_billing_v1(monkeypatch)
 +    from contractor_ops.billing import set_billing_db

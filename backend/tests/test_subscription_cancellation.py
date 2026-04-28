@@ -93,10 +93,6 @@ def _wire_mdb(set_billing_db, set_router_db):
     set_router_db(mdb)
     return mdb
 
-
-# ============================================================================
-# Test 1 — cancel sets auto_renew=False, cancelled_at, expires_at
-# ============================================================================
 def test_cancel_sets_auto_renew_to_false_and_expires_at(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from contractor_ops import billing_router as br
@@ -135,10 +131,6 @@ def test_cancel_sets_auto_renew_to_false_and_expires_at(monkeypatch):
     finally:
         _cleanup(sync_db, org_id)
 
-
-# ============================================================================
-# Test 2 — cancel does NOT call PayPlus API
-# ============================================================================
 def test_cancel_does_NOT_call_payplus_api(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from contractor_ops import billing_router as br
@@ -175,10 +167,6 @@ def test_cancel_does_NOT_call_payplus_api(monkeypatch):
     finally:
         _cleanup(sync_db, org_id)
 
-
-# ============================================================================
-# Test 3 — cancel inserts audit_event with reason
-# ============================================================================
 def test_cancel_inserts_audit_event_with_reason(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from contractor_ops import billing_router as br
@@ -217,10 +205,6 @@ def test_cancel_inserts_audit_event_with_reason(monkeypatch):
     finally:
         _cleanup(sync_db, org_id)
 
-
-# ============================================================================
-# Test 4 — cancel is idempotent on already-cancelled subs
-# ============================================================================
 def test_cancel_idempotent_on_already_cancelled(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from contractor_ops import billing_router as br
@@ -266,10 +250,6 @@ def test_cancel_idempotent_on_already_cancelled(monkeypatch):
     finally:
         _cleanup(sync_db, org_id)
 
-
-# ============================================================================
-# Test 5 — cancel returns 403 for users without billing role
-# ============================================================================
 def test_cancel_blocked_for_non_billing_admin(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from fastapi import HTTPException
@@ -302,10 +282,6 @@ def test_cancel_blocked_for_non_billing_admin(monkeypatch):
         _cleanup(sync_db, org_id)
         sync_db.organization_memberships.delete_many({"user_id": user["id"], "org_id": org_id})
 
-
-# ============================================================================
-# Test 6 — reactivate works before expires_at
-# ============================================================================
 def test_reactivate_before_expiry_works(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from contractor_ops import billing_router as br
@@ -345,10 +321,6 @@ def test_reactivate_before_expiry_works(monkeypatch):
     finally:
         _cleanup(sync_db, org_id)
 
-
-# ============================================================================
-# Test 7 — reactivate returns 410 Gone after expires_at
-# ============================================================================
 def test_reactivate_after_expiry_returns_410(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from fastapi import HTTPException
@@ -389,10 +361,6 @@ def test_reactivate_after_expiry_returns_410(monkeypatch):
         _cleanup(sync_db, org_id)
 
 
-# ============================================================================
-# Test 8 — renewal cron query (the existing one at billing_router.py:~931)
-# still skips cancelled subs (auto_renew=False).
-# ============================================================================
 def test_renewal_cron_skips_cancelled_subs(monkeypatch):
     _enable_billing_v1(monkeypatch)
     from contractor_ops.billing import set_billing_db

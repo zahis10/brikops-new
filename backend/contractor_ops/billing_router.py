@@ -1896,7 +1896,6 @@ async def get_recent_quota_updates(project_id: str, user: dict = Depends(get_cur
     return {'requests': requests}
 
 
-# ============================================================================
 @router.post("/billing/org/{org_id}/cancel")
 async def billing_cancel_subscription(org_id: str, request: Request, user: dict = Depends(get_current_user)):
     """Cancel auto-renewal for an org subscription. No PayPlus API calls — purely local DB.
