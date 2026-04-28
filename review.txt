@@ -221,10 +221,11 @@ PRE-FLIGHT QUERIES (run in order; record outputs):
             paid_until: 1, last_payment_at: 1 }
         ).limit(10)
 
-    Query C — count of subs that would be silently excluded from the
-              renewal cron and have ALREADY expired (highest urgency):
+    Query C — count of active subs that would be silently excluded from
+              the renewal cron and have ALREADY expired (highest urgency):
         db.subscriptions.countDocuments({
           auto_renew: { $exists: false },
+          status: 'active',
           paid_until: { $lt: new Date() }
         })
 
