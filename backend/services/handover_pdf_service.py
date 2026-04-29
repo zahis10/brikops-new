@@ -428,6 +428,18 @@ async def _build_template_context(protocol: dict, db) -> dict:
             meter_photo_keys[meter_type] = key_name
 
     legal_sections_raw = protocol.get("legal_sections", [])
+    logger.info(
+        f"[PDF] legal_sections diagnostic: protocol_id={protocol_id} "
+        f"protocol_type={protocol_type} count={len(legal_sections_raw)} "
+        f"section_titles={[ls.get('title', '?')[:40] for ls in legal_sections_raw]}"
+    )
+    if not legal_sections_raw:
+        logger.warning(
+            f"[PDF] No legal_sections on protocol {protocol_id} "
+            f"(type={protocol_type}). Page will not render. "
+            f"Likely cause: protocol created before template legal_sections were configured, "
+            f"or applies_to filter excluded protocol_type at creation time."
+        )
     legal_section_image_keys = {}
     for ls_idx, ls in enumerate(legal_sections_raw):
         sigs_obj = ls.get("signatures") or {}

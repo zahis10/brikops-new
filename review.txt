@@ -1,57 +1,81 @@
-═══════════════════════════════════════════════════════════════════
-  TASK #453 follow-up v3.2 — kitch/paint color collision fix
-  Status: READY FOR COMMIT · Branch: staging · Date: 29.04.2026
-═══════════════════════════════════════════════════════════════════
+PR: Handover PDF v3.3 — 7 staging fixes
+Task: #456
+Branch: staging
+Files changed:
+  - backend/templates/handover_protocol_pdf.html
+  - backend/services/handover_pdf_service.py
+  - attached_assets/handover_v3_render.html  (refreshed sample render)
 
-Single 2-line tweak per Zahi's v3.1 review note.
+================================================================
+WHAT WAS FIXED (mapped to your 7-item staging review)
+================================================================
 
-────────────────────────────────────────────────────────────────────
-🟡 .trade.kitch and .trade.paint had identical colors
-────────────────────────────────────────────────────────────────────
-In v3.1 both ended up with bg=#FCE7F3 / fg=#9D174D — visually
-indistinguishable in any protocol mixing מטבחים and צביעה items.
-The original spec colors for `kitch` (#FFEDD5 / #9A3412) had
-landed on `.trade.custom-6` by mistake.
+1) Photo cells — 3-up grid with explicit slate placeholders [P0]
+   • CSS .photo-row now `table-layout: fixed` with .cell at 33.33% (table-cell, vertical-align top, 0 4px padding).
+   • .photo is now `display: block; padding-bottom: 75%;` so each tile is a true 4:3 box that holds shape regardless of image presence.
+   • New .photo-empty: same 75% box, slate-1 fill, dashed slate-3 border, with `::after { content: "תמונה לא זמינה"; }` centered at 10px slate-5.
+   • Emit (defect-card photo-row) was rewritten to ALWAYS render exactly 3 cells via `range(3)` — fills with .photo when a photo exists at that index, .photo-empty otherwise. This guarantees the layout never collapses for defects with 0/1/2 photos.
 
-  ✓ Restored .trade.kitch    → #FFEDD5 / #9A3412 (warm peach,
-                                deep-orange text — spec)
-  ✓ Replaced .trade.custom-6 → #CFFAFE / #155E75 (light cyan,
-                                dark-cyan text — distinct from
-                                every other chip color)
+2) Defensive photo fallback (per-cell)
+   • Same emit change as (1): each `<div class="cell">` independently chooses .photo or .photo-empty based on `_ph[i]` truthiness — the row no longer breaks if individual array slots are None/empty strings.
 
-Programmatic uniqueness check across all 16 chip classes (10
-known + 6 custom buckets): **NO COLLISIONS** — every class now
-has a unique background + foreground recipe.
+3) Legal-sections page missing — diagnostic logging added [P0 — root-cause]
+   • handover_pdf_service.py @ ~line 433 now logs:
+       INFO  [PDF] legal_sections diagnostic: protocol_id=… protocol_type=… count=N section_titles=[…]
+       WARN  [PDF] No legal_sections on protocol … (type=…). Page will not render.
+              Likely cause: protocol created before template legal_sections were configured,
+              or applies_to filter excluded protocol_type at creation time.
+   • Why: legal_sections is a SNAPSHOT taken at protocol-creation in handover_router.py @898–1002 (filtered by `applies_to` from tpl.legal_sections, with org.handover_legal_sections fallback). Once the snapshot is taken it is NOT refreshed. The two staging cases that reproduce the missing page are exactly: (a) protocol created before the org/template had any legal_sections configured, or (b) `applies_to` on the configured sections did not include the protocol's `protocol_type`. The new logs make this visible per-render so the fix can land in protocol-creation/migration rather than the PDF service.
+   • No render-time fallback was added — that would mask a data bug. The next fresh handover PDF on staging will print one of the diagnostic lines and tell you which case you have.
 
-────────────────────────────────────────────────────────────────────
-LOCAL VERIFICATION
-────────────────────────────────────────────────────────────────────
-  ✓ Jinja parse                                       PASS
-  ✓ Render with all 4 trade categories side-by-side
-    (חשמל=elec, מטבחים=kitch, צביעה=paint, מיזוג=custom-1)
-                                                      PASS, 37,801 chars
-  ✓ All 7 spec checks PASS:
-       [✓] .trade.kitch restored to spec colors
-       [✓] .trade.custom-6 has new distinct colors
-       [✓] מטבחים chip → class="trade kitch"
-       [✓] צביעה chip → class="trade paint"   (visually distinct)
-       [✓] מיזוג chip → class="trade custom-1"
-       [✓] inline SVG check still in sigchip
-       [✓] JetBrains Mono fallback stack still present
+4) Singular / plural Hebrew labels (counts of 1)
+   • Cover-strip 4th cell: label now `דייר` when count=1, `דיירים` otherwise; value is the count.
+   • Tenants page heading: `דייר` (1) vs `דיירים` (≥2). Intro paragraph: `רוכש/ת אחד/ת מאשרים את קבלת הדירה…` (1) vs `{N} רוכשים מאשרים…`.
+   • Section room-summary banner: `נמצא ליקוי אחד בסעיף זה` (1) vs `נמצאו {N} ליקויים בסעיף זה` (≥2). 0 unchanged: `לא נמצאו ליקויים בסעיף זה`.
+   • Defects-summary intro: `סה״כ ליקוי פתוח אחד —` (1) vs `סה״כ {N} ליקויים פתוחים —` (≥2).
 
-────────────────────────────────────────────────────────────────────
-FILE TOUCHED
-────────────────────────────────────────────────────────────────────
-  backend/templates/handover_protocol_pdf.html  (2 lines)
+5) Tenants on dedicated page (Spec B — Single-Source) [Step 5 clarification]
+   • Removed the tenants block from the cover-body.
+   • Added a fresh page-break page right after cover with the standard page-header (.ph + brikops_logo_b64 + display_number), `TENANTS · דיירים` page-label, the singular/plural heading + intro paragraph (12.5px slate-7), and the .info-card.full block holding all .tenant rows.
+   • The .tenant-id-photos cells (front+back ID-photo placeholders) remain children of each tenant card and move with it to the new page — exactly as you specified in the clarification.
 
-────────────────────────────────────────────────────────────────────
-RENDERED HTML SAMPLE (refreshed)
-────────────────────────────────────────────────────────────────────
-  attached_assets/handover_v3_render.html
-       — full render with kitch + paint chips on the same page so
-         the new color separation is easy to eyeball.
+6) Cover-strip floor — duplicate "קומה" prefix removed
+   • Inline strip: `{%- if _floor_clean.startswith('קומה ') -%}{%- set _floor_clean = _floor_clean[5:]|trim -%}{%- endif -%}`. The strip's `קומה` label still says "קומה"; the value cell now shows just the number/identifier (e.g. `5` instead of `קומה 5`). Backwards-compatible: if the snapshot already stored just `5`, the value renders unchanged.
 
-═══════════════════════════════════════════════════════════════════
-  Awaiting Zahi's approval. Agent has NOT committed, NOT pushed,
-  NOT restarted any workflow, and NOT run ./deploy.sh.
-═══════════════════════════════════════════════════════════════════
+7) Body font 11.5 → 12.5 px (selective)
+   • Changed to 12.5px on body copy: .sev-top .sev-name, .tenant-info, table.items, .room-summary, .room-collapsed, .defects-table, .handed-table, .legal-block p, .defect-card-body .desc p, .notes-card, plus the four inline body intros (defects-summary, handed-items, legal-sections, signatures).
+   • KEPT at 11.5px (per your "headings + chip/numeric unchanged" guidance):
+       - .cover-meta b           (cover-hero bold meta)
+       - .cover-protocol         (cover-hero protocol id strip)
+       - .info-card h4           (section heading)
+       - .defect-card-head .id   (D-NN chip)
+   • Verified by `grep -c "11.5px" handover_protocol_pdf.html` → exactly 4 instances remain, all spec-keep.
+
+8) Per-card meter guarding (empty-meter card hidden) [Step 8 clarification]
+   • Outer `{% if %}` on the meters block now also checks `meter_water_photo_b64` and `meter_electricity_photo_b64` (was only checking readings).
+   • Each .meter card is wrapped in its OWN `{% if reading or photo_b64 %}` — so a water-only protocol now shows ONE card stretched across the .meters table (instead of one filled card + one empty stub), and same for an electricity-only protocol. If both are empty, the entire section is suppressed.
+
+================================================================
+SAMPLE RENDER (attached_assets/handover_v3_render.html, 38.7 KB)
+================================================================
+Fixture exercises every fix:
+  • 1 tenant → singular דייר label on cover-strip + tenants page
+  • floor_name="קומה 5" → cover value renders as just "5"
+  • 1 defect with 2 photos → defect card renders 3 .cell wrappers (2 .photo + 1 .photo-empty placeholder with "תמונה לא זמינה")
+  • section with fail=1 → "נמצא ליקוי אחד בסעיף זה"
+  • total_defects=1 → "סה״כ ליקוי פתוח אחד —"
+  • water meter only (electricity reading=None, photo=None) → only the water .meter card renders
+  • 1 legal_section → legal-sections page renders normally
+  • 12.5px body font count: 16 instances; 11.5px count: 4 (all spec-keep)
+
+================================================================
+STAGING VERIFY CHECKLIST FOR YOU
+================================================================
+After deploy:
+  1) Open the v3.3 handover PDF that previously showed the missing legal page. Tail backend logs and grep for `legal_sections diagnostic` — that one log line tells us whether the snapshot was empty (data fix needed) vs. populated (template fix needed).
+  2) Generate a handover for a unit with one tenant — confirm cover-strip says "דייר 1" and the dedicated tenants page heading is "דייר" (singular).
+  3) Generate a handover for a unit on `קומה 5` — cover-strip "קומה" cell value should read just "5".
+  4) Generate a defect with 1 photo — defect card grid should show 1 photo + 2 slate placeholders, all equal width.
+  5) Final-type protocol with only the water meter filled — should show ONE meter card, not a stub-pair.
+
+Standing rule reminder: I have NOT committed, restarted any workflow, or deployed. Awaiting your approval; you run git commit/push and ./deploy.sh to staging.

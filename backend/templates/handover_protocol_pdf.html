@@ -295,7 +295,7 @@ table { border-collapse: collapse; }
 }
 .sev-top .sev-name {
   display: table-cell; text-align: right;
-  font-size: 11.5px; font-weight: 600; color: var(--slate-7);
+  font-size: 12.5px; font-weight: 600; color: var(--slate-7);
 }
 .sev-top .sev-num {
   display: table-cell; text-align: left;
@@ -391,7 +391,7 @@ table { border-collapse: collapse; }
   display: table-cell;
   vertical-align: middle;
   padding-right: 12px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--slate-7);
   line-height: 1.5;
 }
@@ -520,7 +520,7 @@ table.items {
   border: 1px solid var(--slate-2);
   border-radius: 10px;
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: 12.5px;
   border-collapse: separate;
   border-spacing: 0;
   page-break-inside: auto;
@@ -625,7 +625,7 @@ table.items .note {
   background: var(--slate-1);
   color: var(--slate-7);
   border-radius: 8px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   page-break-inside: avoid;
 }
 .room-summary.clean { background: var(--green-soft); color: #166534; }
@@ -652,7 +652,7 @@ table.items .note {
   border-radius: 10px;
   background: var(--slate-1);
   color: var(--slate-7);
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-align: center;
 }
 
@@ -664,7 +664,7 @@ table.items .note {
   overflow: hidden;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 11.5px;
+  font-size: 12.5px;
   margin-bottom: 12px;
 }
 .defects-table thead th {
@@ -695,7 +695,7 @@ table.items .note {
   overflow: hidden;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 11.5px;
+  font-size: 12.5px;
   margin-bottom: 14px;
 }
 .handed-table th {
@@ -787,7 +787,7 @@ table.items .note {
 }
 .legal-block p {
   margin: 0 0 8px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.7;
   color: var(--slate-7);
 }
@@ -966,7 +966,7 @@ table.items .note {
 }
 .defect-card-body .desc p {
   margin: 0 0 8px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--ink);
   line-height: 1.6;
 }
@@ -975,22 +975,47 @@ table.items .note {
   width: 100%;
   border-spacing: 6px 0;
   margin-top: 8px;
+  table-layout: fixed;
 }
-.photo {
+.photo-row .cell {
   display: table-cell;
   width: 33.33%;
-  padding-bottom: 25%;
+  vertical-align: top;
+  padding: 0 4px;
+}
+.photo {
+  display: block;
   position: relative;
+  padding-bottom: 75%;
   border-radius: 8px;
   overflow: hidden;
-  background: var(--slate-1);
+  background: var(--paper);
   border: 1px solid var(--slate-2);
-  vertical-align: top;
 }
 .photo img {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
+  display: block;
+}
+.photo-empty {
+  display: block;
+  position: relative;
+  padding-bottom: 75%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--slate-1);
+  border: 1px dashed var(--slate-3);
+}
+.photo-empty::after {
+  content: "תמונה לא זמינה";
+  position: absolute; inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--slate-5);
+  text-align: center;
 }
 
 /* ---------- TENANT NOTES ---------- */
@@ -1000,7 +1025,7 @@ table.items .note {
   background: var(--paper);
   padding: 14px 16px;
   margin-top: 8px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--slate-7);
   line-height: 1.7;
   white-space: pre-wrap;
@@ -1074,11 +1099,16 @@ table.items .note {
     </div>
     {% endif %}
 
+    {%- set _floor_clean = (floor_name or '')|trim -%}
+    {%- if _floor_clean.startswith('קומה ') -%}
+      {%- set _floor_clean = _floor_clean[5:]|trim -%}
+    {%- endif -%}
+    {%- set _tenant_count = (tenants|default([]))|length -%}
     <div class="cover-card-strip">
       <div><div class="lab">בניין</div><div class="val">{{ building_name or '—' }}</div></div>
-      <div><div class="lab">קומה</div><div class="val">{{ floor_name or '—' }}</div></div>
+      <div><div class="lab">קומה</div><div class="val">{{ _floor_clean or '—' }}</div></div>
       <div><div class="lab">דירה</div><div class="val">{{ unit_name or unit_number or '—' }}</div></div>
-      <div><div class="lab">דיירים</div><div class="val">{{ (tenants|default([]))|length }}</div></div>
+      <div><div class="lab">{% if _tenant_count == 1 %}דייר{% else %}דיירים{% endif %}</div><div class="val">{{ _tenant_count }}</div></div>
     </div>
   </div>
 
@@ -1146,32 +1176,48 @@ table.items .note {
       </div>
     </div>
 
-    {% if tenants|default([]) %}
-    <h3 class="section-h" style="margin-top:18px">דיירים</h3>
-    <div class="info-card full">
-      {% for t in tenants %}
-      {% set tname = t.name|default('') %}
-      {% set initials = (tname|string)[:2] %}
-      <div class="tenant">
-        <div class="tenant-avatar">{{ initials }}</div>
-        <div class="tenant-info">
-          <div class="name">
-            {{ tname }}
-            <span class="role">{% if loop.index == 1 %}רוכש/ת ראשי/ת{% else %}רוכש/ת נוסף/ת{% endif %}</span>
-          </div>
-          {% if t.id_number %}ת״ז {{ t.id_number }}{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}
-        </div>
-        <div class="tenant-id-photos">
-          <div class="id-photo"><span class="lbl">ת.ז · קדמי</span></div>
-          <div class="id-photo"><span class="lbl">ת.ז · אחורי</span></div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
   </div>
 </div>
+
+{# tenants on dedicated page (moved out of cover per Spec B Single-Source) #}
+{% if tenants|default([]) %}
+<div class="page-break">
+  <div class="ph">
+    <div class="ph-left">
+      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
+      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
+    </div>
+    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
+  </div>
+
+  <div class="page-label">TENANTS · דיירים</div>
+  {% set _tenant_count_pg = tenants|length %}
+  <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">{% if _tenant_count_pg == 1 %}דייר{% else %}דיירים{% endif %}</h2>
+  <p style="font-size:12.5px;color:var(--slate-7);margin:0 0 14px">
+    {% if _tenant_count_pg == 1 %}רוכש/ת אחד/ת{% else %}{{ _tenant_count_pg }} רוכשים{% endif %} מאשרים את קבלת הדירה כמתואר בפרוטוקול זה.
+  </p>
+  <div class="info-card full">
+    {% for t in tenants %}
+    {% set tname = t.name|default('') %}
+    {% set initials = (tname|string)[:2] %}
+    <div class="tenant">
+      <div class="tenant-avatar">{{ initials }}</div>
+      <div class="tenant-info">
+        <div class="name">
+          {{ tname }}
+          <span class="role">{% if loop.index == 1 %}רוכש/ת ראשי/ת{% else %}רוכש/ת נוסף/ת{% endif %}</span>
+        </div>
+        {% if t.id_number %}ת״ז {{ t.id_number }}{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}
+      </div>
+      <div class="tenant-id-photos">
+        <div class="id-photo"><span class="lbl">ת.ז · קדמי</span></div>
+        <div class="id-photo"><span class="lbl">ת.ז · אחורי</span></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 {# TOC + defects summary #}
 <div class="page-break">
@@ -1213,8 +1259,9 @@ table.items .note {
 
   <div style="height:18px"></div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px;">סיכום ליקויים</h2>
-  <p style="font-size:11.5px;color:var(--slate-7);margin:0 0 12px;">
-    סה״כ <b style="color:var(--ink)">{{ total_defects|default(0) }} ליקויים</b> פתוחים —
+  {%- set _td = total_defects|default(0) -%}
+  <p style="font-size:12.5px;color:var(--slate-7);margin:0 0 12px;">
+    סה״כ {% if _td == 1 %}<b style="color:var(--ink)">ליקוי פתוח אחד</b>{% else %}<b style="color:var(--ink)">{{ _td }} ליקויים</b> פתוחים{% endif %} —
     מתוכם <b style="color:var(--red)">{{ (defect_severity_counts|default({})).get('critical', 0) }} קריטי</b>,
     <b style="color:var(--amber)">{{ (defect_severity_counts|default({})).get('normal', 0) }} רגיל</b>,
     <b style="color:var(--blue)">{{ (defect_severity_counts|default({})).get('cosmetic', 0) }} קוסמטי</b>.
@@ -1314,7 +1361,7 @@ table.items .note {
 
     <div class="room-summary {% if sec_defects == 0 %}clean{% else %}bad{% endif %}">
       <span class="sym">{% if sec_defects == 0 %}✓{% else %}!{% endif %}</span>
-      {% if sec_defects == 0 %}לא נמצאו ליקויים בסעיף זה{% else %}נמצאו {{ sec_defects }} ליקויים בסעיף זה{% endif %}
+      {% if sec_defects == 0 %}לא נמצאו ליקויים בסעיף זה{% elif sec_defects == 1 %}נמצא ליקוי אחד בסעיף זה{% else %}נמצאו {{ sec_defects }} ליקויים בסעיף זה{% endif %}
     </div>
 
     {# Defect detail cards (with photos) for items in this section #}
@@ -1341,7 +1388,8 @@ table.items .note {
           </div>
           {% endif %}
           <div class="photo-row">
-            {% for p in it.photos %}{% if p %}<div class="photo"><img src="{{ p }}" alt=""></div>{% endif %}{% endfor %}
+            {%- set _ph = (it.photos or [])|list -%}
+            {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo"><img src="{{ p }}" alt=""></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
           </div>
         </div>
       </div>
@@ -1370,7 +1418,7 @@ table.items .note {
 
   {% if delivered_items|default([]) %}
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 4px">פריטים שנמסרו</h2>
-  <p style="font-size:11.5px;color:var(--slate-7);margin:0 0 12px">הרוכש מאשר את קבלת הפריטים הבאים בכמויות המצוינות.</p>
+  <p style="font-size:12.5px;color:var(--slate-7);margin:0 0 12px">הרוכש מאשר את קבלת הפריטים הבאים בכמויות המצוינות.</p>
   <table class="handed-table">
     <thead>
       <tr>
@@ -1393,21 +1441,25 @@ table.items .note {
   </table>
   {% endif %}
 
-  {% if meter_water_reading or meter_electricity_reading %}
+  {% if meter_water_reading or meter_water_photo_b64 or meter_electricity_reading or meter_electricity_photo_b64 %}
   <h3 class="section-h" style="margin-top:22px">קריאות מונים</h3>
   <div class="meters">
+    {% if meter_water_reading or meter_water_photo_b64 %}
     <div class="meter water">
       <div class="icon">מ</div>
       <div class="lab">מים — מ״ק</div>
       <div class="val">{{ meter_water_reading or '—' }}</div>
       {% if meter_water_photo_b64 %}<div class="photo"><img src="{{ meter_water_photo_b64 }}" alt=""></div>{% endif %}
     </div>
+    {% endif %}
+    {% if meter_electricity_reading or meter_electricity_photo_b64 %}
     <div class="meter elec">
       <div class="icon">ח</div>
       <div class="lab">חשמל — קוט״ש</div>
       <div class="val">{{ meter_electricity_reading or '—' }}</div>
       {% if meter_electricity_photo_b64 %}<div class="photo"><img src="{{ meter_electricity_photo_b64 }}" alt=""></div>{% endif %}
     </div>
+    {% endif %}
   </div>
   {% endif %}
 </div>
@@ -1426,7 +1478,7 @@ table.items .note {
 
   <div class="page-label">LEGAL DECLARATIONS · נסחים משפטיים</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">נסחים משפטיים</h2>
-  <p style="font-size:11.5px;color:var(--slate-7);margin:0 0 18px">
+  <p style="font-size:12.5px;color:var(--slate-7);margin:0 0 18px">
     נסחים אלה מהווים חלק בלתי נפרד מהסכם המכר וחתומים על ידי הרוכשים במעמד המסירה.
   </p>
 
@@ -1484,7 +1536,7 @@ table.items .note {
 
   <div class="page-label">SIGNATURES · חתימות</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">חתימות מסירה</h2>
-  <p style="font-size:11.5px;color:var(--slate-7);margin:0 0 12px">
+  <p style="font-size:12.5px;color:var(--slate-7);margin:0 0 12px">
     כל הצדדים מאשרים בחתימתם את ביצוע הביקור, נכונות הליקויים שתועדו, ואת מסירת המפתחות.
   </p>
 
