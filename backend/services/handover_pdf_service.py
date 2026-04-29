@@ -40,6 +40,14 @@ _MAX_IMAGE_WIDTH = 300
 _PHOTO_THUMB_WIDTH = 150
 _JPEG_QUALITY = 65
 
+# Per-tier image targets (v3 template) — width in px, JPEG quality 1-95.
+_DEFECT_PHOTO_WIDTH = 600
+_DEFECT_PHOTO_QUALITY = 75
+_METER_PHOTO_WIDTH = 800
+_METER_PHOTO_QUALITY = 80
+_SIGNATURE_WIDTH = 300
+_SIGNATURE_QUALITY = 85
+
 _b64_cache = {}
 _B64_CACHE_TTL = 900
 
@@ -146,7 +154,7 @@ def _sanitize_filename(text: str) -> str:
     return ascii_safe or "unknown"
 
 
-async def _fetch_image_as_base64(url: str, session=None, max_width=None) -> Optional[str]:
+async def _fetch_image_as_base64(url: str, session=None, max_width=None, jpeg_quality=None) -> Optional[str]:
     if not url:
         return None
     try:
@@ -164,7 +172,7 @@ async def _fetch_image_as_base64(url: str, session=None, max_width=None) -> Opti
                         return None
                     data = await resp.read()
 
-        data = _resize_image(data, max_width=max_width)
+        data = _resize_image(data, max_width=max_width, jpeg_quality=jpeg_quality)
         content_type = "image/jpeg"
         if data[:4] == b'\x89PNG':
             content_type = "image/png"
@@ -175,9 +183,11 @@ async def _fetch_image_as_base64(url: str, session=None, max_width=None) -> Opti
         return None
 
 
-def _resize_image(data: bytes, max_width=None) -> bytes:
+def _resize_image(data: bytes, max_width=None, jpeg_quality=None) -> bytes:
     if max_width is None:
         max_width = _MAX_IMAGE_WIDTH
+    if jpeg_quality is None:
+        jpeg_quality = _JPEG_QUALITY
     try:
         from PIL import Image
         img = Image.open(io.BytesIO(data))
@@ -192,7 +202,7 @@ def _resize_image(data: bytes, max_width=None) -> bytes:
         elif img.mode != 'RGB':
             img = img.convert('RGB')
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=_JPEG_QUALITY, optimize=True)
+        img.save(buf, format='JPEG', quality=jpeg_quality, optimize=True)
         return buf.getvalue()
     except Exception:
         return data
@@ -213,12 +223,12 @@ def _local_image_to_base64(file_path: str) -> Optional[str]:
         return None
 
 
-async def _fetch_local_or_remote_image(stored_ref: str, session=None, max_width=None) -> Optional[str]:
+async def _fetch_local_or_remote_image(stored_ref: str, session=None, max_width=None, jpeg_quality=None) -> Optional[str]:
     if not stored_ref:
         return None
 
     now = time.time()
-    cache_key = f"{stored_ref}:{max_width or 'default'}"
+    cache_key = f"{stored_ref}:{max_width or 'default'}:{jpeg_quality or 'default'}"
     cached = _b64_cache.get(cache_key)
     if cached and (now - cached[1]) < _B64_CACHE_TTL:
         return cached[0]
@@ -228,7 +238,7 @@ async def _fetch_local_or_remote_image(stored_ref: str, session=None, max_width=
     result = None
     if stored_ref.startswith("s3://"):
         url = generate_url(stored_ref)
-        result = await _fetch_image_as_base64(url, session, max_width=max_width)
+        result = await _fetch_image_as_base64(url, session, max_width=max_width, jpeg_quality=jpeg_quality)
     elif stored_ref.startswith("/api/uploads/"):
         rel_path = stored_ref[len("/api/uploads/"):]
         uploads_root = (_BACKEND_DIR / "uploads").resolve()
@@ -408,9 +418,20 @@ async def _build_template_context(protocol: dict, db) -> dict:
         async with aiohttp.ClientSession() as session:
             fetch_tasks = []
             for key_name, stored_ref in image_keys:
-                is_photo = key_name.startswith("photo_")
-                mw = _PHOTO_THUMB_WIDTH if is_photo else None
-                fetch_tasks.append(_fetch_local_or_remote_image(stored_ref, session, max_width=mw))
+                # Per-tier compression targets for v3 template (handover PDF redesign):
+                #  - defect photos (photo_*)         → 600px / Q75
+                #  - meter photos    (meter_*_photo) → 800px / Q80
+                #  - signatures      (sig_*, legal_sig_*) → 300px / Q85
+                #  - logo                            → defaults
+                if key_name.startswith("photo_"):
+                    mw, q = _DEFECT_PHOTO_WIDTH, _DEFECT_PHOTO_QUALITY
+                elif key_name.startswith("meter_") and key_name.endswith("_photo"):
+                    mw, q = _METER_PHOTO_WIDTH, _METER_PHOTO_QUALITY
+                elif key_name.startswith("sig_") or key_name.startswith("legal_sig_"):
+                    mw, q = _SIGNATURE_WIDTH, _SIGNATURE_QUALITY
+                else:
+                    mw, q = None, None
+                fetch_tasks.append(_fetch_local_or_remote_image(stored_ref, session, max_width=mw, jpeg_quality=q))
 
             results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
             for i, (key_name, _) in enumerate(image_keys):

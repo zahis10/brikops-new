@@ -1,934 +1,185 @@
-================================================================================
-BATCH 5K — COMPLETE DIFF (full code, both files, before/after)
-================================================================================
-Task #451 | Branch: staging | Date: 2026-04-29
-2 files changed | 4 sub-edits
-
-================================================================================
-SECTION A — UNIFIED DIFF (changed lines only)
-================================================================================
-
---- a/frontend/src/pages/QCFloorSelectionPage.js
-+++ b/frontend/src/pages/QCFloorSelectionPage.js
-@@ -323,7 +323,7 @@
-             return (
-               <button
-                 key={building.id}
--                onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc`)}
-+                onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc?from=qc`)}
-                 className={`w-full bg-white rounded-xl border border-slate-100 ${stats.accentBorder} px-4 py-3.5 hover:border-amber-200 hover:shadow transition-all text-right`}
-               >
-                 <div className="flex items-center justify-between">
-
-
---- a/frontend/src/pages/BuildingQCPage.js
-+++ b/frontend/src/pages/BuildingQCPage.js
-@@ -1,5 +1,5 @@
- import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
--import { useParams, useNavigate } from 'react-router-dom';
-+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
- import { projectService, qcService } from '../services/api';
- import { qcFloorStatusLabel } from '../utils/qcLabels';
- import { getFloorBadgeVisualStatus } from '../utils/qcVisualStatus';
-
-@@ -64,6 +64,7 @@
- export default function BuildingQCPage() {
-   const { projectId, buildingId } = useParams();
-   const navigate = useNavigate();
-+  const [searchParams] = useSearchParams();
-
-   const [loading, setLoading] = useState(true);
-   const [building, setBuilding] = useState(null);
-
-@@ -77,8 +78,12 @@
-   const seqRef = useRef(0);
-
-   const handleBack = useCallback(() => {
--    navigate(`/projects/${projectId}/buildings/${buildingId}`);
--  }, [navigate, projectId, buildingId]);
-+    if (searchParams.get('from') === 'qc') {
-+      navigate(`/projects/${projectId}/qc`);
-+    } else {
-+      navigate(`/projects/${projectId}/buildings/${buildingId}`);
-+    }
-+  }, [navigate, projectId, buildingId, searchParams]);
-
-   const load = useCallback(async () => {
-     if (abortRef.current) abortRef.current.abort();
-
-
-================================================================================
-SECTION B — BEFORE/AFTER PER SUB-EDIT
-================================================================================
-
->>> EDIT 1 of 4 — QCFloorSelectionPage.js, line 326 (building card onClick)
-
-  BEFORE:
-    onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc`)}
-
-  AFTER:
-    onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc?from=qc`)}
-
-
->>> EDIT 2 of 4 — BuildingQCPage.js, line 2 (react-router-dom import)
-
-  BEFORE:
-    import { useParams, useNavigate } from 'react-router-dom';
-
-  AFTER:
-    import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-
-
->>> EDIT 3 of 4 — BuildingQCPage.js, line 67 (new destructure after useNavigate)
-
-  BEFORE (lines 64-68):
-    export default function BuildingQCPage() {
-      const { projectId, buildingId } = useParams();
-      const navigate = useNavigate();
-
-      const [loading, setLoading] = useState(true);
-
-  AFTER (lines 64-69):
-    export default function BuildingQCPage() {
-      const { projectId, buildingId } = useParams();
-      const navigate = useNavigate();
-      const [searchParams] = useSearchParams();
-
-      const [loading, setLoading] = useState(true);
-
-
->>> EDIT 4 of 4 — BuildingQCPage.js, lines 80-86 (handleBack body)
-
-  BEFORE (lines 79-81):
-      const handleBack = useCallback(() => {
-        navigate(`/projects/${projectId}/buildings/${buildingId}`);
-      }, [navigate, projectId, buildingId]);
-
-  AFTER (lines 80-86):
-      const handleBack = useCallback(() => {
-        if (searchParams.get('from') === 'qc') {
-          navigate(`/projects/${projectId}/qc`);
-        } else {
-          navigate(`/projects/${projectId}/buildings/${buildingId}`);
-        }
-      }, [navigate, projectId, buildingId, searchParams]);
-
-
-  (No change to the 5 visible back-arrow elements at lines 213, 238, 256, 267, 281
-   — they all reuse handleBack and become smart automatically.)
-
-
-================================================================================
-SECTION C — FULL FINAL CODE: frontend/src/pages/QCFloorSelectionPage.js
-================================================================================
-(378 lines total — only line 326 changed. The full file as it sits now:)
-
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { projectService, qcService } from '../services/api';
-import HamburgerMenu from '../components/HamburgerMenu';
-import NotificationBell from '../components/NotificationBell';
-
-import {
-  ArrowRight, Loader2, ClipboardCheck, Building2, Search,
-  AlertCircle, ChevronLeft, ChevronDown, BarChart3
-} from 'lucide-react';
-
-const getFloorBadge = (qcData) => {
-  if (!qcData) return 'not_started';
-  if (typeof qcData === 'string') return qcData;
-  return qcData.badge || 'not_started';
-};
-
-
-
-export default function QCFloorSelectionPage() {
-  const { projectId } = useParams();
-  const navigate = useNavigate();
-  const { logout } = useAuth();
-
-  const [loading, setLoading] = useState(true);
-  const [hierarchy, setHierarchy] = useState([]);
-  const [qcStatuses, setQcStatuses] = useState({});
-  const [projectName, setProjectName] = useState('');
-  const [search, setSearch] = useState('');
-  const [loadError, setLoadError] = useState(null);
-  const [batchStatusError, setBatchStatusError] = useState(false);
-  const [execSummary, setExecSummary] = useState(null);
-  const storageKey = `qc_summary_collapsed_${projectId}`;
-  const [summaryCollapsed, setSummaryCollapsed] = useState(() => {
-    try { return sessionStorage.getItem(storageKey) === '1'; } catch { return false; }
-  });
-  const abortRef = useRef(null);
-  const seqRef = useRef(0);
-
-  useEffect(() => {
-    try { setSummaryCollapsed(sessionStorage.getItem(storageKey) === '1'); } catch { setSummaryCollapsed(false); }
-  }, [storageKey]);
-
-  const load = useCallback(async () => {
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const seq = ++seqRef.current;
-    const signal = controller.signal;
-
-    setHierarchy([]);
-    setQcStatuses({});
-    setExecSummary(null);
-    setLoading(true);
-    setLoadError(null);
-    setBatchStatusError(false);
-
-    try {
-      const data = await projectService.getHierarchy(projectId, { signal });
-      if (signal.aborted || seqRef.current !== seq) return;
-
-      const buildings =
-        Array.isArray(data) ? data :
-        Array.isArray(data?.buildings) ? data.buildings :
-        Array.isArray(data?.items) ? data.items :
-        [];
-      setHierarchy(buildings);
-
-      if (data?.project_name) setProjectName(data.project_name);
-
-      qcService.getExecutionSummary(projectId).then(result => {
-        if (!signal.aborted && seqRef.current === seq) setExecSummary(result);
-      }).catch(() => {});
-
-      const floorIds = [];
-      buildings.forEach(b => (b.floors || []).forEach(f => floorIds.push(f.id)));
-      if (floorIds.length > 0) {
-        try {
-          const statuses = await qcService.getFloorsBatchStatus(floorIds, { projectId, signal });
-          if (signal.aborted || seqRef.current !== seq) return;
-          setQcStatuses(statuses);
-        } catch (batchErr) {
-          if (signal.aborted || seqRef.current !== seq) return;
-          console.error('[QC] batch-status failed', batchErr);
-          setBatchStatusError(true);
-        }
-      }
-    } catch (err) {
-      if (signal.aborted || seqRef.current !== seq) return;
-      console.error('Failed to load hierarchy', err);
-      const status = err?.response?.status;
-      setLoadError(status === 403 ? 'forbidden' : 'error');
-    } finally {
-      if (!signal.aborted && seqRef.current === seq) setLoading(false);
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    load();
-    return () => { if (abortRef.current) abortRef.current.abort(); };
-  }, [load]);
-
-  const buildingStats = useMemo(() => {
-    const stats = {};
-    hierarchy.forEach(b => {
-      const floors = b.floors || [];
-      const counts = {};
-      let totalItems = 0;
-      let passItems = 0;
-      let failingFloors = 0;
-      floors.forEach(f => {
-        const qd = qcStatuses[f.id];
-        const st = getFloorBadge(qd);
-        const normalized = st === 'submitted' ? 'pending_review' : st;
-        counts[normalized] = (counts[normalized] || 0) + 1;
-        if (normalized === 'rejected' || (qd?.fail_count || 0) > 0) failingFloors++;
-        if (qd && typeof qd === 'object' && qd.total > 0) {
-          totalItems += qd.total;
-          passItems += qd.pass_count || 0;
-        } else if (normalized === 'approved') {
-          totalItems += 1;
-          passItems += 1;
-        } else if (normalized !== 'not_started') {
-          totalItems += 1;
-        }
-      });
-      const floorCount = floors.length;
-      const progressPct = totalItems > 0 ? Math.round((passItems / totalItems) * 100) : 0;
-      const accentBorder = progressPct === 100 ? 'border-r-4 border-green-400' : progressPct > 50 ? 'border-r-4 border-blue-400' : progressPct > 0 ? 'border-r-4 border-amber-400' : 'border-r-4 border-slate-300';
-      const ringColor = progressPct === 100 ? '#22C55E' : progressPct > 50 ? '#3B82F6' : progressPct > 0 ? '#F59E0B' : '#CBD5E1';
-      stats[b.id] = { floorCount, counts, failingFloors, progressPct, accentBorder, ringColor };
-    });
-    return stats;
-  }, [hierarchy, qcStatuses]);
-
-  const filteredBuildings = useMemo(() => {
-    if (!search.trim()) return hierarchy;
-    const q = search.trim().toLowerCase();
-    return hierarchy.filter(b => (b.name || '').toLowerCase().includes(q));
-  }, [hierarchy, search]);
-
-  const globalStats = useMemo(() => {
-    let pending = 0, inProgress = 0, approved = 0, rejected = 0;
-    hierarchy.forEach(b => {
-      const s = buildingStats[b.id]?.counts || {};
-      approved += s.approved || 0;
-      inProgress += (s.in_progress || 0) + (s.pending_review || 0);
-      rejected += buildingStats[b.id]?.failingFloors || 0;
-      pending += s.not_started || 0;
-    });
-    return { pending, inProgress, approved, rejected };
-  }, [hierarchy, buildingStats]);
-
-  const totalFloors = hierarchy.reduce((s, b) => s + (b.floors?.length || 0), 0);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
-        <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
-      </div>
-    );
-  }
-
-  const headerBlock = (
-    <div className="bg-slate-800 text-white sticky top-0 z-30">
-      <div className="max-w-2xl mx-auto px-4 py-3">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate(`/projects/${projectId}/control`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
-            <ArrowRight className="w-5 h-5" />
-          </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base font-bold flex items-center gap-2">
-              <ClipboardCheck className="w-4 h-4 text-amber-400" />
-              בקרת ביצוע
-            </h1>
-            {projectName && (
-              <p className="text-[11px] text-slate-400 truncate">{projectName}</p>
-            )}
-          </div>
-          <NotificationBell />
-          <HamburgerMenu slim onNavigate={(path) => navigate(path)} onLogout={() => { logout(); navigate('/login'); }} />
-        </div>
-      </div>
-    </div>
-  );
-
-  if (loadError) {
-    return (
-      <div className="min-h-screen bg-slate-50" dir="rtl">
-        {headerBlock}
-        <div className="max-w-2xl mx-auto px-4 py-12 text-center">
-          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
-          {loadError === 'forbidden' ? (
-            <p className="text-slate-600 font-medium">אין הרשאה לצפייה בבקרת ביצוע</p>
-          ) : (
-            <>
-              <p className="text-slate-600 font-medium mb-4">לא הצלחנו לטעון מבנים</p>
-              <button onClick={load} className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors">
-                נסה שוב
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (hierarchy.length === 0 || totalFloors === 0) {
-    return (
-      <div className="min-h-screen bg-slate-50" dir="rtl">
-        {headerBlock}
-        <div className="max-w-2xl mx-auto px-4 py-12 text-center">
-          <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 mb-4">צריך להקים מבנה וקומות כדי להתחיל בקרת ביצוע</p>
-          <button
-            onClick={() => navigate(`/projects/${projectId}/control?tab=structure`)}
-            className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-sm transition-colors"
-          >
-            הקמה מהירה
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50" dir="rtl">
-      {headerBlock}
-
-      <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
-        {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
-          <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-            <button
-              onClick={() => {
-                const next = !summaryCollapsed;
-                setSummaryCollapsed(next);
-                try { sessionStorage.setItem(storageKey, next ? '1' : '0'); } catch {}
-              }}
-              className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-indigo-500" />
-                <span className="text-sm font-bold text-slate-700">סטטוס ביצוע כללי</span>
-                <span className="text-xs font-semibold text-indigo-600">{execSummary.overall.completion_pct}%</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${summaryCollapsed ? '' : 'rotate-180'}`} />
-            </button>
-            {!summaryCollapsed && (
-              <div className="px-4 pb-3 space-y-1.5">
-                {execSummary.stages.map(stage => {
-                  const pct = stage.completion_pct;
-                  const barBg = pct === 100 ? '#10b981' : pct >= 50 ? '#f59e0b' : pct > 0 ? '#6366f1' : '#cbd5e1';
-                  return (
-                    <div key={stage.stage_id} className="flex items-center gap-2">
-                      <span className="text-sm w-5 text-center shrink-0">{stage.icon}</span>
-                      <span className="text-xs text-slate-600 w-28 truncate shrink-0">{stage.title}</span>
-                      <div className="flex-1 bg-slate-100 rounded-full h-1.5">
-                        <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barBg }} />
-                      </div>
-                      <span className="text-[11px] text-slate-400 w-14 text-left shrink-0">{stage.completed}/{stage.total} {stage.entity_label}</span>
-                    </div>
-                  );
-                })}
-                <div className="text-[11px] text-slate-400 text-center pt-1 border-t border-slate-100">
-                  {execSummary.overall.completed}/{execSummary.overall.total} שלבים הושלמו ({execSummary.overall.completion_pct}%)
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="grid grid-cols-4 gap-2 text-center">
-          <div className="bg-slate-50 rounded-lg p-2">
-            <div className="text-lg font-bold text-slate-500">{globalStats.pending}</div>
-            <div className="text-[10px] text-slate-500 font-medium">בהמתנה</div>
-          </div>
-          <div className="bg-red-50 rounded-lg p-2">
-            <div className="text-lg font-bold text-red-500">{globalStats.rejected}</div>
-            <div className="text-[10px] text-red-500 font-medium">נכשלו</div>
-          </div>
-          <div className="bg-amber-50 rounded-lg p-2">
-            <div className="text-lg font-bold text-amber-500">{globalStats.inProgress}</div>
-            <div className="text-[10px] text-amber-600 font-medium">בביצוע</div>
-          </div>
-          <div className="bg-emerald-50 rounded-lg p-2">
-            <div className="text-lg font-bold text-emerald-600">{globalStats.approved}</div>
-            <div className="text-[10px] text-emerald-600 font-medium">הושלמו</div>
-          </div>
-        </div>
-
-        <p className="text-[11px] text-slate-400 px-1">
-          {hierarchy.length} מבנים · {totalFloors} קומות
-        </p>
-
-        {hierarchy.length > 3 && (
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="חיפוש מבנה..."
-              className="w-full pr-9 pl-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-amber-300"
-              dir="rtl"
-            />
-          </div>
-        )}
-
-        {batchStatusError && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700" dir="rtl">
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>סטטוסים לא זמינים כרגע</span>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          {filteredBuildings.map(building => {
-            const stats = buildingStats[building.id] || { floorCount: 0, counts: {}, progressPct: 0, ringColor: '#CBD5E1' };
-            const r = 16, sw = 3, cx = 18, circ = 2 * Math.PI * r;
-            const offset = circ - (stats.progressPct / 100) * circ;
-
-            return (
-              <button
-                key={building.id}
-                onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc?from=qc`)}
-                className={`w-full bg-white rounded-xl border border-slate-100 ${stats.accentBorder} px-4 py-3.5 hover:border-amber-200 hover:shadow transition-all text-right`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-[38px] h-[38px] bg-emerald-50 rounded-[10px] flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-5 h-5 text-emerald-600" />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-[15px] font-bold text-slate-700 truncate block">{building.name}</span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {(stats.counts.approved || 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">✓ {stats.counts.approved} הושלמו</span>
-                        )}
-                        {((stats.counts.in_progress || 0) + (stats.counts.pending_review || 0)) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">◐ {(stats.counts.in_progress || 0) + (stats.counts.pending_review || 0)} בביצוע</span>
-                        )}
-                        {(stats.counts.not_started || 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">◷ {stats.counts.not_started} לא התחיל</span>
-                        )}
-                        {(stats.failingFloors || 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600">✗ {stats.failingFloors} נכשלו</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <svg width="36" height="36" viewBox="0 0 36 36" role="progressbar" aria-valuenow={stats.progressPct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${stats.progressPct}%`}>
-                      <circle cx={cx} cy={cx} r={r} fill="none" stroke="#E2E8F0" strokeWidth={sw} />
-                      <circle cx={cx} cy={cx} r={r} fill="none" stroke={stats.ringColor} strokeWidth={sw}
-                        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
-                        transform={`rotate(-90 ${cx} ${cx})`} style={{ transition: 'stroke-dashoffset 0.5s' }} />
-                      <text x={cx} y={cx} textAnchor="middle" dominantBaseline="central"
-                        fill="#334155" fontSize="10" fontWeight="bold">{stats.progressPct}%</text>
-                    </svg>
-                    <ChevronLeft className="w-4 h-4 text-slate-300" />
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-
-          {filteredBuildings.length === 0 && search.trim() && (
-            <div className="text-center py-8">
-              <p className="text-sm text-slate-400">לא נמצאו מבנים תואמים</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-================================================================================
-SECTION D — FULL FINAL CODE: frontend/src/pages/BuildingQCPage.js
-================================================================================
-(420 lines total — line 2 + line 67 + lines 80-86 changed. The full file:)
-
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { projectService, qcService } from '../services/api';
-import { qcFloorStatusLabel } from '../utils/qcLabels';
-import { getFloorBadgeVisualStatus } from '../utils/qcVisualStatus';
-import {
-  ArrowRight, Loader2, Layers, Search,
-  Clock, AlertCircle, Lock, ShieldCheck, XCircle, WifiOff, ChevronLeft
-} from 'lucide-react';
-
-const normalizeList = (data) => {
-  if (Array.isArray(data)) return data;
-  if (data && Array.isArray(data.items)) return data.items;
-  if (data && typeof data === 'object') {
-    const arrKey = Object.keys(data).find(k => Array.isArray(data[k]));
-    if (arrKey) return data[arrKey];
-  }
-  return [];
-};
-
-const getFloorBadge = (qcData) => {
-  if (!qcData) return 'not_started';
-  if (typeof qcData === 'string') return qcData;
-  return qcData.badge || 'not_started';
-};
-
-const getFloorQuality = (qcData) => {
-  if (!qcData || typeof qcData === 'string') return null;
-  const { pass_count = 0, fail_count = 0, total = 0 } = qcData;
-  if (total === 0) return null;
-  if (fail_count > 0) return { label: 'נכשל', color: 'bg-red-100 text-red-700' };
-  if (pass_count === total) return { label: 'תקין', color: 'bg-emerald-100 text-emerald-700' };
-  if (pass_count > 0) return { label: 'בביצוע', color: 'bg-amber-100 text-amber-700' };
-  return null;
-};
-
-const QC_STATUS_ICONS = {
-  not_started: Clock,
-  in_progress: AlertCircle,
-  pending_review: Lock,
-  submitted: Lock,
-  approved: ShieldCheck,
-  rejected: XCircle,
-};
-
-const QC_STATUS_ORDER = {
-  rejected: 0,
-  pending_review: 1,
-  in_progress: 2,
-  not_started: 3,
-  submitted: 4,
-  approved: 5,
-};
-
-const FILTER_OPTIONS = [
-  { id: 'all' },
-  { id: 'rejected' },
-  { id: 'pending_review' },
-  { id: 'in_progress' },
-  { id: 'approved' },
-  { id: 'not_started' },
-];
-
-export default function BuildingQCPage() {
-  const { projectId, buildingId } = useParams();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-
-  const [loading, setLoading] = useState(true);
-  const [building, setBuilding] = useState(null);
-  const [projectName, setProjectName] = useState('');
-  const [qcStatuses, setQcStatuses] = useState({});
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [loadError, setLoadError] = useState(null);
-  const [batchStatusError, setBatchStatusError] = useState(false);
-  const abortRef = useRef(null);
-  const seqRef = useRef(0);
-
-  const handleBack = useCallback(() => {
-    if (searchParams.get('from') === 'qc') {
-      navigate(`/projects/${projectId}/qc`);
-    } else {
-      navigate(`/projects/${projectId}/buildings/${buildingId}`);
-    }
-  }, [navigate, projectId, buildingId, searchParams]);
-
-  const load = useCallback(async () => {
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const seq = ++seqRef.current;
-    const signal = controller.signal;
-
-    setLoading(true);
-    setLoadError(null);
-    setBatchStatusError(false);
-
-    try {
-      const data = await projectService.getHierarchy(projectId, { signal });
-      if (signal.aborted || seqRef.current !== seq) return;
-
-      const pName = data?.project_name || '';
-      setProjectName(pName);
-      const buildings = normalizeList(data);
-      const found = buildings.find(b => b.id === buildingId);
-      setBuilding(found || null);
-
-      if (!found) {
-        setLoading(false);
-        return;
-      }
-
-      const floorIds = (found.floors || []).map(f => f.id);
-      if (floorIds.length > 0) {
-        try {
-          const statuses = await qcService.getFloorsBatchStatus(floorIds, { projectId, signal });
-          if (signal.aborted || seqRef.current !== seq) return;
-          setQcStatuses(statuses);
-        } catch (batchErr) {
-          if (signal.aborted || seqRef.current !== seq) return;
-          setBatchStatusError(true);
-        }
-      }
-    } catch (err) {
-      if (signal.aborted || seqRef.current !== seq) return;
-      const status = err?.response?.status;
-      if (status === 403 || status === 401) {
-        setLoadError('forbidden');
-      } else {
-        setLoadError('error');
-      }
-    } finally {
-      if (!signal.aborted && seqRef.current === seq) {
-        setLoading(false);
-      }
-    }
-  }, [projectId, buildingId]);
-
-  useEffect(() => {
-    load();
-    return () => { if (abortRef.current) abortRef.current.abort(); };
-  }, [load]);
-
-  const floors = useMemo(() => building?.floors || [], [building]);
-
-  const statusCounts = useMemo(() => {
-    const counts = {};
-    floors.forEach(f => {
-      const st = getFloorBadge(qcStatuses[f.id]);
-      const normalized = st === 'submitted' ? 'pending_review' : st;
-      counts[normalized] = (counts[normalized] || 0) + 1;
-    });
-    return counts;
-  }, [floors, qcStatuses]);
-
-  const summaryParts = useMemo(() => {
-    const parts = [];
-    if (statusCounts.approved) parts.push(`${statusCounts.approved} הושלמו`);
-    if (statusCounts.in_progress) parts.push(`${statusCounts.in_progress} בביצוע`);
-    if (statusCounts.pending_review) parts.push(`${statusCounts.pending_review} ממתין לאישור`);
-    if (statusCounts.rejected) parts.push(`${statusCounts.rejected} נדחה`);
-    if (statusCounts.not_started) parts.push(`${statusCounts.not_started} לא התחיל`);
-    return parts.length > 0 ? parts.join(' · ') : `${floors.length} קומות`;
-  }, [floors.length, statusCounts]);
-
-  const filteredFloors = useMemo(() => {
-    let result = floors;
-
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      result = result.filter(f =>
-        (f.name || '').toLowerCase().includes(q) ||
-        (f.floor_number?.toString() || '').includes(q)
-      );
-    }
-
-    if (filter !== 'all') {
-      if (filter === 'pending_review') {
-        result = result.filter(f => {
-          const s = getFloorBadge(qcStatuses[f.id]);
-          return s === 'pending_review' || s === 'submitted';
-        });
-      } else {
-        result = result.filter(f => getFloorBadge(qcStatuses[f.id]) === filter);
-      }
-    }
-
-    result.sort((a, b) => {
-      const orderA = QC_STATUS_ORDER[getFloorBadge(qcStatuses[a.id])] ?? 3;
-      const orderB = QC_STATUS_ORDER[getFloorBadge(qcStatuses[b.id])] ?? 3;
-      return orderA - orderB;
-    });
-
-    return result;
-  }, [floors, search, filter, qcStatuses]);
-
-  if (loading) {
-    return (
-      <div dir="rtl" className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-amber-500 mx-auto" />
-          <p className="text-sm text-slate-500 mt-3">טוען בקרת ביצוע...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <div dir="rtl" className="min-h-screen bg-slate-50">
-        <div className="sticky top-0 z-30 bg-slate-800 px-4 py-3 flex items-center gap-3">
-          <button onClick={handleBack} className="text-white hover:text-amber-300 transition-colors" aria-label="חזרה">
-            <ArrowRight className="w-5 h-5" />
-          </button>
-          <h1 className="text-white font-bold text-base">בקרת ביצוע</h1>
-        </div>
-        <div className="flex items-center justify-center py-16">
-          <div className="text-center">
-            {loadError === 'forbidden' ? (
-              <>
-                <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
-                <p className="text-slate-600 font-medium">אין הרשאה לצפייה בבקרת ביצוע</p>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-lg font-medium text-slate-600 mb-1">שגיאת תקשורת</p>
-                <p className="text-sm text-slate-400 mb-4">לא ניתן לטעון את נתוני הבניין</p>
-                <div className="flex gap-2 justify-center">
-                  <button
-                    onClick={load}
-                    className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors"
-                  >
-                    נסה שוב
-                  </button>
-                  <button
-                    onClick={handleBack}
-                    className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-300 transition-colors"
-                  >
-                    חזרה
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!building || floors.length === 0) {
-    return (
-      <div dir="rtl" className="min-h-screen bg-slate-50">
-        <div className="sticky top-0 z-30 bg-slate-800 px-4 py-3 flex items-center gap-3">
-          <button onClick={handleBack} className="text-white hover:text-amber-300 transition-colors" aria-label="חזרה">
-            <ArrowRight className="w-5 h-5" />
-          </button>
-          <h1 className="text-white font-bold text-base">בקרת ביצוע</h1>
-        </div>
-        <div className="flex items-center justify-center py-16">
-          <div className="text-center">
-            <Layers className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-lg font-medium text-slate-600 mb-1">אין קומות בבניין זה</p>
-            <p className="text-sm text-slate-400 mb-4">צריך להקים קומות כדי להתחיל בקרת ביצוע</p>
-            <button
-              onClick={handleBack}
-              className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors"
-            >
-              חזרה לבניין
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div dir="rtl" className="min-h-screen bg-slate-50">
-      <div className="sticky top-0 z-30 bg-slate-800 px-4 py-3 flex items-center gap-3">
-        <button onClick={handleBack} className="text-white hover:text-amber-300 transition-colors" aria-label="חזרה">
-          <ArrowRight className="w-5 h-5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-white font-bold text-base truncate leading-tight">בקרת ביצוע</h1>
-          <p className="text-slate-300 text-xs truncate">{building.name}{projectName ? ` — ${projectName}` : ''}</p>
-        </div>
-      </div>
-
-      <div className="px-4 pt-2.5 pb-1">
-        <p className="text-[11px] text-slate-400">{summaryParts}</p>
-        {(() => {
-          const approvedCount = statusCounts.approved || 0;
-          const remaining = floors.length - approvedCount;
-          const approvedRatio = floors.length > 0 ? approvedCount / floors.length : 0;
-          if (approvedRatio >= 0.7 && remaining > 0 && remaining <= 3) {
-            return (
-              <div className="mt-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-center">
-                <span className="text-sm font-bold text-green-700">🎯 עוד {remaining} קומות והבניין מושלם!</span>
-              </div>
-            );
-          }
-          return null;
-        })()}
-      </div>
-
-      <div className="px-4 pt-1.5 space-y-2">
-        <div className="relative">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="חיפוש קומה..."
-            className="w-full pr-9 pl-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-amber-300"
-          />
-        </div>
-
-        <div className="flex gap-1.5 overflow-x-auto pb-1">
-          {FILTER_OPTIONS.map(opt => (
-            <button
-              key={opt.id}
-              onClick={() => setFilter(opt.id)}
-              aria-pressed={filter === opt.id}
-              className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                filter === opt.id
-                  ? 'bg-amber-500 text-white shadow-sm'
-                  : 'bg-white border border-slate-200 text-slate-500 hover:border-slate-300'
-              }`}
-            >
-              {opt.id === 'all' ? 'הכל' : qcFloorStatusLabel(opt.id)}
-              {opt.id === 'all'
-                ? ` (${floors.length})`
-                : statusCounts[opt.id] ? ` (${statusCounts[opt.id]})` : ''}
-            </button>
-          ))}
-        </div>
-
-        {batchStatusError && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>סטטוסים לא זמינים כרגע — הקומות מוצגות ללא סטטוס</span>
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 pt-2.5 pb-6 space-y-1.5">
-        {filteredFloors.length === 0 ? (
-          <div className="text-center py-8">
-            <Layers className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-            <p className="text-sm text-slate-500">אין קומות מתאימות לפילטר</p>
-          </div>
-        ) : (
-          filteredFloors.map(floor => {
-            const status = getFloorBadge(qcStatuses[floor.id]);
-            const quality = getFloorQuality(qcStatuses[floor.id]);
-            const vs = getFloorBadgeVisualStatus(status);
-            const Icon = QC_STATUS_ICONS[status] || Clock;
-            const showQuality = quality && quality.label !== qcFloorStatusLabel(status);
-            const qd = qcStatuses[floor.id];
-            const failCount = qd?.fail_count || 0;
-            const floorTotal = qd?.total || 0;
-            const floorPass = qd?.pass_count || 0;
-            const floorPct = floorTotal > 0 ? Math.round((floorPass / floorTotal) * 100) : 0;
-            const floorAccent = failCount > 0 ? 'border-r-4 border-red-400'
-              : status === 'in_progress' ? 'border-r-4 border-amber-400'
-              : status === 'not_started' ? 'border-r-4 border-slate-300'
-              : status === 'approved' ? 'border-r-4 border-green-400'
-              : (status === 'pending_review' || status === 'submitted') ? 'border-r-4 border-blue-400'
-              : '';
-            const badgePrefix = status === 'in_progress' ? '◐ '
-              : status === 'not_started' ? '◷ '
-              : status === 'approved' ? '✓ '
-              : failCount > 0 ? '⚠ '
-              : '';
-
-            return (
-              <button
-                key={floor.id}
-                onClick={() => navigate(`/projects/${projectId}/floors/${floor.id}`)}
-                className={`w-full flex items-center justify-between px-3.5 py-3 bg-white rounded-xl border border-slate-100 ${floorAccent} hover:border-amber-200 hover:shadow active:bg-slate-50 transition-all text-right`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <Layers className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <span className="text-sm font-bold text-slate-700 block">
-                      {floor.display_label || floor.name || `קומה ${floor.floor_number}`}
-                    </span>
-                    {floorTotal > 0 && (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <div className="flex-1 bg-slate-100 rounded-full h-1" role="progressbar" aria-valuenow={floorPct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות קומה ${floorPct}%`}>
-                          <div className={`h-1 rounded-full transition-all ${floorPct === 100 ? 'bg-green-400' : floorPct > 50 ? 'bg-blue-400' : 'bg-amber-400'}`}
-                            style={{ width: `${floorPct}%` }} />
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">{floorPass}/{floorTotal} שלבים</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {showQuality && (
-                    <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${quality.color}`}>
-                      {quality.label}
-                    </span>
-                  )}
-                  <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full ${vs.bg} ${vs.color}`}>
-                    <span>{badgePrefix}</span>
-                    <Icon className="w-3 h-3" />
-                    {qcFloorStatusLabel(status)}
-                  </span>
-                  <ChevronLeft className="w-3.5 h-3.5 text-slate-300" />
-                </div>
-              </button>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
-
-
-================================================================================
-END OF DIFF
-================================================================================
+═══════════════════════════════════════════════════════════════════
+  TASK #453 — Handover PDF Template v3 (mockup v2.6 → production)
+  Status: READY FOR REVIEW · Branch: staging · Date: 29.04.2026
+═══════════════════════════════════════════════════════════════════
+
+WHAT CHANGED
+────────────────────────────────────────────────────────────────────
+1. backend/templates/handover_protocol_pdf.html
+   • REWRITTEN from 884 → 1515 lines.
+   • Visual language ported from /tmp/v2.6_unwrapped.html (mockup v2.6):
+     dark-navy hero cover, orange accents (#F08A3E), stat cards,
+     severity bars, info-grid, tenant cards with ID-photo slots,
+     TOC, defects-summary table, room-head + items-table per section,
+     room-summary banner, defect-card with photos, handed-over table,
+     meters block, legal blocks with sigchips, signature grid (2×2),
+     digital-verification footer.
+   • All wired to real service variables — NO new context fields
+     required; the service contract is unchanged.
+
+2. backend/templates/handover_protocol_pdf.v1.html.bak
+   • NEW — pristine copy of the previous 884-line template.
+   • Kept for reference / quick rollback (cp .bak over the live file).
+
+3. backend/services/handover_pdf_service.py
+   • _resize_image:           +jpeg_quality kwarg (default 65, unchanged)
+   • _fetch_image_as_base64:  +jpeg_quality kwarg, threaded through
+   • _fetch_local_or_remote_image:
+       +jpeg_quality kwarg + cache_key now includes quality so
+       a key fetched at Q75 doesn't poison a Q85 fetch.
+   • Image-fetch loop in _build_template_context:
+       per-tier dispatch by key prefix —
+         photo_*           → 600 px / Q75   (defect photos)
+         meter_*_photo     → 800 px / Q80   (meter readings)
+         sig_*, legal_sig_*→ 300 px / Q85   (signatures)
+         logo              → defaults (unchanged)
+   • New module constants: _DEFECT_PHOTO_WIDTH/_QUALITY,
+     _METER_PHOTO_WIDTH/_QUALITY, _SIGNATURE_WIDTH/_QUALITY.
+
+LOCKED DECISIONS (Zahi 2026-04-29) — APPLIED
+────────────────────────────────────────────────────────────────────
+✓ Body font-stack: 'Rubik', sans-serif
+   → @font-face blocks reference Rubik-Regular.ttf + Rubik-Bold.ttf
+     via file://{{ fonts_dir }} (existing pattern). Caveat-Regular.ttf
+     loaded for typed signatures (.sig-area .typed).
+   → No Heebo files added; mockup's 11 Heebo woff2 placeholders dropped.
+
+✓ Cover thumbnail: ALWAYS render the SVG building-icon from mockup
+   → No project_cover_image_b64 plumbing. Thumbnail is the
+     inline 28×28 building-2 SVG inside .cover-thumb (mockup L1584-1587).
+
+✓ Monospace stack: 'JetBrains Mono', ui-monospace, monospace
+   → REMOVED entirely. The mockup used JetBrains Mono on numeric chips,
+     defect IDs, page labels, etc. Per Zahi decision, I dropped it
+     completely and let those classes fall back to Rubik. No .ttf
+     needs to ship; no font-shadowing surprises in WeasyPrint.
+     (Visual: those chips/labels are still distinct via background
+     color + letter-spacing + uppercase — not via font swap.)
+
+WEASYPRINT-SAFE SHIMS (no Chrome-only CSS in production output)
+────────────────────────────────────────────────────────────────────
+• NO display:flex with `gap` — replaced with display:table + table-cell
+  for layouts: .stats (4-col), .severity-row (3-col), .info-grid (2-col),
+  .meters (2-col), .sig-grid (HTML <table>), .ph header, .cover-top,
+  .cover-card-strip, .tenant, .kv, .room-head, .toc-item, .sig-meta,
+  .photo-row, .defect-card-head, .legal-sigline rows.
+• NO CSS Grid — replaced with the same table/table-cell patterns.
+• NO aspect-ratio — replaced with padding-bottom: % hack
+  (.photo at 25%/3-up, .meter .photo at 56%).
+• NO oklch() / no JS / no @container — none used.
+• Inline SVGs have explicit width/height attrs.
+• Page footer (page X / Y) implemented via @page @bottom-left/right
+  running CSS counters, not in-flow elements.
+• @page :first { margin: 0 } so the cover hero bleeds edge-to-edge
+  without the standard inner-page margins.
+• Hebrew RTL: <html dir="rtl">, body direction:rtl text-align:right;
+  per-element text-align:left used only on visual-LTR slots
+  (page-num counter, meta dates).
+
+EDGE-CASE HANDLING (CONDITIONALS)
+────────────────────────────────────────────────────────────────────
+• Severity bar: hidden when total_defects == 0 (no empty bars).
+• Defects table: replaced with green "no defects found" banner when
+  all_defects is empty.
+• Tenant notes page: only emitted when tenant_notes is truthy.
+• Delivered/meters page: only emitted when delivered_items is non-empty
+  OR meter_water/electricity readings exist.
+• Legal sections page: only emitted when legal_sections is non-empty.
+• Per-legal-section signatures: when ls.signers is empty,
+  shows "ממתין לחתימה" gray chip; ת״ז is appended from the matching
+  tenant record by name lookup.
+• Signatures grid:
+   - Manager + tenant_1 always rendered.
+   - Tenant_2 cell rendered only when is_tenant2_required OR
+     sig_t2.signed (so 1-tenant flows don't show a phantom card).
+   - Contractor_rep cell only on second row, alongside tenant_2.
+   - Each card flips to .unsigned styling (dashed border, opacity)
+     when sig.signed is False.
+   - Signature payload: <img> for canvas, Caveat-cursive text for
+     typed, "ממתין לחתימה" placeholder otherwise.
+• Per-room defect cards (with photos) only render when at least one
+  item has photos.
+• Collapsed sections (all_not_checked / all_not_relevant): show a
+  centered dashed-border banner instead of the items table.
+
+SECTIONS DROPPED FROM MOCKUP (out of scope / no service data)
+────────────────────────────────────────────────────────────────────
+• ID Cards Appendix page (mockup page 11) — service has NO
+  id_card_image_url field. Kept the 2 ID-photo placeholder boxes on
+  the cover tenant card per Zahi's lock.
+• "Spare tiles" handed table — service has no separate "spare tiles"
+  collection (delivered_items is generic).
+• QR + SHA-256 verification block — replaced with the simpler
+  "אימות דיגיטלי + מספר אסמכתא" footer using display_number.
+• MOCKUP banner / __bundler_thumbnail SVG / mockup template wrapper —
+  removed (these were dev artifacts).
+
+JINJA GOTCHAS FIXED
+────────────────────────────────────────────────────────────────────
+• `sec.items` resolved to the dict `.items()` builtin method
+  (Jinja attribute lookup precedence). Switched to `sec['items']`
+  in 2 spots. All other dict accesses use `.foo` safely (no
+  collisions with bool, get, items, keys, values, update, copy, ...).
+• `(signatures|default({})).get('manager', {})` used everywhere so
+  signatures={} never raises.
+• `tenants[1].id_number` guarded by `(tenants|length) > 1`.
+• All aggregate filters use `|default([])` / `|default({})` /
+  `|default(0)` to be friendly to partially-missing context.
+
+LOCAL VERIFICATION RESULTS (this environment)
+────────────────────────────────────────────────────────────────────
+✓ python3 -c py_compile services/handover_pdf_service.py    PASS
+✓ Jinja parse of handover_protocol_pdf.html                  PASS
+✓ Dry render with realistic 3-section / 2-defect fixture     PASS
+   → 42,737 chars / 1,709 lines, all conditionals exercised
+✓ Dry render with empty-everything fixture                   PASS
+   → 29,166 chars, no template errors on missing data
+✗ Live WeasyPrint render NOT attempted —
+   the workspace's WeasyPrint module fails to import here
+   (system Pango/cffi libs missing). Live PDF render is for Zahi
+   to validate on staging after merge.
+
+RENDERED HTML SAMPLES (for visual sanity check, not the actual PDF)
+────────────────────────────────────────────────────────────────────
+   /tmp/handover_v3_render.html    — full-fixture render
+   /tmp/handover_v3_minimal.html   — empty-fixture render
+(open in browser for a rough preview — note that browsers ignore the
+ @page directives so footers won't show; only WeasyPrint applies them)
+
+FOR ZAHI — STAGING SCENARIOS TO RUN POST-MERGE
+────────────────────────────────────────────────────────────────────
+Once merged + ./deploy.sh, please verify these 3 protocols generate
+clean PDFs with the new look:
+
+  1. INITIAL handover, single tenant, 0 defects
+     → expect: severity-bar HIDDEN, green "no defects" banner on
+       page 2, tenant_2 sig card NOT rendered.
+
+  2. INITIAL handover, 2 tenants, mixed defects (≥1 critical + photos),
+     legal sections with both tenants signed (canvas + typed)
+     → expect: severity bars show with proper widths, all_defects
+       table on p.2, defect-cards with photos on per-room pages,
+       legal sigchips with green check + ת״ז appended, signature
+       grid 2×2.
+
+  3. FOLLOWUP visit with a "not_checked" or "not_relevant" section
+     → expect: collapsed-banner replaces items table for that section,
+       TOC item shows the gray "לא נבדק" / "לא רלוונטי" badge.
+
+If any fonts render as fallback (no Hebrew shaping), confirm:
+  ls -la backend/fonts/Rubik-*.ttf
+and that {{ fonts_dir }} resolves to the absolute path inside the
+deployed container (already does on current staging).
+
+ROLLBACK
+────────────────────────────────────────────────────────────────────
+   cp backend/templates/handover_protocol_pdf.v1.html.bak \
+      backend/templates/handover_protocol_pdf.html
+(Service helper changes are backward-compatible: jpeg_quality kwarg
+ is optional and defaults to the original Q65, so reverting only the
+ template will produce v1 output without further service changes.)
+
+═══════════════════════════════════════════════════════════════════
+  Awaiting Zahi's approval. Agent has NOT committed, NOT pushed,
+  NOT restarted any workflow, and NOT run ./deploy.sh.
+═══════════════════════════════════════════════════════════════════
