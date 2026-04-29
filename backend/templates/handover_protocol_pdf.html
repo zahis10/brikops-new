@@ -1000,10 +1000,7 @@ table.items .note {
   white-space: pre-wrap;
 }
 
-/* ----- Locked decision #3: monospace numerals stack
-   ----- (JetBrains Mono if available, else system mono fallback).
-   ----- Last in the cascade so it wins over upstream Rubik on the
-   ----- specific numeric/identifier elements below. ---------------- */
+/* monospace numerals (JetBrains Mono w/ system fallback) */
 .cover-meta b,
 .cover-card-strip .val,
 .cover-protocol b,
@@ -1029,9 +1026,7 @@ table.items .note {
 </head>
 <body>
 
-{# ============================================================
-   PAGE 1 · COVER
-   ============================================================ #}
+{# cover #}
 <div class="cover-wrap">
   <div class="cover-hero">
     <div class="cover-top">
@@ -1091,7 +1086,7 @@ table.items .note {
       <div class="stat bad"><div class="num">{{ stats_fail|default(0) }}</div><div class="lab">ליקויים</div></div>
     </div>
 
-    {# Severity bars — show only the bars whose count > 0 (per spec) #}
+    {# severity bars: show only bars with count > 0 #}
     {% set sev_total = total_defects|default(0) %}
     {% set sev_crit = (defect_severity_counts|default({})).get('critical', 0) %}
     {% set sev_norm = (defect_severity_counts|default({})).get('normal', 0) %}
@@ -1172,9 +1167,7 @@ table.items .note {
   </div>
 </div>
 
-{# ============================================================
-   PAGE 2 · TOC + DEFECTS SUMMARY
-   ============================================================ #}
+{# TOC + defects summary #}
 <div class="page-break">
   <div class="ph">
     <div class="ph-left">
@@ -1251,9 +1244,7 @@ table.items .note {
   {% endif %}
 </div>
 
-{# ============================================================
-   PAGE 3+ · ROOM INSPECTIONS
-   ============================================================ #}
+{# room inspections #}
 <div class="page-break">
   <div class="ph">
     <div class="ph-left">
@@ -1358,9 +1349,7 @@ table.items .note {
   {% endfor %}
 </div>
 
-{# ============================================================
-   DELIVERED ITEMS + METERS
-   ============================================================ #}
+{# delivered items + meters #}
 {% if delivered_items|default([]) or meter_water_reading or meter_electricity_reading %}
 <div class="page-break">
   <div class="ph">
@@ -1418,9 +1407,7 @@ table.items .note {
 </div>
 {% endif %}
 
-{# ============================================================
-   LEGAL SECTIONS
-   ============================================================ #}
+{# legal sections #}
 {% if legal_sections|default([]) %}
 <div class="page-break">
   <div class="ph">
@@ -1463,9 +1450,7 @@ table.items .note {
 </div>
 {% endif %}
 
-{# ============================================================
-   TENANT NOTES (free-form)
-   ============================================================ #}
+{# tenant notes #}
 {% if tenant_notes %}
 <div class="page-break">
   <div class="ph">
@@ -1481,9 +1466,7 @@ table.items .note {
 </div>
 {% endif %}
 
-{# ============================================================
-   SIGNATURES
-   ============================================================ #}
+{# signatures #}
 <div class="page-break">
   <div class="ph">
     <div class="ph-left">
@@ -1504,9 +1487,6 @@ table.items .note {
   {% set sig_t2  = (signatures|default({})).get('tenant_2', {}) %}
   {% set sig_cr  = (signatures|default({})).get('contractor_rep', {}) %}
 
-  {# A signature card is "unsigned" when there's no actual signature
-     payload — i.e. neither a canvas image_b64 nor a typed_name.
-     This catches stale `signed=True` flags missing the payload. #}
   {% macro sig_card(role_label, sub_text, sig) %}
   {%- set _has_payload = (sig.image_b64 or sig.typed_name) -%}
   <td class="{% if not _has_payload %}unsigned{% endif %}">

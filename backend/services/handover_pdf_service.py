@@ -209,17 +209,13 @@ def _resize_image(data: bytes, max_width=None, jpeg_quality=None) -> bytes:
 
 
 def _local_image_to_base64(file_path: str, max_width=None, jpeg_quality=None) -> Optional[str]:
-    """Read a local file and return data: URL. Always passes through
-    `_resize_image` so per-tier (max_width, jpeg_quality) is honored
-    for local uploads — same compression contract as remote fetches."""
+    """Read a local file and return a data: URL, applying per-tier
+    resize/quality so local uploads match the remote-fetch contract."""
     try:
         if not os.path.exists(file_path):
             return None
         with open(file_path, 'rb') as f:
             data = f.read()
-        # Always run through resize/quality pipeline (it's a no-op when
-        # max_width/jpeg_quality are None and the image fits, but preserves
-        # tier compression for handover-PDF defect/meter/signature uploads).
         data = _resize_image(data, max_width=max_width, jpeg_quality=jpeg_quality)
         ct = 'image/png' if data[:4] == b'\x89PNG' else 'image/jpeg'
         return f"data:{ct};base64,{base64.b64encode(data).decode('ascii')}"
@@ -422,11 +418,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
         async with aiohttp.ClientSession() as session:
             fetch_tasks = []
             for key_name, stored_ref in image_keys:
-                # Per-tier compression targets for v3 template (handover PDF redesign):
-                #  - defect photos (photo_*)         → 600px / Q75
-                #  - meter photos    (meter_*_photo) → 800px / Q80
-                #  - signatures      (sig_*, legal_sig_*) → 300px / Q85
-                #  - logo                            → defaults
+                # per-tier compression: defect 600/Q75, meter 800/Q80, sig 300/Q85
                 if key_name.startswith("photo_"):
                     mw, q = _DEFECT_PHOTO_WIDTH, _DEFECT_PHOTO_QUALITY
                 elif key_name.startswith("meter_") and key_name.endswith("_photo"):
