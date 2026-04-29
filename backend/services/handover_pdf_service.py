@@ -119,6 +119,36 @@ SEVERITY_COLORS = {
     "cosmetic": "#6b7280",
 }
 
+KNOWN_TRADES = {
+    "חשמל": "elec",
+    "אינסטלציה": "plumb",
+    "ריצוף": "tile",
+    "אלומיניום": "alum",
+    "דלתות": "door",
+    "ברזל": "iron",
+    "צביעה": "paint",
+    "טיח": "plast",
+    "מטבחים": "kitch",
+    "שיש": "marble",
+    "כללי": "gen",
+}
+FALLBACK_BUCKETS = 6
+
+
+def trade_to_class(trade_name: Optional[str]) -> str:
+    """Map a trade name to its CSS class. Known trades get a fixed
+    class; custom (admin-typed) trades get a deterministic
+    custom-1..custom-N bucket so the same name always renders the
+    same color across PDFs. .gen is reserved for explicit 'כללי' or
+    empty trade."""
+    if not trade_name:
+        return "gen"
+    if trade_name in KNOWN_TRADES:
+        return KNOWN_TRADES[trade_name]
+    h = sum(ord(c) for c in trade_name)
+    return f"custom-{(h % FALLBACK_BUCKETS) + 1}"
+
+
 HEBREW_MONTHS = {
     1: "ינואר", 2: "פברואר", 3: "מרץ", 4: "אפריל",
     5: "מאי", 6: "יוני", 7: "יולי", 8: "אוגוסט",
@@ -472,10 +502,12 @@ async def _build_template_context(protocol: dict, db) -> dict:
             if not severity and status in ("defective", "partial"):
                 severity = item.get("severity", "normal")
 
+            _trade = item.get("trade", "")
             item_data = {
                 "num": idx,
                 "name": item.get("name", ""),
-                "trade": item.get("trade", ""),
+                "trade": _trade,
+                "trade_class": trade_to_class(_trade),
                 "status": status,
                 "status_label": STATUS_LABELS.get(status, status),
                 "status_color": STATUS_COLORS.get(status, "#e5e7eb"),
@@ -498,7 +530,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
                 all_defects.append({
                     "section_name": sec.get("name", ""),
                     "item_name": item.get("name", ""),
-                    "trade": item.get("trade", ""),
+                    "trade": _trade,
+                    "trade_class": trade_to_class(_trade),
                     "severity": severity,
                     "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
                     "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",

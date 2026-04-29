@@ -589,11 +589,20 @@ table.items .note {
 .trade.plumb  { background: #DBEAFE; color: #1E40AF; }
 .trade.tile   { background: #E0E7FF; color: #3730A3; }
 .trade.alum   { background: #F1F5F9; color: var(--slate-7); }
+.trade.door   { background: #DCFCE7; color: #14532D; }
+.trade.iron   { background: #E2E8F0; color: #334155; }
+.trade.paint  { background: #FCE7F3; color: #9D174D; }
+.trade.plast  { background: #FAE8FF; color: #6B21A8; }
 .trade.kitch  { background: #FCE7F3; color: #9D174D; }
-.trade.frame  { background: #DCFCE7; color: #14532D; }
-.trade.finish { background: #FFEDD9; color: #9A3412; }
 .trade.marble { background: #F5F5F4; color: #44403C; }
 .trade.gen    { background: var(--slate-1); color: var(--slate-7); }
+/* fallback buckets for admin-typed custom trades (deterministic by name) */
+.trade.custom-1 { background: #E0F2FE; color: #075985; }
+.trade.custom-2 { background: #FEF9C3; color: #713F12; }
+.trade.custom-3 { background: #FFE4E6; color: #9F1239; }
+.trade.custom-4 { background: #F0FDF4; color: #166534; }
+.trade.custom-5 { background: #EDE9FE; color: #5B21B6; }
+.trade.custom-6 { background: #FFEDD5; color: #9A3412; }
 
 /* Severity tag */
 .sev-tag {
@@ -822,16 +831,13 @@ table.items .note {
 .legal-sigline .sigchip .check {
   display: inline-block;
   background: var(--green);
-  color: white;
-  font-size: 9px;
-  font-weight: 700;
-  padding: 0 4px;
   border-radius: 50%;
   margin-left: 4px;
   vertical-align: middle;
-  line-height: 12px;
+  width: 12px;
   height: 12px;
-  min-width: 12px;
+  line-height: 12px;
+  text-align: center;
 }
 
 /* ---------- SIGNATURE GRID (2-col, table) ---------- */
@@ -1232,7 +1238,7 @@ table.items .note {
         <td class="num-cell">{{ loop.index }}</td>
         <td>{{ d.section_name|default('—') }}</td>
         <td>{{ d.item_name|default('—') }}</td>
-        <td>{% set tc = d.trade|default('') %}<span class="trade {% if 'חשמל' in tc or 'תאורה' in tc %}elec{% elif 'אינסטל' in tc or 'מים' in tc or 'ניקוז' in tc %}plumb{% elif 'ריצ' in tc or 'רובה' in tc or 'אריח' in tc %}tile{% elif 'אלומ' in tc %}alum{% elif 'מטבח' in tc or 'ארונ' in tc %}kitch{% elif 'דלת' in tc or 'משקוף' in tc or 'מסגר' in tc %}frame{% elif 'צבע' in tc or 'טיח' in tc or 'גימור' in tc %}finish{% elif 'שיש' in tc %}marble{% else %}gen{% endif %}">{{ d.trade or 'כללי' }}</span></td>
+        <td><span class="trade {{ d.trade_class|default('gen') }}">{{ d.trade or 'כללי' }}</span></td>
         <td>{% if d.severity == 'critical' %}<span class="sev-tag crit">קריטי</span>{% elif d.severity == 'normal' %}<span class="sev-tag norm">רגיל</span>{% elif d.severity == 'cosmetic' %}<span class="sev-tag cosm">קוסמטי</span>{% else %}—{% endif %}</td>
         <td>{{ d.description|default('') }}</td>
       </tr>
@@ -1295,7 +1301,7 @@ table.items .note {
         <tr class="{% if it.status == 'defective' %}row-bad{% elif it.status == 'partial' %}row-part{% endif %}">
           <td>{{ it.num }}</td>
           <td class="item-name">{{ it.name|default('—') }}</td>
-          <td>{% set tc = it.trade|default('') %}<span class="trade {% if 'חשמל' in tc or 'תאורה' in tc %}elec{% elif 'אינסטל' in tc or 'מים' in tc or 'ניקוז' in tc %}plumb{% elif 'ריצ' in tc or 'רובה' in tc or 'אריח' in tc %}tile{% elif 'אלומ' in tc %}alum{% elif 'מטבח' in tc or 'ארונ' in tc %}kitch{% elif 'דלת' in tc or 'משקוף' in tc or 'מסגר' in tc %}frame{% elif 'צבע' in tc or 'טיח' in tc or 'גימור' in tc %}finish{% elif 'שיש' in tc %}marble{% else %}gen{% endif %}">{{ it.trade or 'כללי' }}</span></td>
+          <td><span class="trade {{ it.trade_class|default('gen') }}">{{ it.trade or 'כללי' }}</span></td>
           <td><span class="status {{ it.status }}"><span class="d"></span>{{ it.status_label }}</span></td>
           <td class="note">
             {% if it.severity == 'critical' %}<span class="sev-tag crit">קריטי</span>{% elif it.severity == 'normal' %}<span class="sev-tag norm">רגיל</span>{% elif it.severity == 'cosmetic' %}<span class="sev-tag cosm">קוסמטי</span>{% endif %}
@@ -1438,7 +1444,7 @@ table.items .note {
           {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
           {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
           {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
-        <span class="sigchip"><span class="check">✓</span>{{ _s_name }} · ת״ז {{ _s_id or '—' }} · {{ signed_date or s.signed_at or '—' }}</span>
+        <span class="sigchip"><span class="check"><svg width="8" height="8" viewBox="0 0 8 8" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle"><polyline points="1.5,4.2 3.4,6 6.5,2.2" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{{ _s_name }} · ת״ז {{ _s_id or '—' }} · {{ signed_date or s.signed_at or '—' }}</span>
         {% endfor %}
       {% else %}
         <span class="sigchip unsigned">ממתין לחתימה</span>
