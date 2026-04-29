@@ -208,16 +208,20 @@ def _resize_image(data: bytes, max_width=None, jpeg_quality=None) -> bytes:
         return data
 
 
-def _local_image_to_base64(file_path: str) -> Optional[str]:
+def _local_image_to_base64(file_path: str, max_width=None, jpeg_quality=None) -> Optional[str]:
+    """Read a local file and return data: URL. Always passes through
+    `_resize_image` so per-tier (max_width, jpeg_quality) is honored
+    for local uploads — same compression contract as remote fetches."""
     try:
         if not os.path.exists(file_path):
             return None
         with open(file_path, 'rb') as f:
             data = f.read()
-        if file_path.endswith('.png'):
-            ct = 'image/png'
-        else:
-            ct = 'image/jpeg'
+        # Always run through resize/quality pipeline (it's a no-op when
+        # max_width/jpeg_quality are None and the image fits, but preserves
+        # tier compression for handover-PDF defect/meter/signature uploads).
+        data = _resize_image(data, max_width=max_width, jpeg_quality=jpeg_quality)
+        ct = 'image/png' if data[:4] == b'\x89PNG' else 'image/jpeg'
         return f"data:{ct};base64,{base64.b64encode(data).decode('ascii')}"
     except Exception:
         return None
@@ -246,7 +250,7 @@ async def _fetch_local_or_remote_image(stored_ref: str, session=None, max_width=
         if not str(local_path).startswith(str(uploads_root)):
             logger.warning(f"[PDF] Path traversal blocked: {stored_ref}")
             return None
-        result = _local_image_to_base64(str(local_path))
+        result = _local_image_to_base64(str(local_path), max_width=max_width, jpeg_quality=jpeg_quality)
     else:
         logger.debug(f"[PDF] Ignoring unrecognized image ref: {stored_ref[:60]}")
         return None

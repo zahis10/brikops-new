@@ -800,9 +800,14 @@ table.items .note {
   border-top: 1px dashed var(--slate-3);
   font-size: 11px;
   color: var(--slate-7);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
 }
 .legal-sigline .sigchip {
-  display: inline-block;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   background: var(--green-soft);
   color: #166534;
   padding: 3px 9px;
@@ -1061,26 +1066,34 @@ table.items .note {
       <div class="stat bad"><div class="num">{{ stats_fail|default(0) }}</div><div class="lab">ליקויים</div></div>
     </div>
 
-    {# Severity bars — only show if any defects exist #}
-    {% if (total_defects|default(0)) > 0 %}
+    {# Severity bars — show only the bars whose count > 0 (per spec) #}
     {% set sev_total = total_defects|default(0) %}
     {% set sev_crit = (defect_severity_counts|default({})).get('critical', 0) %}
     {% set sev_norm = (defect_severity_counts|default({})).get('normal', 0) %}
     {% set sev_cosm = (defect_severity_counts|default({})).get('cosmetic', 0) %}
+    {% set _shown = (1 if sev_crit > 0 else 0) + (1 if sev_norm > 0 else 0) + (1 if sev_cosm > 0 else 0) %}
+    {% if _shown > 0 %}
+    {% set _w = (100 / _shown)|round(2) %}
     <h3 class="section-h" style="margin-top:18px">חלוקת ליקויים לפי חומרה</h3>
     <div class="severity-row">
-      <div class="sev crit">
+      {% if sev_crit > 0 %}
+      <div class="sev crit" style="width:{{ _w }}%">
         <div class="sev-top"><span class="sev-name">קריטי</span><span class="sev-num">{{ sev_crit }}</span></div>
         <div class="bar"><i style="width:{{ ((sev_crit / sev_total) * 100)|round(0, 'floor')|int if sev_total > 0 else 0 }}%"></i></div>
       </div>
-      <div class="sev norm">
+      {% endif %}
+      {% if sev_norm > 0 %}
+      <div class="sev norm" style="width:{{ _w }}%">
         <div class="sev-top"><span class="sev-name">רגיל</span><span class="sev-num">{{ sev_norm }}</span></div>
         <div class="bar"><i style="width:{{ ((sev_norm / sev_total) * 100)|round(0, 'floor')|int if sev_total > 0 else 0 }}%"></i></div>
       </div>
-      <div class="sev cosm">
+      {% endif %}
+      {% if sev_cosm > 0 %}
+      <div class="sev cosm" style="width:{{ _w }}%">
         <div class="sev-top"><span class="sev-name">קוסמטי</span><span class="sev-num">{{ sev_cosm }}</span></div>
         <div class="bar"><i style="width:{{ ((sev_cosm / sev_total) * 100)|round(0, 'floor')|int if sev_total > 0 else 0 }}%"></i></div>
       </div>
+      {% endif %}
     </div>
     {% endif %}
 
@@ -1410,7 +1423,10 @@ table.items .note {
     <div class="legal-sigline">
       {% if ls.signers %}
         {% for s in ls.signers %}
-        <span class="sigchip"><span class="check">✓</span>{{ s.signer_name or s.typed_name or s.label or 'חתום' }}{% set tnt = (tenants|default([]))|selectattr('name','equalto', s.signer_name)|list %}{% if tnt and tnt[0].id_number %} · ת״ז {{ tnt[0].id_number }}{% endif %}{% if s.signed_at %} · {{ s.signed_at }}{% endif %}</span>
+          {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
+          {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
+          {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
+        <span class="sigchip"><span class="check">✓</span>{{ _s_name }} · ת״ז {{ _s_id or '—' }} · {{ signed_date or s.signed_at or '—' }}</span>
         {% endfor %}
       {% else %}
         <span class="sigchip unsigned">ממתין לחתימה</span>
@@ -1463,8 +1479,12 @@ table.items .note {
   {% set sig_t2  = (signatures|default({})).get('tenant_2', {}) %}
   {% set sig_cr  = (signatures|default({})).get('contractor_rep', {}) %}
 
+  {# A signature card is "unsigned" when there's no actual signature
+     payload — i.e. neither a canvas image_b64 nor a typed_name.
+     This catches stale `signed=True` flags missing the payload. #}
   {% macro sig_card(role_label, sub_text, sig) %}
-  <td class="{% if not sig.signed %}unsigned{% endif %}">
+  {%- set _has_payload = (sig.image_b64 or sig.typed_name) -%}
+  <td class="{% if not _has_payload %}unsigned{% endif %}">
     <div class="role">{{ role_label }}</div>
     <div class="name">
       {{ sig.signer_name or sig.typed_name or 'לא מונה' }}
@@ -1472,9 +1492,9 @@ table.items .note {
     </div>
     {% if sig.label %}<div class="stmt">{{ sig.label }}</div>{% endif %}
     <div class="sig-area">
-      {% if sig.signed and sig.type == 'canvas' and sig.image_b64 %}
+      {% if sig.type == 'canvas' and sig.image_b64 %}
         <img src="{{ sig.image_b64 }}" alt="חתימה">
-      {% elif sig.signed and sig.type == 'typed' and sig.typed_name %}
+      {% elif sig.type == 'typed' and sig.typed_name %}
         <div class="typed">{{ sig.typed_name }}</div>
       {% else %}
         <div class="pending">ממתין לחתימה</div>

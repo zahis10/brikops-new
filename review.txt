@@ -1,183 +1,142 @@
 ═══════════════════════════════════════════════════════════════════
   TASK #453 — Handover PDF Template v3 (mockup v2.6 → production)
-  Status: READY FOR REVIEW · Branch: staging · Date: 29.04.2026
+  Status: SECOND-PASS · Branch: staging · Date: 29.04.2026
 ═══════════════════════════════════════════════════════════════════
 
-WHAT CHANGED
+WHAT CHANGED IN THIS PASS (in response to first review)
 ────────────────────────────────────────────────────────────────────
-1. backend/templates/handover_protocol_pdf.html
-   • REWRITTEN from 884 → 1515 lines.
-   • Visual language ported from /tmp/v2.6_unwrapped.html (mockup v2.6):
-     dark-navy hero cover, orange accents (#F08A3E), stat cards,
-     severity bars, info-grid, tenant cards with ID-photo slots,
-     TOC, defects-summary table, room-head + items-table per section,
-     room-summary banner, defect-card with photos, handed-over table,
-     meters block, legal blocks with sigchips, signature grid (2×2),
-     digital-verification footer.
-   • All wired to real service variables — NO new context fields
-     required; the service contract is unchanged.
+The first pass (29.04 13:30) was approved by Zahi with the two
+explicit deviations below accepted, but then a code-review pass
+flagged 7 items. This second pass (29.04 14:00) addresses items
+1, 2, 4, 5, 6 directly. Items 3 and 7 are addressed in the
+"Deviations" section below — both are pre-approved by Zahi or
+unfixable in this dev container.
 
-2. backend/templates/handover_protocol_pdf.v1.html.bak
-   • NEW — pristine copy of the previous 884-line template.
-   • Kept for reference / quick rollback (cp .bak over the live file).
+  ✓ #1 Legal sigchip format
+        Now renders the exact triplet:
+            <name> · ת״ז <id_number> · <signed_date>
+        — uses global `signed_date` (not per-signer `signed_at`)
+        — ת״ז comes from `s.id_number` if present, else looked up
+          from the matching tenant by name; falls back to "—"
+          (so the dot-separated triplet structure always renders)
 
-3. backend/services/handover_pdf_service.py
-   • _resize_image:           +jpeg_quality kwarg (default 65, unchanged)
-   • _fetch_image_as_base64:  +jpeg_quality kwarg, threaded through
-   • _fetch_local_or_remote_image:
-       +jpeg_quality kwarg + cache_key now includes quality so
-       a key fetched at Q75 doesn't poison a Q85 fetch.
-   • Image-fetch loop in _build_template_context:
-       per-tier dispatch by key prefix —
-         photo_*           → 600 px / Q75   (defect photos)
-         meter_*_photo     → 800 px / Q80   (meter readings)
-         sig_*, legal_sig_*→ 300 px / Q85   (signatures)
-         logo              → defaults (unchanged)
-   • New module constants: _DEFECT_PHOTO_WIDTH/_QUALITY,
-     _METER_PHOTO_WIDTH/_QUALITY, _SIGNATURE_WIDTH/_QUALITY.
+  ✓ #2 Legal-sigline + sigchip flex-wrap layout
+        .legal-sigline → display:flex; flex-wrap:wrap; align-items:center
+        .sigchip       → display:inline-flex; flex-wrap:wrap;
+                         align-items:center; (margin-based gaps preserved)
+        WeasyPrint 60+ supports display:flex + flex-wrap; chips wrap
+        cleanly when many signers exist.
 
-LOCKED DECISIONS (Zahi 2026-04-29) — APPLIED
+  ✓ #4 Severity-bar per-zero hiding
+        Each of the 3 bars (קריטי / רגיל / קוסמטי) now renders
+        ONLY when its count > 0. The header itself is hidden when
+        all three are zero. Visible bars share width equally
+        (50%/50% with two, 100% with one) so the row always feels
+        intentional, not "missing a column".
+
+  ✓ #5 Contractor unsigned-state by image_b64 absence
+        sig_card macro now flags a card as `.unsigned` when neither
+        `sig.image_b64` (canvas) nor `sig.typed_name` (typed) is
+        present — no longer driven by a possibly-stale `sig.signed`
+        boolean. Validated: a card with `signed=True, type='canvas',
+        image_b64=None, typed_name=''` correctly renders dashed/gray.
+
+  ✓ #6 Tiered compression on local /api/uploads/ path
+        `_local_image_to_base64` now accepts `max_width` + `jpeg_quality`
+        and always pipes data through `_resize_image`. The local
+        branch in `_fetch_local_or_remote_image` passes the same
+        per-tier params it computes for remote fetches. Result:
+        defect/meter/signature uploads are compressed identically
+        whether served from S3 or `/api/uploads/`. This was a
+        real WhatsApp-size leak before — now closed.
+
+DEVIATIONS FROM SPEC — Zahi-approved or environment-bound
 ────────────────────────────────────────────────────────────────────
-✓ Body font-stack: 'Rubik', sans-serif
-   → @font-face blocks reference Rubik-Regular.ttf + Rubik-Bold.ttf
-     via file://{{ fonts_dir }} (existing pattern). Caveat-Regular.ttf
-     loaded for typed signatures (.sig-area .typed).
-   → No Heebo files added; mockup's 11 Heebo woff2 placeholders dropped.
+  ✓ #3 ID-card appendix page DROPPED
+        — Pre-approved by Zahi (29.04 13:51 message):
+          "ID Cards Appendix page: ACCEPT removal. Cleaner output.
+           Cover thumbnails are sufficient placeholder. We'll restore
+           in Spec B (Phase 2) when real upload exists."
+        — Tracked as follow-up Task #454.
 
-✓ Cover thumbnail: ALWAYS render the SVG building-icon from mockup
-   → No project_cover_image_b64 plumbing. Thumbnail is the
-     inline 28×28 building-2 SVG inside .cover-thumb (mockup L1584-1587).
+  ⚠ #7 Live staging PDF sizes NOT measured here
+        WeasyPrint module fails to import in this dev container
+        (system Pango/cffi/cairo libs unavailable). I cannot
+        produce real PDF bytes here — only HTML render. The
+        3-scenario size budget check (Sc1<1MB, Sc2<5MB, Sc3<16MB)
+        must run on staging, which Zahi handles via ./deploy.sh.
+        Concrete numbers will be added to review.txt by Zahi after
+        the staging round-trip; if Sc3 exceeds 16 MB, follow the
+        iterate-and-retest path Zahi outlined (Q75→65 / 600→480).
 
-✓ Monospace stack: 'JetBrains Mono', ui-monospace, monospace
-   → REMOVED entirely. The mockup used JetBrains Mono on numeric chips,
-     defect IDs, page labels, etc. Per Zahi decision, I dropped it
-     completely and let those classes fall back to Rubik. No .ttf
-     needs to ship; no font-shadowing surprises in WeasyPrint.
-     (Visual: those chips/labels are still distinct via background
-     color + letter-spacing + uppercase — not via font swap.)
-
-WEASYPRINT-SAFE SHIMS (no Chrome-only CSS in production output)
+ANSWER TO ZAHI'S QUESTION (30+ defect fixture in staging?)
 ────────────────────────────────────────────────────────────────────
-• NO display:flex with `gap` — replaced with display:table + table-cell
-  for layouts: .stats (4-col), .severity-row (3-col), .info-grid (2-col),
-  .meters (2-col), .sig-grid (HTML <table>), .ph header, .cover-top,
-  .cover-card-strip, .tenant, .kv, .room-head, .toc-item, .sig-meta,
-  .photo-row, .defect-card-head, .legal-sigline rows.
-• NO CSS Grid — replaced with the same table/table-cell patterns.
-• NO aspect-ratio — replaced with padding-bottom: % hack
-  (.photo at 25%/3-up, .meter .photo at 56%).
-• NO oklch() / no JS / no @container — none used.
-• Inline SVGs have explicit width/height attrs.
-• Page footer (page X / Y) implemented via @page @bottom-left/right
-  running CSS counters, not in-flow elements.
-• @page :first { margin: 0 } so the cover hero bleeds edge-to-edge
-  without the standard inner-page margins.
-• Hebrew RTL: <html dir="rtl">, body direction:rtl text-align:right;
-  per-element text-align:left used only on visual-LTR slots
-  (page-num counter, meta dates).
+I cannot reach the staging Mongo from this dev container. I queried
+the LOCAL `handover_protocols` collection (mongodb://localhost:27017
+/contractor_ops) and found 5 protocols, all with n_defects = 0 in
+the inspection_items shape — so this dev container has no heavy-
+defect fixture either. No seed script in the repo creates a 30+
+defect protocol.
 
-EDGE-CASE HANDLING (CONDITIONALS)
+Recommendation: take the Path-NO option you offered —
+   Sc1 + Sc2 on staging, Sc3 validated on prod against a real
+   heavy-defect apartment. The cost of seeding a 30-defect fixture
+   (4–6h) is not justified given Sc3 is mostly a payload-size check
+   and our compression tiers are deterministic functions of input
+   count and dimensions; the math should hold linearly.
+
+LOCAL VERIFICATION (this pass)
 ────────────────────────────────────────────────────────────────────
-• Severity bar: hidden when total_defects == 0 (no empty bars).
-• Defects table: replaced with green "no defects found" banner when
-  all_defects is empty.
-• Tenant notes page: only emitted when tenant_notes is truthy.
-• Delivered/meters page: only emitted when delivered_items is non-empty
-  OR meter_water/electricity readings exist.
-• Legal sections page: only emitted when legal_sections is non-empty.
-• Per-legal-section signatures: when ls.signers is empty,
-  shows "ממתין לחתימה" gray chip; ת״ז is appended from the matching
-  tenant record by name lookup.
-• Signatures grid:
-   - Manager + tenant_1 always rendered.
-   - Tenant_2 cell rendered only when is_tenant2_required OR
-     sig_t2.signed (so 1-tenant flows don't show a phantom card).
-   - Contractor_rep cell only on second row, alongside tenant_2.
-   - Each card flips to .unsigned styling (dashed border, opacity)
-     when sig.signed is False.
-   - Signature payload: <img> for canvas, Caveat-cursive text for
-     typed, "ממתין לחתימה" placeholder otherwise.
-• Per-room defect cards (with photos) only render when at least one
-  item has photos.
-• Collapsed sections (all_not_checked / all_not_relevant): show a
-  centered dashed-border banner instead of the items table.
+  ✓ py_compile of services/handover_pdf_service.py     PASS
+  ✓ Jinja parse of handover_protocol_pdf.html           PASS
+  ✓ Full-fixture render (1 critical defect, 2 tenants,
+    1 legal section, contractor stale-signed)           PASS, 37,465 chars
+  ✓ Programmatic checks against rendered HTML:
+       [✓] legal sigchip has triplet (name · ת״ז · date)
+       [✓] legal-sigline uses flex-wrap CSS
+       [✓] only critical sev bar rendered (normal+cosmetic hidden)
+       [✓] contractor signed=True+no-payload → .unsigned class
+       [✓] manager canvas+image_b64 → not .unsigned
+  ✓ Zero-defect fixture render                          PASS
+       [✓] severity-bar header HIDDEN at zero defects
+       [✓] green "no defects" clean banner shown
+  ✓ Empty-everything fixture render                     PASS, 29,288 chars
 
-SECTIONS DROPPED FROM MOCKUP (out of scope / no service data)
+RENDERED HTML SAMPLES (in attached_assets/, refreshed this pass)
 ────────────────────────────────────────────────────────────────────
-• ID Cards Appendix page (mockup page 11) — service has NO
-  id_card_image_url field. Kept the 2 ID-photo placeholder boxes on
-  the cover tenant card per Zahi's lock.
-• "Spare tiles" handed table — service has no separate "spare tiles"
-  collection (delivered_items is generic).
-• QR + SHA-256 verification block — replaced with the simpler
-  "אימות דיגיטלי + מספר אסמכתא" footer using display_number.
-• MOCKUP banner / __bundler_thumbnail SVG / mockup template wrapper —
-  removed (these were dev artifacts).
+  attached_assets/handover_v3_render.html    — 1-defect / 2-tenant
+  attached_assets/handover_v3_minimal.html   — empty-everything
 
-JINJA GOTCHAS FIXED
+(Open in Chrome for visual sanity. Note: browsers ignore @page
+ directives, so the page-counter footer won't appear in the
+ browser view — only WeasyPrint applies it.)
+
+FILE INVENTORY
 ────────────────────────────────────────────────────────────────────
-• `sec.items` resolved to the dict `.items()` builtin method
-  (Jinja attribute lookup precedence). Switched to `sec['items']`
-  in 2 spots. All other dict accesses use `.foo` safely (no
-  collisions with bool, get, items, keys, values, update, copy, ...).
-• `(signatures|default({})).get('manager', {})` used everywhere so
-  signatures={} never raises.
-• `tenants[1].id_number` guarded by `(tenants|length) > 1`.
-• All aggregate filters use `|default([])` / `|default({})` /
-  `|default(0)` to be friendly to partially-missing context.
-
-LOCAL VERIFICATION RESULTS (this environment)
-────────────────────────────────────────────────────────────────────
-✓ python3 -c py_compile services/handover_pdf_service.py    PASS
-✓ Jinja parse of handover_protocol_pdf.html                  PASS
-✓ Dry render with realistic 3-section / 2-defect fixture     PASS
-   → 42,737 chars / 1,709 lines, all conditionals exercised
-✓ Dry render with empty-everything fixture                   PASS
-   → 29,166 chars, no template errors on missing data
-✗ Live WeasyPrint render NOT attempted —
-   the workspace's WeasyPrint module fails to import here
-   (system Pango/cffi libs missing). Live PDF render is for Zahi
-   to validate on staging after merge.
-
-RENDERED HTML SAMPLES (for visual sanity check, not the actual PDF)
-────────────────────────────────────────────────────────────────────
-   /tmp/handover_v3_render.html    — full-fixture render
-   /tmp/handover_v3_minimal.html   — empty-fixture render
-(open in browser for a rough preview — note that browsers ignore the
- @page directives so footers won't show; only WeasyPrint applies them)
-
-FOR ZAHI — STAGING SCENARIOS TO RUN POST-MERGE
-────────────────────────────────────────────────────────────────────
-Once merged + ./deploy.sh, please verify these 3 protocols generate
-clean PDFs with the new look:
-
-  1. INITIAL handover, single tenant, 0 defects
-     → expect: severity-bar HIDDEN, green "no defects" banner on
-       page 2, tenant_2 sig card NOT rendered.
-
-  2. INITIAL handover, 2 tenants, mixed defects (≥1 critical + photos),
-     legal sections with both tenants signed (canvas + typed)
-     → expect: severity bars show with proper widths, all_defects
-       table on p.2, defect-cards with photos on per-room pages,
-       legal sigchips with green check + ת״ז appended, signature
-       grid 2×2.
-
-  3. FOLLOWUP visit with a "not_checked" or "not_relevant" section
-     → expect: collapsed-banner replaces items table for that section,
-       TOC item shows the gray "לא נבדק" / "לא רלוונטי" badge.
-
-If any fonts render as fallback (no Hebrew shaping), confirm:
-  ls -la backend/fonts/Rubik-*.ttf
-and that {{ fonts_dir }} resolves to the absolute path inside the
-deployed container (already does on current staging).
+  backend/templates/handover_protocol_pdf.html        ~1525 lines (NEW v3)
+  backend/templates/handover_protocol_pdf.v1.html.bak  883 lines (backup)
+  backend/services/handover_pdf_service.py             671 lines (modified)
 
 ROLLBACK
 ────────────────────────────────────────────────────────────────────
    cp backend/templates/handover_protocol_pdf.v1.html.bak \
       backend/templates/handover_protocol_pdf.html
-(Service helper changes are backward-compatible: jpeg_quality kwarg
- is optional and defaults to the original Q65, so reverting only the
- template will produce v1 output without further service changes.)
+The service helper changes are backward-compatible:
+   • all new kwargs (jpeg_quality, max_width on local) default to
+     None, which preserves prior behavior;
+   • cache key now includes quality but old keys naturally roll off
+     after the 15-minute TTL.
+
+FOR ZAHI — DEPLOYMENT FLOW (unchanged from your message)
+────────────────────────────────────────────────────────────────────
+1. Open the two attached_assets/*.html files in Chrome
+2. If visuals look right → ./deploy.sh (staging only)
+3. Generate 3 real PDFs from the API + measure sizes:
+     Sc1 (zero defects)         expected < 1 MB
+     Sc2 (mixed, ~10 defects)   expected < 5 MB
+     Sc3 (30+ defects, prod)    must be < 16 MB
+4. If all pass → ./deploy.sh --prod
+5. If Sc3 fails → flag, iterate: defect Q75→65, width 600→480
 
 ═══════════════════════════════════════════════════════════════════
   Awaiting Zahi's approval. Agent has NOT committed, NOT pushed,
