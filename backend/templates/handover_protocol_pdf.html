@@ -1000,6 +1000,31 @@ table.items .note {
   white-space: pre-wrap;
 }
 
+/* ----- Locked decision #3: monospace numerals stack
+   ----- (JetBrains Mono if available, else system mono fallback).
+   ----- Last in the cascade so it wins over upstream Rubik on the
+   ----- specific numeric/identifier elements below. ---------------- */
+.cover-meta b,
+.cover-card-strip .val,
+.cover-protocol b,
+.stat .num,
+.sev-top .sev-num,
+.ph .ph-right,
+.page-label,
+.toc-item .pg,
+.toc-item .badge,
+.room-title .num,
+.defect-card-head .id,
+.handed-table .qty,
+.meter .val,
+.sig-meta,
+.sig-meta .l,
+.sig-meta .r {
+  font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo',
+               'Consolas', 'Courier New', monospace;
+  font-feature-settings: "tnum" 1;
+}
+
 </style>
 </head>
 <body>
@@ -1527,7 +1552,7 @@ table.items .note {
   <div style="margin-top:18px;padding:12px 14px;background:var(--paper);border:1px solid var(--slate-2);border-radius:10px;font-size:10.5px;color:var(--slate-7);line-height:1.55">
     <b style="color:var(--ink)">אימות דיגיטלי:</b>
     פרוטוקול זה נוצר באמצעות פלטפורמת BrikOps וחתום דיגיטלית.
-    {% if display_number %}<br><span style="font-family:'Rubik',sans-serif;font-size:10px;color:var(--slate-5)">מספר אסמכתא: <b style="color:var(--orange);font-weight:600">{{ display_number }}</b></span>{% endif %}
+    {% if display_number %}<br><span style="font-size:10px;color:var(--slate-5)">מספר אסמכתא: <b style="font-family:'JetBrains Mono',ui-monospace,monospace;color:var(--orange);font-weight:600;letter-spacing:0.04em">{{ display_number }}</b></span>{% endif %}
   </div>
 </div>
 

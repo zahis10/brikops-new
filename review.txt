@@ -1,16 +1,45 @@
 ═══════════════════════════════════════════════════════════════════
   TASK #453 — Handover PDF Template v3 (mockup v2.6 → production)
-  Status: SECOND-PASS · Branch: staging · Date: 29.04.2026
+  Status: THIRD-PASS · Branch: staging · Date: 29.04.2026
 ═══════════════════════════════════════════════════════════════════
 
-WHAT CHANGED IN THIS PASS (in response to first review)
+WHAT CHANGED IN THIS PASS (in response to second review)
+────────────────────────────────────────────────────────────────────
+Locked-decision #3 (monospace numerals) was misinterpreted in
+pass #2 as "drop the JetBrains Mono stack entirely". The actual
+lock was "JetBrains Mono via system fallback only" — i.e. KEEP the
+stack with `ui-monospace, monospace` fallbacks so we don't ship a
+.ttf, but still get tabular numerals where Mac/Linux users have it
+installed. Restored:
+
+  ✓ Added a single cascade-final CSS rule applying
+        font-family: 'JetBrains Mono', ui-monospace,
+                     'SF Mono', 'Menlo', 'Consolas', 'Courier New',
+                     monospace;
+        font-feature-settings: "tnum" 1;
+    on every numeric / identifier element:
+        .cover-meta b           (protocol number on cover meta)
+        .cover-card-strip .val  (building/floor/unit/tenant counts)
+        .cover-protocol b       (signed-date emphasis)
+        .stat .num              (4-card stat counters)
+        .sev-top .sev-num       (severity counts)
+        .ph .ph-right           (page-header date / display_number)
+        .page-label             (uppercase eyebrow)
+        .toc-item .pg, .badge   (TOC right-side pagination/counters)
+        .room-title .num        (chip with room sequence #)
+        .defect-card-head .id   (D-01 chip)
+        .handed-table .qty      (delivered qty)
+        .meter .val             (meter readings)
+        .sig-meta, .sig-meta .l, .sig-meta .r  (signature timestamps)
+    + inline override on the digital-verification footer
+    `display_number` so it renders mono with letter-spacing.
+
+PASS #2 FIXES (still in place)
 ────────────────────────────────────────────────────────────────────
 The first pass (29.04 13:30) was approved by Zahi with the two
-explicit deviations below accepted, but then a code-review pass
-flagged 7 items. This second pass (29.04 14:00) addresses items
-1, 2, 4, 5, 6 directly. Items 3 and 7 are addressed in the
-"Deviations" section below — both are pre-approved by Zahi or
-unfixable in this dev container.
+explicit deviations below accepted; then a code-review pass flagged
+7 items. Pass #2 (29.04 14:00) addressed items 1, 2, 4, 5, 6.
+Pass #3 (this one) addresses item 3 from the second review.
 
   ✓ #1 Legal sigchip format
         Now renders the exact triplet:
@@ -85,22 +114,23 @@ Recommendation: take the Path-NO option you offered —
    and our compression tiers are deterministic functions of input
    count and dimensions; the math should hold linearly.
 
-LOCAL VERIFICATION (this pass)
+LOCAL VERIFICATION (third pass)
 ────────────────────────────────────────────────────────────────────
   ✓ py_compile of services/handover_pdf_service.py     PASS
   ✓ Jinja parse of handover_protocol_pdf.html           PASS
-  ✓ Full-fixture render (1 critical defect, 2 tenants,
-    1 legal section, contractor stale-signed)           PASS, 37,465 chars
+  ✓ Full-fixture render with 1 critical defect          PASS, 37,154 chars
   ✓ Programmatic checks against rendered HTML:
-       [✓] legal sigchip has triplet (name · ת״ז · date)
+       [✓] JetBrains Mono stack present (locked decision #3)
+       [✓] mono applies to display_number footer
+       [✓] mono cascade rule covers .stat .num and friends
+       [✓] legal sigchip triplet (name · ת״ז · date)
        [✓] legal-sigline uses flex-wrap CSS
-       [✓] only critical sev bar rendered (normal+cosmetic hidden)
+       [✓] only crit sev bar rendered (normal+cosmetic hidden at 0)
        [✓] contractor signed=True+no-payload → .unsigned class
        [✓] manager canvas+image_b64 → not .unsigned
-  ✓ Zero-defect fixture render                          PASS
-       [✓] severity-bar header HIDDEN at zero defects
-       [✓] green "no defects" clean banner shown
-  ✓ Empty-everything fixture render                     PASS, 29,288 chars
+  ✓ Severity-bar header HIDDEN at zero defects
+  ✓ Green "no defects" clean banner shown
+  ✓ Empty-everything fixture render still parses & renders
 
 RENDERED HTML SAMPLES (in attached_assets/, refreshed this pass)
 ────────────────────────────────────────────────────────────────────
