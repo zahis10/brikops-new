@@ -1,280 +1,351 @@
 ================================================================================
-BATCH 5G — Dashboard simplification (remove "בביצוע" KPI) + i18n unification — REVIEW
+BATCH 5H — Smart back from /control to /dashboard — REVIEW
 ================================================================================
 Date:           2026-04-29
 Branch:         staging
-Rollback SHA:   d74fe28927bb (BATCH 5F merged checkpoint)
-Severity:       P1 — fixes 2 user-visible bugs found post-5F deploy.
-Files edited:   4 files / 8 logical edits.
-                  Backend:      tasks_router.py (1 edit — bucket dict)
-                  Backend test: test_status_buckets.py (1 edit — 'open' assertion)
-                  Frontend:     ProjectDashboardPage.js (5 sub-edits)
-                  i18n:         he.json (1 edit — label)
-Mobile:         Capacitor wraps the same React build via WebView. No native
-                code changes. Frontend changes ship via Capgo OTA — no
-                ./ship.sh needed.
+Rollback SHA:   a985ab13ef9c (BATCH 5G merged checkpoint)
+Severity:       P2 UX — found during 5G smoke test (Task #35).
+Files edited:   2 frontend files / 8 logical sub-edits.
+                  Frontend: ProjectDashboardPage.js (6 KPI/action navigates)
+                            ProjectControlPage.js (1 back button + 1 breadcrumb)
+Mobile:         Capacitor backButton handler at App.js:513-519 delegates to
+                window.history.back(). Hardware back / iOS swipe-back use
+                history pop, NOT the in-app arrow. No mobile-specific edits.
+                Confirmed in STEP 0.5.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT AUDIT (run in plan mode, before any edits)
 ================================================================================
 
-0.1 — Spec line numbers vs HEAD (4 greps from spec section 0.1):
-  $ grep -n "STATUS_BUCKET_EXPANSION = " backend/contractor_ops/tasks_router.py
-    40:STATUS_BUCKET_EXPANSION = {                          ✅ matches spec
-  $ grep -n 'label="בביצוע"\|label='\''בביצוע'\''' frontend/src/pages/ProjectDashboardPage.js
-    71:  in_progress: 'בביצוע',                             (page-level STATUS_LABELS map — KEEP)
-    303:            label="בביצוע"                          ✅ matches spec — the KPI card to remove
-  $ grep -n '"approved":' frontend/src/i18n/he.json
-    49:    "approved": "אושר",                              ✅ matches spec
-  $ grep -n "test_bucket_expansion_open" backend/tests/test_status_buckets.py
-    18:def test_bucket_expansion_open_matches_dashboard():  ✅ matches spec
-    20:        'open', 'assigned', 'reopened',              ✅ assertion to update
+0.1 — Spec line numbers vs HEAD (DRIFTED post-5G — used corrected numbers)
+  5G shrank ProjectDashboardPage.js by removing the בביצוע KPI card. Spec
+  line numbers were off by ~+2/−7 lines. Used the actual numbers below.
 
-0.2 — i18n call sites that will pick up the new "סגור" label:
-  No direct t('status.approved') / t("status.approved") calls anywhere.
-  The only generic-helper call site is ContractorDashboard.js:469 via
-  tStatus(task.status). After this batch, every surface that resolves
-  tStatus('approved') will display "סגור" — exactly Zahi's intent
-  ("סגור הוא סגור"). Surfaces using literal status maps were already
-  fixed in 5F (UnitDetailPage, ProjectTasksPage, ApartmentDashboardPage,
-  ProjectControlPage). Together 5F + 5G unify all 'approved' display
-  surfaces to "סגור".
+  ProjectDashboardPage.js — spec → actual:
+    spec 299 → actual 301 — פתוחים KPI ........................ EDIT 1
+    spec 308 → gone (the בביצוע KPI removed in 5G — confirmed)
+    spec 318 → actual 311 — נסגרו KPI ......................... EDIT 2
+    spec 329 → actual 322 — לאישורי KPI ....................... EDIT 3
+    spec 339 → actual 332 — באיחור KPI ........................ EDIT 4
+    spec 348 → actual 341 — צוות KPI .......................... EDIT 5
+    spec 682 → actual 675 — לאישור sub-section action ......... EDIT 6
+    spec 254 → actual 255 — dashboard's own back (DO NOT TOUCH — loop)
+    spec 830 → actual 823 — footer /control link (DO NOT TOUCH — exit)
 
-0.3 — `kpis.in_progress` consumers (must NOT break):
-  $ grep -rn "kpis\.in_progress\|kpis\?\.in_progress" frontend/src/
-    ProjectDashboardPage.js:304 — THE card being removed. Goes away. ✅
-    UnitHomePage.js:71          — `kpi.open + kpi.in_progress` for unit-level
-                                   badge. Different KPI object (per-unit).  KEEP
-    UnitDetailPage.js:209       — unit-level "בטיפול" stat card. Different
-                                   page, different label.                   KEEP
-  Only ProjectDashboardPage.js renders `label="בביצוע"`. Spec is correct.
-  Backend `kpis.in_progress` field stays available (we just stop displaying
-  it as a card on the project dashboard).
+  ProjectControlPage.js — spec → actual:
+    spec 3643 → actual 3655 — header back arrow .............. EDIT 7
+    spec 3782 → actual 3794 — defects-banner block ........... EDIT 8 (insert)
+    spec 3411 → actual 3417 — setActiveTab merge logic (DO NOT TOUCH —
+                              this is what preserves from=dashboard across
+                              tab switches via {replace:true})
 
-0.4 — KpiCard `title` prop pass-through (extra finding from audit):
-  The inline KpiCard at ProjectDashboardPage.js:31 was:
-    const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg,
-                       borderColor, numberColor, urgent }) => (...)
-  It did NOT accept a `title` prop. Step 3 below adds `title` to the
-  destructured props AND applies it to the root `<div>` so the HTML
-  tooltip actually renders. Without this 5th sub-edit, the title="..."
-  on the JSX call site would silently do nothing.
+  Other navigate('/projects') calls in ProjectControlPage at lines 3444 and
+  3484: body-level guard/error-handler redirects, NOT the header back button.
+  Untouched. The unique header back button is at line 3655 (now 3658).
 
-0.5 — Audit clean. Proceeded to edits with no scope expansion needed.
+  ProjectTasksPage.js convention to mirror — spec → actual:
+    spec 81 → actual 82  — const fromDashboard = searchParams.get('from')
+                                             === 'dashboard'
+    actual 359 — navigate(fromDashboard ? `/projects/${projectId}/dashboard`
+                                       : getProjectBackPath(...))
+    actual 528 — also uses fromDashboard for state.returnTo on task drill-down
+
+  Pattern is real, exact, proven in production. Mirrored, not invented.
+
+0.2 — Full classification of all 32 navigate(.../control) call sites
+
+  EDIT (6 sites — append &from=dashboard):
+    ProjectDashboardPage.js:301 — פתוחים KPI
+    ProjectDashboardPage.js:311 — נסגרו KPI
+    ProjectDashboardPage.js:322 — לאישורי KPI (PM/owner-only)
+    ProjectDashboardPage.js:332 — באיחור KPI
+    ProjectDashboardPage.js:341 — צוות KPI
+    ProjectDashboardPage.js:675 — לאישור sub-section action button
+
+  DO NOT TOUCH (26 sites — back to /projects is correct, or path is internal):
+    ProjectDashboardPage.js:255 — dashboard's own back (loop avoidance)
+    ProjectDashboardPage.js:823 — footer /control link (intentional exit)
+    ProjectControlPage.js:3760 — in-page לאישור shortcut (intra-/control;
+                                  flagged edge case where from is dropped —
+                                  out of scope, spec is silent)
+    ProjectControlPage.js:3859 — defect drill-down with state.returnTo
+    NewDefectModal.js:914,939   — modal-driven nav
+    StageDetailPage.js:595,1661 — QC settings nav
+    AdminOrgsPage.js:473        — admin nav
+    QCFloorSelectionPage.js:169,217 — QC nav
+    ProjectPlansPage.js:579     — plans nav
+    UnitHomePage.js:108         — unit context
+    OnboardingPage.js:583       — onboarding
+    MyProjectsPage.js:390       — project list (canonical entry path)
+    BuildingDefectsPage.js:78,95,380,396 — building scope
+    InnerBuildingPage.js:59     — building scope
+    ApartmentDashboardPage.js:383 — apartment scope
+    TaskDetailPage.js:815,1072  — task detail
+    UnitDetailPage.js:171       — unit context
+    ProjectTasksPage.js:456     — invitation flow
+    utils/navigation.js:9       — getProjectBackPath (canonical entry helper)
+
+0.3 — Back-button mechanism audit (no collisions)
+  - TaskDetailPage uses state.returnTo + sessionStorage (different mechanism)
+  - AdminBillingPage / AdminUsersPage use location.state?.from (admin-scoped)
+  - ProjectTasksPage already uses the EXACT same ?from=dashboard URL-param
+    pattern (proven convention)
+  - StageDetailPage uses local goBack() helper for QC routes (different)
+  Zero collision risk. URL-based, scoped to /control, mirrors sibling page.
+
+0.4 — Extra findings (planning value-add)
+  - searchParams already in scope on ProjectControlPage (useSearchParams
+    imported at line 6, destructured at line 3194). 16+ uses. No new import.
+  - ArrowRight already imported at ProjectControlPage:23. Reused for the
+    new breadcrumb. No new import.
+  - i18n approved label sanity: he.json:49 reads "סגור" — 5G merged correctly.
+  - In-page לאישור shortcut at ProjectControlPage:3760 (now :3770 after
+    the breadcrumb insert) drops `from=dashboard` if user clicks it from a
+    /control session that arrived with from. Minor edge case, flagged, not
+    in scope (spec doesn't address it).
+
+0.5 — Mobile audit (Capacitor backButton handler)
+  App.js:513-519:
+    CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack) window.history.back();
+      else CapacitorApp.exitApp();
+    });
+  Hardware back / iOS swipe-back pop browser history. Do NOT trigger the
+  in-app arrow. Smart-back fix only affects users who tap the visible icon.
+  History-pop paths land on /dashboard correctly (it WAS the previous entry).
+  No mobile changes. Capgo OTA delivers the React build as-is.
+
+Audit clean. Proceeded with 8 edits, no scope expansion needed.
 
 ================================================================================
-PER-FILE DIFFS (4 files / 8 logical edits)
+PER-FILE DIFFS (2 files / 8 logical sub-edits)
 ================================================================================
 
-FILE 1/4 — backend/contractor_ops/tasks_router.py (1 sub-location)
-- STATUS_BUCKET_EXPANSION = {
--     'open': ['open', 'assigned', 'reopened'],
-+ STATUS_BUCKET_EXPANSION = {
-+     'open': ['open', 'assigned', 'in_progress',
-+              'pending_contractor_proof', 'reopened', 'waiting_verify'],
-      'in_progress': [...]   # unchanged
-      'closed': [...]        # unchanged
-  }
+FILE 1/2 — frontend/src/pages/ProjectDashboardPage.js (6 sub-edits)
 
-  The 'open' bucket now mirrors `open_statuses` literal at
-  tasks_router.py:363 (6 statuses, intentionally excluding
-  pending_manager_approval — it's tracked separately as "לאישורי" via
-  literal pass-through). The 'in_progress' bucket stays unchanged for
-  any future caller that wants the 5 in-progress sub-statuses
-  explicitly. The list_tasks branch logic at line 239-241 is
-  untouched — still correctly checks `status in STATUS_BUCKET_EXPANSION`.
+Each edit appends `&from=dashboard` to an existing query string. Pure
+URL-string change, no logic.
 
-FILE 2/4 — backend/tests/test_status_buckets.py (1 sub-location)
-  Updated only the first assertion (test_bucket_expansion_open_matches_dashboard):
-- assert set(STATUS_BUCKET_EXPANSION['open']) == {
--     'open', 'assigned', 'reopened',
-- }, "STATUS_BUCKET_EXPANSION['open'] drifted from dashboard open_statuses"
-+ assert set(STATUS_BUCKET_EXPANSION['open']) == {
-+     'open', 'assigned', 'in_progress',
-+     'pending_contractor_proof', 'reopened', 'waiting_verify',
-+ }, "STATUS_BUCKET_EXPANSION['open'] must mirror dashboard open_statuses
-+    (6 statuses, no pending_manager_approval — that's tracked as לאישורי)"
+EDIT 1 — line 304 (was 301; the call spans two lines after the wrap)
+- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
++ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open&from=dashboard`)}
+  (פתוחים KPI — also has the title="כולל משימות שממתינות לאישור מנהל"
+  added in 5G; that's preserved.)
 
-  The other 3 tests (in_progress, closed, union-superset) are unchanged.
-  The 4th union-coverage test continues to PASS without modification —
-  pending_manager_approval lives in the 'in_progress' bucket and the
-  dashboard's handled_statuses set, so the union still covers
-  dashboard_all. No further edit needed (per spec section 2.2).
+EDIT 2 — line 314
+- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed`)}
++ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed&from=dashboard`)}
+  (נסגרו KPI)
 
-FILE 3/4 — frontend/src/pages/ProjectDashboardPage.js (5 sub-locations)
+EDIT 3 — line 325 (לאישורי KPI — PM/owner-only)
+- urgent={kpis.pending_approval > 0}
+- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
++ urgent={kpis.pending_approval > 0}
++ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
+  (Disambiguated from the line-678 edit by the surrounding `urgent={...}`
+  prop on the line above.)
 
-3a) Line 17 (lucide-react import) — remove TrendingUp (unused after card removal):
--   ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck,
-+   ExternalLink, BarChart3, AlertCircle, Shield, ClipboardCheck,
+EDIT 4 — line 335
+- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true`)}
++ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true&from=dashboard`)}
+  (באיחור KPI)
 
-3b) Line 31 (KpiCard component definition) — accept new `title` prop:
-- const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg,
--                    borderColor, numberColor, urgent }) => (
--   <div
--     onClick={onClick}
--     className={...}
-+ const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg,
-+                    borderColor, numberColor, urgent, title }) => (
-+   <div
-+     onClick={onClick}
-+     title={title}
-+     className={...}
+EDIT 5 — line 344
+- onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team`)}
++ onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team&from=dashboard`)}
+  (צוות KPI)
 
-3c) Line 290 (KPI grid columns) — 6 → 5:
-- <div className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
-+ <div className="grid grid-cols-3 md:grid-cols-5 gap-2.5">
+EDIT 6 — line 678 (לאישור sub-section "show all" button — not the KPI)
+- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
+- className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
++ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
++ className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
+  (Disambiguated from EDIT 3 by the className on the line below.)
 
-3d) Line 291 (פתוחים KpiCard) — add Hebrew tooltip:
-+   title="כולל משימות שממתינות לאישור מנהל"
+FILE 2/2 — frontend/src/pages/ProjectControlPage.js (2 sub-edits)
 
-3e) Lines 301-309 — DELETE the entire "בביצוע" KpiCard block:
-- <KpiCard
--   icon={TrendingUp}
--   label="בביצוע"
--   value={kpis.in_progress}
--   bg="bg-blue-50"
--   borderColor="#60a5fa"
--   numberColor="text-blue-600"
--   onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=in_progress`)}
-- />
+EDIT 7 — line 3658 (header back arrow — make it smart)
+- <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+-   <ArrowRight className="w-5 h-5" />
+- </button>
++ <button
++   onClick={() => {
++     if (searchParams.get('from') === 'dashboard') {
++       navigate(`/projects/${projectId}/dashboard`);
++     } else {
++       navigate('/projects');
++     }
++   }}
++   className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
++   title={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
++ >
++   <ArrowRight className="w-5 h-5" />
++ </button>
 
-   Result: the dashboard now shows 5 KPI cards (was 6) at the desktop
-   breakpoint — פתוחים / נסגרו / לאישורי / באיחור / צוות. When
-   isPmOrOwner is false, "לאישורי" is conditionally hidden and the
-   grid distributes the remaining 4 cards (acceptable per spec).
+  className unchanged — only onClick + title. searchParams already in scope
+  (destructured at line 3194 from useSearchParams imported at line 6). The
+  navigate('/projects') call is preserved inside the else-branch.
 
-FILE 4/4 — frontend/src/i18n/he.json:49 (Hebrew status label only)
-- "approved": "אושר",
-+ "approved": "סגור",
+EDIT 8 — line 3807 (breadcrumb above amber filter chip — defects view only)
+  Inside the existing `workMode === 'defects' && !activeTab && hasFilterParams`
+  block, just before the amber filter chip:
 
-  en.json / ar.json / zh.json intentionally NOT TOUCHED per Zahi's call
-  (Hebrew is the only user-facing locale today; EN/AR/ZH are pre-staged
-  for future market expansion and will be aligned in a separate pass
-  when those locales go live).
+  {workMode === 'defects' && !activeTab && hasFilterParams && (
+    <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
++     {searchParams.get('from') === 'dashboard' && (
++       <button
++         onClick={() => navigate(`/projects/${projectId}/dashboard`)}
++         className="flex items-center gap-1.5 text-sm text-amber-700 hover:text-amber-800 font-medium"
++       >
++         <ArrowRight className="w-4 h-4" />
++         חזרה לדשבורד
++       </button>
++     )}
+      <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+
+  Conditionally rendered only when from=dashboard. ArrowRight reused (already
+  imported at line 23). Visual weight matches the existing "נקה סינון" link
+  inside the filter chip. Other entry paths to /control never see it.
 
 ================================================================================
 DO NOT TOUCH — verified untouched per spec
 ================================================================================
-- tasks_router.py:363-364 (`open_statuses` + `handled_statuses`) — source
-  of truth, the bucket aligns TO it.
-- tasks_router.py:239-245 (list_tasks bucket-aware branch from 5F) —
-  still correctly delegates to STATUS_BUCKET_EXPANSION.
-- The 3 unchanged drift tests (in_progress, closed, union).
-- KpiCard component for non-targeted callers — adding the `title` prop
-  is fully backward-compatible (undefined when not passed → rendered as
-  `title={undefined}` → DOM omits the attribute entirely).
-- Backend `kpis.in_progress` response field — still computed, just no
-  longer rendered as a card on this page.
-- All other KPI cards (פתוחים, נסגרו, לאישורי, באיחור, צוות).
-- en.json, ar.json, zh.json (per Zahi's locale-scope decision).
-- DB value `approved` — unchanged. Audit-trail distinction preserved.
+- The dashboard's own back button at line 255 (loop avoidance).
+- The dashboard's footer /control link at line 823 (intentional exit).
+- The setActiveTab merge logic in ProjectControlPage at line 3417 — this is
+  EXACTLY what preserves `from=dashboard` across tab-switching inside
+  /control (uses {replace:true} and merges).
+- The workTabs strip + handleWorkTab function (intra-page nav, no `from`).
+- Body-level navigate('/projects') guards at ProjectControlPage:3444,3484
+  (NOT the back button — distinct error/access redirects).
+- The in-page לאישור shortcut at ProjectControlPage:3760 (now :3770) —
+  flagged edge case, out of scope per spec.
+- The defect drill-down at ProjectControlPage:3859 (now :3878) — different
+  state.returnTo mechanism, already works.
+- All 24 other navigate-to-/control sites across the app (modals, QC, admin,
+  building scope, unit context, task detail, invitation, utils/navigation).
+- en.json / ar.json / zh.json (Hebrew-only per Zahi standing decision).
+- Capacitor / Capgo / native code.
 
 ================================================================================
-VERIFY 1 — Backend syntax compile
-================================================================================
-$ python3 -m compileall backend/contractor_ops/ -q
-✅ COMPILE PASS
-
-================================================================================
-VERIFY 2 — STATUS_BUCKET_EXPANSION mirrors open_statuses
-================================================================================
-$ grep -A 10 "STATUS_BUCKET_EXPANSION = {" backend/contractor_ops/tasks_router.py
-STATUS_BUCKET_EXPANSION = {
-    'open': ['open', 'assigned', 'in_progress',
-             'pending_contractor_proof', 'reopened', 'waiting_verify'],
-    'in_progress': ['in_progress', 'pending_contractor_proof',
-                    'pending_manager_approval', 'returned_to_contractor',
-                    'waiting_verify'],
-    'closed': ['closed', 'approved'],
-}
-✅ 'open' bucket lists all 6 dashboard statuses.
-
-================================================================================
-VERIFY 3 — Drift-guard pytest (4 tests)
-================================================================================
-$ python3 -m pytest backend/tests/test_status_buckets.py -v
-  test_bucket_expansion_open_matches_dashboard         PASSED
-  test_bucket_expansion_in_progress_matches_dashboard  PASSED
-  test_bucket_expansion_closed_matches_dashboard_handled PASSED
-  test_bucket_union_covers_all_dashboard_statuses      PASSED
-  ============================ 4 passed in 1.34s ============================
-✅ ALL 4 TESTS PASS — including the 4th union test (no modification needed,
-   pending_manager_approval lives in the in_progress bucket so the union
-   still covers dashboard_all).
-
-================================================================================
-VERIFY 4 — Frontend yarn build
+VERIFY 1 — Frontend yarn build
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.example.com CI=false yarn build
-✅ BUILD PASS — Done in 33.87s. "The build folder is ready to be deployed."
-   No new warnings (TrendingUp removal was clean — unused-import warning
-   would have triggered if we left it in).
+✅ BUILD PASS — Done in 34.50s. "The build folder is ready to be deployed."
+   No new warnings.
 
 ================================================================================
-VERIFY 5 — i18n grep — אושר removed from he.json
+VERIFY 2 — All KPI/dashboard-action navigates now include from=dashboard
 ================================================================================
-$ grep -c "אושר" frontend/src/i18n/he.json
-0
-✅ ZERO hits in he.json. The only one (line 49) was the line we changed.
+$ grep -c 'from=dashboard' frontend/src/pages/ProjectDashboardPage.js
+6
+✅ Exactly 6 hits — one per edited KPI/action navigate.
 
 ================================================================================
-VERIFY 6 — KPI card removed from dashboard
+VERIFY 3 — Back button + breadcrumb wired correctly in ProjectControlPage
 ================================================================================
-$ grep -c 'label="בביצוע"' frontend/src/pages/ProjectDashboardPage.js
-0
-$ grep -c "kpis\.in_progress" frontend/src/pages/ProjectDashboardPage.js
-0
-$ grep -c "TrendingUp" frontend/src/pages/ProjectDashboardPage.js
-0
-✅ ZERO hits — card body, value reference, and now-dead icon import all gone.
+$ grep -c "searchParams.get('from')" frontend/src/pages/ProjectControlPage.js
+3
+✅ 3 hits — back button onClick + back button title + breadcrumb conditional.
+
+$ grep -n "navigate('/projects')" frontend/src/pages/ProjectControlPage.js
+3444:        navigate('/projects');     ← body-level guard (untouched, per audit)
+3484:      navigate('/projects');       ← body-level error handler (untouched)
+3660:                  navigate('/projects');   ← NEW: wrapped inside the else-branch of the smart back button
+✅ The header back button's call is now inside the conditional (line 3660),
+   not standalone. Body-level guards at 3444/3484 are intentionally untouched.
 
 ================================================================================
-INFORMATIONAL — wider 'אושר' grep (sanity check)
+VERIFY 4 — Regression: existing /control entry paths still go back to /projects
 ================================================================================
-$ grep -rn "אושר" frontend/src/ | wc -l
-18
+$ grep -rn 'navigate(.*projects/.*control' frontend/src/ | grep -v 'from=dashboard' | grep -v node_modules
 
-These 18 surviving hits are all unrelated domains and intentionally KEPT
-(carried over from 5F audit classification):
-  - JoinRequestsPage (membership join request status — different entity)
-  - StageDetailPage (QC stage status — different entity)
-  - ProjectControlPage:2640 (`accepted` field — different field name)
-  - utils/qcLabels.js (QC labels — different domain)
-  - Hebrew i18n keys for non-Hebrew locales / other status maps not in scope
-None are user-facing task status labels. SAFE.
+All 25 remaining /control navigates without from=dashboard match the
+0.2 DO-NOT-TOUCH classification exactly:
+
+  ProjectDashboardPage.js:255       — dashboard's own back (loop avoidance) ✓
+  ProjectDashboardPage.js:823       — footer /control link (intentional exit) ✓
+  ProjectControlPage.js:3770        — in-page לאישור shortcut (line shifted
+                                      from 3760 to 3770 after the breadcrumb
+                                      insert; flagged out-of-scope edge case) ✓
+  ProjectControlPage.js:3878        — defect drill-down with state.returnTo
+                                      (line shifted from 3859; different
+                                      mechanism, already works) ✓
+  components/NewDefectModal.js:914,939         ✓
+  pages/StageDetailPage.js:595,1661            ✓
+  pages/AdminOrgsPage.js:473                   ✓
+  pages/QCFloorSelectionPage.js:169,217        ✓
+  pages/ProjectPlansPage.js:579                ✓
+  pages/UnitHomePage.js:108                    ✓
+  pages/OnboardingPage.js:583                  ✓
+  pages/MyProjectsPage.js:390                  ✓
+  pages/BuildingDefectsPage.js:78,95,380,396   ✓
+  pages/InnerBuildingPage.js:59                ✓
+  pages/ApartmentDashboardPage.js:383          ✓
+  pages/TaskDetailPage.js:815,1072             ✓
+  pages/UnitDetailPage.js:171                  ✓
+  pages/ProjectTasksPage.js:456                ✓
+  utils/navigation.js:9                        ✓
+
+✅ No regression. All non-dashboard entry paths preserve original "back to
+   /projects" behavior.
 
 ================================================================================
-VERIFY 7 — Behavior smoke (Zahi runs visually on staging — not Replit)
+INTENTIONAL BEHAVIORS (no code action; documented for Zahi)
+================================================================================
+- from=dashboard SURVIVES tab switches inside /control. setActiveTab uses
+  setSearchParams(prev => {...}, {replace:true}) at line 3417 and merges
+  existing params. So a user who arrives via /control?...&from=dashboard,
+  switches to the "מבנה" tab, then taps the back arrow → still returns to
+  /dashboard. Intentional: dashboard context follows the user during their
+  session inside /control.
+- Bookmark edge case: if a user bookmarks a URL with from=dashboard and
+  opens it next session, the back arrow will go to /dashboard even though
+  the visit technically wasn't "from dashboard". Acceptable tradeoff —
+  bookmarks of deep-linked URLs with query params are rare, and the worst
+  case is back goes to /dashboard instead of /projects (still sensible).
+- In-page לאישור shortcut at ProjectControlPage:3770 — clicking it from a
+  /control session that arrived with from=dashboard DROPS the from param
+  (because navigate(`<full URL>`) replaces all search params, unlike the
+  setSearchParams merge used for tab switching). After clicking, back arrow
+  reverts to /projects. Minor edge case, flagged in audit, out of scope.
+
+================================================================================
+VERIFY 5 — Behavior smoke (Zahi runs visually on staging — not in Replit)
 ================================================================================
 After Zahi deploys, confirm:
-  a. Dashboard shows 5 KPI cards (was 6). "בביצוע" gone.
-  b. "פתוחים" KPI shows N → click → list shows exactly N tasks (no more 13/9 mismatch).
-  c. "פתוחים" KPI hover (desktop) → tooltip "כולל משימות שממתינות לאישור מנהל".
-  d. "לאישורי" KPI: click → shows only pending_manager_approval tasks.
-     (Those tasks ALSO appear in "פתוחים" — overlap is intentional per Zahi.)
-  e. Open any task with backend status='approved' → all surfaces
-     (TaskDetailPage, list badges, filter dropdown, ContractorDashboard) → "סגור".
-
-VERIFY 8 — Capgo OTA (Zahi runs on his phone after deploy):
-  Open the iOS or Android app → wait up to 5 min OR force-quit and reopen
-  → open any task with status='approved' → badge reads "סגור".
+  a. Project list → click project → /control?workMode=structure
+     → back arrow → returns to /projects ✓ (preserved, no `from`)
+  b. /control → click "דשבורד" tab → /dashboard → back → /control ✓
+     (preserved, dashboard's own back at line 255 untouched)
+  c. /dashboard → click "פתוחים" KPI → /control?...&from=dashboard
+     → back arrow → returns to /dashboard ✓ (THE FIX)
+     → tooltip on the back arrow now reads "חזרה לדשבורד"
+     → above the filter chip, a "← חזרה לדשבורד" link is visible
+  d. /dashboard → each of נסגרו, לאישורי, באיחור, צוות KPIs → back →
+     returns to /dashboard ✓ (consistent across all 5 KPIs + לאישור action)
+  e. Browser refresh on the deep-linked URL → breadcrumb still visible,
+     back arrow still goes to /dashboard ✓ (URL param survives)
+  f. QC flow + apartment defect flow untouched ✓
+  g. Browser back button (history pop) — already worked, still works ✓
+  h. Android hardware back / iOS swipe-back — uses window.history.back(),
+     same as browser back, lands on /dashboard ✓
+  i. Tab switching inside /control preserves from=dashboard ✓ (audit 0.4)
 
 ================================================================================
 COMMIT MESSAGE (full text in .local/.commit_message)
 ================================================================================
-fix(dashboard): merge בביצוע into פתוחים KPI; align bucket expansion to
-                dashboard aggregation; unify i18n approved→סגור
+fix(nav): smart back from /control to /dashboard when user came from
+          dashboard KPI
 
 ================================================================================
 FOLLOW-UPS
 ================================================================================
-- No new follow-ups needed for 5G — both architectural gaps closed.
-- Standing follow-ups still tracked (from prior batches):
-    • #443 (5D handover 'done' $nin)
-    • #444 (P1 force-close → aggregation → reopen regression suite)
-- Future pass (TASK BACKLOG, not blocking): when EN/AR/ZH go live for
-  real users, run a parallel locale alignment for the 'approved' label
-  in en.json / ar.json / zh.json.
+- No new follow-ups for 5H. The intra-/control לאישור shortcut at line 3770
+  has the minor `from` drop edge case but is intentionally out of scope per
+  spec (Zahi can decide later whether to expand).
+- No overlap with existing tasks (#15 defect detail back nav uses a
+  different page/mechanism; #348/#190 already MERGED/CANCELLED).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

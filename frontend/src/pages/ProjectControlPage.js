@@ -3652,7 +3652,17 @@ const ProjectControlPage = () => {
       <div className="sticky top-0 z-50">
         <header className="bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md">
           <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-2">
-            <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
+            <button
+              onClick={() => {
+                if (searchParams.get('from') === 'dashboard') {
+                  navigate(`/projects/${projectId}/dashboard`);
+                } else {
+                  navigate('/projects');
+                }
+              }}
+              className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
+              title={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
+            >
               <ArrowRight className="w-5 h-5" />
             </button>
             <div className="flex-1 min-w-0">
@@ -3793,6 +3803,15 @@ const ProjectControlPage = () => {
 
       {workMode === 'defects' && !activeTab && hasFilterParams && (
         <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
+          {searchParams.get('from') === 'dashboard' && (
+            <button
+              onClick={() => navigate(`/projects/${projectId}/dashboard`)}
+              className="flex items-center gap-1.5 text-sm text-amber-700 hover:text-amber-800 font-medium"
+            >
+              <ArrowRight className="w-4 h-4" />
+              חזרה לדשבורד
+            </button>
+          )}
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
             <span className="text-xs text-amber-800 font-medium">
