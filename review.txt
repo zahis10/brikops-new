@@ -1,10 +1,18 @@
-PR: Handover PDF v3.3 — 7 staging fixes
+PR: Handover PDF v3.3 — 7 staging fixes (+ approved 2-line label flip)
 Task: #456
 Branch: staging
 Files changed:
   - backend/templates/handover_protocol_pdf.html
   - backend/services/handover_pdf_service.py
   - attached_assets/handover_v3_render.html  (refreshed sample render)
+
+Post-approval addendum (Zahi requested before commit):
+  - HARDCODED_PROPERTY_LABELS in handover_pdf_service.py:
+      'parking_num': 'מספר חניה'   (was 'מספר חניות')
+      'storage_num': 'מספר מחסן'   (was 'מספר מחסנים')
+    Reason: these fields are identifiers, not counts — singular reads correctly
+    after the value (e.g. "מספר חניה 47") and avoids the "1 parking spot"
+    misread when the value is 1.
 
 ================================================================
 WHAT WAS FIXED (mapped to your 7-item staging review)
