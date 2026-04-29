@@ -1,273 +1,307 @@
 ================================================================
-PR: Handover PDF v3.3 — Root-Cause Follow-Up
-Task: #457 (follows #456)
+PR: Handover PDF v3.3 Follow-Up #2
+Task: #458 (follows #457, #456)
 Branch: staging
 Files changed: 2
-  - backend/services/handover_pdf_service.py
-  - backend/templates/handover_protocol_pdf.html
+  - backend/templates/handover_protocol_pdf.html  (5 selector cleanups)
+  - backend/services/handover_pdf_service.py      (diagnostic logging)
+
+⚠ TWO COMMITS in this PR — split per Zahi's spec:
+  Commit 1: template — strip 5 remaining text-transform: uppercase
+  Commit 2: service  — add [PDF] Photo diag logging
 ================================================================
 
-Two root-cause fixes — both diagnosed by Zahi from a v1-vs-current diff.
-No sample regenerated this round (per request: just the diffs).
+VERIFICATION (run before merge):
+  $ grep -n "text-transform" backend/templates/handover_protocol_pdf.html
+  → ZERO matches ✅
 
-================================================================
-BUG #1 — Defect-card photos render blank
-================================================================
-
-ROOT CAUSE
-----------
-The per-item loop in _build_template_context() builds two parallel
-structures from the same source row:
-
-  - item_data  → goes into inspection_sections (and DOES carry photos)
-  - all_defects.append({...})  → drives the defect-card section
-    in the template ... and was missing the "photos" key entirely.
-
-The current template's defect card iterates `all_defects` and reads
-`defect.photos` for its 3-up `range(3)` photo grid. Since the key
-was absent, every cell hit the empty-placeholder branch — no real
-images ever reached the page.
-
-THE FIX (1 line added)
-----------------------
-
-File: backend/services/handover_pdf_service.py
-Location: inside the `for item in section_items:` loop,
-          inside `if status in ("defective", "partial"):` — line ~544
-
-BEFORE:
--------
-            if status in ("defective", "partial"):
-                all_defects.append({
-                    "section_name": sec.get("name", ""),
-                    "item_name": item.get("name", ""),
-                    "trade": _trade,
-                    "trade_class": trade_to_class(_trade),
-                    "severity": severity,
-                    "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
-                    "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
-                    "description": description,
-                })
-
-AFTER:
-------
-            if status in ("defective", "partial"):
-                all_defects.append({
-                    "section_name": sec.get("name", ""),
-                    "item_name": item.get("name", ""),
-                    "trade": _trade,
-                    "trade_class": trade_to_class(_trade),
-                    "severity": severity,
-                    "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
-                    "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
-                    "description": description,
-                    "photos": photo_b64s,
-                })
-
-UNIFIED DIFF:
--------------
-@@ backend/services/handover_pdf_service.py
-                     "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
-                     "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
-                     "description": description,
-+                    "photos": photo_b64s,
-                 })
-
-`photo_b64s` is already in scope inside the same loop (it's the same
-list assigned to item_data["photos"] earlier in the iteration), so no
-additional plumbing was required.
+  $ python3 -c "import ast; ast.parse(open('backend/services/handover_pdf_service.py').read())"
+  → syntax OK ✅
 
 
 ================================================================
-BUG #2 — Hebrew rendering as Latin-Extended gibberish ("Akñàá")
+COMMIT 1 — Strip remaining 5 text-transform: uppercase
 ================================================================
-
-ROOT CAUSE
-----------
-v1 (working) template: ZERO occurrences of `text-transform: uppercase`.
-v3 template: 3 of them landed on selectors that carry Hebrew text:
-   .cover-eyebrow, .page-label, .section-h
-…each combined with non-trivial `letter-spacing`.
-
-When WeasyPrint sees `text-transform: uppercase` + wide letter-spacing
-on Hebrew Unicode, it cannot shape Rubik-Bold under that combination
-and falls back to DejaVu-Sans-Bold (visible in `pdffonts` output on
-the v3 PDFs). DejaVu-Sans-Bold's Hebrew glyph table maps Hebrew code
-points to visually-similar Latin Extended characters — hence the
-"Akñàá"-style gibberish on the cover, page headers, and section
-titles.
-
-Hebrew has no case, so `text-transform: uppercase` is a visual no-op
-on Hebrew text; the only thing it accomplishes is triggering the
-font fallback. The fix is to remove all three uppercase declarations
-and soften letter-spacing on the two selectors that had aggressive
-0.18em tracking.
-
-The 4th uppercase rule on `.cover-thumb .lab` (line 168) is left
-untouched — it sits on Latin-only labels (the small "PROJECT" /
-"UNIT" badges inside the cover thumbnails) and is not a Zahi-named
-target.
-
-THE FIX (3 declarations removed, 2 letter-spacings softened)
-------------------------------------------------------------
-
 File: backend/templates/handover_protocol_pdf.html
 
---- selector #1: .page-label ---
+Diagnosis: previous patch removed 3 of 8 uppercase declarations.
+A fresh grep on origin/staging revealed 5 still active — every one
+of them on a selector that carries Hebrew text. Each is a
+guaranteed WeasyPrint font-fallback trigger to DejaVu-Sans-Bold
+(→ Latin Extended gibberish on Hebrew code points).
 
+Hebrew has no case → text-transform: uppercase is a visual no-op
+on Hebrew text and exists in the stylesheet purely as a font-
+fallback bug. All 5 must go.
+
+----------------------------------------------------------------
+1/5 — .cover-thumb .lab  (line 166)
+      affects: Hebrew thumbnail caption "חזית" on cover page
+----------------------------------------------------------------
 BEFORE:
--------
-.page-label {
-  font-family: 'Rubik', sans-serif;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  color: var(--slate-5);
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
+  .cover-thumb .lab {
+    display: block;
+    font-size: 9px;
+    margin-top: 2px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+  }
 
 AFTER:
-------
-.page-label {
-  font-family: 'Rubik', sans-serif;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--slate-5);
-  margin-bottom: 6px;
-}
+  .cover-thumb .lab {
+    display: block;
+    font-size: 9px;
+    margin-top: 2px;
+    letter-spacing: 0.06em;
+    color: rgba(255,255,255,0.55);
+  }
 
---- selector #2: .section-h ---
+DIFF:
+  -  text-transform: uppercase;
 
+----------------------------------------------------------------
+2/5 — .cover-card-strip .lab  (line 226)
+      affects: Hebrew labels "בניין", "קומה", "דירה", "דייר"/"דיירים"
+               on the cover summary cards
+----------------------------------------------------------------
 BEFORE:
--------
-.section-h {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--slate-7);
-  margin: 0 0 10px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
+  .cover-card-strip .lab {
+    font-size: 9.5px; color: rgba(255,255,255,0.45);
+    letter-spacing: 0.10em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
 
 AFTER:
-------
-.section-h {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--slate-7);
-  margin: 0 0 10px;
-  letter-spacing: 0.02em;
-}
+  .cover-card-strip .lab {
+    font-size: 9.5px; color: rgba(255,255,255,0.45);
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
 
-(letter-spacing already at the safe 0.02em target — only the
-text-transform line was removed.)
+DIFF:
+  -  letter-spacing: 0.10em; text-transform: uppercase;
+  +  letter-spacing: 0.04em;
 
---- selector #3: .cover-eyebrow ---
+(The only selector this round where letter-spacing also drops —
+0.10em → 0.04em — per Zahi's spec, because the original line
+combined uppercase + tight tracking on a single declaration.)
 
+----------------------------------------------------------------
+3/5 — .info-card h4  (line 334)
+      affects: Hebrew section headings "פרטי נכס", "צוות מסירה",
+               "דיירים" on the info-cards page
+----------------------------------------------------------------
 BEFORE:
--------
-.cover-eyebrow {
-  font-size: 10.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--orange);
-  font-weight: 600;
-  margin-bottom: 8px;
-}
+  .info-card h4 {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--slate-7);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 10px;
+  }
 
 AFTER:
-------
-.cover-eyebrow {
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  color: var(--orange);
-  font-weight: 600;
-  margin-bottom: 8px;
-}
+  .info-card h4 {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--slate-7);
+    letter-spacing: 0.04em;
+    margin: 0 0 10px;
+  }
+
+DIFF:
+  -  text-transform: uppercase;
+
+----------------------------------------------------------------
+4/5 — .sig-grid td .role  (line 865)
+      affects: Hebrew role labels "מנהל פרויקט", "רוכש/ת ראשי/ת",
+               "רוכש/ת נוסף/ת", "נציג קבלן" on the signatures grid
+----------------------------------------------------------------
+BEFORE:
+  .sig-grid td .role {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--orange);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+AFTER:
+  .sig-grid td .role {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--orange);
+    margin-bottom: 4px;
+  }
+
+DIFF:
+  -  text-transform: uppercase;
+
+----------------------------------------------------------------
+5/5 — .defect-card-body .desc h5  (line 962)
+      affects: Hebrew defect-description heading "תיאור הליקוי"
+               on every defect card
+----------------------------------------------------------------
+BEFORE:
+  .defect-card-body .desc h5 {
+    margin: 0 0 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--slate-5);
+    text-transform: uppercase;
+  }
+
+AFTER:
+  .defect-card-body .desc h5 {
+    margin: 0 0 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--slate-5);
+  }
+
+DIFF:
+  -  text-transform: uppercase;
 
 
-UNIFIED DIFF (template):
-------------------------
-@@ backend/templates/handover_protocol_pdf.html  .page-label
- .page-label {
-   font-family: 'Rubik', sans-serif;
-   font-size: 9.5px;
-   font-weight: 700;
--  letter-spacing: 0.18em;
-+  letter-spacing: 0.04em;
-   color: var(--slate-5);
--  text-transform: uppercase;
-   margin-bottom: 6px;
- }
+================================================================
+COMMIT 2 — Photo diagnostic logging (NO logic change)
+================================================================
+File: backend/services/handover_pdf_service.py
 
-@@ backend/templates/handover_protocol_pdf.html  .section-h
- .section-h {
-   font-size: 13px;
-   font-weight: 700;
-   color: var(--slate-7);
-   margin: 0 0 10px;
-   letter-spacing: 0.02em;
--  text-transform: uppercase;
- }
+Diagnosis: data-flow code looks correct (item_data["photos"] set,
+all_defects.append({..., "photos": photo_b64s}) carries the same
+list). But staging still produces no photos. We don't know which
+layer is empty: section item.photos, defect.proof_urls, the
+S3 fetch, or the images.get(pk) lookup.
 
-@@ backend/templates/handover_protocol_pdf.html  .cover-eyebrow
- .cover-eyebrow {
-   font-size: 10.5px;
--  letter-spacing: 0.18em;
--  text-transform: uppercase;
-+  letter-spacing: 0.04em;
-   color: var(--orange);
-   font-weight: 600;
-   margin-bottom: 8px;
- }
+Per Zahi's instruction: diagnose, don't patch. Adding structured
+per-item logs that will tell us — on the next staging PDF — which
+layer falls empty for each defective/partial item.
+
+INSERTION POINT: immediately after `photo_b64s = [images.get(pk)
+for pk in photo_keys]` (currently line 505), inside the section-
+items loop. All identifiers used (sec, item, photo_keys,
+photo_b64s, defect_map) are already in scope.
+
+BEFORE (lines 503-506):
+            item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
+            photo_keys = item_photo_map.get(item_key, [])
+            photo_b64s = [images.get(pk) for pk in photo_keys]
+
+            defect_id = item.get("defect_id")
+
+AFTER (lines 503-529):
+            item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
+            photo_keys = item_photo_map.get(item_key, [])
+            photo_b64s = [images.get(pk) for pk in photo_keys]
+
+            # DIAGNOSTIC — log photo flow per item
+            if photo_keys:
+                truthy_count = sum(1 for p in photo_b64s if p)
+                logger.info(
+                    f"[PDF] Photo diag: section='{sec.get('name', '?')}' "
+                    f"item='{item.get('name', '?')[:30]}' "
+                    f"item_id={item.get('item_id', '?')} "
+                    f"defect_id={item.get('defect_id', 'none')} "
+                    f"status={item.get('status')} "
+                    f"item.photos_count={len(item.get('photos', []) or [])} "
+                    f"defect.proof_urls_count={len((defect_map.get(item.get('defect_id', '')) or {}).get('proof_urls', []) or [])} "
+                    f"photo_keys={photo_keys} "
+                    f"fetched_truthy={truthy_count}/{len(photo_keys)}"
+                )
+            elif item.get("status") in ("defective", "partial"):
+                logger.info(
+                    f"[PDF] Photo diag: NO photos registered for defective item "
+                    f"section='{sec.get('name', '?')}' item='{item.get('name', '?')[:30]}' "
+                    f"item.photos={item.get('photos', [])} "
+                    f"defect_id={item.get('defect_id', 'none')}"
+                )
+
+            defect_id = item.get("defect_id")
+
+WHAT THE LOGS WILL TELL YOU:
+
+Per defective/partial item, you get one of two log lines:
+
+  1. If photo_keys is non-empty (the item HAS photos registered):
+     [PDF] Photo diag: section='...' item='...' item_id=... defect_id=...
+       status=... item.photos_count=N
+       defect.proof_urls_count=M
+       photo_keys=[...]
+       fetched_truthy=X/Y
+
+     Read it as:
+       - item.photos_count    → did the section item arrive carrying photos?
+       - defect.proof_urls    → does the underlying defect doc have URLs?
+       - photo_keys           → which keys the loop computed
+       - fetched_truthy=X/Y   → how many actually came back from S3
+                                (X<Y means S3/object-storage failure)
+
+  2. If photo_keys is empty AND status is defective/partial:
+     [PDF] Photo diag: NO photos registered for defective item
+       section='...' item='...'
+       item.photos=[]
+       defect_id=...
+
+     Means: this defect was saved without photos at the data layer
+     (item.photos empty AND no defect_id mapping into proof_urls).
+     Either the user truly didn't upload, or the link from item →
+     photos is broken upstream.
+
+VERIFICATION ON STAGING:
+After ./deploy.sh and one PDF generation:
+
+  # On Beanstalk / CloudWatch, search for "[PDF] Photo diag":
+  grep "\[PDF\] Photo diag" /var/log/.../app.log
+
+You should see N log lines where N = number of defective/partial
+items in that protocol. The pattern of which fields are 0 vs N
+will identify the failing layer immediately.
 
 
 ================================================================
 NOT TOUCHED (deliberately)
 ================================================================
 
-- .cover-thumb .lab  (line 168, text-transform: uppercase, 0.06em)
-  → Latin-only badges inside cover thumbnails. Not in Zahi's target
-    list. Leave as-is.
+- Template: defect-card photo-rendering logic (the has_photo_items
+  filter at lines 1366-1389). This is the intended design — no
+  card if no photo — and stays.
 
-- .info-card h4 / sig-grid td .role / cover-card-strip .lab and any
-  other text-transform:uppercase rules elsewhere in the stylesheet
-  → Either Latin-only or short, low-tracking; not implicated by the
-    Akñàá symptom. Leave as-is.
+- Service: no data-flow changes. Diagnostic logging only. We
+  patch nothing until the staging logs reveal which layer is
+  empty.
 
-- letter-spacing on TOC numerals, English chips, and Latin-only
-  labels → untouched.
-
-
-================================================================
-VERIFICATION RECOMMENDED ON STAGING
-================================================================
-
-After Zahi runs ./deploy.sh and generates a fresh PDF:
-
-  pdffonts /path/to/generated.pdf
-
-Expected: ONLY Rubik (any weight) + Caveat (typed signatures).
-NOT expected: DejaVu-Sans-Bold, DejaVu-Sans, or any other fallback.
-
-If DejaVu still surfaces, there is at least one more
-text-transform/letter-spacing combo touching Hebrew text that needs
-to be hunted down. The 3 removed here are the v3-vs-v1 delta and
-should be sufficient.
+- letter-spacing on selectors not named by Zahi → preserved
+  exactly. Only .cover-card-strip .lab dropped 0.10em → 0.04em
+  per explicit spec.
 
 
 ================================================================
 DEPLOYMENT
 ================================================================
 
-Standing rule respected: agent did NOT git commit, did NOT restart
-workflows, did NOT deploy.
+Standing rule respected: agent did NOT git commit, did NOT
+restart workflows, did NOT deploy.
 
-Zahi runs:
-  git add backend/services/handover_pdf_service.py \
-          backend/templates/handover_protocol_pdf.html
-  git commit -m "$(cat .local/.commit_message)"
+Zahi runs (TWO separate commits per his spec):
+
+  # Commit 1 — template cleanup
+  git add backend/templates/handover_protocol_pdf.html
+  git commit -m "handover-pdf: strip remaining 5 text-transform uppercase (Hebrew gibberish fix #2)"
+
+  # Commit 2 — diagnostic logging
+  git add backend/services/handover_pdf_service.py
+  git commit -m "handover-pdf: add [PDF] Photo diag per-item logging (no logic change)"
+
+  # Push + deploy
   git push origin staging
   ./deploy.sh
+
+  # Generate one staging PDF, then:
+  grep "\[PDF\] Photo diag" /var/log/.../app.log

@@ -501,6 +501,28 @@ async def _build_template_context(protocol: dict, db) -> dict:
             photo_keys = item_photo_map.get(item_key, [])
             photo_b64s = [images.get(pk) for pk in photo_keys]
 
+            # DIAGNOSTIC — log photo flow per item
+            if photo_keys:
+                truthy_count = sum(1 for p in photo_b64s if p)
+                logger.info(
+                    f"[PDF] Photo diag: section='{sec.get('name', '?')}' "
+                    f"item='{item.get('name', '?')[:30]}' "
+                    f"item_id={item.get('item_id', '?')} "
+                    f"defect_id={item.get('defect_id', 'none')} "
+                    f"status={item.get('status')} "
+                    f"item.photos_count={len(item.get('photos', []) or [])} "
+                    f"defect.proof_urls_count={len((defect_map.get(item.get('defect_id', '')) or {}).get('proof_urls', []) or [])} "
+                    f"photo_keys={photo_keys} "
+                    f"fetched_truthy={truthy_count}/{len(photo_keys)}"
+                )
+            elif item.get("status") in ("defective", "partial"):
+                logger.info(
+                    f"[PDF] Photo diag: NO photos registered for defective item "
+                    f"section='{sec.get('name', '?')}' item='{item.get('name', '?')[:30]}' "
+                    f"item.photos={item.get('photos', [])} "
+                    f"defect_id={item.get('defect_id', 'none')}"
+                )
+
             defect_id = item.get("defect_id")
             description = item.get("notes", "")
             severity = None
