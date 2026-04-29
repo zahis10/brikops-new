@@ -17,8 +17,9 @@ from contractor_ops.tasks_router import STATUS_BUCKET_EXPANSION
 
 def test_bucket_expansion_open_matches_dashboard():
     assert set(STATUS_BUCKET_EXPANSION['open']) == {
-        'open', 'assigned', 'reopened',
-    }, "STATUS_BUCKET_EXPANSION['open'] drifted from dashboard open_statuses"
+        'open', 'assigned', 'in_progress',
+        'pending_contractor_proof', 'reopened', 'waiting_verify',
+    }, "STATUS_BUCKET_EXPANSION['open'] must mirror dashboard open_statuses (6 statuses, no pending_manager_approval — that's tracked as לאישורי)"
 
 
 def test_bucket_expansion_in_progress_matches_dashboard():

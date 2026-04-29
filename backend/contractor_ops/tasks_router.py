@@ -38,7 +38,8 @@ router = APIRouter(prefix="/api")
 # (open_statuses + handled_statuses). Drift-guarded by
 # backend/tests/test_status_buckets.py.
 STATUS_BUCKET_EXPANSION = {
-    'open': ['open', 'assigned', 'reopened'],
+    'open': ['open', 'assigned', 'in_progress',
+             'pending_contractor_proof', 'reopened', 'waiting_verify'],
     'in_progress': ['in_progress', 'pending_contractor_proof',
                     'pending_manager_approval', 'returned_to_contractor',
                     'waiting_verify'],

@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import {
   ArrowRight, AlertTriangle, Clock, CheckCircle2, Users, Timer,
   ChevronLeft, ChevronDown, Building2, HardHat, Loader2, RefreshCw,
-  ExternalLink, TrendingUp, BarChart3, AlertCircle, Shield, ClipboardCheck,
+  ExternalLink, BarChart3, AlertCircle, Shield, ClipboardCheck,
   Construction, FileSignature, Send, MessageSquare
 } from 'lucide-react';
 
@@ -28,9 +28,10 @@ const formatHours = (h) => {
   return `${days} ימים`;
 };
 
-const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg, borderColor, numberColor, urgent }) => (
+const KpiCard = ({ icon: Icon, label, value, sub, onClick, bg, borderColor, numberColor, urgent, title }) => (
   <div
     onClick={onClick}
+    title={title}
     className={`rounded-xl p-3 transition-all border-r-4 ${bg} ${
       onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98]' : ''
     }`}
@@ -287,7 +288,7 @@ export default function ProjectDashboardPage() {
       </header>
 
       <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-4">
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
+        <div className="grid grid-cols-3 md:grid-cols-5 gap-2.5">
           <KpiCard
             icon={AlertTriangle}
             label="פתוחים"
@@ -296,16 +297,8 @@ export default function ProjectDashboardPage() {
             bg="bg-red-50"
             borderColor="#f87171"
             numberColor={kpis.open_total > 0 ? 'text-red-600' : 'text-slate-800'}
+            title="כולל משימות שממתינות לאישור מנהל"
             onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
-          />
-          <KpiCard
-            icon={TrendingUp}
-            label="בביצוע"
-            value={kpis.in_progress}
-            bg="bg-blue-50"
-            borderColor="#60a5fa"
-            numberColor="text-blue-600"
-            onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=in_progress`)}
           />
           <KpiCard
             icon={CheckCircle2}
