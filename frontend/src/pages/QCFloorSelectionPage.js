@@ -323,7 +323,7 @@ export default function QCFloorSelectionPage() {
             return (
               <button
                 key={building.id}
-                onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc`)}
+                onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc?from=qc`)}
                 className={`w-full bg-white rounded-xl border border-slate-100 ${stats.accentBorder} px-4 py-3.5 hover:border-amber-200 hover:shadow transition-all text-right`}
               >
                 <div className="flex items-center justify-between">

@@ -1,245 +1,157 @@
 ================================================================================
-DOCS PHASE 1A — Architecture ADRs + Refactor Backlog + CLAUDE.md Extension
+BATCH 5K — BuildingQCPage smart back when arriving from /qc
 ================================================================================
-Task #450 | Branch: staging | Date: 2026-04-29 | Agent: Cowork
-Mode: Build (auto-switched from Plan after Zahi approved task #450 card)
+Task #451 | Branch: staging | Date: 2026-04-29 | Agent: Cowork
+Severity: P2 UX. Same family as 5H (smart-back via ?from= URL param) and
+5I (back-button broken-route fix).
 
-ZAHI: This is a pure documentation batch. No code changes. No deploy needed.
-After your review, run `./deploy.sh --stag` ONLY IF you want the docs visible
-on staging — but the docs are repo-only, so a commit/push is sufficient.
-
-================================================================================
-WHAT WAS BUILT (11 files)
-================================================================================
-
-NEW FILES (10):
-1. docs/architecture/README.md                         (197 lines, 11.3 KB)
-2. docs/architecture/adr-001-project-control-page.md   (163 lines,  8.5 KB)
-3. docs/architecture/adr-002-qc-router.md              (133 lines,  6.4 KB)
-4. docs/architecture/adr-003-handover-router.md        (138 lines,  6.8 KB)
-5. docs/architecture/adr-004-billing-router.md         (151 lines,  7.2 KB)
-6. docs/architecture/adr-005-tasks-router.md           (158 lines,  7.3 KB)
-7. docs/architecture/adr-006-status-system.md          (152 lines,  7.5 KB)
-8. docs/architecture/adr-007-i18n.md                   (151 lines,  6.8 KB)
-9. docs/architecture/adr-008-navigation.md             (198 lines,  8.9 KB)
-10. docs/refactor-backlog.md                           (353 lines, 15.7 KB)
-
-MODIFIED FILES (1):
-11. CLAUDE.md  41 → 133 lines  (preserved verbatim 41 + appended 92 lines)
-
-TOTAL: 11 files, ~1927 lines, ~96 KB of architecture documentation.
+ZAHI: 2 frontend files / 4 sub-edits. No native build needed (React only —
+Capgo OTA picks it up). Run `./deploy.sh --stag` after approval.
 
 ================================================================================
-2 CLARIFICATIONS APPLIED (per Zahi's approval message)
+STEP 0 — PRE-FLIGHT AUDIT (run before any edits)
 ================================================================================
 
-[1] docs/strategy/codebase-refactor-plan.md and ROADMAP.md exist on Mac only,
-    not on staging. PROCEEDED WITHOUT THEM. The spec was self-contained;
-    cross-links instead point to PROJECT_OVERVIEW.md (44KB, exists at root).
+0.1 — All entry paths to /buildings/:id/qc — 3 confirmed:
+  ✓ frontend/src/pages/QCFloorSelectionPage.js:326   (THE FIX TARGET)
+  ✓ frontend/src/pages/InnerBuildingPage.js:162      (preserved, no ?from=qc)
+  ✓ frontend/src/pages/FloorDetailPage.js:222        (preserved, no ?from=qc)
+  Plus UnitQCSelectionPage.js:58 uses state.returnTo (different mechanism — KEEP).
 
-[2] CODEBASE_SUMMARY.md is the cross-link target for the directory tree.
-    docs/architecture/README.md COMPLEMENTS it (line counts, conventions,
-    anti-patterns, ADR index, helper-finder table) — does NOT duplicate the
-    directory tree. README.md cites CODEBASE_SUMMARY.md (2 mentions) and
-    PROJECT_OVERVIEW.md (2 mentions) as the directory + product references.
+0.2 — BuildingQCPage handleBack location confirmed at line 79-81 (matches spec).
 
-================================================================================
-SPEC DRIFT CAUGHT DURING STEP 0 (documented; not "fixed")
-================================================================================
+0.3 — useSearchParams was NOT yet imported in BuildingQCPage. Original line 2:
+        import { useParams, useNavigate } from 'react-router-dom';
+      → Edit needed (added to destructure).
 
-The spec assumptions were significantly out of date — flagged here so you
-know what the docs actually describe vs what the spec text claimed:
-
-[A] FILES >1500 LINES: spec said 5-8; reality 14 (8 backend + 6 frontend).
-    Added an inventory table to README.md listing all 14 with line counts and
-    ADR mapping. The 9 candidates without an ADR are flagged in the backlog
-    as "future ADR triggers when next touched heavily" (#20).
-
-[B] ProjectControlPage.js: spec said 3680 lines; reality 4115. The growth
-    came from BATCHes 5G (KPI chips) and 5H (smart-back). ADR-001 cites
-    4115 with the as-of date.
-
-[C] qc_router.py: spec did NOT mention this file. It is the LARGEST backend
-    file (2936 lines). Promoted to ADR-002 (one of the 5 file-specific
-    ADRs). Replaced no other ADR — fits within the spec's 5-8 budget.
-
-[D] CLAUDE.md: spec said 62 lines; reality 41 lines. Confirmed by tail.
-    Append succeeded — appended `---` separator + new 92-line section.
-    Final: 133 lines. Original 41 lines preserved verbatim (verified:
-    grep '## כללים ברזל' = 1, grep 'capacitor plugins' = 1).
-
-[E] LINE REFS: most spec line refs verified at HEAD; one minor drift —
-    getProjectBackPath at utils/navigation.js:17 (spec said :9). ADR-008
-    uses :17.
-
-[F] TODO INVENTORY: 7 grep hits, only 2 real:
-    - handover_router.py:926 (org legal text fallback removal) → backlog #13
-    - tasks_router.py:493 (N+1 in task-detail) → backlog #17
-    The other 5 hits were in test phase markers and a phone placeholder.
-
-[G] STATUS_LABELS frontend duplication: spec said 5 files; reality 8 files
-    (AdminUsersPage, HandoverTabPage, AdminActivityPage, AdminDashboardPage,
-    BuildingDefectsPage, ApartmentDashboardPage, UnitDetailPage,
-    OrgBillingPage) plus utils/qcLabels.js + utils/billingLabels.js.
-    ADR-007 + backlog #6 both reflect the actual count.
+0.4 — Other navigates back to /qc (none need editing — informational only):
+  - FloorDetailPage.js:167          (back-to-QC button, already correct)
+  - ProjectControlPage.js:3641      (work-tab handler)
+  - ProjectControlPage.js:3761      (KpiSection onViewQc)
+  - ProjectDashboardPage.js:356     (KPI card)
+  - ProjectDashboardPage.js:614     (KPI card)
+  None of the 5 enter /buildings/:id/qc — out of scope per spec.
 
 ================================================================================
-ADR ROSTER (final 8, within spec budget of 5-8)
+SPEC DRIFT CAUGHT (documented, not "fixed")
 ================================================================================
 
-FILE-SPECIFIC ADRs (5) — chosen for largest + most recently active:
-  ADR-001 ProjectControlPage.js    (4115 lines, BATCH 5H/5I context)
-  ADR-002 qc_router.py             (2936 lines, the largest backend)
-  ADR-003 handover_router.py       (2652 lines, BATCH 5C TERMINAL_TASK fix)
-  ADR-004 billing_router.py        (2068 lines, BATCH 5I context)
-  ADR-005 tasks_router.py          (1289 lines, BATCH 5C/5F/5G drift hub)
-
-CROSS-CUTTING ADRs (3):
-  ADR-006 Status system            (drift lessons from 5C/5F/5G)
-  ADR-007 i18n                     (he.json source of truth + frozen locales)
-  ADR-008 Navigation               (5H smart-back + 5I broken-route fix)
-
-EACH ADR HAS THE 5 REQUIRED SECTIONS (verified):
-  ## Why this exists
-  ## Architectural decisions
-  ## Conventions used here
-  ## When to refactor
-  ## Refactor backlog items touching this file
-
-Plus most have natural-seams + recent-changes sections beyond the minimum.
+Spec said handleBack call sites are at lines 208, 251, 276 (3 sites). Reality
+in current HEAD: 5 sites at lines 213, 238, 256, 267, 281. The file has grown
+since the spec was written, but the pattern is identical — all 5 visible
+back-arrow elements reuse the same handleBack handler, so all 5 become smart
+automatically with the single handler update. No additional edits needed.
 
 ================================================================================
-REFACTOR BACKLOG (21 items — spec required ≥10-15)
+PER-FILE DIFF (2 files, 4 sub-edits)
 ================================================================================
 
-Each item has the 6 fields: File / Severity / What's wrong (data, not feeling) /
-Proposed fix / Estimated time / Fold into batch X when.
+FILE 1 of 2: frontend/src/pages/QCFloorSelectionPage.js (1 edit)
+----------------------------------------------------------------
+LOCATION 1.1 — line 326 (building card onClick):
+  - onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc`)}
+  + onClick={() => navigate(`/projects/${projectId}/buildings/${building.id}/qc?from=qc`)}
 
-Highlights (severity-sorted):
+  Other 3 navigates in this file (lines 169, 182, 217) preserved verbatim.
 
-  HIGH:
-  #10 force_close → aggregation → reopen regression tests (BLOCKING LAUNCH,
-      Task #28 from BATCH 5C)
+FILE 2 of 2: frontend/src/pages/BuildingQCPage.js (3 sub-edits)
+---------------------------------------------------------------
+LOCATION 2.1 — line 2 (import):
+  - import { useParams, useNavigate } from 'react-router-dom';
+  + import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 
-  MEDIUM:
-  #1  Extract CompaniesTab from ProjectControlPage.js
-  #2  Extract TeamTab + AddTeamMemberForm
-  #4  Consolidate STATUS_BUCKET_EXPANSION + dashboard agg lists (drift surface)
-  #6  Centralize duplicated frontend STATUS_LABELS (8 files)
-  #7  UserDrawer native <select> Desktop+RTL+fixed bug (Task #21)
-  #9  handover_router.py:2336 $nin missing 'done' (Task #27)
+LOCATION 2.2 — line 70 (destructure, after useNavigate at line 69):
+  +   const [searchParams] = useSearchParams();
 
-  LOW (12 more): #3, #5, #8 (Task #36), #11, #12, #13, #14, #15, #16, #17,
-       #18 (post-launch), #19, #20.
+LOCATION 2.3 — lines 83-89 (handleBack — was lines 79-81 before insert):
+  - const handleBack = useCallback(() => {
+  -   navigate(`/projects/${projectId}/buildings/${buildingId}`);
+  - }, [navigate, projectId, buildingId]);
+  + const handleBack = useCallback(() => {
+  +   if (searchParams.get('from') === 'qc') {
+  +     navigate(`/projects/${projectId}/qc`);
+  +   } else {
+  +     navigate(`/projects/${projectId}/buildings/${buildingId}`);
+  +   }
+  + }, [navigate, projectId, buildingId, searchParams]);
 
-The 3 CRITICAL ITEMS to bring forward are #10 (BLOCKING LAUNCH), #9 (Task #27,
-known correctness bug), and #6 (drift surface across 8 frontend files).
+  Behavior matrix:
+  - From /qc → /buildings/Y/qc?from=qc → back returns to /qc            ✓ THE FIX
+  - From /buildings/Y → /buildings/Y/qc → back returns to /buildings/Y  ✓ preserved
+  - From /floors/Z → /buildings/Y/qc → back returns to /buildings/Y     ✓ preserved
+  - Direct URL /buildings/Y/qc (no from) → back returns to /buildings/Y ✓ default
 
-================================================================================
-CLAUDE.md EXTENSION CONTENT
-================================================================================
-
-The new "🤖 Standing instructions for Cowork" section (lines 46-133) covers:
-- Before any spec implementation: read README, ADRs, run STEP 0, check backlog
-- Anti-patterns Zahi has flagged repeatedly (10 entries with reasons)
-- Where to find existing helpers (12-entry quick reference)
-- Hebrew commit message format (`fix(<scope>): <one-line lowercase>`)
-- The standing rule (NEVER deploy/commit/push/restart, branch=staging,
-  Cowork edits React only, Capgo OTA, Zahi runs ./deploy.sh)
-
-Original Hebrew operational content (lines 1-44) PRESERVED VERBATIM.
-Separator: `---` at line 45.
-
-================================================================================
-VERIFY 1-6 RESULTS
-================================================================================
-
-V1 — All 11 files exist + non-empty:
-     ✓ All sized 6.4-15.7 KB; line counts 133-353.
-
-V2 — CLAUDE.md sanity:
-     ✓ Total: 133 lines (was 41, added 92)
-     ✓ Original "## כללים ברזל" header: 1 occurrence (preserved)
-     ✓ Original "capacitor plugins" bullet: 1 occurrence (preserved)
-     ✓ New "🤖 Standing instructions" header: 1 occurrence (added)
-     ✓ Separator "---" present
-
-V3 — ADR structural completeness:
-     ✓ All 8 ADRs have all 5 required sections (Why / Decisions /
-       Conventions / When to refactor / Refactor backlog items).
-
-V4 — refactor-backlog.md item count:
-     ✓ 21 items (spec required ≥10-15).
-
-V5 — README.md completeness:
-     ✓ 6 top-level sections (Index intro, Top files, Cross-cutting ADRs,
-       Conventions, Anti-patterns, Helpers + Reading order).
-     ✓ Cross-links to CODEBASE_SUMMARY.md (×2), PROJECT_OVERVIEW.md (×2),
-       CLAUDE.md (×2).
-
-V6 — Zero code changes:
-     ✓ No files in backend/ or frontend/src/ modified in this batch.
-       (Two files HandoverOverviewPage.js + OrgBillingPage.js show in
-        find-mmin output — those are residual mod-times from BATCH 5I's
-        recent merge, NOT this batch. Verifiable: this batch wrote to
-        docs/ + CLAUDE.md only.)
-     ✓ git status was unavailable due to a stale .git/index.lock; used
-       `find -mmin` as alternative confirmation (more reliable for
-       intent-vs-merge distinction anyway).
+  All 5 visible back-arrow elements (lines 213, 238, 256, 267, 281)
+  reuse this handler — they become smart automatically.
 
 ================================================================================
-WHAT'S NOT IN THIS BATCH (deliberate scope discipline)
+VERIFY 1-4 RESULTS
 ================================================================================
 
-- No ADR for OrgBillingPage.js (2256 lines), StageDetailPage.js (2239),
-  billing.py (2200), onboarding_router.py (2125), safety_router.py (1912),
-  TaskDetailPage.js (1909), admin_router.py (1613), projects_router.py (1603),
-  OnboardingPage.js (1543), ProjectPlansPage.js (1518). All 10 are flagged
-  in backlog #20 as "future ADR triggers when next touched heavily."
+VERIFY 1 — Frontend syntax sanity:
+  ✓ Both files parse cleanly. Sizes: BuildingQCPage 17252 bytes (was 17089),
+    QCFloorSelectionPage 17476 bytes (was 17468).
 
-- No code changes to fix backlog items. Documentation precedes refactor —
-  this batch establishes the WHY so future batches can fold the cleanup in.
+VERIFY 2 — Source navigate updated:
+  ✓ `?from=qc` count in QCFloorSelectionPage:  1 (was 0)
+  ✓ Old form (`/qc'` no param) count:           0 (was 1)
+  ✓ Other 3 navigates in same file preserved (lines 169, 182, 217).
 
-- No docs/strategy/ directory created. Spec referenced it, but Zahi's
-  clarification said codebase-refactor-plan.md exists on Mac only. Skipped.
+VERIFY 3 — BuildingQCPage handleBack uses searchParams:
+  ✓ `searchParams.get('from')` count:           1
+  ✓ `useSearchParams` count:                    2 (import + destructure)
+  ✓ handleBack conditional with both destinations + dependency array updated.
 
-- No ROADMAP.md. Same reason as above.
+VERIFY 4 — Other entry paths preserved (regression sweep):
+  ✓ InnerBuildingPage.js:162    no `?from=qc` (preserved)
+  ✓ FloorDetailPage.js:222      no `?from=qc` (preserved)
+  ✓ All 3 entry paths confirmed to have correct param presence/absence.
 
-- No edits to PROJECT_OVERVIEW.md or CODEBASE_SUMMARY.md. README.md cross-
-  links to both as authoritative siblings — does not modify them.
+VERIFY 5 — Behavior smoke (Zahi runs visually on staging — skipped per spec).
 
 ================================================================================
-NEXT STEPS (Zahi)
+SCOPE DISCIPLINE
 ================================================================================
 
-1. Review the 11 files (suggested reading order):
-   - docs/architecture/README.md (the entry point)
-   - One ADR sample (recommend ADR-006 status-system — captures the most
-     drift lessons across the recent batches)
-   - docs/refactor-backlog.md (the actionable artifact)
-   - CLAUDE.md (the appended Cowork section, lines 46-133)
+NOT TOUCHED:
+- InnerBuildingPage.js:162 — entry from inside a building. Back to building
+  detail is correct from this entry; no change.
+- FloorDetailPage.js:222 — entry from a floor. Back to building's QC view is
+  correct from this entry (existing rebound).
+- UnitQCSelectionPage.js:58 — uses state.returnTo (different mechanism).
+- The 5 navigates back to /qc from other pages (KpiSection, work-tab handler,
+  ProjectDashboardPage cards, FloorDetailPage's "back to QC" button). None
+  enter /buildings/:id/qc, so they don't need the from param.
+- Any header/breadcrumb visuals.
+- Any backend code.
 
-2. If revisions needed: tell me, I'll edit and re-verify.
+NO BACKEND CHANGES. NO NEW DEPENDENCIES. NO NATIVE EDITS.
 
-3. If approved: you commit + push from your machine. Suggested commit
-   message in .local/.commit_message:
-       docs(architecture): add ADRs, refactor backlog, and Cowork
-       standing instructions
+================================================================================
+COMMIT MESSAGE
+================================================================================
 
-4. Deploy is OPTIONAL for this batch (docs are repo-only, not served).
-   Skip ./deploy.sh unless you want the docs visible on a staging URL.
+fix(qc): BuildingQCPage back returns to /qc when arrived from there
+
+(Full body in .local/.commit_message)
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha> on staging. 2 files / 4 surgical edits. Trivially safe.
 
 ================================================================================
 STANDING RULE COMPLIANCE
 ================================================================================
 
-- ❌ NO ./deploy.sh executed (per standing rule).
+- ❌ NO ./deploy.sh executed.
 - ❌ NO ./ship.sh executed.
-- ❌ NO git commit / push executed.
-- ❌ NO workflow restarts performed.
+- ❌ NO git commit / push / restart_workflow performed.
 - ❌ NO suggestions to publish or deploy made to user.
-- ✓  Branch: staging (verified, not main).
+- ✓  Branch: staging.
 - ✓  Stopped at review.txt + .local/.commit_message + present_asset.
 
-End of review.
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

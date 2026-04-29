@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { projectService, qcService } from '../services/api';
 import { qcFloorStatusLabel } from '../utils/qcLabels';
 import { getFloorBadgeVisualStatus } from '../utils/qcVisualStatus';
@@ -64,6 +64,7 @@ const FILTER_OPTIONS = [
 export default function BuildingQCPage() {
   const { projectId, buildingId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(null);
@@ -77,8 +78,12 @@ export default function BuildingQCPage() {
   const seqRef = useRef(0);
 
   const handleBack = useCallback(() => {
-    navigate(`/projects/${projectId}/buildings/${buildingId}`);
-  }, [navigate, projectId, buildingId]);
+    if (searchParams.get('from') === 'qc') {
+      navigate(`/projects/${projectId}/qc`);
+    } else {
+      navigate(`/projects/${projectId}/buildings/${buildingId}`);
+    }
+  }, [navigate, projectId, buildingId, searchParams]);
 
   const load = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort();
