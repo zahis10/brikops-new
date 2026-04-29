@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "BATCH 5I — Back-button fixes for /handover and /org-billing — REVIEW"
+title = "DOCS PHASE 1A — Review (Task #450)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
@@ -222,3 +222,27 @@ id = "pZGm3qlpZoA8zgNDOJyMT"
 uri = "file://frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png"
 type = "image"
 title = "ic_launcher_foreground.png xxxhdpi (transparent bg, adaptive layer)"
+
+[[outputs]]
+id = "7OLWmHUzQOwZkKktx0Hig"
+uri = "file://docs/architecture/README.md"
+type = "text"
+title = "Architecture README — Index + Conventions + Anti-patterns"
+
+[[outputs]]
+id = "HHkzqu6GQ6pec9k4u3Loy"
+uri = "file://docs/architecture/adr-006-status-system.md"
+type = "text"
+title = "ADR-006 — Status System (recommended ADR sample)"
+
+[[outputs]]
+id = "NGOsY-qu8gVjQENGVEJEG"
+uri = "file://docs/refactor-backlog.md"
+type = "text"
+title = "Refactor Backlog — 21 actionable items"
+
+[[outputs]]
+id = "DtBPlf09-Xqr71-kEXhRx"
+uri = "file://CLAUDE.md"
+type = "text"
+title = "CLAUDE.md (extended) — original 41 lines + new Cowork section"

@@ -1,229 +1,245 @@
 ================================================================================
-BATCH 5I — Back-button fixes for /handover and /org-billing — REVIEW
+DOCS PHASE 1A — Architecture ADRs + Refactor Backlog + CLAUDE.md Extension
 ================================================================================
-Date:           2026-04-29
-Branch:         staging
-Rollback SHA:   54ff2b26ce14 (BATCH 5H merged checkpoint)
-Severity:       P2 UX — found during 5H smoke test (Task #35 follow-up).
-Files edited:   2 frontend files / 2 logical sub-edits.
-                  Frontend: HandoverOverviewPage.js (1 onClick + 1 added title)
-                            OrgBillingPage.js       (1 onClick)
-Mobile:         N/A — Capacitor backButton handler at App.js:513-519 uses
-                window.history.back(); bypasses the in-app arrow. Same as
-                BATCH 5H. No native rebuild. Capgo OTA delivers the React
-                build as-is.
+Task #450 | Branch: staging | Date: 2026-04-29 | Agent: Cowork
+Mode: Build (auto-switched from Plan after Zahi approved task #450 card)
+
+ZAHI: This is a pure documentation batch. No code changes. No deploy needed.
+After your review, run `./deploy.sh --stag` ONLY IF you want the docs visible
+on staging — but the docs are repo-only, so a commit/push is sufficient.
 
 ================================================================================
-SCOPE EXPANSION (Zahi-approved 2026-04-29)
-================================================================================
-Original spec: 1 file (HandoverOverviewPage.js).
-STEP 0.2 audit surfaced a SECOND broken caller of the same pattern at
-OrgBillingPage.js:894. Zahi approved bundling: "Approved with expansion:
-bundle OrgBillingPage.js:894 into 5I scope. Same broken pattern, same 1-line
-fix shape (navigate to /control?workMode=structure or appropriate destination
-— for OrgBillingPage the source project IS the destination, so use
-/projects/${sourceProjectId}/control?workMode=structure). Update Steps +
-Relevant files to reflect 2 files / 2 sub-edits."
-
-Final scope: 2 files / 2 sub-edits as documented below.
-
-================================================================================
-STEP 0 — PRE-FLIGHT AUDIT (run in plan mode, before any edits)
+WHAT WAS BUILT (11 files)
 ================================================================================
 
-0.1 — Broken navigate locations (PASS)
-  $ grep -n 'navigate(`/projects/${projectId}`)' frontend/src/pages/HandoverOverviewPage.js
-  → 1 hit at line 231 — header back button with ChevronRight icon, no title attr.
+NEW FILES (10):
+1. docs/architecture/README.md                         (197 lines, 11.3 KB)
+2. docs/architecture/adr-001-project-control-page.md   (163 lines,  8.5 KB)
+3. docs/architecture/adr-002-qc-router.md              (133 lines,  6.4 KB)
+4. docs/architecture/adr-003-handover-router.md        (138 lines,  6.8 KB)
+5. docs/architecture/adr-004-billing-router.md         (151 lines,  7.2 KB)
+6. docs/architecture/adr-005-tasks-router.md           (158 lines,  7.3 KB)
+7. docs/architecture/adr-006-status-system.md          (152 lines,  7.5 KB)
+8. docs/architecture/adr-007-i18n.md                   (151 lines,  6.8 KB)
+9. docs/architecture/adr-008-navigation.md             (198 lines,  8.9 KB)
+10. docs/refactor-backlog.md                           (353 lines, 15.7 KB)
 
-0.2 — All callers using the broken /projects/:projectId pattern (2 sites)
-  $ grep -rn 'navigate(`/projects/${projectId}`)' frontend/src/ | grep -v node_modules
-  → 1 hit (HandoverOverviewPage.js:231).
+MODIFIED FILES (1):
+11. CLAUDE.md  41 → 133 lines  (preserved verbatim 41 + appended 92 lines)
 
-  $ grep -rn 'navigate(`/projects/\${[a-zA-Z_.]*}`)' frontend/src/ | grep -v node_modules
-    (broadened to catch variant variable names like sourceProjectId)
-  → 2 hits — both bundled into this batch per Zahi 2026-04-29 approval:
-    - HandoverOverviewPage.js:231 (uses `projectId`) ............ EDIT 1
-    - OrgBillingPage.js:894      (uses `sourceProjectId`) ...... EDIT 2
-
-  OrgBillingPage.js:894 context (read 880-905):
-    {sourceProjectId && (
-      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
-        <div className="text-sm text-blue-800">
-          {sourceProjectName
-            ? <span>הגעת מפרויקט: <strong>{sourceProjectName}</strong></span>
-            : <span>הגעת מפרויקט</span>
-          }
-        </div>
-        <button
-          onClick={() => navigate(`/projects/${sourceProjectId}`)}   ← BROKEN, EDIT 2
-          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
-        >
-          <ArrowRight className="w-3.5 h-3.5" />
-          חזרה לפרויקט
-        </button>
-      </div>
-    )}
-
-  The OTHER navigates on OrgBillingPage at lines 795, 860, 880 all read
-  `navigate(isSA ? '/admin' : '/projects')` — top-level breadcrumb/back links,
-  intentional exit. DO NOT TOUCH. Confirmed in post-edit bonus grep.
-
-0.3 — Target route exists (PASS)
-  $ grep -n 'path="/projects/:projectId/control"' frontend/src/App.js
-  → 1 hit at line 285. Destination is valid for both edits.
-
-  $ grep -n 'path="/projects/:projectId"' frontend/src/App.js
-  → 0 hits. Confirms there is NO bare /projects/:projectId route — that's the
-    root cause for both sites. React Router falls through to the project-list
-    redirect.
-
-  $ grep -nE 'path="/projects/:projectId' frontend/src/App.js
-  → 22 project-scoped routes, all with suffixes (control, dashboard, handover,
-    qc, plans, tasks, units, buildings, floors, safety). Convention universal.
-
-0.4 — Mobile / back-button mechanism audit (no new collisions)
-  - Capacitor backButton handler at App.js:513-519 uses window.history.back();
-    bypasses the in-app arrow. Hardware back / iOS swipe-back land on whatever
-    is the previous history entry. No mobile changes. Same mechanism as
-    BATCH 5H audit 0.5.
-  - The ?from=dashboard URL-param convention shipped in 5H lives entirely
-    inside ProjectControlPage. No collision with this fix — different pages,
-    different param namespace, no shared state.
-
-0.5 — Existing-task overlap (clean)
-  Searched `handover back navigation control` and `billing source project navigation`:
-  - #379 (back nav preserves project context) — MERGED, different mechanism,
-    doesn't touch HandoverOverviewPage or OrgBillingPage. No overlap.
-  - #190 (sticky stack + back button to navigating tabs) — CANCELLED.
-  - #31 (admin panel navigation tabs) — MERGED, different concern (top-level
-    admin nav, not the source-project banner).
-  - No other open task touches these two back buttons.
-
-Audit clean. Proceeded with 2 edits, no further scope expansion needed.
+TOTAL: 11 files, ~1927 lines, ~96 KB of architecture documentation.
 
 ================================================================================
-PER-FILE DIFFS (2 files / 2 logical sub-edits)
+2 CLARIFICATIONS APPLIED (per Zahi's approval message)
 ================================================================================
 
-FILE 1/2 — frontend/src/pages/HandoverOverviewPage.js (1 sub-edit)
+[1] docs/strategy/codebase-refactor-plan.md and ROADMAP.md exist on Mac only,
+    not on staging. PROCEEDED WITHOUT THEM. The spec was self-contained;
+    cross-links instead point to PROJECT_OVERVIEW.md (44KB, exists at root).
 
-EDIT 1 — line 231 (header back button — fix broken route + add tooltip)
-- <button onClick={() => navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
-+ <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקט">
-    <ChevronRight className="w-4 h-4" />
-  </button>
-
-  Two changes to the same <button> element:
-  - onClick: target the existing /control route with workMode=structure
-    (the project's "home" view, where most user flows originate).
-  - title: add Hebrew tooltip "חזרה לפרויקט" so the affordance is clear on
-    hover (button has only a ChevronRight icon, no visible label — convention
-    matches the smart back arrow shipped in BATCH 5H at ProjectControlPage:3667).
-  No styling, no className change, no icon change.
-
-FILE 2/2 — frontend/src/pages/OrgBillingPage.js (1 sub-edit)
-
-EDIT 2 — line 894 (now line 897 — source-project banner back link)
-- onClick={() => navigate(`/projects/${sourceProjectId}`)}
-+ onClick={() => navigate(`/projects/${sourceProjectId}/control?workMode=structure`)}
-  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
-
-  Pure URL-string change. No styling, no className change, no text change —
-  the button already shows visible Hebrew text "חזרה לפרויקט", so no tooltip
-  needed. The conditional `{sourceProjectId && (...)}` wrapper is preserved,
-  so the banner only renders when the page was reached from a specific project
-  (admin direct entry doesn't render this banner — VERIFY 4c covers that).
+[2] CODEBASE_SUMMARY.md is the cross-link target for the directory tree.
+    docs/architecture/README.md COMPLEMENTS it (line counts, conventions,
+    anti-patterns, ADR index, helper-finder table) — does NOT duplicate the
+    directory tree. README.md cites CODEBASE_SUMMARY.md (2 mentions) and
+    PROJECT_OVERVIEW.md (2 mentions) as the directory + product references.
 
 ================================================================================
-DO NOT TOUCH — verified untouched per spec
+SPEC DRIFT CAUGHT DURING STEP 0 (documented; not "fixed")
 ================================================================================
-- HandoverOverviewPage.js — all other navigates (HamburgerMenu pass-through,
-  logout, etc.).
-- HandoverTabPage / HandoverSectionPage / HandoverProtocolPage — STEP 0.2
-  grep confirmed they don't use the broken pattern.
-- OrgBillingPage.js — three top-level back links at lines 795, 860, 880, all
-  reading `navigate(isSA ? '/admin' : '/projects')` (breadcrumb/header back to
-  admin or project list, intentional exit). Verified unchanged in post-edit
-  bonus grep below.
-- App.js routing table (no new routes, none changed).
-- en.json / ar.json / zh.json (Hebrew-only per Zahi standing decision).
-- Capacitor / Capgo / native code.
+
+The spec assumptions were significantly out of date — flagged here so you
+know what the docs actually describe vs what the spec text claimed:
+
+[A] FILES >1500 LINES: spec said 5-8; reality 14 (8 backend + 6 frontend).
+    Added an inventory table to README.md listing all 14 with line counts and
+    ADR mapping. The 9 candidates without an ADR are flagged in the backlog
+    as "future ADR triggers when next touched heavily" (#20).
+
+[B] ProjectControlPage.js: spec said 3680 lines; reality 4115. The growth
+    came from BATCHes 5G (KPI chips) and 5H (smart-back). ADR-001 cites
+    4115 with the as-of date.
+
+[C] qc_router.py: spec did NOT mention this file. It is the LARGEST backend
+    file (2936 lines). Promoted to ADR-002 (one of the 5 file-specific
+    ADRs). Replaced no other ADR — fits within the spec's 5-8 budget.
+
+[D] CLAUDE.md: spec said 62 lines; reality 41 lines. Confirmed by tail.
+    Append succeeded — appended `---` separator + new 92-line section.
+    Final: 133 lines. Original 41 lines preserved verbatim (verified:
+    grep '## כללים ברזל' = 1, grep 'capacitor plugins' = 1).
+
+[E] LINE REFS: most spec line refs verified at HEAD; one minor drift —
+    getProjectBackPath at utils/navigation.js:17 (spec said :9). ADR-008
+    uses :17.
+
+[F] TODO INVENTORY: 7 grep hits, only 2 real:
+    - handover_router.py:926 (org legal text fallback removal) → backlog #13
+    - tasks_router.py:493 (N+1 in task-detail) → backlog #17
+    The other 5 hits were in test phase markers and a phone placeholder.
+
+[G] STATUS_LABELS frontend duplication: spec said 5 files; reality 8 files
+    (AdminUsersPage, HandoverTabPage, AdminActivityPage, AdminDashboardPage,
+    BuildingDefectsPage, ApartmentDashboardPage, UnitDetailPage,
+    OrgBillingPage) plus utils/qcLabels.js + utils/billingLabels.js.
+    ADR-007 + backlog #6 both reflect the actual count.
 
 ================================================================================
-VERIFY 1 — Frontend yarn build
+ADR ROSTER (final 8, within spec budget of 5-8)
 ================================================================================
-$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.example.com CI=false yarn build
-✅ BUILD PASS — Done in 37.32s. "The build folder is ready to be deployed."
-   No new warnings.
+
+FILE-SPECIFIC ADRs (5) — chosen for largest + most recently active:
+  ADR-001 ProjectControlPage.js    (4115 lines, BATCH 5H/5I context)
+  ADR-002 qc_router.py             (2936 lines, the largest backend)
+  ADR-003 handover_router.py       (2652 lines, BATCH 5C TERMINAL_TASK fix)
+  ADR-004 billing_router.py        (2068 lines, BATCH 5I context)
+  ADR-005 tasks_router.py          (1289 lines, BATCH 5C/5F/5G drift hub)
+
+CROSS-CUTTING ADRs (3):
+  ADR-006 Status system            (drift lessons from 5C/5F/5G)
+  ADR-007 i18n                     (he.json source of truth + frozen locales)
+  ADR-008 Navigation               (5H smart-back + 5I broken-route fix)
+
+EACH ADR HAS THE 5 REQUIRED SECTIONS (verified):
+  ## Why this exists
+  ## Architectural decisions
+  ## Conventions used here
+  ## When to refactor
+  ## Refactor backlog items touching this file
+
+Plus most have natural-seams + recent-changes sections beyond the minimum.
 
 ================================================================================
-VERIFY 2 — Broken navigates are gone (must return 0)
+REFACTOR BACKLOG (21 items — spec required ≥10-15)
 ================================================================================
-$ grep -c 'navigate(`/projects/${projectId}`)' frontend/src/pages/HandoverOverviewPage.js
-0   ✅ (was 1 before)
 
-$ grep -c 'navigate(`/projects/${sourceProjectId}`)' frontend/src/pages/OrgBillingPage.js
-0   ✅ (was 1 before)
+Each item has the 6 fields: File / Severity / What's wrong (data, not feeling) /
+Proposed fix / Estimated time / Fold into batch X when.
 
-================================================================================
-VERIFY 3 — New navigates in place (must return ≥1)
-================================================================================
-$ grep -c 'navigate(`/projects/${projectId}/control?workMode=structure`)' frontend/src/pages/HandoverOverviewPage.js
-1   ✅
+Highlights (severity-sorted):
 
-$ grep -c 'navigate(`/projects/${sourceProjectId}/control?workMode=structure`)' frontend/src/pages/OrgBillingPage.js
-1   ✅
+  HIGH:
+  #10 force_close → aggregation → reopen regression tests (BLOCKING LAUNCH,
+      Task #28 from BATCH 5C)
 
-================================================================================
-BONUS — Regression sweep
-================================================================================
-Confirm OrgBillingPage's three top-level back links at :795, :860, :880 are UNTOUCHED:
-$ grep -n "navigate(isSA ? '/admin' : '/projects')" frontend/src/pages/OrgBillingPage.js
-795:          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} ... >חזרה</button>
-860:          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} ... >...</button>
-880:        <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
-✅ All three preserved exactly as before.
+  MEDIUM:
+  #1  Extract CompaniesTab from ProjectControlPage.js
+  #2  Extract TeamTab + AddTeamMemberForm
+  #4  Consolidate STATUS_BUCKET_EXPANSION + dashboard agg lists (drift surface)
+  #6  Centralize duplicated frontend STATUS_LABELS (8 files)
+  #7  UserDrawer native <select> Desktop+RTL+fixed bug (Task #21)
+  #9  handover_router.py:2336 $nin missing 'done' (Task #27)
 
-Confirm NO remaining broken /projects/${...} pattern anywhere in frontend/src/:
-$ grep -rn 'navigate(`/projects/${[a-zA-Z_.]*}`)' frontend/src/ | grep -v node_modules
-(none — clean)
-✅ The bug class is fully eradicated from the frontend.
+  LOW (12 more): #3, #5, #8 (Task #36), #11, #12, #13, #14, #15, #16, #17,
+       #18 (post-launch), #19, #20.
+
+The 3 CRITICAL ITEMS to bring forward are #10 (BLOCKING LAUNCH), #9 (Task #27,
+known correctness bug), and #6 (drift surface across 8 frontend files).
 
 ================================================================================
-VERIFY 4 — Behavior smoke (Zahi runs visually on staging — not in Replit)
+CLAUDE.md EXTENSION CONTENT
 ================================================================================
-After Zahi deploys, confirm:
-  a. Project → "מסירות" tab → /handover → click header back arrow (right-side
-     ChevronRight) → returns to /control?workMode=structure ✓ (NOT /projects).
-     Hover the back arrow → tooltip reads "חזרה לפרויקט".
-  b. Project context (e.g. from a project-scoped CTA into the org billing
-     flow) → /org-billing with sourceProjectId populated → blue "הגעת
-     מפרויקט" banner visible → click "חזרה לפרויקט" link in the banner →
-     returns to /control?workMode=structure of the source project ✓
-     (NOT /projects).
-  c. Direct admin → org billing (no sourceProjectId) → blue banner does NOT
-     render → top-level "חזרה" links at :795/:860/:880 still go to /admin or
-     /projects per `isSA` ✓ (untouched).
-  d. Browser back / Android hardware back / iOS swipe-back from /handover or
-     /org-billing — uses window.history.back(), unaffected by these edits.
+
+The new "🤖 Standing instructions for Cowork" section (lines 46-133) covers:
+- Before any spec implementation: read README, ADRs, run STEP 0, check backlog
+- Anti-patterns Zahi has flagged repeatedly (10 entries with reasons)
+- Where to find existing helpers (12-entry quick reference)
+- Hebrew commit message format (`fix(<scope>): <one-line lowercase>`)
+- The standing rule (NEVER deploy/commit/push/restart, branch=staging,
+  Cowork edits React only, Capgo OTA, Zahi runs ./deploy.sh)
+
+Original Hebrew operational content (lines 1-44) PRESERVED VERBATIM.
+Separator: `---` at line 45.
 
 ================================================================================
-COMMIT MESSAGE (full text in .local/.commit_message)
+VERIFY 1-6 RESULTS
 ================================================================================
-fix(nav): back arrows on /handover and /org-billing route to
-          /control?workMode=structure instead of broken /projects/:id
+
+V1 — All 11 files exist + non-empty:
+     ✓ All sized 6.4-15.7 KB; line counts 133-353.
+
+V2 — CLAUDE.md sanity:
+     ✓ Total: 133 lines (was 41, added 92)
+     ✓ Original "## כללים ברזל" header: 1 occurrence (preserved)
+     ✓ Original "capacitor plugins" bullet: 1 occurrence (preserved)
+     ✓ New "🤖 Standing instructions" header: 1 occurrence (added)
+     ✓ Separator "---" present
+
+V3 — ADR structural completeness:
+     ✓ All 8 ADRs have all 5 required sections (Why / Decisions /
+       Conventions / When to refactor / Refactor backlog items).
+
+V4 — refactor-backlog.md item count:
+     ✓ 21 items (spec required ≥10-15).
+
+V5 — README.md completeness:
+     ✓ 6 top-level sections (Index intro, Top files, Cross-cutting ADRs,
+       Conventions, Anti-patterns, Helpers + Reading order).
+     ✓ Cross-links to CODEBASE_SUMMARY.md (×2), PROJECT_OVERVIEW.md (×2),
+       CLAUDE.md (×2).
+
+V6 — Zero code changes:
+     ✓ No files in backend/ or frontend/src/ modified in this batch.
+       (Two files HandoverOverviewPage.js + OrgBillingPage.js show in
+        find-mmin output — those are residual mod-times from BATCH 5I's
+        recent merge, NOT this batch. Verifiable: this batch wrote to
+        docs/ + CLAUDE.md only.)
+     ✓ git status was unavailable due to a stale .git/index.lock; used
+       `find -mmin` as alternative confirmation (more reliable for
+       intent-vs-merge distinction anyway).
 
 ================================================================================
-FOLLOW-UPS
+WHAT'S NOT IN THIS BATCH (deliberate scope discipline)
 ================================================================================
-- No new follow-ups for 5I. STEP 0.2 broadened grep already swept the whole
-  frontend for the broken `/projects/${...}` pattern; bonus regression check
-  after the edits returned zero hits, confirming the bug class is fully
-  eradicated.
-- No overlap with existing tasks. The follow-ups list scanned (Building QC,
-  Plans refresh, Demo seeding, Admin org drill-down, Onboarding, Twilio leak,
-  etc.) shares no surface with these two back buttons.
+
+- No ADR for OrgBillingPage.js (2256 lines), StageDetailPage.js (2239),
+  billing.py (2200), onboarding_router.py (2125), safety_router.py (1912),
+  TaskDetailPage.js (1909), admin_router.py (1613), projects_router.py (1603),
+  OnboardingPage.js (1543), ProjectPlansPage.js (1518). All 10 are flagged
+  in backlog #20 as "future ADR triggers when next touched heavily."
+
+- No code changes to fix backlog items. Documentation precedes refactor —
+  this batch establishes the WHY so future batches can fold the cleanup in.
+
+- No docs/strategy/ directory created. Spec referenced it, but Zahi's
+  clarification said codebase-refactor-plan.md exists on Mac only. Skipped.
+
+- No ROADMAP.md. Same reason as above.
+
+- No edits to PROJECT_OVERVIEW.md or CODEBASE_SUMMARY.md. README.md cross-
+  links to both as authoritative siblings — does not modify them.
 
 ================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+NEXT STEPS (Zahi)
+================================================================================
+
+1. Review the 11 files (suggested reading order):
+   - docs/architecture/README.md (the entry point)
+   - One ADR sample (recommend ADR-006 status-system — captures the most
+     drift lessons across the recent batches)
+   - docs/refactor-backlog.md (the actionable artifact)
+   - CLAUDE.md (the appended Cowork section, lines 46-133)
+
+2. If revisions needed: tell me, I'll edit and re-verify.
+
+3. If approved: you commit + push from your machine. Suggested commit
+   message in .local/.commit_message:
+       docs(architecture): add ADRs, refactor backlog, and Cowork
+       standing instructions
+
+4. Deploy is OPTIONAL for this batch (docs are repo-only, not served).
+   Skip ./deploy.sh unless you want the docs visible on a staging URL.
+
+================================================================================
+STANDING RULE COMPLIANCE
+================================================================================
+
+- ❌ NO ./deploy.sh executed (per standing rule).
+- ❌ NO ./ship.sh executed.
+- ❌ NO git commit / push executed.
+- ❌ NO workflow restarts performed.
+- ❌ NO suggestions to publish or deploy made to user.
+- ✓  Branch: staging (verified, not main).
+- ✓  Stopped at review.txt + .local/.commit_message + present_asset.
+
+End of review.
 ================================================================================
