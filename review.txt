@@ -1,138 +1,55 @@
 ═══════════════════════════════════════════════════════════════════
-  TASK #453 follow-up — Trade CSS fix + extensible trades + SVG check
-  Status: READY FOR REVIEW · Branch: staging · Date: 29.04.2026
+  TASK #453 follow-up v3.2 — kitch/paint color collision fix
+  Status: READY FOR COMMIT · Branch: staging · Date: 29.04.2026
 ═══════════════════════════════════════════════════════════════════
 
-Addresses Zahi's "NEAR-APPROVAL — three fixes needed before commit"
-review on the just-merged Handover PDF v3.
+Single 2-line tweak per Zahi's v3.1 review note.
 
 ────────────────────────────────────────────────────────────────────
-🔴 BLOCKER #1 — Trade CSS classes incomplete
+🟡 .trade.kitch and .trade.paint had identical colors
 ────────────────────────────────────────────────────────────────────
-The v3 template carried over two consolidated trade classes
-(`frame`, `finish`) from an earlier mockup version, missing 4 of
-the 11 real DB trades. Defects with trade=דלתות / ברזל / צביעה /
-טיח were silently falling back to .trade.gen (gray).
+In v3.1 both ended up with bg=#FCE7F3 / fg=#9D174D — visually
+indistinguishable in any protocol mixing מטבחים and צביעה items.
+The original spec colors for `kitch` (#FFEDD5 / #9A3412) had
+landed on `.trade.custom-6` by mistake.
 
-  ✓ REMOVED:  .trade.frame, .trade.finish
-  ✓ ADDED:    .trade.door  (#DCFCE7 / #14532D — green)
-              .trade.iron  (#E2E8F0 / #334155 — slate)
-              .trade.paint (#FCE7F3 / #9D174D — pink)
-              .trade.plast (#FAE8FF / #6B21A8 — purple)
-  ✓ UNCHANGED: elec, plumb, tile, alum, kitch, marble, gen
-                (all 7 keep their existing color recipes)
+  ✓ Restored .trade.kitch    → #FFEDD5 / #9A3412 (warm peach,
+                                deep-orange text — spec)
+  ✓ Replaced .trade.custom-6 → #CFFAFE / #155E75 (light cyan,
+                                dark-cyan text — distinct from
+                                every other chip color)
 
-────────────────────────────────────────────────────────────────────
-🔴 BLOCKER #2 — Trades are EXTENSIBLE, not a closed enum
-────────────────────────────────────────────────────────────────────
-AdminHandoverTemplateEditor.js uses a free-text TradeCombobox —
-admins can save custom trades like 'מיזוג', 'גינון', 'שערים
-אוטומטיים' that aren't in the canonical list. Previously every
-custom trade collapsed to .trade.gen (gray), losing visual identity.
-
-Fix: deterministic 6-bucket fallback in the service, single
-class-emit in the template.
-
-In `backend/services/handover_pdf_service.py`:
-  ✓ Added KNOWN_TRADES dict (11 entries) and FALLBACK_BUCKETS = 6
-  ✓ Added trade_to_class(trade_name):
-       - empty / None / 'כללי'        → 'gen'
-       - matches a KNOWN_TRADES key   → that exact class
-       - anything else (custom)       → 'custom-{(hash % 6) + 1}'
-       where hash = sum(ord(c) for c in trade_name)
-       — pure function, deterministic across PDFs, no DB lookup.
-  ✓ Threaded trade_class through both data shapes the template
-    consumes:
-       item_data['trade_class']    = trade_to_class(trade)
-       all_defects[…]['trade_class'] = trade_to_class(trade)
-
-In `backend/templates/handover_protocol_pdf.html`:
-  ✓ Added 6 fallback color CSS rules (.trade.custom-1 … custom-6),
-    intentionally distinct hues so adjacent custom trades on the
-    same row look different.
-  ✓ Replaced both inline `{% set tc = … %}` if-chains (one in the
-    defects-summary table, one in per-section items table) with a
-    single one-liner: <span class="trade {{ trade_class }}">…
-    Template no longer knows anything about Hebrew trade names.
-
-Verified determinism (local programmatic check):
-   trade_to_class('מיזוג')              → custom-1   (always)
-   trade_to_class('גינון')              → custom-6   (always)
-   trade_to_class('שערים אוטומטיים')    → custom-1   (always)
-Two custom trades can hash to the same bucket — that's expected
-with only 6 buckets — but each individual name always renders the
-same color across all PDFs, which is the contract Zahi specified.
-
-────────────────────────────────────────────────────────────────────
-🟡 NIT — Legal sigchip ✓ emoji → inline SVG
-────────────────────────────────────────────────────────────────────
-The legal sigchip used a literal U+2713 (✓) wrapped in a green
-circle. Risk: WeasyPrint with Rubik may render it as tofu since
-Rubik doesn't include the dingbat glyph.
-
-  ✓ Replaced with an 8×8 inline SVG polyline checkmark
-    (white stroke, 1.5px, round caps/joins) inside the existing
-    12×12 green circle background.
-  ✓ Updated .legal-sigline .sigchip .check CSS:
-       - dropped font-size / font-weight / color / padding
-       - added explicit width:12px, line-height:12px, text-align:
-         center so the SVG centers visually inside the green dot
-  ✓ Same pattern used by the room-summary banner SVG check
-    that you'd already approved.
+Programmatic uniqueness check across all 16 chip classes (10
+known + 6 custom buckets): **NO COLLISIONS** — every class now
+has a unique background + foreground recipe.
 
 ────────────────────────────────────────────────────────────────────
 LOCAL VERIFICATION
 ────────────────────────────────────────────────────────────────────
-  ✓ py_compile of services/handover_pdf_service.py     PASS
-  ✓ Jinja parse of handover_protocol_pdf.html           PASS
-  ✓ Mixed-trade fixture render                          PASS, 37,196 chars
-       inspection items: trade=חשמל, מיזוג, דלתות
-       defects:          trade=חשמל, מיזוג, דלתות
-  ✓ Programmatic checks against rendered HTML:
-       [✓] CSS .trade.door / .iron / .paint / .plast all present
-       [✓] CSS .trade.frame / .finish REMOVED
-       [✓] CSS .trade.custom-1 … .custom-6 fallback rules present
-       [✓] rendered chip has class="trade elec"   (known)
-       [✓] rendered chip has class="trade door"   (known, new)
-       [✓] rendered chip has class="trade custom-1" (custom hashed)
-       [✓] inline SVG check in sigchip (no ✓ U+2713 emoji)
-       [✓] sigchip triplet (name · ת״ז · date) still present
-       [✓] JetBrains Mono fallback stack still applied
-       [✓] inline Jinja trade if-chains REMOVED from template
+  ✓ Jinja parse                                       PASS
+  ✓ Render with all 4 trade categories side-by-side
+    (חשמל=elec, מטבחים=kitch, צביעה=paint, מיזוג=custom-1)
+                                                      PASS, 37,801 chars
+  ✓ All 7 spec checks PASS:
+       [✓] .trade.kitch restored to spec colors
+       [✓] .trade.custom-6 has new distinct colors
+       [✓] מטבחים chip → class="trade kitch"
+       [✓] צביעה chip → class="trade paint"   (visually distinct)
+       [✓] מיזוג chip → class="trade custom-1"
+       [✓] inline SVG check still in sigchip
+       [✓] JetBrains Mono fallback stack still present
 
 ────────────────────────────────────────────────────────────────────
-FILES TOUCHED
+FILE TOUCHED
 ────────────────────────────────────────────────────────────────────
-  backend/services/handover_pdf_service.py
-       + KNOWN_TRADES (11 entries)
-       + FALLBACK_BUCKETS = 6
-       + trade_to_class()
-       ~ item_data + all_defects items now carry 'trade_class'
-  backend/templates/handover_protocol_pdf.html
-       ~ trade CSS: removed frame/finish, added door/iron/paint/plast
-       + 6 fallback custom-N CSS rules
-       ~ defects-summary table: <span class="trade {{ trade_class }}">
-       ~ per-section items table: same
-       ~ legal sigchip: ✓ emoji → inline SVG
-       ~ .check CSS: refit for SVG centering
+  backend/templates/handover_protocol_pdf.html  (2 lines)
 
 ────────────────────────────────────────────────────────────────────
 RENDERED HTML SAMPLE (refreshed)
 ────────────────────────────────────────────────────────────────────
   attached_assets/handover_v3_render.html
-       — full render with one of each trade type in the mix:
-         elec (known), custom-1 (מיזוג), door (known/new)
-
-────────────────────────────────────────────────────────────────────
-ROLLBACK
-────────────────────────────────────────────────────────────────────
-The v1 template backup is still on disk:
-   cp backend/templates/handover_protocol_pdf.v1.html.bak \
-      backend/templates/handover_protocol_pdf.html
-Service-side: KNOWN_TRADES + trade_to_class are pure additions;
-removing them only affects PDFs that were going to be regenerated
-anyway. trade_class on item dicts is consumed only by the new
-template — the old template ignores extra keys.
+       — full render with kitch + paint chips on the same page so
+         the new color separation is easy to eyeball.
 
 ═══════════════════════════════════════════════════════════════════
   Awaiting Zahi's approval. Agent has NOT committed, NOT pushed,
