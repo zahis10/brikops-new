@@ -548,6 +548,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
                     "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
                     "description": description,
+                    "photos": photo_b64s,
                 })
 
         global_ok += sec_ok

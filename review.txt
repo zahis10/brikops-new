@@ -1,89 +1,273 @@
-PR: Handover PDF v3.3 — 7 staging fixes (+ approved 2-line label flip)
-Task: #456
+================================================================
+PR: Handover PDF v3.3 — Root-Cause Follow-Up
+Task: #457 (follows #456)
 Branch: staging
-Files changed:
-  - backend/templates/handover_protocol_pdf.html
+Files changed: 2
   - backend/services/handover_pdf_service.py
-  - attached_assets/handover_v3_render.html  (refreshed sample render)
-
-Post-approval addendum (Zahi requested before commit):
-  - HARDCODED_PROPERTY_LABELS in handover_pdf_service.py:
-      'parking_num': 'מספר חניה'   (was 'מספר חניות')
-      'storage_num': 'מספר מחסן'   (was 'מספר מחסנים')
-    Reason: these fields are identifiers, not counts — singular reads correctly
-    after the value (e.g. "מספר חניה 47") and avoids the "1 parking spot"
-    misread when the value is 1.
-
-================================================================
-WHAT WAS FIXED (mapped to your 7-item staging review)
+  - backend/templates/handover_protocol_pdf.html
 ================================================================
 
-1) Photo cells — 3-up grid with explicit slate placeholders [P0]
-   • CSS .photo-row now `table-layout: fixed` with .cell at 33.33% (table-cell, vertical-align top, 0 4px padding).
-   • .photo is now `display: block; padding-bottom: 75%;` so each tile is a true 4:3 box that holds shape regardless of image presence.
-   • New .photo-empty: same 75% box, slate-1 fill, dashed slate-3 border, with `::after { content: "תמונה לא זמינה"; }` centered at 10px slate-5.
-   • Emit (defect-card photo-row) was rewritten to ALWAYS render exactly 3 cells via `range(3)` — fills with .photo when a photo exists at that index, .photo-empty otherwise. This guarantees the layout never collapses for defects with 0/1/2 photos.
-
-2) Defensive photo fallback (per-cell)
-   • Same emit change as (1): each `<div class="cell">` independently chooses .photo or .photo-empty based on `_ph[i]` truthiness — the row no longer breaks if individual array slots are None/empty strings.
-
-3) Legal-sections page missing — diagnostic logging added [P0 — root-cause]
-   • handover_pdf_service.py @ ~line 433 now logs:
-       INFO  [PDF] legal_sections diagnostic: protocol_id=… protocol_type=… count=N section_titles=[…]
-       WARN  [PDF] No legal_sections on protocol … (type=…). Page will not render.
-              Likely cause: protocol created before template legal_sections were configured,
-              or applies_to filter excluded protocol_type at creation time.
-   • Why: legal_sections is a SNAPSHOT taken at protocol-creation in handover_router.py @898–1002 (filtered by `applies_to` from tpl.legal_sections, with org.handover_legal_sections fallback). Once the snapshot is taken it is NOT refreshed. The two staging cases that reproduce the missing page are exactly: (a) protocol created before the org/template had any legal_sections configured, or (b) `applies_to` on the configured sections did not include the protocol's `protocol_type`. The new logs make this visible per-render so the fix can land in protocol-creation/migration rather than the PDF service.
-   • No render-time fallback was added — that would mask a data bug. The next fresh handover PDF on staging will print one of the diagnostic lines and tell you which case you have.
-
-4) Singular / plural Hebrew labels (counts of 1)
-   • Cover-strip 4th cell: label now `דייר` when count=1, `דיירים` otherwise; value is the count.
-   • Tenants page heading: `דייר` (1) vs `דיירים` (≥2). Intro paragraph: `רוכש/ת אחד/ת מאשרים את קבלת הדירה…` (1) vs `{N} רוכשים מאשרים…`.
-   • Section room-summary banner: `נמצא ליקוי אחד בסעיף זה` (1) vs `נמצאו {N} ליקויים בסעיף זה` (≥2). 0 unchanged: `לא נמצאו ליקויים בסעיף זה`.
-   • Defects-summary intro: `סה״כ ליקוי פתוח אחד —` (1) vs `סה״כ {N} ליקויים פתוחים —` (≥2).
-
-5) Tenants on dedicated page (Spec B — Single-Source) [Step 5 clarification]
-   • Removed the tenants block from the cover-body.
-   • Added a fresh page-break page right after cover with the standard page-header (.ph + brikops_logo_b64 + display_number), `TENANTS · דיירים` page-label, the singular/plural heading + intro paragraph (12.5px slate-7), and the .info-card.full block holding all .tenant rows.
-   • The .tenant-id-photos cells (front+back ID-photo placeholders) remain children of each tenant card and move with it to the new page — exactly as you specified in the clarification.
-
-6) Cover-strip floor — duplicate "קומה" prefix removed
-   • Inline strip: `{%- if _floor_clean.startswith('קומה ') -%}{%- set _floor_clean = _floor_clean[5:]|trim -%}{%- endif -%}`. The strip's `קומה` label still says "קומה"; the value cell now shows just the number/identifier (e.g. `5` instead of `קומה 5`). Backwards-compatible: if the snapshot already stored just `5`, the value renders unchanged.
-
-7) Body font 11.5 → 12.5 px (selective)
-   • Changed to 12.5px on body copy: .sev-top .sev-name, .tenant-info, table.items, .room-summary, .room-collapsed, .defects-table, .handed-table, .legal-block p, .defect-card-body .desc p, .notes-card, plus the four inline body intros (defects-summary, handed-items, legal-sections, signatures).
-   • KEPT at 11.5px (per your "headings + chip/numeric unchanged" guidance):
-       - .cover-meta b           (cover-hero bold meta)
-       - .cover-protocol         (cover-hero protocol id strip)
-       - .info-card h4           (section heading)
-       - .defect-card-head .id   (D-NN chip)
-   • Verified by `grep -c "11.5px" handover_protocol_pdf.html` → exactly 4 instances remain, all spec-keep.
-
-8) Per-card meter guarding (empty-meter card hidden) [Step 8 clarification]
-   • Outer `{% if %}` on the meters block now also checks `meter_water_photo_b64` and `meter_electricity_photo_b64` (was only checking readings).
-   • Each .meter card is wrapped in its OWN `{% if reading or photo_b64 %}` — so a water-only protocol now shows ONE card stretched across the .meters table (instead of one filled card + one empty stub), and same for an electricity-only protocol. If both are empty, the entire section is suppressed.
+Two root-cause fixes — both diagnosed by Zahi from a v1-vs-current diff.
+No sample regenerated this round (per request: just the diffs).
 
 ================================================================
-SAMPLE RENDER (attached_assets/handover_v3_render.html, 38.7 KB)
+BUG #1 — Defect-card photos render blank
 ================================================================
-Fixture exercises every fix:
-  • 1 tenant → singular דייר label on cover-strip + tenants page
-  • floor_name="קומה 5" → cover value renders as just "5"
-  • 1 defect with 2 photos → defect card renders 3 .cell wrappers (2 .photo + 1 .photo-empty placeholder with "תמונה לא זמינה")
-  • section with fail=1 → "נמצא ליקוי אחד בסעיף זה"
-  • total_defects=1 → "סה״כ ליקוי פתוח אחד —"
-  • water meter only (electricity reading=None, photo=None) → only the water .meter card renders
-  • 1 legal_section → legal-sections page renders normally
-  • 12.5px body font count: 16 instances; 11.5px count: 4 (all spec-keep)
+
+ROOT CAUSE
+----------
+The per-item loop in _build_template_context() builds two parallel
+structures from the same source row:
+
+  - item_data  → goes into inspection_sections (and DOES carry photos)
+  - all_defects.append({...})  → drives the defect-card section
+    in the template ... and was missing the "photos" key entirely.
+
+The current template's defect card iterates `all_defects` and reads
+`defect.photos` for its 3-up `range(3)` photo grid. Since the key
+was absent, every cell hit the empty-placeholder branch — no real
+images ever reached the page.
+
+THE FIX (1 line added)
+----------------------
+
+File: backend/services/handover_pdf_service.py
+Location: inside the `for item in section_items:` loop,
+          inside `if status in ("defective", "partial"):` — line ~544
+
+BEFORE:
+-------
+            if status in ("defective", "partial"):
+                all_defects.append({
+                    "section_name": sec.get("name", ""),
+                    "item_name": item.get("name", ""),
+                    "trade": _trade,
+                    "trade_class": trade_to_class(_trade),
+                    "severity": severity,
+                    "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
+                    "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
+                    "description": description,
+                })
+
+AFTER:
+------
+            if status in ("defective", "partial"):
+                all_defects.append({
+                    "section_name": sec.get("name", ""),
+                    "item_name": item.get("name", ""),
+                    "trade": _trade,
+                    "trade_class": trade_to_class(_trade),
+                    "severity": severity,
+                    "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
+                    "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
+                    "description": description,
+                    "photos": photo_b64s,
+                })
+
+UNIFIED DIFF:
+-------------
+@@ backend/services/handover_pdf_service.py
+                     "severity_label": SEVERITY_LABELS.get(severity, "") if severity else "",
+                     "severity_color": SEVERITY_COLORS.get(severity, "#6b7280") if severity else "",
+                     "description": description,
++                    "photos": photo_b64s,
+                 })
+
+`photo_b64s` is already in scope inside the same loop (it's the same
+list assigned to item_data["photos"] earlier in the iteration), so no
+additional plumbing was required.
+
 
 ================================================================
-STAGING VERIFY CHECKLIST FOR YOU
+BUG #2 — Hebrew rendering as Latin-Extended gibberish ("Akñàá")
 ================================================================
-After deploy:
-  1) Open the v3.3 handover PDF that previously showed the missing legal page. Tail backend logs and grep for `legal_sections diagnostic` — that one log line tells us whether the snapshot was empty (data fix needed) vs. populated (template fix needed).
-  2) Generate a handover for a unit with one tenant — confirm cover-strip says "דייר 1" and the dedicated tenants page heading is "דייר" (singular).
-  3) Generate a handover for a unit on `קומה 5` — cover-strip "קומה" cell value should read just "5".
-  4) Generate a defect with 1 photo — defect card grid should show 1 photo + 2 slate placeholders, all equal width.
-  5) Final-type protocol with only the water meter filled — should show ONE meter card, not a stub-pair.
 
-Standing rule reminder: I have NOT committed, restarted any workflow, or deployed. Awaiting your approval; you run git commit/push and ./deploy.sh to staging.
+ROOT CAUSE
+----------
+v1 (working) template: ZERO occurrences of `text-transform: uppercase`.
+v3 template: 3 of them landed on selectors that carry Hebrew text:
+   .cover-eyebrow, .page-label, .section-h
+…each combined with non-trivial `letter-spacing`.
+
+When WeasyPrint sees `text-transform: uppercase` + wide letter-spacing
+on Hebrew Unicode, it cannot shape Rubik-Bold under that combination
+and falls back to DejaVu-Sans-Bold (visible in `pdffonts` output on
+the v3 PDFs). DejaVu-Sans-Bold's Hebrew glyph table maps Hebrew code
+points to visually-similar Latin Extended characters — hence the
+"Akñàá"-style gibberish on the cover, page headers, and section
+titles.
+
+Hebrew has no case, so `text-transform: uppercase` is a visual no-op
+on Hebrew text; the only thing it accomplishes is triggering the
+font fallback. The fix is to remove all three uppercase declarations
+and soften letter-spacing on the two selectors that had aggressive
+0.18em tracking.
+
+The 4th uppercase rule on `.cover-thumb .lab` (line 168) is left
+untouched — it sits on Latin-only labels (the small "PROJECT" /
+"UNIT" badges inside the cover thumbnails) and is not a Zahi-named
+target.
+
+THE FIX (3 declarations removed, 2 letter-spacings softened)
+------------------------------------------------------------
+
+File: backend/templates/handover_protocol_pdf.html
+
+--- selector #1: .page-label ---
+
+BEFORE:
+-------
+.page-label {
+  font-family: 'Rubik', sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--slate-5);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+AFTER:
+------
+.page-label {
+  font-family: 'Rubik', sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--slate-5);
+  margin-bottom: 6px;
+}
+
+--- selector #2: .section-h ---
+
+BEFORE:
+-------
+.section-h {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--slate-7);
+  margin: 0 0 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+AFTER:
+------
+.section-h {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--slate-7);
+  margin: 0 0 10px;
+  letter-spacing: 0.02em;
+}
+
+(letter-spacing already at the safe 0.02em target — only the
+text-transform line was removed.)
+
+--- selector #3: .cover-eyebrow ---
+
+BEFORE:
+-------
+.cover-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--orange);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+AFTER:
+------
+.cover-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--orange);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+
+UNIFIED DIFF (template):
+------------------------
+@@ backend/templates/handover_protocol_pdf.html  .page-label
+ .page-label {
+   font-family: 'Rubik', sans-serif;
+   font-size: 9.5px;
+   font-weight: 700;
+-  letter-spacing: 0.18em;
++  letter-spacing: 0.04em;
+   color: var(--slate-5);
+-  text-transform: uppercase;
+   margin-bottom: 6px;
+ }
+
+@@ backend/templates/handover_protocol_pdf.html  .section-h
+ .section-h {
+   font-size: 13px;
+   font-weight: 700;
+   color: var(--slate-7);
+   margin: 0 0 10px;
+   letter-spacing: 0.02em;
+-  text-transform: uppercase;
+ }
+
+@@ backend/templates/handover_protocol_pdf.html  .cover-eyebrow
+ .cover-eyebrow {
+   font-size: 10.5px;
+-  letter-spacing: 0.18em;
+-  text-transform: uppercase;
++  letter-spacing: 0.04em;
+   color: var(--orange);
+   font-weight: 600;
+   margin-bottom: 8px;
+ }
+
+
+================================================================
+NOT TOUCHED (deliberately)
+================================================================
+
+- .cover-thumb .lab  (line 168, text-transform: uppercase, 0.06em)
+  → Latin-only badges inside cover thumbnails. Not in Zahi's target
+    list. Leave as-is.
+
+- .info-card h4 / sig-grid td .role / cover-card-strip .lab and any
+  other text-transform:uppercase rules elsewhere in the stylesheet
+  → Either Latin-only or short, low-tracking; not implicated by the
+    Akñàá symptom. Leave as-is.
+
+- letter-spacing on TOC numerals, English chips, and Latin-only
+  labels → untouched.
+
+
+================================================================
+VERIFICATION RECOMMENDED ON STAGING
+================================================================
+
+After Zahi runs ./deploy.sh and generates a fresh PDF:
+
+  pdffonts /path/to/generated.pdf
+
+Expected: ONLY Rubik (any weight) + Caveat (typed signatures).
+NOT expected: DejaVu-Sans-Bold, DejaVu-Sans, or any other fallback.
+
+If DejaVu still surfaces, there is at least one more
+text-transform/letter-spacing combo touching Hebrew text that needs
+to be hunted down. The 3 removed here are the v3-vs-v1 delta and
+should be sufficient.
+
+
+================================================================
+DEPLOYMENT
+================================================================
+
+Standing rule respected: agent did NOT git commit, did NOT restart
+workflows, did NOT deploy.
+
+Zahi runs:
+  git add backend/services/handover_pdf_service.py \
+          backend/templates/handover_protocol_pdf.html
+  git commit -m "$(cat .local/.commit_message)"
+  git push origin staging
+  ./deploy.sh
