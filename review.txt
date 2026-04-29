@@ -1,229 +1,151 @@
 ================================================================================
-BATCH 5H — Smart back from /control to /dashboard — REVIEW
+BATCH 5I — Back-button fixes for /handover and /org-billing — REVIEW
 ================================================================================
 Date:           2026-04-29
 Branch:         staging
-Rollback SHA:   a985ab13ef9c (BATCH 5G merged checkpoint)
-Severity:       P2 UX — found during 5G smoke test (Task #35).
-Files edited:   2 frontend files / 8 logical sub-edits.
-                  Frontend: ProjectDashboardPage.js (6 KPI/action navigates)
-                            ProjectControlPage.js (1 back button + 1 breadcrumb)
-Mobile:         Capacitor backButton handler at App.js:513-519 delegates to
-                window.history.back(). Hardware back / iOS swipe-back use
-                history pop, NOT the in-app arrow. No mobile-specific edits.
-                Confirmed in STEP 0.5.
+Rollback SHA:   54ff2b26ce14 (BATCH 5H merged checkpoint)
+Severity:       P2 UX — found during 5H smoke test (Task #35 follow-up).
+Files edited:   2 frontend files / 2 logical sub-edits.
+                  Frontend: HandoverOverviewPage.js (1 onClick + 1 added title)
+                            OrgBillingPage.js       (1 onClick)
+Mobile:         N/A — Capacitor backButton handler at App.js:513-519 uses
+                window.history.back(); bypasses the in-app arrow. Same as
+                BATCH 5H. No native rebuild. Capgo OTA delivers the React
+                build as-is.
+
+================================================================================
+SCOPE EXPANSION (Zahi-approved 2026-04-29)
+================================================================================
+Original spec: 1 file (HandoverOverviewPage.js).
+STEP 0.2 audit surfaced a SECOND broken caller of the same pattern at
+OrgBillingPage.js:894. Zahi approved bundling: "Approved with expansion:
+bundle OrgBillingPage.js:894 into 5I scope. Same broken pattern, same 1-line
+fix shape (navigate to /control?workMode=structure or appropriate destination
+— for OrgBillingPage the source project IS the destination, so use
+/projects/${sourceProjectId}/control?workMode=structure). Update Steps +
+Relevant files to reflect 2 files / 2 sub-edits."
+
+Final scope: 2 files / 2 sub-edits as documented below.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT AUDIT (run in plan mode, before any edits)
 ================================================================================
 
-0.1 — Spec line numbers vs HEAD (DRIFTED post-5G — used corrected numbers)
-  5G shrank ProjectDashboardPage.js by removing the בביצוע KPI card. Spec
-  line numbers were off by ~+2/−7 lines. Used the actual numbers below.
+0.1 — Broken navigate locations (PASS)
+  $ grep -n 'navigate(`/projects/${projectId}`)' frontend/src/pages/HandoverOverviewPage.js
+  → 1 hit at line 231 — header back button with ChevronRight icon, no title attr.
 
-  ProjectDashboardPage.js — spec → actual:
-    spec 299 → actual 301 — פתוחים KPI ........................ EDIT 1
-    spec 308 → gone (the בביצוע KPI removed in 5G — confirmed)
-    spec 318 → actual 311 — נסגרו KPI ......................... EDIT 2
-    spec 329 → actual 322 — לאישורי KPI ....................... EDIT 3
-    spec 339 → actual 332 — באיחור KPI ........................ EDIT 4
-    spec 348 → actual 341 — צוות KPI .......................... EDIT 5
-    spec 682 → actual 675 — לאישור sub-section action ......... EDIT 6
-    spec 254 → actual 255 — dashboard's own back (DO NOT TOUCH — loop)
-    spec 830 → actual 823 — footer /control link (DO NOT TOUCH — exit)
+0.2 — All callers using the broken /projects/:projectId pattern (2 sites)
+  $ grep -rn 'navigate(`/projects/${projectId}`)' frontend/src/ | grep -v node_modules
+  → 1 hit (HandoverOverviewPage.js:231).
 
-  ProjectControlPage.js — spec → actual:
-    spec 3643 → actual 3655 — header back arrow .............. EDIT 7
-    spec 3782 → actual 3794 — defects-banner block ........... EDIT 8 (insert)
-    spec 3411 → actual 3417 — setActiveTab merge logic (DO NOT TOUCH —
-                              this is what preserves from=dashboard across
-                              tab switches via {replace:true})
+  $ grep -rn 'navigate(`/projects/\${[a-zA-Z_.]*}`)' frontend/src/ | grep -v node_modules
+    (broadened to catch variant variable names like sourceProjectId)
+  → 2 hits — both bundled into this batch per Zahi 2026-04-29 approval:
+    - HandoverOverviewPage.js:231 (uses `projectId`) ............ EDIT 1
+    - OrgBillingPage.js:894      (uses `sourceProjectId`) ...... EDIT 2
 
-  Other navigate('/projects') calls in ProjectControlPage at lines 3444 and
-  3484: body-level guard/error-handler redirects, NOT the header back button.
-  Untouched. The unique header back button is at line 3655 (now 3658).
+  OrgBillingPage.js:894 context (read 880-905):
+    {sourceProjectId && (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
+        <div className="text-sm text-blue-800">
+          {sourceProjectName
+            ? <span>הגעת מפרויקט: <strong>{sourceProjectName}</strong></span>
+            : <span>הגעת מפרויקט</span>
+          }
+        </div>
+        <button
+          onClick={() => navigate(`/projects/${sourceProjectId}`)}   ← BROKEN, EDIT 2
+          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+        >
+          <ArrowRight className="w-3.5 h-3.5" />
+          חזרה לפרויקט
+        </button>
+      </div>
+    )}
 
-  ProjectTasksPage.js convention to mirror — spec → actual:
-    spec 81 → actual 82  — const fromDashboard = searchParams.get('from')
-                                             === 'dashboard'
-    actual 359 — navigate(fromDashboard ? `/projects/${projectId}/dashboard`
-                                       : getProjectBackPath(...))
-    actual 528 — also uses fromDashboard for state.returnTo on task drill-down
+  The OTHER navigates on OrgBillingPage at lines 795, 860, 880 all read
+  `navigate(isSA ? '/admin' : '/projects')` — top-level breadcrumb/back links,
+  intentional exit. DO NOT TOUCH. Confirmed in post-edit bonus grep.
 
-  Pattern is real, exact, proven in production. Mirrored, not invented.
+0.3 — Target route exists (PASS)
+  $ grep -n 'path="/projects/:projectId/control"' frontend/src/App.js
+  → 1 hit at line 285. Destination is valid for both edits.
 
-0.2 — Full classification of all 32 navigate(.../control) call sites
+  $ grep -n 'path="/projects/:projectId"' frontend/src/App.js
+  → 0 hits. Confirms there is NO bare /projects/:projectId route — that's the
+    root cause for both sites. React Router falls through to the project-list
+    redirect.
 
-  EDIT (6 sites — append &from=dashboard):
-    ProjectDashboardPage.js:301 — פתוחים KPI
-    ProjectDashboardPage.js:311 — נסגרו KPI
-    ProjectDashboardPage.js:322 — לאישורי KPI (PM/owner-only)
-    ProjectDashboardPage.js:332 — באיחור KPI
-    ProjectDashboardPage.js:341 — צוות KPI
-    ProjectDashboardPage.js:675 — לאישור sub-section action button
+  $ grep -nE 'path="/projects/:projectId' frontend/src/App.js
+  → 22 project-scoped routes, all with suffixes (control, dashboard, handover,
+    qc, plans, tasks, units, buildings, floors, safety). Convention universal.
 
-  DO NOT TOUCH (26 sites — back to /projects is correct, or path is internal):
-    ProjectDashboardPage.js:255 — dashboard's own back (loop avoidance)
-    ProjectDashboardPage.js:823 — footer /control link (intentional exit)
-    ProjectControlPage.js:3760 — in-page לאישור shortcut (intra-/control;
-                                  flagged edge case where from is dropped —
-                                  out of scope, spec is silent)
-    ProjectControlPage.js:3859 — defect drill-down with state.returnTo
-    NewDefectModal.js:914,939   — modal-driven nav
-    StageDetailPage.js:595,1661 — QC settings nav
-    AdminOrgsPage.js:473        — admin nav
-    QCFloorSelectionPage.js:169,217 — QC nav
-    ProjectPlansPage.js:579     — plans nav
-    UnitHomePage.js:108         — unit context
-    OnboardingPage.js:583       — onboarding
-    MyProjectsPage.js:390       — project list (canonical entry path)
-    BuildingDefectsPage.js:78,95,380,396 — building scope
-    InnerBuildingPage.js:59     — building scope
-    ApartmentDashboardPage.js:383 — apartment scope
-    TaskDetailPage.js:815,1072  — task detail
-    UnitDetailPage.js:171       — unit context
-    ProjectTasksPage.js:456     — invitation flow
-    utils/navigation.js:9       — getProjectBackPath (canonical entry helper)
+0.4 — Mobile / back-button mechanism audit (no new collisions)
+  - Capacitor backButton handler at App.js:513-519 uses window.history.back();
+    bypasses the in-app arrow. Hardware back / iOS swipe-back land on whatever
+    is the previous history entry. No mobile changes. Same mechanism as
+    BATCH 5H audit 0.5.
+  - The ?from=dashboard URL-param convention shipped in 5H lives entirely
+    inside ProjectControlPage. No collision with this fix — different pages,
+    different param namespace, no shared state.
 
-0.3 — Back-button mechanism audit (no collisions)
-  - TaskDetailPage uses state.returnTo + sessionStorage (different mechanism)
-  - AdminBillingPage / AdminUsersPage use location.state?.from (admin-scoped)
-  - ProjectTasksPage already uses the EXACT same ?from=dashboard URL-param
-    pattern (proven convention)
-  - StageDetailPage uses local goBack() helper for QC routes (different)
-  Zero collision risk. URL-based, scoped to /control, mirrors sibling page.
+0.5 — Existing-task overlap (clean)
+  Searched `handover back navigation control` and `billing source project navigation`:
+  - #379 (back nav preserves project context) — MERGED, different mechanism,
+    doesn't touch HandoverOverviewPage or OrgBillingPage. No overlap.
+  - #190 (sticky stack + back button to navigating tabs) — CANCELLED.
+  - #31 (admin panel navigation tabs) — MERGED, different concern (top-level
+    admin nav, not the source-project banner).
+  - No other open task touches these two back buttons.
 
-0.4 — Extra findings (planning value-add)
-  - searchParams already in scope on ProjectControlPage (useSearchParams
-    imported at line 6, destructured at line 3194). 16+ uses. No new import.
-  - ArrowRight already imported at ProjectControlPage:23. Reused for the
-    new breadcrumb. No new import.
-  - i18n approved label sanity: he.json:49 reads "סגור" — 5G merged correctly.
-  - In-page לאישור shortcut at ProjectControlPage:3760 (now :3770 after
-    the breadcrumb insert) drops `from=dashboard` if user clicks it from a
-    /control session that arrived with from. Minor edge case, flagged, not
-    in scope (spec doesn't address it).
-
-0.5 — Mobile audit (Capacitor backButton handler)
-  App.js:513-519:
-    CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-      if (canGoBack) window.history.back();
-      else CapacitorApp.exitApp();
-    });
-  Hardware back / iOS swipe-back pop browser history. Do NOT trigger the
-  in-app arrow. Smart-back fix only affects users who tap the visible icon.
-  History-pop paths land on /dashboard correctly (it WAS the previous entry).
-  No mobile changes. Capgo OTA delivers the React build as-is.
-
-Audit clean. Proceeded with 8 edits, no scope expansion needed.
+Audit clean. Proceeded with 2 edits, no further scope expansion needed.
 
 ================================================================================
-PER-FILE DIFFS (2 files / 8 logical sub-edits)
+PER-FILE DIFFS (2 files / 2 logical sub-edits)
 ================================================================================
 
-FILE 1/2 — frontend/src/pages/ProjectDashboardPage.js (6 sub-edits)
+FILE 1/2 — frontend/src/pages/HandoverOverviewPage.js (1 sub-edit)
 
-Each edit appends `&from=dashboard` to an existing query string. Pure
-URL-string change, no logic.
+EDIT 1 — line 231 (header back button — fix broken route + add tooltip)
+- <button onClick={() => navigate(`/projects/${projectId}`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors">
++ <button onClick={() => navigate(`/projects/${projectId}/control?workMode=structure`)} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקט">
+    <ChevronRight className="w-4 h-4" />
+  </button>
 
-EDIT 1 — line 304 (was 301; the call spans two lines after the wrap)
-- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open`)}
-+ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=open&from=dashboard`)}
-  (פתוחים KPI — also has the title="כולל משימות שממתינות לאישור מנהל"
-  added in 5G; that's preserved.)
+  Two changes to the same <button> element:
+  - onClick: target the existing /control route with workMode=structure
+    (the project's "home" view, where most user flows originate).
+  - title: add Hebrew tooltip "חזרה לפרויקט" so the affordance is clear on
+    hover (button has only a ChevronRight icon, no visible label — convention
+    matches the smart back arrow shipped in BATCH 5H at ProjectControlPage:3667).
+  No styling, no className change, no icon change.
 
-EDIT 2 — line 314
-- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed`)}
-+ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=closed&from=dashboard`)}
-  (נסגרו KPI)
+FILE 2/2 — frontend/src/pages/OrgBillingPage.js (1 sub-edit)
 
-EDIT 3 — line 325 (לאישורי KPI — PM/owner-only)
-- urgent={kpis.pending_approval > 0}
-- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
-+ urgent={kpis.pending_approval > 0}
-+ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
-  (Disambiguated from the line-678 edit by the surrounding `urgent={...}`
-  prop on the line above.)
+EDIT 2 — line 894 (now line 897 — source-project banner back link)
+- onClick={() => navigate(`/projects/${sourceProjectId}`)}
++ onClick={() => navigate(`/projects/${sourceProjectId}/control?workMode=structure`)}
+  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
 
-EDIT 4 — line 335
-- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true`)}
-+ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&overdue=true&from=dashboard`)}
-  (באיחור KPI)
-
-EDIT 5 — line 344
-- onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team`)}
-+ onClick={() => navigate(`/projects/${projectId}/control?workMode=structure&tab=team&from=dashboard`)}
-  (צוות KPI)
-
-EDIT 6 — line 678 (לאישור sub-section "show all" button — not the KPI)
-- onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval`)}
-- className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
-+ onClick={() => navigate(`/projects/${projectId}/control?workMode=defects&statusChip=pending_manager_approval&from=dashboard`)}
-+ className="w-full text-center text-xs text-amber-600 hover:text-amber-700 py-2 font-medium"
-  (Disambiguated from EDIT 3 by the className on the line below.)
-
-FILE 2/2 — frontend/src/pages/ProjectControlPage.js (2 sub-edits)
-
-EDIT 7 — line 3658 (header back arrow — make it smart)
-- <button onClick={() => navigate('/projects')} className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors" title="חזרה לפרויקטים">
--   <ArrowRight className="w-5 h-5" />
-- </button>
-+ <button
-+   onClick={() => {
-+     if (searchParams.get('from') === 'dashboard') {
-+       navigate(`/projects/${projectId}/dashboard`);
-+     } else {
-+       navigate('/projects');
-+     }
-+   }}
-+   className="p-1.5 bg-white/[0.07] border border-white/10 rounded-[10px] hover:bg-white/[0.14] transition-colors"
-+   title={searchParams.get('from') === 'dashboard' ? 'חזרה לדשבורד' : 'חזרה לפרויקטים'}
-+ >
-+   <ArrowRight className="w-5 h-5" />
-+ </button>
-
-  className unchanged — only onClick + title. searchParams already in scope
-  (destructured at line 3194 from useSearchParams imported at line 6). The
-  navigate('/projects') call is preserved inside the else-branch.
-
-EDIT 8 — line 3807 (breadcrumb above amber filter chip — defects view only)
-  Inside the existing `workMode === 'defects' && !activeTab && hasFilterParams`
-  block, just before the amber filter chip:
-
-  {workMode === 'defects' && !activeTab && hasFilterParams && (
-    <div className="max-w-[1100px] mx-auto px-4 pt-4 space-y-3">
-+     {searchParams.get('from') === 'dashboard' && (
-+       <button
-+         onClick={() => navigate(`/projects/${projectId}/dashboard`)}
-+         className="flex items-center gap-1.5 text-sm text-amber-700 hover:text-amber-800 font-medium"
-+       >
-+         <ArrowRight className="w-4 h-4" />
-+         חזרה לדשבורד
-+       </button>
-+     )}
-      <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-
-  Conditionally rendered only when from=dashboard. ArrowRight reused (already
-  imported at line 23). Visual weight matches the existing "נקה סינון" link
-  inside the filter chip. Other entry paths to /control never see it.
+  Pure URL-string change. No styling, no className change, no text change —
+  the button already shows visible Hebrew text "חזרה לפרויקט", so no tooltip
+  needed. The conditional `{sourceProjectId && (...)}` wrapper is preserved,
+  so the banner only renders when the page was reached from a specific project
+  (admin direct entry doesn't render this banner — VERIFY 4c covers that).
 
 ================================================================================
 DO NOT TOUCH — verified untouched per spec
 ================================================================================
-- The dashboard's own back button at line 255 (loop avoidance).
-- The dashboard's footer /control link at line 823 (intentional exit).
-- The setActiveTab merge logic in ProjectControlPage at line 3417 — this is
-  EXACTLY what preserves `from=dashboard` across tab-switching inside
-  /control (uses {replace:true} and merges).
-- The workTabs strip + handleWorkTab function (intra-page nav, no `from`).
-- Body-level navigate('/projects') guards at ProjectControlPage:3444,3484
-  (NOT the back button — distinct error/access redirects).
-- The in-page לאישור shortcut at ProjectControlPage:3760 (now :3770) —
-  flagged edge case, out of scope per spec.
-- The defect drill-down at ProjectControlPage:3859 (now :3878) — different
-  state.returnTo mechanism, already works.
-- All 24 other navigate-to-/control sites across the app (modals, QC, admin,
-  building scope, unit context, task detail, invitation, utils/navigation).
+- HandoverOverviewPage.js — all other navigates (HamburgerMenu pass-through,
+  logout, etc.).
+- HandoverTabPage / HandoverSectionPage / HandoverProtocolPage — STEP 0.2
+  grep confirmed they don't use the broken pattern.
+- OrgBillingPage.js — three top-level back links at lines 795, 860, 880, all
+  reading `navigate(isSA ? '/admin' : '/projects')` (breadcrumb/header back to
+  admin or project list, intentional exit). Verified unchanged in post-edit
+  bonus grep below.
+- App.js routing table (no new routes, none changed).
 - en.json / ar.json / zh.json (Hebrew-only per Zahi standing decision).
 - Capacitor / Capgo / native code.
 
@@ -231,121 +153,76 @@ DO NOT TOUCH — verified untouched per spec
 VERIFY 1 — Frontend yarn build
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.example.com CI=false yarn build
-✅ BUILD PASS — Done in 34.50s. "The build folder is ready to be deployed."
+✅ BUILD PASS — Done in 37.32s. "The build folder is ready to be deployed."
    No new warnings.
 
 ================================================================================
-VERIFY 2 — All KPI/dashboard-action navigates now include from=dashboard
+VERIFY 2 — Broken navigates are gone (must return 0)
 ================================================================================
-$ grep -c 'from=dashboard' frontend/src/pages/ProjectDashboardPage.js
-6
-✅ Exactly 6 hits — one per edited KPI/action navigate.
+$ grep -c 'navigate(`/projects/${projectId}`)' frontend/src/pages/HandoverOverviewPage.js
+0   ✅ (was 1 before)
+
+$ grep -c 'navigate(`/projects/${sourceProjectId}`)' frontend/src/pages/OrgBillingPage.js
+0   ✅ (was 1 before)
 
 ================================================================================
-VERIFY 3 — Back button + breadcrumb wired correctly in ProjectControlPage
+VERIFY 3 — New navigates in place (must return ≥1)
 ================================================================================
-$ grep -c "searchParams.get('from')" frontend/src/pages/ProjectControlPage.js
-3
-✅ 3 hits — back button onClick + back button title + breadcrumb conditional.
+$ grep -c 'navigate(`/projects/${projectId}/control?workMode=structure`)' frontend/src/pages/HandoverOverviewPage.js
+1   ✅
 
-$ grep -n "navigate('/projects')" frontend/src/pages/ProjectControlPage.js
-3444:        navigate('/projects');     ← body-level guard (untouched, per audit)
-3484:      navigate('/projects');       ← body-level error handler (untouched)
-3660:                  navigate('/projects');   ← NEW: wrapped inside the else-branch of the smart back button
-✅ The header back button's call is now inside the conditional (line 3660),
-   not standalone. Body-level guards at 3444/3484 are intentionally untouched.
+$ grep -c 'navigate(`/projects/${sourceProjectId}/control?workMode=structure`)' frontend/src/pages/OrgBillingPage.js
+1   ✅
 
 ================================================================================
-VERIFY 4 — Regression: existing /control entry paths still go back to /projects
+BONUS — Regression sweep
 ================================================================================
-$ grep -rn 'navigate(.*projects/.*control' frontend/src/ | grep -v 'from=dashboard' | grep -v node_modules
+Confirm OrgBillingPage's three top-level back links at :795, :860, :880 are UNTOUCHED:
+$ grep -n "navigate(isSA ? '/admin' : '/projects')" frontend/src/pages/OrgBillingPage.js
+795:          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} ... >חזרה</button>
+860:          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} ... >...</button>
+880:        <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
+✅ All three preserved exactly as before.
 
-All 25 remaining /control navigates without from=dashboard match the
-0.2 DO-NOT-TOUCH classification exactly:
-
-  ProjectDashboardPage.js:255       — dashboard's own back (loop avoidance) ✓
-  ProjectDashboardPage.js:823       — footer /control link (intentional exit) ✓
-  ProjectControlPage.js:3770        — in-page לאישור shortcut (line shifted
-                                      from 3760 to 3770 after the breadcrumb
-                                      insert; flagged out-of-scope edge case) ✓
-  ProjectControlPage.js:3878        — defect drill-down with state.returnTo
-                                      (line shifted from 3859; different
-                                      mechanism, already works) ✓
-  components/NewDefectModal.js:914,939         ✓
-  pages/StageDetailPage.js:595,1661            ✓
-  pages/AdminOrgsPage.js:473                   ✓
-  pages/QCFloorSelectionPage.js:169,217        ✓
-  pages/ProjectPlansPage.js:579                ✓
-  pages/UnitHomePage.js:108                    ✓
-  pages/OnboardingPage.js:583                  ✓
-  pages/MyProjectsPage.js:390                  ✓
-  pages/BuildingDefectsPage.js:78,95,380,396   ✓
-  pages/InnerBuildingPage.js:59                ✓
-  pages/ApartmentDashboardPage.js:383          ✓
-  pages/TaskDetailPage.js:815,1072             ✓
-  pages/UnitDetailPage.js:171                  ✓
-  pages/ProjectTasksPage.js:456                ✓
-  utils/navigation.js:9                        ✓
-
-✅ No regression. All non-dashboard entry paths preserve original "back to
-   /projects" behavior.
+Confirm NO remaining broken /projects/${...} pattern anywhere in frontend/src/:
+$ grep -rn 'navigate(`/projects/${[a-zA-Z_.]*}`)' frontend/src/ | grep -v node_modules
+(none — clean)
+✅ The bug class is fully eradicated from the frontend.
 
 ================================================================================
-INTENTIONAL BEHAVIORS (no code action; documented for Zahi)
-================================================================================
-- from=dashboard SURVIVES tab switches inside /control. setActiveTab uses
-  setSearchParams(prev => {...}, {replace:true}) at line 3417 and merges
-  existing params. So a user who arrives via /control?...&from=dashboard,
-  switches to the "מבנה" tab, then taps the back arrow → still returns to
-  /dashboard. Intentional: dashboard context follows the user during their
-  session inside /control.
-- Bookmark edge case: if a user bookmarks a URL with from=dashboard and
-  opens it next session, the back arrow will go to /dashboard even though
-  the visit technically wasn't "from dashboard". Acceptable tradeoff —
-  bookmarks of deep-linked URLs with query params are rare, and the worst
-  case is back goes to /dashboard instead of /projects (still sensible).
-- In-page לאישור shortcut at ProjectControlPage:3770 — clicking it from a
-  /control session that arrived with from=dashboard DROPS the from param
-  (because navigate(`<full URL>`) replaces all search params, unlike the
-  setSearchParams merge used for tab switching). After clicking, back arrow
-  reverts to /projects. Minor edge case, flagged in audit, out of scope.
-
-================================================================================
-VERIFY 5 — Behavior smoke (Zahi runs visually on staging — not in Replit)
+VERIFY 4 — Behavior smoke (Zahi runs visually on staging — not in Replit)
 ================================================================================
 After Zahi deploys, confirm:
-  a. Project list → click project → /control?workMode=structure
-     → back arrow → returns to /projects ✓ (preserved, no `from`)
-  b. /control → click "דשבורד" tab → /dashboard → back → /control ✓
-     (preserved, dashboard's own back at line 255 untouched)
-  c. /dashboard → click "פתוחים" KPI → /control?...&from=dashboard
-     → back arrow → returns to /dashboard ✓ (THE FIX)
-     → tooltip on the back arrow now reads "חזרה לדשבורד"
-     → above the filter chip, a "← חזרה לדשבורד" link is visible
-  d. /dashboard → each of נסגרו, לאישורי, באיחור, צוות KPIs → back →
-     returns to /dashboard ✓ (consistent across all 5 KPIs + לאישור action)
-  e. Browser refresh on the deep-linked URL → breadcrumb still visible,
-     back arrow still goes to /dashboard ✓ (URL param survives)
-  f. QC flow + apartment defect flow untouched ✓
-  g. Browser back button (history pop) — already worked, still works ✓
-  h. Android hardware back / iOS swipe-back — uses window.history.back(),
-     same as browser back, lands on /dashboard ✓
-  i. Tab switching inside /control preserves from=dashboard ✓ (audit 0.4)
+  a. Project → "מסירות" tab → /handover → click header back arrow (right-side
+     ChevronRight) → returns to /control?workMode=structure ✓ (NOT /projects).
+     Hover the back arrow → tooltip reads "חזרה לפרויקט".
+  b. Project context (e.g. from a project-scoped CTA into the org billing
+     flow) → /org-billing with sourceProjectId populated → blue "הגעת
+     מפרויקט" banner visible → click "חזרה לפרויקט" link in the banner →
+     returns to /control?workMode=structure of the source project ✓
+     (NOT /projects).
+  c. Direct admin → org billing (no sourceProjectId) → blue banner does NOT
+     render → top-level "חזרה" links at :795/:860/:880 still go to /admin or
+     /projects per `isSA` ✓ (untouched).
+  d. Browser back / Android hardware back / iOS swipe-back from /handover or
+     /org-billing — uses window.history.back(), unaffected by these edits.
 
 ================================================================================
 COMMIT MESSAGE (full text in .local/.commit_message)
 ================================================================================
-fix(nav): smart back from /control to /dashboard when user came from
-          dashboard KPI
+fix(nav): back arrows on /handover and /org-billing route to
+          /control?workMode=structure instead of broken /projects/:id
 
 ================================================================================
 FOLLOW-UPS
 ================================================================================
-- No new follow-ups for 5H. The intra-/control לאישור shortcut at line 3770
-  has the minor `from` drop edge case but is intentionally out of scope per
-  spec (Zahi can decide later whether to expand).
-- No overlap with existing tasks (#15 defect detail back nav uses a
-  different page/mechanism; #348/#190 already MERGED/CANCELLED).
+- No new follow-ups for 5I. STEP 0.2 broadened grep already swept the whole
+  frontend for the broken `/projects/${...}` pattern; bonus regression check
+  after the edits returned zero hits, confirming the bug class is fully
+  eradicated.
+- No overlap with existing tasks. The follow-ups list scanned (Building QC,
+  Plans refresh, Demo seeding, Admin org drill-down, Onboarding, Twilio leak,
+  etc.) shares no surface with these two back buttons.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

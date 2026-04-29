@@ -891,7 +891,7 @@ export default function OrgBillingPage() {
             }
           </div>
           <button
-            onClick={() => navigate(`/projects/${sourceProjectId}`)}
+            onClick={() => navigate(`/projects/${sourceProjectId}/control?workMode=structure`)}
             className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
           >
             <ArrowRight className="w-3.5 h-3.5" />
