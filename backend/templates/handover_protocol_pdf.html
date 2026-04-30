@@ -467,11 +467,17 @@ table { border-collapse: collapse; }
 }
 
 /* ---------- ROOM HEAD + ITEMS ---------- */
+.room-block {
+  page-break-inside: auto;
+}
 .room-head {
   display: table;
   width: 100%;
   margin: 18px 0 8px;
   page-break-after: avoid;
+}
+table.items tbody tr {
+  page-break-inside: avoid;
 }
 .room-title {
   display: table-cell;
@@ -841,6 +847,18 @@ table.items .note {
   font-size: 22px;
   color: var(--ink);
 }
+.ph-company-logo {
+  height: 22px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.ph-date {
+  color: var(--ink);
+}
+.ph-date b {
+  color: var(--orange);
+  font-weight: 700;
+}
 .legal-sigline .sigchip .check {
   display: inline-block;
   background: var(--green);
@@ -993,8 +1011,8 @@ table.items .note {
   vertical-align: top;
   padding: 0 4px;
 }
-.photo-row.count-1 .cell { width: 50%; }
-.photo-row.count-2 .cell { width: 50%; }
+.photo-row.count-1 .cell { width: 40%; }
+.photo-row.count-2 .cell { width: 40%; }
 .photo-row.count-3 .cell { width: 33.33%; }
 .photo {
   display: block;
@@ -1057,6 +1075,19 @@ table.items .note {
 </style>
 </head>
 <body>
+{% macro page_header() %}
+<div class="ph">
+  <div class="ph-left">
+    {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt=""/>{% endif %}
+    {% if logo_b64 %}<img class="ph-logo ph-company-logo" src="{{ logo_b64 }}" alt=""/>{% endif %}
+    <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
+  </div>
+  <div class="ph-right">
+    {% if signed_date %}<span class="ph-date">מסירה: <b>{{ signed_date }}</b></span>{% else %}{{ generation_date }}{% endif %}
+    {% if display_number %} · {{ display_number }}{% endif %}
+  </div>
+</div>
+{% endmacro %}
 
 {# cover #}
 <div class="cover-wrap">
@@ -1183,13 +1214,7 @@ table.items .note {
 {# tenants on dedicated page (moved out of cover per Spec B Single-Source) #}
 {% if tenants|default([]) %}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
 
   <div class="page-label">TENANTS · דיירים</div>
   {% set _tenant_count_pg = tenants|length %}
@@ -1222,13 +1247,7 @@ table.items .note {
 
 {# TOC + defects summary #}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
 
   <div class="page-label">TABLE OF CONTENTS · DEFECTS SUMMARY</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 14px;">תוכן עניינים</h2>
@@ -1302,19 +1321,13 @@ table.items .note {
 
 {# room inspections #}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
 
-  <div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>
+  <div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
 
   {% for sec in inspection_sections|default([]) %}
   {% set sec_defects = (sec.fail|default(0)) + (sec.partial|default(0)) %}
-  <div class="no-break">
+  <div class="room-block">
     <div class="room-head">
       <div class="room-title">
         <span class="num">{{ '%02d'|format(loop.index) }}</span>{{ sec.name|default('—') }}
@@ -1412,13 +1425,7 @@ table.items .note {
 {# delivered items + meters #}
 {% if delivered_items|default([]) or meter_water_reading or meter_electricity_reading %}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
 
   <div class="page-label">HANDED-OVER ITEMS · METER READINGS</div>
 
@@ -1474,13 +1481,7 @@ table.items .note {
 {# legal sections #}
 {% if legal_sections|default([]) %}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
 
   <div class="page-label">LEGAL DECLARATIONS · נסחים משפטיים</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">נסחים משפטיים</h2>
@@ -1524,13 +1525,7 @@ table.items .note {
 {# tenant notes #}
 {% if tenant_notes %}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
   <div class="page-label">TENANT NOTES · הערות הדייר</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 12px">הערות הדייר</h2>
   <div class="notes-card">{{ tenant_notes }}</div>
@@ -1539,13 +1534,7 @@ table.items .note {
 
 {# signatures #}
 <div class="page-break">
-  <div class="ph">
-    <div class="ph-left">
-      {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt="">{% endif %}
-      <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-    </div>
-    <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
-  </div>
+  {{ page_header() }}
 
   <div class="page-label">SIGNATURES · חתימות</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">חתימות מסירה</h2>

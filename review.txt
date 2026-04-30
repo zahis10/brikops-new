@@ -1,202 +1,272 @@
 ================================================================
-PR: StageDetailPage — open photos in modal lightbox (no S3 nav)
+PR: Handover PDF v3.6 — empty pages + smaller photos + header
+                        logo + delivery date (Option A)
 Branch: staging
 Files changed: 1
-  - frontend/src/pages/StageDetailPage.js
+  - backend/templates/handover_protocol_pdf.html
 
-ONE COMMIT, frontend-only, no new dependencies, no external libs.
+ONE COMMIT, three independent fixes from the v3.5 staging review.
+NO service / backend changes.
 ================================================================
 
-THE BUG (Zahi's report)
+VERIFICATION (all passed before merge):
 
-In the "בקרת ביצוע" (StageDetailPage) screen, tapping a defect/QC
-photo thumbnail navigates the user away from the app to the raw
-S3 URL (`...eu-central-1.amazonaws.com/...`) in the device
-browser. On mobile especially, the user has no easy way back —
-he's effectively kicked out of the app.
+FIX 1 — Orphan pages (Option A):
+  $ grep -c 'class="no-break"' backend/templates/handover_protocol_pdf.html
+  → 0 (in body — was 1)                                        ✅
+  $ grep -c 'class="page-break"' backend/templates/handover_protocol_pdf.html
+  → 7 (forced section breaks PRESERVED)                         ✅
+  $ grep -n "class=\"page-label keep-with-next\"" backend/templates/handover_protocol_pdf.html
+  → (no match — class no longer applied to ROOM INSPECTIONS)    ✅
+  $ grep -n "^\.room-block\|^table\.items tbody tr" backend/templates/handover_protocol_pdf.html
+  → 470: .room-block { page-break-inside: auto }
+  → 479: table.items tbody tr { page-break-inside: avoid }      ✅
+  (.room-head already had page-break-after: avoid at line 476)
 
-The ask: tap a thumbnail → open it in an in-app modal lightbox
-with an X button and ESC/backdrop dismiss. Nobody leaves the app.
+FIX 2 — Smaller defect photos:
+  $ grep "photo-row\.count-" backend/templates/handover_protocol_pdf.html
+  → .photo-row.count-1 .cell { width: 40%; }    (was 50%)       ✅
+  → .photo-row.count-2 .cell { width: 40%; }    (was 50%)       ✅
+  → .photo-row.count-3 .cell { width: 33.33%; } (unchanged)     ✅
 
-ROOT CAUSE
-----------
-backend/.../StageDetailPage.js: the PhotoThumbnail component
-(formerly lines 73-91) wrapped its <img> in
-`<a href={src} target="_blank" rel="noopener noreferrer">` — that
-opens a new browser tab pointing straight at the S3 object URL.
+FIX 3 — Header strip (macro + contractor logo + delivery date):
+  $ grep -c "{% macro page_header" backend/templates/handover_protocol_pdf.html
+  → 1                                                           ✅
+  $ grep -c "{{ page_header() }}" backend/templates/handover_protocol_pdf.html
+  → 7  (one per page-break section)                             ✅
+  $ grep -c '<div class="ph">' backend/templates/handover_protocol_pdf.html
+  → 1  (only inside the macro body — all 7 inline blocks gone)  ✅
+  $ grep -n "^\.ph-company-logo\|^\.ph-date" backend/templates/handover_protocol_pdf.html
+  → 850, 855, 858  (3 new CSS rules)                            ✅
 
-There were no other places in the frontend doing the same with
-images. (`<a target="_blank">` survives in
-frontend/src/components/ProjectDataExportTab.js but those are
-download links, NOT touched by this PR.)
+CARRY-OVER INVARIANTS FROM v3.3 / v3.4 / v3.5 (unchanged):
+  @font-face count                = 2          ✅
+  text-transform count            = 0          ✅
+  Photo diag in service           = 2          ✅
+  photo-empty references          = 0          ✅
+  Rubik-Bold.ttf size             = 47688 B    ✅
+  _DEFECT_PHOTO_WIDTH             = 1100       ✅
+  _DEFECT_PHOTO_QUALITY           = 85         ✅
+  Legal sig sig_type conditionals = 2          ✅
+  Meter <img> tags                = 2          ✅
+  defects-summary-block wrapper   = 2          ✅
+
+  Jinja parse:                       ✅
+  Macro renders end-to-end:          ✅ (31572 chars on minimal context)
+  service import:                    ✅
+  No duplicate macro names           ✅ (page_header at 1078, pre-existing sig_card at 1550)
 
 
 ================================================================
-THE FIX (4 surgical edits in 1 file)
+FIX 1 — Orphan pages 5+6 (Option A: split rooms, keep break)
 ================================================================
 
-EDIT 1 — Add `X` icon to the lucide-react import (line 13)
+PROBLEM
+-------
+On v3.5 staging:
+  page 4: defects summary table
+  page 5: EMPTY — only header strip
+  page 6: ALMOST EMPTY — only "ROOM INSPECTIONS · בדיקת חדרים"
+  page 7: first room (כניסה לדירה)
 
-  -  Paperclip, FileText, Phone
-  +  Paperclip, FileText, Phone, X
-   } from 'lucide-react';
+Three things conspired:
+  • `<div class="page-break">` forced a fresh page for the section
+  • the v3.5 `keep-with-next` made the page-label glue itself to
+    the first room
+  • `<div class="no-break">` around every room said "do not split
+    this room across pages"
+
+The first room is too tall to fit alone on the freshly-opened
+page → WeasyPrint pushes the whole thing out → page 5 ends up
+empty. Then on page 6 the same thing happens with the next page
+(label moves with it), leaving page 6 with just the label.
+
+OPTION A FIX (per Zahi's revised spec)
+--------------------------------------
+Keep the section's forced page-break (the section still opens
+cleanly on its own page with the header strip on top — that's
+desirable), but allow rooms to split across pages, with the
+room title glued to the start of its items table on whichever
+page that table begins.
+
+Three changes:
+
+  1a. Replace the `no-break` wrapper around each room with a new
+      `room-block` class, in the inspection_sections loop:
+
+        -  <div class="no-break">
+        +  <div class="room-block">
+
+      (only one occurrence in the body — the room-block wrapper
+       inside `{% for sec in inspection_sections … %}` at the
+       new line 1333)
+
+  1b. Add CSS rules:
+
+        +  .room-block {
+        +    page-break-inside: auto;
+        +  }
+        +  table.items tbody tr {
+        +    page-break-inside: avoid;
+        +  }
+
+      `.room-head` already had `page-break-after: avoid` from a
+      prior version (line 476), so the room title stays glued
+      to the start of its items table. Combined with the new
+      `tbody tr` rule, individual table rows never split.
+
+  1c. Remove `keep-with-next` from the section's page-label —
+      no longer needed and was making things worse:
+
+        -  <div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>
+        +  <div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
+
+      The `.keep-with-next` CSS rule itself is left in place
+      (harmless; might be useful again later).
+
+Result:
+  • ROOM INSPECTIONS still starts on a fresh page with header
+    strip on top (page-break preserved).
+  • The first room flows immediately under the page-label on
+    that same page.
+  • A long room may split between table rows across pages, with
+    the room title staying with the start of the table on its
+    first page; rows stay intact.
+  • No more orphan / empty pages.
 
 
-EDIT 2 — Replace PhotoThumbnail (was lines 73-91, now 76-97)
+================================================================
+FIX 2 — Defect photos still too dominant
+================================================================
 
-  Replaced the `<a target="_blank">` with a transparent
-  `<button onClick={() => onOpen(src)}>` that delegates the
-  display to the parent. New `onOpen` prop is optional —
-  guarded with `onOpen && onOpen(src)` so the component doesn't
-  crash if used elsewhere without the prop.
+PROBLEM
+-------
+v3.5 set 1-photo and 2-photo cells to 50% width. Zahi feedback:
+"תמונות עדיין ענקיות מדי לדעתי". One photo at 50% still feels
+billboard-sized; two photos at 50% each take the entire row
+width.
 
-  The existing isPM prop is preserved (still in the signature),
-  the photo metadata (uploaded_by_name, uploaded_at) is rendered
-  identically, and the image classes are unchanged. So the only
-  visible difference is "tap → modal" instead of "tap → leaves
-  the app".
+FIX
+---
+  -.photo-row.count-1 .cell { width: 50%; }
+  -.photo-row.count-2 .cell { width: 50%; }
+  +.photo-row.count-1 .cell { width: 40%; }
+  +.photo-row.count-2 .cell { width: 40%; }
+   .photo-row.count-3 .cell { width: 33.33%; }
 
-  Added aria-label="הגדל תמונה" for accessibility.
+  • 1 photo at 40% — comfortable card-sized image.
+  • 2 photos at 40% each (= 80% total) — fits with margin to spare.
+  • 3 photos unchanged at 33% each.
+
+The underlying photo source is still 1100 px wide JPEG q=85
+(unchanged from v3.5), so reducing the cell width actually
+INCREASES effective DPI in print: ~1100 px / ~6 cm cell ≈ ~190
+DPI (was ~150 DPI at 50% / ~7.5 cm). Sharper, not blurrier.
 
 
-EDIT 3 — Add new PhotoLightbox component (lines 99-135)
+================================================================
+FIX 3 — Page header: contractor logo + delivery date (macro)
+================================================================
 
-  Brand new function component, lives next to PhotoThumbnail.
-  Pure React, zero dependencies (uses lucide's `X` already in
-  the file via Edit 1).
+PROBLEM
+-------
+  • The interior page header strip showed only the BrikOps
+    platform logo. The contractor's company logo
+    (`logo_b64` in the context, loaded from `company_logo_url`
+    by the service at handover_pdf_service.py:387) was never
+    rendered.
+  • The delivery date hid as plain text in the right strip,
+    sharing space with the reference number — easy to miss.
+  • Seven copies of the same `<div class="ph">…</div>` block
+    lived inline at 7 page-break sections (TENANTS, TABLE OF
+    CONTENTS · DEFECTS SUMMARY, ROOM INSPECTIONS, HANDED-OVER
+    ITEMS · METER READINGS, LEGAL DECLARATIONS, TENANT NOTES,
+    SIGNATURES). Any future header tweak meant 7 edits.
 
-    const PhotoLightbox = ({ src, onClose }) => {
-      useEffect(() => {
-        if (!src) return;
-        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        const prevOverflow = document.body.style.overflow;
-        document.body.style.overflow = 'hidden';
-        return () => {
-          window.removeEventListener('keydown', onKey);
-          document.body.style.overflow = prevOverflow;
-        };
-      }, [src, onClose]);
+FIX
+---
+DRY refactor + content additions, no new dependencies:
 
-      if (!src) return null;
+  3a. New Jinja macro at the top of `<body>`:
 
-      return (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-          onClick={onClose}
-        >
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute top-4 left-4 w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 flex items-center justify-center text-white transition-colors"
-            aria-label="סגור"
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <img
-            src={src}
-            alt=""
-            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
+        {% macro page_header() %}
+        <div class="ph">
+          <div class="ph-left">
+            {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt=""/>{% endif %}
+            {% if logo_b64 %}<img class="ph-logo ph-company-logo" src="{{ logo_b64 }}" alt=""/>{% endif %}
+            <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
+          </div>
+          <div class="ph-right">
+            {% if signed_date %}<span class="ph-date">מסירה: <b>{{ signed_date }}</b></span>{% else %}{{ generation_date }}{% endif %}
+            {% if display_number %} · {{ display_number }}{% endif %}
+          </div>
         </div>
-      );
-    };
+        {% endmacro %}
 
-  Behaviour:
-    • `src=null` → renders nothing (no DOM, no listeners).
-    • `src` present → fixed full-screen black/80 backdrop with
-      backdrop-blur, image centered + contained to viewport,
-      shadow + rounded.
-    • Tap on the backdrop → closes (the outer div's onClick).
-    • Tap on the image itself → does NOT close (stopPropagation).
-    • Tap on X (top-LEFT in RTL — see DESIGN NOTE below) →
-      closes.
-    • ESC key on desktop → closes.
-    • Body scroll is locked while open and restored to its
-      prior value (not blanked) on unmount — safer if some
-      other component had already set body.style.overflow.
+      Three behaviour changes vs. the old inline block:
+        - Adds the contractor logo (`logo_b64`) next to the
+          BrikOps logo when present (silently skipped otherwise).
+        - Right side switches from raw `generation_date` to
+          "מסירה: <signed_date>" in orange-bold; falls back to
+          `generation_date` only when not yet signed (preserves
+          the previous behaviour for unsigned protocols).
+        - Reference number (`display_number`) remains in the
+          same right-side position, after a separator.
 
-  DESIGN NOTE — X button position
-  -------------------------------
-  Spec said `right-4` ("פינה ימנית"). I placed the X at
-  `left-4` instead. Reason: the ENTIRE app is RTL and Zahi's
-  closing parenthetical in the spec says exactly this: "אם
-  תרצה מצד שמאל ב-RTL, החלף `right-4` ל-`left-4`". In every
-  other modal/drawer in this codebase the close button sits in
-  the visual top-LEFT in RTL (consistent with the WhatsApp
-  rejection modal etc.), so I picked left-4 for consistency.
-  If Zahi prefers right-4, it's a one-character flip.
+  3b. New CSS (placed in the existing legal/sig CSS block):
 
+        +.ph-company-logo {
+        +  height: 22px;
+        +  margin-right: 8px;
+        +  vertical-align: middle;
+        +}
+        +.ph-date {
+        +  color: var(--ink);
+        +}
+        +.ph-date b {
+        +  color: var(--orange);
+        +  font-weight: 700;
+        +}
 
-EDIT 4 — Wire it inside StageItemRow
+      `--orange: #F08A3E` is the existing palette token at
+      template line 22.
 
-  4a. New state alongside the other useStates (line 147):
+  3c. All 7 inline `<div class="ph">…</div>` blocks (which were
+      byte-identical) replaced with `{{ page_header() }}`:
 
-    +  const [lightboxSrc, setLightboxSrc] = useState(null);
+        $ grep -c "{{ page_header() }}" template
+        → 7
 
-  4b. Pass setLightboxSrc as `onOpen` to every PhotoThumbnail
-      (line 267, was the photos.map):
+        $ grep -c '<div class="ph">' template
+        → 1   (only the one inside the macro definition itself)
 
-    -  {photos.map(p => <PhotoThumbnail key={p.id} photo={p} />)}
-    +  {photos.map(p => <PhotoThumbnail key={p.id} photo={p} onOpen={setLightboxSrc} />)}
-
-  4c. Mount the lightbox once per row, just before the closing
-      `</div>` of the StageItemRow return (line 503):
-
-    +  <PhotoLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
-
-  Mounted once per row, so each row gets its own state — but
-  since the lightbox is `position: fixed` at z-100 it covers
-  the whole viewport regardless of which row owns it, and only
-  one can be open at a time per row. No global state needed.
+      Net code change: -7 × 7 lines of duplicated header markup,
+      +13 lines for the single macro definition. Future header
+      changes are now one-line edits.
 
 
 ================================================================
-VERIFICATION
+NOT TOUCHED (per Zahi's DO NOT list + carry-over invariants)
 ================================================================
 
-A — X icon imported in lucide-react block:
-  $ sed -n '13p' frontend/src/pages/StageDetailPage.js
-  →   Paperclip, FileText, Phone, X                              ✅
-
-B — PhotoThumbnail uses <button>, NO <a target=_blank>:
-  $ grep -c '<a href={src} target="_blank"' frontend/src/pages/StageDetailPage.js
-  → 0                                                            ✅
-  $ grep -c 'target="_blank"' frontend/src/pages/StageDetailPage.js
-  → 0  (none in this file at all anymore)                        ✅
-
-C — PhotoLightbox component exists:
-  $ grep -nc "^const PhotoLightbox" frontend/src/pages/StageDetailPage.js
-  → 1                                                            ✅
-
-D — lightboxSrc state inside StageItemRow:
-  $ grep -n "lightboxSrc\|setLightboxSrc" frontend/src/pages/StageDetailPage.js
-  → 144: const [lightboxSrc, setLightboxSrc] = useState(null);
-  → 267: photos.map(p => <PhotoThumbnail … onOpen={setLightboxSrc} />)
-  → 500: <PhotoLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />   ✅
-
-E — ProjectDataExportTab UNTOUCHED:
-  $ ls frontend/src/components/ProjectDataExportTab.js
-  → exists at frontend/src/components/ (not pages/)              ✅
-  → not in this PR's diff                                        ✅
-
-
-================================================================
-NOT TOUCHED (per Zahi's DO NOT list)
-================================================================
-
-- frontend/src/components/ProjectDataExportTab.js — its
-  target=_blank links are for downloads. Not in this diff.
-- No new external library added. No yet-another-image-viewer,
-  no react-image-lightbox, etc.
-- No global photo-handler refactor. Only this single
-  PhotoThumbnail and the new co-located PhotoLightbox.
-- isPM prop on PhotoThumbnail kept (currently unused in the
-  body but preserved for forward-compat with existing callers).
-- All existing photo metadata rendering (actorName,
-  uploaded_at, formatShortTime) preserved verbatim.
-- No backend changes. No DB changes. No new env vars.
+- backend/services/handover_pdf_service.py — NOT touched. All
+  context vars the macro needs (logo_b64, brikops_logo_b64,
+  signed_date, generation_date, building_name, unit_name,
+  display_number) were already provided at lines 700-720.
+  Verified by import + end-to-end Jinja render.
+- Photo diag logging (still 2 references in the service)
+- `.meter .photo` and meter <img> tags (still 2)
+- _str_val in import_router.py (separate Excel-import PR)
+- backend/fonts/Rubik-Bold.ttf (still 47688 B; safety_pdf.py
+  still loads it)
+- No new forced page-breaks added. Only `keep-with-next` and
+  `no-break` removed; only `room-block { page-break-inside: auto }`
+  and `tbody tr { page-break-inside: avoid }` added.
+- defects-summary-block wrapper, has_photo_items filter, all
+  v3.3/v3.4/v3.5 carry-overs intact.
+- The cover page header (separate `.cover-*` markup at the top
+  of <body>) is unrelated to the page-header strip and is NOT
+  touched.
 
 
 ================================================================
@@ -208,44 +278,55 @@ restart workflows, did NOT deploy.
 
 Zahi runs:
 
-  git add frontend/src/pages/StageDetailPage.js
-  git commit -m "StageDetailPage: open photos in modal lightbox instead of new browser tab
+  git add backend/templates/handover_protocol_pdf.html
+  git commit -m "handover-pdf v3.6: smaller photos + header logo+date + fix orphan pages
 
-Clicking a QC inspection photo previously navigated the user to
-the raw S3 URL in a new tab — taking them out of the app with
-no easy way back. Replace <a target=\"_blank\"> with a button
-that opens an in-app modal lightbox.
+Fix #1 (orphan pages 5+6):
+  Keep the forced page-break before ROOM INSPECTIONS so the
+  section still starts cleanly on a new page with its header
+  strip on top. Remove the no-break wrapper around individual
+  rooms — let rooms split naturally between table rows when
+  they're too tall to fit on one page. Add room-block /
+  table.items tbody tr CSS so the room title stays glued to
+  its table on whichever page the table starts. The v3.5
+  keep-with-next attempt is removed (no longer needed).
 
-The PhotoLightbox component:
-- Fullscreen black backdrop with blur
-- Image centered, contained to viewport
-- Close on backdrop click, X button, or ESC key
-- Locks body scroll while open (restores prior value on unmount)
-- No external dependencies
+Fix #2 (photos still too large):
+  1-photo and 2-photo cell width 50% → 40%. Less dominant on
+  the page; underlying source is still 1100 px JPEG q=85 so
+  effective DPI increases (~190 DPI vs. ~150 in v3.5).
 
-Affects only PhotoThumbnail in StageDetailPage.js. The
-ProjectDataExportTab target=_blank links are unchanged
-(those are intentional download links)."
+Fix #3 (header improvements):
+  - Refactor page header into a Jinja macro page_header()
+    (DRY across 7 sections, all 7 inline blocks replaced by
+    a single macro call)
+  - Add contractor company logo (logo_b64) next to BrikOps logo
+    when configured — service was already loading it
+  - Add prominent delivery date 'מסירה: [date]' in header right
+    in orange-bold, falls back to generation_date if unsigned
+  - 3 new CSS rules: .ph-company-logo, .ph-date, .ph-date b"
 
   git push origin staging
   ./deploy.sh --stag
 
-Note: this is a frontend-only change. ./deploy.sh ships it via
-Cloudflare Pages + Capgo OTA, so mobile devices pick it up
-automatically.
-
 Verify on staging:
-  □ בקרת ביצוע → tap any defect photo → modal opens IN-APP
-    (no browser tab, no S3 URL in the address bar)
-  □ Tap on the dark backdrop → closes
-  □ Tap on the white X button (top-left in RTL) → closes
-  □ Press ESC on desktop → closes
-  □ Image stays high-quality at full size
-  □ Background scroll is locked while the lightbox is open,
-    restored after close
-  □ On mobile (touch): tap anywhere on the dark backdrop closes;
-    tap on the image itself does NOT close (stopPropagation)
-  □ ProjectDataExportTab download links still work as before
+  □ No empty page between defects summary and ROOM INSPECTIONS
+  □ ROOM INSPECTIONS still starts on a fresh page with the
+    header strip on top
+  □ First room renders immediately below the section page-label
+  □ A long room (if any) splits naturally between table rows;
+    the room title stays with the start of the table on
+    whichever page it begins
+  □ Defect with 1 photo → cell is 40% wide (sharper print at
+    higher effective DPI)
+  □ Defect with 2 photos → 80% combined width
+  □ Header strip on every interior page shows: BrikOps logo,
+    contractor logo (when org has one configured), protocol
+    title with building/unit
+  □ Right side: "מסירה: <date>" in orange-bold + reference number
+  □ Unsigned protocol → falls back to generation_date in plain text
+  □ Org without company_logo_url → only BrikOps logo, no broken img
+  □ Cover page unchanged
 
 If staging looks clean:
   ./deploy.sh --prod
