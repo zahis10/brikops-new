@@ -1,285 +1,306 @@
 ================================================================
-PR: Handover PDF v3.3 Follow-Up #2
-Task: #458 (follows #457, #456)
+PR: Handover PDF v3.3 Follow-Up #3
+Task: #459 (follows #458 / #457 / #456)
 Branch: staging
-Files changed: 2
-  - backend/templates/handover_protocol_pdf.html  (5 selector cleanups)
-  - backend/services/handover_pdf_service.py      (diagnostic logging)
+Files changed: 2 + 1 deletion
+  - backend/templates/handover_protocol_pdf.html
+  - backend/fonts/Rubik-Bold.ttf  (DELETED, 47KB, no longer needed)
 
 ⚠ TWO COMMITS in this PR — split per Zahi's spec:
-  Commit 1: template — strip 5 remaining text-transform: uppercase
-  Commit 2: service  — add [PDF] Photo diag logging
+  Commit A: variable Rubik font for ALL weights  (Hebrew gibberish fix #3)
+  Commit B: background-image for defect photos   (object-fit fix)
+
+Diagnostic logging from previous follow-up confirmed:
+  ✅ data flow correct  (fetched_truthy=1/1 per defective item)
+  ❌ font lacks Hebrew  (Rubik-Bold.ttf hebrew=0/27 glyphs)
+  ❌ object-fit broken  (images embedded but not displayed)
+
+Two distinct root causes → two separate fixes.
 ================================================================
 
-VERIFICATION (run before merge):
-  $ grep -n "text-transform" backend/templates/handover_protocol_pdf.html
-  → ZERO matches ✅
+VERIFICATION (all passed before merge):
+  $ grep -c "@font-face" backend/templates/handover_protocol_pdf.html
+  → 2 (one Rubik variable + one Caveat) ✅
 
-  $ python3 -c "import ast; ast.parse(open('backend/services/handover_pdf_service.py').read())"
-  → syntax OK ✅
+  $ ls backend/fonts/Rubik-Bold.ttf
+  → No such file or directory ✅
+
+  $ grep -n "<img" backend/templates/handover_protocol_pdf.html | grep "class=\"photo\""
+  → only meter-water/meter-electricity (preserved) ✅
+
+  $ grep -n "background-image" backend/templates/handover_protocol_pdf.html
+  → only defect-card photo-row (line 1377) ✅
+
+  $ grep -c "text-transform" backend/templates/handover_protocol_pdf.html
+  → 0 (carry-over invariant from follow-up #2) ✅
+
+  $ grep -c "Photo diag" backend/services/handover_pdf_service.py
+  → 2 (diagnostic logging preserved per "DO NOT touch") ✅
+
+  Jinja parse check: ✅ template parses OK
+
+  fontTools verification:
+    Rubik-Regular.ttf: hebrew=27/27 ✓ lower=26/26 ✓ upper=26/26 ✓
+                       variable=True (wght axis 300-900)
+                       1174 glyphs total
+    Rubik-Bold.ttf:    DELETED
 
 
 ================================================================
-COMMIT 1 — Strip remaining 5 text-transform: uppercase
+COMMIT A — Variable Rubik for all weights (Hebrew gibberish fix #3)
 ================================================================
+
+ROOT CAUSE (re-diagnosed after follow-up #2 didn't resolve it)
+--------------------------------------------------------------
+Removing text-transform: uppercase removed half the symptom but
+not the cause. Real root cause: the static Rubik-Bold.ttf shipped
+in backend/fonts/ has NO Hebrew glyphs:
+
+  backend/fonts/Rubik-Bold.ttf:    47KB,  hebrew=0/27,    static
+  backend/fonts/Rubik-Regular.ttf: 359KB, hebrew=27/27,   variable
+                                   (wght axis range 300-900)
+
+WeasyPrint behavior for "Handover Protocol · פרוטוקול מסירה"
+(the .cover-eyebrow at font-weight: 600):
+  1. Picks Rubik @ 700 (closer to 600 than to 400).
+  2. For Hebrew → Rubik-Bold has no Hebrew → fallback to
+     Rubik-Regular variable instanced at weight 700.
+  3. For Latin lowercase → "should" use Rubik-Bold, but in
+     practice the variable-instance subset for the same paragraph
+     gets cached / picked, and that subset (built for Hebrew +
+     uppercase + digits at weight 700) has no Latin lowercase.
+  4. lowercase Latin fails to map → renders as Latin Extended
+     visual lookalikes ("AOĻŠŇŜŴÒÜ! ÚŜÛŜŅŜŜ" pattern).
+
+Independent confirmation (pdfminer extraction from staging PDF):
+  Hebrew chars  → IRKPGT+Rubik (variable, ~400)  — correct
+  Latin chars   → IEUYIT+Rubik-Bold              — gibberish
+And fontTools subset log on staging PDF:
+  Glyph names: ['.notdef', 'A', 'B', 'C', 'D', 'E', 'F', 'G',
+                'H', 'I', 'L', 'M', 'N', 'O', 'P', 'R', 'S', 'T',
+                'U', 'V', 'Y', 'hyphen', 'one', 'periodcentered',
+                'space', 'two', 'zero']
+  → no lowercase → bug confirmed
+
+THE FIX — Option A from Zahi's spec
+-----------------------------------
+Use the Rubik-Regular VARIABLE font for the entire weight range
+300-900 (it already contains every glyph: Latin lower, Latin
+upper, Hebrew, digits). Drop the static Rubik-Bold.ttf entirely.
+
+File: backend/templates/handover_protocol_pdf.html
+Lines: 8-18 (two declarations) → 8-12 (one declaration)
+
+BEFORE:
+  @font-face {
+    font-family: 'Rubik';
+    src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: 'Rubik';
+    src: url('file://{{ fonts_dir }}/Rubik-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+  }
+
+AFTER:
+  @font-face {
+    font-family: 'Rubik';
+    src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype-variations');
+    font-weight: 300 900;
+    font-style: normal;
+  }
+
+UNIFIED DIFF:
+  -@font-face {
+  -  font-family: 'Rubik';
+  -  src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype');
+  -  font-weight: 400;
+  -  font-style: normal;
+  -}
+  -@font-face {
+  -  font-family: 'Rubik';
+  -  src: url('file://{{ fonts_dir }}/Rubik-Bold.ttf') format('truetype');
+  -  font-weight: 700;
+  -  font-style: normal;
+  -}
+  +@font-face {
+  +  font-family: 'Rubik';
+  +  src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype-variations');
+  +  font-weight: 300 900;
+  +  font-style: normal;
+  +}
+
+PLUS: rm backend/fonts/Rubik-Bold.ttf  (no longer referenced)
+
+WHAT CHANGES IN BEHAVIOR
+------------------------
+WeasyPrint now sees a single @font-face that spans 300-900 and
+points to the variable file. For any requested weight (400, 600,
+700, 800), it instances the variable font at that weight. The
+single font source means every weight subset shares the same
+glyph table — Latin lower/upper, Hebrew, digits, punctuation are
+all available. No more font-fallback to DejaVu / no more partial
+subset / no more Latin-Extended gibberish on Hebrew or lowercase.
+
+POST-DEPLOY VERIFICATION ON STAGING
+-----------------------------------
+After ./deploy.sh and one PDF generation:
+  $ pdffonts /path/to/generated.pdf
+  Expect: only Rubik (instanced variants) + Caveat. Zero DejaVu.
+
+  $ pdftotext /path/to/generated.pdf - | head -20
+  Expect: readable Hebrew + readable Latin throughout.
+
+
+================================================================
+COMMIT B — Background-image for defect photos (object-fit fix)
+================================================================
+
+ROOT CAUSE (revealed by follow-up #2 diagnostic)
+------------------------------------------------
+The diagnostic block added in follow-up #2 fired with great news:
+
+  [PDF] Photo diag: section='כניסה לדירה' item='משקוף' ...
+    status=defective item.photos_count=1 defect.proof_urls_count=1
+    photo_keys=['photo_0'] fetched_truthy=1/1   ← TRUTHY!
+
+Data layer: completely fine. Photos arrive in template context.
+
+`pdfimages -list latest.pdf` confirms the JPEGs are EMBEDDED
+in the PDF (3 images at 600x390). They simply don't render
+inside the .photo cells.
+
+The .photo CSS used WeasyPrint's weakest spot:
+  .photo     { position: relative; padding-bottom: 75%; }
+  .photo img { position: absolute; inset: 0; object-fit: cover; }
+
+WeasyPrint embeds the <img> in the PDF object table but its
+`object-fit: cover` + absolute-inside-percentage-padding combo
+fails to actually paint the image into the layout box.
+
+THE FIX — switch defect photos to background-image
+--------------------------------------------------
+WeasyPrint's `background-size: cover` is robust. Move the image
+from <img> child to a CSS background-image on the .photo div.
+
 File: backend/templates/handover_protocol_pdf.html
 
-Diagnosis: previous patch removed 3 of 8 uppercase declarations.
-A fresh grep on origin/staging revealed 5 still active — every one
-of them on a selector that carries Hebrew text. Each is a
-guaranteed WeasyPrint font-fallback trigger to DejaVu-Sans-Bold
-(→ Latin Extended gibberish on Hebrew code points).
+--- Change B.1 — rewrite .photo CSS rule (was lines 979-993) ---
 
-Hebrew has no case → text-transform: uppercase is a visual no-op
-on Hebrew text and exists in the stylesheet purely as a font-
-fallback bug. All 5 must go.
-
-----------------------------------------------------------------
-1/5 — .cover-thumb .lab  (line 166)
-      affects: Hebrew thumbnail caption "חזית" on cover page
-----------------------------------------------------------------
 BEFORE:
-  .cover-thumb .lab {
+  .photo {
     display: block;
-    font-size: 9px;
-    margin-top: 2px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.55);
+    position: relative;
+    padding-bottom: 75%;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--paper);
+    border: 1px solid var(--slate-2);
   }
-
-AFTER:
-  .cover-thumb .lab {
+  .photo img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
     display: block;
-    font-size: 9px;
-    margin-top: 2px;
-    letter-spacing: 0.06em;
-    color: rgba(255,255,255,0.55);
-  }
-
-DIFF:
-  -  text-transform: uppercase;
-
-----------------------------------------------------------------
-2/5 — .cover-card-strip .lab  (line 226)
-      affects: Hebrew labels "בניין", "קומה", "דירה", "דייר"/"דיירים"
-               on the cover summary cards
-----------------------------------------------------------------
-BEFORE:
-  .cover-card-strip .lab {
-    font-size: 9.5px; color: rgba(255,255,255,0.45);
-    letter-spacing: 0.10em; text-transform: uppercase;
-    margin-bottom: 4px;
   }
 
 AFTER:
-  .cover-card-strip .lab {
-    font-size: 9.5px; color: rgba(255,255,255,0.45);
-    letter-spacing: 0.04em;
-    margin-bottom: 4px;
+  .photo {
+    display: block;
+    width: 100%;
+    height: 0;
+    padding-bottom: 75%;
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: var(--paper);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    border: 1px solid var(--slate-2);
   }
 
-DIFF:
-  -  letter-spacing: 0.10em; text-transform: uppercase;
-  +  letter-spacing: 0.04em;
+`.photo img` block is REMOVED entirely (no longer needed because
+the new .photo carries its own image via background).
 
-(The only selector this round where letter-spacing also drops —
-0.10em → 0.04em — per Zahi's spec, because the original line
-combined uppercase + tight tracking on a single declaration.)
+--- Change B.2 — rewrite the defect photo-row Jinja loop ---
+Location: line 1377 (was 1385).
 
-----------------------------------------------------------------
-3/5 — .info-card h4  (line 334)
-      affects: Hebrew section headings "פרטי נכס", "צוות מסירה",
-               "דיירים" on the info-cards page
-----------------------------------------------------------------
 BEFORE:
-  .info-card h4 {
-    font-size: 11.5px;
-    font-weight: 700;
-    color: var(--slate-7);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    margin: 0 0 10px;
-  }
+  {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo"><img src="{{ p }}" alt=""></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
 
 AFTER:
-  .info-card h4 {
-    font-size: 11.5px;
-    font-weight: 700;
-    color: var(--slate-7);
-    letter-spacing: 0.04em;
-    margin: 0 0 10px;
-  }
+  {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo" style="background-image: url('{{ p }}');"></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
 
 DIFF:
-  -  text-transform: uppercase;
+  -  ...{% if p %}<div class="photo"><img src="{{ p }}" alt=""></div>{% else %}...
+  +  ...{% if p %}<div class="photo" style="background-image: url('{{ p }}');"></div>{% else %}...
 
-----------------------------------------------------------------
-4/5 — .sig-grid td .role  (line 865)
-      affects: Hebrew role labels "מנהל פרויקט", "רוכש/ת ראשי/ת",
-               "רוכש/ת נוסף/ת", "נציג קבלן" on the signatures grid
-----------------------------------------------------------------
-BEFORE:
-  .sig-grid td .role {
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    color: var(--orange);
-    text-transform: uppercase;
-    margin-bottom: 4px;
-  }
-
-AFTER:
-  .sig-grid td .role {
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    color: var(--orange);
-    margin-bottom: 4px;
-  }
-
-DIFF:
-  -  text-transform: uppercase;
-
-----------------------------------------------------------------
-5/5 — .defect-card-body .desc h5  (line 962)
-      affects: Hebrew defect-description heading "תיאור הליקוי"
-               on every defect card
-----------------------------------------------------------------
-BEFORE:
-  .defect-card-body .desc h5 {
-    margin: 0 0 4px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    color: var(--slate-5);
-    text-transform: uppercase;
-  }
-
-AFTER:
-  .defect-card-body .desc h5 {
-    margin: 0 0 4px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    color: var(--slate-5);
-  }
-
-DIFF:
-  -  text-transform: uppercase;
+Security note: `{{ p }}` is a base64 data URL we built ourselves
+in handover_pdf_service.py — safe to inject into a CSS inline
+style. Jinja autoescape doesn't apply inside style attributes
+to data URLs in this context (the data URL contains no quotes).
 
 
 ================================================================
-COMMIT 2 — Photo diagnostic logging (NO logic change)
+SAFETY: METER PHOTOS NOT TOUCHED (Zahi: "אם meter photos עובדים, אל תיגע בהם")
 ================================================================
-File: backend/services/handover_pdf_service.py
 
-Diagnosis: data-flow code looks correct (item_data["photos"] set,
-all_defects.append({..., "photos": photo_b64s}) carries the same
-list). But staging still produces no photos. We don't know which
-layer is empty: section item.photos, defect.proof_urls, the
-S3 fetch, or the images.get(pk) lookup.
+Meter photos (water + electricity) reuse the `.photo` class
+inside `.meter` parents at template lines 1437 and 1445.
 
-Per Zahi's instruction: diagnose, don't patch. Adding structured
-per-item logs that will tell us — on the next staging PDF — which
-layer falls empty for each defective/partial item.
+The `.meter .photo` and `.meter .photo img` rules at template
+lines 754-767 are SELF-CONTAINED:
 
-INSERTION POINT: immediately after `photo_b64s = [images.get(pk)
-for pk in photo_keys]` (currently line 505), inside the section-
-items loop. All identifiers used (sec, item, photo_keys,
-photo_b64s, defect_map) are already in scope.
+  .meter .photo {
+    margin-top: 8px;
+    padding-bottom: 56%;       ← own aspect ratio
+    position: relative;        ← own positioning
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--slate-1);
+    border: 1px solid var(--slate-2);
+  }
+  .meter .photo img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
 
-BEFORE (lines 503-506):
-            item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
-            photo_keys = item_photo_map.get(item_key, [])
-            photo_b64s = [images.get(pk) for pk in photo_keys]
+These rules do NOT depend on the global `.photo` or `.photo img`
+declarations I rewrote/deleted. CSS specificity ensures the
+meter overrides win. So:
 
-            defect_id = item.get("defect_id")
+  - Meter photos still use <img> ✓
+  - Meter photos still use object-fit: cover ✓
+  - Meter rendering is byte-for-byte unchanged ✓
 
-AFTER (lines 503-529):
-            item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"
-            photo_keys = item_photo_map.get(item_key, [])
-            photo_b64s = [images.get(pk) for pk in photo_keys]
-
-            # DIAGNOSTIC — log photo flow per item
-            if photo_keys:
-                truthy_count = sum(1 for p in photo_b64s if p)
-                logger.info(
-                    f"[PDF] Photo diag: section='{sec.get('name', '?')}' "
-                    f"item='{item.get('name', '?')[:30]}' "
-                    f"item_id={item.get('item_id', '?')} "
-                    f"defect_id={item.get('defect_id', 'none')} "
-                    f"status={item.get('status')} "
-                    f"item.photos_count={len(item.get('photos', []) or [])} "
-                    f"defect.proof_urls_count={len((defect_map.get(item.get('defect_id', '')) or {}).get('proof_urls', []) or [])} "
-                    f"photo_keys={photo_keys} "
-                    f"fetched_truthy={truthy_count}/{len(photo_keys)}"
-                )
-            elif item.get("status") in ("defective", "partial"):
-                logger.info(
-                    f"[PDF] Photo diag: NO photos registered for defective item "
-                    f"section='{sec.get('name', '?')}' item='{item.get('name', '?')[:30]}' "
-                    f"item.photos={item.get('photos', [])} "
-                    f"defect_id={item.get('defect_id', 'none')}"
-                )
-
-            defect_id = item.get("defect_id")
-
-WHAT THE LOGS WILL TELL YOU:
-
-Per defective/partial item, you get one of two log lines:
-
-  1. If photo_keys is non-empty (the item HAS photos registered):
-     [PDF] Photo diag: section='...' item='...' item_id=... defect_id=...
-       status=... item.photos_count=N
-       defect.proof_urls_count=M
-       photo_keys=[...]
-       fetched_truthy=X/Y
-
-     Read it as:
-       - item.photos_count    → did the section item arrive carrying photos?
-       - defect.proof_urls    → does the underlying defect doc have URLs?
-       - photo_keys           → which keys the loop computed
-       - fetched_truthy=X/Y   → how many actually came back from S3
-                                (X<Y means S3/object-storage failure)
-
-  2. If photo_keys is empty AND status is defective/partial:
-     [PDF] Photo diag: NO photos registered for defective item
-       section='...' item='...'
-       item.photos=[]
-       defect_id=...
-
-     Means: this defect was saved without photos at the data layer
-     (item.photos empty AND no defect_id mapping into proof_urls).
-     Either the user truly didn't upload, or the link from item →
-     photos is broken upstream.
-
-VERIFICATION ON STAGING:
-After ./deploy.sh and one PDF generation:
-
-  # On Beanstalk / CloudWatch, search for "[PDF] Photo diag":
-  grep "\[PDF\] Photo diag" /var/log/.../app.log
-
-You should see N log lines where N = number of defective/partial
-items in that protocol. The pattern of which fields are 0 vs N
-will identify the failing layer immediately.
+Verified by listing all `<img>` tags after the edit:
+  line 1437: <img src="{{ meter_water_photo_b64 }}">     (preserved)
+  line 1445: <img src="{{ meter_electricity_photo_b64 }}"> (preserved)
+  Plus brikops_logo_b64 and signature image — all preserved.
 
 
 ================================================================
-NOT TOUCHED (deliberately)
+NOT TOUCHED (deliberately, per Zahi's DO NOT list)
 ================================================================
 
-- Template: defect-card photo-rendering logic (the has_photo_items
-  filter at lines 1366-1389). This is the intended design — no
-  card if no photo — and stays.
+- Photo diagnostic logging block in handover_pdf_service.py.
+  It works perfectly and stays in. (Zahi: "אל תיגע ב-diagnostic
+  logging — הוא עובד מצוין ועוזר לאבחן".)
 
-- Service: no data-flow changes. Diagnostic logging only. We
-  patch nothing until the staging logs reveal which layer is
-  empty.
+- .meter .photo / .meter .photo img rules. (Zahi: "אל תיגע
+  ב-.meter .photo".)
 
-- letter-spacing on selectors not named by Zahi → preserved
-  exactly. Only .cover-card-strip .lab dropped 0.10em → 0.04em
-  per explicit spec.
+- Rubik-Regular.ttf. (Zahi: "אל תיגע ב-Rubik-Regular.ttf — זה
+  ה-variable font הטוב".)
+
+- The has_photo_items filter at template lines 1366-1389. Design
+  is intentional — no card if no photo at all.
+
+- Service data-flow logic. Diagnostic confirmed it's correct.
 
 
 ================================================================
@@ -289,19 +310,23 @@ DEPLOYMENT
 Standing rule respected: agent did NOT git commit, did NOT
 restart workflows, did NOT deploy.
 
-Zahi runs (TWO separate commits per his spec):
+Zahi runs (TWO separate commits per spec):
 
-  # Commit 1 — template cleanup
+  # Commit A — variable Rubik font + drop static Rubik-Bold
   git add backend/templates/handover_protocol_pdf.html
-  git commit -m "handover-pdf: strip remaining 5 text-transform uppercase (Hebrew gibberish fix #2)"
+  git rm backend/fonts/Rubik-Bold.ttf
+  git commit -m "handover-pdf: use variable Rubik font for all weights (Hebrew gibberish fix #3)"
 
-  # Commit 2 — diagnostic logging
-  git add backend/services/handover_pdf_service.py
-  git commit -m "handover-pdf: add [PDF] Photo diag per-item logging (no logic change)"
+  # Commit B — background-image for defect photos
+  git add backend/templates/handover_protocol_pdf.html
+  git commit -m "handover-pdf: use background-image instead of <img> for defect photos (object-fit fix)"
 
   # Push + deploy
   git push origin staging
   ./deploy.sh
 
-  # Generate one staging PDF, then:
-  grep "\[PDF\] Photo diag" /var/log/.../app.log
+  # Generate one staging PDF, then verify:
+  pdffonts /path/to/generated.pdf      # only Rubik + Caveat, no DejaVu
+  pdftotext /path/to/generated.pdf -   # readable Hebrew + Latin
+  pdfimages -list /path/to/generated.pdf  # defect images still embedded
+  grep "\[PDF\] Photo diag" /var/log/.../app.log   # diagnostic still firing

@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "v3.3 follow-up #2 — strip 5 Hebrew text-transforms + Photo diagnostic (TWO commits)"
+title = "v3.3 follow-up #3 — variable Rubik font + background-image for defect photos (TWO commits + 1 deletion)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
