@@ -1,203 +1,173 @@
 ================================================================
-PR: Handover PDF v3.7 — smaller photos (Cemento-style, up to 6)
-                        + smart section break (no orphan rows)
+PR: Handover PDF v3.7.1 HOTFIX — photo width finally takes effect
+                                  (move width from .cell to .photo-row)
 Branch: staging
-Files changed: 2
+Files changed: 1
   - backend/templates/handover_protocol_pdf.html
-  - backend/services/handover_pdf_service.py
 
-ONE COMMIT, two independent fixes from the v3.6 staging review.
-Service touched in exactly one place: bump photo cap 3 → 6.
+Pure CSS swap. No Python, no service, no template loop changes.
 ================================================================
 
 VERIFICATION (all passed before merge):
 
-FIX 1 — Smaller photos + support up to 6:
-  $ grep -n "for photo_ref in item_photos" backend/services/handover_pdf_service.py
-  → 411: item_photos[:6]   (was [:3])                          ✅
-  $ grep -n "photo-row\.count-" backend/templates/handover_protocol_pdf.html
-  → count-1 .cell { width: 30%; }   (was 40%)                  ✅
-  → count-2 .cell { width: 30%; }   (was 40%)                  ✅
-  → count-3 .cell { width: 30%; }   (was 33.33%)               ✅
-  → count-4 .cell { width: 24%; }   (NEW)                      ✅
-  → count-5 .cell { width: 19%; }   (NEW)                      ✅
-  → count-6 .cell { width: 16%; }   (NEW)                      ✅
-  (Existing template loop already uses `count-{{ _count }}` —
-   automatically picks up the new count-4/5/6 classes.)
+  $ sed -n '1008,1024p' backend/templates/handover_protocol_pdf.html
+  → .photo-row {                                                ✅
+  →   display: table;                                           ✅
+  →   border-spacing: 6px 0;                                    ✅
+  →   margin-top: 8px;                                          ✅
+  →   table-layout: fixed;                                      ✅
+  → }
+  → .photo-row .cell {                                          ✅
+  →   display: table-cell;                                      ✅
+  →   vertical-align: top;                                      ✅
+  →   padding: 0 4px;                                           ✅
+  → }
+  → .photo-row.count-1 { width: 30%; }                          ✅
+  → .photo-row.count-2 { width: 60%; }                          ✅
+  → .photo-row.count-3 { width: 90%; }                          ✅
+  → .photo-row.count-4 { width: 96%; }                          ✅
+  → .photo-row.count-5 { width: 95%; }                          ✅
+  → .photo-row.count-6 { width: 96%; }                          ✅
 
-FIX 2 — Smart section break (keep-together for non-first rooms):
-  $ grep -n "keep-together" backend/templates/handover_protocol_pdf.html
-  → 473: .room-block.keep-together {     (CSS rule)            ✅
-  → 1336: <div class="room-block{% if not loop.first %} keep-together{% endif %}">  ✅
-  $ grep -n "^\.room-block" backend/templates/handover_protocol_pdf.html
-  → 470: .room-block { page-break-inside: auto; }              ✅
-  → 473: .room-block.keep-together { page-break-inside: avoid; }  ✅
-  End-to-end render with 2 inspection_sections:
-  → room[0] = "<div class=\"room-block\""                      ✅
-  → room[1] = "<div class=\"room-block keep-together\""        ✅
+  $ grep -c "^\.photo-row\.count-[0-9] { width:" template
+  → 6   (all six count-N rules now target the .photo-row itself,
+        no longer the .cell)                                    ✅
+
+  Removed:
+  - `width: 100%` on `.photo-row`                               ✅
+  - `width: 30%/30%/30%/24%/19%/16%` on `.photo-row.count-N .cell` ✅
+
 
 CARRY-OVER INVARIANTS (all unchanged):
-  @font-face count                  = 2          ✅
-  text-transform count              = 0          ✅
+  Service photo cap [:6]            = 1 ref       ✅
   Photo diag in service             = 2          ✅
-  photo-empty references            = 0          ✅
-  Rubik-Bold.ttf size               = 47688 B    ✅
-  _DEFECT_PHOTO_WIDTH               = 1100       ✅
-  _DEFECT_PHOTO_QUALITY             = 85         ✅
-  page_header() macro defs          = 1          ✅
   page_header() calls               = 7          ✅
-  forced page-break wrappers        = 7          ✅
+  page-break wrappers               = 7          ✅
   no-break in body                  = 0          ✅
-  defects-summary-block wrapper     = 2          ✅
-  Meter <img> tags                  = 2          ✅
+  keep-together conditional         = 1 (in inspection_sections loop)  ✅
+  @font-face count                  = 2          ✅
+  Rubik-Bold.ttf size               = 47688 B    ✅
+  _DEFECT_PHOTO_WIDTH = 1100        =            ✅
+  .meter .photo refs (untouched)    = 2          ✅
   Jinja parse                       =            ✅
-  Macro renders end-to-end          = 33688 chars ✅
   service import                    =            ✅
 
 
 ================================================================
-FIX 1 — Photos still too dominant + need up to 6
+WHY THE v3.7 EDIT DIDN'T TAKE EFFECT
 ================================================================
 
-PROBLEM
--------
-v3.6 set 1-photo and 2-photo cells to 40%. Zahi feedback:
-"בסגנון של סמנטו" — the user wants Cemento-style miniatures
-(roughly 25-30%). And he wants to support more than 3 photos
-per defect; today the service hard-caps at 3.
+In v3.7 the CSS read:
 
-FIX 1A — Service: raise cap from 3 to 6
----------------------------------------
-  backend/services/handover_pdf_service.py:411
+  .photo-row {
+    display: table;
+    width: 100%;             ← the bug trigger
+    table-layout: fixed;
+  }
+  .photo-row .cell {
+    display: table-cell;
+  }
+  .photo-row.count-1 .cell { width: 30%; }   ← ignored
 
-    -  for photo_ref in item_photos[:3]:
-    +  for photo_ref in item_photos[:6]:
+WeasyPrint (and any CSS table layout engine) treats `width` on
+a single-cell row inside a 100%-wide table as a hint for that
+cell's intrinsic size, then stretches the cell to fill the
+table's remaining width. With one cell, "remaining" = the
+whole table, so the 30% is silently overridden and the photo
+ends up at ~95–100% width. The PDF v3.7 confirmed it: photos
+were rendering at ~140 DPI / ~20 cm wide instead of ~250 DPI /
+~5 cm.
 
-  This is the only line touched in the service. Everything else
-  about photo registration / reference-resolution / image
-  embedding is unchanged.
-
-FIX 1B — CSS: smaller widths + support count-4/5/6
---------------------------------------------------
-  backend/templates/handover_protocol_pdf.html:1017–1022
-
-    -.photo-row.count-1 .cell { width: 40%; }
-    -.photo-row.count-2 .cell { width: 40%; }
-    -.photo-row.count-3 .cell { width: 33.33%; }
-    +.photo-row.count-1 .cell { width: 30%; }
-    +.photo-row.count-2 .cell { width: 30%; }
-    +.photo-row.count-3 .cell { width: 30%; }
-    +.photo-row.count-4 .cell { width: 24%; }
-    +.photo-row.count-5 .cell { width: 19%; }
-    +.photo-row.count-6 .cell { width: 16%; }
-
-  Width arithmetic on A4 (~17 cm usable):
-    1 photo  → 30% × 17 cm ≈ 5.1 cm wide  (Cemento-style card)
-    2 photos → 30% × 2 = 60%   (margin to spare)
-    3 photos → 30% × 3 = 90%   (was 100%, slightly tighter row)
-    4 photos → 24% × 4 = 96%
-    5 photos → 19% × 5 = 95%
-    6 photos → 16% × 6 = 96%
-
-  Effective print DPI further increased: source is still 1100 px
-  at JPEG q=85, so a 30% (~5 cm) cell prints at ~250 DPI (was
-  ~190 DPI at 40%). Sharper, not blurrier.
-
-  The Jinja photo loop already builds the class as
-  `count-{{ _count }}` and there's no upper-bound `if`, so the
-  new count-4/5/6 classes are picked up automatically — no
-  template-loop changes needed.
-
-  File-size trade-off: a defect with all 6 photos adds ~3 extra
-  full-resolution photos (~30 KB JPEG each) ≈ +180 KB per
-  worst-case defect. Acceptable.
+For 2 or 3 photos the same mechanism kicked in but slightly
+less obviously — `table-layout: fixed` distributed the leftover
+space evenly across the cells, so photos ended up larger than
+30% as well.
 
 
 ================================================================
-FIX 2 — Section split bug (small rooms tearing across pages)
+THE FIX — push the width up one level
 ================================================================
 
-PROBLEM
--------
-On v3.6 staging: "שירותי הורים" (a small section, 13 items)
-started at the bottom of one page with header + 1–2 rows and
-continued on the next page. Ugly for an A4 print.
+Move the `width:` from `.cell` to `.photo-row` itself, and drop
+`width: 100%` from `.photo-row` so the table no longer auto-
+stretches.
 
-DIAGNOSIS
----------
-v3.6 deliberately switched `.room-block` to
-`page-break-inside: auto` so a long first room could split
-across pages — that's what fixed the v3.5 orphan pages 5+6
-(empty page after ROOM INSPECTIONS). But blanket-`auto`
-applied to ALL rooms means short rooms now also split
-mid-section if they happen to land at a page boundary.
+  -.photo-row {
+  -  display: table;
+  -  width: 100%;
+  -  border-spacing: 6px 0;
+  -  margin-top: 8px;
+  -  table-layout: fixed;
+  -}
+  +.photo-row {
+  +  display: table;
+  +  border-spacing: 6px 0;
+  +  margin-top: 8px;
+  +  table-layout: fixed;
+  +}
+   .photo-row .cell {
+     display: table-cell;
+     vertical-align: top;
+     padding: 0 4px;
+   }
+  -.photo-row.count-1 .cell { width: 30%; }
+  -.photo-row.count-2 .cell { width: 30%; }
+  -.photo-row.count-3 .cell { width: 30%; }
+  -.photo-row.count-4 .cell { width: 24%; }
+  -.photo-row.count-5 .cell { width: 19%; }
+  -.photo-row.count-6 .cell { width: 16%; }
+  +.photo-row.count-1 { width: 30%; }
+  +.photo-row.count-2 { width: 60%; }
+  +.photo-row.count-3 { width: 90%; }
+  +.photo-row.count-4 { width: 96%; }
+  +.photo-row.count-5 { width: 95%; }
+  +.photo-row.count-6 { width: 96%; }
 
-The right behaviour:
-  • The FIRST room must keep `auto` so it can still break if
-    it doesn't fit on the freshly-opened section page (else
-    the v3.5 orphan-page bug returns).
-  • All SUBSEQUENT rooms should `avoid` mid-page splits — if
-    the next room doesn't fit on the current page, push the
-    whole thing to the next page intact.
+Now CSS table layout has nothing to override:
+  • The `.photo-row` table is sized to a fixed percentage of its
+    container (no longer 100%).
+  • `table-layout: fixed` distributes that fixed width equally
+    across the N cells (since no cell has an explicit width).
+  • Each photo lands in a uniformly-sized cell.
 
-FIX 2A — Template: conditional class
-------------------------------------
-  backend/templates/handover_protocol_pdf.html:1336
+Width arithmetic on A4 (~17 cm content area):
+  count-1 (30%)  → 5.1 cm row, 1 cell × 5.1 cm  → 5.1 cm photo
+  count-2 (60%)  → 10.2 cm row, 2 cells × 5.1   → 5.1 cm each
+  count-3 (90%)  → 15.3 cm row, 3 cells × 5.1   → 5.1 cm each
+  count-4 (96%)  → 16.3 cm row, 4 cells × 4.1   → 4.1 cm each
+  count-5 (95%)  → 16.2 cm row, 5 cells × 3.2   → 3.2 cm each
+  count-6 (96%)  → 16.3 cm row, 6 cells × 2.7   → 2.7 cm each
 
-    -  <div class="room-block">
-    +  <div class="room-block{% if not loop.first %} keep-together{% endif %}">
+Photos are now uniform ~5 cm wide for the common 1–3 case
+(Cemento-style miniatures), shrinking for 4+ to keep them on
+one row. With the 1100 px source unchanged at JPEG q=85,
+effective print DPI for the 1-photo case is now ~550 DPI —
+sharp at any practical zoom.
 
-  Only the very first iteration (`loop.first`) of the
-  inspection_sections loop renders the bare `room-block`; all
-  others get the additional `keep-together` modifier.
-
-FIX 2B — CSS: split rule, two behaviours
-----------------------------------------
-  backend/templates/handover_protocol_pdf.html:470–478
-
-    .room-block {
-      page-break-inside: auto;       /* default — first room can split */
-    }
-    .room-block.keep-together {
-      page-break-inside: avoid;      /* all subsequent rooms try to stay together */
-    }
-
-  `.room-head` keeps its own `page-break-after: avoid` (set in
-  an earlier version, line 482) — so the room title still glues
-  itself to the start of its items table on whichever page that
-  table begins. `table.items tbody tr { page-break-inside: avoid }`
-  (set in v3.6) keeps individual rows from tearing.
-
-EXPECTED RESULT
----------------
-  • ROOM INSPECTIONS still opens on a fresh page with the page
-    header strip on top + page-label.
-  • The first room flows in immediately; if it's enormous it
-    can split between rows — no orphan / empty page comes back.
-  • Each subsequent room either fits on the current page in its
-    entirety, or moves intact to the next page.
-  • Small sections like "שירותי הורים" are no longer torn at
-    page boundaries.
+RTL note: the `.photo-row` is `display: table` without
+`margin: auto`, so a partial-width row (e.g. 30%, 60%) sits
+naturally against the inline-start edge — which is the right
+edge in this Hebrew RTL document. Behaviour matches the rest
+of the body text.
 
 
 ================================================================
-NOT TOUCHED (per Zahi's DO NOT list + carry-over invariants)
+NOT TOUCHED
 ================================================================
 
-- Photo diag logging in handover_pdf_service.py (still 2 refs)
-- `.meter .photo` and meter <img> tags (still 2)
-- _str_val in import_router.py (separate Excel-import PR)
-- The `page_header()` macro from v3.6 (unchanged)
-- `.defects-summary-block` wrapper from v3.4 (still 2 refs)
-- backend/fonts/Rubik-Bold.ttf (still 47688 B; safety_pdf.py
-  still uses it)
-- handover_pdf_service.py — only the `[:3]` → `[:6]` cap was
-  bumped. Nothing else in the service was edited.
-- All v3.3 / v3.4 / v3.5 / v3.6 carry-overs preserved
-  (variable Rubik @font-face, background-image defect photos,
-  defects-summary-block wrapper, photo constants 1100/85,
-  legal sig rendering, has_photo_items filter, page_header
-  macro, page-break / no-break structure)
+  • Jinja loop building the photo-row markup — already uses
+    `count-{{ _count }}` and works with the new CSS unchanged
+  • `.photo` rule (background-image / aspect-ratio padding-top
+    trick — still rendering correctly)
+  • `.meter .photo` (still 2 refs)
+  • Service code: `_DEFECT_PHOTO_WIDTH = 1100`,
+    `_DEFECT_PHOTO_QUALITY = 85`, `[:6]` cap from v3.7,
+    Photo diag logging — all untouched
+  • `page_header()` macro from v3.6
+  • `.room-block` / `.room-block.keep-together` from v3.7
+  • `.defects-summary-block` wrapper from v3.4
+  • backend/fonts/Rubik-Bold.ttf (47688 B; safety_pdf.py uses it)
+  • All carry-overs from v3.3 / v3.4 / v3.5 / v3.6 / v3.7
 
 
 ================================================================
@@ -209,46 +179,38 @@ restart workflows, did NOT deploy.
 
 Zahi runs:
 
-  git add backend/templates/handover_protocol_pdf.html backend/services/handover_pdf_service.py
-  git commit -m "handover-pdf v3.7: smaller photos + support up to 6 + smart section break
+  git add backend/templates/handover_protocol_pdf.html
+  git commit -m "handover-pdf v3.7.1 hotfix: move photo-row width from .cell to .photo-row
 
-Fix #1 (photo size + count):
-  - All photo widths reduced to 30% (Cemento-style)
-  - Service cap raised from 3 to 6 photos per defect
-  - Add count-4/5/6 CSS rules (24%/19%/16%)
-  - Effective DPI further increased: ~250 DPI at 30% (was ~190 at 40%)
+v3.7 set width: 30% on .photo-row .cell but WeasyPrint ignored it because
+the parent .photo-row was display:table with width:100%, and a single
+cell in a 100%-wide table gets stretched to fill the table.
 
-Fix #2 (section split bug):
-  - All rooms except the first get a keep-together class
-  - CSS: .room-block.keep-together { page-break-inside: avoid }
-  - First room stays auto so it can split if it doesn't fit on the
-    fresh page after the section header (preserves v3.6 orphan-page fix)
-  - Result: small sections like 'שירותי הורים' no longer split with
-    just 1-2 rows at the bottom of a page"
+Fix: remove width:100% from .photo-row, drop the per-cell widths, and
+put the modifier widths on .photo-row.count-N (the table itself):
+  count-1: 30% / count-2: 60% / count-3: 90%
+  count-4: 96% / count-5: 95% / count-6: 96%
+
+Cells now share the row width equally — each photo is ~5cm wide on A4
+regardless of count, matching the Cemento-style miniature design."
 
   git push origin staging
   ./deploy.sh --stag
 
 Verify on staging:
-  □ Defect with 1 photo → cell ~30% wide (Cemento-style miniature)
-  □ Defect with 2 photos → 30% + 30% (60% combined, comfy gap)
-  □ Defect with 3 photos → 3 × 30% (90% combined)
-  □ Defect with 4 photos → 4 × 24% all on one row
-  □ Defect with 5 photos → 5 × 19% all on one row
-  □ Defect with 6 photos → 6 × 16% all on one row (miniatures
-    but readable)
-  □ A defect that previously had >3 photos now shows up to 6
-    (capped at 6)
-  □ "שירותי הורים" (or any small section) is NOT torn at the
-    bottom of a page — either fully on current page or fully
-    moved to next page
-  □ ROOM INSPECTIONS still starts on a fresh page with header
-    strip + page-label on top
-  □ The very first room can still split across pages if it's
-    too tall — no empty page 5/6 returns
-  □ Page header strip on every interior page unchanged from v3.6
-    (BrikOps logo, contractor logo when present, "מסירה: <date>"
-    in orange-bold + reference number)
+  □ Defect with 1 photo → photo cell is ~5 cm wide on the right
+    (RTL inline-start), most of the row is empty space
+  □ Defect with 2 photos → 2 cells × ~5 cm sit on the right,
+    rest of row empty
+  □ Defect with 3 photos → 3 cells × ~5 cm fill ~90% of the row
+  □ Defect with 4 photos → 4 × ~4.1 cm in one row
+  □ Defect with 5 photos → 5 × ~3.2 cm in one row
+  □ Defect with 6 photos → 6 × ~2.7 cm in one row
+  □ `pdfimages -list staging.pdf` → defect photos now report
+    a much higher DPI (~250 or more, vs. ~140 in v3.7)
+  □ No row overflows the page width
+  □ Header / room-block / keep-together behaviour from v3.6 +
+    v3.7 unchanged
 
 If staging looks clean:
   ./deploy.sh --prod
