@@ -367,7 +367,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
                 property_rows.append({"label": label, "value": value})
 
     tenants = protocol.get("tenants", [])
-    tenants_data = [t for t in tenants if t.get("name")]
+    # tenants_data is built later (after images are loaded) so we can attach
+    # each tenant's id_photo_b64 alongside their existing fields.
 
     defect_ids = []
     for sec in sections:
@@ -387,6 +388,12 @@ async def _build_template_context(protocol: dict, db) -> dict:
     logo_url = snapshot.get("company_logo_url")
     if logo_url:
         image_keys.append(("logo", logo_url))
+
+    # Tenant ID photos — register each tenant's id_photo_url under tenant_{idx}_id key
+    for t_idx, tnt in enumerate(tenants):
+        id_url = tnt.get("id_photo_url")
+        if id_url:
+            image_keys.append((f"tenant_{t_idx}_id", id_url))
 
     for role in ("manager", "tenant", "tenant_2", "contractor_rep"):
         sig = signatures.get(role, {})
@@ -467,6 +474,8 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     mw, q = _METER_PHOTO_WIDTH, _METER_PHOTO_QUALITY
                 elif key_name.startswith("sig_") or key_name.startswith("legal_sig_"):
                     mw, q = _SIGNATURE_WIDTH, _SIGNATURE_QUALITY
+                elif key_name.startswith("tenant_") and key_name.endswith("_id"):
+                    mw, q = 1200, 80   # ID photos — court-grade, between defect and signature
                 else:
                     mw, q = None, None
                 fetch_tasks.append(_fetch_local_or_remote_image(stored_ref, session, max_width=mw, jpeg_quality=q))
@@ -691,6 +700,16 @@ async def _build_template_context(protocol: dict, db) -> dict:
     fonts_dir_str = str(_FONTS_DIR.resolve())
     if os.name == 'nt':
         fonts_dir_str = fonts_dir_str.replace('\\', '/')
+
+    # Build tenants_data — preserves all existing tenant fields and attaches
+    # id_photo_b64 (resolved earlier into `images`) for the template to render.
+    tenants_data = []
+    for t_idx, t in enumerate(tenants):
+        if not t.get("name"):
+            continue
+        t_with_photo = dict(t)
+        t_with_photo["id_photo_b64"] = images.get(f"tenant_{t_idx}_id")
+        tenants_data.append(t_with_photo)
 
     return {
         "protocol_type": protocol_type,

@@ -1644,6 +1644,20 @@ export const handoverService = {
     );
     return response.data;
   },
+  async uploadTenantIdPhoto(projectId, protocolId, tenantIdx, formData) {
+    const response = await axios.post(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/tenants/${tenantIdx}/id-photo`,
+      formData, { headers: { ...getAuthHeader(), 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+  async deleteTenantIdPhoto(projectId, protocolId, tenantIdx) {
+    const response = await axios.delete(
+      `${API}/projects/${projectId}/handover/protocols/${protocolId}/tenants/${tenantIdx}/id-photo`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
   async updateTenantNotes(projectId, protocolId, tenantNotes) {
     const response = await axios.put(
       `${API}/projects/${projectId}/handover/protocols/${protocolId}/tenant-notes`,

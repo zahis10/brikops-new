@@ -2,13 +2,59 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
 
 const EMPTY_TENANT = { name: '', id_number: '', phone: '', email: '', id_photo_url: null };
 
 const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [tenants, setTenants] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [uploadingIdx, setUploadingIdx] = useState(null);
+
+  const handleIdPhotoUpload = async (idx, file) => {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error('גודל הקובץ חורג מ-8MB');
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast.error('פורמט לא נתמך — יש להעלות JPG / PNG / WEBP');
+      return;
+    }
+    try {
+      setUploadingIdx(idx);
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await handoverService.uploadTenantIdPhoto(projectId, protocol.id, idx, fd);
+      setTenants(prev => prev.map((ten, i) =>
+        i === idx ? { ...ten, id_photo_url: res.id_photo_url } : ten
+      ));
+      toast.success('תמונת ת.ז הועלתה');
+      onUpdated?.();
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה בהעלאת תמונת ת.ז');
+    } finally {
+      setUploadingIdx(null);
+    }
+  };
+
+  const handleIdPhotoDelete = async (idx) => {
+    try {
+      setUploadingIdx(idx);
+      await handoverService.deleteTenantIdPhoto(projectId, protocol.id, idx);
+      setTenants(prev => prev.map((ten, i) =>
+        i === idx ? { ...ten, id_photo_url: null } : ten
+      ));
+      toast.success('תמונת ת.ז נמחקה');
+      onUpdated?.();
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה במחיקת תמונת ת.ז');
+    } finally {
+      setUploadingIdx(null);
+    }
+  };
 
   useEffect(() => {
     const t = protocol?.tenants || [];
@@ -119,6 +165,48 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
                   disabled:bg-slate-50 disabled:text-slate-500"
                 dir="ltr"
               />
+            </div>
+          </div>
+          {/* תמונת ת.ז (קדמית) */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">צילום ת.ז (קדמי)</label>
+            <div className="flex items-center gap-2">
+              {tenant.id_photo_url ? (
+                <>
+                  <span className="text-xs text-emerald-600 font-medium">✓ תמונה הועלתה</span>
+                  {!isSigned && (
+                    <button
+                      onClick={() => handleIdPhotoDelete(idx)}
+                      disabled={uploadingIdx === idx}
+                      className="text-red-400 hover:text-red-600 p-1 disabled:opacity-50"
+                      title="מחק תמונה"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {isSigned && (
+                    <span className="text-xs text-slate-400">(נעול — פרוטוקול חתום)</span>
+                  )}
+                </>
+              ) : (
+                !isSigned && (
+                  <label className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-800 cursor-pointer font-medium">
+                    {uploadingIdx === idx ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    {uploadingIdx === idx ? 'מעלה...' : 'העלה צילום ת.ז'}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={uploadingIdx === idx}
+                      onChange={(e) => handleIdPhotoUpload(idx, e.target.files?.[0])}
+                    />
+                  </label>
+                )
+              )}
             </div>
           </div>
         </div>

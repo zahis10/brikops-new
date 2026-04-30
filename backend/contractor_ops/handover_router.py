@@ -2450,6 +2450,86 @@ async def upload_meter_photo(
     return {"photo_url": stored_ref, "display_url": url}
 
 
+@router.post("/projects/{project_id}/handover/protocols/{protocol_id}/tenants/{tenant_idx}/id-photo")
+async def upload_tenant_id_photo(
+    project_id: str, protocol_id: str, tenant_idx: int,
+    file: UploadFile = File(...), user: dict = Depends(get_current_user),
+):
+    """העלאת תמונת ת.ז (קדמית) של דייר. PII — נדרש audit log."""
+    from services.object_storage import save_bytes as _save_bytes, generate_url as _gen_url
+    import asyncio
+
+    if tenant_idx < 0 or tenant_idx > 9:
+        raise HTTPException(status_code=400, detail="אינדקס דייר לא תקין")
+
+    await _check_handover_management(user, project_id)
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    tenants = protocol.get("tenants") or []
+    if tenant_idx >= len(tenants):
+        raise HTTPException(status_code=400, detail=f"דייר {tenant_idx + 1} לא קיים")
+
+    validate_upload(file, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES)
+    MAX_SIZE = 8 * 1024 * 1024  # ת.ז = ראיה משפטית פוטנציאלית — איכות גבוהה לקריאות
+    raw = await file.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="קובץ ריק")
+    if len(raw) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="גודל הקובץ חורג מ-8MB")
+
+    ext = (file.filename or "id.jpg").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp"):
+        ext = "jpg"
+    ct = file.content_type or "image/jpeg"
+
+    key = f"handover/{project_id}/{protocol_id}/tenant_{tenant_idx}_id.{ext}"
+    stored_ref = await asyncio.to_thread(_save_bytes, raw, key, ct)
+
+    db = get_db()
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        {"$set": {f"tenants.{tenant_idx}.id_photo_url": stored_ref, "updated_at": _now()}}
+    )
+
+    # Audit log — PII tracking (חובה!)
+    logger.info(
+        f"[HANDOVER-PII] Protocol={protocol_id} tenant_idx={tenant_idx} "
+        f"id_photo_uploaded by user={user['id']} ({user.get('email', '?')})"
+    )
+
+    url = await asyncio.to_thread(_gen_url, stored_ref)
+    return {"id_photo_url": stored_ref, "display_url": url}
+
+
+@router.delete("/projects/{project_id}/handover/protocols/{protocol_id}/tenants/{tenant_idx}/id-photo")
+async def delete_tenant_id_photo(
+    project_id: str, protocol_id: str, tenant_idx: int,
+    user: dict = Depends(get_current_user),
+):
+    """מחיקת תמונת ת.ז של דייר. PII — נדרש audit log."""
+    if tenant_idx < 0 or tenant_idx > 9:
+        raise HTTPException(status_code=400, detail="אינדקס דייר לא תקין")
+
+    await _check_handover_management(user, project_id)
+    protocol = await _get_protocol_or_404(protocol_id, project_id)
+    _check_not_locked(protocol)
+
+    db = get_db()
+    await db.handover_protocols.update_one(
+        {"id": protocol_id, "project_id": project_id},
+        {"$set": {f"tenants.{tenant_idx}.id_photo_url": None, "updated_at": _now()}}
+    )
+
+    # Audit log — PII tracking
+    logger.info(
+        f"[HANDOVER-PII] Protocol={protocol_id} tenant_idx={tenant_idx} "
+        f"id_photo_deleted by user={user['id']} ({user.get('email', '?')})"
+    )
+
+    return {"ok": True}
+
+
 @router.put("/projects/{project_id}/handover/protocols/{protocol_id}/tenant-notes")
 async def update_tenant_notes(
     project_id: str, protocol_id: str,

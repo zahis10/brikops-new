@@ -425,24 +425,34 @@ table { border-collapse: collapse; }
   text-align: left;
 }
 .id-photo {
-  display: inline-block;
-  width: 46px; height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 90px; height: 56px;
   background: var(--slate-1);
   border: 1px dashed var(--slate-3);
-  border-radius: 4px;
+  border-radius: 6px;
   vertical-align: middle;
-  margin-right: 4px;
   position: relative;
   overflow: hidden;
 }
+.id-photo.has-image {
+  border: 1px solid var(--slate-3);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
 .id-photo .lbl {
-  display: block; padding-top: 9px;
   font-family: 'Rubik', sans-serif;
-  font-size: 7.5px;
+  font-size: 9px;
   color: var(--slate-5);
   text-align: center;
-  letter-spacing: 0.04em;
+  padding: 0 4px;
+  letter-spacing: 0.02em;
   font-weight: 600;
+}
+.id-photo.has-image .lbl {
+  display: none;
 }
 
 /* ---------- TOC ---------- */
@@ -1253,8 +1263,11 @@ table.items .note {
         {% if t.id_number %}ת״ז {{ t.id_number }}{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}
       </div>
       <div class="tenant-id-photos">
-        <div class="id-photo"><span class="lbl">ת.ז · קדמי</span></div>
-        <div class="id-photo"><span class="lbl">ת.ז · אחורי</span></div>
+        {% if t.id_photo_b64 %}
+          <div class="id-photo has-image" style="background-image: url('{{ t.id_photo_b64 }}');"></div>
+        {% else %}
+          <div class="id-photo"><span class="lbl">ת.ז · אין תמונה</span></div>
+        {% endif %}
       </div>
     </div>
     {% endfor %}

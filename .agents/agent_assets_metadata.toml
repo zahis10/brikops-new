@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Handover PDF v3.8 — header strip now repeats on EVERY page (incl. continuation pages of long sections) via CSS Paged Media running() element; cover page kept clean; weasyprint 68.1 fully supports it (1 commit, 1 file, CSS+template only)"
+title = "Tenant ID Photo Upload (Front Only) — 5 files: 2 backend endpoints with [HANDOVER-PII] audit logs, 4 surgical PDF service edits, template CSS + front-only render, axios+multipart api.js methods, HandoverTenantForm UI with 4-state control. All 8 verifications + carry-over invariants pass; Python/Jinja parse, JS balanced."
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
