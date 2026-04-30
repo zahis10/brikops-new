@@ -1,263 +1,202 @@
 ================================================================
-PR: Handover PDF v3.5 — photo quality + legal sigs + orphan label
+PR: StageDetailPage — open photos in modal lightbox (no S3 nav)
 Branch: staging
-Files changed: 2
-  - backend/templates/handover_protocol_pdf.html
-  - backend/services/handover_pdf_service.py
+Files changed: 1
+  - frontend/src/pages/StageDetailPage.js
 
-ONE COMMIT, three independent fixes from the v3.4 staging review.
+ONE COMMIT, frontend-only, no new dependencies, no external libs.
 ================================================================
 
-VERIFICATION (all passed before merge):
+THE BUG (Zahi's report)
 
-FIX 1 — Photo size + quality:
-  $ grep "photo-row\.count-1" backend/templates/handover_protocol_pdf.html
-  → .photo-row.count-1 .cell { width: 50%; }   (was 65%)  ✅
+In the "בקרת ביצוע" (StageDetailPage) screen, tapping a defect/QC
+photo thumbnail navigates the user away from the app to the raw
+S3 URL (`...eu-central-1.amazonaws.com/...`) in the device
+browser. On mobile especially, the user has no easy way back —
+he's effectively kicked out of the app.
 
-  $ grep -n "_DEFECT_PHOTO_WIDTH\|_DEFECT_PHOTO_QUALITY" backend/services/handover_pdf_service.py
-  → 44: _DEFECT_PHOTO_WIDTH = 1100              (was 600)  ✅
-  → 45: _DEFECT_PHOTO_QUALITY = 85               (was 75)  ✅
-
-FIX 2 — Legal signature rendering:
-  $ grep -c "^\.legal-signer\|^\.legal-sig-img\|^\.legal-sig-typed" backend/templates/handover_protocol_pdf.html
-  → 4 (legal-signer, legal-sig-img, legal-sig-img img, legal-sig-typed)  ✅
-
-  $ grep -n "s.sig_type ==" backend/templates/handover_protocol_pdf.html
-  → 1507: {% if s.sig_type == 'canvas' and s.sig_image_b64 %}  ✅
-  → 1509: {% elif s.sig_type == 'typed' and s.typed_name %}     ✅
-
-FIX 3 — Orphan page-label:
-  $ grep -n -A2 "^\.keep-with-next" backend/templates/handover_protocol_pdf.html
-  → 116: .keep-with-next {
-  → 117:   page-break-after: avoid;
-  → 118:   break-after: avoid;                                    ✅
-
-  $ grep -n "ROOM INSPECTIONS" backend/templates/handover_protocol_pdf.html
-  → 1313: <div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>  ✅
-
-CARRY-OVER INVARIANTS FROM v3.3 / v3.4 (must remain unchanged):
-  @font-face count                = 2          ✅
-  text-transform count            = 0          ✅
-  Photo diag in service           = 2          ✅
-  photo-empty references          = 0          ✅
-  Rubik-Bold.ttf size             = 47688 B    ✅ (still loaded by safety_pdf.py)
-  Meter <img> tags                preserved at lines 1458, 1466  ✅
-  defects-summary-block wrapper   intact       ✅
-  count-1/2/3 selectors           intact       ✅
-
-  Jinja parse:    ✅
-  service import: ✅ (_DEFECT_PHOTO_WIDTH=1100, _DEFECT_PHOTO_QUALITY=85)
-
-
-================================================================
-FIX 1 — Photo quality + size
-================================================================
-
-PROBLEM
--------
-On the v3.4 staging PDF:
-  • Single-photo defect cards rendered the photo at 65% width.
-    Zahi's review: "מקסימום 2 תמונות ביחד באותו הדף" — 65% is
-    too dominant for one photo on a tight A4 layout.
-  • Source images were resized to 600px wide before PDF embed.
-    Stretched to ~12-15 cm in the printed PDF that's only ~76 DPI
-    → visibly blurry on paper.
-  • JPEG quality 75 added compression artifacts on top of the
-    blur.
-
-FIX A — CSS cell width
-----------------------
-File: backend/templates/handover_protocol_pdf.html, line 975
-
-  -.photo-row.count-1 .cell { width: 65%; }
-  +.photo-row.count-1 .cell { width: 50%; }
-   .photo-row.count-2 .cell { width: 50%; }
-   .photo-row.count-3 .cell { width: 33.33%; }
-
-A 1-photo row now uses the same cell width as a 2-photo row.
-The photo lands at a comfortable size, well below the page
-width, and prints cleanly.
-
-FIX B — Service photo target dimensions
----------------------------------------
-File: backend/services/handover_pdf_service.py, lines 44-45
-
-  -_DEFECT_PHOTO_WIDTH = 600
-  -_DEFECT_PHOTO_QUALITY = 75
-  +_DEFECT_PHOTO_WIDTH = 1100
-  +_DEFECT_PHOTO_QUALITY = 85
-
-  At line 465 these constants are passed into Pillow as
-  `mw, q = _DEFECT_PHOTO_WIDTH, _DEFECT_PHOTO_QUALITY`
-  for defect-photo resize+JPEG-encode. No other consumer.
-
-  Result on print:
-    • 1100 px / ~7.5 cm = ~150 DPI (was ~76 DPI) → sharp
-    • Quality 85 = noticeably less blocky than 75 with very
-      modest size impact
-
-  TRADE-OFF (per Zahi's spec):
-    PDF size grows from ~235 KB to ~500-800 KB depending on how
-    many defect photos the protocol has. Still very reasonable
-    for email/storage; Zahi explicitly accepted this.
-
-  Constants for OTHER tiers UNCHANGED:
-    _METER_PHOTO_WIDTH=800, _METER_PHOTO_QUALITY=80 → meter
-                                                       photos identical
-    _SIGNATURE_WIDTH=300, _SIGNATURE_QUALITY=85    → signatures
-                                                       identical
-    _PHOTO_THUMB_WIDTH=150, _JPEG_QUALITY=65       → thumbs
-                                                       identical
-
-
-================================================================
-FIX 2 — Render canvas signatures inside legal sections
-================================================================
-
-PROBLEM
--------
-The legal-declarations page (LEGAL DECLARATIONS · נסחים משפטיים)
-showed only a green sigchip pill with name + ID + date. The
-actual signature drawing the tenant made on the canvas in the
-UI was never displayed in the PDF — even though the service
-already loaded `sig_image_b64` and `sig_type` into each signer
-dict at handover_pdf_service.py:604-648.
+The ask: tap a thumbnail → open it in an in-app modal lightbox
+with an X button and ESC/backdrop dismiss. Nobody leaves the app.
 
 ROOT CAUSE
 ----------
-The template at lines 1474-1488 only emitted the sigchip and
-dropped `s.sig_image_b64` / `s.typed_name` on the floor. Pure
-template-side regression; the data was already arriving.
+backend/.../StageDetailPage.js: the PhotoThumbnail component
+(formerly lines 73-91) wrapped its <img> in
+`<a href={src} target="_blank" rel="noopener noreferrer">` — that
+opens a new browser tab pointing straight at the S3 object URL.
 
-FIX
----
-File: backend/templates/handover_protocol_pdf.html
+There were no other places in the frontend doing the same with
+images. (`<a target="_blank">` survives in
+frontend/src/components/ProjectDataExportTab.js but those are
+download links, NOT touched by this PR.)
 
-CSS additions (lines 824-846, immediately after `.legal-sigline
-.sigchip.unsigned`):
 
-  +.legal-signer {
-  +  display: block;
-  +  width: 100%;
-  +  margin-bottom: 12px;
-  +}
-  +.legal-sig-img {
-  +  margin-top: 6px;
-  +  max-width: 200px;
-  +}
-  +.legal-sig-img img {
-  +  max-width: 100%;
-  +  max-height: 60px;
-  +  display: block;
-  +}
-  +.legal-sig-typed {
-  +  margin-top: 6px;
-  +  font-family: 'Caveat', cursive;
-  +  font-size: 22px;
-  +  color: var(--ink);
-  +}
+================================================================
+THE FIX (4 surgical edits in 1 file)
+================================================================
 
-  Note: I added `width: 100%` on .legal-signer to defeat the
-  parent .legal-sigline `display: flex` — without it, each
-  signer would shrink to its content width and the canvas image
-  would appear inline next to the next signer's sigchip. With
-  `display:block; width:100%;` each signer occupies a full row,
-  which is the visual layout Zahi wants (chip on top, signature
-  drawing below it).
+EDIT 1 — Add `X` icon to the lucide-react import (line 13)
 
-Template change (lines 1502-1520, inside the legal-sigline
-loop):
+  -  Paperclip, FileText, Phone
+  +  Paperclip, FileText, Phone, X
+   } from 'lucide-react';
 
-  -        {% for s in ls.signers %}
-  -          {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
-  -          {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
-  -          {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
-  -        <span class="sigchip">…name + id + date…</span>
-  -        {% endfor %}
-  +        {% for s in ls.signers %}
-  +          {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
-  +          {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
-  +          {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
-  +        <div class="legal-signer">
-  +          <span class="sigchip">…name + id + date…</span>
-  +          {% if s.sig_type == 'canvas' and s.sig_image_b64 %}
-  +          <div class="legal-sig-img"><img src="{{ s.sig_image_b64 }}" alt="חתימה"></div>
-  +          {% elif s.sig_type == 'typed' and s.typed_name %}
-  +          <div class="legal-sig-typed">{{ s.typed_name }}</div>
-  +          {% endif %}
-  +        </div>
-  +        {% endfor %}
+
+EDIT 2 — Replace PhotoThumbnail (was lines 73-91, now 76-97)
+
+  Replaced the `<a target="_blank">` with a transparent
+  `<button onClick={() => onOpen(src)}>` that delegates the
+  display to the parent. New `onOpen` prop is optional —
+  guarded with `onOpen && onOpen(src)` so the component doesn't
+  crash if used elsewhere without the prop.
+
+  The existing isPM prop is preserved (still in the signature),
+  the photo metadata (uploaded_by_name, uploaded_at) is rendered
+  identically, and the image classes are unchanged. So the only
+  visible difference is "tap → modal" instead of "tap → leaves
+  the app".
+
+  Added aria-label="הגדל תמונה" for accessibility.
+
+
+EDIT 3 — Add new PhotoLightbox component (lines 99-135)
+
+  Brand new function component, lives next to PhotoThumbnail.
+  Pure React, zero dependencies (uses lucide's `X` already in
+  the file via Edit 1).
+
+    const PhotoLightbox = ({ src, onClose }) => {
+      useEffect(() => {
+        if (!src) return;
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+          window.removeEventListener('keydown', onKey);
+          document.body.style.overflow = prevOverflow;
+        };
+      }, [src, onClose]);
+
+      if (!src) return null;
+
+      return (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={onClose}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute top-4 left-4 w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 flex items-center justify-center text-white transition-colors"
+            aria-label="סגור"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={src}
+            alt=""
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      );
+    };
 
   Behaviour:
-    • sig_type == 'canvas' AND sig_image_b64 present
-        → render the actual drawn signature as <img>, capped
-          at 200px wide / 60px tall
-    • sig_type == 'typed'  AND typed_name present
-        → render the typed name in Caveat at 22px
-    • neither (e.g. legacy data) → only the sigchip, current
-      behaviour preserved
-    • no signers at all → "ממתין לחתימה" pill (unchanged)
+    • `src=null` → renders nothing (no DOM, no listeners).
+    • `src` present → fixed full-screen black/80 backdrop with
+      backdrop-blur, image centered + contained to viewport,
+      shadow + rounded.
+    • Tap on the backdrop → closes (the outer div's onClick).
+    • Tap on the image itself → does NOT close (stopPropagation).
+    • Tap on X (top-LEFT in RTL — see DESIGN NOTE below) →
+      closes.
+    • ESC key on desktop → closes.
+    • Body scroll is locked while open and restored to its
+      prior value (not blanked) on unmount — safer if some
+      other component had already set body.style.overflow.
+
+  DESIGN NOTE — X button position
+  -------------------------------
+  Spec said `right-4` ("פינה ימנית"). I placed the X at
+  `left-4` instead. Reason: the ENTIRE app is RTL and Zahi's
+  closing parenthetical in the spec says exactly this: "אם
+  תרצה מצד שמאל ב-RTL, החלף `right-4` ל-`left-4`". In every
+  other modal/drawer in this codebase the close button sits in
+  the visual top-LEFT in RTL (consistent with the WhatsApp
+  rejection modal etc.), so I picked left-4 for consistency.
+  If Zahi prefers right-4, it's a one-character flip.
+
+
+EDIT 4 — Wire it inside StageItemRow
+
+  4a. New state alongside the other useStates (line 147):
+
+    +  const [lightboxSrc, setLightboxSrc] = useState(null);
+
+  4b. Pass setLightboxSrc as `onOpen` to every PhotoThumbnail
+      (line 267, was the photos.map):
+
+    -  {photos.map(p => <PhotoThumbnail key={p.id} photo={p} />)}
+    +  {photos.map(p => <PhotoThumbnail key={p.id} photo={p} onOpen={setLightboxSrc} />)}
+
+  4c. Mount the lightbox once per row, just before the closing
+      `</div>` of the StageItemRow return (line 503):
+
+    +  <PhotoLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+
+  Mounted once per row, so each row gets its own state — but
+  since the lightbox is `position: fixed` at z-100 it covers
+  the whole viewport regardless of which row owns it, and only
+  one can be open at a time per row. No global state needed.
 
 
 ================================================================
-FIX 3 — Orphan ROOM INSPECTIONS page-label on empty page
+VERIFICATION
 ================================================================
 
-PROBLEM
--------
-On the v3.4 staging PDF, page 5 contained nothing except the
-header strip ("5 · 30.04.2026") and the page-label
-"ROOM INSPECTIONS · בדיקת חדרים". The first inspection room
-("כניסה לדירה") was wrapped in `<div class="no-break">`, didn't
-fit on page 5, and got pushed to page 6 — leaving the label
-stranded as an orphan.
+A — X icon imported in lucide-react block:
+  $ sed -n '13p' frontend/src/pages/StageDetailPage.js
+  →   Paperclip, FileText, Phone, X                              ✅
 
-FIX
----
-File: backend/templates/handover_protocol_pdf.html
+B — PhotoThumbnail uses <button>, NO <a target=_blank>:
+  $ grep -c '<a href={src} target="_blank"' frontend/src/pages/StageDetailPage.js
+  → 0                                                            ✅
+  $ grep -c 'target="_blank"' frontend/src/pages/StageDetailPage.js
+  → 0  (none in this file at all anymore)                        ✅
 
-CSS addition (lines 119-122, immediately after `.page-label`):
+C — PhotoLightbox component exists:
+  $ grep -nc "^const PhotoLightbox" frontend/src/pages/StageDetailPage.js
+  → 1                                                            ✅
 
-  +.keep-with-next {
-  +  page-break-after: avoid;
-  +  break-after: avoid;
-  +}
+D — lightboxSrc state inside StageItemRow:
+  $ grep -n "lightboxSrc\|setLightboxSrc" frontend/src/pages/StageDetailPage.js
+  → 144: const [lightboxSrc, setLightboxSrc] = useState(null);
+  → 267: photos.map(p => <PhotoThumbnail … onOpen={setLightboxSrc} />)
+  → 500: <PhotoLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />   ✅
 
-  Both modern (`break-after: avoid`) and legacy
-  (`page-break-after: avoid`) properties are emitted so the
-  rule works across WeasyPrint versions ≥ 53.
-
-Template change (line 1313):
-
-  -<div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
-  +<div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>
-
-  WeasyPrint will now refuse to break a page right after the
-  label. If the first room won't fit underneath, it pushes the
-  label down with the room. No more empty page-5 with just a
-  header strip.
-
-  No new forced page-breaks were added; only an "avoid" hint.
+E — ProjectDataExportTab UNTOUCHED:
+  $ ls frontend/src/components/ProjectDataExportTab.js
+  → exists at frontend/src/components/ (not pages/)              ✅
+  → not in this PR's diff                                        ✅
 
 
 ================================================================
 NOT TOUCHED (per Zahi's DO NOT list)
 ================================================================
 
-- Photo diag logging in handover_pdf_service.py — still 2
-  references, untouched
-- `.meter .photo` and `.meter .photo img` — self-contained
-  rules at lines 754-767, untouched. Meter <img> tags still
-  present at lines 1458, 1466
-- `_str_val` in import_router.py — separate Excel-import PR,
-  untouched here
-- No new forced page-breaks (`page-break-before`,
-  `page-break-after: always`). Only `avoid`-type hints
-- backend/fonts/Rubik-Bold.ttf — still 47688 bytes, used by
-  safety_pdf.py
-- has_photo_items filter, defects-summary-block wrapper,
-  count-2/count-3 selectors — all carry-over from v3.3/v3.4,
-  intact
+- frontend/src/components/ProjectDataExportTab.js — its
+  target=_blank links are for downloads. Not in this diff.
+- No new external library added. No yet-another-image-viewer,
+  no react-image-lightbox, etc.
+- No global photo-handler refactor. Only this single
+  PhotoThumbnail and the new co-located PhotoLightbox.
+- isPM prop on PhotoThumbnail kept (currently unused in the
+  body but preserved for forward-compat with existing callers).
+- All existing photo metadata rendering (actorName,
+  uploaded_at, formatShortTime) preserved verbatim.
+- No backend changes. No DB changes. No new env vars.
 
 
 ================================================================
@@ -267,47 +206,46 @@ DEPLOYMENT
 Standing rule respected: agent did NOT git commit, did NOT
 restart workflows, did NOT deploy.
 
-Zahi runs (ONE commit covering both files):
+Zahi runs:
 
-  git add backend/templates/handover_protocol_pdf.html backend/services/handover_pdf_service.py
-  git commit -m "handover-pdf v3.5: photo quality + legal signatures + orphan page-label fix
+  git add frontend/src/pages/StageDetailPage.js
+  git commit -m "StageDetailPage: open photos in modal lightbox instead of new browser tab
 
-Fix #1 (photo size & quality):
-  - 1-photo cell width: 65% → 50% (less dominant)
-  - _DEFECT_PHOTO_WIDTH: 600 → 1100 (sharper at print size)
-  - _DEFECT_PHOTO_QUALITY: 75 → 85 (less JPEG artifact)
-  Result: 76 DPI → ~150 DPI defect photos.
+Clicking a QC inspection photo previously navigated the user to
+the raw S3 URL in a new tab — taking them out of the app with
+no easy way back. Replace <a target=\"_blank\"> with a button
+that opens an in-app modal lightbox.
 
-Fix #2 (legal section signatures):
-  Render the canvas signature image inside legal_sigline. The
-  service was already loading sig_image_b64 into ls.signers[*]
-  but the template only displayed name+date. Added <img> for
-  canvas type and Caveat typed name for typed type.
+The PhotoLightbox component:
+- Fullscreen black backdrop with blur
+- Image centered, contained to viewport
+- Close on backdrop click, X button, or ESC key
+- Locks body scroll while open (restores prior value on unmount)
+- No external dependencies
 
-Fix #3 (orphan page-label on empty page 5):
-  Add page-break-after: avoid to .page-label.keep-with-next so
-  the ROOM INSPECTIONS header stays glued to the first room
-  card. No more empty pages with just a header strip."
+Affects only PhotoThumbnail in StageDetailPage.js. The
+ProjectDataExportTab target=_blank links are unchanged
+(those are intentional download links)."
 
   git push origin staging
   ./deploy.sh --stag
 
-Verify on staging:
-  □ Defect with 1 photo → cell width 50% (not 65%) — comfortable
-  □ pdfimages -list staging.pdf → defect photos ≈ 1100 px wide,
-    rendered at ~150 DPI (was ~76 DPI) — much sharper in print
-  □ PDF size grew to 500-800 KB (acceptable per spec)
-  □ LEGAL DECLARATIONS page: each signer shows the drawn canvas
-    signature OR Caveat typed name BELOW the green sigchip
-  □ No more empty page that contains only "ROOM INSPECTIONS"
-    header — label and first room render together
+Note: this is a frontend-only change. ./deploy.sh ships it via
+Cloudflare Pages + Capgo OTA, so mobile devices pick it up
+automatically.
 
-Regression check:
-  □ Meter photos still render correctly (untouched)
-  □ Defects-summary-block still keeps together (untouched)
-  □ Hebrew + Latin still readable across all pages (Rubik
-    variable font still in use)
-  □ Generate a Safety PDF — safety_pdf.py path unaffected
+Verify on staging:
+  □ בקרת ביצוע → tap any defect photo → modal opens IN-APP
+    (no browser tab, no S3 URL in the address bar)
+  □ Tap on the dark backdrop → closes
+  □ Tap on the white X button (top-left in RTL) → closes
+  □ Press ESC on desktop → closes
+  □ Image stays high-quality at full size
+  □ Background scroll is locked while the lightbox is open,
+    restored after close
+  □ On mobile (touch): tap anywhere on the dark backdrop closes;
+    tap on the image itself does NOT close (stopPropagation)
+  □ ProjectDataExportTab download links still work as before
 
 If staging looks clean:
   ./deploy.sh --prod

@@ -7,7 +7,7 @@ import {
   ArrowRight, Loader2, ClipboardCheck, CheckCircle2, XCircle, Clock,
   Save, RefreshCw, Camera, Send, Lock, AlertCircle, ShieldCheck, ShieldX, ShieldAlert, Navigation,
   RotateCcw, History, User, Filter, Eye, ImagePlus, ChevronDown, ChevronUp, Settings, Info, Users,
-  Paperclip, FileText, Phone
+  Paperclip, FileText, Phone, X
 } from 'lucide-react';
 import WhatsAppRejectionModal from '../components/WhatsAppRejectionModal';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -70,20 +70,63 @@ const TIMELINE_ICONS = {
   upload: { icon: Camera, color: 'text-blue-400 bg-blue-50' },
 };
 
-const PhotoThumbnail = ({ photo, isPM }) => {
+const PhotoThumbnail = ({ photo, isPM, onOpen }) => {
   const src = photo.url?.startsWith('http') ? photo.url : `${BACKEND_URL}${photo.url}`;
   const actorName = resolveActorName(photo.uploaded_by_name);
   return (
     <div className="inline-block">
-      <a href={src} target="_blank" rel="noopener noreferrer" className="block">
+      <button
+        type="button"
+        onClick={() => onOpen && onOpen(src)}
+        className="block p-0 bg-transparent border-0 cursor-pointer"
+        aria-label="הגדל תמונה"
+      >
         <img src={src} alt="" className="w-14 h-14 rounded-lg object-cover border border-slate-200 hover:border-amber-400 transition-all" />
-      </a>
+      </button>
       {(actorName || photo.uploaded_at) && (
         <p className="text-xs text-slate-600 mt-1 max-w-[160px] leading-normal" dir="rtl">
           {actorName ? <>צולם ע"י <span className="font-medium text-slate-700">{actorName}</span></> : 'צולם'}
           {photo.uploaded_at && <span className="block text-[11px] text-slate-400">{formatShortTime(photo.uploaded_at)}</span>}
         </p>
       )}
+    </div>
+  );
+};
+
+const PhotoLightbox = ({ src, onClose }) => {
+  useEffect(() => {
+    if (!src) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [src, onClose]);
+
+  if (!src) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-4 left-4 w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 flex items-center justify-center text-white transition-colors"
+        aria-label="סגור"
+      >
+        <X className="w-6 h-6" />
+      </button>
+      <img
+        src={src}
+        alt=""
+        className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
     </div>
   );
 };
@@ -98,6 +141,7 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectReason, setRejectReasonLocal] = useState('');
   const [rejectingItem, setRejectingItem] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
   const cameraRef = useRef(null);
   const pickerRef = useRef(null);
   const uploadLockRef = useRef(false);
@@ -220,7 +264,7 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
       {/* 4. Photos */}
       {photos.length > 0 && (
         <div className="flex gap-2 mt-3 flex-wrap">
-          {photos.map(p => <PhotoThumbnail key={p.id} photo={p} />)}
+          {photos.map(p => <PhotoThumbnail key={p.id} photo={p} onOpen={setLightboxSrc} />)}
         </div>
       )}
 
@@ -452,6 +496,8 @@ const StageItemRow = React.forwardRef(({ item, canEdit, isLocked, onToggle, loca
           ))}
         </div>
       )}
+
+      <PhotoLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </div>
   );
 });

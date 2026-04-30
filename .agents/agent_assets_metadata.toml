@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Handover PDF v3.5 — sharper defect photos + canvas signatures + no orphan ROOM INSPECTIONS label (1 commit, 2 files)"
+title = "StageDetailPage — in-app photo lightbox (no more S3 redirect on tap), single file"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
