@@ -2,13 +2,21 @@
 PR: Handover PDF v3.3 Follow-Up #3
 Task: #459 (follows #458 / #457 / #456)
 Branch: staging
-Files changed: 2 + 1 deletion
+Files changed: 1
   - backend/templates/handover_protocol_pdf.html
-  - backend/fonts/Rubik-Bold.ttf  (DELETED, 47KB, no longer needed)
 
 ⚠ TWO COMMITS in this PR — split per Zahi's spec:
   Commit A: variable Rubik font for ALL weights  (Hebrew gibberish fix #3)
   Commit B: background-image for defect photos   (object-fit fix)
+
+⚠ CORRECTION (was caught in review)
+The first draft of this PR proposed deleting
+backend/fonts/Rubik-Bold.ttf as part of Commit A. That was wrong —
+the file is still consumed by backend/services/safety_pdf.py
+(Safety feature, ReportLab path), which is INDEPENDENT of the
+handover PDF (WeasyPrint path). The file has been restored
+byte-for-byte (git blob hash bb7df28b… matches the original).
+Commit A now changes only the template — no font file deletion.
 
 Diagnostic logging from previous follow-up confirmed:
   ✅ data flow correct  (fetched_truthy=1/1 per defective item)
@@ -22,8 +30,17 @@ VERIFICATION (all passed before merge):
   $ grep -c "@font-face" backend/templates/handover_protocol_pdf.html
   → 2 (one Rubik variable + one Caveat) ✅
 
-  $ ls backend/fonts/Rubik-Bold.ttf
-  → No such file or directory ✅
+  $ ls -la backend/fonts/Rubik-Bold.ttf
+  → present, 47688 bytes (used by safety_pdf.py — kept on disk) ✅
+
+  $ git hash-object backend/fonts/Rubik-Bold.ttf
+  → bb7df28b1bbfba23e640f288579dd1a6919f5f72 (matches original) ✅
+
+  $ grep -n "Rubik-Bold" backend/templates/handover_protocol_pdf.html
+  → ZERO references (handover no longer uses static bold) ✅
+
+  $ grep -n "Rubik-Bold" backend/services/safety_pdf.py
+  → 4 references (lines 38, 44, 221, 225 — safety_pdf still uses it) ✅
 
   $ grep -n "<img" backend/templates/handover_protocol_pdf.html | grep "class=\"photo\""
   → only meter-water/meter-electricity (preserved) ✅
@@ -39,11 +56,45 @@ VERIFICATION (all passed before merge):
 
   Jinja parse check: ✅ template parses OK
 
-  fontTools verification:
+  fontTools verification (UNCHANGED on disk, intentionally):
     Rubik-Regular.ttf: hebrew=27/27 ✓ lower=26/26 ✓ upper=26/26 ✓
                        variable=True (wght axis 300-900)
                        1174 glyphs total
-    Rubik-Bold.ttf:    DELETED
+    Rubik-Bold.ttf:    hebrew=0/27,  lower=26/26,   upper=26/26
+                       static, 47688 bytes
+                       (kept for safety_pdf.py — not loaded by handover)
+
+
+================================================================
+WHY Rubik-Bold.ttf STAYS ON DISK (two isolated PDF paths)
+================================================================
+
+The codebase has TWO independent PDF generators:
+
+  1. HANDOVER PDF — backend/services/handover_pdf_service.py
+     Engine: WeasyPrint (HTML/CSS → PDF)
+     Template: backend/templates/handover_protocol_pdf.html
+     Fonts: declared via @font-face inside the template.
+     After this PR: only Rubik-Regular.ttf (variable, 300-900) +
+                    Caveat-Regular.ttf. NO reference to Rubik-Bold.
+
+  2. SAFETY PDF — backend/services/safety_pdf.py
+     Engine: ReportLab (programmatic Canvas + Platypus)
+     Fonts: registered programmatically via reportlab.pdfbase.
+       Line 38: bold = os.path.join(_FONTS_DIR, "Rubik-Bold.ttf")
+       Line 44: pdfmetrics.registerFont(TTFont("Rubik-Bold", bold))
+       Lines 221, 225: ParagraphStyle(... fontName="Rubik-Bold" ...)
+     Still requires the static Rubik-Bold.ttf at runtime.
+
+These two paths share the fonts/ directory but otherwise do not
+overlap. The handover fix (variable font for all weights) does
+not affect safety_pdf, and keeping the static Bold on disk does
+not affect handover (the handover template no longer references
+it). Both stay green.
+
+If the safety PDF is ever migrated to WeasyPrint or re-fonted
+later, Rubik-Bold.ttf can be revisited — but that is OUT OF SCOPE
+for this PR.
 
 
 ================================================================
@@ -82,11 +133,13 @@ And fontTools subset log on staging PDF:
                 'space', 'two', 'zero']
   → no lowercase → bug confirmed
 
-THE FIX — Option A from Zahi's spec
------------------------------------
+THE FIX — Option A from Zahi's spec (TEMPLATE ONLY, no file delete)
+-------------------------------------------------------------------
 Use the Rubik-Regular VARIABLE font for the entire weight range
 300-900 (it already contains every glyph: Latin lower, Latin
-upper, Hebrew, digits). Drop the static Rubik-Bold.ttf entirely.
+upper, Hebrew, digits). The handover template no longer references
+the static Rubik-Bold.ttf — but the file STAYS on disk for
+safety_pdf.py.
 
 File: backend/templates/handover_protocol_pdf.html
 Lines: 8-18 (two declarations) → 8-12 (one declaration)
@@ -133,7 +186,9 @@ UNIFIED DIFF:
   +  font-style: normal;
   +}
 
-PLUS: rm backend/fonts/Rubik-Bold.ttf  (no longer referenced)
+(Rubik-Bold.ttf is NOT deleted — see "WHY Rubik-Bold.ttf STAYS"
+section above. Only the @font-face reference is dropped from the
+handover template. safety_pdf.py keeps loading the file directly.)
 
 WHAT CHANGES IN BEHAVIOR
 ------------------------
@@ -150,9 +205,14 @@ POST-DEPLOY VERIFICATION ON STAGING
 After ./deploy.sh and one PDF generation:
   $ pdffonts /path/to/generated.pdf
   Expect: only Rubik (instanced variants) + Caveat. Zero DejaVu.
+  Expect: NO Rubik-Bold subset (since handover stopped referencing it).
 
   $ pdftotext /path/to/generated.pdf - | head -20
   Expect: readable Hebrew + readable Latin throughout.
+
+Also verify safety PDFs still render correctly (regression check):
+  $ generate a safety report PDF → spot-check Hebrew + Latin
+  Expect: unchanged from current — safety_pdf.py path untouched.
 
 
 ================================================================
@@ -287,6 +347,10 @@ Verified by listing all `<img>` tags after the edit:
 NOT TOUCHED (deliberately, per Zahi's DO NOT list)
 ================================================================
 
+- backend/fonts/Rubik-Bold.ttf — STAYS on disk (used by
+  safety_pdf.py). The handover template just stops referencing
+  it.
+
 - Photo diagnostic logging block in handover_pdf_service.py.
   It works perfectly and stays in. (Zahi: "אל תיגע ב-diagnostic
   logging — הוא עובד מצוין ועוזר לאבחן".)
@@ -302,6 +366,10 @@ NOT TOUCHED (deliberately, per Zahi's DO NOT list)
 
 - Service data-flow logic. Diagnostic confirmed it's correct.
 
+- backend/services/safety_pdf.py — entirely out of scope. Its
+  ReportLab font registration of Rubik-Bold continues to work
+  unchanged.
+
 
 ================================================================
 DEPLOYMENT
@@ -310,11 +378,11 @@ DEPLOYMENT
 Standing rule respected: agent did NOT git commit, did NOT
 restart workflows, did NOT deploy.
 
-Zahi runs (TWO separate commits per spec):
+Zahi runs (TWO separate commits per spec, both touching the SAME
+file but logically distinct):
 
-  # Commit A — variable Rubik font + drop static Rubik-Bold
+  # Commit A — variable Rubik font (template-only change)
   git add backend/templates/handover_protocol_pdf.html
-  git rm backend/fonts/Rubik-Bold.ttf
   git commit -m "handover-pdf: use variable Rubik font for all weights (Hebrew gibberish fix #3)"
 
   # Commit B — background-image for defect photos
@@ -330,3 +398,13 @@ Zahi runs (TWO separate commits per spec):
   pdftotext /path/to/generated.pdf -   # readable Hebrew + Latin
   pdfimages -list /path/to/generated.pdf  # defect images still embedded
   grep "\[PDF\] Photo diag" /var/log/.../app.log   # diagnostic still firing
+
+  # Regression check on safety PDF (separate code path, must still work):
+  generate a safety report PDF → confirm renders normally
+
+NOTE on the two-commit split: both commits modify the same file.
+Easiest path is to stage a partial commit per logical chunk:
+  git add -p backend/templates/handover_protocol_pdf.html
+and accept the @font-face hunk for Commit A, then accept the
+.photo / photo-row hunks for Commit B. Or amend later if simpler
+to do as a single commit and split via interactive rebase.
