@@ -113,6 +113,10 @@ table { border-collapse: collapse; }
   color: var(--slate-5);
   margin-bottom: 6px;
 }
+.keep-with-next {
+  page-break-after: avoid;
+  break-after: avoid;
+}
 
 .section-h {
   font-size: 13px;
@@ -817,6 +821,26 @@ table.items .note {
 .legal-sigline .sigchip.unsigned {
   background: var(--slate-1); color: var(--slate-5);
 }
+.legal-signer {
+  display: block;
+  width: 100%;
+  margin-bottom: 12px;
+}
+.legal-sig-img {
+  margin-top: 6px;
+  max-width: 200px;
+}
+.legal-sig-img img {
+  max-width: 100%;
+  max-height: 60px;
+  display: block;
+}
+.legal-sig-typed {
+  margin-top: 6px;
+  font-family: 'Caveat', cursive;
+  font-size: 22px;
+  color: var(--ink);
+}
 .legal-sigline .sigchip .check {
   display: inline-block;
   background: var(--green);
@@ -969,7 +993,7 @@ table.items .note {
   vertical-align: top;
   padding: 0 4px;
 }
-.photo-row.count-1 .cell { width: 65%; }
+.photo-row.count-1 .cell { width: 50%; }
 .photo-row.count-2 .cell { width: 50%; }
 .photo-row.count-3 .cell { width: 33.33%; }
 .photo {
@@ -1286,7 +1310,7 @@ table.items .note {
     <div class="ph-right">{{ generation_date }}{% if display_number %} · {{ display_number }}{% endif %}</div>
   </div>
 
-  <div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
+  <div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>
 
   {% for sec in inspection_sections|default([]) %}
   {% set sec_defects = (sec.fail|default(0)) + (sec.partial|default(0)) %}
@@ -1478,7 +1502,14 @@ table.items .note {
           {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
           {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
           {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
-        <span class="sigchip"><span class="check"><svg width="8" height="8" viewBox="0 0 8 8" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle"><polyline points="1.5,4.2 3.4,6 6.5,2.2" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{{ _s_name }} · ת״ז {{ _s_id or '—' }} · {{ signed_date or s.signed_at or '—' }}</span>
+        <div class="legal-signer">
+          <span class="sigchip"><span class="check"><svg width="8" height="8" viewBox="0 0 8 8" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle"><polyline points="1.5,4.2 3.4,6 6.5,2.2" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{{ _s_name }} · ת״ז {{ _s_id or '—' }} · {{ signed_date or s.signed_at or '—' }}</span>
+          {% if s.sig_type == 'canvas' and s.sig_image_b64 %}
+          <div class="legal-sig-img"><img src="{{ s.sig_image_b64 }}" alt="חתימה"></div>
+          {% elif s.sig_type == 'typed' and s.typed_name %}
+          <div class="legal-sig-typed">{{ s.typed_name }}</div>
+          {% endif %}
+        </div>
         {% endfor %}
       {% else %}
         <span class="sigchip unsigned">ממתין לחתימה</span>

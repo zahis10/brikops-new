@@ -1,156 +1,263 @@
 ================================================================
-PR: Excel Import — int-as-float fix ("1.0" → "1")
+PR: Handover PDF v3.5 — photo quality + legal sigs + orphan label
 Branch: staging
-Files changed: 1
-  - backend/contractor_ops/import_router.py
+Files changed: 2
+  - backend/templates/handover_protocol_pdf.html
+  - backend/services/handover_pdf_service.py
 
-ONE COMMIT, ~7-line change in one file. Self-contained.
+ONE COMMIT, three independent fixes from the v3.4 staging review.
 ================================================================
 
-THE BUG (Zahi's report)
+VERIFICATION (all passed before merge):
 
-Importing 277 tenants from Excel produced 198 rows failing with
-  "בניין '1.0' לא נמצא בפרויקט"
-even though the buildings are stored in the DB as plain "1", "2",
-"3" and the cells in Excel display as "1", "2", "3".
+FIX 1 — Photo size + quality:
+  $ grep "photo-row\.count-1" backend/templates/handover_protocol_pdf.html
+  → .photo-row.count-1 .cell { width: 50%; }   (was 65%)  ✅
+
+  $ grep -n "_DEFECT_PHOTO_WIDTH\|_DEFECT_PHOTO_QUALITY" backend/services/handover_pdf_service.py
+  → 44: _DEFECT_PHOTO_WIDTH = 1100              (was 600)  ✅
+  → 45: _DEFECT_PHOTO_QUALITY = 85               (was 75)  ✅
+
+FIX 2 — Legal signature rendering:
+  $ grep -c "^\.legal-signer\|^\.legal-sig-img\|^\.legal-sig-typed" backend/templates/handover_protocol_pdf.html
+  → 4 (legal-signer, legal-sig-img, legal-sig-img img, legal-sig-typed)  ✅
+
+  $ grep -n "s.sig_type ==" backend/templates/handover_protocol_pdf.html
+  → 1507: {% if s.sig_type == 'canvas' and s.sig_image_b64 %}  ✅
+  → 1509: {% elif s.sig_type == 'typed' and s.typed_name %}     ✅
+
+FIX 3 — Orphan page-label:
+  $ grep -n -A2 "^\.keep-with-next" backend/templates/handover_protocol_pdf.html
+  → 116: .keep-with-next {
+  → 117:   page-break-after: avoid;
+  → 118:   break-after: avoid;                                    ✅
+
+  $ grep -n "ROOM INSPECTIONS" backend/templates/handover_protocol_pdf.html
+  → 1313: <div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>  ✅
+
+CARRY-OVER INVARIANTS FROM v3.3 / v3.4 (must remain unchanged):
+  @font-face count                = 2          ✅
+  text-transform count            = 0          ✅
+  Photo diag in service           = 2          ✅
+  photo-empty references          = 0          ✅
+  Rubik-Bold.ttf size             = 47688 B    ✅ (still loaded by safety_pdf.py)
+  Meter <img> tags                preserved at lines 1458, 1466  ✅
+  defects-summary-block wrapper   intact       ✅
+  count-1/2/3 selectors           intact       ✅
+
+  Jinja parse:    ✅
+  service import: ✅ (_DEFECT_PHOTO_WIDTH=1100, _DEFECT_PHOTO_QUALITY=85)
+
+
+================================================================
+FIX 1 — Photo quality + size
+================================================================
+
+PROBLEM
+-------
+On the v3.4 staging PDF:
+  • Single-photo defect cards rendered the photo at 65% width.
+    Zahi's review: "מקסימום 2 תמונות ביחד באותו הדף" — 65% is
+    too dominant for one photo on a tight A4 layout.
+  • Source images were resized to 600px wide before PDF embed.
+    Stretched to ~12-15 cm in the printed PDF that's only ~76 DPI
+    → visibly blurry on paper.
+  • JPEG quality 75 added compression artifacts on top of the
+    blur.
+
+FIX A — CSS cell width
+----------------------
+File: backend/templates/handover_protocol_pdf.html, line 975
+
+  -.photo-row.count-1 .cell { width: 65%; }
+  +.photo-row.count-1 .cell { width: 50%; }
+   .photo-row.count-2 .cell { width: 50%; }
+   .photo-row.count-3 .cell { width: 33.33%; }
+
+A 1-photo row now uses the same cell width as a 2-photo row.
+The photo lands at a comfortable size, well below the page
+width, and prints cleanly.
+
+FIX B — Service photo target dimensions
+---------------------------------------
+File: backend/services/handover_pdf_service.py, lines 44-45
+
+  -_DEFECT_PHOTO_WIDTH = 600
+  -_DEFECT_PHOTO_QUALITY = 75
+  +_DEFECT_PHOTO_WIDTH = 1100
+  +_DEFECT_PHOTO_QUALITY = 85
+
+  At line 465 these constants are passed into Pillow as
+  `mw, q = _DEFECT_PHOTO_WIDTH, _DEFECT_PHOTO_QUALITY`
+  for defect-photo resize+JPEG-encode. No other consumer.
+
+  Result on print:
+    • 1100 px / ~7.5 cm = ~150 DPI (was ~76 DPI) → sharp
+    • Quality 85 = noticeably less blocky than 75 with very
+      modest size impact
+
+  TRADE-OFF (per Zahi's spec):
+    PDF size grows from ~235 KB to ~500-800 KB depending on how
+    many defect photos the protocol has. Still very reasonable
+    for email/storage; Zahi explicitly accepted this.
+
+  Constants for OTHER tiers UNCHANGED:
+    _METER_PHOTO_WIDTH=800, _METER_PHOTO_QUALITY=80 → meter
+                                                       photos identical
+    _SIGNATURE_WIDTH=300, _SIGNATURE_QUALITY=85    → signatures
+                                                       identical
+    _PHOTO_THUMB_WIDTH=150, _JPEG_QUALITY=65       → thumbs
+                                                       identical
+
+
+================================================================
+FIX 2 — Render canvas signatures inside legal sections
+================================================================
+
+PROBLEM
+-------
+The legal-declarations page (LEGAL DECLARATIONS · נסחים משפטיים)
+showed only a green sigchip pill with name + ID + date. The
+actual signature drawing the tenant made on the canvas in the
+UI was never displayed in the PDF — even though the service
+already loaded `sig_image_b64` and `sig_type` into each signer
+dict at handover_pdf_service.py:604-648.
 
 ROOT CAUSE
+----------
+The template at lines 1474-1488 only emitted the sigchip and
+dropped `s.sig_image_b64` / `s.typed_name` on the floor. Pure
+template-side regression; the data was already arriving.
 
-openpyxl reads numeric Excel cells as Python `float` (an integer
-"1" in the cell becomes Python `1.0`). Two locations in
-import_router.py then converted that float to string with
-plain `str(...)`, producing "1.0" instead of "1":
+FIX
+---
+File: backend/templates/handover_protocol_pdf.html
 
-  1. _str_val (line 230) — the central reader used everywhere
-     for building, apartment, tenant_id, tenant_2_id, tenant_email.
-     Just did `str(val).strip()` with no int-vs-float distinction.
+CSS additions (lines 824-846, immediately after `.legal-sigline
+.sigchip.unsigned`):
 
-  2. _validate_row (lines 281-289) — a final pass that
-     re-stringified all remaining values with another plain
-     `str(row[key])`, duplicating the same bug logic.
+  +.legal-signer {
+  +  display: block;
+  +  width: 100%;
+  +  margin-bottom: 12px;
+  +}
+  +.legal-sig-img {
+  +  margin-top: 6px;
+  +  max-width: 200px;
+  +}
+  +.legal-sig-img img {
+  +  max-width: 100%;
+  +  max-height: 60px;
+  +  display: block;
+  +}
+  +.legal-sig-typed {
+  +  margin-top: 6px;
+  +  font-family: 'Caveat', cursive;
+  +  font-size: 22px;
+  +  color: var(--ink);
+  +}
 
-Result: lookup keys "1.0" / "2.0" / etc. never matched the DB's
-"1" / "2" — almost every row failed.
+  Note: I added `width: 100%` on .legal-signer to defeat the
+  parent .legal-sigline `display: flex` — without it, each
+  signer would shrink to its content width and the canvas image
+  would appear inline next to the next signer's sigchip. With
+  `display:block; width:100%;` each signer occupies a full row,
+  which is the visual layout Zahi wants (chip on top, signature
+  drawing below it).
 
-THE FIX
+Template change (lines 1502-1520, inside the legal-sigline
+loop):
 
-Two surgical edits to a single file, both following Zahi's spec
-verbatim.
+  -        {% for s in ls.signers %}
+  -          {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
+  -          {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
+  -          {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
+  -        <span class="sigchip">…name + id + date…</span>
+  -        {% endfor %}
+  +        {% for s in ls.signers %}
+  +          {%- set _s_name = s.signer_name or s.typed_name or s.label or 'חתום' -%}
+  +          {%- set _tnt = (tenants|default([]))|selectattr('name','equalto', _s_name)|list -%}
+  +          {%- set _s_id = (s.id_number if s.id_number is defined else '') or (_tnt[0].id_number if _tnt else '') -%}
+  +        <div class="legal-signer">
+  +          <span class="sigchip">…name + id + date…</span>
+  +          {% if s.sig_type == 'canvas' and s.sig_image_b64 %}
+  +          <div class="legal-sig-img"><img src="{{ s.sig_image_b64 }}" alt="חתימה"></div>
+  +          {% elif s.sig_type == 'typed' and s.typed_name %}
+  +          <div class="legal-sig-typed">{{ s.typed_name }}</div>
+  +          {% endif %}
+  +        </div>
+  +        {% endfor %}
 
-================================================================
-EDIT 1 — _str_val (lines 230-238)
-================================================================
-
-BEFORE:
-  def _str_val(val):
-      if val is None:
-          return ""
-      return str(val).strip()
-
-AFTER:
-  def _str_val(val):
-      if val is None:
-          return ""
-      if isinstance(val, float) and val.is_integer():
-          return str(int(val))
-      return str(val).strip()
-
-The new branch detects a float whose value is a whole integer
-(e.g. 1.0, 2.0, 12.0, 123456789.0) and converts via int first,
-giving "1", "2", "12", "123456789".
-
-Real fractional floats (1.5, 1.999999) and all other types
-(int, str, etc.) take the existing `str(val).strip()` path —
-behaviour preserved.
-
-Edge cases verified (see VERIFICATION section below):
-  - True floats unchanged: _str_val(1.5) == "1.5"
-  - True ints unchanged:    _str_val(2)   == "2"
-  - Negatives:              _str_val(-3.0) == "-3"
-  - Zero:                   _str_val(0.0) == "0"
-  - String "1.0" preserved: _str_val("1.0") == "1.0"
-                            (user typed a string, we don't strip
-                             trailing zeros from text)
-  - None unchanged:         _str_val(None) == ""
-
-================================================================
-EDIT 2 — _validate_row (lines 281-289 → 281-285)
-================================================================
-
-BEFORE:
-  for key in row:
-      if key in ('source_row', 'handover_date', 'tenant_phone', 'tenant_phone_2'):
-          continue
-      if isinstance(row[key], (int, float)):
-          row[key] = str(row[key])         # ← duplicated bug
-      elif row[key] is None:
-          row[key] = ""
-      else:
-          row[key] = str(row[key]).strip()
-
-AFTER:
-  for key in row:
-      if key in ('source_row', 'handover_date', 'tenant_phone', 'tenant_phone_2'):
-          continue
-      row[key] = _str_val(row[key])
-
-Refactored to delegate to _str_val. Now there is a single source
-of truth for cell-value stringification; future improvements
-land in one place.
-
-The skip list is preserved exactly — source_row keeps its int
-(used as a row number), handover_date is parsed separately at
-lines 275-279, and the two phone keys are normalised by
-clean_phone_for_import / normalize_israeli_phone at lines 252-265.
+  Behaviour:
+    • sig_type == 'canvas' AND sig_image_b64 present
+        → render the actual drawn signature as <img>, capped
+          at 200px wide / 60px tall
+    • sig_type == 'typed'  AND typed_name present
+        → render the typed name in Caveat at 22px
+    • neither (e.g. legacy data) → only the sigchip, current
+      behaviour preserved
+    • no signers at all → "ממתין לחתימה" pill (unchanged)
 
 
 ================================================================
-VERIFICATION (ran locally before handoff)
+FIX 3 — Orphan ROOM INSPECTIONS page-label on empty page
 ================================================================
 
-Spec assertions from the task — all pass:
-  ✅ _str_val(1.0) == '1'
-  ✅ _str_val(2)   == '2'
-  ✅ _str_val(1.5) == '1.5'
-  ✅ _str_val('בניין 1') == 'בניין 1'
-  ✅ _str_val(None) == ''
+PROBLEM
+-------
+On the v3.4 staging PDF, page 5 contained nothing except the
+header strip ("5 · 30.04.2026") and the page-label
+"ROOM INSPECTIONS · בדיקת חדרים". The first inspection room
+("כניסה לדירה") was wrapped in `<div class="no-break">`, didn't
+fit on page 5, and got pushed to page 6 — leaving the label
+stranded as an orphan.
 
-Extra edge cases — all pass:
-  ✅ _str_val(0)              == '0'
-  ✅ _str_val(0.0)            == '0'
-  ✅ _str_val(-3.0)           == '-3'
-  ✅ _str_val(1.999999)       == '1.999999'
-  ✅ _str_val('  hello  ')    == 'hello'
-  ✅ _str_val('123')          == '123'
-  ✅ _str_val('1.0')          == '1.0'   (string left alone)
-  ✅ _str_val(123456789.0)    == '123456789'  ← tenant_id fix
+FIX
+---
+File: backend/templates/handover_protocol_pdf.html
 
-End-to-end _validate_row simulation (openpyxl-shaped row):
-  Input  : {'building': 1.0, 'apartment': 12.0,
-            'tenant_id': 123456789.0,
-            'tenant_name': '  אבי כהן  ',
-            'tenant_email': 'avi@example.com',
-            'source_row': 5, ...}
-  Output : building='1', apartment='12', tenant_id='123456789',
-           tenant_name='אבי כהן', source_row=5 (int, preserved),
-           valid=True
-  ✅ all expected values produced; no errors
+CSS addition (lines 119-122, immediately after `.page-label`):
+
+  +.keep-with-next {
+  +  page-break-after: avoid;
+  +  break-after: avoid;
+  +}
+
+  Both modern (`break-after: avoid`) and legacy
+  (`page-break-after: avoid`) properties are emitted so the
+  rule works across WeasyPrint versions ≥ 53.
+
+Template change (line 1313):
+
+  -<div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
+  +<div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>
+
+  WeasyPrint will now refuse to break a page right after the
+  label. If the first room won't fit underneath, it pushes the
+  label down with the room. No more empty page-5 with just a
+  header strip.
+
+  No new forced page-breaks were added; only an "avoid" hint.
 
 
 ================================================================
 NOT TOUCHED (per Zahi's DO NOT list)
 ================================================================
 
-- _normalize_building_name (line ~299)        — already correct
-- _normalize_unit_no                          — already correct
-- _parse_date                                 — handles its own
-                                                 .is_integer() path
-                                                 (Excel serial → date)
-- handover_date / tenant_phone / tenant_phone_2 stripping
-                                              — preserved via the
-                                                skip list
-- All other validation logic, error messages, and the route
-  handlers themselves                          — untouched
+- Photo diag logging in handover_pdf_service.py — still 2
+  references, untouched
+- `.meter .photo` and `.meter .photo img` — self-contained
+  rules at lines 754-767, untouched. Meter <img> tags still
+  present at lines 1458, 1466
+- `_str_val` in import_router.py — separate Excel-import PR,
+  untouched here
+- No new forced page-breaks (`page-break-before`,
+  `page-break-after: always`). Only `avoid`-type hints
+- backend/fonts/Rubik-Bold.ttf — still 47688 bytes, used by
+  safety_pdf.py
+- has_photo_items filter, defects-summary-block wrapper,
+  count-2/count-3 selectors — all carry-over from v3.3/v3.4,
+  intact
 
 
 ================================================================
@@ -160,35 +267,47 @@ DEPLOYMENT
 Standing rule respected: agent did NOT git commit, did NOT
 restart workflows, did NOT deploy.
 
-Zahi runs:
+Zahi runs (ONE commit covering both files):
 
-  git add backend/contractor_ops/import_router.py
-  git commit -m "import_router: fix int-as-float reading from Excel (1.0 → 1)
+  git add backend/templates/handover_protocol_pdf.html backend/services/handover_pdf_service.py
+  git commit -m "handover-pdf v3.5: photo quality + legal signatures + orphan page-label fix
 
-openpyxl reads integer cells as Python float (1 → 1.0). Previously
-str(val) produced \"1.0\" which broke building/apartment lookup against
-DB values stored as \"1\". Now _str_val detects int-valued floats and
-converts via int first. Refactored _validate_row to use _str_val
-instead of duplicating the conversion logic.
+Fix #1 (photo size & quality):
+  - 1-photo cell width: 65% → 50% (less dominant)
+  - _DEFECT_PHOTO_WIDTH: 600 → 1100 (sharper at print size)
+  - _DEFECT_PHOTO_QUALITY: 75 → 85 (less JPEG artifact)
+  Result: 76 DPI → ~150 DPI defect photos.
 
-Fixes: 198/277 rows failing import with \"בניין '1.0' לא נמצא בפרויקט\""
+Fix #2 (legal section signatures):
+  Render the canvas signature image inside legal_sigline. The
+  service was already loading sig_image_b64 into ls.signers[*]
+  but the template only displayed name+date. Added <img> for
+  canvas type and Caveat typed name for typed type.
+
+Fix #3 (orphan page-label on empty page 5):
+  Add page-break-after: avoid to .page-label.keep-with-next so
+  the ROOM INSPECTIONS header stays glued to the first room
+  card. No more empty pages with just a header strip."
+
   git push origin staging
   ./deploy.sh --stag
 
 Verify on staging:
-  1. Open "ייבוא נתוני רוכשים" screen
-  2. Upload the same 277-tenant Excel file that previously failed
-  3. Expected: the 198 "בניין '1.0' לא נמצא" errors → 0
-     The previously-red rows turn green ("תקינות")
-  4. Spot-check that any row with a real fractional value
-     (unlikely here, but safety) still parses correctly
+  □ Defect with 1 photo → cell width 50% (not 65%) — comfortable
+  □ pdfimages -list staging.pdf → defect photos ≈ 1100 px wide,
+    rendered at ~150 DPI (was ~76 DPI) — much sharper in print
+  □ PDF size grew to 500-800 KB (acceptable per spec)
+  □ LEGAL DECLARATIONS page: each signer shows the drawn canvas
+    signature OR Caveat typed name BELOW the green sigchip
+  □ No more empty page that contains only "ROOM INSPECTIONS"
+    header — label and first room render together
+
+Regression check:
+  □ Meter photos still render correctly (untouched)
+  □ Defects-summary-block still keeps together (untouched)
+  □ Hebrew + Latin still readable across all pages (Rubik
+    variable font still in use)
+  □ Generate a Safety PDF — safety_pdf.py path unaffected
 
 If staging looks clean:
   ./deploy.sh --prod
-
-Regression check (no DB schema changes; pure Python logic):
-  - Other importers using _str_val (if any) get the same
-    improvement automatically — search for callers shows it is
-    used 5 times in this file (apt, name, tenant_id, email,
-    tenant_2_id) and once via _validate_row's catch-all loop.
-  - No other modules import _str_val.
