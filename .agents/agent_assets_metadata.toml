@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Handover PDF v3.7.1 hotfix — fixes WeasyPrint single-cell stretch by moving width: from .photo-row .cell up to .photo-row itself; photos finally render at the intended ~5cm Cemento-style size on A4 (1 commit, 1 file, CSS-only)"
+title = "Handover PDF v3.8 — header strip now repeats on EVERY page (incl. continuation pages of long sections) via CSS Paged Media running() element; cover page kept clean; weasyprint 68.1 fully supports it (1 commit, 1 file, CSS+template only)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

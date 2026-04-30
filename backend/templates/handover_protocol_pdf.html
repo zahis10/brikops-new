@@ -42,7 +42,12 @@
 
 @page {
   size: A4;
-  margin: 18mm 12mm 18mm 12mm;
+  margin: 24mm 12mm 18mm 12mm;
+  @top-left {
+    content: element(page-header);
+    width: 100%;
+    vertical-align: top;
+  }
   @bottom-right {
     content: counter(page) " / " counter(pages);
     font-family: 'Rubik', sans-serif;
@@ -60,8 +65,13 @@
 }
 @page :first {
   margin: 0;
+  @top-left { content: ""; }
   @bottom-right { content: ""; }
   @bottom-left { content: ""; }
+}
+
+.running-header {
+  position: running(page-header);
 }
 
 * { box-sizing: border-box; }
@@ -1094,6 +1104,9 @@ table.items .note {
 </div>
 {% endmacro %}
 
+{# Running header — appears at top of every page (except cover) via CSS Paged Media #}
+<div class="running-header">{{ page_header() }}</div>
+
 {# cover #}
 <div class="cover-wrap">
   <div class="cover-hero">
@@ -1219,7 +1232,6 @@ table.items .note {
 {# tenants on dedicated page (moved out of cover per Spec B Single-Source) #}
 {% if tenants|default([]) %}
 <div class="page-break">
-  {{ page_header() }}
 
   <div class="page-label">TENANTS · דיירים</div>
   {% set _tenant_count_pg = tenants|length %}
@@ -1252,7 +1264,6 @@ table.items .note {
 
 {# TOC + defects summary #}
 <div class="page-break">
-  {{ page_header() }}
 
   <div class="page-label">TABLE OF CONTENTS · DEFECTS SUMMARY</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 14px;">תוכן עניינים</h2>
@@ -1326,7 +1337,6 @@ table.items .note {
 
 {# room inspections #}
 <div class="page-break">
-  {{ page_header() }}
 
   <div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
 
@@ -1430,7 +1440,6 @@ table.items .note {
 {# delivered items + meters #}
 {% if delivered_items|default([]) or meter_water_reading or meter_electricity_reading %}
 <div class="page-break">
-  {{ page_header() }}
 
   <div class="page-label">HANDED-OVER ITEMS · METER READINGS</div>
 
@@ -1486,7 +1495,6 @@ table.items .note {
 {# legal sections #}
 {% if legal_sections|default([]) %}
 <div class="page-break">
-  {{ page_header() }}
 
   <div class="page-label">LEGAL DECLARATIONS · נסחים משפטיים</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">נסחים משפטיים</h2>
@@ -1530,7 +1538,6 @@ table.items .note {
 {# tenant notes #}
 {% if tenant_notes %}
 <div class="page-break">
-  {{ page_header() }}
   <div class="page-label">TENANT NOTES · הערות הדייר</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 12px">הערות הדייר</h2>
   <div class="notes-card">{{ tenant_notes }}</div>
@@ -1539,7 +1546,6 @@ table.items .note {
 
 {# signatures #}
 <div class="page-break">
-  {{ page_header() }}
 
   <div class="page-label">SIGNATURES · חתימות</div>
   <h2 style="font-size:22px;font-weight:800;letter-spacing:-0.01em;margin:0 0 6px">חתימות מסירה</h2>

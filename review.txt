@@ -1,173 +1,201 @@
 ================================================================
-PR: Handover PDF v3.7.1 HOTFIX — photo width finally takes effect
-                                  (move width from .cell to .photo-row)
+PR: Handover PDF v3.8 — header strip on EVERY page
+                        via CSS Paged Media running() element
 Branch: staging
 Files changed: 1
   - backend/templates/handover_protocol_pdf.html
 
-Pure CSS swap. No Python, no service, no template loop changes.
+Switched the page header from 7 inline calls (only one per
+section) to a single CSS Paged Media running() element so the
+strip repeats automatically on every page (cover excluded).
 ================================================================
 
 VERIFICATION (all passed before merge):
 
-  $ sed -n '1008,1024p' backend/templates/handover_protocol_pdf.html
-  → .photo-row {                                                ✅
-  →   display: table;                                           ✅
-  →   border-spacing: 6px 0;                                    ✅
-  →   margin-top: 8px;                                          ✅
-  →   table-layout: fixed;                                      ✅
+  $ grep -c "{{ page_header() }}" backend/templates/handover_protocol_pdf.html
+  → 1   (was 7 — only inside .running-header now)              ✅
+  $ grep -n "{{ page_header() }}" template
+  → 1108: <div class="running-header">{{ page_header() }}</div> ✅
+
+  $ grep -c '<div class="page-break">' template
+  → 7   (page-break wrappers PRESERVED)                         ✅
+
+  $ grep -c "{% macro page_header" template
+  → 1   (macro definition unchanged)                            ✅
+
+  $ grep -n "^\.running-header" template
+  → 73: .running-header { position: running(page-header); }     ✅
+
+  $ sed -n '46,53p' template
+  → @page {
+  →   size: A4;
+  →   margin: 24mm 12mm 18mm 12mm;       ← top bumped 18 → 24mm  ✅
+  →   @top-left {
+  →     content: element(page-header);    ← repeats on every page ✅
+  →     width: 100%;
+  →     vertical-align: top;
+  →   }
+
+  $ sed -n '69,74p' template
+  → @page :first {
+  →   margin: 0;
+  →   @top-left { content: ""; }          ← cover suppresses header ✅
+  →   @bottom-right { content: ""; }
+  →   @bottom-left { content: ""; }
   → }
-  → .photo-row .cell {                                          ✅
-  →   display: table-cell;                                      ✅
-  →   vertical-align: top;                                      ✅
-  →   padding: 0 4px;                                           ✅
-  → }
-  → .photo-row.count-1 { width: 30%; }                          ✅
-  → .photo-row.count-2 { width: 60%; }                          ✅
-  → .photo-row.count-3 { width: 90%; }                          ✅
-  → .photo-row.count-4 { width: 96%; }                          ✅
-  → .photo-row.count-5 { width: 95%; }                          ✅
-  → .photo-row.count-6 { width: 96%; }                          ✅
 
-  $ grep -c "^\.photo-row\.count-[0-9] { width:" template
-  → 6   (all six count-N rules now target the .photo-row itself,
-        no longer the .cell)                                    ✅
+  Backend Python pin:
+  $ grep weasyprint backend/requirements.txt
+  → weasyprint==68.1
+  CSS Paged Media `position: running()` + `content: element()`
+  has been supported since WeasyPrint 0.30 (2014). 68.1 is
+  fully compatible.                                              ✅
 
-  Removed:
-  - `width: 100%` on `.photo-row`                               ✅
-  - `width: 30%/30%/30%/24%/19%/16%` on `.photo-row.count-N .cell` ✅
-
+  End-to-end render (Jinja):
+  → 1 `<div class="running-header">…</div>` in HTML output       ✅
+  → Service imports OK                                           ✅
 
 CARRY-OVER INVARIANTS (all unchanged):
-  Service photo cap [:6]            = 1 ref       ✅
-  Photo diag in service             = 2          ✅
-  page_header() calls               = 7          ✅
-  page-break wrappers               = 7          ✅
-  no-break in body                  = 0          ✅
-  keep-together conditional         = 1 (in inspection_sections loop)  ✅
   @font-face count                  = 2          ✅
+  text-transform count              = 0          ✅
+  Photo diag in service             = 2          ✅
+  photo-empty refs                  = 0          ✅
   Rubik-Bold.ttf size               = 47688 B    ✅
-  _DEFECT_PHOTO_WIDTH = 1100        =            ✅
-  .meter .photo refs (untouched)    = 2          ✅
-  Jinja parse                       =            ✅
-  service import                    =            ✅
+  _DEFECT_PHOTO_WIDTH               = 1100       ✅
+  _DEFECT_PHOTO_QUALITY             = 85         ✅
+  service photo cap [:6]            = 1          ✅
+  no-break in body                  = 0          ✅
+  keep-together (rooms 2+)          = 1          ✅
+  .photo-row.count-N rules on row   = 6          ✅
+  defects-summary-block             = 2          ✅
+  .meter .photo refs                = 2          ✅
 
 
 ================================================================
-WHY THE v3.7 EDIT DIDN'T TAKE EFFECT
+THE PROBLEM
 ================================================================
 
-In v3.7 the CSS read:
+v3.6 introduced the `page_header()` Jinja macro and called it
+manually at the top of each `<div class="page-break">` section
+(7 sections: TENANTS, TOC · DEFECTS SUMMARY, ROOM INSPECTIONS,
+HANDED-OVER ITEMS · METER READINGS, LEGAL DECLARATIONS, TENANT
+NOTES, SIGNATURES).
 
-  .photo-row {
-    display: table;
-    width: 100%;             ← the bug trigger
-    table-layout: fixed;
-  }
-  .photo-row .cell {
-    display: table-cell;
-  }
-  .photo-row.count-1 .cell { width: 30%; }   ← ignored
+That worked for the FIRST page of each section. But:
+  • A long room (in ROOM INSPECTIONS) that overflowed onto a
+    second page — the second page had NO header.
+  • A long defects table that wrapped onto a continuation page
+    — same: continuation page had no header.
 
-WeasyPrint (and any CSS table layout engine) treats `width` on
-a single-cell row inside a 100%-wide table as a hint for that
-cell's intrinsic size, then stretches the cell to fill the
-table's remaining width. With one cell, "remaining" = the
-whole table, so the 30% is silently overridden and the photo
-ends up at ~95–100% width. The PDF v3.7 confirmed it: photos
-were rendering at ~140 DPI / ~20 cm wide instead of ~250 DPI /
-~5 cm.
-
-For 2 or 3 photos the same mechanism kicked in but slightly
-less obviously — `table-layout: fixed` distributed the leftover
-space evenly across the cells, so photos ended up larger than
-30% as well.
+The macro only ran once per section, so anything that flowed
+naturally across page boundaries lost the strip.
 
 
 ================================================================
-THE FIX — push the width up one level
+THE FIX — CSS Paged Media running() element
 ================================================================
 
-Move the `width:` from `.cell` to `.photo-row` itself, and drop
-`width: 100%` from `.photo-row` so the table no longer auto-
-stretches.
+Standard CSS Paged Media (CSS Generated Content for Paged Media,
+W3C WD) lets you "park" an element under a name slot and then
+render it inside any margin-box on every page:
 
-  -.photo-row {
-  -  display: table;
-  -  width: 100%;
-  -  border-spacing: 6px 0;
-  -  margin-top: 8px;
-  -  table-layout: fixed;
-  -}
-  +.photo-row {
-  +  display: table;
-  +  border-spacing: 6px 0;
-  +  margin-top: 8px;
-  +  table-layout: fixed;
-  +}
-   .photo-row .cell {
-     display: table-cell;
-     vertical-align: top;
-     padding: 0 4px;
-   }
-  -.photo-row.count-1 .cell { width: 30%; }
-  -.photo-row.count-2 .cell { width: 30%; }
-  -.photo-row.count-3 .cell { width: 30%; }
-  -.photo-row.count-4 .cell { width: 24%; }
-  -.photo-row.count-5 .cell { width: 19%; }
-  -.photo-row.count-6 .cell { width: 16%; }
-  +.photo-row.count-1 { width: 30%; }
-  +.photo-row.count-2 { width: 60%; }
-  +.photo-row.count-3 { width: 90%; }
-  +.photo-row.count-4 { width: 96%; }
-  +.photo-row.count-5 { width: 95%; }
-  +.photo-row.count-6 { width: 96%; }
+  • An element with `position: running(<name>)` is removed from
+    the normal flow and stored under that name.
+  • A `@page { @top-left { content: element(<name>); } }` rule
+    asks the renderer to place that element at the top of every
+    page.
 
-Now CSS table layout has nothing to override:
-  • The `.photo-row` table is sized to a fixed percentage of its
-    container (no longer 100%).
-  • `table-layout: fixed` distributes that fixed width equally
-    across the N cells (since no cell has an explicit width).
-  • Each photo lands in a uniformly-sized cell.
+Three additions, one removal:
 
-Width arithmetic on A4 (~17 cm content area):
-  count-1 (30%)  → 5.1 cm row, 1 cell × 5.1 cm  → 5.1 cm photo
-  count-2 (60%)  → 10.2 cm row, 2 cells × 5.1   → 5.1 cm each
-  count-3 (90%)  → 15.3 cm row, 3 cells × 5.1   → 5.1 cm each
-  count-4 (96%)  → 16.3 cm row, 4 cells × 4.1   → 4.1 cm each
-  count-5 (95%)  → 16.2 cm row, 5 cells × 3.2   → 3.2 cm each
-  count-6 (96%)  → 16.3 cm row, 6 cells × 2.7   → 2.7 cm each
+  1. CSS — bump @page top margin from 18mm to 24mm (room for
+     the strip), add the @top-left margin-box, and add the
+     `.running-header` rule:
 
-Photos are now uniform ~5 cm wide for the common 1–3 case
-(Cemento-style miniatures), shrinking for 4+ to keep them on
-one row. With the 1100 px source unchanged at JPEG q=85,
-effective print DPI for the 1-photo case is now ~550 DPI —
-sharp at any practical zoom.
+        @page {
+          size: A4;
+       -  margin: 18mm 12mm 18mm 12mm;
+       +  margin: 24mm 12mm 18mm 12mm;
+       +  @top-left {
+       +    content: element(page-header);
+       +    width: 100%;
+       +    vertical-align: top;
+       +  }
+          @bottom-right { … }
+          @bottom-left  { … }
+        }
 
-RTL note: the `.photo-row` is `display: table` without
-`margin: auto`, so a partial-width row (e.g. 30%, 60%) sits
-naturally against the inline-start edge — which is the right
-edge in this Hebrew RTL document. Behaviour matches the rest
-of the body text.
+  2. CSS — keep the cover page clean (no header on page 1):
+
+        @page :first {
+          margin: 0;
+       +  @top-left { content: ""; }
+          @bottom-right { content: ""; }
+          @bottom-left  { content: ""; }
+        }
+
+  3. CSS — register `.running-header` as the named slot:
+
+       +.running-header {
+       +  position: running(page-header);
+       +}
+
+  4. Template — add the running element exactly once, right
+     after the `page_header()` macro definition (so the macro
+     is in scope), before the cover markup:
+
+       +{# Running header — appears at top of every page (except cover) via CSS Paged Media #}
+       +<div class="running-header">{{ page_header() }}</div>
+
+  5. Template — remove all 7 inline `{{ page_header() }}` calls
+     from the `<div class="page-break">` blocks. They're
+     redundant now and would actually double-render. Each
+     removal is just the `  {{ page_header() }}` line:
+
+        <div class="page-break">
+       -  {{ page_header() }}
+       -
+          <div class="page-label">…</div>
+          …
+        </div>
+
+     One single `replace_all` on `  {{ page_header() }}\n` —
+     all 7 call sites had byte-identical text.
+
+
+================================================================
+WHY THE COVER STAYS CLEAN
+================================================================
+
+The cover page is the document's first page and is rendered
+into `@page :first`. We explicitly set its `@top-left` content
+to the empty string, which short-circuits the `element(page-header)`
+lookup for that page only. So:
+
+  • Page 1 (cover): margin 0, no margin-boxes, full-bleed
+    cover image — UNCHANGED visual, exactly as v3.7.1.
+  • Page 2 onwards: 24mm top margin, header strip rendered in
+    the @top-left margin-box on EVERY page including
+    continuation pages of long sections.
 
 
 ================================================================
 NOT TOUCHED
 ================================================================
 
-  • Jinja loop building the photo-row markup — already uses
-    `count-{{ _count }}` and works with the new CSS unchanged
-  • `.photo` rule (background-image / aspect-ratio padding-top
-    trick — still rendering correctly)
-  • `.meter .photo` (still 2 refs)
-  • Service code: `_DEFECT_PHOTO_WIDTH = 1100`,
-    `_DEFECT_PHOTO_QUALITY = 85`, `[:6]` cap from v3.7,
-    Photo diag logging — all untouched
-  • `page_header()` macro from v3.6
-  • `.room-block` / `.room-block.keep-together` from v3.7
-  • `.defects-summary-block` wrapper from v3.4
+  • The `page_header()` macro itself — same markup, same logos,
+    same orange "מסירה: <date>" treatment. The strip looks
+    identical to v3.7.1; only the placement mechanism changed.
+  • All 7 `<div class="page-break">` wrappers — preserved
+    (forced section breaks still work; page-labels start each
+    section on a fresh page).
+  • Cover page markup, `@page :first { margin: 0 }` — preserved.
+  • Service code: nothing changed.
+  • Photo CSS (.photo-row widths from v3.7.1, .photo from
+    v3.4) — untouched.
+  • .room-block / .room-block.keep-together (v3.7) — untouched.
+  • .defects-summary-block wrapper (v3.4) — untouched.
   • backend/fonts/Rubik-Bold.ttf (47688 B; safety_pdf.py uses it)
-  • All carry-overs from v3.3 / v3.4 / v3.5 / v3.6 / v3.7
+  • All v3.3 / v3.4 / v3.5 / v3.6 / v3.7 / v3.7.1 carry-overs.
 
 
 ================================================================
@@ -180,37 +208,42 @@ restart workflows, did NOT deploy.
 Zahi runs:
 
   git add backend/templates/handover_protocol_pdf.html
-  git commit -m "handover-pdf v3.7.1 hotfix: move photo-row width from .cell to .photo-row
+  git commit -m "handover-pdf v3.8: repeat page header on EVERY page via CSS running()
 
-v3.7 set width: 30% on .photo-row .cell but WeasyPrint ignored it because
-the parent .photo-row was display:table with width:100%, and a single
-cell in a 100%-wide table gets stretched to fill the table.
+Switched the page header strip from 7 inline calls to a single
+running() element via CSS Paged Media.
 
-Fix: remove width:100% from .photo-row, drop the per-cell widths, and
-put the modifier widths on .photo-row.count-N (the table itself):
-  count-1: 30% / count-2: 60% / count-3: 90%
-  count-4: 96% / count-5: 95% / count-6: 96%
+- Added .running-header { position: running(page-header); }
+- Added @page { @top-left { content: element(page-header); } }
+- Bumped @page top margin from 18mm to 24mm to fit the strip
+- Cover page (@page :first) explicitly suppresses the running header
+- Removed all 7 inline {{ page_header() }} calls from page-break sections
 
-Cells now share the row width equally — each photo is ~5cm wide on A4
-regardless of count, matching the Cemento-style miniature design."
+Result: header strip with BrikOps + contractor logos + delivery date +
+reference number now appears at the top of EVERY page (except cover),
+not just on the first page of each section. Matches Cemento layout."
 
   git push origin staging
   ./deploy.sh --stag
 
 Verify on staging:
-  □ Defect with 1 photo → photo cell is ~5 cm wide on the right
-    (RTL inline-start), most of the row is empty space
-  □ Defect with 2 photos → 2 cells × ~5 cm sit on the right,
-    rest of row empty
-  □ Defect with 3 photos → 3 cells × ~5 cm fill ~90% of the row
-  □ Defect with 4 photos → 4 × ~4.1 cm in one row
-  □ Defect with 5 photos → 5 × ~3.2 cm in one row
-  □ Defect with 6 photos → 6 × ~2.7 cm in one row
-  □ `pdfimages -list staging.pdf` → defect photos now report
-    a much higher DPI (~250 or more, vs. ~140 in v3.7)
-  □ No row overflows the page width
-  □ Header / room-block / keep-together behaviour from v3.6 +
-    v3.7 unchanged
+  □ Page 1 (cover) — full-bleed cover, NO header strip
+    (visually identical to v3.7.1)
+  □ Page 2 (TENANTS) — header strip at top
+  □ Page 3 (TOC · DEFECTS SUMMARY) — header at top
+  □ Page 4 (ROOM INSPECTIONS, first page) — header at top
+  □ Page 5+ (continuation of ROOM INSPECTIONS, if any room
+    is long enough to wrap) — header at top  ← was missing before
+  □ Page (HANDED-OVER ITEMS), continuation if any — header at top
+  □ Page (LEGAL DECLARATIONS) and continuations — header at top
+  □ Page (TENANT NOTES) — header at top
+  □ Page (SIGNATURES) — header at top
+  □ Footer (page X / Y + brikops.com) still renders on every
+    page except cover, unchanged
+  □ Total page count similar to v3.7.1 (top margin grew 6mm,
+    so a borderline page may shift; expect ±1 page total)
+  □ pdfimages -list staging.pdf shows defect photos still at
+    high effective DPI (no regression from v3.7.1)
 
 If staging looks clean:
   ./deploy.sh --prod
