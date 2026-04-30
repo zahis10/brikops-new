@@ -230,6 +230,8 @@ def _parse_date(raw_val) -> tuple:
 def _str_val(val):
     if val is None:
         return ""
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
     return str(val).strip()
 
 
@@ -281,12 +283,7 @@ def _validate_row(row: dict, detected_keys: set) -> dict:
     for key in row:
         if key in ('source_row', 'handover_date', 'tenant_phone', 'tenant_phone_2'):
             continue
-        if isinstance(row[key], (int, float)):
-            row[key] = str(row[key])
-        elif row[key] is None:
-            row[key] = ""
-        else:
-            row[key] = str(row[key]).strip()
+        row[key] = _str_val(row[key])
 
     return {
         "row": row,

@@ -1,221 +1,156 @@
 ================================================================
-PR: Handover PDF v3.4 — Adaptive Photos + Summary Pagination
-Task: #459 (follows v3.3 / #459 follow-up #3 / #458 / #457 / #456)
+PR: Excel Import — int-as-float fix ("1.0" → "1")
 Branch: staging
 Files changed: 1
-  - backend/templates/handover_protocol_pdf.html
+  - backend/contractor_ops/import_router.py
 
-ONE COMMIT in this PR — both fixes are in the same template,
-single deploy, single commit (per Zahi's spec).
-
-Two visual polish fixes from staging review:
-  Fix 1: Adaptive defect photo layout (1/2/3 photos → 1/2/3 cells
-         at 65%/50%/33% width). No more dashed empty placeholders.
-  Fix 2: "סיכום ליקויים" header + table no longer split across
-         pages. Wrapped in a page-break-inside:avoid block.
+ONE COMMIT, ~7-line change in one file. Self-contained.
 ================================================================
 
-VERIFICATION (all passed before merge):
+THE BUG (Zahi's report)
 
-CARRY-OVER INVARIANTS FROM v3.3 (must remain unchanged):
-  $ grep -c "@font-face" backend/templates/handover_protocol_pdf.html
-  → 2 (variable Rubik + Caveat) ✅
-
-  $ grep -c "text-transform" backend/templates/handover_protocol_pdf.html
-  → 0 ✅
-
-  $ grep -c "Photo diag" backend/services/handover_pdf_service.py
-  → 2 (diagnostic logging untouched) ✅
-
-  $ stat -c '%s' backend/fonts/Rubik-Bold.ttf
-  → 47688 bytes (used by safety_pdf.py — untouched) ✅
-
-  $ git hash-object backend/fonts/Rubik-Bold.ttf
-  → bb7df28b1bbfba23e640f288579dd1a6919f5f72 (matches original) ✅
-
-NEW v3.4 INVARIANTS:
-  $ grep -c "photo-empty" backend/templates/handover_protocol_pdf.html
-  → 0 (CSS rules removed; Jinja never emits them) ✅
-
-  $ grep -c "\.photo-row\.count-" backend/templates/handover_protocol_pdf.html
-  → 3 (count-1, count-2, count-3 selectors) ✅
-
-  $ grep -c "for i in range(3)" backend/templates/handover_protocol_pdf.html
-  → 0 (Jinja loop now iterates real photos only) ✅
-
-  $ grep -c "class=\"defects-summary-block\"" backend/templates/handover_protocol_pdf.html
-  → 1 (single wrapper div around heading + paragraph + table) ✅
-
-  $ grep -c "page-break-inside: avoid" backend/templates/handover_protocol_pdf.html
-  → 7 (3 new from this PR + 4 pre-existing in print stylesheet) ✅
-
-METER PHOTOS PRESERVED (Zahi: "אם meter photos עובדים, אל תיגע"):
-  Line 1434: <img src="{{ meter_water_photo_b64 }}" alt="">
-  Line 1442: <img src="{{ meter_electricity_photo_b64 }}" alt="">
-  → both still using <img> (NOT background-image) — unchanged ✅
-
-JINJA PARSE: ✅
-
-
-================================================================
-FIX 1 — Adaptive defect photo layout
-================================================================
+Importing 277 tenants from Excel produced 198 rows failing with
+  "בניין '1.0' לא נמצא בפרויקט"
+even though the buildings are stored in the DB as plain "1", "2",
+"3" and the cells in Excel display as "1", "2", "3".
 
 ROOT CAUSE
-----------
-The defect photo-row was hard-coded to render exactly 3 cells
-via `{% for i in range(3) %}`, with each "missing" cell
-filled by a dashed `<div class="photo-empty">` placeholder
-("תמונה לא זמינה"). When the user uploaded 1 photo, it
-appeared narrow (33% column) flanked by 2 dashed boxes —
-ugly and unprofessional.
+
+openpyxl reads numeric Excel cells as Python `float` (an integer
+"1" in the cell becomes Python `1.0`). Two locations in
+import_router.py then converted that float to string with
+plain `str(...)`, producing "1.0" instead of "1":
+
+  1. _str_val (line 230) — the central reader used everywhere
+     for building, apartment, tenant_id, tenant_2_id, tenant_email.
+     Just did `str(val).strip()` with no int-vs-float distinction.
+
+  2. _validate_row (lines 281-289) — a final pass that
+     re-stringified all remaining values with another plain
+     `str(row[key])`, duplicating the same bug logic.
+
+Result: lookup keys "1.0" / "2.0" / etc. never matched the DB's
+"1" / "2" — almost every row failed.
 
 THE FIX
--------
-1. CSS: split .photo-row .cell into a base rule (no fixed width)
-   plus three modifier selectors `.photo-row.count-1/2/3 .cell`
-   that set 65% / 50% / 33.33% width respectively. Removed the
-   .photo-empty and .photo-empty::after rules entirely.
-2. Jinja: compute `_count = (it.photos or [])|select|list|length`,
-   render the wrapper only when `_count > 0`, attach a
-   `count-{{ _count }}` modifier class, and iterate only the real
-   photos (no `range(3)`, no empty placeholders).
 
-CSS DIFF (around lines 963-999):
-  .photo-row {
-    display: table;
-    width: 100%;
-    border-spacing: 6px 0;
-    margin-top: 8px;
-    table-layout: fixed;
-  }
-  .photo-row .cell {
-    display: table-cell;
-  - width: 33.33%;
-    vertical-align: top;
-    padding: 0 4px;
-  }
-  + .photo-row.count-1 .cell { width: 65%; }
-  + .photo-row.count-2 .cell { width: 50%; }
-  + .photo-row.count-3 .cell { width: 33.33%; }
-  .photo { ... unchanged ... }
-  - .photo-empty { ... entire rule removed ... }
-  - .photo-empty::after { ... entire rule removed ... }
+Two surgical edits to a single file, both following Zahi's spec
+verbatim.
 
-JINJA DIFF (defect photo-row, around lines 1370-1376):
-  -          <div class="photo-row">
-  -            {%- set _ph = (it.photos or [])|list -%}
-  -            {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo" style="background-image: url('{{ p }}');"></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
-  -          </div>
-  +          {%- set _ph = (it.photos or [])|select|list -%}
-  +          {%- set _count = _ph|length -%}
-  +          {% if _count > 0 %}
-  +          <div class="photo-row count-{{ _count }}">
-  +            {% for p in _ph %}<div class="cell"><div class="photo" style="background-image: url('{{ p }}');"></div></div>{% endfor %}
-  +          </div>
-  +          {% endif %}
+================================================================
+EDIT 1 — _str_val (lines 230-238)
+================================================================
 
-Note the `|select` filter — it strips falsy values (None, empty
-strings) so a defect with `[None, "url", None]` becomes just
-`["url"]` and renders as count-1.
+BEFORE:
+  def _str_val(val):
+      if val is None:
+          return ""
+      return str(val).strip()
 
-Note also: the `has_photo_items` filter at lines 1353-1357 still
-runs first. A defect with zero photos never enters the inner
-loop, so the `_count > 0` guard is belt-and-suspenders — but
-necessary if anyone removes/changes the outer filter later.
+AFTER:
+  def _str_val(val):
+      if val is None:
+          return ""
+      if isinstance(val, float) and val.is_integer():
+          return str(int(val))
+      return str(val).strip()
 
-WHY display:table over flex
----------------------------
-WeasyPrint's flexbox support is improving but `display: table`
-+ `table-layout: fixed` + per-cell `width:%` is rock solid in
-older WeasyPrint releases too. The existing photo-row already
-used display:table — keeping the engine choice the same minimizes
-risk to the layout pass.
+The new branch detects a float whose value is a whole integer
+(e.g. 1.0, 2.0, 12.0, 123456789.0) and converts via int first,
+giving "1", "2", "12", "123456789".
+
+Real fractional floats (1.5, 1.999999) and all other types
+(int, str, etc.) take the existing `str(val).strip()` path —
+behaviour preserved.
+
+Edge cases verified (see VERIFICATION section below):
+  - True floats unchanged: _str_val(1.5) == "1.5"
+  - True ints unchanged:    _str_val(2)   == "2"
+  - Negatives:              _str_val(-3.0) == "-3"
+  - Zero:                   _str_val(0.0) == "0"
+  - String "1.0" preserved: _str_val("1.0") == "1.0"
+                            (user typed a string, we don't strip
+                             trailing zeros from text)
+  - None unchanged:         _str_val(None) == ""
+
+================================================================
+EDIT 2 — _validate_row (lines 281-289 → 281-285)
+================================================================
+
+BEFORE:
+  for key in row:
+      if key in ('source_row', 'handover_date', 'tenant_phone', 'tenant_phone_2'):
+          continue
+      if isinstance(row[key], (int, float)):
+          row[key] = str(row[key])         # ← duplicated bug
+      elif row[key] is None:
+          row[key] = ""
+      else:
+          row[key] = str(row[key]).strip()
+
+AFTER:
+  for key in row:
+      if key in ('source_row', 'handover_date', 'tenant_phone', 'tenant_phone_2'):
+          continue
+      row[key] = _str_val(row[key])
+
+Refactored to delegate to _str_val. Now there is a single source
+of truth for cell-value stringification; future improvements
+land in one place.
+
+The skip list is preserved exactly — source_row keeps its int
+(used as a row number), handover_date is parsed separately at
+lines 275-279, and the two phone keys are normalised by
+clean_phone_for_import / normalize_israeli_phone at lines 252-265.
 
 
 ================================================================
-FIX 2 — "סיכום ליקויים" stays on one page
+VERIFICATION (ran locally before handoff)
 ================================================================
 
-ROOT CAUSE
-----------
-On the v3.3 staging PDF, page 3 contained the TOC + the heading
-"סיכום ליקויים" + the totals paragraph, then the defects-table
-overflowed onto page 4 — leaving page 3 with an orphaned heading
-and page 4 starting awkwardly mid-table-rows.
+Spec assertions from the task — all pass:
+  ✅ _str_val(1.0) == '1'
+  ✅ _str_val(2)   == '2'
+  ✅ _str_val(1.5) == '1.5'
+  ✅ _str_val('בניין 1') == 'בניין 1'
+  ✅ _str_val(None) == ''
 
-THE FIX
--------
-Wrap the heading, the totals paragraph, and the table-or-clean-
-message branch in a single `<div class="defects-summary-block">`
-and declare `page-break-inside: avoid` on it (plus on the table
-itself and individual rows for extra safety). WeasyPrint now
-keeps the entire summary together; if it doesn't fit on the
-current page, it pushes the whole block to the next page.
+Extra edge cases — all pass:
+  ✅ _str_val(0)              == '0'
+  ✅ _str_val(0.0)            == '0'
+  ✅ _str_val(-3.0)           == '-3'
+  ✅ _str_val(1.999999)       == '1.999999'
+  ✅ _str_val('  hello  ')    == 'hello'
+  ✅ _str_val('123')          == '123'
+  ✅ _str_val('1.0')          == '1.0'   (string left alone)
+  ✅ _str_val(123456789.0)    == '123456789'  ← tenant_id fix
 
-CSS ADDED (around lines 988-998):
-  + .defects-summary-block {
-  +   page-break-inside: avoid;
-  + }
-  + .defects-table {
-  +   page-break-inside: avoid;
-  + }
-  + .defects-table tbody tr {
-  +   page-break-inside: avoid;
-  + }
-
-TEMPLATE CHANGE (around lines 1240-1280):
-  Open `<div class="defects-summary-block">` immediately after
-  the `<div style="height:18px"></div>` spacer (just before the
-  h2), and close it with a matching `</div>` immediately after
-  the `{% endif %}` that closes the `if all_defects` branch and
-  before the parent page wrapper's `</div>`.
-
-  +  <div class="defects-summary-block">
-     <h2 ...>סיכום ליקויים</h2>
-     {%- set _td = total_defects|default(0) -%}
-     <p ...>סה״כ ... {{ _td }} ... </p>
-
-     {% if all_defects|default([]) %}
-     <table class="defects-table"> ... </table>
-     {% else %}
-     <div class="room-summary clean">✓ לא נמצאו ליקויים ...</div>
-     {% endif %}
-  +  </div>
-
-Wrapper boundaries verified:
-  Line 1241: <div class="defects-summary-block">
-  Line 1276: </div>            ← closes defects-summary-block
-  Line 1277: </div>            ← closes the parent page wrapper
-                                 (preserved, untouched)
+End-to-end _validate_row simulation (openpyxl-shaped row):
+  Input  : {'building': 1.0, 'apartment': 12.0,
+            'tenant_id': 123456789.0,
+            'tenant_name': '  אבי כהן  ',
+            'tenant_email': 'avi@example.com',
+            'source_row': 5, ...}
+  Output : building='1', apartment='12', tenant_id='123456789',
+           tenant_name='אבי כהן', source_row=5 (int, preserved),
+           valid=True
+  ✅ all expected values produced; no errors
 
 
 ================================================================
-SAFETY: NOT TOUCHED (per Zahi's DO NOT list)
+NOT TOUCHED (per Zahi's DO NOT list)
 ================================================================
 
-- `.meter .photo` and `.meter .photo img` rules (template lines
-  754-767). Self-contained — meter photos still use <img> +
-  object-fit:cover. CSS specificity ensures my .photo edits do
-  not affect them.
-  Verified meter <img> tags still present:
-    line 1434: <img src="{{ meter_water_photo_b64 }}">
-    line 1442: <img src="{{ meter_electricity_photo_b64 }}">
-
-- `has_photo_items` filter at lines 1353-1357. Untouched —
-  defects with zero photos still get no card.
-
-- Photo diagnostic logging block in handover_pdf_service.py.
-  Untouched — still 2 references ("Photo diag" log lines).
-
-- `Rubik-Regular.ttf` and `Rubik-Bold.ttf`. Untouched on disk.
-  Bold (47688 bytes, hash bb7df28b…) stays on disk for
-  safety_pdf.py / ReportLab path.
-
-- `backend/services/safety_pdf.py` and any service-layer logic.
-  Template-only PR.
-
-- No new forced page-breaks. Only `page-break-inside: avoid`.
+- _normalize_building_name (line ~299)        — already correct
+- _normalize_unit_no                          — already correct
+- _parse_date                                 — handles its own
+                                                 .is_integer() path
+                                                 (Excel serial → date)
+- handover_date / tenant_phone / tenant_phone_2 stripping
+                                              — preserved via the
+                                                skip list
+- All other validation logic, error messages, and the route
+  handlers themselves                          — untouched
 
 
 ================================================================
@@ -225,29 +160,35 @@ DEPLOYMENT
 Standing rule respected: agent did NOT git commit, did NOT
 restart workflows, did NOT deploy.
 
-Zahi runs (ONE commit, both fixes in same file):
+Zahi runs:
 
-  git add backend/templates/handover_protocol_pdf.html
-  git commit -m "handover-pdf v3.4: adaptive photo layout + summary table page-break fix"
+  git add backend/contractor_ops/import_router.py
+  git commit -m "import_router: fix int-as-float reading from Excel (1.0 → 1)
+
+openpyxl reads integer cells as Python float (1 → 1.0). Previously
+str(val) produced \"1.0\" which broke building/apartment lookup against
+DB values stored as \"1\". Now _str_val detects int-valued floats and
+converts via int first. Refactored _validate_row to use _str_val
+instead of duplicating the conversion logic.
+
+Fixes: 198/277 rows failing import with \"בניין '1.0' לא נמצא בפרויקט\""
   git push origin staging
   ./deploy.sh --stag
 
-  # Verify on staging — generate one PDF with mixed defects:
-  #   1. defect with 1 photo → expect ONE large centered cell
-  #      (no dashed boxes on either side)
-  #   2. defect with 2 photos → expect TWO half-width cells
-  #   3. defect with 3 photos → expect THREE equal cells (current look)
-  #
-  # And page break check:
-  #   pdftotext -layout staging.pdf - | grep -A 2 "סיכום ליקויים"
-  #     → heading + table contents appear together on the same page
-  #     → no page begins mid-table-rows
+Verify on staging:
+  1. Open "ייבוא נתוני רוכשים" screen
+  2. Upload the same 277-tenant Excel file that previously failed
+  3. Expected: the 198 "בניין '1.0' לא נמצא" errors → 0
+     The previously-red rows turn green ("תקינות")
+  4. Spot-check that any row with a real fractional value
+     (unlikely here, but safety) still parses correctly
 
-  # If staging looks good:
+If staging looks clean:
   ./deploy.sh --prod
 
-Regression checks:
-  pdfimages -list staging.pdf            # defect photos still embedded
-  pdffonts staging.pdf                   # only Rubik + Caveat (no DejaVu)
-  generate a safety PDF                  # safety_pdf.py path still works
-  grep "\[PDF\] Photo diag" /var/log/.../app.log   # diagnostic still firing
+Regression check (no DB schema changes; pure Python logic):
+  - Other importers using _str_val (if any) get the same
+    improvement automatically — search for callers shows it is
+    used 5 times in this file (apt, name, tenant_id, email,
+    tenant_2_id) and once via _validate_row's catch-all loop.
+  - No other modules import _str_val.
