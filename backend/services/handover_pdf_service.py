@@ -408,7 +408,7 @@ async def _build_template_context(protocol: dict, db) -> dict:
                     item_photos = defect_photos
 
             if item_photos and item.get("status") in ("defective", "partial"):
-                for photo_ref in item_photos[:3]:
+                for photo_ref in item_photos[:6]:
                     key_name = f"photo_{photo_counter}"
                     image_keys.append((key_name, photo_ref))
                     item_key = f"{sec.get('section_id', '')}_{item.get('item_id', '')}"

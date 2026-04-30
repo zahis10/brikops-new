@@ -1,272 +1,203 @@
 ================================================================
-PR: Handover PDF v3.6 — empty pages + smaller photos + header
-                        logo + delivery date (Option A)
+PR: Handover PDF v3.7 — smaller photos (Cemento-style, up to 6)
+                        + smart section break (no orphan rows)
 Branch: staging
-Files changed: 1
+Files changed: 2
   - backend/templates/handover_protocol_pdf.html
+  - backend/services/handover_pdf_service.py
 
-ONE COMMIT, three independent fixes from the v3.5 staging review.
-NO service / backend changes.
+ONE COMMIT, two independent fixes from the v3.6 staging review.
+Service touched in exactly one place: bump photo cap 3 → 6.
 ================================================================
 
 VERIFICATION (all passed before merge):
 
-FIX 1 — Orphan pages (Option A):
-  $ grep -c 'class="no-break"' backend/templates/handover_protocol_pdf.html
-  → 0 (in body — was 1)                                        ✅
-  $ grep -c 'class="page-break"' backend/templates/handover_protocol_pdf.html
-  → 7 (forced section breaks PRESERVED)                         ✅
-  $ grep -n "class=\"page-label keep-with-next\"" backend/templates/handover_protocol_pdf.html
-  → (no match — class no longer applied to ROOM INSPECTIONS)    ✅
-  $ grep -n "^\.room-block\|^table\.items tbody tr" backend/templates/handover_protocol_pdf.html
-  → 470: .room-block { page-break-inside: auto }
-  → 479: table.items tbody tr { page-break-inside: avoid }      ✅
-  (.room-head already had page-break-after: avoid at line 476)
+FIX 1 — Smaller photos + support up to 6:
+  $ grep -n "for photo_ref in item_photos" backend/services/handover_pdf_service.py
+  → 411: item_photos[:6]   (was [:3])                          ✅
+  $ grep -n "photo-row\.count-" backend/templates/handover_protocol_pdf.html
+  → count-1 .cell { width: 30%; }   (was 40%)                  ✅
+  → count-2 .cell { width: 30%; }   (was 40%)                  ✅
+  → count-3 .cell { width: 30%; }   (was 33.33%)               ✅
+  → count-4 .cell { width: 24%; }   (NEW)                      ✅
+  → count-5 .cell { width: 19%; }   (NEW)                      ✅
+  → count-6 .cell { width: 16%; }   (NEW)                      ✅
+  (Existing template loop already uses `count-{{ _count }}` —
+   automatically picks up the new count-4/5/6 classes.)
 
-FIX 2 — Smaller defect photos:
-  $ grep "photo-row\.count-" backend/templates/handover_protocol_pdf.html
-  → .photo-row.count-1 .cell { width: 40%; }    (was 50%)       ✅
-  → .photo-row.count-2 .cell { width: 40%; }    (was 50%)       ✅
-  → .photo-row.count-3 .cell { width: 33.33%; } (unchanged)     ✅
+FIX 2 — Smart section break (keep-together for non-first rooms):
+  $ grep -n "keep-together" backend/templates/handover_protocol_pdf.html
+  → 473: .room-block.keep-together {     (CSS rule)            ✅
+  → 1336: <div class="room-block{% if not loop.first %} keep-together{% endif %}">  ✅
+  $ grep -n "^\.room-block" backend/templates/handover_protocol_pdf.html
+  → 470: .room-block { page-break-inside: auto; }              ✅
+  → 473: .room-block.keep-together { page-break-inside: avoid; }  ✅
+  End-to-end render with 2 inspection_sections:
+  → room[0] = "<div class=\"room-block\""                      ✅
+  → room[1] = "<div class=\"room-block keep-together\""        ✅
 
-FIX 3 — Header strip (macro + contractor logo + delivery date):
-  $ grep -c "{% macro page_header" backend/templates/handover_protocol_pdf.html
-  → 1                                                           ✅
-  $ grep -c "{{ page_header() }}" backend/templates/handover_protocol_pdf.html
-  → 7  (one per page-break section)                             ✅
-  $ grep -c '<div class="ph">' backend/templates/handover_protocol_pdf.html
-  → 1  (only inside the macro body — all 7 inline blocks gone)  ✅
-  $ grep -n "^\.ph-company-logo\|^\.ph-date" backend/templates/handover_protocol_pdf.html
-  → 850, 855, 858  (3 new CSS rules)                            ✅
-
-CARRY-OVER INVARIANTS FROM v3.3 / v3.4 / v3.5 (unchanged):
-  @font-face count                = 2          ✅
-  text-transform count            = 0          ✅
-  Photo diag in service           = 2          ✅
-  photo-empty references          = 0          ✅
-  Rubik-Bold.ttf size             = 47688 B    ✅
-  _DEFECT_PHOTO_WIDTH             = 1100       ✅
-  _DEFECT_PHOTO_QUALITY           = 85         ✅
-  Legal sig sig_type conditionals = 2          ✅
-  Meter <img> tags                = 2          ✅
-  defects-summary-block wrapper   = 2          ✅
-
-  Jinja parse:                       ✅
-  Macro renders end-to-end:          ✅ (31572 chars on minimal context)
-  service import:                    ✅
-  No duplicate macro names           ✅ (page_header at 1078, pre-existing sig_card at 1550)
+CARRY-OVER INVARIANTS (all unchanged):
+  @font-face count                  = 2          ✅
+  text-transform count              = 0          ✅
+  Photo diag in service             = 2          ✅
+  photo-empty references            = 0          ✅
+  Rubik-Bold.ttf size               = 47688 B    ✅
+  _DEFECT_PHOTO_WIDTH               = 1100       ✅
+  _DEFECT_PHOTO_QUALITY             = 85         ✅
+  page_header() macro defs          = 1          ✅
+  page_header() calls               = 7          ✅
+  forced page-break wrappers        = 7          ✅
+  no-break in body                  = 0          ✅
+  defects-summary-block wrapper     = 2          ✅
+  Meter <img> tags                  = 2          ✅
+  Jinja parse                       =            ✅
+  Macro renders end-to-end          = 33688 chars ✅
+  service import                    =            ✅
 
 
 ================================================================
-FIX 1 — Orphan pages 5+6 (Option A: split rooms, keep break)
+FIX 1 — Photos still too dominant + need up to 6
 ================================================================
 
 PROBLEM
 -------
-On v3.5 staging:
-  page 4: defects summary table
-  page 5: EMPTY — only header strip
-  page 6: ALMOST EMPTY — only "ROOM INSPECTIONS · בדיקת חדרים"
-  page 7: first room (כניסה לדירה)
+v3.6 set 1-photo and 2-photo cells to 40%. Zahi feedback:
+"בסגנון של סמנטו" — the user wants Cemento-style miniatures
+(roughly 25-30%). And he wants to support more than 3 photos
+per defect; today the service hard-caps at 3.
 
-Three things conspired:
-  • `<div class="page-break">` forced a fresh page for the section
-  • the v3.5 `keep-with-next` made the page-label glue itself to
-    the first room
-  • `<div class="no-break">` around every room said "do not split
-    this room across pages"
+FIX 1A — Service: raise cap from 3 to 6
+---------------------------------------
+  backend/services/handover_pdf_service.py:411
 
-The first room is too tall to fit alone on the freshly-opened
-page → WeasyPrint pushes the whole thing out → page 5 ends up
-empty. Then on page 6 the same thing happens with the next page
-(label moves with it), leaving page 6 with just the label.
+    -  for photo_ref in item_photos[:3]:
+    +  for photo_ref in item_photos[:6]:
 
-OPTION A FIX (per Zahi's revised spec)
---------------------------------------
-Keep the section's forced page-break (the section still opens
-cleanly on its own page with the header strip on top — that's
-desirable), but allow rooms to split across pages, with the
-room title glued to the start of its items table on whichever
-page that table begins.
+  This is the only line touched in the service. Everything else
+  about photo registration / reference-resolution / image
+  embedding is unchanged.
 
-Three changes:
+FIX 1B — CSS: smaller widths + support count-4/5/6
+--------------------------------------------------
+  backend/templates/handover_protocol_pdf.html:1017–1022
 
-  1a. Replace the `no-break` wrapper around each room with a new
-      `room-block` class, in the inspection_sections loop:
+    -.photo-row.count-1 .cell { width: 40%; }
+    -.photo-row.count-2 .cell { width: 40%; }
+    -.photo-row.count-3 .cell { width: 33.33%; }
+    +.photo-row.count-1 .cell { width: 30%; }
+    +.photo-row.count-2 .cell { width: 30%; }
+    +.photo-row.count-3 .cell { width: 30%; }
+    +.photo-row.count-4 .cell { width: 24%; }
+    +.photo-row.count-5 .cell { width: 19%; }
+    +.photo-row.count-6 .cell { width: 16%; }
 
-        -  <div class="no-break">
-        +  <div class="room-block">
+  Width arithmetic on A4 (~17 cm usable):
+    1 photo  → 30% × 17 cm ≈ 5.1 cm wide  (Cemento-style card)
+    2 photos → 30% × 2 = 60%   (margin to spare)
+    3 photos → 30% × 3 = 90%   (was 100%, slightly tighter row)
+    4 photos → 24% × 4 = 96%
+    5 photos → 19% × 5 = 95%
+    6 photos → 16% × 6 = 96%
 
-      (only one occurrence in the body — the room-block wrapper
-       inside `{% for sec in inspection_sections … %}` at the
-       new line 1333)
+  Effective print DPI further increased: source is still 1100 px
+  at JPEG q=85, so a 30% (~5 cm) cell prints at ~250 DPI (was
+  ~190 DPI at 40%). Sharper, not blurrier.
 
-  1b. Add CSS rules:
+  The Jinja photo loop already builds the class as
+  `count-{{ _count }}` and there's no upper-bound `if`, so the
+  new count-4/5/6 classes are picked up automatically — no
+  template-loop changes needed.
 
-        +  .room-block {
-        +    page-break-inside: auto;
-        +  }
-        +  table.items tbody tr {
-        +    page-break-inside: avoid;
-        +  }
-
-      `.room-head` already had `page-break-after: avoid` from a
-      prior version (line 476), so the room title stays glued
-      to the start of its items table. Combined with the new
-      `tbody tr` rule, individual table rows never split.
-
-  1c. Remove `keep-with-next` from the section's page-label —
-      no longer needed and was making things worse:
-
-        -  <div class="page-label keep-with-next">ROOM INSPECTIONS · בדיקת חדרים</div>
-        +  <div class="page-label">ROOM INSPECTIONS · בדיקת חדרים</div>
-
-      The `.keep-with-next` CSS rule itself is left in place
-      (harmless; might be useful again later).
-
-Result:
-  • ROOM INSPECTIONS still starts on a fresh page with header
-    strip on top (page-break preserved).
-  • The first room flows immediately under the page-label on
-    that same page.
-  • A long room may split between table rows across pages, with
-    the room title staying with the start of the table on its
-    first page; rows stay intact.
-  • No more orphan / empty pages.
+  File-size trade-off: a defect with all 6 photos adds ~3 extra
+  full-resolution photos (~30 KB JPEG each) ≈ +180 KB per
+  worst-case defect. Acceptable.
 
 
 ================================================================
-FIX 2 — Defect photos still too dominant
+FIX 2 — Section split bug (small rooms tearing across pages)
 ================================================================
 
 PROBLEM
 -------
-v3.5 set 1-photo and 2-photo cells to 50% width. Zahi feedback:
-"תמונות עדיין ענקיות מדי לדעתי". One photo at 50% still feels
-billboard-sized; two photos at 50% each take the entire row
-width.
+On v3.6 staging: "שירותי הורים" (a small section, 13 items)
+started at the bottom of one page with header + 1–2 rows and
+continued on the next page. Ugly for an A4 print.
 
-FIX
----
-  -.photo-row.count-1 .cell { width: 50%; }
-  -.photo-row.count-2 .cell { width: 50%; }
-  +.photo-row.count-1 .cell { width: 40%; }
-  +.photo-row.count-2 .cell { width: 40%; }
-   .photo-row.count-3 .cell { width: 33.33%; }
+DIAGNOSIS
+---------
+v3.6 deliberately switched `.room-block` to
+`page-break-inside: auto` so a long first room could split
+across pages — that's what fixed the v3.5 orphan pages 5+6
+(empty page after ROOM INSPECTIONS). But blanket-`auto`
+applied to ALL rooms means short rooms now also split
+mid-section if they happen to land at a page boundary.
 
-  • 1 photo at 40% — comfortable card-sized image.
-  • 2 photos at 40% each (= 80% total) — fits with margin to spare.
-  • 3 photos unchanged at 33% each.
+The right behaviour:
+  • The FIRST room must keep `auto` so it can still break if
+    it doesn't fit on the freshly-opened section page (else
+    the v3.5 orphan-page bug returns).
+  • All SUBSEQUENT rooms should `avoid` mid-page splits — if
+    the next room doesn't fit on the current page, push the
+    whole thing to the next page intact.
 
-The underlying photo source is still 1100 px wide JPEG q=85
-(unchanged from v3.5), so reducing the cell width actually
-INCREASES effective DPI in print: ~1100 px / ~6 cm cell ≈ ~190
-DPI (was ~150 DPI at 50% / ~7.5 cm). Sharper, not blurrier.
+FIX 2A — Template: conditional class
+------------------------------------
+  backend/templates/handover_protocol_pdf.html:1336
 
+    -  <div class="room-block">
+    +  <div class="room-block{% if not loop.first %} keep-together{% endif %}">
 
-================================================================
-FIX 3 — Page header: contractor logo + delivery date (macro)
-================================================================
+  Only the very first iteration (`loop.first`) of the
+  inspection_sections loop renders the bare `room-block`; all
+  others get the additional `keep-together` modifier.
 
-PROBLEM
--------
-  • The interior page header strip showed only the BrikOps
-    platform logo. The contractor's company logo
-    (`logo_b64` in the context, loaded from `company_logo_url`
-    by the service at handover_pdf_service.py:387) was never
-    rendered.
-  • The delivery date hid as plain text in the right strip,
-    sharing space with the reference number — easy to miss.
-  • Seven copies of the same `<div class="ph">…</div>` block
-    lived inline at 7 page-break sections (TENANTS, TABLE OF
-    CONTENTS · DEFECTS SUMMARY, ROOM INSPECTIONS, HANDED-OVER
-    ITEMS · METER READINGS, LEGAL DECLARATIONS, TENANT NOTES,
-    SIGNATURES). Any future header tweak meant 7 edits.
+FIX 2B — CSS: split rule, two behaviours
+----------------------------------------
+  backend/templates/handover_protocol_pdf.html:470–478
 
-FIX
----
-DRY refactor + content additions, no new dependencies:
+    .room-block {
+      page-break-inside: auto;       /* default — first room can split */
+    }
+    .room-block.keep-together {
+      page-break-inside: avoid;      /* all subsequent rooms try to stay together */
+    }
 
-  3a. New Jinja macro at the top of `<body>`:
+  `.room-head` keeps its own `page-break-after: avoid` (set in
+  an earlier version, line 482) — so the room title still glues
+  itself to the start of its items table on whichever page that
+  table begins. `table.items tbody tr { page-break-inside: avoid }`
+  (set in v3.6) keeps individual rows from tearing.
 
-        {% macro page_header() %}
-        <div class="ph">
-          <div class="ph-left">
-            {% if brikops_logo_b64 %}<img class="ph-logo" src="{{ brikops_logo_b64 }}" alt=""/>{% endif %}
-            {% if logo_b64 %}<img class="ph-logo ph-company-logo" src="{{ logo_b64 }}" alt=""/>{% endif %}
-            <span class="ph-title">פרוטוקול מסירה{% if building_name or unit_name %} · <b>{{ building_name }}{% if unit_name %} · {{ unit_name }}{% endif %}</b>{% endif %}</span>
-          </div>
-          <div class="ph-right">
-            {% if signed_date %}<span class="ph-date">מסירה: <b>{{ signed_date }}</b></span>{% else %}{{ generation_date }}{% endif %}
-            {% if display_number %} · {{ display_number }}{% endif %}
-          </div>
-        </div>
-        {% endmacro %}
-
-      Three behaviour changes vs. the old inline block:
-        - Adds the contractor logo (`logo_b64`) next to the
-          BrikOps logo when present (silently skipped otherwise).
-        - Right side switches from raw `generation_date` to
-          "מסירה: <signed_date>" in orange-bold; falls back to
-          `generation_date` only when not yet signed (preserves
-          the previous behaviour for unsigned protocols).
-        - Reference number (`display_number`) remains in the
-          same right-side position, after a separator.
-
-  3b. New CSS (placed in the existing legal/sig CSS block):
-
-        +.ph-company-logo {
-        +  height: 22px;
-        +  margin-right: 8px;
-        +  vertical-align: middle;
-        +}
-        +.ph-date {
-        +  color: var(--ink);
-        +}
-        +.ph-date b {
-        +  color: var(--orange);
-        +  font-weight: 700;
-        +}
-
-      `--orange: #F08A3E` is the existing palette token at
-      template line 22.
-
-  3c. All 7 inline `<div class="ph">…</div>` blocks (which were
-      byte-identical) replaced with `{{ page_header() }}`:
-
-        $ grep -c "{{ page_header() }}" template
-        → 7
-
-        $ grep -c '<div class="ph">' template
-        → 1   (only the one inside the macro definition itself)
-
-      Net code change: -7 × 7 lines of duplicated header markup,
-      +13 lines for the single macro definition. Future header
-      changes are now one-line edits.
+EXPECTED RESULT
+---------------
+  • ROOM INSPECTIONS still opens on a fresh page with the page
+    header strip on top + page-label.
+  • The first room flows in immediately; if it's enormous it
+    can split between rows — no orphan / empty page comes back.
+  • Each subsequent room either fits on the current page in its
+    entirety, or moves intact to the next page.
+  • Small sections like "שירותי הורים" are no longer torn at
+    page boundaries.
 
 
 ================================================================
 NOT TOUCHED (per Zahi's DO NOT list + carry-over invariants)
 ================================================================
 
-- backend/services/handover_pdf_service.py — NOT touched. All
-  context vars the macro needs (logo_b64, brikops_logo_b64,
-  signed_date, generation_date, building_name, unit_name,
-  display_number) were already provided at lines 700-720.
-  Verified by import + end-to-end Jinja render.
-- Photo diag logging (still 2 references in the service)
+- Photo diag logging in handover_pdf_service.py (still 2 refs)
 - `.meter .photo` and meter <img> tags (still 2)
 - _str_val in import_router.py (separate Excel-import PR)
+- The `page_header()` macro from v3.6 (unchanged)
+- `.defects-summary-block` wrapper from v3.4 (still 2 refs)
 - backend/fonts/Rubik-Bold.ttf (still 47688 B; safety_pdf.py
-  still loads it)
-- No new forced page-breaks added. Only `keep-with-next` and
-  `no-break` removed; only `room-block { page-break-inside: auto }`
-  and `tbody tr { page-break-inside: avoid }` added.
-- defects-summary-block wrapper, has_photo_items filter, all
-  v3.3/v3.4/v3.5 carry-overs intact.
-- The cover page header (separate `.cover-*` markup at the top
-  of <body>) is unrelated to the page-header strip and is NOT
-  touched.
+  still uses it)
+- handover_pdf_service.py — only the `[:3]` → `[:6]` cap was
+  bumped. Nothing else in the service was edited.
+- All v3.3 / v3.4 / v3.5 / v3.6 carry-overs preserved
+  (variable Rubik @font-face, background-image defect photos,
+  defects-summary-block wrapper, photo constants 1100/85,
+  legal sig rendering, has_photo_items filter, page_header
+  macro, page-break / no-break structure)
 
 
 ================================================================
@@ -278,55 +209,46 @@ restart workflows, did NOT deploy.
 
 Zahi runs:
 
-  git add backend/templates/handover_protocol_pdf.html
-  git commit -m "handover-pdf v3.6: smaller photos + header logo+date + fix orphan pages
+  git add backend/templates/handover_protocol_pdf.html backend/services/handover_pdf_service.py
+  git commit -m "handover-pdf v3.7: smaller photos + support up to 6 + smart section break
 
-Fix #1 (orphan pages 5+6):
-  Keep the forced page-break before ROOM INSPECTIONS so the
-  section still starts cleanly on a new page with its header
-  strip on top. Remove the no-break wrapper around individual
-  rooms — let rooms split naturally between table rows when
-  they're too tall to fit on one page. Add room-block /
-  table.items tbody tr CSS so the room title stays glued to
-  its table on whichever page the table starts. The v3.5
-  keep-with-next attempt is removed (no longer needed).
+Fix #1 (photo size + count):
+  - All photo widths reduced to 30% (Cemento-style)
+  - Service cap raised from 3 to 6 photos per defect
+  - Add count-4/5/6 CSS rules (24%/19%/16%)
+  - Effective DPI further increased: ~250 DPI at 30% (was ~190 at 40%)
 
-Fix #2 (photos still too large):
-  1-photo and 2-photo cell width 50% → 40%. Less dominant on
-  the page; underlying source is still 1100 px JPEG q=85 so
-  effective DPI increases (~190 DPI vs. ~150 in v3.5).
-
-Fix #3 (header improvements):
-  - Refactor page header into a Jinja macro page_header()
-    (DRY across 7 sections, all 7 inline blocks replaced by
-    a single macro call)
-  - Add contractor company logo (logo_b64) next to BrikOps logo
-    when configured — service was already loading it
-  - Add prominent delivery date 'מסירה: [date]' in header right
-    in orange-bold, falls back to generation_date if unsigned
-  - 3 new CSS rules: .ph-company-logo, .ph-date, .ph-date b"
+Fix #2 (section split bug):
+  - All rooms except the first get a keep-together class
+  - CSS: .room-block.keep-together { page-break-inside: avoid }
+  - First room stays auto so it can split if it doesn't fit on the
+    fresh page after the section header (preserves v3.6 orphan-page fix)
+  - Result: small sections like 'שירותי הורים' no longer split with
+    just 1-2 rows at the bottom of a page"
 
   git push origin staging
   ./deploy.sh --stag
 
 Verify on staging:
-  □ No empty page between defects summary and ROOM INSPECTIONS
-  □ ROOM INSPECTIONS still starts on a fresh page with the
-    header strip on top
-  □ First room renders immediately below the section page-label
-  □ A long room (if any) splits naturally between table rows;
-    the room title stays with the start of the table on
-    whichever page it begins
-  □ Defect with 1 photo → cell is 40% wide (sharper print at
-    higher effective DPI)
-  □ Defect with 2 photos → 80% combined width
-  □ Header strip on every interior page shows: BrikOps logo,
-    contractor logo (when org has one configured), protocol
-    title with building/unit
-  □ Right side: "מסירה: <date>" in orange-bold + reference number
-  □ Unsigned protocol → falls back to generation_date in plain text
-  □ Org without company_logo_url → only BrikOps logo, no broken img
-  □ Cover page unchanged
+  □ Defect with 1 photo → cell ~30% wide (Cemento-style miniature)
+  □ Defect with 2 photos → 30% + 30% (60% combined, comfy gap)
+  □ Defect with 3 photos → 3 × 30% (90% combined)
+  □ Defect with 4 photos → 4 × 24% all on one row
+  □ Defect with 5 photos → 5 × 19% all on one row
+  □ Defect with 6 photos → 6 × 16% all on one row (miniatures
+    but readable)
+  □ A defect that previously had >3 photos now shows up to 6
+    (capped at 6)
+  □ "שירותי הורים" (or any small section) is NOT torn at the
+    bottom of a page — either fully on current page or fully
+    moved to next page
+  □ ROOM INSPECTIONS still starts on a fresh page with header
+    strip + page-label on top
+  □ The very first room can still split across pages if it's
+    too tall — no empty page 5/6 returns
+  □ Page header strip on every interior page unchanged from v3.6
+    (BrikOps logo, contractor logo when present, "מסירה: <date>"
+    in orange-bold + reference number)
 
 If staging looks clean:
   ./deploy.sh --prod

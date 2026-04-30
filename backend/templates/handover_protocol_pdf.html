@@ -468,7 +468,10 @@ table { border-collapse: collapse; }
 
 /* ---------- ROOM HEAD + ITEMS ---------- */
 .room-block {
-  page-break-inside: auto;
+  page-break-inside: auto;       /* default — first room can split */
+}
+.room-block.keep-together {
+  page-break-inside: avoid;      /* all subsequent rooms try to stay together */
 }
 .room-head {
   display: table;
@@ -1011,9 +1014,12 @@ table.items .note {
   vertical-align: top;
   padding: 0 4px;
 }
-.photo-row.count-1 .cell { width: 40%; }
-.photo-row.count-2 .cell { width: 40%; }
-.photo-row.count-3 .cell { width: 33.33%; }
+.photo-row.count-1 .cell { width: 30%; }
+.photo-row.count-2 .cell { width: 30%; }
+.photo-row.count-3 .cell { width: 30%; }
+.photo-row.count-4 .cell { width: 24%; }
+.photo-row.count-5 .cell { width: 19%; }
+.photo-row.count-6 .cell { width: 16%; }
 .photo {
   display: block;
   width: 100%;
@@ -1327,7 +1333,7 @@ table.items .note {
 
   {% for sec in inspection_sections|default([]) %}
   {% set sec_defects = (sec.fail|default(0)) + (sec.partial|default(0)) %}
-  <div class="room-block">
+  <div class="room-block{% if not loop.first %} keep-together{% endif %}">
     <div class="room-head">
       <div class="room-title">
         <span class="num">{{ '%02d'|format(loop.index) }}</span>{{ sec.name|default('—') }}

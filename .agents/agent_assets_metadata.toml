@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Handover PDF v3.6 (Option A) — fixes orphan pages, shrinks photos to 40%, adds contractor logo + orange delivery date in macro-refactored header (1 commit, 1 file, no service changes)"
+title = "Handover PDF v3.7 — Cemento-style 30% photos with support up to 6 per defect, plus smart section-break that keeps small rooms (e.g. שירותי הורים) intact while still allowing the first long room to split (1 commit, 2 files)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"
