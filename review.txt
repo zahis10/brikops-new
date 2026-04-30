@@ -1,374 +1,221 @@
 ================================================================
-PR: Handover PDF v3.3 Follow-Up #3
-Task: #459 (follows #458 / #457 / #456)
+PR: Handover PDF v3.4 — Adaptive Photos + Summary Pagination
+Task: #459 (follows v3.3 / #459 follow-up #3 / #458 / #457 / #456)
 Branch: staging
 Files changed: 1
   - backend/templates/handover_protocol_pdf.html
 
-⚠ TWO COMMITS in this PR — split per Zahi's spec:
-  Commit A: variable Rubik font for ALL weights  (Hebrew gibberish fix #3)
-  Commit B: background-image for defect photos   (object-fit fix)
+ONE COMMIT in this PR — both fixes are in the same template,
+single deploy, single commit (per Zahi's spec).
 
-⚠ CORRECTION (was caught in review)
-The first draft of this PR proposed deleting
-backend/fonts/Rubik-Bold.ttf as part of Commit A. That was wrong —
-the file is still consumed by backend/services/safety_pdf.py
-(Safety feature, ReportLab path), which is INDEPENDENT of the
-handover PDF (WeasyPrint path). The file has been restored
-byte-for-byte (git blob hash bb7df28b… matches the original).
-Commit A now changes only the template — no font file deletion.
-
-Diagnostic logging from previous follow-up confirmed:
-  ✅ data flow correct  (fetched_truthy=1/1 per defective item)
-  ❌ font lacks Hebrew  (Rubik-Bold.ttf hebrew=0/27 glyphs)
-  ❌ object-fit broken  (images embedded but not displayed)
-
-Two distinct root causes → two separate fixes.
+Two visual polish fixes from staging review:
+  Fix 1: Adaptive defect photo layout (1/2/3 photos → 1/2/3 cells
+         at 65%/50%/33% width). No more dashed empty placeholders.
+  Fix 2: "סיכום ליקויים" header + table no longer split across
+         pages. Wrapped in a page-break-inside:avoid block.
 ================================================================
 
 VERIFICATION (all passed before merge):
-  $ grep -c "@font-face" backend/templates/handover_protocol_pdf.html
-  → 2 (one Rubik variable + one Caveat) ✅
 
-  $ ls -la backend/fonts/Rubik-Bold.ttf
-  → present, 47688 bytes (used by safety_pdf.py — kept on disk) ✅
+CARRY-OVER INVARIANTS FROM v3.3 (must remain unchanged):
+  $ grep -c "@font-face" backend/templates/handover_protocol_pdf.html
+  → 2 (variable Rubik + Caveat) ✅
+
+  $ grep -c "text-transform" backend/templates/handover_protocol_pdf.html
+  → 0 ✅
+
+  $ grep -c "Photo diag" backend/services/handover_pdf_service.py
+  → 2 (diagnostic logging untouched) ✅
+
+  $ stat -c '%s' backend/fonts/Rubik-Bold.ttf
+  → 47688 bytes (used by safety_pdf.py — untouched) ✅
 
   $ git hash-object backend/fonts/Rubik-Bold.ttf
   → bb7df28b1bbfba23e640f288579dd1a6919f5f72 (matches original) ✅
 
-  $ grep -n "Rubik-Bold" backend/templates/handover_protocol_pdf.html
-  → ZERO references (handover no longer uses static bold) ✅
+NEW v3.4 INVARIANTS:
+  $ grep -c "photo-empty" backend/templates/handover_protocol_pdf.html
+  → 0 (CSS rules removed; Jinja never emits them) ✅
 
-  $ grep -n "Rubik-Bold" backend/services/safety_pdf.py
-  → 4 references (lines 38, 44, 221, 225 — safety_pdf still uses it) ✅
+  $ grep -c "\.photo-row\.count-" backend/templates/handover_protocol_pdf.html
+  → 3 (count-1, count-2, count-3 selectors) ✅
 
-  $ grep -n "<img" backend/templates/handover_protocol_pdf.html | grep "class=\"photo\""
-  → only meter-water/meter-electricity (preserved) ✅
+  $ grep -c "for i in range(3)" backend/templates/handover_protocol_pdf.html
+  → 0 (Jinja loop now iterates real photos only) ✅
 
-  $ grep -n "background-image" backend/templates/handover_protocol_pdf.html
-  → only defect-card photo-row (line 1377) ✅
+  $ grep -c "class=\"defects-summary-block\"" backend/templates/handover_protocol_pdf.html
+  → 1 (single wrapper div around heading + paragraph + table) ✅
 
-  $ grep -c "text-transform" backend/templates/handover_protocol_pdf.html
-  → 0 (carry-over invariant from follow-up #2) ✅
+  $ grep -c "page-break-inside: avoid" backend/templates/handover_protocol_pdf.html
+  → 7 (3 new from this PR + 4 pre-existing in print stylesheet) ✅
 
-  $ grep -c "Photo diag" backend/services/handover_pdf_service.py
-  → 2 (diagnostic logging preserved per "DO NOT touch") ✅
+METER PHOTOS PRESERVED (Zahi: "אם meter photos עובדים, אל תיגע"):
+  Line 1434: <img src="{{ meter_water_photo_b64 }}" alt="">
+  Line 1442: <img src="{{ meter_electricity_photo_b64 }}" alt="">
+  → both still using <img> (NOT background-image) — unchanged ✅
 
-  Jinja parse check: ✅ template parses OK
-
-  fontTools verification (UNCHANGED on disk, intentionally):
-    Rubik-Regular.ttf: hebrew=27/27 ✓ lower=26/26 ✓ upper=26/26 ✓
-                       variable=True (wght axis 300-900)
-                       1174 glyphs total
-    Rubik-Bold.ttf:    hebrew=0/27,  lower=26/26,   upper=26/26
-                       static, 47688 bytes
-                       (kept for safety_pdf.py — not loaded by handover)
+JINJA PARSE: ✅
 
 
 ================================================================
-WHY Rubik-Bold.ttf STAYS ON DISK (two isolated PDF paths)
+FIX 1 — Adaptive defect photo layout
 ================================================================
 
-The codebase has TWO independent PDF generators:
+ROOT CAUSE
+----------
+The defect photo-row was hard-coded to render exactly 3 cells
+via `{% for i in range(3) %}`, with each "missing" cell
+filled by a dashed `<div class="photo-empty">` placeholder
+("תמונה לא זמינה"). When the user uploaded 1 photo, it
+appeared narrow (33% column) flanked by 2 dashed boxes —
+ugly and unprofessional.
 
-  1. HANDOVER PDF — backend/services/handover_pdf_service.py
-     Engine: WeasyPrint (HTML/CSS → PDF)
-     Template: backend/templates/handover_protocol_pdf.html
-     Fonts: declared via @font-face inside the template.
-     After this PR: only Rubik-Regular.ttf (variable, 300-900) +
-                    Caveat-Regular.ttf. NO reference to Rubik-Bold.
+THE FIX
+-------
+1. CSS: split .photo-row .cell into a base rule (no fixed width)
+   plus three modifier selectors `.photo-row.count-1/2/3 .cell`
+   that set 65% / 50% / 33.33% width respectively. Removed the
+   .photo-empty and .photo-empty::after rules entirely.
+2. Jinja: compute `_count = (it.photos or [])|select|list|length`,
+   render the wrapper only when `_count > 0`, attach a
+   `count-{{ _count }}` modifier class, and iterate only the real
+   photos (no `range(3)`, no empty placeholders).
 
-  2. SAFETY PDF — backend/services/safety_pdf.py
-     Engine: ReportLab (programmatic Canvas + Platypus)
-     Fonts: registered programmatically via reportlab.pdfbase.
-       Line 38: bold = os.path.join(_FONTS_DIR, "Rubik-Bold.ttf")
-       Line 44: pdfmetrics.registerFont(TTFont("Rubik-Bold", bold))
-       Lines 221, 225: ParagraphStyle(... fontName="Rubik-Bold" ...)
-     Still requires the static Rubik-Bold.ttf at runtime.
-
-These two paths share the fonts/ directory but otherwise do not
-overlap. The handover fix (variable font for all weights) does
-not affect safety_pdf, and keeping the static Bold on disk does
-not affect handover (the handover template no longer references
-it). Both stay green.
-
-If the safety PDF is ever migrated to WeasyPrint or re-fonted
-later, Rubik-Bold.ttf can be revisited — but that is OUT OF SCOPE
-for this PR.
-
-
-================================================================
-COMMIT A — Variable Rubik for all weights (Hebrew gibberish fix #3)
-================================================================
-
-ROOT CAUSE (re-diagnosed after follow-up #2 didn't resolve it)
---------------------------------------------------------------
-Removing text-transform: uppercase removed half the symptom but
-not the cause. Real root cause: the static Rubik-Bold.ttf shipped
-in backend/fonts/ has NO Hebrew glyphs:
-
-  backend/fonts/Rubik-Bold.ttf:    47KB,  hebrew=0/27,    static
-  backend/fonts/Rubik-Regular.ttf: 359KB, hebrew=27/27,   variable
-                                   (wght axis range 300-900)
-
-WeasyPrint behavior for "Handover Protocol · פרוטוקול מסירה"
-(the .cover-eyebrow at font-weight: 600):
-  1. Picks Rubik @ 700 (closer to 600 than to 400).
-  2. For Hebrew → Rubik-Bold has no Hebrew → fallback to
-     Rubik-Regular variable instanced at weight 700.
-  3. For Latin lowercase → "should" use Rubik-Bold, but in
-     practice the variable-instance subset for the same paragraph
-     gets cached / picked, and that subset (built for Hebrew +
-     uppercase + digits at weight 700) has no Latin lowercase.
-  4. lowercase Latin fails to map → renders as Latin Extended
-     visual lookalikes ("AOĻŠŇŜŴÒÜ! ÚŜÛŜŅŜŜ" pattern).
-
-Independent confirmation (pdfminer extraction from staging PDF):
-  Hebrew chars  → IRKPGT+Rubik (variable, ~400)  — correct
-  Latin chars   → IEUYIT+Rubik-Bold              — gibberish
-And fontTools subset log on staging PDF:
-  Glyph names: ['.notdef', 'A', 'B', 'C', 'D', 'E', 'F', 'G',
-                'H', 'I', 'L', 'M', 'N', 'O', 'P', 'R', 'S', 'T',
-                'U', 'V', 'Y', 'hyphen', 'one', 'periodcentered',
-                'space', 'two', 'zero']
-  → no lowercase → bug confirmed
-
-THE FIX — Option A from Zahi's spec (TEMPLATE ONLY, no file delete)
--------------------------------------------------------------------
-Use the Rubik-Regular VARIABLE font for the entire weight range
-300-900 (it already contains every glyph: Latin lower, Latin
-upper, Hebrew, digits). The handover template no longer references
-the static Rubik-Bold.ttf — but the file STAYS on disk for
-safety_pdf.py.
-
-File: backend/templates/handover_protocol_pdf.html
-Lines: 8-18 (two declarations) → 8-12 (one declaration)
-
-BEFORE:
-  @font-face {
-    font-family: 'Rubik';
-    src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype');
-    font-weight: 400;
-    font-style: normal;
-  }
-  @font-face {
-    font-family: 'Rubik';
-    src: url('file://{{ fonts_dir }}/Rubik-Bold.ttf') format('truetype');
-    font-weight: 700;
-    font-style: normal;
-  }
-
-AFTER:
-  @font-face {
-    font-family: 'Rubik';
-    src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype-variations');
-    font-weight: 300 900;
-    font-style: normal;
-  }
-
-UNIFIED DIFF:
-  -@font-face {
-  -  font-family: 'Rubik';
-  -  src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype');
-  -  font-weight: 400;
-  -  font-style: normal;
-  -}
-  -@font-face {
-  -  font-family: 'Rubik';
-  -  src: url('file://{{ fonts_dir }}/Rubik-Bold.ttf') format('truetype');
-  -  font-weight: 700;
-  -  font-style: normal;
-  -}
-  +@font-face {
-  +  font-family: 'Rubik';
-  +  src: url('file://{{ fonts_dir }}/Rubik-Regular.ttf') format('truetype-variations');
-  +  font-weight: 300 900;
-  +  font-style: normal;
-  +}
-
-(Rubik-Bold.ttf is NOT deleted — see "WHY Rubik-Bold.ttf STAYS"
-section above. Only the @font-face reference is dropped from the
-handover template. safety_pdf.py keeps loading the file directly.)
-
-WHAT CHANGES IN BEHAVIOR
-------------------------
-WeasyPrint now sees a single @font-face that spans 300-900 and
-points to the variable file. For any requested weight (400, 600,
-700, 800), it instances the variable font at that weight. The
-single font source means every weight subset shares the same
-glyph table — Latin lower/upper, Hebrew, digits, punctuation are
-all available. No more font-fallback to DejaVu / no more partial
-subset / no more Latin-Extended gibberish on Hebrew or lowercase.
-
-POST-DEPLOY VERIFICATION ON STAGING
------------------------------------
-After ./deploy.sh and one PDF generation:
-  $ pdffonts /path/to/generated.pdf
-  Expect: only Rubik (instanced variants) + Caveat. Zero DejaVu.
-  Expect: NO Rubik-Bold subset (since handover stopped referencing it).
-
-  $ pdftotext /path/to/generated.pdf - | head -20
-  Expect: readable Hebrew + readable Latin throughout.
-
-Also verify safety PDFs still render correctly (regression check):
-  $ generate a safety report PDF → spot-check Hebrew + Latin
-  Expect: unchanged from current — safety_pdf.py path untouched.
-
-
-================================================================
-COMMIT B — Background-image for defect photos (object-fit fix)
-================================================================
-
-ROOT CAUSE (revealed by follow-up #2 diagnostic)
-------------------------------------------------
-The diagnostic block added in follow-up #2 fired with great news:
-
-  [PDF] Photo diag: section='כניסה לדירה' item='משקוף' ...
-    status=defective item.photos_count=1 defect.proof_urls_count=1
-    photo_keys=['photo_0'] fetched_truthy=1/1   ← TRUTHY!
-
-Data layer: completely fine. Photos arrive in template context.
-
-`pdfimages -list latest.pdf` confirms the JPEGs are EMBEDDED
-in the PDF (3 images at 600x390). They simply don't render
-inside the .photo cells.
-
-The .photo CSS used WeasyPrint's weakest spot:
-  .photo     { position: relative; padding-bottom: 75%; }
-  .photo img { position: absolute; inset: 0; object-fit: cover; }
-
-WeasyPrint embeds the <img> in the PDF object table but its
-`object-fit: cover` + absolute-inside-percentage-padding combo
-fails to actually paint the image into the layout box.
-
-THE FIX — switch defect photos to background-image
---------------------------------------------------
-WeasyPrint's `background-size: cover` is robust. Move the image
-from <img> child to a CSS background-image on the .photo div.
-
-File: backend/templates/handover_protocol_pdf.html
-
---- Change B.1 — rewrite .photo CSS rule (was lines 979-993) ---
-
-BEFORE:
-  .photo {
-    display: block;
-    position: relative;
-    padding-bottom: 75%;
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--paper);
-    border: 1px solid var(--slate-2);
-  }
-  .photo img {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-
-AFTER:
-  .photo {
-    display: block;
+CSS DIFF (around lines 963-999):
+  .photo-row {
+    display: table;
     width: 100%;
-    height: 0;
-    padding-bottom: 75%;
-    border-radius: 8px;
-    overflow: hidden;
-    background-color: var(--paper);
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    border: 1px solid var(--slate-2);
-  }
-
-`.photo img` block is REMOVED entirely (no longer needed because
-the new .photo carries its own image via background).
-
---- Change B.2 — rewrite the defect photo-row Jinja loop ---
-Location: line 1377 (was 1385).
-
-BEFORE:
-  {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo"><img src="{{ p }}" alt=""></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
-
-AFTER:
-  {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo" style="background-image: url('{{ p }}');"></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
-
-DIFF:
-  -  ...{% if p %}<div class="photo"><img src="{{ p }}" alt=""></div>{% else %}...
-  +  ...{% if p %}<div class="photo" style="background-image: url('{{ p }}');"></div>{% else %}...
-
-Security note: `{{ p }}` is a base64 data URL we built ourselves
-in handover_pdf_service.py — safe to inject into a CSS inline
-style. Jinja autoescape doesn't apply inside style attributes
-to data URLs in this context (the data URL contains no quotes).
-
-
-================================================================
-SAFETY: METER PHOTOS NOT TOUCHED (Zahi: "אם meter photos עובדים, אל תיגע בהם")
-================================================================
-
-Meter photos (water + electricity) reuse the `.photo` class
-inside `.meter` parents at template lines 1437 and 1445.
-
-The `.meter .photo` and `.meter .photo img` rules at template
-lines 754-767 are SELF-CONTAINED:
-
-  .meter .photo {
+    border-spacing: 6px 0;
     margin-top: 8px;
-    padding-bottom: 56%;       ← own aspect ratio
-    position: relative;        ← own positioning
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--slate-1);
-    border: 1px solid var(--slate-2);
+    table-layout: fixed;
   }
-  .meter .photo img {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
+  .photo-row .cell {
+    display: table-cell;
+  - width: 33.33%;
+    vertical-align: top;
+    padding: 0 4px;
   }
+  + .photo-row.count-1 .cell { width: 65%; }
+  + .photo-row.count-2 .cell { width: 50%; }
+  + .photo-row.count-3 .cell { width: 33.33%; }
+  .photo { ... unchanged ... }
+  - .photo-empty { ... entire rule removed ... }
+  - .photo-empty::after { ... entire rule removed ... }
 
-These rules do NOT depend on the global `.photo` or `.photo img`
-declarations I rewrote/deleted. CSS specificity ensures the
-meter overrides win. So:
+JINJA DIFF (defect photo-row, around lines 1370-1376):
+  -          <div class="photo-row">
+  -            {%- set _ph = (it.photos or [])|list -%}
+  -            {% for i in range(3) %}<div class="cell">{%- set p = _ph[i] if i < _ph|length else None -%}{% if p %}<div class="photo" style="background-image: url('{{ p }}');"></div>{% else %}<div class="photo-empty"></div>{% endif %}</div>{% endfor %}
+  -          </div>
+  +          {%- set _ph = (it.photos or [])|select|list -%}
+  +          {%- set _count = _ph|length -%}
+  +          {% if _count > 0 %}
+  +          <div class="photo-row count-{{ _count }}">
+  +            {% for p in _ph %}<div class="cell"><div class="photo" style="background-image: url('{{ p }}');"></div></div>{% endfor %}
+  +          </div>
+  +          {% endif %}
 
-  - Meter photos still use <img> ✓
-  - Meter photos still use object-fit: cover ✓
-  - Meter rendering is byte-for-byte unchanged ✓
+Note the `|select` filter — it strips falsy values (None, empty
+strings) so a defect with `[None, "url", None]` becomes just
+`["url"]` and renders as count-1.
 
-Verified by listing all `<img>` tags after the edit:
-  line 1437: <img src="{{ meter_water_photo_b64 }}">     (preserved)
-  line 1445: <img src="{{ meter_electricity_photo_b64 }}"> (preserved)
-  Plus brikops_logo_b64 and signature image — all preserved.
+Note also: the `has_photo_items` filter at lines 1353-1357 still
+runs first. A defect with zero photos never enters the inner
+loop, so the `_count > 0` guard is belt-and-suspenders — but
+necessary if anyone removes/changes the outer filter later.
+
+WHY display:table over flex
+---------------------------
+WeasyPrint's flexbox support is improving but `display: table`
++ `table-layout: fixed` + per-cell `width:%` is rock solid in
+older WeasyPrint releases too. The existing photo-row already
+used display:table — keeping the engine choice the same minimizes
+risk to the layout pass.
 
 
 ================================================================
-NOT TOUCHED (deliberately, per Zahi's DO NOT list)
+FIX 2 — "סיכום ליקויים" stays on one page
 ================================================================
 
-- backend/fonts/Rubik-Bold.ttf — STAYS on disk (used by
-  safety_pdf.py). The handover template just stops referencing
-  it.
+ROOT CAUSE
+----------
+On the v3.3 staging PDF, page 3 contained the TOC + the heading
+"סיכום ליקויים" + the totals paragraph, then the defects-table
+overflowed onto page 4 — leaving page 3 with an orphaned heading
+and page 4 starting awkwardly mid-table-rows.
+
+THE FIX
+-------
+Wrap the heading, the totals paragraph, and the table-or-clean-
+message branch in a single `<div class="defects-summary-block">`
+and declare `page-break-inside: avoid` on it (plus on the table
+itself and individual rows for extra safety). WeasyPrint now
+keeps the entire summary together; if it doesn't fit on the
+current page, it pushes the whole block to the next page.
+
+CSS ADDED (around lines 988-998):
+  + .defects-summary-block {
+  +   page-break-inside: avoid;
+  + }
+  + .defects-table {
+  +   page-break-inside: avoid;
+  + }
+  + .defects-table tbody tr {
+  +   page-break-inside: avoid;
+  + }
+
+TEMPLATE CHANGE (around lines 1240-1280):
+  Open `<div class="defects-summary-block">` immediately after
+  the `<div style="height:18px"></div>` spacer (just before the
+  h2), and close it with a matching `</div>` immediately after
+  the `{% endif %}` that closes the `if all_defects` branch and
+  before the parent page wrapper's `</div>`.
+
+  +  <div class="defects-summary-block">
+     <h2 ...>סיכום ליקויים</h2>
+     {%- set _td = total_defects|default(0) -%}
+     <p ...>סה״כ ... {{ _td }} ... </p>
+
+     {% if all_defects|default([]) %}
+     <table class="defects-table"> ... </table>
+     {% else %}
+     <div class="room-summary clean">✓ לא נמצאו ליקויים ...</div>
+     {% endif %}
+  +  </div>
+
+Wrapper boundaries verified:
+  Line 1241: <div class="defects-summary-block">
+  Line 1276: </div>            ← closes defects-summary-block
+  Line 1277: </div>            ← closes the parent page wrapper
+                                 (preserved, untouched)
+
+
+================================================================
+SAFETY: NOT TOUCHED (per Zahi's DO NOT list)
+================================================================
+
+- `.meter .photo` and `.meter .photo img` rules (template lines
+  754-767). Self-contained — meter photos still use <img> +
+  object-fit:cover. CSS specificity ensures my .photo edits do
+  not affect them.
+  Verified meter <img> tags still present:
+    line 1434: <img src="{{ meter_water_photo_b64 }}">
+    line 1442: <img src="{{ meter_electricity_photo_b64 }}">
+
+- `has_photo_items` filter at lines 1353-1357. Untouched —
+  defects with zero photos still get no card.
 
 - Photo diagnostic logging block in handover_pdf_service.py.
-  It works perfectly and stays in. (Zahi: "אל תיגע ב-diagnostic
-  logging — הוא עובד מצוין ועוזר לאבחן".)
+  Untouched — still 2 references ("Photo diag" log lines).
 
-- .meter .photo / .meter .photo img rules. (Zahi: "אל תיגע
-  ב-.meter .photo".)
+- `Rubik-Regular.ttf` and `Rubik-Bold.ttf`. Untouched on disk.
+  Bold (47688 bytes, hash bb7df28b…) stays on disk for
+  safety_pdf.py / ReportLab path.
 
-- Rubik-Regular.ttf. (Zahi: "אל תיגע ב-Rubik-Regular.ttf — זה
-  ה-variable font הטוב".)
+- `backend/services/safety_pdf.py` and any service-layer logic.
+  Template-only PR.
 
-- The has_photo_items filter at template lines 1366-1389. Design
-  is intentional — no card if no photo at all.
-
-- Service data-flow logic. Diagnostic confirmed it's correct.
-
-- backend/services/safety_pdf.py — entirely out of scope. Its
-  ReportLab font registration of Rubik-Bold continues to work
-  unchanged.
+- No new forced page-breaks. Only `page-break-inside: avoid`.
 
 
 ================================================================
@@ -378,33 +225,29 @@ DEPLOYMENT
 Standing rule respected: agent did NOT git commit, did NOT
 restart workflows, did NOT deploy.
 
-Zahi runs (TWO separate commits per spec, both touching the SAME
-file but logically distinct):
+Zahi runs (ONE commit, both fixes in same file):
 
-  # Commit A — variable Rubik font (template-only change)
   git add backend/templates/handover_protocol_pdf.html
-  git commit -m "handover-pdf: use variable Rubik font for all weights (Hebrew gibberish fix #3)"
-
-  # Commit B — background-image for defect photos
-  git add backend/templates/handover_protocol_pdf.html
-  git commit -m "handover-pdf: use background-image instead of <img> for defect photos (object-fit fix)"
-
-  # Push + deploy
+  git commit -m "handover-pdf v3.4: adaptive photo layout + summary table page-break fix"
   git push origin staging
-  ./deploy.sh
+  ./deploy.sh --stag
 
-  # Generate one staging PDF, then verify:
-  pdffonts /path/to/generated.pdf      # only Rubik + Caveat, no DejaVu
-  pdftotext /path/to/generated.pdf -   # readable Hebrew + Latin
-  pdfimages -list /path/to/generated.pdf  # defect images still embedded
+  # Verify on staging — generate one PDF with mixed defects:
+  #   1. defect with 1 photo → expect ONE large centered cell
+  #      (no dashed boxes on either side)
+  #   2. defect with 2 photos → expect TWO half-width cells
+  #   3. defect with 3 photos → expect THREE equal cells (current look)
+  #
+  # And page break check:
+  #   pdftotext -layout staging.pdf - | grep -A 2 "סיכום ליקויים"
+  #     → heading + table contents appear together on the same page
+  #     → no page begins mid-table-rows
+
+  # If staging looks good:
+  ./deploy.sh --prod
+
+Regression checks:
+  pdfimages -list staging.pdf            # defect photos still embedded
+  pdffonts staging.pdf                   # only Rubik + Caveat (no DejaVu)
+  generate a safety PDF                  # safety_pdf.py path still works
   grep "\[PDF\] Photo diag" /var/log/.../app.log   # diagnostic still firing
-
-  # Regression check on safety PDF (separate code path, must still work):
-  generate a safety report PDF → confirm renders normally
-
-NOTE on the two-commit split: both commits modify the same file.
-Easiest path is to stage a partial commit per logical chunk:
-  git add -p backend/templates/handover_protocol_pdf.html
-and accept the @font-face hunk for Commit A, then accept the
-.photo / photo-row hunks for Commit B. Or amend later if simpler
-to do as a single commit and split via interactive rebase.
