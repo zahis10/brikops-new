@@ -1125,6 +1125,14 @@ async def get_protocol(project_id: str, protocol_id: str, user: dict = Depends(g
             except Exception:
                 md["display_url"] = None
 
+    tenants = protocol.get("tenants") or []
+    for t in tenants:
+        if isinstance(t, dict) and t.get("id_photo_url"):
+            try:
+                t["id_photo_display_url"] = generate_url(t["id_photo_url"])
+            except Exception:
+                t["id_photo_display_url"] = None
+
     version_id = protocol.get("template_version_id")
     if version_id:
         db = get_db()
@@ -1199,6 +1207,14 @@ async def update_protocol(project_id: str, protocol_id: str, request: Request, u
                 md["display_url"] = generate_url(md["photo_url"])
             except Exception:
                 md["display_url"] = None
+
+    u_tenants = updated.get("tenants") or []
+    for t in u_tenants:
+        if isinstance(t, dict) and t.get("id_photo_url"):
+            try:
+                t["id_photo_display_url"] = generate_url(t["id_photo_url"])
+            except Exception:
+                t["id_photo_display_url"] = None
 
     return updated
 

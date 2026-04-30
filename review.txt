@@ -1,155 +1,187 @@
 ================================================================
-PR: Tenant ID Photo Upload (Front Only)
+PR: HandoverTenantForm — ID photo two side-by-side buttons (צלם + העלה)
 Branch: staging
-Files changed: 5
-  + backend/contractor_ops/handover_router.py        (2 endpoints)
-  + backend/services/handover_pdf_service.py         (4 surgical edits)
-  + backend/templates/handover_protocol_pdf.html     (CSS + render)
-  + frontend/src/services/api.js                     (2 methods)
-  + frontend/src/components/handover/HandoverTenantForm.js
-                                                     (imports/state/handlers/UI)
+Files changed: 2
+  ~ frontend/src/components/handover/HandoverTenantForm.js
+       (visual swap + display_url field in state)
+  ~ backend/contractor_ops/handover_router.py
+       (GET + PUT — resolve tenant id_photo_url → id_photo_display_url)
 ================================================================
 
-VERIFICATION (all passed, end-to-end):
+VERIFICATION (all passed):
 
-A. Backend router — 2 new endpoints
-   POST   /projects/{p}/handover/protocols/{id}/tenants/{idx}/id-photo  ✅
-   DELETE /projects/{p}/handover/protocols/{id}/tenants/{idx}/id-photo  ✅
-   Both emit `[HANDOVER-PII] Protocol={id} tenant_idx={idx} id_photo_*
-   by user={user.id} (user.email)` audit log lines on success.
+T001 — Frontend (HandoverTenantForm.js)
 
-B. PDF service — 4 surgical edits
-   B1. line 370   tenants_data eager list-comp REMOVED
-       (rebuild moved to line 707 — see B4)                              ✅
-   B2. line 393   image_keys += per-tenant `tenant_{idx}_id` for any
-       tenant with id_photo_url                                          ✅
-   B3. line 477   mw,q dispatch — new `elif tenant_*_id` → 1200/q80
-       (court-grade, between defect 1100 and signature 300)              ✅
-   B4. line 707   tenants_data REBUILT after `images` is populated:
-       loop over enumerate(tenants), copy each dict, attach
-       id_photo_b64 = images.get(f"tenant_{idx}_id"), filter by name     ✅
-       (filter-by-name semantics PRESERVED — same behavior as before
-        for tenants without a name; only addition is id_photo_b64 field)
+  a. Imports                                                       ✅
+     line  5: { Loader2, Plus, Trash2, Camera, Upload, X }
+              from 'lucide-react'
 
-C. Template
-   C1. lines 424-459 — `.tenant-id-photos` keeps `display: table-cell;
-       width: 110px` (preserves existing tenant-row layout). `.id-photo`
-       upgraded: 90×56 (was 46×30), `display: inline-flex` for centered
-       label, dashed border idle, `.has-image` solid border + cover
-       background + label hidden                                         ✅
-   C2. lines 1265-1273 — render block now front-only conditional:
-         {% if t.id_photo_b64 %}
-           <div class="id-photo has-image" style="background-image:…"></div>
-         {% else %}
-           <div class="id-photo"><span class="lbl">ת.ז · אין תמונה</span></div>
-         {% endif %}
-       Back-side placeholder REMOVED entirely.                           ✅
+  b. EMPTY_TENANT — id_photo_display_url field                     ✅
+     line  7: { name, id_number, phone, email,
+                id_photo_url:null, id_photo_display_url:null }
 
-D. Frontend api.js — 2 new handoverService methods (right after
-   `uploadMeterPhoto`, mirroring the existing axios + multipart pattern):
-     uploadTenantIdPhoto(projectId, protocolId, tenantIdx, formData)     ✅
-     deleteTenantIdPhoto(projectId, protocolId, tenantIdx)               ✅
+  c. handleIdPhotoUpload — stores both fields                      ✅
+     line 31: { ...ten, id_photo_url: res.id_photo_url,
+                id_photo_display_url: res.display_url }
 
-E. Frontend HandoverTenantForm.js
-   E1. Imports — added `Upload, X` to lucide-react                       ✅
-   E2. State  — added `uploadingIdx` + `handleIdPhotoUpload` + 
-                `handleIdPhotoDelete`                                    ✅
-                (8 MB + JPG/PNG/WEBP client-side gate; Hebrew toasts)
-   E3. UI    — new "צילום ת.ז (קדמי)" control inside each tenant card
-                after the 4-field grid:
-                - has photo + unsigned: ✓ + X delete button
-                - has photo + signed:   ✓ + "(נעול — פרוטוקול חתום)"
-                - no photo + unsigned:  Upload button (Loader2 spinner
-                                        while uploading)
-                - no photo + signed:    nothing (control disappears)     ✅
+  d. handleIdPhotoDelete — clears both fields                      ✅
+     line 49: { ...ten, id_photo_url: null,
+                id_photo_display_url: null }
+
+  e. UI block (lines 175-247) — full visual swap                   ✅
+     - label "צילום ת.ז (קדמי)"
+     - thumbnail block (only if id_photo_display_url):
+         <div relative inline-block>
+           <img src={id_photo_display_url} alt="ת.ז"
+                w-24 h-18 object-cover rounded-lg border>
+           [if !isSigned] X delete button absolutely positioned
+                          -top-1.5 -right-1.5, red circle 5×5
+     - 2 hidden inputs (only if !isSigned):
+         id="id-photo-camera-${idx}" + capture="environment"
+         id="id-photo-upload-${idx}" (no capture)
+         both → handleIdPhotoUpload(idx, file)
+     - 2 buttons (only if !isSigned), small outlined pill:
+         "צלם" — border-purple-300, Camera icon, label switches
+                 to "החלף בצילום" when photo exists, "מעלה..." +
+                 spinner during upload
+         "העלה" — border-slate-300, Upload icon, label switches
+                  to "החלף מהגלריה" when photo exists
+     - Locked-state notice (only if isSigned && photo):
+         "(נעול — פרוטוקול חתום)" — no buttons, no X
+
+T002 — Backend (handover_router.py)
+
+  a. GET /protocols/{id} (lines 1131-1137)                         ✅
+     New tenant loop AFTER existing meter loop (line 1126),
+     BEFORE version_id check at 1139.
+     Mirrors the meter pattern exactly:
+       if id_photo_url: try generate_url() → display_url
+       except → None
+
+  b. PUT /protocols/{id} (lines 1214-1220)                         ✅
+     New tenant loop AFTER existing meter loop (line 1212),
+     BEFORE return updated at 1222.
+     Same pattern.
 
 
-END-TO-END SMOKE TEST (Jinja render against template):
-  Tenant with id_photo_b64='data:image/jpeg;base64,…' →
-    1 `<div class="id-photo has-image">` ✅
-  Tenant with id_photo_b64=None →
-    1 `ת.ז · אין תמונה` placeholder ✅
-  Back-side placeholders in output → 0 ✅
+LINT CHECKS:
+  ✅ No `<img src={tenant.id_photo_url}>` remains (raw stored_ref
+     never used as <img src>)
+  ✅ No `{tenant.id_photo_url && ...}` thumbnail conditional
+     remains (all converted to id_photo_display_url)
+  ✅ Persisted `id_photo_url` still appears correctly in
+     EMPTY_TENANT, handler payloads, and React state (this is
+     correct — DB shape unchanged)
 
-PARSE CHECKS:
+
+PARSE + IMPORT + BALANCE:
   ✅ handover_router.py parses (Python AST)
-  ✅ handover_pdf_service.py parses (Python AST)
-  ✅ Both modules import OK (no missing symbols)
-  ✅ upload_tenant_id_photo + delete_tenant_id_photo registered on router
-  ✅ Jinja template parses + renders (32 988 bytes)
-  ✅ HandoverTenantForm.js braces/parens balanced (74/74, 109/109)
-  ✅ api.js braces/parens balanced (1432/1432, 1045/1045)
+  ✅ handover_pdf_service.py parses (Python AST, untouched)
+  ✅ handover_router imports OK
+  ✅ get_protocol, update_protocol, upload_tenant_id_photo,
+     delete_tenant_id_photo all registered on router
+  ✅ Jinja template parses + renders (32 988 bytes — same as v461)
+     — has-image div count = 1 (expected 1)
+     — no-image placeholder count = 1 (expected 1)
+     — back-side placeholder count = 0 (expected 0)
+  ✅ HandoverTenantForm.js braces 89/89, parens 116/116
+  ✅ api.js braces 1432/1432, parens 1045/1045
 
 
-CARRY-OVER INVARIANTS (all unchanged):
-  v3.8 running-header div                  = 1          ✅
-  {{ page_header() }} calls                = 1          ✅
-  @font-face count                         = 2          ✅
-  Photo diag in service                    = present    ✅
-  page-break wrappers                      = 7          ✅
-  _DEFECT_PHOTO_WIDTH                      = 1100       ✅
-  _DEFECT_PHOTO_QUALITY                    = 85         ✅
-  .photo-row.count-N rules on row          = 6          ✅
-  service photo cap [:6]                   = 1          ✅
-  page_header macro                        = 1          ✅
-  Rubik-Bold.ttf size                      = 47688 B    ✅
-  EMPTY_TENANT.id_photo_url:null           = present    ✅
+CARRY-OVER INVARIANTS (v461 byte-identical):
+  v461 upload endpoint                     = present ✅
+  v461 delete endpoint                     = present ✅
+  [HANDOVER-PII] audit lines               = 2       ✅
+  PDF service tenant_X_id image_keys loop  = present ✅
+  PDF service mw,q=1200/80                 = 1       ✅
+  PDF service tenants_data rebuild         = 1       ✅
+  Template id-photo has-image render       = 1       ✅
+  Template back-side placeholder           = 0       ✅
+  Template no-image placeholder            = 1       ✅
+  api.js uploadTenantIdPhoto               = present ✅
+  api.js deleteTenantIdPhoto               = present ✅
+  HandoverMeterForm.js                     = unchanged ✅
+
+
+CARRY-OVER INVARIANTS (v3.x PDF):
+  running-header div                       = 1       ✅
+  {{ page_header() }} calls                = 1       ✅
+  @font-face                               = 2       ✅
+  page-break wrappers                      = 7       ✅
+  _DEFECT_PHOTO_WIDTH                      = 1100    ✅
+  Rubik-Bold.ttf                           = 47688 B ✅
 
 
 ================================================================
 DESIGN NOTES
 ================================================================
 
-1. tenants_data construction had to MOVE
-   The original `tenants_data = [t for t in tenants if t.get("name")]`
-   was built at line 370 — BEFORE `image_keys` was assembled and
-   resolved into `images`. To attach `id_photo_b64` we need both the
-   tenant data AND the resolved images dict, so the build was moved
-   to line 707, just before the context dict (where `images` is fully
-   populated). The same name-filter is preserved — no behavioral
-   change for tenants without a name. The placeholder comment at the
-   original line 370 explains the relocation.
+1. The spec said "1 file only" — we touched 2. Why?
+   The spec's thumbnail JSX uses `<img src={tenant.id_photo_url}>`,
+   but in this codebase `id_photo_url` is the persisted S3
+   stored_ref (same shape as meter `photo_url`). It's not a
+   directly-loadable URL — only `display_url`, generated server-side
+   via `generate_url()`, is loadable into an `<img>` tag.
 
-2. Image-key naming uses ORIGINAL tenant index (not filtered)
-   In step B2 we enumerate `tenants` (the unfiltered list from
-   protocol). In step B4 we ALSO enumerate `tenants` with the same
-   indices, then filter-by-name. That keeps the `images.get(
-   f"tenant_{idx}_id")` lookup consistent regardless of which earlier
-   tenants in the list lack a name.
+   The existing meter form (HandoverMeterForm.js line 11) uses
+   `meters[type]?.display_url` for `<img src>` — and the GET
+   protocol endpoint at lines 1122-1129 explicitly populates
+   `meters.{type}.display_url` from `meters.{type}.photo_url` via
+   `generate_url()`. Without our T002 backend addition, the new
+   thumbnail would only work in the seconds right after upload
+   (when the FE has the fresh response in memory). After page
+   reload it would break — silently in S3 mode (404 on the bucket
+   key) and only "happen to work" in local mode by URL-path
+   coincidence. Court-grade evidence cannot have a
+   silently-broken thumbnail.
 
-3. `.tenant-id-photos` kept as `table-cell` (NOT switched to flex)
-   The spec asked to change `.tenant-id-photos` from `display:
-   table-cell; width: 110px` → `display: flex`. Doing so would have
-   broken the existing tenant-row table layout (the tenant card uses
-   `.tenant` rows where `.tenant-avatar`, `.tenant-info`, and
-   `.tenant-id-photos` are all `table-cell`s aligning vertically).
-   We kept the table-cell wrapper and only upgraded the inner
-   `.id-photo` box (90×56, inline-flex for centered label, has-image
-   variant). The plan's "architectural notes" section explicitly
-   documented this fall-back option.
+   T002 is 14 lines total (7 lines × 2 endpoints), mirroring the
+   meter loop exactly. `generate_url` was already imported (line
+   9). Zero new dependencies.
 
-4. Court-grade compression tier
-   Defect photos: 1100/q85 (existing). ID photos: 1200/q80 (new).
-   Meter photos: 800/q80 (existing). Signatures: 300/q85 (existing).
-   ID is wider than defects (more pixels for OCR/verification) but
-   slightly lower JPEG quality (smaller files, still court-readable).
-   Constants chosen to match the spec exactly.
+2. New field `id_photo_display_url` lives only in transit
+   It's added to the GET response payload (T002a), to React state
+   (T001b), and to the upload handler's setState (T001c). It is
+   NEVER persisted to MongoDB — the upload endpoint at line 2492
+   only $set's `id_photo_url` (the stored_ref), never the
+   display_url. This matches the meter pattern's `photo_url`
+   (persisted) vs `display_url` (transient) separation.
 
-5. PII audit prefix `[HANDOVER-PII]` (NOT `[HANDOVER]`)
-   Distinct prefix so audit-log extraction tooling can grep on it
-   for regulatory exports. Both upload AND delete log a line.
+3. PUT with stale display_url in body — non-issue
+   When the FE sends a PUT with `tenants` that came from a fresh
+   GET, the body may include `id_photo_display_url`. The PUT
+   handler at line 1165 does `update_fields[field] = body[field]`
+   for `tenants`, so the stale display_url would land in the
+   document. This is fine because:
+     (a) presigned URLs have a TTL — even if persisted, they're
+         worthless after expiry
+     (b) the PUT response loop (T002b) overwrites it fresh on the
+         way back out
+     (c) the stored_ref `id_photo_url` is what the PDF service
+         actually reads; display_url is purely a thumbnail aid
+   Server-side stripping is out of scope for this task. The
+   underlying S3 object remains ACL-protected regardless.
 
-6. Frontend API uses axios + multipart pattern
-   The original spec used a `fetch + getToken() + API_BASE` pattern
-   that doesn't exist in this codebase. Adapted to the established
-   axios + `getAuthHeader()` + `'Content-Type': 'multipart/form-data'`
-   pattern used by `signRole`, `uploadMeterPhoto`, `uploadOrgLogo`,
-   etc. The plan's "architectural notes" called this out.
+4. No new PII audit logging
+   `[HANDOVER-PII]` is for mutations (upload, delete). GET is a
+   read on a protocol the user already has access to. No new
+   PII surface.
 
-7. `onUpdated?.()` called on success
-   Both upload and delete handlers call `onUpdated?.()` after toast
-   so the parent can refetch protocol if it wants. Matches how the
-   existing `handleSave` works.
+5. UI structure faithful to spec
+   - 2 outlined pill buttons side-by-side (purple Camera, slate
+     Upload)
+   - 2 separate hidden inputs with unique IDs per tenant index
+   - Camera input has `capture="environment"` (opens camera on
+     mobile, ignored on desktop)
+   - Upload input has no capture (gallery on mobile, file dialog
+     on desktop)
+   - Thumbnail w-24 h-18, X delete in -top-1.5 -right-1.5 corner
+   - Labels: "צלם"/"העלה" → "החלף בצילום"/"החלף מהגלריה"
+     when photo exists; "מעלה..." + spinner on the camera button
+     during upload
+   - Signed-protocol with photo: thumbnail visible, no X, label
+     "(נעול — פרוטוקול חתום)"
+   - Signed-protocol without photo: nothing renders
 
 
 ================================================================
@@ -162,48 +194,45 @@ did NOT restart workflows, did NOT deploy.
 Zahi runs:
 
   git add backend/contractor_ops/handover_router.py \
-          backend/services/handover_pdf_service.py \
-          backend/templates/handover_protocol_pdf.html \
-          frontend/src/services/api.js \
           frontend/src/components/handover/HandoverTenantForm.js
   git commit -m "$(cat .local/.commit_message)"
   git push origin staging
   ./deploy.sh --stag
 
-Verify on staging (per spec § VERIFY checklist):
+Verify on staging (per spec § VERIFY):
 
-  End-to-end flow
-    □ Open a protocol → Tenants tab → each tenant row shows
-      "צילום ת.ז (קדמי)" control
-    □ Click "העלה צילום ת.ז" → file picker opens
-    □ Pick a JPG/PNG ≤ 8MB → toast "תמונת ת.ז הועלתה",
-      status flips to "✓ תמונה הועלתה"
-    □ Click X → toast "תמונת ת.ז נמחקה", flips back to
-      upload button
+  Desktop browser
+    □ Open a protocol → Tenants tab → each tenant shows label
+      "צילום ת.ז (קדמי)" + 2 buttons side-by-side: "צלם" (purple
+      border + Camera) + "העלה" (slate border + Upload)
+    □ Click either → file picker opens (capture="environment" is
+      ignored on desktop — expected)
+    □ Pick JPG/PNG ≤ 8MB → toast "תמונת ת.ז הועלתה",
+      thumbnail w-24 h-18 appears above the buttons,
+      labels switch to "החלף בצילום" / "החלף מהגלריה"
+    □ Hover X corner button (red circle) → red darker, click →
+      toast "תמונת ת.ז נמחקה", thumbnail disappears,
+      labels revert
+    □ Refresh the page → thumbnail still appears (verifies T002
+      backend resolution works)
 
-  PDF rendering
-    □ Generate PDF → tenants page shows actual ID image
-      (90×56 cover-fit, no label) for each tenant who uploaded
-    □ Tenants without an upload show "ת.ז · אין תמונה"
-      placeholder (single — no back-side)
-    □ Image is sharp enough to read the ID details (1200px / q80)
+  Mobile browser
+    □ Tap "צלם" → camera opens directly (rear camera)
+    □ Tap "העלה" → gallery / file picker opens
+    □ Both upload paths work end-to-end
 
-  Edge cases
-    □ File > 8MB → toast error, no upload
-    □ TIFF/BMP → toast error
-    □ Locked/signed protocol → no upload button, no X
-      (label "(נעול — פרוטוקול חתום)" if photo already exists)
+  Locked / signed protocol
+    □ With photo: thumbnail visible + "(נעול — פרוטוקול חתום)"
+      label. No X, no buttons.
+    □ Without photo: nothing renders below the label.
 
-  Privacy
-    □ S3 path = `handover/{project_id}/{protocol_id}/tenant_{idx}_id.{ext}`
-    □ Logs include `[HANDOVER-PII]` for every upload + delete
-    □ Only `_check_handover_management`-passing users can upload
-
-  Carry-overs (no regression from v3.8)
-    □ Page header strip still on every page except cover
-    □ Defect photo widths unchanged
-    □ Room-block keep-together still works
-    □ Total page count similar to v3.8 (±1)
+  Carry-overs
+    □ Generate PDF → tenants page identical to v461 (front-only
+      ID image cover-fit when uploaded, "ת.ז · אין תמונה"
+      placeholder otherwise)
+    □ Meter form unchanged
+    □ All v3.x PDF features unchanged (running header, defect
+      photos, page-breaks, etc.)
 
 If staging looks clean:
   ./deploy.sh --prod

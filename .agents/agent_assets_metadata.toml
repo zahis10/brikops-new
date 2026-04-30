@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "Tenant ID Photo Upload (Front Only) — 5 files: 2 backend endpoints with [HANDOVER-PII] audit logs, 4 surgical PDF service edits, template CSS + front-only render, axios+multipart api.js methods, HandoverTenantForm UI with 4-state control. All 8 verifications + carry-over invariants pass; Python/Jinja parse, JS balanced."
+title = "Tenant ID Photo — Two Buttons (צלם + העלה) — 2 files: HandoverTenantForm.js (5 sub-edits: imports + EMPTY_TENANT + 2 handlers + UI swap) + handover_router.py (GET + PUT loops to resolve id_photo_display_url, mirrors meter pattern). All v461 carry-overs byte-identical, all v3.x PDF features intact, parse + render + balance ✅."
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

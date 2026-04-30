@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { handoverService } from '../../services/api';
 import { toast } from 'sonner';
 import { t } from '../../i18n';
-import { Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Loader2, Plus, Trash2, Camera, Upload, X } from 'lucide-react';
 
-const EMPTY_TENANT = { name: '', id_number: '', phone: '', email: '', id_photo_url: null };
+const EMPTY_TENANT = { name: '', id_number: '', phone: '', email: '', id_photo_url: null, id_photo_display_url: null };
 
 const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
   const [tenants, setTenants] = useState([]);
@@ -27,7 +27,9 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
       fd.append('file', file);
       const res = await handoverService.uploadTenantIdPhoto(projectId, protocol.id, idx, fd);
       setTenants(prev => prev.map((ten, i) =>
-        i === idx ? { ...ten, id_photo_url: res.id_photo_url } : ten
+        i === idx
+          ? { ...ten, id_photo_url: res.id_photo_url, id_photo_display_url: res.display_url }
+          : ten
       ));
       toast.success('תמונת ת.ז הועלתה');
       onUpdated?.();
@@ -44,7 +46,7 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
       setUploadingIdx(idx);
       await handoverService.deleteTenantIdPhoto(projectId, protocol.id, idx);
       setTenants(prev => prev.map((ten, i) =>
-        i === idx ? { ...ten, id_photo_url: null } : ten
+        i === idx ? { ...ten, id_photo_url: null, id_photo_display_url: null } : ten
       ));
       toast.success('תמונת ת.ז נמחקה');
       onUpdated?.();
@@ -167,47 +169,81 @@ const HandoverTenantForm = ({ protocol, projectId, isSigned, onUpdated }) => {
               />
             </div>
           </div>
-          {/* תמונת ת.ז (קדמית) */}
+          {/* תמונת ת.ז (קדמי) — אותה תבנית של "צלם מונה" */}
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">צילום ת.ז (קדמי)</label>
-            <div className="flex items-center gap-2">
-              {tenant.id_photo_url ? (
-                <>
-                  <span className="text-xs text-emerald-600 font-medium">✓ תמונה הועלתה</span>
-                  {!isSigned && (
-                    <button
-                      onClick={() => handleIdPhotoDelete(idx)}
-                      disabled={uploadingIdx === idx}
-                      className="text-red-400 hover:text-red-600 p-1 disabled:opacity-50"
-                      title="מחק תמונה"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+
+            {tenant.id_photo_display_url && (
+              <div className="relative inline-block">
+                <img
+                  src={tenant.id_photo_display_url}
+                  alt="ת.ז"
+                  className="w-24 h-18 object-cover rounded-lg border border-slate-200"
+                />
+                {!isSigned && (
+                  <button
+                    onClick={() => handleIdPhotoDelete(idx)}
+                    disabled={uploadingIdx === idx}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center disabled:opacity-50 shadow"
+                    title="מחק תמונה"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {!isSigned && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  id={`id-photo-camera-${idx}`}
+                  disabled={uploadingIdx === idx}
+                  onChange={(e) => handleIdPhotoUpload(idx, e.target.files?.[0])}
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  id={`id-photo-upload-${idx}`}
+                  disabled={uploadingIdx === idx}
+                  onChange={(e) => handleIdPhotoUpload(idx, e.target.files?.[0])}
+                />
+
+                <button
+                  onClick={() => document.getElementById(`id-photo-camera-${idx}`)?.click()}
+                  disabled={uploadingIdx === idx}
+                  className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors border-purple-300 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {uploadingIdx === idx ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="w-3.5 h-3.5" />
                   )}
-                  {isSigned && (
-                    <span className="text-xs text-slate-400">(נעול — פרוטוקול חתום)</span>
-                  )}
-                </>
-              ) : (
-                !isSigned && (
-                  <label className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-800 cursor-pointer font-medium">
-                    {uploadingIdx === idx ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Upload className="w-3.5 h-3.5" />
-                    )}
-                    {uploadingIdx === idx ? 'מעלה...' : 'העלה צילום ת.ז'}
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="hidden"
-                      disabled={uploadingIdx === idx}
-                      onChange={(e) => handleIdPhotoUpload(idx, e.target.files?.[0])}
-                    />
-                  </label>
-                )
-              )}
-            </div>
+                  {uploadingIdx === idx
+                    ? 'מעלה...'
+                    : tenant.id_photo_display_url
+                      ? 'החלף בצילום'
+                      : 'צלם'}
+                </button>
+
+                <button
+                  onClick={() => document.getElementById(`id-photo-upload-${idx}`)?.click()}
+                  disabled={uploadingIdx === idx}
+                  className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors border-slate-300 hover:bg-slate-50 disabled:opacity-50 text-slate-600"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  {tenant.id_photo_display_url ? 'החלף מהגלריה' : 'העלה'}
+                </button>
+              </div>
+            )}
+
+            {tenant.id_photo_display_url && isSigned && (
+              <span className="text-xs text-slate-400">(נעול — פרוטוקול חתום)</span>
+            )}
           </div>
         </div>
       ))}
