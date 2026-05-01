@@ -2862,31 +2862,55 @@ async def list_notifications(
         {"_id": 0}
     ).sort("created_at", -1).skip(offset).limit(limit).to_list(limit)
 
+    # Stream C1 2026-05-01 — verbs/codes for QC events (existing) + defect events (new).
     action_verbs = {
+        # QC events (existing — used by qc_notifications without notification_type field)
         "submitted": "שלח לאישור",
         "approved": "אישר",
         "rejected": "דחה",
         "reopened": "פתח מחדש",
+        # Defect lifecycle events (new in C1)
+        "close_request": "ביקש לסגור",
+        "approve": "אישר",
+        "reject": "דחה",
     }
     action_to_frontend = {
+        # QC events (existing — emit qc_* codes for backward compat with NotificationBell)
         "submitted": "submit_for_review",
         "approved": "qc_approved",
         "rejected": "qc_rejected",
         "reopened": "qc_reopened",
+        # Defect lifecycle events (new — emit defect_* codes)
+        "close_request": "defect_close_request",
+        "approve": "defect_approved",
+        "reject": "defect_rejected",
     }
 
     notifications = []
     for n in raw:
         raw_action = n.get("action", "")
-        actor = n.get("actor_name", "")
-        stage_label = n.get("stage_label_he", n.get("stage_code", ""))
-        verb = action_verbs.get(raw_action, raw_action)
-        body = f"{actor} {verb} את שלב \"{stage_label}\"" if actor else f"שלב \"{stage_label}\" {verb}"
-        if n.get("reason"):
-            body += f" — {n['reason']}"
+        ntype = n.get("notification_type", "qc")  # legacy docs default to 'qc'
 
+        # Build body — defect notifications carry a pre-built body field;
+        # QC notifications synthesize from actor + verb + stage_label.
+        if ntype in ("defect_close_request", "defect_status_change_by_pm") and n.get("body"):
+            body = n["body"]
+        else:
+            # Legacy QC body composition (preserved verbatim).
+            actor = n.get("actor_name", "")
+            stage_label = n.get("stage_label_he", n.get("stage_code", ""))
+            verb = action_verbs.get(raw_action, raw_action)
+            body = f"{actor} {verb} את שלב \"{stage_label}\"" if actor else f"שלב \"{stage_label}\" {verb}"
+            if n.get("reason"):
+                body += f" — {n['reason']}"
+
+        # Build link — defect notifications point to /tasks/{id};
+        # QC notifications point to the existing run/stage URL.
         link = None
-        if n.get("project_id") and n.get("floor_id") and n.get("run_id") and n.get("stage_id"):
+        if ntype in ("defect_close_request", "defect_status_change_by_pm"):
+            if n.get("task_id"):
+                link = f"/tasks/{n['task_id']}?src=bell"
+        elif n.get("project_id") and n.get("floor_id") and n.get("run_id") and n.get("stage_id"):
             link = f"/projects/{n['project_id']}/floors/{n['floor_id']}/qc/{n['run_id']}/stage/{n['stage_id']}"
 
         notifications.append({

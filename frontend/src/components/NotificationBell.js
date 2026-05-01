@@ -5,10 +5,15 @@ import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 const ACTION_ICONS = {
+  // QC events (existing)
   submit_for_review: { icon: Send, color: 'text-blue-500' },
   qc_approved: { icon: ShieldCheck, color: 'text-emerald-500' },
   qc_rejected: { icon: ShieldX, color: 'text-red-500' },
   qc_reopened: { icon: RotateCcw, color: 'text-orange-500' },
+  // Defect events (new in C1)
+  defect_close_request: { icon: Send, color: 'text-blue-500' },
+  defect_approved: { icon: ShieldCheck, color: 'text-emerald-500' },
+  defect_rejected: { icon: ShieldX, color: 'text-red-500' },
 };
 
 const formatTimeAgo = (dateStr) => {

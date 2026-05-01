@@ -13,6 +13,12 @@ from contractor_ops.router import (
     PRIORITY_SORT_MAP, _priority_sort_key,
 )
 from contractor_ops.msg_logger import mask_phone
+from contractor_ops.notification_helpers import (
+    create_defect_notification,
+    get_defect_recipients_for_close_request,
+    build_close_request_body,
+    build_status_change_body,
+)
 from contractor_ops.schemas import (
     Task, TaskCreate, TaskUpdate, TaskAssign, TaskStatusChange,
     TaskUpdateCreate, TaskUpdateResponse,
@@ -909,6 +915,25 @@ async def contractor_proof(
         'changed_by': user['id'], 'note': proof_content, 'created_at': ts,
     })
 
+    # Bell notification: contractor uploaded proof, PMs need to approve.
+    # Best-effort: a failure here does NOT roll back the canonical proof upload.
+    try:
+        recipients = await get_defect_recipients_for_close_request(db, task['project_id'])
+        await create_defect_notification(
+            db,
+            recipients,
+            notification_type='defect_close_request',
+            action='close_request',
+            task_id=task_id,
+            task_title=task.get('title', ''),
+            project_id=task['project_id'],
+            actor_id=user['id'],
+            actor_name=user.get('name', ''),
+            body=build_close_request_body(user.get('name', ''), task.get('title', '')),
+        )
+    except Exception as e:
+        logger.error(f"[NOTIF] Failed to create close_request notification for task {task_id}: {e}")
+
     membership = await _get_project_membership(user, task['project_id'])
     await _audit('task', task_id, 'contractor_proof_uploaded', user['id'], {
         'old_status': old_status, 'new_status': new_status,
@@ -1072,6 +1097,27 @@ async def manager_decision(task_id: str, body: ManagerDecisionRequest, user: dic
         'old_status': old_status, 'new_status': new_status,
         'changed_by': user['id'], 'note': update_content, 'created_at': ts,
     })
+
+    # Bell notification: PM made a decision, the assignee (contractor) needs to know.
+    # Best-effort: a failure here does NOT roll back the canonical PM decision.
+    try:
+        assignee_id = task.get('assignee_id')
+        if assignee_id and assignee_id != user['id']:
+            await create_defect_notification(
+                db,
+                [assignee_id],
+                notification_type='defect_status_change_by_pm',
+                action=decision,  # 'approve' or 'reject'
+                task_id=task_id,
+                task_title=task.get('title', ''),
+                project_id=task['project_id'],
+                actor_id=user['id'],
+                actor_name=user.get('name', ''),
+                body=build_status_change_body(decision, task.get('title', ''), body.reason if decision == 'reject' else None),
+                reason=body.reason if decision == 'reject' else None,
+            )
+    except Exception as e:
+        logger.error(f"[NOTIF] Failed to create status_change notification for task {task_id}: {e}")
 
     await db.task_updates.insert_one({
         'id': str(uuid.uuid4()), 'task_id': task_id, 'user_id': user['id'],

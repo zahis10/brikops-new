@@ -682,5 +682,10 @@
     "bulk_confirm": "למחוק {{count}} ליקויים?",
     "bulk_partial_failure": "{{failed}} מתוך {{total}} לא נמחקו",
     "bulk_success": "{{count}} ליקויים נמחקו"
+  },
+  "notifications": {
+    "defect_close_request_short": "ממתין לאישורך",
+    "defect_approved_short": "תיקון אושר",
+    "defect_rejected_short": "תיקון נדחה"
   }
 }

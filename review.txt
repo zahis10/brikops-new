@@ -1,197 +1,268 @@
 ================================================================================
-BATCH 6A v2 — Contractor Reminder Digest + Multi-Project URL Routing (Stream A)
-Task #464 · Branch: staging · Date: 2026-05-01
+BATCH 7A — Bell notifications for defect lifecycle (Stream C1)
+Task #465 · Branch: staging · Date: 2026-05-01
 ================================================================================
 
 STATUS: READY FOR ZAHI APPROVAL — DO NOT DEPLOY
 
 ────────────────────────────────────────────────────────────────────────────────
-STEP 0 — REPO AUDIT (V2 spec confirmation)
+STEP 0 — REPO AUDIT (run BEFORE any edit)
 ────────────────────────────────────────────────────────────────────────────────
-- Branch confirmed: staging (no merges to main).
-- Per-defect template `WA_REMINDER_TEMPLATE_HE` preserved in config.py:1 occurrence
-  (used by send_pm_digest line 433 and any future manual-flow code paths). The
-  digest refactor is ADDITIVE — old constant kept for backward compat.
-- send_pm_digest at line 433 NOT touched: still uses default `lang_code="he"`
-  via _send_wa_template's new optional kwarg (Finding A — KEEP-UNCHANGED).
-- React.lazy ContractorDashboard import confirmed; props pass through (Finding D).
-- Codebase has no pytest-asyncio plugin; tests use `asyncio.run(run())` per
-  test_billing_v1.py:307,336,366 (Finding B).
+0.1 _create_qc_notification helper anchor (NOT modified, only referenced):
+    - Definition: qc_router.py:40
+    - Callsites: 5 (lines 1394, 1640, 2294, 2355, 2697) — ALL PRESERVED.
+      (Spec said "~8" — actual 5; harmless paraphrase.)
+
+0.2 contractor_proof endpoint anchor (Event 1 insertion point):
+    - Definition: tasks_router.py:839 (spec said 819-820 — drift)
+    - new_status='pending_manager_approval' assignment: line 901
+    - task_status_history.insert_one (anchor): lines 906-910
+    - Insertion point: line 911 (immediately after history insert,
+      before _get_project_membership at line 912 — original spec line 893)
+
+0.3 manager_decision endpoint anchor (Event 2 insertion point):
+    - Definition: tasks_router.py:1033 (spec said 1014 — drift)
+    - task_status_history.insert_one (anchor): lines 1070-1074
+    - Insertion point: line 1075 (immediately after history insert,
+      before task_updates.insert_one at line 1076 — original spec line 1057)
+    - body.reason field confirmed on ManagerDecisionRequest (used at line 1051).
+    - decision values confirmed: 'approve' / 'reject' (lines 1047-1056).
+
+0.4 MANAGEMENT_ROLES verified:
+    - router.py:413 → ('project_manager', 'management_team') ✓ matches spec.
+
+0.5 list_notifications mapping anchors:
+    - action_verbs at line 2865, action_to_frontend at line 2871 ✓ matches spec.
+
+0.6 NotificationBell.js ACTION_ICONS at lines 7-12 ✓ matches spec.
+    - Lucide imports already include Send, ShieldCheck, ShieldX (line 2) —
+      no new imports required.
+
+0.7 backend/tests/test_notifications*.py — none existed ✓ (test_notifications_defect.py
+    is genuinely new).
+
+0.8 backend/contractor_ops/notification_helpers.py — none existed ✓ (new module).
+
+0.9 he.json had NO `notifications` section — created one at end of root object
+    per spec ("create one if missing").
 
 ────────────────────────────────────────────────────────────────────────────────
 FILES CHANGED — DIFF SUMMARY
 ────────────────────────────────────────────────────────────────────────────────
- backend/.env.production.template           |   7 ++
- backend/config.py                          |  18 ++++
- backend/contractor_ops/reminder_service.py | 132 ++++++++++++++-------------
- frontend/src/App.js                        |  19 ++++-
- frontend/src/pages/ContractorDashboard.js  |   5 +-
- backend/tests/test_reminder_digest.py      | 374 ++++ (NEW)
- 5 files modified, 1 new, +111 / -70 LOC (excl. test file)
+ backend/contractor_ops/notification_helpers.py | 113 +++++ (NEW)
+ backend/contractor_ops/qc_router.py            |  38 +++--
+ backend/contractor_ops/tasks_router.py         |  46 ++++
+ backend/tests/test_notifications_defect.py     | 174 +++++++++ (NEW)
+ frontend/src/components/NotificationBell.js    |   5 +
+ frontend/src/i18n/he.json                      |   5 +
+ 4 modified, 2 new, +381 / -7 LOC
 
 ────────────────────────────────────────────────────────────────────────────────
 PER-FILE CHANGES
 ────────────────────────────────────────────────────────────────────────────────
 
-1) backend/config.py (lines 97-109, +13 LOC)
-   + WA_REMINDER_DIGEST_TEMPLATES dict mirroring WA_DEFECT_TEMPLATES pattern.
-     Keys: 'he','en','ar','zh' → {'name': env-driven, 'lang': meta lang code}.
-     'zh' deliberately maps to lang code 'zh_CN' (Meta requirement).
-   + WA_REMINDER_DIGEST_DEFAULT_LANG = 'he' (used by helper as fallback floor).
-   + Existing WA_REMINDER_TEMPLATE_HE (line ~80) UNTOUCHED — used by per-defect
-     code paths (e.g. send_pm_digest:433).
+1) backend/contractor_ops/notification_helpers.py (NEW, 113 LOC)
+   New module with:
+   - NOTIFICATION_TYPES allowlist {'qc', 'defect_close_request',
+     'defect_status_change_by_pm'}
+   - async create_defect_notification(db, recipients, *, notification_type,
+     action, task_id, task_title, project_id, actor_id, actor_name, body,
+     reason=None) — validates type, auto-excludes actor and falsy uids,
+     short-circuits on empty docs list, writes one doc per recipient into
+     `qc_notifications` (legacy collection name, kept per Zahi 2026-05-01),
+     logs count.
+   - async get_defect_recipients_for_close_request(db, project_id) — queries
+     project_memberships filtered to role IN (project_manager, management_team),
+     returns user_ids list.
+   - build_close_request_body(actor_name, task_title) — Hebrew copy with
+     defensive defaults ("קבלן" / "ליקוי") for missing fields.
+   - build_status_change_body(decision, task_title, reason=None) — branches
+     on approve/reject; reject appends "— {reason}" only when reason truthy;
+     defensive fallback for unknown decision.
 
-2) backend/contractor_ops/reminder_service.py (132 LOC delta)
-   (a) _send_wa_template signature line 100:
-       + new optional kwarg `lang_code: str = "he"` (default preserves all
-         existing call sites — send_pm_digest, etc.)
-   (b) Line 132 — body language now from kwarg:
-       BEFORE: "language": {"code": "he"}
-       AFTER:  "language": {"code": lang_code}
-   (c) New helper `_resolve_digest_template_for_user` inserted at line 200-222
-       (24 LOC). Mirrors notification_service._resolve_template_name pattern.
-       Returns (template_name, lang_code). Fallback chain: requested →
-       'en' → 'he' (last-resort floor).
-   (d) `send_contractor_reminder` body (lines 273-339) REPLACED:
-       BEFORE: looped tasks[:5] per recipient; sent up to 5 per-defect WA
-               messages with task-id button URL.
-       AFTER:  sends ONE digest message per recipient with body params
-               {name, count, project} and button URL `{project_id}?src=wa`.
-               log_entry.type="contractor_reminder_digest" + open_count + lang_code.
-       Empty-tasks early return (line 239-240, "no_open_defects") preserved.
-       Cooldown / preferences / phone resolution / company fallback unchanged.
+2) backend/contractor_ops/tasks_router.py (+46 LOC)
+   (a) Lines 19-24: added new import block immediately after msg_logger import:
+       from contractor_ops.notification_helpers import (
+           create_defect_notification, get_defect_recipients_for_close_request,
+           build_close_request_body, build_status_change_body,
+       )
+   (b) Lines 921-938: NEW try/except block inside contractor_proof endpoint,
+       wired immediately AFTER task_status_history.insert_one (line 919) and
+       BEFORE _get_project_membership (line 940). Resolves PM+management_team
+       recipients, builds Hebrew body, fires notification with action='close_request'.
+       Logs error on failure but does NOT raise — proof upload remains canonical.
+   (c) Lines 1104-1123: NEW try/except block inside manager_decision endpoint,
+       wired immediately AFTER task_status_history.insert_one (line 1102) and
+       BEFORE task_updates.insert_one (line 1125). Sends notification to assignee
+       only (defensive guard `assignee_id != user['id']` — should never happen
+       per business rules but cheap to enforce). action equals decision verb
+       ('approve' or 'reject'). reason kwarg passed only on reject.
 
-3) backend/.env.production.template (lines 45-51, +7 LOC)
-   + 4 env vars: WA_REMINDER_DIGEST_TEMPLATE_{HE,EN,AR,ZH}
-   + 3 explanatory comments (Meta approval flow note).
+3) backend/contractor_ops/qc_router.py (+31/-7 LOC)
+   Lines 2868-2890: extended action_verbs (+3 keys: close_request, approve,
+     reject) and action_to_frontend (+3 keys → defect_close_request,
+     defect_approved, defect_rejected). Comments separate QC vs defect blocks.
+   Lines 2892-2926: extended body+link builder. NEW logic:
+     - Reads notification_type field (defaults to 'qc' for legacy docs without it)
+     - For defect types with pre-built body field → use n["body"] verbatim
+     - Otherwise → preserve original QC actor+verb+stage_label composition
+     - Defect link: /tasks/{task_id}?src=bell
+     - QC link: /projects/.../floors/.../qc/.../stage/... (unchanged)
+   Backward compat: legacy QC docs (no notification_type field) still work
+   identically because ntype defaults to 'qc' and the old composition path runs.
 
-4) frontend/src/App.js
-   + Line 2: useParams added to react-router-dom import.
-   + Lines 146-157: ProjectsHome rewritten to read URL projectId param.
-       - Contractor → <ContractorDashboard initialProjectId={projectId} />
-       - PM/admin with projectId → Navigate to /projects/:projectId/dashboard
-       - PM/admin no projectId → MyProjectsPage (existing behavior)
-   + Lines 206-213: NEW <Route path="/projects/:projectId"> guarded by
-       ProtectedRoute, rendering ProjectsHome.
+4) frontend/src/components/NotificationBell.js (+5 LOC)
+   Lines 10-20: extended ACTION_ICONS with 3 new entries (defect_close_request
+     → blue Send, defect_approved → emerald ShieldCheck, defect_rejected →
+     red ShieldX). All 3 Lucide icons already in the existing import (line 2).
+     Comments separate QC vs defect blocks.
+   Unknown-action fallback to Clock icon (existing line ~85) covers any future
+   action codes safely.
 
-5) frontend/src/pages/ContractorDashboard.js
-   + Line 106: signature `({ initialProjectId } = {})` — destructured prop.
-   + Lines 114-117: useState init priority: initialProjectId (from URL) →
-       localStorage('lastProjectId') → 'all'. Comment added inline.
+5) frontend/src/i18n/he.json (+5 LOC)
+   New `notifications` section appended at end of root object with 3 short
+     labels. No existing keys touched.
 
-6) backend/tests/test_reminder_digest.py (NEW, 374 LOC, 14 tests)
-   - 8 sync tests on _resolve_digest_template_for_user covering: he, en, ar,
-     zh→zh_CN, no preferred_language → he, company → he, unknown → en fallback,
-     uppercase normalization.
-   - 5 async tests on send_contractor_reminder covering: 100 defects → 1 send,
-     button URL = project_id, recipient lang preference honored, no_open_defects
-     skip, log entry shape (type/open_count/lang_code/wa_message_id).
-   - 1 multi-project pin: 3 projects × 1 contractor → 3 separate WA messages
-     each naming its own project (test_send_all_three_projects_three_messages).
+6) backend/tests/test_notifications_defect.py (NEW, 174 LOC, 8 tests)
+   - 4 tests on create_defect_notification (writes one doc per recipient and
+     preserves order; skips actor when actor in recipients; skips entirely on
+     unknown notification_type; skips DB insert on empty recipients)
+   - 1 test on get_defect_recipients_for_close_request (verifies query filter
+     restricts to PM + management_team only)
+   - 3 tests on body builders (close-request format with defensive empty
+     fallback; approve format ignores reason; reject format with and without
+     reason — verifies trailing em-dash is NOT appended when reason absent)
 
 ────────────────────────────────────────────────────────────────────────────────
-FINDINGS (V2 from initial audit, all addressed)
+FINDINGS
 ────────────────────────────────────────────────────────────────────────────────
-A. send_pm_digest:433 — KEEP-UNCHANGED. _send_wa_template default lang_code="he"
-   preserves existing behavior; no call site changes required.
-B. asyncio.run() pattern — async tests written WITHOUT @pytest.mark.asyncio,
-   matching test_billing_v1.py:307,336,366. Verified: codebase has no
-   pytest-asyncio plugin (only anyio).
-C. useParams import — added to App.js only (ContractorDashboard receives
-   projectId as a prop, not from router context, keeping the component
-   testable without a Router wrapper).
-D. React.lazy passes props — confirmed: `<ContractorDashboard initialProjectId={projectId} />`
-   compiles cleanly through Suspense+lazy (Babel parse OK).
-E. 14 tests delivered — Test file matches V2 spec count exactly.
+A. Spec line numbers drift — content anchors (function signatures + adjacent
+   string literals) are stable; spec line numbers were ~20-30 off in
+   tasks_router.py and exact in qc_router.py / NotificationBell.js. All edits
+   used unique anchor strings, so drift didn't matter.
+
+B. asyncio.run() pattern — async tests written WITHOUT @pytest.mark.asyncio
+   per BATCH 6A v2 Finding B (codebase has no pytest-asyncio plugin, only
+   anyio).
+
+C. Best-effort notification — both call sites wrapped in try/except so a
+   notification failure (e.g. transient mongo issue) does NOT roll back the
+   canonical proof upload or PM decision. Errors are logged with task_id
+   for forensics.
+
+D. Backward compat for legacy QC docs — list_notifications uses
+   `n.get("notification_type", "qc")` so existing qc_notifications docs
+   without the new field render identically to before.
+
+E. _create_qc_notification helper (qc_router.py:40) UNCHANGED — still used
+   by 5 QC code paths (lines 1394, 1640, 2294, 2355, 2697). Spec said ~8;
+   actual 5. Either way, fully preserved.
+
+F. Lucide icons already imported in NotificationBell.js (line 2:
+   Send, ShieldCheck, ShieldX) — no new imports needed.
+
+G. he.json had no `notifications` section before this batch — created as
+   a new top-level object per spec instruction "create one if missing".
+   Future i18n keys for bell labels can be added under this key.
 
 ────────────────────────────────────────────────────────────────────────────────
-SPEC DRIFTS (harmless line-number paraphrases)
+SPEC DRIFTS NOTED (informational — all benign)
 ────────────────────────────────────────────────────────────────────────────────
-- ContractorDashboard selectedProjectId useState was at line 113-117 (spec said
-  111). No semantic difference.
-- reminder_service.py replace block end was line 359 in working file (spec said
-  336). Line numbers only — content identical to spec snippet.
-- send_contractor_reminder def is now at line 225 (post-helper-insert), was 202
-  before edits. Line numbers only.
+- contractor_proof endpoint at line 839 (spec said 819-820)
+- manager_decision endpoint at line 1033 (spec said 1014)
+- contractor_proof status_history insert at lines 906-910 (spec said 887-891)
+- manager_decision status_history insert at lines 1070-1074 (spec said 1051-1055)
+- _create_qc_notification has 5 callsites (spec said ~8)
+- tasks_router.py grew by 46 LOC after edits — final file 1338 lines
+- qc_router.py grew by 31 LOC after edits — final file 2961 lines
 
 ────────────────────────────────────────────────────────────────────────────────
 VERIFICATION OUTPUTS
 ────────────────────────────────────────────────────────────────────────────────
 
 VERIFY 1a — backend imports cleanly
-  $ python -c "from contractor_ops import reminder_service; print('OK')"
-  OK
+  $ python -c "from contractor_ops import notification_helpers, tasks_router, qc_router"
+  OK — all 3 modules import ✓
 
-VERIFY 1b — pytest 14 tests
-  $ python -m pytest backend/tests/test_reminder_digest.py -v
-  ============================== 14 passed in 1.25s ==============================
-  All 14 tests PASSED:
-    [ 8/8 ] _resolve_digest_template_for_user (he/en/ar/zh→zh_CN/no-pref/
-            company/unknown→en/uppercase)
-    [ 5/5 ] send_contractor_reminder digest (one-message-100-defects/
-            button-uses-project-id/recipient-lang/no-open-defects-skip/log-shape)
-    [ 1/1 ] multi-project pin (3 projects → 3 distinct messages)
+VERIFY 1b — pytest 8 new tests
+  $ python -m pytest backend/tests/test_notifications_defect.py -v
+  ============================== 8 passed in 0.20s ==============================
+  All 8 tests PASSED:
+    [ 4/4 ] create_defect_notification (writes-per-recipient/skips-actor/
+            unknown-type-skipped/empty-recipients-no-insert)
+    [ 1/1 ] get_defect_recipients_for_close_request (PM+management_team only)
+    [ 3/3 ] body builders (close_request format / approve / reject-with-reason)
 
-VERIFY 2 — MAX_MESSAGES_PER_BATCH removed (expect 0)
-  $ grep -c "MAX_MESSAGES_PER_BATCH" backend/contractor_ops/reminder_service.py
-  0 ✓
+VERIFY 2 — _create_qc_notification preserved (expect 6 = 1 def + 5 callsites)
+  $ grep -c "_create_qc_notification" backend/contractor_ops/qc_router.py
+  6 ✓
 
-VERIFY 3 — WA_REMINDER_TEMPLATE_HE preserved in config.py (expect 1)
-  $ grep -c "WA_REMINDER_TEMPLATE_HE" backend/config.py
-  1 ✓
+VERIFY 3 — 3 new ACTION_ICONS keys in NotificationBell.js
+  $ grep -cE "defect_(close_request|approved|rejected):" frontend/src/components/NotificationBell.js
+  3 ✓
 
-VERIFY 4 — digest dict has all 4 lang keys
-  $ python -c "from config import WA_REMINDER_DIGEST_TEMPLATES; print(sorted(WA_REMINDER_DIGEST_TEMPLATES.keys()))"
-  ['ar', 'en', 'he', 'zh'] ✓
+VERIFY 4 — 3 new he.json keys
+  $ grep -cE "defect_(close_request|approved|rejected)_short" frontend/src/i18n/he.json
+  3 ✓
 
-VERIFY 5a — hardcoded "he" language string removed (expect 0)
-  $ grep -c '"language": {"code": "he"}' backend/contractor_ops/reminder_service.py
-  0 ✓
+VERIFY 5 — frontend syntax (Babel parse)
+  src/components/NotificationBell.js — OK ✓
 
-VERIFY 5b — lang_code threaded through (expect ≥4)
-  $ grep -c "lang_code" backend/contractor_ops/reminder_service.py
-  7 ✓
+VERIFY 6 — he.json is valid JSON
+  $ python -c "import json; json.load(open('frontend/src/i18n/he.json'))"
+  he.json OK ✓
 
-VERIFY 6 — App.js has the new /projects/:projectId Route (expect 1)
-  $ grep -c 'path="/projects/:projectId"' frontend/src/App.js
-  1 ✓
+VERIFY 7 — new helper symbols referenced in tasks_router.py
+  $ grep -c "create_defect_notification|get_defect_recipients_for_close_request|
+            build_close_request_body|build_status_change_body" tasks_router.py
+  9 ✓ (4 in import + 1 get_recipients + 1 close_request body + 1 close_request
+      create call + 1 status_change body + 1 status_change create call)
 
-VERIFY 7 — useParams referenced (expect 2: import + use)
-  $ grep -c "useParams" frontend/src/App.js
-  2 ✓
+VERIFY 8 — try/except wrappers around notification calls (expect 2)
+  $ grep -c "Failed to create.*notification" tasks_router.py
+  2 ✓ (one for close_request, one for status_change)
 
-VERIFY 8 — initialProjectId wired in ContractorDashboard (expect 2)
-  $ grep -n "initialProjectId" frontend/src/pages/ContractorDashboard.js
-  103: const ContractorDashboard = ({ initialProjectId } = {}) => {
-  113:   return initialProjectId || localStorage.getItem('lastProjectId') || 'all';
-  ✓ (signature + useState initializer)
-
-VERIFY EXTRA — frontend syntax (Babel parse)
-  src/App.js — OK
-  src/pages/ContractorDashboard.js — OK
+VERIFY 9 — git diff stats
+  backend/contractor_ops/notification_helpers.py | NEW
+  backend/contractor_ops/qc_router.py            | 38 +++++++++++++++++++-----
+  backend/contractor_ops/tasks_router.py         | 46 +++++++++++++++++++++++++
+  backend/tests/test_notifications_defect.py     | NEW
+  frontend/src/components/NotificationBell.js    |  5 ++++
+  frontend/src/i18n/he.json                      |  5 ++++
+  Total: 4 modified, 2 new, +87/-7 LOC (excl. test/helper files)
 
 ────────────────────────────────────────────────────────────────────────────────
 DEPLOYMENT NOTES (for Zahi after approval)
 ────────────────────────────────────────────────────────────────────────────────
-1. After git commit/push and ./deploy.sh --stag merge:
-   - Submit 4 WhatsApp templates to Meta Business Manager →
-     wa_contractor_reminder_digest_{he,en,ar,zh}
-   - Each template needs body params: {{name}}, {{count}}, {{project}} +
-     1 button (URL type) opening /projects/{{1}}?src=wa.
-   - Approval ~24-48h per template.
+1. NO DB migration required — `qc_notifications` collection name preserved.
+   New docs include `notification_type` field; existing docs without the field
+   are treated as `'qc'` by the list endpoint (verified path).
 
-2. Set in AWS Elastic Beanstalk environment vars (after Meta approval):
-   WA_REMINDER_DIGEST_TEMPLATE_HE=wa_contractor_reminder_digest_he
-   WA_REMINDER_DIGEST_TEMPLATE_EN=wa_contractor_reminder_digest_en
-   WA_REMINDER_DIGEST_TEMPLATE_AR=wa_contractor_reminder_digest_ar
-   WA_REMINDER_DIGEST_TEMPLATE_ZH=wa_contractor_reminder_digest_zh
+2. NO new env vars required. Bell polling already runs every 30s in production.
 
-3. Migration: existing reminder_log entries with type="contractor_reminder"
-   stay as-is. New digest entries get type="contractor_reminder_digest" so
-   analytics queries should UNION both.
+3. NO mobile changes — no `./ship.sh` required.
 
-4. Per-defect WA_REMINDER_TEMPLATE_HE remains live for any manual
-   send_pm_digest paths — no Meta template revocation needed.
+4. AFTER ./deploy.sh --stag merge:
+   - Manual smoke test:
+     a) Login as a contractor on a project that has a PM assigned.
+     b) Open a defect and upload proof — verify the PM sees a bell
+        notification within 30s ("X ביקש לסגור ליקוי ... — ממתין לאישורך").
+     c) Click the bell entry — should navigate to /tasks/{task_id}?src=bell.
+     d) As the PM, approve the defect — verify the contractor sees
+        "המנהל אישר את התיקון של ..." in their bell within 30s.
+     e) Reject another defect with a reason — verify rejection body includes
+        the reason ("המנהל דחה את התיקון של ... — {reason}").
+
+5. Existing 4 QC bell types (submit_for_review/qc_approved/qc_rejected/
+   qc_reopened) MUST continue to work identically — VERIFY 2 confirms the
+   5 callsites of _create_qc_notification are untouched.
+
+6. Defer to C2/C3:
+   - DB rename qc_notifications → notifications
+   - Endpoint rename /api/qc-notifications → /api/notifications
+   - Service rename qcNotificationService → notificationService
+   - defect_tagged + handover_signed events
+   - PM "reopened" defect notification (separate code path)
 
 ────────────────────────────────────────────────────────────────────────────────
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
