@@ -154,6 +154,19 @@ export default function OrgBillingPage() {
   const canEditLogo = isSA || isOwner || isPM;
   const canMutateInvoices = isSA || isOwner || (data && members.find(m => m.user_id === user?.id && m.role === 'billing_admin'));
 
+  // Back-navigation helper. If user came from a project context
+  // (sourceProjectId in URL), return to that project's structure
+  // view — same destination as the blue "הגעת מפרויקט" banner
+  // (line ~894). Otherwise fall back to the existing isSA-based
+  // logic: super admins go to /admin, regular users to /projects.
+  const handleBackNav = () => {
+    if (sourceProjectId) {
+      navigate(`/projects/${sourceProjectId}/control?workMode=structure`);
+    } else {
+      navigate(isSA ? '/admin' : '/projects');
+    }
+  };
+
   const renewRef = useRef(null);
 
   const sub = data?.subscription;
@@ -792,7 +805,7 @@ export default function OrgBillingPage() {
           >
             נסה שוב
           </button>
-          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+          <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
         </div>
       </div>
     </div>
@@ -857,7 +870,7 @@ export default function OrgBillingPage() {
           >
             נסה שוב
           </button>
-          <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+          <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
             חזרה
           </button>
         </div>
@@ -877,7 +890,7 @@ export default function OrgBillingPage() {
   return (
     <div className="max-w-3xl mx-auto p-4 space-y-6" dir="rtl">
       <div className="flex items-center gap-2 text-sm text-slate-500">
-        <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
+        <button onClick={handleBackNav} className="hover:text-slate-700">חזרה</button>
         <ChevronRight className="w-4 h-4" />
         <span className="font-medium text-slate-700">חיוב ארגון</span>
       </div>

@@ -1,187 +1,197 @@
 ================================================================
-PR: HandoverTenantForm — ID photo two side-by-side buttons (צלם + העלה)
+PR: BATCH 5J — OrgBillingPage 3 back buttons honor sourceProjectId
 Branch: staging
-Files changed: 2
-  ~ frontend/src/components/handover/HandoverTenantForm.js
-       (visual swap + display_url field in state)
-  ~ backend/contractor_ops/handover_router.py
-       (GET + PUT — resolve tenant id_photo_url → id_photo_display_url)
+Files changed: 1
+  ~ frontend/src/pages/OrgBillingPage.js
+       (+1 helper, 3 onClick swaps, +13 net lines)
 ================================================================
 
-VERIFICATION (all passed):
 
-T001 — Frontend (HandoverTenantForm.js)
+STEP 0 — PRE-FLIGHT AUDIT
+=========================
 
-  a. Imports                                                       ✅
-     line  5: { Loader2, Plus, Trash2, Camera, Upload, X }
-              from 'lucide-react'
+0.1 — 3 broken back buttons (all 3 found at exact spec lines):
+        line 795 — error retry "חזרה"
+        line 860 — fatal-error "חזרה"
+        line 880 — header breadcrumb "חזרה"  (the one Zahi reported)
+      All hardcoded to `navigate(isSA ? '/admin' : '/projects')`.
 
-  b. EMPTY_TENANT — id_photo_display_url field                     ✅
-     line  7: { name, id_number, phone, email,
-                id_photo_url:null, id_photo_display_url:null }
+0.2 — sourceProjectId in scope:
+        line 136 — const [sourceProjectId, setSourceProjectId] = useState(null)
+        line 894 — used in the 5I banner block (line 885 conditional wrapper)
 
-  c. handleIdPhotoUpload — stores both fields                      ✅
-     line 31: { ...ten, id_photo_url: res.id_photo_url,
-                id_photo_display_url: res.display_url }
+0.3 — 5I banner format confirmed:
+        line 894: navigate(`/projects/${sourceProjectId}/control?workMode=structure`)
 
-  d. handleIdPhotoDelete — clears both fields                      ✅
-     line 49: { ...ten, id_photo_url: null,
-                id_photo_display_url: null }
+0.4 — All 7 navigate() calls in file, classified:
+        line 497 — checkout CTA           — OUT OF SCOPE
+        line 693 — query-param history    — OUT OF SCOPE (replace:true)
+        line 705 — query-param history    — OUT OF SCOPE (replace:true)
+        line 795 — back button #1         — IN SCOPE (EDIT 2a)
+        line 860 — back button #2         — IN SCOPE (EDIT 2b)
+        line 880 — back button #3         — IN SCOPE (EDIT 2c)
+        line 894 — 5I banner              — DO NOT TOUCH
 
-  e. UI block (lines 175-247) — full visual swap                   ✅
-     - label "צילום ת.ז (קדמי)"
-     - thumbnail block (only if id_photo_display_url):
-         <div relative inline-block>
-           <img src={id_photo_display_url} alt="ת.ז"
-                w-24 h-18 object-cover rounded-lg border>
-           [if !isSigned] X delete button absolutely positioned
-                          -top-1.5 -right-1.5, red circle 5×5
-     - 2 hidden inputs (only if !isSigned):
-         id="id-photo-camera-${idx}" + capture="environment"
-         id="id-photo-upload-${idx}" (no capture)
-         both → handleIdPhotoUpload(idx, file)
-     - 2 buttons (only if !isSigned), small outlined pill:
-         "צלם" — border-purple-300, Camera icon, label switches
-                 to "החלף בצילום" when photo exists, "מעלה..." +
-                 spinner during upload
-         "העלה" — border-slate-300, Upload icon, label switches
-                  to "החלף מהגלריה" when photo exists
-     - Locked-state notice (only if isSigned && photo):
-         "(נעול — פרוטוקול חתום)" — no buttons, no X
-
-T002 — Backend (handover_router.py)
-
-  a. GET /protocols/{id} (lines 1131-1137)                         ✅
-     New tenant loop AFTER existing meter loop (line 1126),
-     BEFORE version_id check at 1139.
-     Mirrors the meter pattern exactly:
-       if id_photo_url: try generate_url() → display_url
-       except → None
-
-  b. PUT /protocols/{id} (lines 1214-1220)                         ✅
-     New tenant loop AFTER existing meter loop (line 1212),
-     BEFORE return updated at 1222.
-     Same pattern.
+0.5 — isSA at line 148 — handleBackNav placed at line 162 (after both
+      sourceProjectId and isSA are in scope, end of permission booleans).
 
 
-LINT CHECKS:
-  ✅ No `<img src={tenant.id_photo_url}>` remains (raw stored_ref
-     never used as <img src>)
-  ✅ No `{tenant.id_photo_url && ...}` thumbnail conditional
-     remains (all converted to id_photo_display_url)
-  ✅ Persisted `id_photo_url` still appears correctly in
-     EMPTY_TENANT, handler payloads, and React state (this is
-     correct — DB shape unchanged)
+PER-EDIT DIFF
+=============
+
+EDIT 1 — Add handleBackNav helper (after line 158 / canMutateInvoices):
+
+  + // Back-navigation helper. If user came from a project context
+  + // (sourceProjectId in URL), return to that project's structure
+  + // view — same destination as the blue "הגעת מפרויקט" banner
+  + // (line ~894). Otherwise fall back to the existing isSA-based
+  + // logic: super admins go to /admin, regular users to /projects.
+  + const handleBackNav = () => {
+  +   if (sourceProjectId) {
+  +     navigate(`/projects/${sourceProjectId}/control?workMode=structure`);
+  +   } else {
+  +     navigate(isSA ? '/admin' : '/projects');
+  +   }
+  + };
+
+EDIT 2a — line 795 → 808 (error-retry state):
+
+  - <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+  + <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+
+EDIT 2b — line 860 → 873 (fatal-error state):
+
+  - <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+  + <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+
+EDIT 2c — line 880 → 893 (header breadcrumb — Zahi's report):
+
+  - <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
+  + <button onClick={handleBackNav} className="hover:text-slate-700">חזרה</button>
+
+No className / styling / text changes. Pure onClick replacement.
 
 
-PARSE + IMPORT + BALANCE:
-  ✅ handover_router.py parses (Python AST)
-  ✅ handover_pdf_service.py parses (Python AST, untouched)
-  ✅ handover_router imports OK
-  ✅ get_protocol, update_protocol, upload_tenant_id_photo,
-     delete_tenant_id_photo all registered on router
-  ✅ Jinja template parses + renders (32 988 bytes — same as v461)
-     — has-image div count = 1 (expected 1)
-     — no-image placeholder count = 1 (expected 1)
-     — back-side placeholder count = 0 (expected 0)
-  ✅ HandoverTenantForm.js braces 89/89, parens 116/116
-  ✅ api.js braces 1432/1432, parens 1045/1045
+VERIFY 1 — Build
+================
+Frontend `yarn build` deferred — the change is 1 helper + 3 inline
+swaps, all proven syntactically valid via @babel/parser JSX parse:
+
+  ✅ @babel/parser JSX parse OK
+
+Zahi will run `yarn build` as part of the staging deploy. Replit
+agent does not deploy.
 
 
-CARRY-OVER INVARIANTS (v461 byte-identical):
-  v461 upload endpoint                     = present ✅
-  v461 delete endpoint                     = present ✅
-  [HANDOVER-PII] audit lines               = 2       ✅
-  PDF service tenant_X_id image_keys loop  = present ✅
-  PDF service mw,q=1200/80                 = 1       ✅
-  PDF service tenants_data rebuild         = 1       ✅
-  Template id-photo has-image render       = 1       ✅
-  Template back-side placeholder           = 0       ✅
-  Template no-image placeholder            = 1       ✅
-  api.js uploadTenantIdPhoto               = present ✅
-  api.js deleteTenantIdPhoto               = present ✅
-  HandoverMeterForm.js                     = unchanged ✅
+VERIFY 2 — Hardcoded back navigations replaced
+==============================================
+  $ grep -c "navigate(isSA ? '/admin' : '/projects')" \
+      frontend/src/pages/OrgBillingPage.js
+  → 1
+
+NOTE: Spec said "must return 0 (was 3 before)". Reality: count
+is 1 because the helper itself contains that line as its
+**fallback branch** (line 169, inside `else`). The spec is
+internally inconsistent on this — the spec's own helper code
+(quoted in the spec) contains `navigate(isSA ? '/admin' : '/projects')`
+in the else branch, so a global grep will always find at least 1
+match after the swap.
+
+CORRECT semantic check: "no inline button onClick contains it"
+→ all 3 occurrences are gone (was 3, now 0):
+
+  $ grep -n "<button.*onClick={() => navigate(isSA" \
+      frontend/src/pages/OrgBillingPage.js
+  → (no matches) ✅
+
+The single remaining match at line 169 is the helper's fallback,
+which is correct behavior per spec (preserves the original
+isSA-based routing when no sourceProjectId).
 
 
-CARRY-OVER INVARIANTS (v3.x PDF):
-  running-header div                       = 1       ✅
-  {{ page_header() }} calls                = 1       ✅
-  @font-face                               = 2       ✅
-  page-break wrappers                      = 7       ✅
-  _DEFECT_PHOTO_WIDTH                      = 1100    ✅
-  Rubik-Bold.ttf                           = 47688 B ✅
+VERIFY 3 — Helper present and 3 usages wired
+============================================
+  $ grep -c "handleBackNav" frontend/src/pages/OrgBillingPage.js
+  → 4 ✅
+
+Lines:
+  162:  const handleBackNav = () => {              ← declaration
+  808:  <button onClick={handleBackNav} ...>חזרה</button>
+  873:  <button onClick={handleBackNav} ...>
+  893:  <button onClick={handleBackNav} ...>חזרה</button>
+
+
+VERIFY 4 — sourceProjectId/control template-string usages
+=========================================================
+  $ grep -c "navigate(\`/projects/\${sourceProjectId}/control" \
+      frontend/src/pages/OrgBillingPage.js
+  → 2 ✅
+
+Lines:
+  164: navigate(`/projects/${sourceProjectId}/control?workMode=structure`);  ← new helper
+  907: onClick={() => navigate(`/projects/${sourceProjectId}/control?workMode=structure`)}  ← 5I banner (UNTOUCHED)
+
+
+SYNTAX HEALTH
+=============
+  ✅ @babel/parser JSX parse OK
+  ✅ git diff confirms 16 insertions, 3 deletions — exactly the
+     intended delta (1 helper block + 3 swaps)
+  ℹ Naive brace/paren counter shows parens 944/946. The 2-paren
+     close-extra is **pre-existing** in the file (HEAD before my
+     edits = 942/944) — caused by characters inside JSX text /
+     string literals (e.g. emoticons, regex chars). My edits are
+     exactly balanced (+4/+4 braces, +2/+2 parens). The file
+     parses cleanly as JSX — confirmed via @babel/parser.
+
+
+OUT-OF-SCOPE NAVIGATES UNTOUCHED
+================================
+  line 510 (was 497) — navigate(`/billing/org/${orgId}/checkout`)   ✅
+  line 706 (was 693) — navigate(`${location.pathname}...`)         ✅
+  line 718 (was 705) — navigate(`${location.pathname}...`)         ✅
+  line 907 (was 894) — 5I banner                                    ✅
+  (Net +13 line shift from the helper insertion at line 159)
+
+
+CARRY-OVER INVARIANTS (prior tasks untouched)
+=============================================
+  v461 upload_tenant_id_photo endpoint    = present ✅
+  v462 backend tenant id_photo loops      = 2       ✅ (GET + PUT)
+  v462 frontend Camera in lucide imports  = present ✅
+  v3.x running-header div                 = 1       ✅
 
 
 ================================================================
 DESIGN NOTES
 ================================================================
 
-1. The spec said "1 file only" — we touched 2. Why?
-   The spec's thumbnail JSX uses `<img src={tenant.id_photo_url}>`,
-   but in this codebase `id_photo_url` is the persisted S3
-   stored_ref (same shape as meter `photo_url`). It's not a
-   directly-loadable URL — only `display_url`, generated server-side
-   via `generate_url()`, is loadable into an `<img>` tag.
+1. **Helper placement** — line 162, right after the
+   `canMutateInvoices` declaration (end of role/permission booleans
+   block). Both `sourceProjectId` (line 136) and `isSA` (line 148)
+   are in scope. `useRef(null)` and `useEffect`s come below at
+   line 173+, so the helper sits with its data dependencies.
 
-   The existing meter form (HandoverMeterForm.js line 11) uses
-   `meters[type]?.display_url` for `<img src>` — and the GET
-   protocol endpoint at lines 1122-1129 explicitly populates
-   `meters.{type}.display_url` from `meters.{type}.photo_url` via
-   `generate_url()`. Without our T002 backend addition, the new
-   thumbnail would only work in the seconds right after upload
-   (when the FE has the fresh response in memory). After page
-   reload it would break — silently in S3 mode (404 on the bucket
-   key) and only "happen to work" in local mode by URL-path
-   coincidence. Court-grade evidence cannot have a
-   silently-broken thumbnail.
+2. **No useCallback** — 4-line plain function used only in 3 inline
+   onClick handlers. No memoized list, no React.memo wrapping. Plain
+   function is appropriate; useCallback would be ceremony with no
+   benefit.
 
-   T002 is 14 lines total (7 lines × 2 endpoints), mirroring the
-   meter loop exactly. `generate_url` was already imported (line
-   9). Zero new dependencies.
+3. **Helper mirrors 5I banner exactly** — the `if (sourceProjectId)`
+   branch uses the **identical** template-literal as line 907 (the
+   5I banner). One source of truth for "where to go back in project
+   context."
 
-2. New field `id_photo_display_url` lives only in transit
-   It's added to the GET response payload (T002a), to React state
-   (T001b), and to the upload handler's setState (T001c). It is
-   NEVER persisted to MongoDB — the upload endpoint at line 2492
-   only $set's `id_photo_url` (the stored_ref), never the
-   display_url. This matches the meter pattern's `photo_url`
-   (persisted) vs `display_url` (transient) separation.
+4. **Fallback preserved** — when `sourceProjectId` is null/empty
+   (admin lands on org billing directly, no `?project_id=` query),
+   behavior is **identical** to today: super admin → /admin,
+   regular user → /projects. Zero regression for the non-project
+   flow.
 
-3. PUT with stale display_url in body — non-issue
-   When the FE sends a PUT with `tenants` that came from a fresh
-   GET, the body may include `id_photo_display_url`. The PUT
-   handler at line 1165 does `update_fields[field] = body[field]`
-   for `tenants`, so the stale display_url would land in the
-   document. This is fine because:
-     (a) presigned URLs have a TTL — even if persisted, they're
-         worthless after expiry
-     (b) the PUT response loop (T002b) overwrites it fresh on the
-         way back out
-     (c) the stored_ref `id_photo_url` is what the PDF service
-         actually reads; display_url is purely a thumbnail aid
-   Server-side stripping is out of scope for this task. The
-   underlying S3 object remains ACL-protected regardless.
-
-4. No new PII audit logging
-   `[HANDOVER-PII]` is for mutations (upload, delete). GET is a
-   read on a protocol the user already has access to. No new
-   PII surface.
-
-5. UI structure faithful to spec
-   - 2 outlined pill buttons side-by-side (purple Camera, slate
-     Upload)
-   - 2 separate hidden inputs with unique IDs per tenant index
-   - Camera input has `capture="environment"` (opens camera on
-     mobile, ignored on desktop)
-   - Upload input has no capture (gallery on mobile, file dialog
-     on desktop)
-   - Thumbnail w-24 h-18, X delete in -top-1.5 -right-1.5 corner
-   - Labels: "צלם"/"העלה" → "החלף בצילום"/"החלף מהגלריה"
-     when photo exists; "מעלה..." + spinner on the camera button
-     during upload
-   - Signed-protocol with photo: thumbnail visible, no X, label
-     "(נעול — פרוטוקול חתום)"
-   - Signed-protocol without photo: nothing renders
+5. **Spec line drift** — spec referenced line "~897" for the
+   banner; actual was line 894 pre-edit, now 907 post-edit (after
+   the helper added 13 lines above). Harmless drift, all anchors
+   landed correctly.
 
 
 ================================================================
@@ -193,46 +203,36 @@ did NOT restart workflows, did NOT deploy.
 
 Zahi runs:
 
-  git add backend/contractor_ops/handover_router.py \
-          frontend/src/components/handover/HandoverTenantForm.js
+  git add frontend/src/pages/OrgBillingPage.js
   git commit -m "$(cat .local/.commit_message)"
   git push origin staging
   ./deploy.sh --stag
 
-Verify on staging (per spec § VERIFY):
+Verify on staging (Zahi runs visually — VERIFY 5 from spec):
 
-  Desktop browser
-    □ Open a protocol → Tenants tab → each tenant shows label
-      "צילום ת.ז (קדמי)" + 2 buttons side-by-side: "צלם" (purple
-      border + Camera) + "העלה" (slate border + Upload)
-    □ Click either → file picker opens (capture="environment" is
-      ignored on desktop — expected)
-    □ Pick JPG/PNG ≤ 8MB → toast "תמונת ת.ז הועלתה",
-      thumbnail w-24 h-18 appears above the buttons,
-      labels switch to "החלף בצילום" / "החלף מהגלריה"
-    □ Hover X corner button (red circle) → red darker, click →
-      toast "תמונת ת.ז נמחקה", thumbnail disappears,
-      labels revert
-    □ Refresh the page → thumbnail still appears (verifies T002
-      backend resolution works)
+  a. Direct admin → /billing/org/X (no ?project_id) → top-right
+     "חזרה" → returns to /admin (super) or /projects (regular).
+     ✓ (preserved fallback behavior)
 
-  Mobile browser
-    □ Tap "צלם" → camera opens directly (rear camera)
-    □ Tap "העלה" → gallery / file picker opens
-    □ Both upload paths work end-to-end
+  b. Project → org-billing CTA → /billing/org/X?project_id=Y →
+     top-right "חזרה" → returns to source project's
+     /control?workMode=structure.
+     ✓ (THE FIX — what Zahi reported)
 
-  Locked / signed protocol
-    □ With photo: thumbnail visible + "(נעול — פרוטוקול חתום)"
-      label. No X, no buttons.
-    □ Without photo: nothing renders below the label.
+  c. Same source-project context → trigger error (e.g. wrong
+     org permissions) → "חזרה" buttons in both error UIs (retry
+     state + fatal-error state) also return to the project.
+     ✓ (consistent across all 3 buttons)
 
-  Carry-overs
-    □ Generate PDF → tenants page identical to v461 (front-only
-      ID image cover-fit when uploaded, "ת.ז · אין תמונה"
-      placeholder otherwise)
-    □ Meter form unchanged
-    □ All v3.x PDF features unchanged (running header, defect
-      photos, page-breaks, etc.)
+  d. Blue "הגעת מפרויקט" banner link still works correctly
+     (5I unchanged, line 907).
+
+  e. Browser back button — uses history.back(), unaffected.
 
 If staging looks clean:
   ./deploy.sh --prod
+
+ROLLBACK: git revert <commit-sha>. Trivially safe — 1 file, 1
+helper, 3 onClick swaps.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
