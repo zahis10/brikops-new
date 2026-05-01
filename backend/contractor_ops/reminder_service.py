@@ -94,7 +94,7 @@ async def _resolve_phone_for_company(company_id: str) -> Optional[str]:
     return None
 
 
-async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None) -> dict:
+async def _send_wa_template(to_phone: str, template_name: str, body_params: list, button_params: list = None, lang_code: str = "he") -> dict:
     if not _wa_enabled:
         logger.info(f"[REMINDER:DRY-RUN] template={template_name} to={mask_phone(to_phone)}")
         return {"success": True, "dry_run": True, "provider_message_id": f"dry_{uuid.uuid4().hex[:12]}"}
@@ -126,7 +126,7 @@ async def _send_wa_template(to_phone: str, template_name: str, body_params: list
         "type": "template",
         "template": {
             "name": template_name,
-            "language": {"code": "he"},
+            "language": {"code": lang_code},
             "components": components
         }
     }
@@ -199,6 +199,29 @@ def _calc_wait_days(task: dict) -> int:
         return 0
 
 
+def _resolve_digest_template_for_user(user: dict) -> tuple:
+    """Pick the digest template (name + lang_code) for a recipient based on
+    users.preferred_language. Mirrors WA_DEFECT_TEMPLATES resolution logic
+    in notification_service.py:189-194.
+
+    Returns (template_name, lang_code). Falls back to Hebrew → English chain.
+    """
+    from config import WA_REMINDER_DIGEST_TEMPLATES, WA_REMINDER_DIGEST_DEFAULT_LANG
+    lang_key = (user or {}).get('preferred_language') or WA_REMINDER_DIGEST_DEFAULT_LANG
+    lang_key = lang_key.lower().strip()
+    tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get(lang_key)
+    if not tpl_info:
+        # First fallback: English (matches notification_service.py pattern)
+        if lang_key != 'en':
+            logger.info(f"[REMINDER:DIGEST] Lang '{lang_key}' not configured, falling back to en")
+            tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get('en')
+        # Last-resort fallback: Hebrew default (should always exist)
+        if not tpl_info:
+            logger.warning(f"[REMINDER:DIGEST] English template missing too, falling back to he")
+            tpl_info = WA_REMINDER_DIGEST_TEMPLATES.get(WA_REMINDER_DIGEST_DEFAULT_LANG)
+    return (tpl_info['name'], tpl_info['lang'])
+
+
 async def send_contractor_reminder(
     project_id: str,
     company_id: str,
@@ -247,33 +270,12 @@ async def send_contractor_reminder(
         else:
             return {"status": "skipped", "reason": "no_valid_phone"}
 
-    from config import WA_REMINDER_TEMPLATE_HE
-
     if not skip_cooldown:
         if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
             return {"status": "skipped", "reason": "cooldown", "company_id": company_id}
 
     results = []
-    MAX_MESSAGES_PER_BATCH = 5
-
-    building_ids = list(set(t.get("building_id") for t in tasks if t.get("building_id")))
-    floor_ids = list(set(t.get("floor_id") for t in tasks if t.get("floor_id")))
-    unit_ids = list(set(t.get("unit_id") for t in tasks if t.get("unit_id")))
-
-    building_map = {}
-    if building_ids:
-        bldgs = await _db.buildings.find({"id": {"$in": building_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
-        building_map = {b["id"]: b.get("name", "") for b in bldgs}
-
-    floor_map = {}
-    if floor_ids:
-        floors = await _db.floors.find({"id": {"$in": floor_ids}}, {"_id": 0, "id": 1, "name": 1, "number": 1}).to_list(200)
-        floor_map = {f["id"]: (f.get("name") or str(f.get("number", ""))) for f in floors}
-
-    unit_map = {}
-    if unit_ids:
-        units = await _db.units.find({"id": {"$in": unit_ids}}, {"_id": 0, "id": 1, "display_label": 1, "name": 1, "unit_no": 1, "number": 1}).to_list(200)
-        unit_map = {u["id"]: (u.get("display_label") or u.get("name") or u.get("unit_no") or str(u.get("number", ""))) for u in units}
+    open_count = len(tasks)
 
     for r in recipients:
         user = r["user"]
@@ -288,52 +290,50 @@ async def send_contractor_reminder(
                 results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
                 continue
 
-        sent_count = 0
-        for task in tasks[:MAX_MESSAGES_PER_BATCH]:
-            task_id = task.get("id", "")
-            location = _build_location_string(task, building_map, floor_map, unit_map)
-            finding = task.get("title", "ליקוי")
-            wait_days = _calc_wait_days(task)
+        # Pick template + language for this recipient.
+        # Companies (no preferred_language) fall through to default (he).
+        tpl_name, lang_code = _resolve_digest_template_for_user(user)
 
-            log_entry = {
-                "type": "contractor_reminder",
-                "company_id": company_id,
-                "recipient_user_id": user_id,
-                "recipient_phone": phone,
-                "project_id": project_id,
-                "org_id": org_id,
-                "task_id": task_id,
-                "message_template": WA_REMINDER_TEMPLATE_HE,
-                "triggered_by": triggered_by,
-            }
+        log_entry = {
+            "type": "contractor_reminder_digest",
+            "company_id": company_id,
+            "recipient_user_id": user_id,
+            "recipient_phone": phone,
+            "project_id": project_id,
+            "org_id": org_id,
+            "open_count": open_count,
+            "message_template": tpl_name,
+            "lang_code": lang_code,
+            "triggered_by": triggered_by,
+        }
 
-            try:
-                body_params = [
-                    {"parameter_name": "project_name", "text": project.get("name", "")},
-                    {"parameter_name": "location", "text": location},
-                    {"parameter_name": "finding_description", "text": finding},
-                    {"parameter_name": "wait_days", "text": str(wait_days)},
-                ]
-                button_params = [
-                    {"index": 0, "text": f"{task_id}?src=wa"}
-                ]
-                wa_result = await _send_wa_template(phone, WA_REMINDER_TEMPLATE_HE, body_params, button_params=button_params)
-                log_entry["status"] = "sent"
-                log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
-                sent_count += 1
-            except Exception as e:
-                log_entry["status"] = "failed"
-                log_entry["error_detail"] = str(e)[:500]
-                results.append({"user_id": user_id, "task_id": task_id, "status": "failed", "error": str(e)[:200]})
-                logger.error(f"[REMINDER] Failed to send contractor reminder to {mask_phone(phone)} for task {task_id}: {e}")
+        try:
+            body_params = [
+                {"parameter_name": "name", "text": user_name},
+                {"parameter_name": "count", "text": str(open_count)},
+                {"parameter_name": "project", "text": project.get("name", "")},
+            ]
+            button_params = [
+                {"index": 0, "text": f"{project_id}?src=wa"}
+            ]
+            wa_result = await _send_wa_template(
+                phone, tpl_name, body_params,
+                button_params=button_params,
+                lang_code=lang_code,
+            )
+            log_entry["status"] = "sent"
+            log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+            results.append({"user_id": user_id, "status": "sent", "messages_sent": 1, "open_count": open_count})
+        except Exception as e:
+            log_entry["status"] = "failed"
+            log_entry["error_detail"] = str(e)[:500]
+            results.append({"user_id": user_id, "status": "failed", "error": str(e)[:200]})
+            logger.error(f"[REMINDER:DIGEST] Failed to send digest to {mask_phone(phone)} for project {project_id}: {e}")
 
-            await _log_reminder(log_entry)
-            await asyncio.sleep(SEND_PACING_SECONDS)
+        await _log_reminder(log_entry)
+        await asyncio.sleep(SEND_PACING_SECONDS)
 
-        if sent_count > 0:
-            results.append({"user_id": user_id, "status": "sent", "messages_sent": sent_count})
-
-    return {"status": "completed", "results": results, "defect_count": len(tasks)}
+    return {"status": "completed", "results": results, "defect_count": open_count}
 
 
 async def send_pm_digest(

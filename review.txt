@@ -1,238 +1,198 @@
-================================================================
-PR: BATCH 5J — OrgBillingPage 3 back buttons honor sourceProjectId
-Branch: staging
-Files changed: 1
-  ~ frontend/src/pages/OrgBillingPage.js
-       (+1 helper, 3 onClick swaps, +13 net lines)
-================================================================
+================================================================================
+BATCH 6A v2 — Contractor Reminder Digest + Multi-Project URL Routing (Stream A)
+Task #464 · Branch: staging · Date: 2026-05-01
+================================================================================
 
+STATUS: READY FOR ZAHI APPROVAL — DO NOT DEPLOY
 
-STEP 0 — PRE-FLIGHT AUDIT
-=========================
+────────────────────────────────────────────────────────────────────────────────
+STEP 0 — REPO AUDIT (V2 spec confirmation)
+────────────────────────────────────────────────────────────────────────────────
+- Branch confirmed: staging (no merges to main).
+- Per-defect template `WA_REMINDER_TEMPLATE_HE` preserved in config.py:1 occurrence
+  (used by send_pm_digest line 433 and any future manual-flow code paths). The
+  digest refactor is ADDITIVE — old constant kept for backward compat.
+- send_pm_digest at line 433 NOT touched: still uses default `lang_code="he"`
+  via _send_wa_template's new optional kwarg (Finding A — KEEP-UNCHANGED).
+- React.lazy ContractorDashboard import confirmed; props pass through (Finding D).
+- Codebase has no pytest-asyncio plugin; tests use `asyncio.run(run())` per
+  test_billing_v1.py:307,336,366 (Finding B).
 
-0.1 — 3 broken back buttons (all 3 found at exact spec lines):
-        line 795 — error retry "חזרה"
-        line 860 — fatal-error "חזרה"
-        line 880 — header breadcrumb "חזרה"  (the one Zahi reported)
-      All hardcoded to `navigate(isSA ? '/admin' : '/projects')`.
+────────────────────────────────────────────────────────────────────────────────
+FILES CHANGED — DIFF SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+ backend/.env.production.template           |   7 ++
+ backend/config.py                          |  18 ++++
+ backend/contractor_ops/reminder_service.py | 132 ++++++++++++++-------------
+ frontend/src/App.js                        |  19 ++++-
+ frontend/src/pages/ContractorDashboard.js  |   5 +-
+ backend/tests/test_reminder_digest.py      | 374 ++++ (NEW)
+ 5 files modified, 1 new, +111 / -70 LOC (excl. test file)
 
-0.2 — sourceProjectId in scope:
-        line 136 — const [sourceProjectId, setSourceProjectId] = useState(null)
-        line 894 — used in the 5I banner block (line 885 conditional wrapper)
+────────────────────────────────────────────────────────────────────────────────
+PER-FILE CHANGES
+────────────────────────────────────────────────────────────────────────────────
 
-0.3 — 5I banner format confirmed:
-        line 894: navigate(`/projects/${sourceProjectId}/control?workMode=structure`)
+1) backend/config.py (lines 97-109, +13 LOC)
+   + WA_REMINDER_DIGEST_TEMPLATES dict mirroring WA_DEFECT_TEMPLATES pattern.
+     Keys: 'he','en','ar','zh' → {'name': env-driven, 'lang': meta lang code}.
+     'zh' deliberately maps to lang code 'zh_CN' (Meta requirement).
+   + WA_REMINDER_DIGEST_DEFAULT_LANG = 'he' (used by helper as fallback floor).
+   + Existing WA_REMINDER_TEMPLATE_HE (line ~80) UNTOUCHED — used by per-defect
+     code paths (e.g. send_pm_digest:433).
 
-0.4 — All 7 navigate() calls in file, classified:
-        line 497 — checkout CTA           — OUT OF SCOPE
-        line 693 — query-param history    — OUT OF SCOPE (replace:true)
-        line 705 — query-param history    — OUT OF SCOPE (replace:true)
-        line 795 — back button #1         — IN SCOPE (EDIT 2a)
-        line 860 — back button #2         — IN SCOPE (EDIT 2b)
-        line 880 — back button #3         — IN SCOPE (EDIT 2c)
-        line 894 — 5I banner              — DO NOT TOUCH
+2) backend/contractor_ops/reminder_service.py (132 LOC delta)
+   (a) _send_wa_template signature line 100:
+       + new optional kwarg `lang_code: str = "he"` (default preserves all
+         existing call sites — send_pm_digest, etc.)
+   (b) Line 132 — body language now from kwarg:
+       BEFORE: "language": {"code": "he"}
+       AFTER:  "language": {"code": lang_code}
+   (c) New helper `_resolve_digest_template_for_user` inserted at line 200-222
+       (24 LOC). Mirrors notification_service._resolve_template_name pattern.
+       Returns (template_name, lang_code). Fallback chain: requested →
+       'en' → 'he' (last-resort floor).
+   (d) `send_contractor_reminder` body (lines 273-339) REPLACED:
+       BEFORE: looped tasks[:5] per recipient; sent up to 5 per-defect WA
+               messages with task-id button URL.
+       AFTER:  sends ONE digest message per recipient with body params
+               {name, count, project} and button URL `{project_id}?src=wa`.
+               log_entry.type="contractor_reminder_digest" + open_count + lang_code.
+       Empty-tasks early return (line 239-240, "no_open_defects") preserved.
+       Cooldown / preferences / phone resolution / company fallback unchanged.
 
-0.5 — isSA at line 148 — handleBackNav placed at line 162 (after both
-      sourceProjectId and isSA are in scope, end of permission booleans).
+3) backend/.env.production.template (lines 45-51, +7 LOC)
+   + 4 env vars: WA_REMINDER_DIGEST_TEMPLATE_{HE,EN,AR,ZH}
+   + 3 explanatory comments (Meta approval flow note).
 
+4) frontend/src/App.js
+   + Line 2: useParams added to react-router-dom import.
+   + Lines 146-157: ProjectsHome rewritten to read URL projectId param.
+       - Contractor → <ContractorDashboard initialProjectId={projectId} />
+       - PM/admin with projectId → Navigate to /projects/:projectId/dashboard
+       - PM/admin no projectId → MyProjectsPage (existing behavior)
+   + Lines 206-213: NEW <Route path="/projects/:projectId"> guarded by
+       ProtectedRoute, rendering ProjectsHome.
 
-PER-EDIT DIFF
-=============
+5) frontend/src/pages/ContractorDashboard.js
+   + Line 106: signature `({ initialProjectId } = {})` — destructured prop.
+   + Lines 114-117: useState init priority: initialProjectId (from URL) →
+       localStorage('lastProjectId') → 'all'. Comment added inline.
 
-EDIT 1 — Add handleBackNav helper (after line 158 / canMutateInvoices):
+6) backend/tests/test_reminder_digest.py (NEW, 374 LOC, 14 tests)
+   - 8 sync tests on _resolve_digest_template_for_user covering: he, en, ar,
+     zh→zh_CN, no preferred_language → he, company → he, unknown → en fallback,
+     uppercase normalization.
+   - 5 async tests on send_contractor_reminder covering: 100 defects → 1 send,
+     button URL = project_id, recipient lang preference honored, no_open_defects
+     skip, log entry shape (type/open_count/lang_code/wa_message_id).
+   - 1 multi-project pin: 3 projects × 1 contractor → 3 separate WA messages
+     each naming its own project (test_send_all_three_projects_three_messages).
 
-  + // Back-navigation helper. If user came from a project context
-  + // (sourceProjectId in URL), return to that project's structure
-  + // view — same destination as the blue "הגעת מפרויקט" banner
-  + // (line ~894). Otherwise fall back to the existing isSA-based
-  + // logic: super admins go to /admin, regular users to /projects.
-  + const handleBackNav = () => {
-  +   if (sourceProjectId) {
-  +     navigate(`/projects/${sourceProjectId}/control?workMode=structure`);
-  +   } else {
-  +     navigate(isSA ? '/admin' : '/projects');
-  +   }
-  + };
+────────────────────────────────────────────────────────────────────────────────
+FINDINGS (V2 from initial audit, all addressed)
+────────────────────────────────────────────────────────────────────────────────
+A. send_pm_digest:433 — KEEP-UNCHANGED. _send_wa_template default lang_code="he"
+   preserves existing behavior; no call site changes required.
+B. asyncio.run() pattern — async tests written WITHOUT @pytest.mark.asyncio,
+   matching test_billing_v1.py:307,336,366. Verified: codebase has no
+   pytest-asyncio plugin (only anyio).
+C. useParams import — added to App.js only (ContractorDashboard receives
+   projectId as a prop, not from router context, keeping the component
+   testable without a Router wrapper).
+D. React.lazy passes props — confirmed: `<ContractorDashboard initialProjectId={projectId} />`
+   compiles cleanly through Suspense+lazy (Babel parse OK).
+E. 14 tests delivered — Test file matches V2 spec count exactly.
 
-EDIT 2a — line 795 → 808 (error-retry state):
+────────────────────────────────────────────────────────────────────────────────
+SPEC DRIFTS (harmless line-number paraphrases)
+────────────────────────────────────────────────────────────────────────────────
+- ContractorDashboard selectedProjectId useState was at line 113-117 (spec said
+  111). No semantic difference.
+- reminder_service.py replace block end was line 359 in working file (spec said
+  336). Line numbers only — content identical to spec snippet.
+- send_contractor_reminder def is now at line 225 (post-helper-insert), was 202
+  before edits. Line numbers only.
 
-  - <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
-  + <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm">חזרה</button>
+────────────────────────────────────────────────────────────────────────────────
+VERIFICATION OUTPUTS
+────────────────────────────────────────────────────────────────────────────────
 
-EDIT 2b — line 860 → 873 (fatal-error state):
+VERIFY 1a — backend imports cleanly
+  $ python -c "from contractor_ops import reminder_service; print('OK')"
+  OK
 
-  - <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
-  + <button onClick={handleBackNav} className="text-slate-500 hover:text-slate-700 text-sm px-4 py-2">
+VERIFY 1b — pytest 14 tests
+  $ python -m pytest backend/tests/test_reminder_digest.py -v
+  ============================== 14 passed in 1.25s ==============================
+  All 14 tests PASSED:
+    [ 8/8 ] _resolve_digest_template_for_user (he/en/ar/zh→zh_CN/no-pref/
+            company/unknown→en/uppercase)
+    [ 5/5 ] send_contractor_reminder digest (one-message-100-defects/
+            button-uses-project-id/recipient-lang/no-open-defects-skip/log-shape)
+    [ 1/1 ] multi-project pin (3 projects → 3 distinct messages)
 
-EDIT 2c — line 880 → 893 (header breadcrumb — Zahi's report):
+VERIFY 2 — MAX_MESSAGES_PER_BATCH removed (expect 0)
+  $ grep -c "MAX_MESSAGES_PER_BATCH" backend/contractor_ops/reminder_service.py
+  0 ✓
 
-  - <button onClick={() => navigate(isSA ? '/admin' : '/projects')} className="hover:text-slate-700">חזרה</button>
-  + <button onClick={handleBackNav} className="hover:text-slate-700">חזרה</button>
+VERIFY 3 — WA_REMINDER_TEMPLATE_HE preserved in config.py (expect 1)
+  $ grep -c "WA_REMINDER_TEMPLATE_HE" backend/config.py
+  1 ✓
 
-No className / styling / text changes. Pure onClick replacement.
+VERIFY 4 — digest dict has all 4 lang keys
+  $ python -c "from config import WA_REMINDER_DIGEST_TEMPLATES; print(sorted(WA_REMINDER_DIGEST_TEMPLATES.keys()))"
+  ['ar', 'en', 'he', 'zh'] ✓
 
+VERIFY 5a — hardcoded "he" language string removed (expect 0)
+  $ grep -c '"language": {"code": "he"}' backend/contractor_ops/reminder_service.py
+  0 ✓
 
-VERIFY 1 — Build
-================
-Frontend `yarn build` deferred — the change is 1 helper + 3 inline
-swaps, all proven syntactically valid via @babel/parser JSX parse:
+VERIFY 5b — lang_code threaded through (expect ≥4)
+  $ grep -c "lang_code" backend/contractor_ops/reminder_service.py
+  7 ✓
 
-  ✅ @babel/parser JSX parse OK
+VERIFY 6 — App.js has the new /projects/:projectId Route (expect 1)
+  $ grep -c 'path="/projects/:projectId"' frontend/src/App.js
+  1 ✓
 
-Zahi will run `yarn build` as part of the staging deploy. Replit
-agent does not deploy.
+VERIFY 7 — useParams referenced (expect 2: import + use)
+  $ grep -c "useParams" frontend/src/App.js
+  2 ✓
 
+VERIFY 8 — initialProjectId wired in ContractorDashboard (expect 2)
+  $ grep -n "initialProjectId" frontend/src/pages/ContractorDashboard.js
+  103: const ContractorDashboard = ({ initialProjectId } = {}) => {
+  113:   return initialProjectId || localStorage.getItem('lastProjectId') || 'all';
+  ✓ (signature + useState initializer)
 
-VERIFY 2 — Hardcoded back navigations replaced
-==============================================
-  $ grep -c "navigate(isSA ? '/admin' : '/projects')" \
-      frontend/src/pages/OrgBillingPage.js
-  → 1
+VERIFY EXTRA — frontend syntax (Babel parse)
+  src/App.js — OK
+  src/pages/ContractorDashboard.js — OK
 
-NOTE: Spec said "must return 0 (was 3 before)". Reality: count
-is 1 because the helper itself contains that line as its
-**fallback branch** (line 169, inside `else`). The spec is
-internally inconsistent on this — the spec's own helper code
-(quoted in the spec) contains `navigate(isSA ? '/admin' : '/projects')`
-in the else branch, so a global grep will always find at least 1
-match after the swap.
+────────────────────────────────────────────────────────────────────────────────
+DEPLOYMENT NOTES (for Zahi after approval)
+────────────────────────────────────────────────────────────────────────────────
+1. After git commit/push and ./deploy.sh --stag merge:
+   - Submit 4 WhatsApp templates to Meta Business Manager →
+     wa_contractor_reminder_digest_{he,en,ar,zh}
+   - Each template needs body params: {{name}}, {{count}}, {{project}} +
+     1 button (URL type) opening /projects/{{1}}?src=wa.
+   - Approval ~24-48h per template.
 
-CORRECT semantic check: "no inline button onClick contains it"
-→ all 3 occurrences are gone (was 3, now 0):
+2. Set in AWS Elastic Beanstalk environment vars (after Meta approval):
+   WA_REMINDER_DIGEST_TEMPLATE_HE=wa_contractor_reminder_digest_he
+   WA_REMINDER_DIGEST_TEMPLATE_EN=wa_contractor_reminder_digest_en
+   WA_REMINDER_DIGEST_TEMPLATE_AR=wa_contractor_reminder_digest_ar
+   WA_REMINDER_DIGEST_TEMPLATE_ZH=wa_contractor_reminder_digest_zh
 
-  $ grep -n "<button.*onClick={() => navigate(isSA" \
-      frontend/src/pages/OrgBillingPage.js
-  → (no matches) ✅
+3. Migration: existing reminder_log entries with type="contractor_reminder"
+   stay as-is. New digest entries get type="contractor_reminder_digest" so
+   analytics queries should UNION both.
 
-The single remaining match at line 169 is the helper's fallback,
-which is correct behavior per spec (preserves the original
-isSA-based routing when no sourceProjectId).
+4. Per-defect WA_REMINDER_TEMPLATE_HE remains live for any manual
+   send_pm_digest paths — no Meta template revocation needed.
 
-
-VERIFY 3 — Helper present and 3 usages wired
-============================================
-  $ grep -c "handleBackNav" frontend/src/pages/OrgBillingPage.js
-  → 4 ✅
-
-Lines:
-  162:  const handleBackNav = () => {              ← declaration
-  808:  <button onClick={handleBackNav} ...>חזרה</button>
-  873:  <button onClick={handleBackNav} ...>
-  893:  <button onClick={handleBackNav} ...>חזרה</button>
-
-
-VERIFY 4 — sourceProjectId/control template-string usages
-=========================================================
-  $ grep -c "navigate(\`/projects/\${sourceProjectId}/control" \
-      frontend/src/pages/OrgBillingPage.js
-  → 2 ✅
-
-Lines:
-  164: navigate(`/projects/${sourceProjectId}/control?workMode=structure`);  ← new helper
-  907: onClick={() => navigate(`/projects/${sourceProjectId}/control?workMode=structure`)}  ← 5I banner (UNTOUCHED)
-
-
-SYNTAX HEALTH
-=============
-  ✅ @babel/parser JSX parse OK
-  ✅ git diff confirms 16 insertions, 3 deletions — exactly the
-     intended delta (1 helper block + 3 swaps)
-  ℹ Naive brace/paren counter shows parens 944/946. The 2-paren
-     close-extra is **pre-existing** in the file (HEAD before my
-     edits = 942/944) — caused by characters inside JSX text /
-     string literals (e.g. emoticons, regex chars). My edits are
-     exactly balanced (+4/+4 braces, +2/+2 parens). The file
-     parses cleanly as JSX — confirmed via @babel/parser.
-
-
-OUT-OF-SCOPE NAVIGATES UNTOUCHED
-================================
-  line 510 (was 497) — navigate(`/billing/org/${orgId}/checkout`)   ✅
-  line 706 (was 693) — navigate(`${location.pathname}...`)         ✅
-  line 718 (was 705) — navigate(`${location.pathname}...`)         ✅
-  line 907 (was 894) — 5I banner                                    ✅
-  (Net +13 line shift from the helper insertion at line 159)
-
-
-CARRY-OVER INVARIANTS (prior tasks untouched)
-=============================================
-  v461 upload_tenant_id_photo endpoint    = present ✅
-  v462 backend tenant id_photo loops      = 2       ✅ (GET + PUT)
-  v462 frontend Camera in lucide imports  = present ✅
-  v3.x running-header div                 = 1       ✅
-
-
-================================================================
-DESIGN NOTES
-================================================================
-
-1. **Helper placement** — line 162, right after the
-   `canMutateInvoices` declaration (end of role/permission booleans
-   block). Both `sourceProjectId` (line 136) and `isSA` (line 148)
-   are in scope. `useRef(null)` and `useEffect`s come below at
-   line 173+, so the helper sits with its data dependencies.
-
-2. **No useCallback** — 4-line plain function used only in 3 inline
-   onClick handlers. No memoized list, no React.memo wrapping. Plain
-   function is appropriate; useCallback would be ceremony with no
-   benefit.
-
-3. **Helper mirrors 5I banner exactly** — the `if (sourceProjectId)`
-   branch uses the **identical** template-literal as line 907 (the
-   5I banner). One source of truth for "where to go back in project
-   context."
-
-4. **Fallback preserved** — when `sourceProjectId` is null/empty
-   (admin lands on org billing directly, no `?project_id=` query),
-   behavior is **identical** to today: super admin → /admin,
-   regular user → /projects. Zero regression for the non-project
-   flow.
-
-5. **Spec line drift** — spec referenced line "~897" for the
-   banner; actual was line 894 pre-edit, now 907 post-edit (after
-   the helper added 13 lines above). Harmless drift, all anchors
-   landed correctly.
-
-
-================================================================
-DEPLOYMENT
-================================================================
-
-Standing rule respected: agent did NOT git commit, did NOT push,
-did NOT restart workflows, did NOT deploy.
-
-Zahi runs:
-
-  git add frontend/src/pages/OrgBillingPage.js
-  git commit -m "$(cat .local/.commit_message)"
-  git push origin staging
-  ./deploy.sh --stag
-
-Verify on staging (Zahi runs visually — VERIFY 5 from spec):
-
-  a. Direct admin → /billing/org/X (no ?project_id) → top-right
-     "חזרה" → returns to /admin (super) or /projects (regular).
-     ✓ (preserved fallback behavior)
-
-  b. Project → org-billing CTA → /billing/org/X?project_id=Y →
-     top-right "חזרה" → returns to source project's
-     /control?workMode=structure.
-     ✓ (THE FIX — what Zahi reported)
-
-  c. Same source-project context → trigger error (e.g. wrong
-     org permissions) → "חזרה" buttons in both error UIs (retry
-     state + fatal-error state) also return to the project.
-     ✓ (consistent across all 3 buttons)
-
-  d. Blue "הגעת מפרויקט" banner link still works correctly
-     (5I unchanged, line 907).
-
-  e. Browser back button — uses history.back(), unaffected.
-
-If staging looks clean:
-  ./deploy.sh --prod
-
-ROLLBACK: git revert <commit-sha>. Trivially safe — 1 file, 1
-helper, 3 onClick swaps.
-
+────────────────────────────────────────────────────────────────────────────────
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

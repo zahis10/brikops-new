@@ -1,5 +1,5 @@
 import React, { useEffect, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BillingProvider, useBilling } from './contexts/BillingContext';
 import { IdentityProvider } from './contexts/IdentityContext';
@@ -142,7 +142,14 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
 
 const ProjectsHome = () => {
   const { user } = useAuth();
-  if (user?.role === 'contractor') return <ContractorDashboard />;
+  const { projectId } = useParams();
+  if (user?.role === 'contractor') {
+    return <ContractorDashboard initialProjectId={projectId} />;
+  }
+  // PMs/admins arriving at /projects/:projectId go to their dashboard.
+  if (projectId) {
+    return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+  }
   return <MyProjectsPage />;
 };
 
@@ -187,6 +194,14 @@ const AppRoutes = () => {
         <Route path="/account/pending-deletion" element={<PendingDeletionPage />} />
         <Route
           path="/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectsHome />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId"
           element={
             <ProtectedRoute>
               <ProjectsHome />

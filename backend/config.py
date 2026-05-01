@@ -90,6 +90,24 @@ WA_QC_REJECT_TEMPLATE_HE = os.environ.get('WA_QC_REJECT_TEMPLATE_HE', 'qc_item_r
 WA_QC_REJECT_TEMPLATE_LANG = 'he'
 WA_REMINDER_TEMPLATE_HE = os.environ.get('WA_REMINDER_TEMPLATE_HE', 'brikops_contractor_reminder_he')
 WA_DIGEST_TEMPLATE_HE = os.environ.get('WA_DIGEST_TEMPLATE_HE', 'brikops_daily_digest_he')
+
+# ----- Stream A 2026-05-01 — contractor digest multi-language template family -----
+# Mirrors WA_DEFECT_TEMPLATES pattern (lines 80-85). One template per language.
+# Submitted to Meta for approval 2026-05-01:
+#   he → wa_contractor_reminder_digest_he   (default — Hebrew)
+#   en → wa_contractor_reminder_digest_en
+#   ar → wa_contractor_reminder_digest_ar
+#   zh → wa_contractor_reminder_digest_zh   (language code: zh_CN)
+# If env var unset, defaults preserve template name (template will simply
+# fail to send if Meta hasn't approved yet — caught and logged).
+WA_REMINDER_DIGEST_TEMPLATES = {
+    'he': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_HE', 'wa_contractor_reminder_digest_he'), 'lang': 'he'},
+    'en': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_EN', 'wa_contractor_reminder_digest_en'), 'lang': 'en'},
+    'ar': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_AR', 'wa_contractor_reminder_digest_ar'), 'lang': 'ar'},
+    'zh': {'name': os.environ.get('WA_REMINDER_DIGEST_TEMPLATE_ZH', 'wa_contractor_reminder_digest_zh'), 'lang': 'zh_CN'},
+}
+WA_REMINDER_DIGEST_DEFAULT_LANG = 'he'
+
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 OTP_SMS_FALLBACK_SECONDS = int(os.environ.get('OTP_SMS_FALLBACK_SECONDS', '25'))
 WA_WEBHOOK_VERIFY_TOKEN = os.environ.get('WA_WEBHOOK_VERIFY_TOKEN', '')

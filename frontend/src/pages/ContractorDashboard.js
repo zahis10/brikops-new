@@ -100,7 +100,7 @@ function TaskCardSkeleton() {
   );
 }
 
-const ContractorDashboard = () => {
+const ContractorDashboard = ({ initialProjectId } = {}) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const lang = getLanguage();
@@ -109,7 +109,8 @@ const ContractorDashboard = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedProjectId, setSelectedProjectId] = useState(() => {
-    return localStorage.getItem('lastProjectId') || 'all';
+    // Priority: URL param (from /projects/:projectId) → localStorage → 'all'
+    return initialProjectId || localStorage.getItem('lastProjectId') || 'all';
   });
   const urgentRef = useRef(null);
 
