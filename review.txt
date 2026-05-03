@@ -1,164 +1,107 @@
-BATCH 6B v2 — Stream A v2 follow-up CRITICAL fixes (5 prod bugs)
-================================================================
-Task #466 | Branch: staging | Files: 3 | Tests: 23/23 PASS
+BATCH 6C — WhatsApp link forces contractor view (multi-role users)
+==================================================================
+Task #467 | Branch: staging | Files: 1 | LOC: ~17 added (incl. comments)
 
-STEP 0 — Pre-flight audit (verbatim greps, repeated at execution)
------------------------------------------------------------------
-✅ reminder_service.py:63    _check_user_reminder_prefs  (anchor)
-✅ reminder_service.py:78    _resolve_phone_for_user     (anchor)
-✅ reminder_service.py:86    _resolve_phone_for_company  (anchor)
-✅ reminder_service.py:153   _log_reminder               (anchor)
-✅ reminder_service.py:160   _check_cooldown             (anchor)
-✅ reminder_service.py:225   send_contractor_reminder    (anchor; spec said ~202)
-✅ reminder_service.py:458   send_all_contractor_reminders (anchor)
-✅ schemas.py:97             ProjectStatus enum
-✅ auth_router.py:144,357    whatsapp_notifications_enabled, last_login_at
-✅ App.js:143-147            ProjectsHome literal-role check
-✅ test_reminder_digest.py   14 existing tests, including
-                             test_send_all_three_projects_three_messages:270
+STEP 0 — Pre-flight audit (verbatim greps)
+-------------------------------------------
+0.1  ProjectsHome / PM_OR_ADMIN_ROLES / isPmOrAdmin in App.js:
+       143:const PM_OR_ADMIN_ROLES = ['project_manager','owner','management_team'];
+       145:const ProjectsHome = () => {
+       153:  const isPmOrAdmin =
+       154:    PM_OR_ADMIN_ROLES.includes(user?.role) ||
+       157:  if (isPmOrAdmin) {
+       210:              <ProjectsHome />
+       218:              <ProjectsHome />
 
-WHAT SHIPPED — 5 BUGS FIXED
----------------------------
-Bug A (CRITICAL — flood):
-  Cron now iterates by `(project, assignee_user)` instead of
-  `(project, company)`. A contractor with tasks in the same project
-  tagged under N companies receives ONE digest with count=N, not N
-  separate "1 ליקוי" messages. Cooldown re-keyed to (project, user)
-  via new `_check_cooldown_for_user`.
+0.2  react-router-dom import (line 2):
+       BEFORE: { BrowserRouter, Routes, Route, Navigate, useLocation, useParams }
+       (useSearchParams NOT yet imported — confirmed)
 
-Bug B (routing):
-  `App.js ProjectsHome` inverted. Defines
-  `PM_OR_ADMIN_ROLES = ['project_manager','owner','management_team']`
-  and treats `platform_role === 'super_admin'` as PM/admin too.
-  Everyone else (contractor + sub-roles like execution_engineer,
-  site_manager, future field-roles) → ContractorDashboard.
+0.3  useSearchParams pattern in pages/ — well-established (4+ files):
+       WaLoginPage.js, ResetPasswordPage.js, HandoverTabPage.js,
+       OnboardingPage.js — all use `const [searchParams] = useSearchParams()`.
+       Pattern is safe.
 
-Bug C (inactive projects):
-  `send_all_contractor_reminders` filters projects to
-  `status='active' AND ($or archived missing/false/null)`.
-  Suspended/archived/deleted projects no longer trigger sends.
+DRIFT NOTED: Spec LOCATION 1.2 shows `PM_OR_ADMIN_ROLES` declared INSIDE
+`ProjectsHome`. Actual prod state (after Batch 6B v2) has it as a
+module-level const at line 143. Adapted the diff: kept module-level
+const, added the new logic inside ProjectsHome only.
 
-Bug D (dormant users >45d):
-  New `_is_user_dormant(user)` helper. Primary signal is
-  `last_login_at`; falls back to `created_at` so brand-new invites
-  (no login yet, account <45d old) still receive their first
-  reminder (V2 new-user exception per Replit feedback). Both
-  missing/malformed → defensive dormant.
+WHAT SHIPPED
+------------
+Multi-role users (PM in some projects, contractor in others) clicking
+a contractor WhatsApp digest link were redirected to the PM dashboard
+(no defects shown). Root cause: after Batch 6B v2, `App.js ProjectsHome`
+checks the global `user.role` field, which is the highest-privilege
+role across all the user's projects. The contractor digest sender
+(`reminder_service.send_contractor_reminder`) appends `?src=wa` to its
+button URL, so we treat that query param as an explicit
+contractor-route signal: arriving from `?src=wa` always shows the
+ContractorDashboard regardless of global role.
 
-Bug E (WA toggle):
-  New `_user_disabled_whatsapp(user)` helper. Returns True iff
-  `whatsapp_notifications_enabled is False` (default-True opt-in
-  preserved). Wired into the 3-tier eligibility gate of
-  `send_contractor_reminder` BEFORE dormancy/prefs/phone checks.
+Future: proper per-project membership lookup is deferred (same family
+as Task #32 scope-aware paywall) — `?src=wa` is a reliable signal
+because contractor digest is currently the ONLY sender of WA links
+to `/projects/:id`.
 
-Orphan fallback (future-proof — current prod has 100% assignee_id):
-  `send_contractor_reminder_to_company` handles tasks with
-  `company_id` but no `assignee_id`. One Hebrew digest per
-  (project, orphan_company), separate cooldown via
-  `_check_cooldown_for_company`. Skips dormant + WA-toggle gates
-  (no user to evaluate). Stream A v2 `send_pm_digest` UNTOUCHED.
-
-FILES (3)
----------
+FILE (1)
+--------
 MODIFIED:
-  backend/contractor_ops/reminder_service.py    (~210 LOC added)
-    + DORMANT_USER_DAYS = 45
-    + _is_user_dormant, _user_disabled_whatsapp
-    + _check_cooldown_for_user, _check_cooldown_for_company
-    + _accumulate_summary
-    * send_contractor_reminder — signature now
-      (project_id, assignee_user_id, ...). 3-tier eligibility
-      (WA toggle → dormant → prefs). Aggregates ALL of that user's
-      open tasks across companies in the project.
-    + send_contractor_reminder_to_company — orphan fallback path
-    * send_all_contractor_reminders — Bug C project filter,
-      per-user PRIMARY loop, per-company FALLBACK loop.
-    - send_pm_digest, send_all_pm_digests — UNTOUCHED (Stream C scope)
-
-  frontend/src/App.js                            (+13 LOC, -3 LOC)
-    + PM_OR_ADMIN_ROLES const
-    * ProjectsHome — inverted role gate (Bug B)
-
-  backend/tests/test_reminder_digest.py          (+9 tests, refactor)
-    * Existing 14 tests adapted to the new (project_id, user_id)
-      signature. _build_mock_db now stubs reminder_log.find_one and
-      companies.find_one. _eligible_user() helper ensures user mocks
-      survive the new eligibility gates (last_login_at recent +
-      whatsapp_notifications_enabled=True).
-    * test_send_all_three_projects_three_messages — project mocks
-      gain status='active'.
-    + 9 new tests:
-       - test_bug_a_user_in_two_companies_same_project_gets_one_digest
-       - test_bug_c_inactive_projects_filtered_out
-       - test_bug_d_dormant_user_skipped
-       - test_bug_e_wa_toggle_disabled_skipped
-       - test_cooldown_user_keyed_skips_second_send
-       - test_dormant_new_user_no_login_recent_created_not_dormant
-       - test_dormant_old_user_no_login_old_created_is_dormant
-       - test_orphan_fallback_sends_to_company_phone
-       - test_orphan_fallback_no_company_phone_skipped
+  frontend/src/App.js
+    LINE 2:  + useSearchParams added to react-router-dom destructure.
+    LINE ~148-184 (inside ProjectsHome):
+      + const [searchParams] = useSearchParams();
+      + const fromContractorReminder = searchParams.get('src') === 'wa';
+      + Comment block explaining the deferred per-project membership fix.
+      * if (isPmOrAdmin)  →  if (isPmOrAdmin && !fromContractorReminder)
+    PRESERVED:
+      - module-level PM_OR_ADMIN_ROLES const (Batch 6B v2)
+      - super_admin platform_role check (Batch 6B v2)
+      - All other Routes / ProtectedRoute / AppRoutes — untouched.
 
 GAUNTLET RESULTS
 ----------------
-✅ VERIFY 1  Backend imports clean — all helpers present:
-              _is_user_dormant, _user_disabled_whatsapp,
-              _check_cooldown_for_user, _check_cooldown_for_company,
-              send_contractor_reminder_to_company, _accumulate_summary
-✅ VERIFY 2  pytest test_reminder_digest.py — 23/23 PASS
-✅ VERIFY 3  Bug A regression PASS
-              (test_bug_a_user_in_two_companies_same_project_gets_one_digest)
-✅ VERIFY 4  Bug C regression PASS
-              (test_bug_c_inactive_projects_filtered_out)
-✅ VERIFY 5  Bug D regression PASS
-              (test_bug_d_dormant_user_skipped)
-✅ VERIFY 6  Bug E regression PASS
-              (test_bug_e_wa_toggle_disabled_skipped)
-✅ VERIFY 7  Cooldown/dormant edge + orphan tests all PASS (4)
-✅ VERIFY 8  Frontend syntax (App.js) — babel parse OK
-✅ VERIFY 9  Greps:
-              - PM_OR_ADMIN_ROLES in App.js:                    2
-              - old literal `user?.role === 'contractor'`:      0
-              - eliminated `for cid in company_ids` (old loop): 0
-              - new `for aid in assignee_ids` (primary path):   1
-              - _check_cooldown_for_user callsites:             3
-              - _is_user_dormant callsites:                     2
-              - _user_disabled_whatsapp callsites:              2
-              - send_contractor_reminder_to_company callsites:  3
-✅ VERIFY 10 Stream C untouched — `send_pm_digest` /
-              `send_all_pm_digests` diff is zero LOC.
+✅ VERIFY 1  Frontend syntax — App.js parses clean (babel).
+             (Skipped full `yarn build` — times out at 120s in sandbox;
+             staging deploy will run the real build.)
+✅ VERIFY 2  useSearchParams in App.js: 2  (1 import + 1 use)
+✅ VERIFY 3  searchParams.get('src') in App.js: 1
+✅ VERIFY 4  isPmOrAdmin && !fromContractorReminder in App.js: 1
+✅ VERIFY 5  PM_OR_ADMIN_ROLES in App.js: 2  (Batch 6B v2 preserved)
 
-⏸ VERIFY 11  Production smoke — DEFERRED to Zahi after deploy.
-              Cron-job.org is currently PAUSED. Resume only after
-              prod logs confirm the 4 expected behaviors:
-              (a) one user / one project = ONE log line, count=N
-              (b) projects with status≠active produce zero log lines
-              (c) `last_login_at < (now-45d)` users yield reason=user_dormant
-              (d) `whatsapp_notifications_enabled=false` users yield
-                  reason=wa_disabled
+⏸ VERIFY 6  Visual smoke — DEFERRED to Zahi after staging deploy.
+             6 scenarios to run (per spec):
+             a) Login as multi-role test user (PM in proj A, contractor
+                in proj B). Visit /projects/B (no query) → expect
+                redirect to /projects/B/dashboard (PM behavior preserved).
+             b) Same user, /projects/B?src=wa → expect ContractorDashboard
+                with project-B defects (NOT redirect).
+             c) Pure contractor (no PM role anywhere), /projects/X?src=wa
+                → expect ContractorDashboard (unchanged from 6B v2).
+             d) Pure contractor, /projects/X (no query) → expect
+                ContractorDashboard (unchanged from 6B v2).
+             e) super_admin, /projects/Y (no query) → expect redirect
+                to /projects/Y/dashboard (super_admin behavior preserved).
+             f) super_admin, /projects/Y?src=wa → expect ContractorDashboard
+                (super_admin treated as contractor when arriving from a
+                contractor-targeted WA link — acceptable edge).
 
 CONSTRAINTS HONORED
 -------------------
-- No DB migration. `_check_cooldown_for_user` /
-  `_check_cooldown_for_company` query both legacy
-  `contractor_reminder` AND new `contractor_reminder_digest` types
-  via `$in: [...]` — cooldowns straddle the deploy boundary cleanly.
-- `whatsapp_notifications_enabled` default-True preserved
-  (only explicit `False` blocks).
-- New-user exception protects fresh invites from dormancy deadlock.
-- Stream C (PM digest) untouched.
-- Per-defect notification path (notification_service.py) untouched.
-- No mobile build (`./ship.sh`) needed.
+- Single-file frontend change. No backend, no automated tests
+  (codebase has no Jest/RTL setup for routing).
+- No mobile build (`./ship.sh`) — frontend OTA via Capgo only.
+- PM_OR_ADMIN_ROLES list unchanged (no role-set regression).
+- Batch 6B v2 inversion preserved — only adds the WA override.
+- super_admin / platform_role check preserved.
+- Comment explicitly references Task #32 family for future work.
 
 DEPLOYMENT TIMELINE
 -------------------
 1. Zahi reviews this file.
 2. Zahi: git commit + push (branch `staging`).
-3. Zahi: ./deploy.sh --stag → manual smoke on staging:
-     • New contractor user assigned 2 defects in 2 companies of 1 project
-       → expect ONE digest, count=2.
-     • Suspend a project → trigger cron → expect zero log lines for it.
+3. Zahi: ./deploy.sh --stag → run VERIFY 6 scenarios a-f on staging.
 4. Zahi: ./deploy.sh --prod.
-5. Zahi: resume cron-job.org schedule.
-6. Zahi: tail prod logs for the 4 VERIFY-11 behaviors above.
+5. Zahi: spot-check the multi-role user clicking the next live WA digest.
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -1,5 +1,5 @@
 import React, { useEffect, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BillingProvider, useBilling } from './contexts/BillingContext';
 import { IdentityProvider } from './contexts/IdentityContext';
@@ -145,6 +145,21 @@ const PM_OR_ADMIN_ROLES = ['project_manager', 'owner', 'management_team'];
 const ProjectsHome = () => {
   const { user } = useAuth();
   const { projectId } = useParams();
+  const [searchParams] = useSearchParams();
+  // Bug B v2 fix (Batch 6C 2026-05-04): WhatsApp contractor digest links
+  // arrive with ?src=wa. The recipient is — by definition — a contractor
+  // for THIS project (the WA was triggered by an assignee_id match). Force
+  // ContractorDashboard regardless of the user's global role, so users
+  // who are PM in some projects but contractor in others see the right
+  // view when clicking a contractor reminder link.
+  //
+  // Future: proper fix would fetch project_memberships and route by
+  // per-project role. Deferred (same family as Task #32 scope-aware
+  // paywall — single global user.role isn't enough to know per-project
+  // role). For now, ?src=wa is a reliable signal because contractor
+  // digest is the ONLY current sender of WA links to /projects/:id.
+  const fromContractorReminder = searchParams.get('src') === 'wa';
+
   // Bug B fix — invert the gate. PM/admin/super_admin see the PM dashboard;
   // EVERYONE ELSE (contractor + sub-roles like execution_engineer,
   // site_manager, etc.) gets the ContractorDashboard. Defaulting to the
@@ -154,7 +169,8 @@ const ProjectsHome = () => {
     PM_OR_ADMIN_ROLES.includes(user?.role) ||
     user?.platform_role === 'super_admin';
 
-  if (isPmOrAdmin) {
+  // PM/admin path — only when NOT arriving from a contractor WA reminder.
+  if (isPmOrAdmin && !fromContractorReminder) {
     if (projectId) {
       return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
     }
