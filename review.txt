@@ -1,84 +1,164 @@
-BATCH 7A — Bell notifications for defect lifecycle (Stream C1)
+BATCH 6B v2 — Stream A v2 follow-up CRITICAL fixes (5 prod bugs)
 ================================================================
-Task #465 | Branch: staging | Files: 6 + 1 addendum = 7 files | Tests: 8/8 PASS
+Task #466 | Branch: staging | Files: 3 | Tests: 23/23 PASS
 
-WHAT SHIPPED
-------------
-Two new bell-notification events on the defect lifecycle:
+STEP 0 — Pre-flight audit (verbatim greps, repeated at execution)
+-----------------------------------------------------------------
+✅ reminder_service.py:63    _check_user_reminder_prefs  (anchor)
+✅ reminder_service.py:78    _resolve_phone_for_user     (anchor)
+✅ reminder_service.py:86    _resolve_phone_for_company  (anchor)
+✅ reminder_service.py:153   _log_reminder               (anchor)
+✅ reminder_service.py:160   _check_cooldown             (anchor)
+✅ reminder_service.py:225   send_contractor_reminder    (anchor; spec said ~202)
+✅ reminder_service.py:458   send_all_contractor_reminders (anchor)
+✅ schemas.py:97             ProjectStatus enum
+✅ auth_router.py:144,357    whatsapp_notifications_enabled, last_login_at
+✅ App.js:143-147            ProjectsHome literal-role check
+✅ test_reminder_digest.py   14 existing tests, including
+                             test_send_all_three_projects_three_messages:270
 
-  Event 1 — defect_close_request:
-    When a contractor uploads proof and requests defect closure
-    (status → pending_manager_approval), every project_manager +
-    management_team member of that project gets a bell notification:
-    "{contractor} ביקש לסגור ליקוי \"{title}\" — ממתין לאישורך"
+WHAT SHIPPED — 5 BUGS FIXED
+---------------------------
+Bug A (CRITICAL — flood):
+  Cron now iterates by `(project, assignee_user)` instead of
+  `(project, company)`. A contractor with tasks in the same project
+  tagged under N companies receives ONE digest with count=N, not N
+  separate "1 ליקוי" messages. Cooldown re-keyed to (project, user)
+  via new `_check_cooldown_for_user`.
 
-  Event 2 — defect_status_change_by_pm:
-    When a PM approves or rejects the contractor's proof, the
-    contractor (task assignee) gets a bell notification:
-    approve → "המנהל אישר את התיקון של \"{title}\""
-    reject  → "המנהל דחה את התיקון של \"{title}\" — {reason}"
+Bug B (routing):
+  `App.js ProjectsHome` inverted. Defines
+  `PM_OR_ADMIN_ROLES = ['project_manager','owner','management_team']`
+  and treats `platform_role === 'super_admin'` as PM/admin too.
+  Everyone else (contractor + sub-roles like execution_engineer,
+  site_manager, future field-roles) → ContractorDashboard.
 
-Existing QC-stage notifications on qc_notifications collection are
-untouched (legacy collection name kept per Zahi 2026-05-01 — no DB
-migration). New docs add a `notification_type` field; existing QC
-docs without it are treated as type 'qc' by the list endpoint.
+Bug C (inactive projects):
+  `send_all_contractor_reminders` filters projects to
+  `status='active' AND ($or archived missing/false/null)`.
+  Suspended/archived/deleted projects no longer trigger sends.
 
-FILES (6 + 1 addendum)
-----------------------
-NEW:
-  backend/contractor_ops/notification_helpers.py        (109 LOC)
-    - create_defect_notification (per-recipient insert, actor excluded)
-    - get_defect_recipients_for_close_request (PM + management_team)
-    - build_close_request_body, build_status_change_body
-  backend/tests/test_notifications_defect.py            (180 LOC, 8 tests)
+Bug D (dormant users >45d):
+  New `_is_user_dormant(user)` helper. Primary signal is
+  `last_login_at`; falls back to `created_at` so brand-new invites
+  (no login yet, account <45d old) still receive their first
+  reminder (V2 new-user exception per Replit feedback). Both
+  missing/malformed → defensive dormant.
 
+Bug E (WA toggle):
+  New `_user_disabled_whatsapp(user)` helper. Returns True iff
+  `whatsapp_notifications_enabled is False` (default-True opt-in
+  preserved). Wired into the 3-tier eligibility gate of
+  `send_contractor_reminder` BEFORE dormancy/prefs/phone checks.
+
+Orphan fallback (future-proof — current prod has 100% assignee_id):
+  `send_contractor_reminder_to_company` handles tasks with
+  `company_id` but no `assignee_id`. One Hebrew digest per
+  (project, orphan_company), separate cooldown via
+  `_check_cooldown_for_company`. Skips dormant + WA-toggle gates
+  (no user to evaluate). Stream A v2 `send_pm_digest` UNTOUCHED.
+
+FILES (3)
+---------
 MODIFIED:
-  backend/contractor_ops/tasks_router.py
-    - Event 1 wired on POST /tasks/{id}/contractor-close-request
-    - Event 2 wired on POST /tasks/{id}/manager-decision (approve/reject)
-  backend/contractor_ops/qc_router.py
-    - Existing qc_notifications list endpoint extended to surface
-      new notification_type field (back-compat: missing → 'qc')
-  frontend/src/components/NotificationBell.js
-    - 3 new ACTION_ICONS entries (defect_close_request, _approved, _rejected)
-  frontend/src/i18n/he.json
-    - 3 new short-strings for the bell dropdown
+  backend/contractor_ops/reminder_service.py    (~210 LOC added)
+    + DORMANT_USER_DAYS = 45
+    + _is_user_dormant, _user_disabled_whatsapp
+    + _check_cooldown_for_user, _check_cooldown_for_company
+    + _accumulate_summary
+    * send_contractor_reminder — signature now
+      (project_id, assignee_user_id, ...). 3-tier eligibility
+      (WA toggle → dormant → prefs). Aggregates ALL of that user's
+      open tasks across companies in the project.
+    + send_contractor_reminder_to_company — orphan fallback path
+    * send_all_contractor_reminders — Bug C project filter,
+      per-user PRIMARY loop, per-company FALLBACK loop.
+    - send_pm_digest, send_all_pm_digests — UNTOUCHED (Stream C scope)
 
-ADDENDUM #1 (mid-task fix):
-  frontend/src/pages/ContractorDashboard.js              (+2 LOC)
-    - Import NotificationBell
-    - Render <NotificationBell /> in header buttons row (left of Settings)
-    Context: ContractorDashboard had no bell rendered, so contractors
-    would never see Event 2 notifications. Added per spec line ~333.
+  frontend/src/App.js                            (+13 LOC, -3 LOC)
+    + PM_OR_ADMIN_ROLES const
+    * ProjectsHome — inverted role gate (Bug B)
+
+  backend/tests/test_reminder_digest.py          (+9 tests, refactor)
+    * Existing 14 tests adapted to the new (project_id, user_id)
+      signature. _build_mock_db now stubs reminder_log.find_one and
+      companies.find_one. _eligible_user() helper ensures user mocks
+      survive the new eligibility gates (last_login_at recent +
+      whatsapp_notifications_enabled=True).
+    * test_send_all_three_projects_three_messages — project mocks
+      gain status='active'.
+    + 9 new tests:
+       - test_bug_a_user_in_two_companies_same_project_gets_one_digest
+       - test_bug_c_inactive_projects_filtered_out
+       - test_bug_d_dormant_user_skipped
+       - test_bug_e_wa_toggle_disabled_skipped
+       - test_cooldown_user_keyed_skips_second_send
+       - test_dormant_new_user_no_login_recent_created_not_dormant
+       - test_dormant_old_user_no_login_old_created_is_dormant
+       - test_orphan_fallback_sends_to_company_phone
+       - test_orphan_fallback_no_company_phone_skipped
 
 GAUNTLET RESULTS
 ----------------
-✅ Tests:           8/8 PASS (test_notifications_defect.py)
-✅ Backend imports: notification_helpers, tasks_router, qc_router all OK
-✅ Frontend syntax: ContractorDashboard.js parses clean (babel)
-✅ Gauntlet greps:
-     - import NotificationBell in ContractorDashboard:        1
-     - <NotificationBell /> rendered in ContractorDashboard:  1
-     - 3 new ACTION_ICONS entries in NotificationBell.js:     3
-     - 3 new he.json short-strings:                           3
-     - qc_router action mappings (close_request/approved/...):6
-     - _create_qc_notification callsites preserved (legacy):  6
-     - tasks_router Event 1 helper calls:                     4
-     - tasks_router Event 2 helper calls:                     2
+✅ VERIFY 1  Backend imports clean — all helpers present:
+              _is_user_dormant, _user_disabled_whatsapp,
+              _check_cooldown_for_user, _check_cooldown_for_company,
+              send_contractor_reminder_to_company, _accumulate_summary
+✅ VERIFY 2  pytest test_reminder_digest.py — 23/23 PASS
+✅ VERIFY 3  Bug A regression PASS
+              (test_bug_a_user_in_two_companies_same_project_gets_one_digest)
+✅ VERIFY 4  Bug C regression PASS
+              (test_bug_c_inactive_projects_filtered_out)
+✅ VERIFY 5  Bug D regression PASS
+              (test_bug_d_dormant_user_skipped)
+✅ VERIFY 6  Bug E regression PASS
+              (test_bug_e_wa_toggle_disabled_skipped)
+✅ VERIFY 7  Cooldown/dormant edge + orphan tests all PASS (4)
+✅ VERIFY 8  Frontend syntax (App.js) — babel parse OK
+✅ VERIFY 9  Greps:
+              - PM_OR_ADMIN_ROLES in App.js:                    2
+              - old literal `user?.role === 'contractor'`:      0
+              - eliminated `for cid in company_ids` (old loop): 0
+              - new `for aid in assignee_ids` (primary path):   1
+              - _check_cooldown_for_user callsites:             3
+              - _is_user_dormant callsites:                     2
+              - _user_disabled_whatsapp callsites:              2
+              - send_contractor_reminder_to_company callsites:  3
+✅ VERIFY 10 Stream C untouched — `send_pm_digest` /
+              `send_all_pm_digests` diff is zero LOC.
 
-⚠️ Skipped: full `yarn build` (timed out at 120s in sandbox; not
-   indicative of a bug — substituted babel syntax-parse on the only
-   modified frontend file). Staging deploy will run the real build.
+⏸ VERIFY 11  Production smoke — DEFERRED to Zahi after deploy.
+              Cron-job.org is currently PAUSED. Resume only after
+              prod logs confirm the 4 expected behaviors:
+              (a) one user / one project = ONE log line, count=N
+              (b) projects with status≠active produce zero log lines
+              (c) `last_login_at < (now-45d)` users yield reason=user_dormant
+              (d) `whatsapp_notifications_enabled=false` users yield
+                  reason=wa_disabled
 
 CONSTRAINTS HONORED
 -------------------
-- No DB migration; existing qc_notifications docs untouched.
-- Actor is auto-excluded from their own notifications.
-- Unknown notification_type → logged warning, no insert (defensive).
-- Empty recipients list → no insert call (no spurious DB ops).
-- Hebrew bodies pre-built server-side (frontend just renders).
+- No DB migration. `_check_cooldown_for_user` /
+  `_check_cooldown_for_company` query both legacy
+  `contractor_reminder` AND new `contractor_reminder_digest` types
+  via `$in: [...]` — cooldowns straddle the deploy boundary cleanly.
+- `whatsapp_notifications_enabled` default-True preserved
+  (only explicit `False` blocks).
+- New-user exception protects fresh invites from dormancy deadlock.
+- Stream C (PM digest) untouched.
+- Per-defect notification path (notification_service.py) untouched.
+- No mobile build (`./ship.sh`) needed.
 
-READY FOR
----------
-Zahi: git commit + push to staging → ./deploy.sh --stag → smoke-test
-defect close-request flow on staging → ./deploy.sh --prod.
+DEPLOYMENT TIMELINE
+-------------------
+1. Zahi reviews this file.
+2. Zahi: git commit + push (branch `staging`).
+3. Zahi: ./deploy.sh --stag → manual smoke on staging:
+     • New contractor user assigned 2 defects in 2 companies of 1 project
+       → expect ONE digest, count=2.
+     • Suspend a project → trigger cron → expect zero log lines for it.
+4. Zahi: ./deploy.sh --prod.
+5. Zahi: resume cron-job.org schedule.
+6. Zahi: tail prod logs for the 4 VERIFY-11 behaviors above.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

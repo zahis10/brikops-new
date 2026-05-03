@@ -18,6 +18,7 @@ OVERDUE_THRESHOLD_DAYS = 7
 COOLDOWN_HOURS = 48
 SEND_PACING_SECONDS = 0.1
 DEFAULT_WORKDAYS = [0, 1, 2, 3, 4]
+DORMANT_USER_DAYS = 45
 PYTHON_TO_ISRAEL_WEEKDAY = {6: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
 
 _db = None
@@ -73,6 +74,49 @@ def _check_user_reminder_prefs(user: dict, reminder_type: str) -> Optional[str]:
     if israel_wd not in allowed_days:
         return f"day_{israel_wd}_not_in_user_days"
     return None
+
+
+def _is_user_dormant(user: dict) -> bool:
+    """Return True if the user has not logged in for >DORMANT_USER_DAYS.
+
+    Primary signal: `last_login_at` (ISO-8601). If absent or malformed,
+    fall back to `created_at` to avoid permanently dead-locking fresh
+    invites that have not yet logged in (per Replit V2 feedback). If
+    BOTH `last_login_at` and `created_at` are missing/malformed, treat
+    as dormant — a defensive default that protects against spamming
+    accounts in unknown states.
+    """
+    if not user:
+        return True
+    cutoff = _now_dt() - timedelta(days=DORMANT_USER_DAYS)
+    last_login = user.get("last_login_at")
+    if last_login:
+        try:
+            ts = datetime.fromisoformat(str(last_login).replace("Z", "+00:00"))
+            return ts < cutoff
+        except (ValueError, TypeError):
+            pass  # malformed → fall through to created_at
+    created = user.get("created_at")
+    if created:
+        try:
+            ts = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+            # New-user exception: account < 45d old → not dormant.
+            return ts < cutoff
+        except (ValueError, TypeError):
+            pass
+    # No usable timestamps at all → defensive dormant.
+    return True
+
+
+def _user_disabled_whatsapp(user: dict) -> bool:
+    """Return True iff the user has explicitly opted out of WhatsApp.
+
+    Field default is True (opt-in), so missing/None must NOT be treated
+    as disabled — only explicit `False` counts.
+    """
+    if not user:
+        return False
+    return user.get("whatsapp_notifications_enabled") is False
 
 
 def _resolve_phone_for_user(user: dict) -> Optional[str]:
@@ -173,6 +217,39 @@ async def _check_cooldown(project_id: str, reminder_type: str = "contractor_remi
     return last is not None
 
 
+async def _check_cooldown_for_user(project_id: str, user_id: str) -> bool:
+    """Cooldown gate for the per-user contractor digest path (Bug A fix).
+
+    Backward compatible: matches BOTH the legacy
+    `contractor_reminder` type AND the new `contractor_reminder_digest`
+    type so cooldowns straddle the deploy boundary.
+    """
+    cutoff = (_now_dt() - timedelta(hours=COOLDOWN_HOURS)).isoformat()
+    query = {
+        "type": {"$in": ["contractor_reminder", "contractor_reminder_digest"]},
+        "project_id": project_id,
+        "recipient_user_id": user_id,
+        "sent_at": {"$gte": cutoff},
+        "status": {"$ne": "failed"},
+    }
+    last = await _db.reminder_log.find_one(query)
+    return last is not None
+
+
+async def _check_cooldown_for_company(project_id: str, company_id: str) -> bool:
+    """Cooldown gate for the orphan-task company-fallback path."""
+    cutoff = (_now_dt() - timedelta(hours=COOLDOWN_HOURS)).isoformat()
+    query = {
+        "type": {"$in": ["contractor_reminder", "contractor_reminder_digest"]},
+        "project_id": project_id,
+        "company_id": company_id,
+        "sent_at": {"$gte": cutoff},
+        "status": {"$ne": "failed"},
+    }
+    last = await _db.reminder_log.find_one(query)
+    return last is not None
+
+
 def _build_location_string(task: dict, building_map: dict, floor_map: dict, unit_map: dict) -> str:
     parts = []
     bld_name = building_map.get(task.get("building_id", ""), "")
@@ -224,20 +301,32 @@ def _resolve_digest_template_for_user(user: dict) -> tuple:
 
 async def send_contractor_reminder(
     project_id: str,
-    company_id: str,
+    assignee_user_id: str,
     triggered_by: str = "cron",
     skip_cooldown: bool = False,
     skip_preferences: bool = False,
 ) -> dict:
+    """Send ONE WhatsApp digest to a contractor user for a single project,
+    aggregating ALL of that user's open tasks across all companies in the
+    project (Bug A fix — keyed by user, not company).
+
+    3-tier eligibility for cron sends:
+      1. WhatsApp toggle  (whatsapp_notifications_enabled is False)   → skip
+      2. Dormant >45 days (with new-user exception via created_at)    → skip
+      3. Reminder prefs   (day-of-week + per-type enabled flag)       → skip
+    Cooldown is keyed to (project_id, user_id) — see
+    `_check_cooldown_for_user`.
+    """
     open_filter = {"status": {"$nin": list(TERMINAL_TASK_STATUSES)}}
     tasks = await _db.tasks.find({
         "project_id": project_id,
-        "company_id": company_id,
+        "assignee_id": assignee_user_id,
         **open_filter,
-    }, {"_id": 0, "id": 1, "title": 1, "building_id": 1, "floor_id": 1, "unit_id": 1, "created_at": 1, "assignee_id": 1}).to_list(100)
+    }, {"_id": 0, "id": 1, "title": 1, "company_id": 1, "created_at": 1, "assignee_id": 1}).to_list(500)
 
     if not tasks:
-        return {"status": "skipped", "reason": "no_open_defects"}
+        return {"status": "skipped", "reason": "no_open_defects",
+                "project_id": project_id, "user_id": assignee_user_id}
 
     project = await _db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
     if not project:
@@ -245,95 +334,180 @@ async def send_contractor_reminder(
 
     org_id = project.get("org_id", "")
 
-    assignee_ids = list(set(t.get("assignee_id") for t in tasks if t.get("assignee_id")))
-    recipients = []
-    for aid in assignee_ids:
-        user = await _db.users.find_one({"id": aid}, {"_id": 0})
-        if user:
-            phone = _resolve_phone_for_user(user)
-            if phone:
-                recipients.append({"user": user, "phone": phone})
-            else:
-                logger.warning(f"[REMINDER] Assignee {aid} has no valid phone, skipping")
-        else:
-            logger.warning(f"[REMINDER] Assignee {aid} not found, skipping")
+    user = await _db.users.find_one({"id": assignee_user_id}, {"_id": 0})
+    if not user:
+        logger.warning(f"[REMINDER] Assignee {assignee_user_id} not found, skipping")
+        return {"status": "skipped", "reason": "user_not_found", "user_id": assignee_user_id}
 
-    if not recipients:
-        company_phone = await _resolve_phone_for_company(company_id)
-        if company_phone:
-            company = await _db.companies.find_one({"id": company_id}, {"_id": 0})
-            recipients.append({
-                "user": {"id": company_id, "name": company.get("name", "קבלן") if company else "קבלן"},
-                "phone": company_phone,
-                "is_company": True,
-            })
-        else:
-            return {"status": "skipped", "reason": "no_valid_phone"}
+    # 3-tier eligibility — only on auto/cron sends; manual triggers bypass.
+    if not skip_preferences:
+        if _user_disabled_whatsapp(user):
+            logger.info(f"[REMINDER] User {assignee_user_id} disabled WhatsApp, skipping")
+            return {"status": "skipped", "reason": "wa_disabled", "user_id": assignee_user_id}
+        if _is_user_dormant(user):
+            logger.info(f"[REMINDER] User {assignee_user_id} is dormant (>{DORMANT_USER_DAYS}d), skipping")
+            return {"status": "skipped", "reason": "user_dormant", "user_id": assignee_user_id}
+        pref_skip = _check_user_reminder_prefs(user, "contractor_reminder")
+        if pref_skip:
+            logger.info(f"[REMINDER] Skipping contractor reminder for user {assignee_user_id}: {pref_skip}")
+            return {"status": "skipped", "reason": pref_skip, "user_id": assignee_user_id}
+
+    phone = _resolve_phone_for_user(user)
+    if not phone:
+        logger.warning(f"[REMINDER] User {assignee_user_id} has no valid phone, skipping")
+        return {"status": "skipped", "reason": "no_valid_phone", "user_id": assignee_user_id}
 
     if not skip_cooldown:
-        if await _check_cooldown(project_id, "contractor_reminder", company_id=company_id):
-            return {"status": "skipped", "reason": "cooldown", "company_id": company_id}
+        if await _check_cooldown_for_user(project_id, assignee_user_id):
+            return {"status": "skipped", "reason": "cooldown",
+                    "project_id": project_id, "user_id": assignee_user_id}
 
-    results = []
+    open_count = len(tasks)
+    user_name = user.get("name", "קבלן")
+    tpl_name, lang_code = _resolve_digest_template_for_user(user)
+
+    log_entry = {
+        "type": "contractor_reminder_digest",
+        "recipient_user_id": assignee_user_id,
+        "recipient_phone": phone,
+        "project_id": project_id,
+        "org_id": org_id,
+        "open_count": open_count,
+        "message_template": tpl_name,
+        "lang_code": lang_code,
+        "triggered_by": triggered_by,
+    }
+
+    try:
+        body_params = [
+            {"parameter_name": "name", "text": user_name},
+            {"parameter_name": "count", "text": str(open_count)},
+            {"parameter_name": "project", "text": project.get("name", "")},
+        ]
+        button_params = [
+            {"index": 0, "text": f"{project_id}?src=wa"}
+        ]
+        wa_result = await _send_wa_template(
+            phone, tpl_name, body_params,
+            button_params=button_params,
+            lang_code=lang_code,
+        )
+        log_entry["status"] = "sent"
+        log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+        result = {"status": "completed", "user_id": assignee_user_id,
+                  "messages_sent": 1, "open_count": open_count,
+                  "results": [{"user_id": assignee_user_id, "status": "sent",
+                               "messages_sent": 1, "open_count": open_count}],
+                  "defect_count": open_count}
+    except Exception as e:
+        log_entry["status"] = "failed"
+        log_entry["error_detail"] = str(e)[:500]
+        logger.error(f"[REMINDER:DIGEST] Failed to send digest to {mask_phone(phone)} "
+                     f"for project {project_id} user {assignee_user_id}: {e}")
+        result = {"status": "completed", "user_id": assignee_user_id,
+                  "results": [{"user_id": assignee_user_id, "status": "failed",
+                               "error": str(e)[:200]}],
+                  "defect_count": open_count}
+
+    await _log_reminder(log_entry)
+    await asyncio.sleep(SEND_PACING_SECONDS)
+    return result
+
+
+async def send_contractor_reminder_to_company(
+    project_id: str,
+    company_id: str,
+    triggered_by: str = "cron",
+    skip_cooldown: bool = False,
+) -> dict:
+    """Fallback path for orphan tasks (no `assignee_id` but `company_id`
+    set). Sends one Hebrew digest to the company's phone. Skips dormant
+    + WA-toggle checks since there's no user to evaluate. Used by
+    `send_all_contractor_reminders` after the per-user primary path.
+    """
+    open_filter = {"status": {"$nin": list(TERMINAL_TASK_STATUSES)}}
+    tasks = await _db.tasks.find({
+        "project_id": project_id,
+        "company_id": company_id,
+        "$or": [
+            {"assignee_id": {"$exists": False}},
+            {"assignee_id": None},
+            {"assignee_id": ""},
+        ],
+        **open_filter,
+    }, {"_id": 0, "id": 1, "title": 1, "company_id": 1, "created_at": 1}).to_list(500)
+
+    if not tasks:
+        return {"status": "skipped", "reason": "no_orphan_defects",
+                "project_id": project_id, "company_id": company_id}
+
+    project = await _db.projects.find_one({"id": project_id}, {"_id": 0, "name": 1, "org_id": 1})
+    if not project:
+        return {"status": "skipped", "reason": "project_not_found"}
+
+    org_id = project.get("org_id", "")
+
+    company_phone = await _resolve_phone_for_company(company_id)
+    if not company_phone:
+        return {"status": "skipped", "reason": "no_valid_phone",
+                "company_id": company_id}
+
+    if not skip_cooldown:
+        if await _check_cooldown_for_company(project_id, company_id):
+            return {"status": "skipped", "reason": "cooldown",
+                    "project_id": project_id, "company_id": company_id}
+
+    company = await _db.companies.find_one({"id": company_id}, {"_id": 0, "name": 1})
+    company_name = (company or {}).get("name", "קבלן")
     open_count = len(tasks)
 
-    for r in recipients:
-        user = r["user"]
-        phone = r["phone"]
-        user_id = user.get("id", "")
-        user_name = user.get("name", "קבלן")
+    # Orphan path uses Hebrew default (no user → no preferred_language).
+    tpl_name, lang_code = _resolve_digest_template_for_user({})
 
-        if not skip_preferences and not r.get("is_company"):
-            pref_skip = _check_user_reminder_prefs(user, "contractor_reminder")
-            if pref_skip:
-                logger.info(f"[REMINDER] Skipping contractor reminder for user {user_id}: {pref_skip}")
-                results.append({"user_id": user_id, "status": "skipped", "reason": pref_skip})
-                continue
+    log_entry = {
+        "type": "contractor_reminder_digest",
+        "company_id": company_id,
+        "recipient_phone": company_phone,
+        "project_id": project_id,
+        "org_id": org_id,
+        "open_count": open_count,
+        "message_template": tpl_name,
+        "lang_code": lang_code,
+        "triggered_by": triggered_by,
+        "is_orphan_fallback": True,
+    }
 
-        # Pick template + language for this recipient.
-        # Companies (no preferred_language) fall through to default (he).
-        tpl_name, lang_code = _resolve_digest_template_for_user(user)
+    try:
+        body_params = [
+            {"parameter_name": "name", "text": company_name},
+            {"parameter_name": "count", "text": str(open_count)},
+            {"parameter_name": "project", "text": project.get("name", "")},
+        ]
+        button_params = [{"index": 0, "text": f"{project_id}?src=wa"}]
+        wa_result = await _send_wa_template(
+            company_phone, tpl_name, body_params,
+            button_params=button_params, lang_code=lang_code,
+        )
+        log_entry["status"] = "sent"
+        log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
+        result = {"status": "completed", "company_id": company_id,
+                  "messages_sent": 1, "open_count": open_count,
+                  "results": [{"company_id": company_id, "status": "sent",
+                               "messages_sent": 1, "open_count": open_count}],
+                  "defect_count": open_count}
+    except Exception as e:
+        log_entry["status"] = "failed"
+        log_entry["error_detail"] = str(e)[:500]
+        logger.error(f"[REMINDER:DIGEST:ORPHAN] Failed to send to {mask_phone(company_phone)} "
+                     f"for project {project_id} company {company_id}: {e}")
+        result = {"status": "completed", "company_id": company_id,
+                  "results": [{"company_id": company_id, "status": "failed",
+                               "error": str(e)[:200]}],
+                  "defect_count": open_count}
 
-        log_entry = {
-            "type": "contractor_reminder_digest",
-            "company_id": company_id,
-            "recipient_user_id": user_id,
-            "recipient_phone": phone,
-            "project_id": project_id,
-            "org_id": org_id,
-            "open_count": open_count,
-            "message_template": tpl_name,
-            "lang_code": lang_code,
-            "triggered_by": triggered_by,
-        }
-
-        try:
-            body_params = [
-                {"parameter_name": "name", "text": user_name},
-                {"parameter_name": "count", "text": str(open_count)},
-                {"parameter_name": "project", "text": project.get("name", "")},
-            ]
-            button_params = [
-                {"index": 0, "text": f"{project_id}?src=wa"}
-            ]
-            wa_result = await _send_wa_template(
-                phone, tpl_name, body_params,
-                button_params=button_params,
-                lang_code=lang_code,
-            )
-            log_entry["status"] = "sent"
-            log_entry["wa_message_id"] = wa_result.get("provider_message_id", "")
-            results.append({"user_id": user_id, "status": "sent", "messages_sent": 1, "open_count": open_count})
-        except Exception as e:
-            log_entry["status"] = "failed"
-            log_entry["error_detail"] = str(e)[:500]
-            results.append({"user_id": user_id, "status": "failed", "error": str(e)[:200]})
-            logger.error(f"[REMINDER:DIGEST] Failed to send digest to {mask_phone(phone)} for project {project_id}: {e}")
-
-        await _log_reminder(log_entry)
-        await asyncio.sleep(SEND_PACING_SECONDS)
-
-    return {"status": "completed", "results": results, "defect_count": open_count}
+    await _log_reminder(log_entry)
+    await asyncio.sleep(SEND_PACING_SECONDS)
+    return result
 
 
 async def send_pm_digest(
@@ -455,39 +629,90 @@ async def send_pm_digest(
     }
 
 
+def _accumulate_summary(summary: dict, result: dict):
+    """Roll up a single send_*_reminder return value into the batch summary."""
+    status = result.get("status", "")
+    if status == "completed":
+        for r in result.get("results", []):
+            if r.get("status") == "sent":
+                summary["sent"] += r.get("messages_sent", 1)
+            elif r.get("status") == "skipped":
+                summary["skipped"] += 1
+            elif r.get("status") == "failed":
+                summary["failed"] += 1
+    elif status == "skipped":
+        summary["skipped"] += 1
+
+
 async def send_all_contractor_reminders() -> dict:
+    """Cron-driven contractor digest sweep.
+
+    Bug A fix: iterates by `(project, assignee_user)` (PRIMARY path) so
+    a contractor in N companies of the same project gets ONE digest with
+    N open defects — not N separate messages.
+
+    Bug C fix: only `status='active'` projects with `archived` not true
+    are eligible (suspended / archived / deleted projects are skipped).
+
+    Orphan fallback: tasks with `company_id` but no `assignee_id` are
+    sent to the company's phone via `send_contractor_reminder_to_company`
+    after the primary loop.
+    """
     summary = {"sent": 0, "skipped": 0, "failed": 0, "projects": []}
     try:
-        projects = await _db.projects.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        # Bug C — filter projects by status + archived flag.
+        project_filter = {
+            "status": "active",
+            "$or": [
+                {"archived": {"$exists": False}},
+                {"archived": False},
+                {"archived": None},
+            ],
+        }
+        projects = await _db.projects.find(
+            project_filter, {"_id": 0, "id": 1, "name": 1}
+        ).to_list(500)
+
         for project in projects:
             pid = project["id"]
             open_tasks = await _db.tasks.find({
                 "project_id": pid,
                 "status": {"$nin": list(TERMINAL_TASK_STATUSES)},
-                "company_id": {"$exists": True, "$nin": [None, ""]},
-            }, {"_id": 0, "company_id": 1}).to_list(1000)
+            }, {"_id": 0, "assignee_id": 1, "company_id": 1}).to_list(2000)
 
-            company_ids = list(set(t["company_id"] for t in open_tasks if t.get("company_id")))
-            if not company_ids:
+            if not open_tasks:
                 continue
 
-            for cid in company_ids:
+            assignee_ids = sorted({
+                t["assignee_id"] for t in open_tasks
+                if t.get("assignee_id")
+            })
+            orphan_company_ids = sorted({
+                t["company_id"] for t in open_tasks
+                if not t.get("assignee_id") and t.get("company_id")
+            })
+
+            # PRIMARY — per-user digest (Bug A: aggregate across companies).
+            for aid in assignee_ids:
                 try:
-                    result = await send_contractor_reminder(pid, cid, triggered_by="cron", skip_cooldown=False)
-                    status = result.get("status", "")
-                    if status == "completed":
-                        for r in result.get("results", []):
-                            if r.get("status") == "sent":
-                                summary["sent"] += r.get("messages_sent", 1)
-                            elif r.get("status") == "skipped":
-                                summary["skipped"] += 1
-                            elif r.get("status") == "failed":
-                                summary["failed"] += 1
-                    elif status == "skipped":
-                        summary["skipped"] += 1
+                    result = await send_contractor_reminder(
+                        pid, aid, triggered_by="cron", skip_cooldown=False
+                    )
+                    _accumulate_summary(summary, result)
                 except Exception as e:
                     summary["failed"] += 1
-                    logger.error(f"[REMINDER-BATCH] Error for project={pid} company={cid}: {e}")
+                    logger.error(f"[REMINDER-BATCH] Error for project={pid} user={aid}: {e}")
+
+            # FALLBACK — orphan tasks (no assignee but with company).
+            for cid in orphan_company_ids:
+                try:
+                    result = await send_contractor_reminder_to_company(
+                        pid, cid, triggered_by="cron", skip_cooldown=False
+                    )
+                    _accumulate_summary(summary, result)
+                except Exception as e:
+                    summary["failed"] += 1
+                    logger.error(f"[REMINDER-BATCH:ORPHAN] Error for project={pid} company={cid}: {e}")
 
             summary["projects"].append(pid)
     except Exception as e:

@@ -140,17 +140,28 @@ const ProtectedRoute = ({ children, allowedRoles, requireSuperAdmin }) => {
   return children;
 };
 
+const PM_OR_ADMIN_ROLES = ['project_manager', 'owner', 'management_team'];
+
 const ProjectsHome = () => {
   const { user } = useAuth();
   const { projectId } = useParams();
-  if (user?.role === 'contractor') {
-    return <ContractorDashboard initialProjectId={projectId} />;
+  // Bug B fix — invert the gate. PM/admin/super_admin see the PM dashboard;
+  // EVERYONE ELSE (contractor + sub-roles like execution_engineer,
+  // site_manager, etc.) gets the ContractorDashboard. Defaulting to the
+  // contractor view keeps unknown / new field-roles safe instead of
+  // dumping them on a PM screen with no defects.
+  const isPmOrAdmin =
+    PM_OR_ADMIN_ROLES.includes(user?.role) ||
+    user?.platform_role === 'super_admin';
+
+  if (isPmOrAdmin) {
+    if (projectId) {
+      return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
+    }
+    return <MyProjectsPage />;
   }
-  // PMs/admins arriving at /projects/:projectId go to their dashboard.
-  if (projectId) {
-    return <Navigate to={`/projects/${projectId}/dashboard`} replace />;
-  }
-  return <MyProjectsPage />;
+
+  return <ContractorDashboard initialProjectId={projectId} />;
 };
 
 const PaywallConnector = () => {
