@@ -252,3 +252,9 @@ id = "nGoHvjzzLw38cW6LMIzlQ"
 uri = "file://attached_assets/brikops-snapshot-2026-04-30.zip"
 type = "unspecified"
 title = "brikops-snapshot-2026-04-30.zip (23MB) — לחץ להורדה"
+
+[[outputs]]
+id = "H1cFkuDvymGmvmMCqbh-a"
+uri = "file://.local/tasks/465-batch-7a-defect-bell-notifications.md"
+type = "text"
+title = "Task #465 — Updated plan (with ADDENDUM #1)"
