@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Literal
 from pydantic import BaseModel, Field, validator
 
 
@@ -833,6 +833,23 @@ class SafetyProjectManager(BaseModel):
     notes: Optional[str] = Field(None, max_length=500)
 
 
+class SafetyProjectPersonnel(BaseModel):
+    """One safety personnel entry embedded on the registration document.
+    Repeat group — N per role. 5 canonical roles from VALID_SUB_ROLES."""
+    role: Literal[
+        'site_manager',
+        'execution_engineer',
+        'safety_assistant',
+        'work_manager',
+        'safety_officer',
+    ]
+    first_name: str = Field(..., min_length=1, max_length=60)
+    last_name: str = Field(..., min_length=1, max_length=60)
+    id_number: Optional[str] = None
+    license_number: Optional[str] = Field(None, max_length=30)
+    notes: Optional[str] = Field(None, max_length=500)
+
+
 class SafetyProjectAddress(BaseModel):
     """Section 2 — מען המשרד הראשי / המשרד הרשום."""
     city: Optional[str] = Field(None, max_length=80)
@@ -853,6 +870,7 @@ class SafetyProjectRegistration(BaseModel):
     contractor_registry_number: Optional[str] = Field(None, max_length=20)
     office_address: Optional[SafetyProjectAddress] = None
     managers: List[SafetyProjectManager] = Field(default_factory=list)
+    personnel: List[SafetyProjectPersonnel] = Field(default_factory=list)
     permit_number: Optional[str] = Field(None, max_length=30)
     form_4_target_date: Optional[str] = None
     updated_at: Optional[str] = None
@@ -866,5 +884,6 @@ class SafetyProjectRegistrationUpsert(BaseModel):
     contractor_registry_number: Optional[str] = None
     office_address: Optional[SafetyProjectAddress] = None
     managers: Optional[List[SafetyProjectManager]] = None
+    personnel: Optional[List[SafetyProjectPersonnel]] = None
     permit_number: Optional[str] = None
     form_4_target_date: Optional[str] = None

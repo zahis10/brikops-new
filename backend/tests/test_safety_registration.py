@@ -161,3 +161,84 @@ def test_registration_address_optional():
     reg = SafetyProjectRegistration(office_address=None, managers=[])
     assert reg.office_address is None
     assert reg.managers == []
+
+
+def test_upsert_persists_personnel():
+    """Batch S2B v2 — personnel array persists via $set in update_one."""
+    async def run():
+        existing = {
+            "id": "x", "project_id": "p1", "deletedAt": None,
+            "developer_name": None, "main_contractor_name": None,
+            "contractor_registry_number": None, "office_address": None,
+            "managers": [], "personnel": [], "permit_number": None,
+            "form_4_target_date": None,
+        }
+        after = dict(existing)
+        after["personnel"] = [
+            {"role": "site_manager", "first_name": "א", "last_name": "ב"}
+        ]
+
+        db = MagicMock()
+        db.safety_project_settings.find_one = AsyncMock(
+            side_effect=[existing, after]
+        )
+        db.safety_project_settings.insert_one = AsyncMock()
+        db.safety_project_settings.update_one = AsyncMock()
+
+        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
+        payload = SafetyProjectRegistrationUpsert(
+            personnel=[{"role": "site_manager", "first_name": "א", "last_name": "ב"}]
+        )
+        user = {"id": "u1"}
+
+        with patch.object(srr, '_check_project_access', AsyncMock(return_value=None)), \
+             patch.object(srr, '_audit', AsyncMock(return_value=None)), \
+             patch.object(srr, 'get_db', return_value=db):
+            result = await srr.upsert_registration("p1", payload, user)
+
+        assert any(p.get("role") == "site_manager" for p in result["personnel"])
+        call = db.safety_project_settings.update_one.call_args
+        set_doc = call.args[1]["$set"]
+        assert "personnel" in set_doc
+        assert set_doc["personnel"][0]["role"] == "site_manager"
+    asyncio.run(run())
+
+
+def test_upsert_hashes_personnel_id_numbers():
+    """Batch S2B v2 — personnel id_number is masked + id_number_hash present."""
+    async def run():
+        existing = {
+            "id": "x", "project_id": "p1", "deletedAt": None,
+            "managers": [], "personnel": [],
+        }
+
+        db = MagicMock()
+        db.safety_project_settings.find_one = AsyncMock(
+            side_effect=[existing, existing, existing]
+        )
+        db.safety_project_settings.insert_one = AsyncMock()
+        db.safety_project_settings.update_one = AsyncMock()
+
+        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
+        payload = SafetyProjectRegistrationUpsert(
+            personnel=[{
+                "role": "safety_officer",
+                "first_name": "א",
+                "last_name": "ב",
+                "id_number": "123456789",
+            }]
+        )
+        user = {"id": "u1"}
+
+        with patch.object(srr, '_check_project_access', AsyncMock(return_value=None)), \
+             patch.object(srr, '_audit', AsyncMock(return_value=None)), \
+             patch.object(srr, 'get_db', return_value=db):
+            await srr.upsert_registration("p1", payload, user)
+
+        call = db.safety_project_settings.update_one.call_args
+        set_doc = call.args[1]["$set"]
+        person = set_doc["personnel"][0]
+        assert person["id_number"] == "1***789"
+        assert "id_number_hash" in person
+        assert person["id_number_hash"] != "123456789"
+    asyncio.run(run())

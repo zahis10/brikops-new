@@ -45,6 +45,7 @@ async def _get_or_init_registration(db, project_id: str) -> dict:
         "contractor_registry_number": None,
         "office_address": None,
         "managers": [],
+        "personnel": [],
         "permit_number": None,
         "form_4_target_date": None,
         "created_at": now,
@@ -93,6 +94,17 @@ async def upsert_registration(
                     mgr["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
                 else:
                     mgr["id_number"] = "***"
+
+    if "personnel" in updates and updates["personnel"] is not None:
+        for person in updates["personnel"]:
+            raw_id = person.get("id_number")
+            if raw_id:
+                person["id_number_hash"] = _hash_id_number(raw_id)
+                stripped = raw_id.strip()
+                if len(stripped) >= 4:
+                    person["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
+                else:
+                    person["id_number"] = "***"
 
     updates["updated_at"] = _now()
     updates["updated_by"] = user["id"]

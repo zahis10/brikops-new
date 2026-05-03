@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { safetyService } from '../services/api';
 import { downloadBlob } from '../utils/fileDownload';
+import SafetyProjectPersonnelSection from '../components/safety/SafetyProjectPersonnelSection';
 
 const EMPTY_MANAGER = {
   first_name: '',
@@ -69,6 +70,7 @@ export default function SafetyProjectRegistrationPage() {
     contractor_registry_number: '',
     office_address: { ...EMPTY_ADDRESS },
     managers: [],
+    personnel: [],
     permit_number: '',
     form_4_target_date: '',
   });
@@ -81,6 +83,7 @@ export default function SafetyProjectRegistrationPage() {
     general: true,
     address: false,
     managers: false,
+    personnel: false,
     regulatory: false,
   });
 
@@ -94,6 +97,7 @@ export default function SafetyProjectRegistrationPage() {
         contractor_registry_number: data.contractor_registry_number || '',
         office_address: data.office_address || { ...EMPTY_ADDRESS },
         managers: data.managers || [],
+        personnel: data.personnel || [],
         permit_number: data.permit_number || '',
         form_4_target_date: data.form_4_target_date || '',
       });
@@ -219,7 +223,14 @@ export default function SafetyProjectRegistrationPage() {
           </button>
         </Section>
 
-        <Section title="4. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
+        <SafetyProjectPersonnelSection
+          personnel={reg.personnel || []}
+          onChange={(p) => setReg(prev => ({ ...prev, personnel: p }))}
+          isOpen={openSections.personnel}
+          onToggle={() => toggleSection('personnel')}
+        />
+
+        <Section title="5. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
           <Field label="מספר היתר בנייה" value={reg.permit_number} onChange={(v) => setField('permit_number', v)} />
           <Field label="תאריך יעד טופס 4" value={reg.form_4_target_date} onChange={(v) => setField('form_4_target_date', v)} type="date" />
         </Section>
