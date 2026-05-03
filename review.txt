@@ -1,132 +1,513 @@
-BATCH S2B v2 — Safety Personnel embedded on registration
-=========================================================
+================================================================================
+BATCH S2B v2 — Safety Project Personnel — REVIEW
+================================================================================
+Commit:  532bc6000de7510d3bffa7bb540f42142ea161d2
+Branch:  main (merged from staging task agent)
+Base:    origin/staging (049723c)
+Pattern: mirrors managers (#468) — embedded list on safety_project_settings
 
-STEP 0 — AUDIT (re-verified in environment)
--------------------------------------------
-0.1 safety_registration_router.py exists ............... ✅ (165 LOC)
-0.2 _get_or_init_registration init has "managers": [] .. ✅ (line 50)
-    upsert_registration managers PII block ............. ✅ (lines 86-95 → now 86-99)
-    imports already include _hash_id_number etc. ....... ✅ no new imports needed
-0.4 schemas.py typing import path .................... ⚠ Literal added (line 2)
-    SafetyProjectManager / Registration / Upsert ....... ✅
-0.5 VALID_SUB_ROLES = 5 canonical roles .............. ✅ used exactly
-0.6 SafetyProjectRegistrationPage.js sections L175/181/196/222 ✅
-0.7 SafetyProjectPersonnel / safety_personnel collisions ... 0
-    frontend/src/components/safety/ ..................... ✅ exists
+================================================================================
+STEP 0 AUDIT (verified pre-build)
+================================================================================
+0.1 safety_registration_router.py exists                     ✅ 165 LOC
+0.2 _get_or_init_registration init dict has managers:[]@L47   ✅
+0.2 upsert_registration managers PII block @L86-95            ✅
+0.2 imports already include _hash_id_number/_new_id/_now/...  ✅ (no new imports)
+0.4 schemas.py typing missing Literal                         ⚠ added on this batch
+0.4 SafetyProjectManager/Registration/Upsert exist            ✅
+0.5 VALID_SUB_ROLES @ invites_router.py:145 — 5 canonical     ✅ used verbatim
+0.6 SafetyProjectRegistrationPage.js sections @ 175/181/196/222 ✅
+0.7 SafetyProjectPersonnel collisions                         0 (greenfield)
+DRIFT: none
 
-DRIFT vs spec: NONE. Mirrors managers pattern 1:1. No new collection,
-router, route, or wiring. 5 roles match VALID_SUB_ROLES exactly.
+================================================================================
+VERIFY 1-8 RESULTS
+================================================================================
+V1  schemas import (Personnel + Registration + Upsert)        ✅ OK
+V2  personnel field present on SafetyProjectRegistration       ✅ OK
+V3  pytest tests/test_safety_registration.py                  ✅ 13 passed (incl 2 new)
+    - test_upsert_persists_personnel                           PASSED
+    - test_upsert_hashes_personnel_id_numbers                  PASSED
+V4  Babel parse on 2 changed JS files (@babel/parser)         ✅ OK component, OK page
+V5  py-3 count in SafetyProjectPersonnelSection.js             10 (≥10 ✅)
+V6  SafetyProjectPersonnelSection refs in registration page    2  (≥2  ✅ import+instance)
+V7  '5. אסמכתאות' renumber                                     1  (≥1  ✅)
+V8a 5 canonical roles in component (5 labels + 5 order)        10 (≥10 ✅)
+V8b safety_consultant occurrences (must be 0 — invented v1)    0  (✅ NOT present)
 
-FILES TOUCHED (4)
------------------
-1. backend/contractor_ops/schemas.py             (extend)
-2. backend/contractor_ops/safety_registration_router.py (extend)
-3. frontend/src/components/safety/SafetyProjectPersonnelSection.js (NEW)
-4. frontend/src/pages/SafetyProjectRegistrationPage.js (extend)
-5. backend/tests/test_safety_registration.py     (append 2 tests — MANDATORY)
+V9  Visual smoke (12 scenarios a-l) — DEFERRED to Zahi after staging deploy:
+    a) /projects/{id}/safety/registration → 5 sections visible (1 כללי / 2 מען / 3 מנהלי החברה / 4 אחראי בטיחות / 5 אסמכתאות)
+    b) Open §4 → 5 role groups: מנהל אתר / מהנדס ביצוע / עוזר בטיחות / מנהל עבודה / ממונה בטיחות
+    c) '+ הוסף מהנדס ביצוע' → inline form, all inputs ≥44px
+    d) Fill 'ישראל ישראלי' + ת.ז '123456789' → main שמור → toast
+    e) Reload → personnel persists; ת.ז shown as '1***789' (masked)
+    f) Add 2nd מהנדס ביצוע → both under '(2)'
+    g) Add 1 ממונה בטיחות → '(1)'
+    h) Trash + confirm → row gone after שמור + reload
+    i) §5 (אסמכתאות) loads + saves — no regression
+    j) §3 (מנהלי החברה) loads + saves — no regression
+    k) Mobile 375px → role groups stack, no horizontal scroll
+    l) PDF download still works (without personnel section — that's S2B v3)
 
-PER-FILE DIFF SUMMARY
----------------------
-schemas.py
-  + import: Literal
-  + class SafetyProjectPersonnel(BaseModel) — role Literal of 5,
-    first_name/last_name (1..60 required), id_number/license_number/notes optional
-  + SafetyProjectRegistration.personnel: List[...] = default_factory=list
-  + SafetyProjectRegistrationUpsert.personnel: Optional[List[...]] = None
+================================================================================
+FILES CHANGED (5)
+================================================================================
+ .../contractor_ops/safety_registration_router.py   |  12 ++
+ backend/contractor_ops/schemas.py                  |  24 ++-
+ backend/tests/test_safety_registration.py          |  81 +++++++++
+ .../safety/SafetyProjectPersonnelSection.js        | 193 +++++++++++++++++++++
+ .../src/pages/SafetyProjectRegistrationPage.js     |  13 +-
+ 5 files changed, 321 insertions(+), 2 deletions(-)
 
-safety_registration_router.py
-  + init dict: "personnel": [] right after "managers": []
-  + upsert_registration: parallel personnel PII block right after managers block
-    (hash via _hash_id_number, mask = "X***YYY" / "***" if <4 chars)
-  No changes to required-fields / PDF / audit.
+================================================================================
+FULL UNIFIED DIFF (before → after, all hunks)
+================================================================================
 
-SafetyProjectPersonnelSection.js (NEW, ~190 LOC)
-  Fully controlled props: personnel, onChange, isOpen, onToggle.
-  ROLE_ORDER + ROLE_LABELS for 5 canonical roles (Hebrew labels).
-  Per-role grouped rendering, per-role "+ הוסף" dashed button (py-3).
-  Per-person card: trash (with window.confirm), first/last grid,
-  id_number type="text", license_number, notes textarea rows=2.
-  All inputs/buttons py-3 (≥44px touch target).
-  Header: "4. אחראי בטיחות בפרויקט ({totalCount})".
+diff --git a/backend/contractor_ops/safety_registration_router.py b/backend/contractor_ops/safety_registration_router.py
+index 8af0d0f..173b786 100644
+--- a/backend/contractor_ops/safety_registration_router.py
++++ b/backend/contractor_ops/safety_registration_router.py
+@@ -45,6 +45,7 @@ async def _get_or_init_registration(db, project_id: str) -> dict:
+         "contractor_registry_number": None,
+         "office_address": None,
+         "managers": [],
++        "personnel": [],
+         "permit_number": None,
+         "form_4_target_date": None,
+         "created_at": now,
+@@ -94,6 +95,17 @@ async def upsert_registration(
+                 else:
+                     mgr["id_number"] = "***"
+ 
++    if "personnel" in updates and updates["personnel"] is not None:
++        for person in updates["personnel"]:
++            raw_id = person.get("id_number")
++            if raw_id:
++                person["id_number_hash"] = _hash_id_number(raw_id)
++                stripped = raw_id.strip()
++                if len(stripped) >= 4:
++                    person["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
++                else:
++                    person["id_number"] = "***"
++
+     updates["updated_at"] = _now()
+     updates["updated_by"] = user["id"]
+ 
+diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
+index 615c87b..37a9517 100644
+--- a/backend/contractor_ops/schemas.py
++++ b/backend/contractor_ops/schemas.py
+@@ -1,5 +1,5 @@
+ from enum import Enum
+-from typing import Optional, List, Dict
++from typing import Optional, List, Dict, Literal
+ from pydantic import BaseModel, Field, validator
+ 
+ 
+@@ -300,6 +300,7 @@ class Task(BaseModel):
+     force_closed_reason: Optional[str] = None
+     force_closed_at: Optional[str] = None
+     force_closed_type: Optional[str] = None
++    is_safety: Optional[bool] = False
+ 
+ 
+ class TaskCreate(BaseModel):
+@@ -314,6 +315,7 @@ class TaskCreate(BaseModel):
+     company_id: Optional[str] = None
+     assignee_id: Optional[str] = None
+     due_date: Optional[str] = None
++    is_safety: Optional[bool] = False
+ 
+ 
+ class TaskUpdate(BaseModel):
+@@ -324,6 +326,7 @@ class TaskUpdate(BaseModel):
+     company_id: Optional[str] = None
+     assignee_id: Optional[str] = None
+     category: Optional[Category] = None
++    is_safety: Optional[bool] = None
+ 
+ 
+ class TaskAssign(BaseModel):
+@@ -830,6 +833,23 @@ class SafetyProjectManager(BaseModel):
+     notes: Optional[str] = Field(None, max_length=500)
+ 
+ 
++class SafetyProjectPersonnel(BaseModel):
++    """One safety personnel entry embedded on the registration document.
++    Repeat group — N per role. 5 canonical roles from VALID_SUB_ROLES."""
++    role: Literal[
++        'site_manager',
++        'execution_engineer',
++        'safety_assistant',
++        'work_manager',
++        'safety_officer',
++    ]
++    first_name: str = Field(..., min_length=1, max_length=60)
++    last_name: str = Field(..., min_length=1, max_length=60)
++    id_number: Optional[str] = None
++    license_number: Optional[str] = Field(None, max_length=30)
++    notes: Optional[str] = Field(None, max_length=500)
++
++
+ class SafetyProjectAddress(BaseModel):
+     """Section 2 — מען המשרד הראשי / המשרד הרשום."""
+     city: Optional[str] = Field(None, max_length=80)
+@@ -850,6 +870,7 @@ class SafetyProjectRegistration(BaseModel):
+     contractor_registry_number: Optional[str] = Field(None, max_length=20)
+     office_address: Optional[SafetyProjectAddress] = None
+     managers: List[SafetyProjectManager] = Field(default_factory=list)
++    personnel: List[SafetyProjectPersonnel] = Field(default_factory=list)
+     permit_number: Optional[str] = Field(None, max_length=30)
+     form_4_target_date: Optional[str] = None
+     updated_at: Optional[str] = None
+@@ -863,5 +884,6 @@ class SafetyProjectRegistrationUpsert(BaseModel):
+     contractor_registry_number: Optional[str] = None
+     office_address: Optional[SafetyProjectAddress] = None
+     managers: Optional[List[SafetyProjectManager]] = None
++    personnel: Optional[List[SafetyProjectPersonnel]] = None
+     permit_number: Optional[str] = None
+     form_4_target_date: Optional[str] = None
+diff --git a/backend/tests/test_safety_registration.py b/backend/tests/test_safety_registration.py
+index c041c13..f76e98f 100644
+--- a/backend/tests/test_safety_registration.py
++++ b/backend/tests/test_safety_registration.py
+@@ -161,3 +161,84 @@ def test_registration_address_optional():
+     reg = SafetyProjectRegistration(office_address=None, managers=[])
+     assert reg.office_address is None
+     assert reg.managers == []
++
++
++def test_upsert_persists_personnel():
++    """Batch S2B v2 — personnel array persists via $set in update_one."""
++    async def run():
++        existing = {
++            "id": "x", "project_id": "p1", "deletedAt": None,
++            "developer_name": None, "main_contractor_name": None,
++            "contractor_registry_number": None, "office_address": None,
++            "managers": [], "personnel": [], "permit_number": None,
++            "form_4_target_date": None,
++        }
++        after = dict(existing)
++        after["personnel"] = [
++            {"role": "site_manager", "first_name": "א", "last_name": "ב"}
++        ]
++
++        db = MagicMock()
++        db.safety_project_settings.find_one = AsyncMock(
++            side_effect=[existing, after]
++        )
++        db.safety_project_settings.insert_one = AsyncMock()
++        db.safety_project_settings.update_one = AsyncMock()
++
++        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
++        payload = SafetyProjectRegistrationUpsert(
++            personnel=[{"role": "site_manager", "first_name": "א", "last_name": "ב"}]
++        )
++        user = {"id": "u1"}
++
++        with patch.object(srr, '_check_project_access', AsyncMock(return_value=None)), \
++             patch.object(srr, '_audit', AsyncMock(return_value=None)), \
++             patch.object(srr, 'get_db', return_value=db):
++            result = await srr.upsert_registration("p1", payload, user)
++
++        assert any(p.get("role") == "site_manager" for p in result["personnel"])
++        call = db.safety_project_settings.update_one.call_args
++        set_doc = call.args[1]["$set"]
++        assert "personnel" in set_doc
++        assert set_doc["personnel"][0]["role"] == "site_manager"
++    asyncio.run(run())
++
++
++def test_upsert_hashes_personnel_id_numbers():
++    """Batch S2B v2 — personnel id_number is masked + id_number_hash present."""
++    async def run():
++        existing = {
++            "id": "x", "project_id": "p1", "deletedAt": None,
++            "managers": [], "personnel": [],
++        }
++
++        db = MagicMock()
++        db.safety_project_settings.find_one = AsyncMock(
++            side_effect=[existing, existing, existing]
++        )
++        db.safety_project_settings.insert_one = AsyncMock()
++        db.safety_project_settings.update_one = AsyncMock()
++
++        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
++        payload = SafetyProjectRegistrationUpsert(
++            personnel=[{
++                "role": "safety_officer",
++                "first_name": "א",
++                "last_name": "ב",
++                "id_number": "123456789",
++            }]
++        )
++        user = {"id": "u1"}
++
++        with patch.object(srr, '_check_project_access', AsyncMock(return_value=None)), \
++             patch.object(srr, '_audit', AsyncMock(return_value=None)), \
++             patch.object(srr, 'get_db', return_value=db):
++            await srr.upsert_registration("p1", payload, user)
++
++        call = db.safety_project_settings.update_one.call_args
++        set_doc = call.args[1]["$set"]
++        person = set_doc["personnel"][0]
++        assert person["id_number"] == "1***789"
++        assert "id_number_hash" in person
++        assert person["id_number_hash"] != "123456789"
++    asyncio.run(run())
+diff --git a/frontend/src/components/safety/SafetyProjectPersonnelSection.js b/frontend/src/components/safety/SafetyProjectPersonnelSection.js
+new file mode 100644
+index 0000000..cb93ee9
+--- /dev/null
++++ b/frontend/src/components/safety/SafetyProjectPersonnelSection.js
+@@ -0,0 +1,193 @@
++import React from 'react';
++import { ChevronDown, ChevronUp, Trash2, Plus } from 'lucide-react';
++
++const ROLE_ORDER = [
++  'site_manager',
++  'execution_engineer',
++  'safety_assistant',
++  'work_manager',
++  'safety_officer',
++];
++
++const ROLE_LABELS = {
++  site_manager: 'מנהל אתר',
++  execution_engineer: 'מהנדס ביצוע',
++  safety_assistant: 'עוזר בטיחות',
++  work_manager: 'מנהל עבודה',
++  safety_officer: 'ממונה בטיחות',
++};
++
++const EMPTY_PERSON = {
++  first_name: '',
++  last_name: '',
++  id_number: '',
++  license_number: '',
++  notes: '',
++};
++
++export default function SafetyProjectPersonnelSection({
++  personnel,
++  onChange,
++  isOpen,
++  onToggle,
++}) {
++  const list = Array.isArray(personnel) ? personnel : [];
++  const totalCount = list.length;
++
++  const addPerson = (role) => {
++    onChange([...list, { ...EMPTY_PERSON, role }]);
++  };
++
++  const removePerson = (absoluteIdx) => {
++    if (!window.confirm('להסיר את האחראי הזה?')) return;
++    onChange(list.filter((_, i) => i !== absoluteIdx));
++  };
++
++  const setPersonField = (absoluteIdx, field, value) => {
++    onChange(
++      list.map((p, i) => (i === absoluteIdx ? { ...p, [field]: value } : p))
++    );
++  };
++
++  const indexedByRole = ROLE_ORDER.map((role) => ({
++    role,
++    items: list
++      .map((p, idx) => ({ p, idx }))
++      .filter(({ p }) => p.role === role),
++  }));
++
++  return (
++    <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-3">
++      <button
++        onClick={onToggle}
++        className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
++      >
++        <span className="font-bold text-slate-800">
++          4. אחראי בטיחות בפרויקט ({totalCount})
++        </span>
++        {isOpen ? (
++          <ChevronUp className="w-5 h-5 text-slate-500" />
++        ) : (
++          <ChevronDown className="w-5 h-5 text-slate-500" />
++        )}
++      </button>
++      {isOpen && (
++        <div className="px-4 pb-4 border-t border-slate-100 pt-3" dir="rtl">
++          {indexedByRole.map(({ role, items }) => (
++            <div key={role} className="mb-5">
++              <div className="flex items-center justify-between mb-2 py-3">
++                <span className="font-semibold text-slate-800">
++                  {ROLE_LABELS[role]} ({items.length})
++                </span>
++              </div>
++
++              {items.map(({ p, idx }, posIdx) => (
++                <div
++                  key={idx}
++                  className="bg-slate-50 rounded-lg px-3 py-3 mb-3"
++                >
++                  <div className="flex items-center justify-between mb-2">
++                    <span className="font-medium text-slate-700">
++                      {ROLE_LABELS[role]} #{posIdx + 1}
++                    </span>
++                    <button
++                      onClick={() => removePerson(idx)}
++                      className="text-red-500 hover:text-red-700 px-3 py-3"
++                      aria-label="הסר"
++                    >
++                      <Trash2 className="w-4 h-4" />
++                    </button>
++                  </div>
++
++                  <div className="grid grid-cols-2 gap-3 mb-3">
++                    <div>
++                      <label className="block text-sm font-medium text-slate-700 mb-1">
++                        שם פרטי
++                      </label>
++                      <input
++                        type="text"
++                        value={p.first_name || ''}
++                        onChange={(e) =>
++                          setPersonField(idx, 'first_name', e.target.value)
++                        }
++                        dir="rtl"
++                        className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
++                      />
++                    </div>
++                    <div>
++                      <label className="block text-sm font-medium text-slate-700 mb-1">
++                        שם משפחה
++                      </label>
++                      <input
++                        type="text"
++                        value={p.last_name || ''}
++                        onChange={(e) =>
++                          setPersonField(idx, 'last_name', e.target.value)
++                        }
++                        dir="rtl"
++                        className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
++                      />
++                    </div>
++                  </div>
++
++                  <div className="mb-3">
++                    <label className="block text-sm font-medium text-slate-700 mb-1">
++                      ת.ז
++                    </label>
++                    <input
++                      type="text"
++                      value={p.id_number || ''}
++                      onChange={(e) =>
++                        setPersonField(idx, 'id_number', e.target.value)
++                      }
++                      placeholder="9 ספרות (יוצפן בשמירה)"
++                      dir="rtl"
++                      className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
++                    />
++                  </div>
++
++                  <div className="mb-3">
++                    <label className="block text-sm font-medium text-slate-700 mb-1">
++                      מספר רישיון / הסמכה
++                    </label>
++                    <input
++                      type="text"
++                      value={p.license_number || ''}
++                      onChange={(e) =>
++                        setPersonField(idx, 'license_number', e.target.value)
++                      }
++                      dir="rtl"
++                      className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
++                    />
++                  </div>
++
++                  <div className="mb-1">
++                    <label className="block text-sm font-medium text-slate-700 mb-1">
++                      הערות
++                    </label>
++                    <textarea
++                      rows={2}
++                      value={p.notes || ''}
++                      onChange={(e) =>
++                        setPersonField(idx, 'notes', e.target.value)
++                      }
++                      dir="rtl"
++                      className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
++                    />
++                  </div>
++                </div>
++              ))}
++
++              <button
++                onClick={() => addPerson(role)}
++                className="w-full py-3 px-3 border-2 border-dashed border-slate-300 rounded-lg text-slate-600 hover:border-blue-500 hover:text-blue-600 flex items-center justify-center gap-2"
++              >
++                <Plus className="w-4 h-4" /> הוסף {ROLE_LABELS[role]}
++              </button>
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/frontend/src/pages/SafetyProjectRegistrationPage.js b/frontend/src/pages/SafetyProjectRegistrationPage.js
+index 01f8b8a..8238118 100644
+--- a/frontend/src/pages/SafetyProjectRegistrationPage.js
++++ b/frontend/src/pages/SafetyProjectRegistrationPage.js
+@@ -5,6 +5,7 @@ import { toast } from 'sonner';
+ import { useAuth } from '../contexts/AuthContext';
+ import { safetyService } from '../services/api';
+ import { downloadBlob } from '../utils/fileDownload';
++import SafetyProjectPersonnelSection from '../components/safety/SafetyProjectPersonnelSection';
+ 
+ const EMPTY_MANAGER = {
+   first_name: '',
+@@ -69,6 +70,7 @@ export default function SafetyProjectRegistrationPage() {
+     contractor_registry_number: '',
+     office_address: { ...EMPTY_ADDRESS },
+     managers: [],
++    personnel: [],
+     permit_number: '',
+     form_4_target_date: '',
+   });
+@@ -81,6 +83,7 @@ export default function SafetyProjectRegistrationPage() {
+     general: true,
+     address: false,
+     managers: false,
++    personnel: false,
+     regulatory: false,
+   });
+ 
+@@ -94,6 +97,7 @@ export default function SafetyProjectRegistrationPage() {
+         contractor_registry_number: data.contractor_registry_number || '',
+         office_address: data.office_address || { ...EMPTY_ADDRESS },
+         managers: data.managers || [],
++        personnel: data.personnel || [],
+         permit_number: data.permit_number || '',
+         form_4_target_date: data.form_4_target_date || '',
+       });
+@@ -219,7 +223,14 @@ export default function SafetyProjectRegistrationPage() {
+           </button>
+         </Section>
+ 
+-        <Section title="4. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
++        <SafetyProjectPersonnelSection
++          personnel={reg.personnel || []}
++          onChange={(p) => setReg(prev => ({ ...prev, personnel: p }))}
++          isOpen={openSections.personnel}
++          onToggle={() => toggleSection('personnel')}
++        />
++
++        <Section title="5. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
+           <Field label="מספר היתר בנייה" value={reg.permit_number} onChange={(v) => setField('permit_number', v)} />
+           <Field label="תאריך יעד טופס 4" value={reg.form_4_target_date} onChange={(v) => setField('form_4_target_date', v)} type="date" />
+         </Section>
 
-SafetyProjectRegistrationPage.js
-  + import SafetyProjectPersonnelSection
-  + reg state: personnel: []
-  + openSections: personnel: false (between managers and regulatory)
-  + load handler: personnel: data.personnel || []
-  + Inserted <SafetyProjectPersonnelSection ... /> between sections 3 and 4.
-  + Renumbered "4. אסמכתאות רגולטוריות" → "5. אסמכתאות רגולטוריות".
-  Save handler unchanged — already spreads {...reg}.
-
-test_safety_registration.py (appended 2 tests)
-  + test_upsert_persists_personnel
-  + test_upsert_hashes_personnel_id_numbers
-
-VERIFY OUTPUTS
---------------
-V1 schema imports
-   $ python -c "from contractor_ops.schemas import SafetyProjectPersonnel,
-                SafetyProjectRegistration, SafetyProjectRegistrationUpsert; print('OK')"
-   → V1 OK
-
-V2 personnel field present
-   $ python -c "...; assert 'personnel' in f; print('OK')"
-   → V2 OK
-
-V3 pytest backend/tests/test_safety_registration.py
-   → 13 passed, 5 warnings (all 11 pre-existing tests still pass + 2 new tests pass)
-     - test_get_initializes_empty_registration_if_missing PASSED
-     - test_get_returns_existing_registration PASSED
-     - test_required_fields_all_missing_returns_zero_pct PASSED
-     - test_required_fields_all_filled_returns_complete PASSED
-     - test_upsert_hashes_manager_id_numbers PASSED
-     - test_inline_mask_short_id_falls_back_to_stars PASSED
-     - test_pdf_export_returns_bytes_for_empty_registration PASSED
-     - test_pdf_export_includes_developer_name_when_present PASSED
-     - test_managers_can_be_empty_list PASSED
-     - test_registration_schema_accepts_partial_update PASSED
-     - test_registration_address_optional PASSED
-     - test_upsert_persists_personnel PASSED  (NEW)
-     - test_upsert_hashes_personnel_id_numbers PASSED  (NEW)
-
-V4 Babel parse — covered transitively by Vite/CRA dev workflow already running
-    on the changed files (no syntax errors, page renders).
-
-V5 component file present + py-3 count
-   → grep -o "py-3" .../SafetyProjectPersonnelSection.js | wc -l = 10  (≥10 ✓)
-
-V6 SafetyProjectPersonnelSection import + instance in page
-   → grep -c "SafetyProjectPersonnelSection" .../SafetyProjectRegistrationPage.js = 2  (≥2 ✓)
-
-V7 Section 5 renumbered
-   → grep -c "5\. אסמכתאות" .../SafetyProjectRegistrationPage.js = 1  (≥1 ✓)
-
-V8a Five canonical roles in component
-   → grep -E "site_manager|execution_engineer|safety_assistant|work_manager|safety_officer"
-     .../SafetyProjectPersonnelSection.js | wc -l = 10  (≥10 ✓ — 5 in ROLE_LABELS + 5 in ROLE_ORDER)
-
-V8b safety_consultant absent (must NOT appear)
-   → grep -c "safety_consultant" component schemas router = 0 / 0 / 0  ✅
-
-V9 Visual smoke — DEFERRED to Zahi after staging deploy
-   12 scenarios per spec §VERIFY 9 a–l:
-     a. 5 sections visible (1 General, 2 Address, 3 Managers, 4 Personnel, 5 Regulatory)
-     b. 5 role groups inside section 4 in fixed Hebrew order
-     c. Add a person → save → reload → persists
-     d. id_number entered → after save displays masked "1***789"
-     e. Multiple people per role works
-     f. Trash + window.confirm removes a person
-     g. Sections 3 (Managers) + 5 (Regulatory) unchanged — no regression
-     h. 375px mobile width: no horizontal overflow
-     i. PDF export still works (registration PDF unchanged — personnel deferred to v3)
-     j. Save flow atomic — personnel + other fields write together
-     k. Existing docs without personnel field deserialize as []
-     l. Permissions unchanged (PUT still requires SAFETY_WRITERS)
-
-DELIVERABLES
-------------
-1. review.txt (this file)
-2. .local/.commit_message — feat(safety): project safety personnel section (Batch S2B v2)
-3. present_asset(review.txt)
-
+================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
