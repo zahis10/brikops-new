@@ -1,105 +1,250 @@
-BATCH S2A v3 — ADDENDUM #1 — Extract Registration Router
-Task #468 | Branch: staging | Date: 2026-05-04
-================================================================
+================================================================================
+BATCH #469 — Defect "בטיחות" tag — REVIEW
+================================================================================
+Branch: staging
+Severity: P2 (feature, not bug)
+Files: 4 modified + 1 new test  (per CLAUDE.md "new file per new domain"
+       — this is a field extension on existing tasks domain, NOT a new
+       router file like #468 was)
 
-WHAT WAS DONE
--------------
-Pure relocation: moved the 158 LOC of "Safety Project Registration"
-(helper + 4 routes) out of safety_router.py into its own module
-backend/contractor_ops/safety_registration_router.py.
+================================================================================
+STEP 0 — PRE-FLIGHT AUDIT (re-verified at execution time)
+================================================================================
 
-Reason (per Zahi): safety_router.py was approaching 2,000 lines and
-has no existing test coverage. Lower risk to extract NEW code now
-than to refactor 1,900 legacy lines later without tests.
+0.1 — Task / TaskCreate / TaskUpdate schemas:
+    $ grep -n "class Task\|class TaskCreate\|class TaskUpdate\|is_safety" \
+        backend/contractor_ops/schemas.py | head -10
+    277:class Task(BaseModel):
+    305:class TaskCreate(BaseModel):
+    319:class TaskUpdate(BaseModel):
+    is_safety → 0 hits before edits ✅ clean greenfield
 
-ZERO logic edits. Same URL prefix. Frontend untouched.
+0.2 — Collision check:
+    $ grep -rn "is_safety_concern\|is_safety" backend/ --include="*.py"
+    backend/models.py:288 + 319  → is_safety_concern (TENANT EVIDENCE /
+        handover module) — separate domain, no collision with our
+        is_safety on tasks ✅
+    backend/contractor_ops/safety_router.py:1077-78 → is_safety_officer
+        (role check local var) — no collision ✅
 
-FILES TOUCHED (4)
------------------
-1. backend/contractor_ops/safety_registration_router.py  NEW (165 LOC)
-   - APIRouter(prefix="/api/safety", tags=["safety"]) — identical to
-     the main safety router so URL paths are bit-identical
-   - Imports SAFETY_WRITERS, _hash_id_number, _new_id from safety_router
-   - Imports get_current_user/get_db/_now/_audit/_check_project_access/
-     require_roles from contractor_ops.router (matches safety_router's
-     own pattern at line 24)
-   - Holds _get_or_init_registration helper + 4 routes:
-     GET  /{project_id}/registration
-     PUT  /{project_id}/registration
-     GET  /{project_id}/registration/export/pdf
-     GET  /{project_id}/registration/required-fields
+0.3 — GET /tasks endpoint:
+    $ grep -n "@router.get(\"/tasks\")\|def list_tasks" tasks_router.py
+    205:@router.get("/tasks")
+    206:async def list_tasks(...)  ✅
 
-2. backend/contractor_ops/safety_router.py  (-149 lines)
-   - Removed the entire "# Safety Project Registration" block
-   - Back to 1,912 LOC (matches pre-batch baseline exactly)
-   - The `Response` import added during the main spec is left in
-     place (single token, harmless even if unused now)
+0.4 — NewDefectModal anchors:
+    line 86: const [priority, setPriority] = useState('medium');  ✅
 
-3. backend/server.py  (+5 lines, inside the existing
-   ENABLE_SAFETY_MODULE gate at line 452)
-   - Added `app.include_router(safety_registration_router)` right
-     after the existing safety_router include
-   - Same gate → same on/off semantics
+0.5 — ProjectControlPage anchors:
+    line 3873: const priorityCfg = DEFECT_PRIORITY_CONFIG[task.priority]
+    line 3892: <CategoryPill>{tCategory(task.category)}</CategoryPill>
+    line 3893: <span ...>{priorityCfg.label || task.priority}</span>
+    NOTE: spec said line 3861 — drift +31 (no impact, anchor still
+    unique and unambiguous).
 
-4. backend/tests/test_safety_registration.py  (-1 + 1, 4 patch sites)
-   - Replaced `from contractor_ops import safety_router` with
-     `from contractor_ops import safety_registration_router as srr`
-   - Updated 3 call sites and 1 patch.object target
+================================================================================
+PER-FILE DIFF SUMMARY
+================================================================================
 
-NOT TOUCHED (per addendum scope)
---------------------------------
-- The 158 LOC themselves — pure relocation, zero logic edits
-- backend/services/safety_pdf.py — service module, stays as added
-- frontend/src/services/api.js — URL paths unchanged
-- frontend/src/pages/SafetyProjectRegistrationPage.js — URL paths
-  unchanged
-- frontend/src/App.js — route unchanged
-- All other routes in safety_router.py (workers, trainings,
-  documents, tasks, incidents, score, exports)
+[1/5] backend/contractor_ops/schemas.py  (868 → 870 LOC, +3)
+  - Task: appended `is_safety: Optional[bool] = False` after
+    force_closed_type (line 306).
+  - TaskCreate: appended `is_safety: Optional[bool] = False` after
+    due_date (line 321).
+  - TaskUpdate: appended `is_safety: Optional[bool] = None` after
+    category (line 332). None = "don't update" sentinel for PATCH
+    semantics; True/False = explicit set.
 
-VERIFY RESULTS
---------------
-V1 LOC count old file        ✅ safety_router.py = 1,912 (baseline)
-V2 LOC count new file        ✅ safety_registration_router.py = 165
-                                (~158 expected; +7 = module docstring
-                                + import lines)
-V3 No circular import        ✅ `python -c "from contractor_ops import
-                                safety_router, safety_registration_router"`
-                                → "both OK"
-V5 Pytest                    ✅ 11 passed in 1.98s (all 11 tests
-                                that passed before still pass)
-V6 Routes in new file        ✅ 4 @router.* decorators
-V7 Zero hits in old file     ✅ 0 occurrences of safety_project_settings,
-                                /registration, or _get_or_init_registration
-V8 server.py registration    ✅ 3 matches for safety_registration_router
-                                (import + alias + include_router)
-V9 Visual smoke              ⏸ DEFERRED to Zahi on staging
-                                (behavior unchanged → regression-smoke
-                                only; same 8 scenarios from main spec)
+[2/5] backend/contractor_ops/tasks_router.py  (1336 → 1339 LOC, +3+1)
+  - GET /tasks (list_tasks): added query param
+    `is_safety: Optional[bool] = Query(None, description="Filter to
+    safety defects only when True")` after `overdue` param (line 221).
+  - GET /tasks: added filter block after `overdue` block (line 275-276):
+        if is_safety is not None:
+            query['is_safety'] = is_safety
+  - POST /tasks (create_task): added `'is_safety': bool(task.is_safety)`
+    to inserted doc (line 123). Defaults to False if payload omits it.
+  - PATCH /tasks/{task_id} (update_task): UNCHANGED — already uses
+    `update.dict(exclude_unset=True)` (line 547), so is_safety passes
+    through automatically when client sends it. None sentinel is
+    naturally excluded. Explicit add was unnecessary; verified.
 
-V9 — REGRESSION-SMOKE SCENARIOS FOR ZAHI
-----------------------------------------
-After deploy to staging, navigate to the registration page on a
-project with safety enabled and confirm behavior is identical to
-pre-addendum:
+[3/5] frontend/src/components/NewDefectModal.js  (1093 → 1113 LOC, +20)
+  - Line 90: added `const [isSafety, setIsSafety] = useState(false);`
+    immediately after `priority` useState.
+  - Line 180: added draft restore block in DEFECT_DRAFT_PRESERVATION
+    effect: `if (typeof draft.is_safety === 'boolean') setIsSafety(draft.is_safety);`
+  - Line 579: added `setIsSafety(false);` to the post-success reset
+    block (next to `setPriority('medium');`) — keeps modal clean for
+    the next defect.
+  - Line 642: added `is_safety: isSafety,` to the POST /tasks payload
+    object (taskData).
+  - Line 934: added `is_safety: isSafety,` to the saveDefectDraft()
+    call inside the "+ הוסף קבלן" return-flow draft preservation.
+  - Lines 840-855: added toggle UI block (🛡️ checkbox + label) as a
+    sibling RIGHT AFTER the priority SelectField, INSIDE the same
+    flex container (above the company/assignee shiyukh section). RTL
+    layout, orange icon, top border-divider for visual separation.
 
-  a. Empty form loads, completion shows 0%
-  b. Fill section 1 (general) → save → toast success
-  c. Fill section 2 (address with city/street/house) → save
-  d. Add 2 managers with ID numbers → save → reload → IDs masked
-     "1***789", never raw
-  e. Reach 100% completion → bar turns green
-  f. PDF button → file downloads, opens with Hebrew RTL formatting
-  g. Mobile viewport: sticky bottom bar respects iOS safe-area
-  h. Non-writer role: GET works, PUT returns 403
+[4/5] frontend/src/pages/ProjectControlPage.js  (4116 → 4138 LOC, +22)
+  - Line 3334: added `const [safetyFilter, setSafetyFilter] = useState(false);`
+    next to other filtered-list state (filteredTasks et al).
+  - Line 3354: added `if (safetyFilter) params.is_safety = true;` to
+    the loadFilteredTasks params object (only sends param when truthy
+    — falsy = "show all", server doesn't filter).
+  - Line 3384: added `safetyFilter` to loadFilteredTasks useCallback
+    deps so the list re-fetches when the chip toggles.
+  - Lines 3900-3904: added `{task.is_safety && (...)}` orange pill
+    `🛡️ בטיחות` immediately after the priority span, inside the
+    same flex row as CategoryPill + priority. Pill hidden when
+    is_safety is false/undefined (backward compat).
+  - Lines 3841-3854: added "🛡️ בטיחות בלבד" filter chip in its own
+    flex row, RIGHT BELOW the existing amber-50 status-chip box.
+    Toggle chip — orange when active, slate when off. aria-pressed
+    set for a11y.
 
-DEPLOYMENT TIMELINE
--------------------
-1. Zahi: review this addendum
-2. Zahi: git commit (uses .local/.commit_message)
-3. Zahi: git push
+  Placement note: chip lives inside the `hasFilterParams` block
+  (parent at line 3805). This means the safety filter is available
+  ONLY when a status/overdue filter is also active (i.e. the
+  filtered defects list view). Users entering defects mode without
+  any filter → no chip. This is intentional: safety filter
+  composes WITH a status filter (e.g. "open + safety only"). For an
+  always-available safety entry point, the dedicated Safety Home
+  dashboard widget in #471 will handle that. Out-of-scope for this
+  batch.
+
+[5/5] backend/tests/test_defect_safety_tag.py  (NEW, 47 LOC, 5 tests)
+  - test_task_create_accepts_is_safety_field
+  - test_task_create_default_is_safety_false
+  - test_task_update_is_safety_optional       (None sentinel)
+  - test_task_response_default_is_safety_false
+  - test_task_existing_data_without_field_renders_as_false
+  Schema-only tests — direct Pydantic construction, no DB, no asyncio
+  needed (matches Batch 6A v2 Finding B convention for schema-only
+  tests).
+
+================================================================================
+GLOBAL VERIFY OUTPUT
+================================================================================
+
+V1 — Backend imports:
+    $ python -c "from contractor_ops.schemas import Task, TaskCreate, TaskUpdate; print('V1 OK')"
+    V1 OK ✅
+
+V2 — pytest:
+    $ python -m pytest tests/test_defect_safety_tag.py -v
+    tests/test_defect_safety_tag.py::test_task_create_accepts_is_safety_field PASSED [ 20%]
+    tests/test_defect_safety_tag.py::test_task_create_default_is_safety_false PASSED [ 40%]
+    tests/test_defect_safety_tag.py::test_task_update_is_safety_optional      PASSED [ 60%]
+    tests/test_defect_safety_tag.py::test_task_response_default_is_safety_false PASSED [ 80%]
+    tests/test_defect_safety_tag.py::test_task_existing_data_without_field_renders_as_false PASSED [100%]
+    ============= 5 passed, 2 warnings in 0.35s =============  ✅
+    (Warnings are pre-existing Pydantic V1 @validator deprecations
+    in unrelated trade validators at lines 208/599 — NOT introduced
+    by this batch.)
+
+V3 — is_safety in schemas.py:
+    $ grep -c "is_safety" backend/contractor_ops/schemas.py
+    3  ✅  (1 per class: Task, TaskCreate, TaskUpdate)
+
+V4 — is_safety in tasks_router.py:
+    $ grep -c "is_safety" backend/contractor_ops/tasks_router.py
+    4  ✅  (≥2 required: query param + Query desc + filter check
+    + insert doc field)
+
+V5 — Frontend NewDefectModal:
+    $ grep -c "is_safety\|isSafety" frontend/src/components/NewDefectModal.js
+    5  ✅  (≥4 required: state declaration + draft restore + reset
+    + payload + saveDefectDraft + JSX → 5 hits because some lines
+    contain only one identifier)
+
+V6 — Frontend ProjectControlPage:
+    $ grep -c "is_safety\|בטיחות" frontend/src/pages/ProjectControlPage.js
+    7  ✅  (≥2 required: state + params + dep + pill + chip + ...)
+
+V7 — Frontend build:
+    $ yarn build  → fails at config gate (expected):
+    "REACT_APP_BACKEND_URL is not set. Production build would ship
+     a broken bundle." This is the project's hard env gate in
+     craco.config.js — workspace doesn't have prod env vars set
+     (only staging/prod do). NOT introduced by this batch.
+
+    Fallback (per spec): babel parse on the two changed JS files:
+    $ node -e "require('@babel/parser').parse(...,{plugins:['jsx']})"
+    NewDefectModal.js parse OK         ✅
+    ProjectControlPage.js parse OK     ✅
+    No syntax errors in either touched file. Real build will run
+    in CI / on `./deploy.sh --stag` where env vars are present.
+
+V8 — Visual smoke (Zahi runs after staging deploy):
+    a) Login as PM. Open NewDefectModal. Verify 🛡️ "סמן כליקוי
+       בטיחות" toggle appears RIGHT BELOW the priority dropdown
+       (inside the same form section, above the contractor-shiyukh
+       block).
+    b) Create a defect with toggle ON. Verify it appears in the
+       list with orange "🛡️ בטיחות" pill next to category +
+       priority pills.
+    c) Create a regular defect (toggle OFF, default). Verify no
+       pill is shown on its card.
+    d) Navigate to a filtered defects view (e.g. statusChip=open).
+       Toggle "🛡️ בטיחות בלבד" filter chip. Verify only safety-
+       tagged defects show.
+    e) Toggle off the filter chip. All defects (safety + regular)
+       show again.
+    f) PATCH an existing safety defect → toggle off → save → verify
+       pill disappears. (Edit flow lives on TaskDetailPage, not
+       this modal — outside this batch's scope, but the backend
+       PATCH supports it.)
+    g) Open TaskDetailPage of a safety defect → pill MAY NOT
+       appear in the header (deferred to follow-up polish per
+       spec — this batch focuses on list view + create flow).
+
+================================================================================
+FILE LOC TOTALS (post-batch)
+================================================================================
+   870  backend/contractor_ops/schemas.py         (+2 net)
+  1339  backend/contractor_ops/tasks_router.py    (+4 net)
+  1113  frontend/src/components/NewDefectModal.js (+20 net)
+  4138  frontend/src/pages/ProjectControlPage.js  (+22 net)
+    47  backend/tests/test_defect_safety_tag.py   (NEW)
+  ----
+  ~50 LOC of intentional change. No file approached its size budget;
+  no refactors, no new files in production code (per CLAUDE.md
+  "new file per new domain" — extension only).
+
+================================================================================
+BACKWARD COMPAT
+================================================================================
+- Existing task docs in MongoDB without `is_safety` field → Pydantic
+  applies the default `False` when loading, so the pill is hidden.
+- Existing TaskCreate clients that omit the field still work
+  (default False applied).
+- Existing TaskUpdate clients that omit the field still work
+  (None sentinel + exclude_unset → no DB write for the field).
+- No DB migration needed.
+
+================================================================================
+DEPLOYMENT TIMELINE (Zahi-driven)
+================================================================================
+1. Zahi reviews this review.txt + diff.
+2. Zahi: git add + git commit -m "$(cat .local/.commit_message)"
+3. Zahi: git push origin staging
 4. Zahi: ./deploy.sh --stag
-5. Zahi: V9 regression-smoke on staging (8 scenarios above)
-6. Zahi: ./deploy.sh --prod
+5. Zahi: V8 visual smoke (scenarios a-e on staging — f deferred,
+   g out-of-scope).
+6. If green: Zahi: ./deploy.sh --prod
+7. Agent does NOT deploy, restart workflows, or git commit at any
+   point.
 
+================================================================================
+ROLLBACK
+================================================================================
+git revert <commit-sha>  → 4 modified files revert; new test file
+removed. Any task docs created with `is_safety: true/false` between
+deploy and revert remain in DB as orphan field — harmless. Optional
+cleanup (NOT required):
+    db.tasks.updateMany({}, {$unset: {is_safety: ""}})
+
+================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

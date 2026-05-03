@@ -117,6 +117,7 @@ async def create_task(task: TaskCreate, user: dict = Depends(require_roles('proj
         'short_ref': task_id[:8],
         'display_number': display_number,
         'attachments_count': 0, 'comments_count': 0,
+        'is_safety': bool(task.is_safety),
     }
     await db.tasks.insert_one(doc)
     await db.task_status_history.insert_one({
@@ -215,6 +216,7 @@ async def list_tasks(
     unassigned: Optional[bool] = Query(None),
     bucket_key: Optional[str] = Query(None),
     overdue: Optional[bool] = Query(None),
+    is_safety: Optional[bool] = Query(None, description="Filter to safety defects only when True"),
     q: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -268,6 +270,8 @@ async def list_tasks(
         query['due_date'] = {'$lt': today_str, '$exists': True, '$ne': None}
         if 'status' not in query:
             query['status'] = {'$nin': ['closed', 'approved']}
+    if is_safety is not None:
+        query['is_safety'] = is_safety
     if q:
         import re as _re_mod
         q_escaped = _re_mod.escape(q)

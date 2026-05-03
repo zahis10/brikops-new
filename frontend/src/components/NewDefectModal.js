@@ -84,6 +84,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
+  const [isSafety, setIsSafety] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
 
@@ -173,6 +174,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     if (draft.title) setTitle(draft.title);
     if (draft.description) setDescription(draft.description);
     if (draft.priority) setPriority(draft.priority);
+    if (typeof draft.is_safety === 'boolean') setIsSafety(draft.is_safety);
     if (draft.companyId) setCompanyId(draft.companyId);
     if (draft.assigneeId) setAssigneeId(draft.assigneeId);
     clearDefectDraft();
@@ -571,6 +573,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
     setTitle('');
     setDescription('');
     setPriority('medium');
+    setIsSafety(false);
     setCompanyId('');
     setAssigneeId('');
     setAutoSelectedCompany(false);
@@ -634,6 +637,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         title: title,
         description: description,
         priority: priority,
+        is_safety: isSafety,
         ...(companyId ? { company_id: companyId } : {}),
       };
 
@@ -830,6 +834,22 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
               icon={AlertTriangle}
               placeholder="בחר עדיפות"
             />
+            {/* Batch #469 — safety tag toggle */}
+            <div className="flex items-center justify-between py-3 border-t border-slate-100" dir="rtl">
+              <div className="flex items-center gap-2">
+                <span className="text-orange-500" aria-hidden="true">🛡️</span>
+                <label htmlFor="is-safety-toggle" className="text-sm font-medium text-slate-700 cursor-pointer">
+                  סמן כליקוי בטיחות
+                </label>
+              </div>
+              <input
+                id="is-safety-toggle"
+                type="checkbox"
+                checked={isSafety}
+                onChange={(e) => setIsSafety(e.target.checked)}
+                className="w-5 h-5 rounded text-orange-500 focus:ring-orange-500 cursor-pointer"
+              />
+            </div>
           </div>
 
           <div className="bg-slate-50 rounded-lg p-4 space-y-3">
@@ -924,6 +944,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                             title,
                             description,
                             priority,
+                            is_safety: isSafety,
                             companyId,
                             assigneeId,
                             prefillData: prefillData || null,

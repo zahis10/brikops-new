@@ -3327,6 +3327,8 @@ const ProjectControlPage = () => {
   const [filteredHasMore, setFilteredHasMore] = useState(false);
   const [filteredLoading, setFilteredLoading] = useState(false);
   const [filteredInitial, setFilteredInitial] = useState(true);
+  // Batch #469 — safety tag filter (local state, scoped to filtered defects view)
+  const [safetyFilter, setSafetyFilter] = useState(false);
   const filteredIdsRef = useRef(new Set());
   const filteredAbortRef = useRef(null);
 
@@ -3346,6 +3348,7 @@ const ProjectControlPage = () => {
       const params = { project_id: projectId, limit: FILTERED_PAGE_SIZE, offset: fromOffset, signal };
       if (urlStatusChip) params.status = urlStatusChip;
       if (urlOverdue) params.overdue = true;
+      if (safetyFilter) params.is_safety = true;
 
       const data = await taskService.list(params);
       if (signal.aborted) return;
@@ -3375,7 +3378,7 @@ const ProjectControlPage = () => {
         setFilteredInitial(false);
       }
     }
-  }, [projectId, urlStatusChip, urlOverdue, hasFilterParams]);
+  }, [projectId, urlStatusChip, urlOverdue, hasFilterParams, safetyFilter]);
 
   useEffect(() => {
     try {
@@ -3832,6 +3835,21 @@ const ProjectControlPage = () => {
             </button>
           </div>
 
+          {/* Batch #469 — safety-only filter chip */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSafetyFilter(prev => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                safetyFilter
+                  ? 'bg-orange-500 text-white hover:bg-orange-600'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+              aria-pressed={safetyFilter}
+            >
+              🛡️ בטיחות בלבד
+            </button>
+          </div>
+
           {filteredInitial ? (
             <div className="space-y-2">
               {[1,2,3].map(i => (
@@ -3891,6 +3909,11 @@ const ProjectControlPage = () => {
                     <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
                       <CategoryPill>{tCategory(task.category)}</CategoryPill>
                       <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
+                      {task.is_safety && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
+                          🛡️ בטיחות
+                        </span>
+                      )}
                       {task.due_date && (
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" /> {task.due_date}

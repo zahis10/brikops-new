@@ -300,6 +300,7 @@ class Task(BaseModel):
     force_closed_reason: Optional[str] = None
     force_closed_at: Optional[str] = None
     force_closed_type: Optional[str] = None
+    is_safety: Optional[bool] = False
 
 
 class TaskCreate(BaseModel):
@@ -314,6 +315,7 @@ class TaskCreate(BaseModel):
     company_id: Optional[str] = None
     assignee_id: Optional[str] = None
     due_date: Optional[str] = None
+    is_safety: Optional[bool] = False
 
 
 class TaskUpdate(BaseModel):
@@ -324,6 +326,7 @@ class TaskUpdate(BaseModel):
     company_id: Optional[str] = None
     assignee_id: Optional[str] = None
     category: Optional[Category] = None
+    is_safety: Optional[bool] = None
 
 
 class TaskAssign(BaseModel):
