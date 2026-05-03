@@ -264,3 +264,9 @@ id = "YwmkUiTwAtQm9wd6xeBSc"
 uri = "file://.local/tasks/task-468.md"
 type = "text"
 title = "Task #468 — Plan + Addendum #1 (Extract registration router)"
+
+[[outputs]]
+id = "UM3w15hfglJQ2Lp0mtTOm"
+uri = "file://.local/tasks/task-468-with-addendum1.md"
+type = "text"
+title = "Task #468 — Plan + ADDENDUM #1 (FRESH COPY)"
