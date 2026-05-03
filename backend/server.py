@@ -449,6 +449,12 @@ app.include_router(config_router)
 if ENABLE_SAFETY_MODULE:
     from contractor_ops.safety_router import router as safety_router
     app.include_router(safety_router)
+    # Batch S2A Addendum #1 — registration extracted to its own router
+    # (same /api/safety prefix → URL paths unchanged for frontend).
+    from contractor_ops.safety_registration_router import (
+        router as safety_registration_router,
+    )
+    app.include_router(safety_registration_router)
     logger.info("Safety module ENABLED — router registered at /api/safety")
 else:
     logger.info("Safety module disabled (ENABLE_SAFETY_MODULE=false)")

@@ -2,7 +2,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from contractor_ops import safety_router
+from contractor_ops import safety_registration_router as srr
 
 
 def test_get_initializes_empty_registration_if_missing():
@@ -16,7 +16,7 @@ def test_get_initializes_empty_registration_if_missing():
             "managers": [], "permit_number": None, "form_4_target_date": None,
         }])
         db.safety_project_settings.insert_one = AsyncMock()
-        doc = await safety_router._get_or_init_registration(db, "p1")
+        doc = await srr._get_or_init_registration(db, "p1")
         assert doc["project_id"] == "p1"
         assert doc["managers"] == []
         db.safety_project_settings.insert_one.assert_called_once()
@@ -30,7 +30,7 @@ def test_get_returns_existing_registration():
         existing = {"id": "x", "project_id": "p1", "deletedAt": None, "developer_name": "Acme"}
         db.safety_project_settings.find_one = AsyncMock(return_value=existing)
         db.safety_project_settings.insert_one = AsyncMock()
-        doc = await safety_router._get_or_init_registration(db, "p1")
+        doc = await srr._get_or_init_registration(db, "p1")
         assert doc["developer_name"] == "Acme"
         db.safety_project_settings.insert_one.assert_not_called()
     asyncio.run(run())
@@ -45,7 +45,7 @@ def test_required_fields_all_missing_returns_zero_pct():
             "contractor_registry_number": None, "office_address": None,
             "managers": [], "permit_number": None, "form_4_target_date": None,
         })
-        doc = await safety_router._get_or_init_registration(db, "p1")
+        doc = await srr._get_or_init_registration(db, "p1")
         required = ["developer_name", "main_contractor_name",
                     "contractor_registry_number", "permit_number"]
         required_address = ["city", "street", "house_number"]
@@ -85,11 +85,11 @@ def test_required_fields_all_filled_returns_complete():
 def test_upsert_hashes_manager_id_numbers():
     """V2 fix: uses _hash_id_number (real helper) + inline masking
     (no _mask_id helper exists). Verifies PII pattern matches workers."""
-    with patch.object(safety_router, '_hash_id_number', return_value='HASHED'):
+    with patch.object(srr, '_hash_id_number', return_value='HASHED'):
         manager = {"first_name": "A", "last_name": "B", "id_number": "123456789"}
         raw_id = manager.get("id_number")
         if raw_id:
-            manager["id_number_hash"] = safety_router._hash_id_number(raw_id)
+            manager["id_number_hash"] = srr._hash_id_number(raw_id)
             stripped = raw_id.strip()
             if len(stripped) >= 4:
                 manager["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"

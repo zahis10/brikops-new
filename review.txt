@@ -1,116 +1,105 @@
-BATCH S2A v3 — Safety Project Registration (פנקס הקבלנים)
-Task #468 | Branch: staging | Date: 2026-05-03
+BATCH S2A v3 — ADDENDUM #1 — Extract Registration Router
+Task #468 | Branch: staging | Date: 2026-05-04
 ================================================================
 
-WHAT WAS BUILT
---------------
-Israeli Ministry of Economy "Contractors Registry" registration form
-for safety projects. 1:1 with project, lazy-init on first GET, manual
-entry only (no external API per Zahi's decision).
+WHAT WAS DONE
+-------------
+Pure relocation: moved the 158 LOC of "Safety Project Registration"
+(helper + 4 routes) out of safety_router.py into its own module
+backend/contractor_ops/safety_registration_router.py.
 
-FILES TOUCHED (7)
+Reason (per Zahi): safety_router.py was approaching 2,000 lines and
+has no existing test coverage. Lower risk to extract NEW code now
+than to refactor 1,900 legacy lines later without tests.
+
+ZERO logic edits. Same URL prefix. Frontend untouched.
+
+FILES TOUCHED (4)
 -----------------
-1. backend/contractor_ops/schemas.py            (+58 lines, 4 models)
-2. backend/contractor_ops/safety_router.py      (+158 lines: Response import,
-                                                 helper, 4 routes)
-3. backend/services/safety_pdf.py               (+115 lines, PDF generator)
-4. frontend/src/services/api.js                 (+30 lines, 4 methods)
-5. frontend/src/App.js                          (+9 lines, lazy + route)
-6. frontend/src/pages/SafetyProjectRegistrationPage.js  NEW (~250 LOC)
-7. backend/tests/test_safety_registration.py    NEW (11 tests)
+1. backend/contractor_ops/safety_registration_router.py  NEW (165 LOC)
+   - APIRouter(prefix="/api/safety", tags=["safety"]) — identical to
+     the main safety router so URL paths are bit-identical
+   - Imports SAFETY_WRITERS, _hash_id_number, _new_id from safety_router
+   - Imports get_current_user/get_db/_now/_audit/_check_project_access/
+     require_roles from contractor_ops.router (matches safety_router's
+     own pattern at line 24)
+   - Holds _get_or_init_registration helper + 4 routes:
+     GET  /{project_id}/registration
+     PUT  /{project_id}/registration
+     GET  /{project_id}/registration/export/pdf
+     GET  /{project_id}/registration/required-fields
 
-ENDPOINTS (all under /api/safety/{project_id}/...)
---------------------------------------------------
-GET  /registration                  — fetch (lazy-init empty doc)
-PUT  /registration                  — upsert (writers only)
-GET  /registration/required-fields  — completion % + missing list
-GET  /registration/export/pdf       — formal PDF download
+2. backend/contractor_ops/safety_router.py  (-149 lines)
+   - Removed the entire "# Safety Project Registration" block
+   - Back to 1,912 LOC (matches pre-batch baseline exactly)
+   - The `Response` import added during the main spec is left in
+     place (single token, harmless even if unused now)
 
-DATA MODEL
-----------
-Collection: safety_project_settings (NEW)
-- id, project_id (1:1), deletedAt
-- developer_name, main_contractor_name, contractor_registry_number
-- office_address: {city, street, house_number, postal_code,
-                   email, phone, mobile, fax}
-- managers: [{first_name, last_name, id_number (masked),
-              id_number_hash (sha256), address, notes}]
-- permit_number, form_4_target_date
-- created_at, updated_at, updated_by
+3. backend/server.py  (+5 lines, inside the existing
+   ENABLE_SAFETY_MODULE gate at line 452)
+   - Added `app.include_router(safety_registration_router)` right
+     after the existing safety_router include
+   - Same gate → same on/off semantics
 
-PII HANDLING
-------------
-Manager Israeli ID numbers (תעודת זהות):
-- Stored as SHA-256 hash via existing `_hash_id_number` helper
-  (matches workers pattern, safety_router.py:67)
-- Display value masked inline as "1***789" (first 1 + last 3 chars)
-- Short IDs (<4 chars) → "***" fallback
-- Audit log records before/after but never raw IDs
+4. backend/tests/test_safety_registration.py  (-1 + 1, 4 patch sites)
+   - Replaced `from contractor_ops import safety_router` with
+     `from contractor_ops import safety_registration_router as srr`
+   - Updated 3 call sites and 1 patch.object target
 
-ADAPTATIONS FROM ORIGINAL SPEC
-------------------------------
-Spec assumed several helpers that don't exist in our codebase. Audited
-first, then adapted:
-- `SAFETY_VIEWERS` constant → use `Depends(get_current_user)` directly
-  (matches all existing safety GET routes; only WRITERS const exists)
-- `_audit_log(db, action, actor_id=, project_id=, before=, after=)` →
-  use real helper `_audit(entity_type, entity_id, action, actor_id,
-  payload_dict)` with before/after wrapped in payload dict
-- `_now_iso()` → `_now()` (real helper name)
-- `Response` was missing from fastapi import → added
-
-ROLE GUARDS
------------
-- GET routes: any authenticated user with project access
-- PUT (upsert): SAFETY_WRITERS = (project_manager, management_team)
-- Project access enforced via `_check_project_access` on every route
+NOT TOUCHED (per addendum scope)
+--------------------------------
+- The 158 LOC themselves — pure relocation, zero logic edits
+- backend/services/safety_pdf.py — service module, stays as added
+- frontend/src/services/api.js — URL paths unchanged
+- frontend/src/pages/SafetyProjectRegistrationPage.js — URL paths
+  unchanged
+- frontend/src/App.js — route unchanged
+- All other routes in safety_router.py (workers, trainings,
+  documents, tasks, incidents, score, exports)
 
 VERIFY RESULTS
 --------------
-V1 imports          ✅ safety_router, schemas, safety_pdf all import clean
-V2 pytest           ✅ 11/11 passed (1.87s)
-V3 /registration    ✅ 4 occurrences (4 routes)
-V4 collection name  ✅ 6 occurrences of safety_project_settings
-V5 schema classes   ✅ 4 new Pydantic models
-V6 babel parse      ✅ App.js + SafetyProjectRegistrationPage.js OK
-V7 App.js routing   ✅ 3 (lazy import + path + component reference)
-V8 api.js methods   ✅ 4 service methods present
-V9 visual           ⏸ DEFERRED to Zahi (8 scenarios a-h)
+V1 LOC count old file        ✅ safety_router.py = 1,912 (baseline)
+V2 LOC count new file        ✅ safety_registration_router.py = 165
+                                (~158 expected; +7 = module docstring
+                                + import lines)
+V3 No circular import        ✅ `python -c "from contractor_ops import
+                                safety_router, safety_registration_router"`
+                                → "both OK"
+V5 Pytest                    ✅ 11 passed in 1.98s (all 11 tests
+                                that passed before still pass)
+V6 Routes in new file        ✅ 4 @router.* decorators
+V7 Zero hits in old file     ✅ 0 occurrences of safety_project_settings,
+                                /registration, or _get_or_init_registration
+V8 server.py registration    ✅ 3 matches for safety_registration_router
+                                (import + alias + include_router)
+V9 Visual smoke              ⏸ DEFERRED to Zahi on staging
+                                (behavior unchanged → regression-smoke
+                                only; same 8 scenarios from main spec)
 
-VISUAL TEST SCENARIOS FOR ZAHI (V9)
-------------------------------------
-After deploy to staging, navigate to a project with safety enabled and
-test:
+V9 — REGRESSION-SMOKE SCENARIOS FOR ZAHI
+----------------------------------------
+After deploy to staging, navigate to the registration page on a
+project with safety enabled and confirm behavior is identical to
+pre-addendum:
+
   a. Empty form loads, completion shows 0%
-  b. Fill section 1 (general) → completion bumps, save → toast success
-  c. Fill section 2 (address with all 3 required: city/street/house) →
-     completion bumps further
-  d. Add 2 managers with ID numbers → save → reload → IDs show as masked
-     "1***789" pattern, never raw
-  e. Reach 100% completion → bar turns green, "is_complete" true
-  f. Click PDF button → file downloads as registration_<projectid>.pdf
-     opens in viewer with Hebrew RTL formatting, all sections present
-  g. Mobile viewport: sticky bottom action bar respects iOS safe-area
-     (no overlap with home indicator), buttons ≥44px touch target
-  h. Member of non-writer role can GET but PUT returns 403
+  b. Fill section 1 (general) → save → toast success
+  c. Fill section 2 (address with city/street/house) → save
+  d. Add 2 managers with ID numbers → save → reload → IDs masked
+     "1***789", never raw
+  e. Reach 100% completion → bar turns green
+  f. PDF button → file downloads, opens with Hebrew RTL formatting
+  g. Mobile viewport: sticky bottom bar respects iOS safe-area
+  h. Non-writer role: GET works, PUT returns 403
 
-NON-FUNCTIONAL NOTES
---------------------
-- All Hebrew strings hardcoded (no i18n keys yet — matches existing
-  safety pages)
-- PDF uses Rubik font (already registered in safety_pdf.py)
-- Mobile-first responsive (max-w-2xl, accordion sections)
-- iOS safe-area-inset-bottom on sticky action bar
-- Capacitor-aware download via existing downloadBlob helper
+DEPLOYMENT TIMELINE
+-------------------
+1. Zahi: review this addendum
+2. Zahi: git commit (uses .local/.commit_message)
+3. Zahi: git push
+4. Zahi: ./deploy.sh --stag
+5. Zahi: V9 regression-smoke on staging (8 scenarios above)
+6. Zahi: ./deploy.sh --prod
 
-NOT DONE
---------
-- No external "פנקס הקבלנים" API integration (per Zahi's decision)
-- No bulk import / Excel template
-- No e-signature on the registration record
-- No PDF preview in app (download only)
-- Visual smoke test (V9) — Zahi to perform on staging
-
-READY FOR
----------
-Zahi review → ./deploy.sh --stag → V9 visual smoke → ./deploy.sh --prod
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
