@@ -3876,6 +3876,7 @@ const ProjectControlPage = () => {
                   const next = new URLSearchParams(searchParams);
                   next.delete('statusChip');
                   next.delete('overdue');
+                  next.delete('safetyOnly');
                   setSearchParams(next, { replace: true });
                 }}
                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600 transition-colors shadow-sm"
