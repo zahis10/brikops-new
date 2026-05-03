@@ -9,6 +9,7 @@ import {
   Camera, Eye, Settings, ChevronLeft, Flame
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
+import NotificationBell from '../components/NotificationBell';
 import CategoryPill from '../components/CategoryPill';
 
 const PAGE_SIZE = 50;
@@ -332,6 +333,7 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <NotificationBell />
               <button onClick={() => navigate('/settings/account')} className="p-2 rounded-full hover:bg-white/10 transition-colors" aria-label={t('dashboard', 'settings_aria')}>
                 <Settings className="w-5 h-5" />
               </button>

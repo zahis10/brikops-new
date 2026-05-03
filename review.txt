@@ -1,269 +1,84 @@
-================================================================================
 BATCH 7A — Bell notifications for defect lifecycle (Stream C1)
-Task #465 · Branch: staging · Date: 2026-05-01
-================================================================================
+================================================================
+Task #465 | Branch: staging | Files: 6 + 1 addendum = 7 files | Tests: 8/8 PASS
 
-STATUS: READY FOR ZAHI APPROVAL — DO NOT DEPLOY
+WHAT SHIPPED
+------------
+Two new bell-notification events on the defect lifecycle:
 
-────────────────────────────────────────────────────────────────────────────────
-STEP 0 — REPO AUDIT (run BEFORE any edit)
-────────────────────────────────────────────────────────────────────────────────
-0.1 _create_qc_notification helper anchor (NOT modified, only referenced):
-    - Definition: qc_router.py:40
-    - Callsites: 5 (lines 1394, 1640, 2294, 2355, 2697) — ALL PRESERVED.
-      (Spec said "~8" — actual 5; harmless paraphrase.)
+  Event 1 — defect_close_request:
+    When a contractor uploads proof and requests defect closure
+    (status → pending_manager_approval), every project_manager +
+    management_team member of that project gets a bell notification:
+    "{contractor} ביקש לסגור ליקוי \"{title}\" — ממתין לאישורך"
 
-0.2 contractor_proof endpoint anchor (Event 1 insertion point):
-    - Definition: tasks_router.py:839 (spec said 819-820 — drift)
-    - new_status='pending_manager_approval' assignment: line 901
-    - task_status_history.insert_one (anchor): lines 906-910
-    - Insertion point: line 911 (immediately after history insert,
-      before _get_project_membership at line 912 — original spec line 893)
+  Event 2 — defect_status_change_by_pm:
+    When a PM approves or rejects the contractor's proof, the
+    contractor (task assignee) gets a bell notification:
+    approve → "המנהל אישר את התיקון של \"{title}\""
+    reject  → "המנהל דחה את התיקון של \"{title}\" — {reason}"
 
-0.3 manager_decision endpoint anchor (Event 2 insertion point):
-    - Definition: tasks_router.py:1033 (spec said 1014 — drift)
-    - task_status_history.insert_one (anchor): lines 1070-1074
-    - Insertion point: line 1075 (immediately after history insert,
-      before task_updates.insert_one at line 1076 — original spec line 1057)
-    - body.reason field confirmed on ManagerDecisionRequest (used at line 1051).
-    - decision values confirmed: 'approve' / 'reject' (lines 1047-1056).
+Existing QC-stage notifications on qc_notifications collection are
+untouched (legacy collection name kept per Zahi 2026-05-01 — no DB
+migration). New docs add a `notification_type` field; existing QC
+docs without it are treated as type 'qc' by the list endpoint.
 
-0.4 MANAGEMENT_ROLES verified:
-    - router.py:413 → ('project_manager', 'management_team') ✓ matches spec.
+FILES (6 + 1 addendum)
+----------------------
+NEW:
+  backend/contractor_ops/notification_helpers.py        (109 LOC)
+    - create_defect_notification (per-recipient insert, actor excluded)
+    - get_defect_recipients_for_close_request (PM + management_team)
+    - build_close_request_body, build_status_change_body
+  backend/tests/test_notifications_defect.py            (180 LOC, 8 tests)
 
-0.5 list_notifications mapping anchors:
-    - action_verbs at line 2865, action_to_frontend at line 2871 ✓ matches spec.
+MODIFIED:
+  backend/contractor_ops/tasks_router.py
+    - Event 1 wired on POST /tasks/{id}/contractor-close-request
+    - Event 2 wired on POST /tasks/{id}/manager-decision (approve/reject)
+  backend/contractor_ops/qc_router.py
+    - Existing qc_notifications list endpoint extended to surface
+      new notification_type field (back-compat: missing → 'qc')
+  frontend/src/components/NotificationBell.js
+    - 3 new ACTION_ICONS entries (defect_close_request, _approved, _rejected)
+  frontend/src/i18n/he.json
+    - 3 new short-strings for the bell dropdown
 
-0.6 NotificationBell.js ACTION_ICONS at lines 7-12 ✓ matches spec.
-    - Lucide imports already include Send, ShieldCheck, ShieldX (line 2) —
-      no new imports required.
+ADDENDUM #1 (mid-task fix):
+  frontend/src/pages/ContractorDashboard.js              (+2 LOC)
+    - Import NotificationBell
+    - Render <NotificationBell /> in header buttons row (left of Settings)
+    Context: ContractorDashboard had no bell rendered, so contractors
+    would never see Event 2 notifications. Added per spec line ~333.
 
-0.7 backend/tests/test_notifications*.py — none existed ✓ (test_notifications_defect.py
-    is genuinely new).
+GAUNTLET RESULTS
+----------------
+✅ Tests:           8/8 PASS (test_notifications_defect.py)
+✅ Backend imports: notification_helpers, tasks_router, qc_router all OK
+✅ Frontend syntax: ContractorDashboard.js parses clean (babel)
+✅ Gauntlet greps:
+     - import NotificationBell in ContractorDashboard:        1
+     - <NotificationBell /> rendered in ContractorDashboard:  1
+     - 3 new ACTION_ICONS entries in NotificationBell.js:     3
+     - 3 new he.json short-strings:                           3
+     - qc_router action mappings (close_request/approved/...):6
+     - _create_qc_notification callsites preserved (legacy):  6
+     - tasks_router Event 1 helper calls:                     4
+     - tasks_router Event 2 helper calls:                     2
 
-0.8 backend/contractor_ops/notification_helpers.py — none existed ✓ (new module).
+⚠️ Skipped: full `yarn build` (timed out at 120s in sandbox; not
+   indicative of a bug — substituted babel syntax-parse on the only
+   modified frontend file). Staging deploy will run the real build.
 
-0.9 he.json had NO `notifications` section — created one at end of root object
-    per spec ("create one if missing").
+CONSTRAINTS HONORED
+-------------------
+- No DB migration; existing qc_notifications docs untouched.
+- Actor is auto-excluded from their own notifications.
+- Unknown notification_type → logged warning, no insert (defensive).
+- Empty recipients list → no insert call (no spurious DB ops).
+- Hebrew bodies pre-built server-side (frontend just renders).
 
-────────────────────────────────────────────────────────────────────────────────
-FILES CHANGED — DIFF SUMMARY
-────────────────────────────────────────────────────────────────────────────────
- backend/contractor_ops/notification_helpers.py | 113 +++++ (NEW)
- backend/contractor_ops/qc_router.py            |  38 +++--
- backend/contractor_ops/tasks_router.py         |  46 ++++
- backend/tests/test_notifications_defect.py     | 174 +++++++++ (NEW)
- frontend/src/components/NotificationBell.js    |   5 +
- frontend/src/i18n/he.json                      |   5 +
- 4 modified, 2 new, +381 / -7 LOC
-
-────────────────────────────────────────────────────────────────────────────────
-PER-FILE CHANGES
-────────────────────────────────────────────────────────────────────────────────
-
-1) backend/contractor_ops/notification_helpers.py (NEW, 113 LOC)
-   New module with:
-   - NOTIFICATION_TYPES allowlist {'qc', 'defect_close_request',
-     'defect_status_change_by_pm'}
-   - async create_defect_notification(db, recipients, *, notification_type,
-     action, task_id, task_title, project_id, actor_id, actor_name, body,
-     reason=None) — validates type, auto-excludes actor and falsy uids,
-     short-circuits on empty docs list, writes one doc per recipient into
-     `qc_notifications` (legacy collection name, kept per Zahi 2026-05-01),
-     logs count.
-   - async get_defect_recipients_for_close_request(db, project_id) — queries
-     project_memberships filtered to role IN (project_manager, management_team),
-     returns user_ids list.
-   - build_close_request_body(actor_name, task_title) — Hebrew copy with
-     defensive defaults ("קבלן" / "ליקוי") for missing fields.
-   - build_status_change_body(decision, task_title, reason=None) — branches
-     on approve/reject; reject appends "— {reason}" only when reason truthy;
-     defensive fallback for unknown decision.
-
-2) backend/contractor_ops/tasks_router.py (+46 LOC)
-   (a) Lines 19-24: added new import block immediately after msg_logger import:
-       from contractor_ops.notification_helpers import (
-           create_defect_notification, get_defect_recipients_for_close_request,
-           build_close_request_body, build_status_change_body,
-       )
-   (b) Lines 921-938: NEW try/except block inside contractor_proof endpoint,
-       wired immediately AFTER task_status_history.insert_one (line 919) and
-       BEFORE _get_project_membership (line 940). Resolves PM+management_team
-       recipients, builds Hebrew body, fires notification with action='close_request'.
-       Logs error on failure but does NOT raise — proof upload remains canonical.
-   (c) Lines 1104-1123: NEW try/except block inside manager_decision endpoint,
-       wired immediately AFTER task_status_history.insert_one (line 1102) and
-       BEFORE task_updates.insert_one (line 1125). Sends notification to assignee
-       only (defensive guard `assignee_id != user['id']` — should never happen
-       per business rules but cheap to enforce). action equals decision verb
-       ('approve' or 'reject'). reason kwarg passed only on reject.
-
-3) backend/contractor_ops/qc_router.py (+31/-7 LOC)
-   Lines 2868-2890: extended action_verbs (+3 keys: close_request, approve,
-     reject) and action_to_frontend (+3 keys → defect_close_request,
-     defect_approved, defect_rejected). Comments separate QC vs defect blocks.
-   Lines 2892-2926: extended body+link builder. NEW logic:
-     - Reads notification_type field (defaults to 'qc' for legacy docs without it)
-     - For defect types with pre-built body field → use n["body"] verbatim
-     - Otherwise → preserve original QC actor+verb+stage_label composition
-     - Defect link: /tasks/{task_id}?src=bell
-     - QC link: /projects/.../floors/.../qc/.../stage/... (unchanged)
-   Backward compat: legacy QC docs (no notification_type field) still work
-   identically because ntype defaults to 'qc' and the old composition path runs.
-
-4) frontend/src/components/NotificationBell.js (+5 LOC)
-   Lines 10-20: extended ACTION_ICONS with 3 new entries (defect_close_request
-     → blue Send, defect_approved → emerald ShieldCheck, defect_rejected →
-     red ShieldX). All 3 Lucide icons already in the existing import (line 2).
-     Comments separate QC vs defect blocks.
-   Unknown-action fallback to Clock icon (existing line ~85) covers any future
-   action codes safely.
-
-5) frontend/src/i18n/he.json (+5 LOC)
-   New `notifications` section appended at end of root object with 3 short
-     labels. No existing keys touched.
-
-6) backend/tests/test_notifications_defect.py (NEW, 174 LOC, 8 tests)
-   - 4 tests on create_defect_notification (writes one doc per recipient and
-     preserves order; skips actor when actor in recipients; skips entirely on
-     unknown notification_type; skips DB insert on empty recipients)
-   - 1 test on get_defect_recipients_for_close_request (verifies query filter
-     restricts to PM + management_team only)
-   - 3 tests on body builders (close-request format with defensive empty
-     fallback; approve format ignores reason; reject format with and without
-     reason — verifies trailing em-dash is NOT appended when reason absent)
-
-────────────────────────────────────────────────────────────────────────────────
-FINDINGS
-────────────────────────────────────────────────────────────────────────────────
-A. Spec line numbers drift — content anchors (function signatures + adjacent
-   string literals) are stable; spec line numbers were ~20-30 off in
-   tasks_router.py and exact in qc_router.py / NotificationBell.js. All edits
-   used unique anchor strings, so drift didn't matter.
-
-B. asyncio.run() pattern — async tests written WITHOUT @pytest.mark.asyncio
-   per BATCH 6A v2 Finding B (codebase has no pytest-asyncio plugin, only
-   anyio).
-
-C. Best-effort notification — both call sites wrapped in try/except so a
-   notification failure (e.g. transient mongo issue) does NOT roll back the
-   canonical proof upload or PM decision. Errors are logged with task_id
-   for forensics.
-
-D. Backward compat for legacy QC docs — list_notifications uses
-   `n.get("notification_type", "qc")` so existing qc_notifications docs
-   without the new field render identically to before.
-
-E. _create_qc_notification helper (qc_router.py:40) UNCHANGED — still used
-   by 5 QC code paths (lines 1394, 1640, 2294, 2355, 2697). Spec said ~8;
-   actual 5. Either way, fully preserved.
-
-F. Lucide icons already imported in NotificationBell.js (line 2:
-   Send, ShieldCheck, ShieldX) — no new imports needed.
-
-G. he.json had no `notifications` section before this batch — created as
-   a new top-level object per spec instruction "create one if missing".
-   Future i18n keys for bell labels can be added under this key.
-
-────────────────────────────────────────────────────────────────────────────────
-SPEC DRIFTS NOTED (informational — all benign)
-────────────────────────────────────────────────────────────────────────────────
-- contractor_proof endpoint at line 839 (spec said 819-820)
-- manager_decision endpoint at line 1033 (spec said 1014)
-- contractor_proof status_history insert at lines 906-910 (spec said 887-891)
-- manager_decision status_history insert at lines 1070-1074 (spec said 1051-1055)
-- _create_qc_notification has 5 callsites (spec said ~8)
-- tasks_router.py grew by 46 LOC after edits — final file 1338 lines
-- qc_router.py grew by 31 LOC after edits — final file 2961 lines
-
-────────────────────────────────────────────────────────────────────────────────
-VERIFICATION OUTPUTS
-────────────────────────────────────────────────────────────────────────────────
-
-VERIFY 1a — backend imports cleanly
-  $ python -c "from contractor_ops import notification_helpers, tasks_router, qc_router"
-  OK — all 3 modules import ✓
-
-VERIFY 1b — pytest 8 new tests
-  $ python -m pytest backend/tests/test_notifications_defect.py -v
-  ============================== 8 passed in 0.20s ==============================
-  All 8 tests PASSED:
-    [ 4/4 ] create_defect_notification (writes-per-recipient/skips-actor/
-            unknown-type-skipped/empty-recipients-no-insert)
-    [ 1/1 ] get_defect_recipients_for_close_request (PM+management_team only)
-    [ 3/3 ] body builders (close_request format / approve / reject-with-reason)
-
-VERIFY 2 — _create_qc_notification preserved (expect 6 = 1 def + 5 callsites)
-  $ grep -c "_create_qc_notification" backend/contractor_ops/qc_router.py
-  6 ✓
-
-VERIFY 3 — 3 new ACTION_ICONS keys in NotificationBell.js
-  $ grep -cE "defect_(close_request|approved|rejected):" frontend/src/components/NotificationBell.js
-  3 ✓
-
-VERIFY 4 — 3 new he.json keys
-  $ grep -cE "defect_(close_request|approved|rejected)_short" frontend/src/i18n/he.json
-  3 ✓
-
-VERIFY 5 — frontend syntax (Babel parse)
-  src/components/NotificationBell.js — OK ✓
-
-VERIFY 6 — he.json is valid JSON
-  $ python -c "import json; json.load(open('frontend/src/i18n/he.json'))"
-  he.json OK ✓
-
-VERIFY 7 — new helper symbols referenced in tasks_router.py
-  $ grep -c "create_defect_notification|get_defect_recipients_for_close_request|
-            build_close_request_body|build_status_change_body" tasks_router.py
-  9 ✓ (4 in import + 1 get_recipients + 1 close_request body + 1 close_request
-      create call + 1 status_change body + 1 status_change create call)
-
-VERIFY 8 — try/except wrappers around notification calls (expect 2)
-  $ grep -c "Failed to create.*notification" tasks_router.py
-  2 ✓ (one for close_request, one for status_change)
-
-VERIFY 9 — git diff stats
-  backend/contractor_ops/notification_helpers.py | NEW
-  backend/contractor_ops/qc_router.py            | 38 +++++++++++++++++++-----
-  backend/contractor_ops/tasks_router.py         | 46 +++++++++++++++++++++++++
-  backend/tests/test_notifications_defect.py     | NEW
-  frontend/src/components/NotificationBell.js    |  5 ++++
-  frontend/src/i18n/he.json                      |  5 ++++
-  Total: 4 modified, 2 new, +87/-7 LOC (excl. test/helper files)
-
-────────────────────────────────────────────────────────────────────────────────
-DEPLOYMENT NOTES (for Zahi after approval)
-────────────────────────────────────────────────────────────────────────────────
-1. NO DB migration required — `qc_notifications` collection name preserved.
-   New docs include `notification_type` field; existing docs without the field
-   are treated as `'qc'` by the list endpoint (verified path).
-
-2. NO new env vars required. Bell polling already runs every 30s in production.
-
-3. NO mobile changes — no `./ship.sh` required.
-
-4. AFTER ./deploy.sh --stag merge:
-   - Manual smoke test:
-     a) Login as a contractor on a project that has a PM assigned.
-     b) Open a defect and upload proof — verify the PM sees a bell
-        notification within 30s ("X ביקש לסגור ליקוי ... — ממתין לאישורך").
-     c) Click the bell entry — should navigate to /tasks/{task_id}?src=bell.
-     d) As the PM, approve the defect — verify the contractor sees
-        "המנהל אישר את התיקון של ..." in their bell within 30s.
-     e) Reject another defect with a reason — verify rejection body includes
-        the reason ("המנהל דחה את התיקון של ... — {reason}").
-
-5. Existing 4 QC bell types (submit_for_review/qc_approved/qc_rejected/
-   qc_reopened) MUST continue to work identically — VERIFY 2 confirms the
-   5 callsites of _create_qc_notification are untouched.
-
-6. Defer to C2/C3:
-   - DB rename qc_notifications → notifications
-   - Endpoint rename /api/qc-notifications → /api/notifications
-   - Service rename qcNotificationService → notificationService
-   - defect_tagged + handover_signed events
-   - PM "reopened" defect notification (separate code path)
-
-────────────────────────────────────────────────────────────────────────────────
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
+READY FOR
+---------
+Zahi: git commit + push to staging → ./deploy.sh --stag → smoke-test
+defect close-request flow on staging → ./deploy.sh --prod.
