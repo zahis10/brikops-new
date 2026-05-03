@@ -258,3 +258,9 @@ id = "H1cFkuDvymGmvmMCqbh-a"
 uri = "file://.local/tasks/465-batch-7a-defect-bell-notifications.md"
 type = "text"
 title = "Task #465 — Updated plan (with ADDENDUM #1)"
+
+[[outputs]]
+id = "YwmkUiTwAtQm9wd6xeBSc"
+uri = "file://.local/tasks/task-468.md"
+type = "text"
+title = "Task #468 — Plan + Addendum #1 (Extract registration router)"
