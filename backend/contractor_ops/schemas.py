@@ -811,3 +811,57 @@ class SafetyIncident(BaseModel):
     deletedBy: Optional[str] = None
     deletion_reason: Optional[str] = None
     retention_until: Optional[str] = None
+
+
+
+# =====================================================================
+# Safety Project Registration (Batch S2A 2026-05-04)
+# Implements Israeli Ministry of Economy "פנקס הקבלנים" format.
+# Manual entry only (per Zahi decision — no external API).
+# =====================================================================
+
+class SafetyProjectManager(BaseModel):
+    """One manager entry in the registration document.
+    Repeat group — a project can have N managers."""
+    first_name: str = Field(..., min_length=1, max_length=60)
+    last_name: str = Field(..., min_length=1, max_length=60)
+    id_number: Optional[str] = None
+    address: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = Field(None, max_length=500)
+
+
+class SafetyProjectAddress(BaseModel):
+    """Section 2 — מען המשרד הראשי / המשרד הרשום."""
+    city: Optional[str] = Field(None, max_length=80)
+    postal_code: Optional[str] = Field(None, max_length=10)
+    street: Optional[str] = Field(None, max_length=120)
+    house_number: Optional[str] = Field(None, max_length=10)
+    email: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=20)
+    mobile: Optional[str] = Field(None, max_length=20)
+    fax: Optional[str] = Field(None, max_length=20)
+
+
+class SafetyProjectRegistration(BaseModel):
+    """One registration record per project (1:1).
+    Persisted in collection `safety_project_settings`."""
+    developer_name: Optional[str] = Field(None, max_length=200)
+    main_contractor_name: Optional[str] = Field(None, max_length=200)
+    contractor_registry_number: Optional[str] = Field(None, max_length=20)
+    office_address: Optional[SafetyProjectAddress] = None
+    managers: List[SafetyProjectManager] = Field(default_factory=list)
+    permit_number: Optional[str] = Field(None, max_length=30)
+    form_4_target_date: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
+class SafetyProjectRegistrationUpsert(BaseModel):
+    """PATCH-style upsert. All fields optional — partial updates allowed."""
+    developer_name: Optional[str] = None
+    main_contractor_name: Optional[str] = None
+    contractor_registry_number: Optional[str] = None
+    office_address: Optional[SafetyProjectAddress] = None
+    managers: Optional[List[SafetyProjectManager]] = None
+    permit_number: Optional[str] = None
+    form_4_target_date: Optional[str] = None

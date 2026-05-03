@@ -507,3 +507,118 @@ async def generate_safety_register(db, project_id: str) -> bytes:
     doc.build(elems, canvasmaker=_make_canvas)
     out.seek(0)
     return out.getvalue()
+
+
+# =====================================================================
+# Safety Project Registration PDF (Batch S2A 2026-05-04)
+# Israeli Ministry of Economy "פנקס הקבלנים" format.
+# Uses 'Rubik' / 'Rubik-Bold' fonts (registered at module top, lines 40,44)
+# and hebrew() helper (imported at line 21) for proper RTL/bidi rendering.
+# =====================================================================
+
+def _today_iso() -> str:
+    from datetime import datetime
+    return datetime.now().strftime("%d/%m/%Y")
+
+
+def _draw_field(c, width, y, label: str, value):
+    """Draws "label: value" right-aligned for RTL Hebrew."""
+    from reportlab.lib.units import cm
+    val = value if value not in (None, "") else "—"
+    c.drawRightString(width - 2 * cm, y, hebrew(f"{label}: {val}"))
+
+
+def generate_registration_pdf(registration: dict, project: dict) -> bytes:
+    """Generate the formal Israeli safety project registration PDF.
+    Layout matches Ministry of Economy 'פנקס הקבלנים' template:
+      - Cover with project name + date
+      - Section 1: כללי (developer, contractor, registry number)
+      - Section 2: מען המשרד
+      - Section 3: מנהלים (repeat group)
+      - Footer: permit number + form 4 target date
+    """
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.units import cm
+
+    _register_fonts_once()
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    # Title
+    c.setFont('Rubik-Bold', 18)
+    project_name = project.get('name', '') if project else ''
+    c.drawRightString(width - 2 * cm, height - 2 * cm,
+                      hebrew(f"רישומי זיהוי — {project_name}"))
+
+    # Date
+    c.setFont('Rubik', 10)
+    c.drawRightString(width - 2 * cm, height - 3 * cm,
+                      hebrew(f"תאריך הפקה: {_today_iso()}"))
+
+    y = height - 5 * cm
+
+    # Section 1 — כללי
+    c.setFont('Rubik-Bold', 14)
+    c.drawRightString(width - 2 * cm, y, hebrew("1. כללי"))
+    y -= 0.8 * cm
+    c.setFont('Rubik', 11)
+    _draw_field(c, width, y, "שם היזם", registration.get("developer_name"))
+    y -= 0.6 * cm
+    _draw_field(c, width, y, "שם המבצע", registration.get("main_contractor_name"))
+    y -= 0.6 * cm
+    _draw_field(c, width, y, "מספר רישום בפנקס הקבלנים",
+                registration.get("contractor_registry_number"))
+
+    y -= 1 * cm
+
+    # Section 2 — מען
+    c.setFont('Rubik-Bold', 14)
+    c.drawRightString(width - 2 * cm, y, hebrew("2. מען המשרד הראשי / המשרד הרשום"))
+    y -= 0.8 * cm
+    c.setFont('Rubik', 11)
+    addr = registration.get("office_address") or {}
+    _draw_field(c, width, y, "הישוב", addr.get("city")); y -= 0.6 * cm
+    _draw_field(c, width, y, "רחוב / ת.ד", addr.get("street")); y -= 0.6 * cm
+    _draw_field(c, width, y, "מס' בית", addr.get("house_number")); y -= 0.6 * cm
+    _draw_field(c, width, y, "מיקוד", addr.get("postal_code")); y -= 0.6 * cm
+    _draw_field(c, width, y, "דואר אלקטרוני", addr.get("email")); y -= 0.6 * cm
+    _draw_field(c, width, y, "טלפון", addr.get("phone")); y -= 0.6 * cm
+    _draw_field(c, width, y, "נייד", addr.get("mobile")); y -= 0.6 * cm
+    _draw_field(c, width, y, "פקס", addr.get("fax"))
+
+    y -= 1.2 * cm
+
+    # Section 3 — מנהלים
+    c.setFont('Rubik-Bold', 14)
+    c.drawRightString(width - 2 * cm, y, hebrew("3. מנהלי החברה / האגודה / השותפות"))
+    y -= 0.8 * cm
+    c.setFont('Rubik', 11)
+    managers = registration.get("managers") or []
+    if not managers:
+        c.drawRightString(width - 2 * cm, y, hebrew("(לא הוזנו מנהלים)"))
+    else:
+        for i, mgr in enumerate(managers, 1):
+            c.setFont('Rubik-Bold', 12)
+            c.drawRightString(width - 2 * cm, y, hebrew(f"מנהל #{i}"))
+            y -= 0.5 * cm
+            c.setFont('Rubik', 11)
+            full = f"{mgr.get('first_name', '')} {mgr.get('last_name', '')}".strip()
+            _draw_field(c, width, y, "שם מלא", full or None); y -= 0.5 * cm
+            _draw_field(c, width, y, "ת.ז (מוסתרת)", mgr.get("id_number")); y -= 0.5 * cm
+            _draw_field(c, width, y, "מען", mgr.get("address")); y -= 0.7 * cm
+
+    # Footer (permit + form 4) near bottom
+    y = 2 * cm
+    c.setFont('Rubik', 10)
+    _draw_field(c, width, y, "מספר היתר בנייה",
+                registration.get("permit_number"))
+    _draw_field(c, width, y - 0.5 * cm, "תאריך יעד טופס 4",
+                registration.get("form_4_target_date"))
+
+    c.showPage()
+    c.save()
+    return buffer.getvalue()

@@ -168,6 +168,37 @@ export const projectService = {
 };
 
 export const safetyService = {
+  // Batch S2A — Safety project registration (פנקס הקבלנים)
+  async getRegistration(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/registration`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async upsertRegistration(projectId, payload) {
+    const response = await axios.put(
+      `${API}/safety/${projectId}/registration`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async getRegistrationRequiredFields(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/registration/required-fields`,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+  async exportRegistrationPdf(projectId) {
+    const response = await axios.get(
+      `${API}/safety/${projectId}/registration/export/pdf`,
+      { headers: getAuthHeader(), responseType: 'blob' }
+    );
+    return response.data;
+  },
+
   async getScore(projectId, refresh = false) {
     const params = refresh ? { refresh: 'true' } : {};
     const response = await axios.get(

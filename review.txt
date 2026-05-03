@@ -1,107 +1,116 @@
-BATCH 6C — WhatsApp link forces contractor view (multi-role users)
-==================================================================
-Task #467 | Branch: staging | Files: 1 | LOC: ~17 added (incl. comments)
+BATCH S2A v3 — Safety Project Registration (פנקס הקבלנים)
+Task #468 | Branch: staging | Date: 2026-05-03
+================================================================
 
-STEP 0 — Pre-flight audit (verbatim greps)
--------------------------------------------
-0.1  ProjectsHome / PM_OR_ADMIN_ROLES / isPmOrAdmin in App.js:
-       143:const PM_OR_ADMIN_ROLES = ['project_manager','owner','management_team'];
-       145:const ProjectsHome = () => {
-       153:  const isPmOrAdmin =
-       154:    PM_OR_ADMIN_ROLES.includes(user?.role) ||
-       157:  if (isPmOrAdmin) {
-       210:              <ProjectsHome />
-       218:              <ProjectsHome />
+WHAT WAS BUILT
+--------------
+Israeli Ministry of Economy "Contractors Registry" registration form
+for safety projects. 1:1 with project, lazy-init on first GET, manual
+entry only (no external API per Zahi's decision).
 
-0.2  react-router-dom import (line 2):
-       BEFORE: { BrowserRouter, Routes, Route, Navigate, useLocation, useParams }
-       (useSearchParams NOT yet imported — confirmed)
+FILES TOUCHED (7)
+-----------------
+1. backend/contractor_ops/schemas.py            (+58 lines, 4 models)
+2. backend/contractor_ops/safety_router.py      (+158 lines: Response import,
+                                                 helper, 4 routes)
+3. backend/services/safety_pdf.py               (+115 lines, PDF generator)
+4. frontend/src/services/api.js                 (+30 lines, 4 methods)
+5. frontend/src/App.js                          (+9 lines, lazy + route)
+6. frontend/src/pages/SafetyProjectRegistrationPage.js  NEW (~250 LOC)
+7. backend/tests/test_safety_registration.py    NEW (11 tests)
 
-0.3  useSearchParams pattern in pages/ — well-established (4+ files):
-       WaLoginPage.js, ResetPasswordPage.js, HandoverTabPage.js,
-       OnboardingPage.js — all use `const [searchParams] = useSearchParams()`.
-       Pattern is safe.
+ENDPOINTS (all under /api/safety/{project_id}/...)
+--------------------------------------------------
+GET  /registration                  — fetch (lazy-init empty doc)
+PUT  /registration                  — upsert (writers only)
+GET  /registration/required-fields  — completion % + missing list
+GET  /registration/export/pdf       — formal PDF download
 
-DRIFT NOTED: Spec LOCATION 1.2 shows `PM_OR_ADMIN_ROLES` declared INSIDE
-`ProjectsHome`. Actual prod state (after Batch 6B v2) has it as a
-module-level const at line 143. Adapted the diff: kept module-level
-const, added the new logic inside ProjectsHome only.
+DATA MODEL
+----------
+Collection: safety_project_settings (NEW)
+- id, project_id (1:1), deletedAt
+- developer_name, main_contractor_name, contractor_registry_number
+- office_address: {city, street, house_number, postal_code,
+                   email, phone, mobile, fax}
+- managers: [{first_name, last_name, id_number (masked),
+              id_number_hash (sha256), address, notes}]
+- permit_number, form_4_target_date
+- created_at, updated_at, updated_by
 
-WHAT SHIPPED
+PII HANDLING
 ------------
-Multi-role users (PM in some projects, contractor in others) clicking
-a contractor WhatsApp digest link were redirected to the PM dashboard
-(no defects shown). Root cause: after Batch 6B v2, `App.js ProjectsHome`
-checks the global `user.role` field, which is the highest-privilege
-role across all the user's projects. The contractor digest sender
-(`reminder_service.send_contractor_reminder`) appends `?src=wa` to its
-button URL, so we treat that query param as an explicit
-contractor-route signal: arriving from `?src=wa` always shows the
-ContractorDashboard regardless of global role.
+Manager Israeli ID numbers (תעודת זהות):
+- Stored as SHA-256 hash via existing `_hash_id_number` helper
+  (matches workers pattern, safety_router.py:67)
+- Display value masked inline as "1***789" (first 1 + last 3 chars)
+- Short IDs (<4 chars) → "***" fallback
+- Audit log records before/after but never raw IDs
 
-Future: proper per-project membership lookup is deferred (same family
-as Task #32 scope-aware paywall) — `?src=wa` is a reliable signal
-because contractor digest is currently the ONLY sender of WA links
-to `/projects/:id`.
+ADAPTATIONS FROM ORIGINAL SPEC
+------------------------------
+Spec assumed several helpers that don't exist in our codebase. Audited
+first, then adapted:
+- `SAFETY_VIEWERS` constant → use `Depends(get_current_user)` directly
+  (matches all existing safety GET routes; only WRITERS const exists)
+- `_audit_log(db, action, actor_id=, project_id=, before=, after=)` →
+  use real helper `_audit(entity_type, entity_id, action, actor_id,
+  payload_dict)` with before/after wrapped in payload dict
+- `_now_iso()` → `_now()` (real helper name)
+- `Response` was missing from fastapi import → added
 
-FILE (1)
+ROLE GUARDS
+-----------
+- GET routes: any authenticated user with project access
+- PUT (upsert): SAFETY_WRITERS = (project_manager, management_team)
+- Project access enforced via `_check_project_access` on every route
+
+VERIFY RESULTS
+--------------
+V1 imports          ✅ safety_router, schemas, safety_pdf all import clean
+V2 pytest           ✅ 11/11 passed (1.87s)
+V3 /registration    ✅ 4 occurrences (4 routes)
+V4 collection name  ✅ 6 occurrences of safety_project_settings
+V5 schema classes   ✅ 4 new Pydantic models
+V6 babel parse      ✅ App.js + SafetyProjectRegistrationPage.js OK
+V7 App.js routing   ✅ 3 (lazy import + path + component reference)
+V8 api.js methods   ✅ 4 service methods present
+V9 visual           ⏸ DEFERRED to Zahi (8 scenarios a-h)
+
+VISUAL TEST SCENARIOS FOR ZAHI (V9)
+------------------------------------
+After deploy to staging, navigate to a project with safety enabled and
+test:
+  a. Empty form loads, completion shows 0%
+  b. Fill section 1 (general) → completion bumps, save → toast success
+  c. Fill section 2 (address with all 3 required: city/street/house) →
+     completion bumps further
+  d. Add 2 managers with ID numbers → save → reload → IDs show as masked
+     "1***789" pattern, never raw
+  e. Reach 100% completion → bar turns green, "is_complete" true
+  f. Click PDF button → file downloads as registration_<projectid>.pdf
+     opens in viewer with Hebrew RTL formatting, all sections present
+  g. Mobile viewport: sticky bottom action bar respects iOS safe-area
+     (no overlap with home indicator), buttons ≥44px touch target
+  h. Member of non-writer role can GET but PUT returns 403
+
+NON-FUNCTIONAL NOTES
+--------------------
+- All Hebrew strings hardcoded (no i18n keys yet — matches existing
+  safety pages)
+- PDF uses Rubik font (already registered in safety_pdf.py)
+- Mobile-first responsive (max-w-2xl, accordion sections)
+- iOS safe-area-inset-bottom on sticky action bar
+- Capacitor-aware download via existing downloadBlob helper
+
+NOT DONE
 --------
-MODIFIED:
-  frontend/src/App.js
-    LINE 2:  + useSearchParams added to react-router-dom destructure.
-    LINE ~148-184 (inside ProjectsHome):
-      + const [searchParams] = useSearchParams();
-      + const fromContractorReminder = searchParams.get('src') === 'wa';
-      + Comment block explaining the deferred per-project membership fix.
-      * if (isPmOrAdmin)  →  if (isPmOrAdmin && !fromContractorReminder)
-    PRESERVED:
-      - module-level PM_OR_ADMIN_ROLES const (Batch 6B v2)
-      - super_admin platform_role check (Batch 6B v2)
-      - All other Routes / ProtectedRoute / AppRoutes — untouched.
+- No external "פנקס הקבלנים" API integration (per Zahi's decision)
+- No bulk import / Excel template
+- No e-signature on the registration record
+- No PDF preview in app (download only)
+- Visual smoke test (V9) — Zahi to perform on staging
 
-GAUNTLET RESULTS
-----------------
-✅ VERIFY 1  Frontend syntax — App.js parses clean (babel).
-             (Skipped full `yarn build` — times out at 120s in sandbox;
-             staging deploy will run the real build.)
-✅ VERIFY 2  useSearchParams in App.js: 2  (1 import + 1 use)
-✅ VERIFY 3  searchParams.get('src') in App.js: 1
-✅ VERIFY 4  isPmOrAdmin && !fromContractorReminder in App.js: 1
-✅ VERIFY 5  PM_OR_ADMIN_ROLES in App.js: 2  (Batch 6B v2 preserved)
-
-⏸ VERIFY 6  Visual smoke — DEFERRED to Zahi after staging deploy.
-             6 scenarios to run (per spec):
-             a) Login as multi-role test user (PM in proj A, contractor
-                in proj B). Visit /projects/B (no query) → expect
-                redirect to /projects/B/dashboard (PM behavior preserved).
-             b) Same user, /projects/B?src=wa → expect ContractorDashboard
-                with project-B defects (NOT redirect).
-             c) Pure contractor (no PM role anywhere), /projects/X?src=wa
-                → expect ContractorDashboard (unchanged from 6B v2).
-             d) Pure contractor, /projects/X (no query) → expect
-                ContractorDashboard (unchanged from 6B v2).
-             e) super_admin, /projects/Y (no query) → expect redirect
-                to /projects/Y/dashboard (super_admin behavior preserved).
-             f) super_admin, /projects/Y?src=wa → expect ContractorDashboard
-                (super_admin treated as contractor when arriving from a
-                contractor-targeted WA link — acceptable edge).
-
-CONSTRAINTS HONORED
--------------------
-- Single-file frontend change. No backend, no automated tests
-  (codebase has no Jest/RTL setup for routing).
-- No mobile build (`./ship.sh`) — frontend OTA via Capgo only.
-- PM_OR_ADMIN_ROLES list unchanged (no role-set regression).
-- Batch 6B v2 inversion preserved — only adds the WA override.
-- super_admin / platform_role check preserved.
-- Comment explicitly references Task #32 family for future work.
-
-DEPLOYMENT TIMELINE
--------------------
-1. Zahi reviews this file.
-2. Zahi: git commit + push (branch `staging`).
-3. Zahi: ./deploy.sh --stag → run VERIFY 6 scenarios a-f on staging.
-4. Zahi: ./deploy.sh --prod.
-5. Zahi: spot-check the multi-role user clicking the next live WA digest.
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+READY FOR
+---------
+Zahi review → ./deploy.sh --stag → V9 visual smoke → ./deploy.sh --prod
