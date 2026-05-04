@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { qcService, BACKEND_URL } from '../services/api';
 import { getStageVisualStatus, getQualityBadge, getReviewBadge } from '../utils/qcVisualStatus';
 import { toast } from 'sonner';
@@ -758,6 +758,8 @@ export default function StageDetailPage() {
   const { projectId, floorId, runId, stageId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const fromParam = searchParams.get('from');
   const navState = location.state || {};
   const isUnitMode = navState.scope === 'unit';
   const unitName = navState.unitName || '';
@@ -1599,7 +1601,9 @@ export default function StageDetailPage() {
   }, [stage, scrollToItem]);
 
   const goBack = () => {
-    navigate(`/projects/${projectId}/floors/${floorId}`);
+    const url = `/projects/${projectId}/floors/${floorId}`;
+    const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+    navigate(withFrom);
   };
 
   if (loading) {

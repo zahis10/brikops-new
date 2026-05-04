@@ -286,7 +286,11 @@ export default function FloorDetailPage() {
               key={stage.id}
               stage={{ ...stage, _tradeEmoji: getTradeEmoji(stage.title) }}
               isActive={false}
-              onClick={() => navigate(`/projects/${projectId}/qc/floors/${floorId}/run/${data.run.id}/stage/${stage.id}`)}
+              onClick={() => {
+                const url = `/projects/${projectId}/qc/floors/${floorId}/run/${data.run.id}/stage/${stage.id}`;
+                const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+                navigate(withFrom);
+              }}
             />
           ))}
         </div>
