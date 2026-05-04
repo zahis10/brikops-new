@@ -1,199 +1,224 @@
 ================================================================
-BATCH: Execution Matrix — PHASE 1 BACKEND  (Task #483)
+BATCH: Execution Matrix — PHASE 2A FRONTEND READ-ONLY (Task #484)
 Branch: staging
 Date: 2026-05-04
 ================================================================
 
 WHAT
 ----
-Net-new backend foundation for an in-app 2D matrix grid
-(units × stages) that PMs / execution engineers will use to track
-project state with 6 status values + custom columns + per-user
-saved views. PHASE 1 = backend only. PHASE 2 (frontend) separate.
+Mobile-first read-only frontend on top of #483 backend.
+PMs / engineers see "מטריצת ביצוע" CTA on QC home page, tap it,
+land on a 2D matrix of units × stages with status icons.
 
-Architectural anchors (Zahi):
-  - Matrix is INDEPENDENT data store (3 new collections).
-  - NO modification of qc_template / qc_runs / qc_items / safety
-    routers / project_memberships / billing.
-  - qc_router.py untouched (V7 = 0 lines diff).
-  - Reads qc_template.stages live (computed at render time —
-    no migration when admin edits the template).
+PHASE 2A of 4 — read only. 2B = cell editing. 2C = stage CRUD.
+2D = filters + saved views.
 
 ================================================================
-STEP 0 AUDIT (canonical-code-based, captured during planning)
+STEP 0 AUDIT
 ================================================================
-0.1 ✅ tpl["stages"] shape: list of {id, title, scope, order, items}.
-       _get_template helper at qc_router L253. scope ∈ {floor, unit}.
-       REUSED unchanged via `from contractor_ops.qc_router import
-       _get_template`.
+0.1 ✅ App.js routes use React.lazy + ProtectedRoute wrapper.
+       /projects/:projectId/qc → QCFloorSelectionPage at L372.
+       New matrix route inserted adjacent (L379-386).
 
-0.2/0.9 ✅ project_approvers shape verified from THREE canonical
-       call sites (no live DB needed; spec STEP 0.9 placeholder
-       query replaced by the verified one BEFORE commit):
-         qc_router L80  _get_stage_recipients: {project_id, active=True}
-         qc_router L1153 qc_contacts:           {project_id, user_id, active=True}
-         qc_router L1853 list_approvers:        {project_id, active=True}
-       → matrix-edit approver = ANY active approver, regardless of
-         mode (mode="all" OR mode="stages"). Stage-scope on the
-         approver doc is irrelevant for the project-level matrix.
-       _get_matrix_approver_user_ids final shape:
-         find({"project_id": pid, "active": True}, {"_id":0,"user_id":1})
-       (REPLACES spec placeholder which omitted "active": True.)
+0.2 ✅ QC home page = QCFloorSelectionPage.js. "סטטוס ביצוע כללי"
+       header at L273 (was L244, shifted by CTA insertion). CTA Link
+       inserted at L237 (delta=36 lines), INSIDE the
+       `<div className="max-w-2xl mx-auto px-4 py-3 space-y-3">`
+       wrapper so it inherits page padding + spacing.
 
-0.3 ✅ Helpers _get_project_role / _is_super_admin / MANAGEMENT_ROLES
-       live in contractor_ops.router (qc_router L10 re-imports).
-       Imported DIRECTLY from router.py (D1 — see divergences).
-       MANAGEMENT_ROLES = ('project_manager', 'management_team') only.
+0.3 ✅ services/api.js — does NOT default-export an axios instance.
+       Pattern is `export const xxxService = { method: async (...) =>
+       { return axios.get(\`${API}/...\`, { headers: getAuthHeader() })
+       .data } }` (verified projectService L75 + safetyService L170).
+       getAuthHeader was MODULE-LOCAL (L70 const, no export) — added
+       `export` keyword (+0 net LOC, just changed `const` → `export
+       const`). matrixService.js is the FIRST external consumer of
+       getAuthHeader → establishes the pattern for future services
+       living outside api.js.
 
-0.4 ✅ Floor/Unit schemas confirmed; archived field absent in schemas
-       but qc_router queries with {"archived": {"$ne": True}} (matches
-       missing). Same pattern used here.
+0.4 ✅ Capacitor available; no platform-specific code needed for
+       read-only matrix view.
 
-0.5 ✅ Zero existing matrix code (grep "execution_matrix\|
-       ExecutionMatrix\|matrix_cell" = 0 hits). Clean slate.
+0.5 ✅ lucide-react ^0.507.0. All icons used confirmed available:
+       CheckCircle2, AlertCircle, Clock, XCircle, MinusCircle,
+       ShieldCheck, LayoutGrid, ArrowLeft, Info, ChevronDown/Up,
+       Loader2.
 
-0.6 ✅ Pydantic v1-style (BaseModel, Field, validator, .dict()).
-       schemas.py L2 already imports Optional/List/Dict/Literal.
+0.6 ✅ Tailwind defaults; md=768px chosen for mobile/desktop split.
+       RTL via dir="rtl" per component (matches StageDetailPage).
 
-0.7 ✅ server.py registration pattern: top-level
-       `from X import router as Y; app.include_router(Y)`
-       (e.g. config_router L443-444). Safety routers gated by
-       `if ENABLE_SAFETY_MODULE:` — matrix is NOT feature-gated,
-       registers UNCONDITIONALLY at L446-447 (right after config_router).
+0.7 ✅ App.js uses React.lazy for ALL pages — D-lazy drift in plan
+       was incorrect. Used React.lazy to match (no drift).
 
-0.8 ✅ STEP 0 audit at TOP of this review.txt (you are reading it).
+0.8 ✅ isContractorRole: no role-conditional pattern in
+       QCFloorSelectionPage. Per spec FALLBACK clause: CTA visible
+       to all, backend 403 = defense-in-depth. Documented inline
+       comment in the CTA block.
 
 ================================================================
-DIVERGENCES FROM SPEC (also documented at top of router.py)
+DIVERGENCES FROM SPEC
 ================================================================
-D1. Imports from contractor_ops.router (NOT via qc_router).
-    Cleaner dependency graph — qc_router (2,936 LOC) is a consumer
-    of these helpers, not their source.
+D-svc.  matrixService.js does NOT use `import api from './api'`
+        (api.js has no default export). Implemented using
+        `axios + API + getAuthHeader` pattern matching
+        projectService/safetyService. Required exporting
+        `getAuthHeader` from api.js (and re-exporting `API` —
+        previously module-local). No external consumer existed
+        before — matrixService is now the reference example.
 
-D2. _get_matrix_approver_user_ids includes "active": True filter.
-    Spec placeholder omitted it; canonical pattern at qc_router
-    L80/L1153/L1853 always filters by active. Inactive (revoked)
-    approvers must NOT get matrix-edit access.
+D-cta-role.  CTA visible to all roles (no `!isContractorRole`
+        wrap). QCFloorSelectionPage has no role-fetch hook in
+        scope; spec PART 9 FALLBACK explicitly permits this.
+        Backend RBAC at /api/execution-matrix/{pid} returns 403
+        for contractors — UI shows error state with retry.
 
-D3. "viewer" role removed from _check_matrix_view.
-    No "viewer" role exists in the codebase. Aligned to existing
-    QC_VIEW_ROLES pattern: super_admin + project_manager + owner +
-    management_team. Contractor blocked explicitly.
-
-D4. Stage-scoped approvers (mode="stages") get FULL matrix-edit access.
-    Per Zahi 2026-05-04: trust given for any stage approval = trust
-    given for matrix annotation. Matrix is project-level, so
-    stage-scope on the approver doc is irrelevant.
+(D-lazy from plan was REMOVED — App.js does use React.lazy.)
 
 ================================================================
 PER-FILE DIFF
 ================================================================
-backend/contractor_ops/schemas.py        +104  / -0
-backend/contractor_ops/execution_matrix_router.py  NEW (540 LOC)
-backend/server.py                        +3    / -0
-backend/tests/test_execution_matrix.py   NEW (~440 LOC, 11 tests)
+NEW (8):
+  frontend/src/components/matrix/STATUS_CONFIG.js     ~65 LOC
+  frontend/src/components/matrix/MatrixCell.js        ~55 LOC
+  frontend/src/components/matrix/StatusLegend.js      ~40 LOC
+  frontend/src/components/matrix/MatrixListView.js    ~85 LOC
+  frontend/src/components/matrix/MatrixGridView.js    ~75 LOC
+  frontend/src/pages/ExecutionMatrixPage.js          ~115 LOC
+  frontend/src/services/matrixService.js              ~22 LOC
+  frontend/src/hooks/useMatrixData.js                 ~40 LOC
+                                              total ~497 LOC
 
-backend/contractor_ops/qc_router.py      0 lines diff  ← V7
+EDITS (3 files):
+  frontend/src/services/api.js                +2 / -1
+    - L10: + `export { API };`
+    - L74: `const getAuthHeader` → `export const getAuthHeader`
+  frontend/src/App.js                         +9 / -0
+    - L60: + lazy import for ExecutionMatrixPage
+    - L379-386: + new <Route> with ProtectedRoute
+  frontend/src/pages/QCFloorSelectionPage.js +29 / -2
+    - L2: added `Link` to react-router-dom import
+    - L11: added `LayoutGrid, ArrowLeft` to lucide imports
+    - L236-262: + CTA Link block (immediately before
+      "סטטוס ביצוע כללי" execSummary block)
 
-================================================================
-ENDPOINTS REGISTERED (all under /api/execution-matrix)
-================================================================
-  GET    /{project_id}                                   matrix data
-  PATCH  /{project_id}/stages                            add custom + hide base
-  PUT    /{project_id}/cells/{unit_id}/{stage_id}        update cell + audit
-  GET    /{project_id}/cells/{unit_id}/{stage_id}/history audit chain
-  GET    /{project_id}/views                             list user's views
-  POST   /{project_id}/views                             create view
-  PATCH  /{project_id}/views/{view_id}                   update view
-  DELETE /{project_id}/views/{view_id}                   soft-delete view
-
-8 paths total (V2 confirmed).
-
-================================================================
-COLLECTIONS (lazy-init, created on first access)
-================================================================
-  execution_matrix          one doc per project (custom_stages, base_stages_removed)
-  execution_matrix_cells    one doc per (project_id, unit_id, stage_id)
-  execution_matrix_views    per-user saved views (soft-delete via deletedAt)
-
-================================================================
-RBAC SUMMARY
-================================================================
-View   = super_admin + project_manager + owner + management_team
-         (contractor → 403 explicit)
-Edit   = super_admin + project_manager + ANY active project_approver
-         (regardless of mode — D4)
+Backend: 0 lines diff (no backend touched).
 
 ================================================================
 VERIFICATIONS
 ================================================================
-V1 router import .................. OK
-V2 routes registered .............. OK (8 paths)
-V3 new test file (11 tests) ....... 11 passed in 2.38s
-V4 regression suite ............... 17 passed in 4.08s
-       test_qc_override_close.py / test_qc_units_status.py /
-       test_safety_registration.py — all green, no flake
-V5 schema imports (11 symbols) .... OK
-V6 router file size ............... 540 LOC (in 400-800 target range)
-V7 git diff qc_router.py .......... 0 lines  ←  qc_router untouched
-V8 curl smoke a-k ................. ⏳ DEFERRED — Zahi runs post-deploy
-       Suggested smoke order:
-         a. GET  /api/execution-matrix/{pid}                  (PM)
-         b. PATCH /stages with custom_stages_added (PM)
-         c. PATCH /stages with base_stages_removed (PM)
-         d. PUT  /cells/{u}/{s} status=in_progress (PM)
-         e. PUT  /cells/{u}/{s} status=completed   (PM)
-         f. GET  /cells/{u}/{s}/history → 2 entries
-         g. PUT  /cells/{u}/{s} as contractor → 403
-         h. POST /views with filters (PM)
-         i. GET  /views as same user → 1 entry
-         j. GET  /views as DIFFERENT user → 0 entries (per-user iso)
-         k. DELETE /views/{vid} → 204 then GET → 0 entries
+V1 yarn build (with REACT_APP_BACKEND_URL set) ... ✅ 34.53s, no
+   new warnings or errors. Build folder ready.
+V2 8 NEW files exist .............................. ✅ all 8
+V3 grep "execution-matrix\|ExecutionMatrixPage"
+   frontend/src/App.js ............................ ✅ 3 hits
+   (lazy import L60 + path L380 + element L383)
+V4 CTA on QC page .................................. ✅
+   - L237: `to=\`/projects/${projectId}/execution-matrix\``
+   - L250: "מטריצת ביצוע" Hebrew label
+   - Placement: CTA at L237, "סטטוס ביצוע כללי" at L273
+     (delta=36 lines, CTA precedes — verified via line numbers).
+V5 backend regression .............................. ✅ 15 passed
+   in 2.95s (11 matrix + 4 qc tests).
+V6 visual smoke a-u ............................... ⏳ deferred to
+   Zahi post-deploy.
+V7 RTL inspection ................................. ⏳ deferred to
+   Zahi post-deploy.
 
 ================================================================
-TEST INVENTORY (backend/tests/test_execution_matrix.py)
+V6 VISUAL SMOKE (Zahi runs after staging deploy)
 ================================================================
-  1. test_get_matrix_returns_resolved_stages       ✅
-  2. test_get_matrix_blocks_contractor             ✅
-  3. test_update_stages_adds_custom                ✅
-  4. test_update_stages_removes_base               ✅
-  5. test_update_stages_blocks_non_approver        ✅
-  6. test_update_cell_creates_with_audit           ✅
-  7. test_update_cell_appends_audit_on_change      ✅
-  8. test_invalid_status_value_rejected_400        ✅
-  9. test_cell_history_returns_full_audit_chain    ✅
- 10. test_saved_view_create_list_delete_per_user   ✅
- 11. test_approver_can_edit_matrix  (D4 confirmation)  ✅
+QC home — CTA discovery:
+  a) PM/admin → /projects/{p}/qc → see violet CTA card ABOVE the
+     "סטטוס ביצוע כללי" execSummary card.
+  b) CTA shows: 🔲 LayoutGrid icon + "מטריצת ביצוע" + "חדש" pill +
+     subtitle "צפייה מפורטת לפי דירה ושלב" + ArrowLeft.
+  c) Tap → navigates to /projects/{p}/execution-matrix.
+  d) Desktop hover → border darkens, ArrowLeft shifts left subtly.
+  e) execSummary card below CTA — UNCHANGED.
+
+Matrix on Mobile (375px):
+  f) Header: "מטריצת ביצוע" + "{N} דירות • {M} שלבים".
+  g) StatusLegend collapsed → tap to expand → 6 statuses visible
+     in 2-col grid (sm: 3-col).
+  h) Each unit = card with header (דירה N • קומה N • room_count) +
+     progress bar (completed/total based on STATUS columns only) +
+     horizontal scroll of 32x32 cells with stage labels.
+  i) Empty cell = gray dash; status cell = colored icon w/ tooltip
+     "בוצע • <actor name>"; tag cell = 3-char text snippet.
+  j) Horizontal scroll within unit card smooth.
+  k) Empty project → "אין דירות בפרויקט".
+
+Matrix on Desktop (≥768px):
+  l) Grid mode (no list cards visible).
+  m) Sticky right column "דירה" (RTL: right-0) stays visible on
+     horizontal scroll.
+  n) Sticky top row stage names stays visible on vertical scroll.
+  o) Custom stages → "מותאם" sub-label under stage name.
+  p) Tag-type stages → text snippet, not status icon.
+  q) Zebra stripes (alternating bg-white / bg-slate-50/30).
+
+Permissions:
+  r) Contractor → CTA still visible (D-cta-role fallback). Click →
+     navigate to matrix page → useMatrixData returns 403 → error
+     state with "נסה שוב" button + Hebrew error message from
+     err.response.data.detail.
+  s) PM / management_team / super_admin → matrix loads normally.
+
+Performance:
+  t) 50 units × 20 stages → renders in <2s on staging.
+  u) Mobile horizontal scroll 60fps.
 
 ================================================================
-OUT OF SCOPE (PHASE 2 / Tier 2 / rejected)
+V7 RTL CHECKLIST (Zahi inspects)
 ================================================================
-- Any frontend (PHASE 2)
-- Read-only 📎 annotation overlay from qc_runs (PHASE 2)
-- Excel/PDF export (Tier 2)
-- Realtime WebSocket collaboration (Tier 3)
-- Per-user matrix variants (rejected — one matrix per project)
-- is_shared flag on saved views (PHASE 2 if requested)
-- Stage reordering endpoint (PHASE 2 — order set on create only,
-  changed only via full custom_stages_added replace)
-- Cleanup of orphaned cells when custom stage deleted (PHASE 2)
-- GDPR audit anonymization (Tier 2 cross-collection sweep)
-- Server-side pagination >100 units / >3MB (PHASE 2)
+- All component roots have dir="rtl" (or inherit).
+- Stage column headers: text-center, no LTR-leakage.
+- Unit identifier column: sticky right-0 (NOT left-0).
+- Unit numbers + floor info: text-right inside the sticky column.
+- Mobile horizontal stage scroll: starts from RIGHT edge (first
+  stage) — relies on browser native RTL `overflow-x-auto`.
+- Hebrew text in CTA: violet card aligned dir="rtl" inside.
 
 ================================================================
 RISK NOTES
 ================================================================
-- Pydantic deprecation warnings (.dict() → model_dump) match the
-  rest of the codebase (schemas.py + safety_registration_router.py
-  emit identical warnings). NOT addressed in this batch — do it
-  project-wide when migrating off Pydantic v1.
-- /api/execution-matrix is NOT feature-gated. If you need a kill
-  switch before frontend ships, add ENABLE_EXECUTION_MATRIX env
-  flag mirroring the safety pattern at server.py L455-468.
-- Tests use mocks — no live MongoDB. V8 curl smoke (post-deploy)
-  exercises the real path.
+- floors metadata NOT in #483 response. ExecutionMatrixPage
+  synthesizes minimal floorsById from units[].floor_id (per spec
+  PART 8 fallback). Floor numbers may show "?" if unit lacks
+  floor_number — future polish: have backend embed floors[].
+- CTA visible to contractors (D-cta-role). They can navigate but
+  immediately hit the 403 error state. Acceptable per spec; clean
+  up in a future polish batch by adding role check.
+- yarn build needs REACT_APP_BACKEND_URL set (existing craco
+  guard from production safety). Doesn't affect deployment which
+  has the env var configured. Local dev `yarn start` unaffected.
+- No new tests added — frontend UI batch. V6 covers it.
+
+================================================================
+OUT OF SCOPE (PHASE 2B / 2C / 2D)
+================================================================
+- Cell editing popover (status select, note, audit history) → 2B
+- Add custom stage / hide base / reorder → 2C
+- Filters + saved views CRUD → 2D
+- Manual list↔grid toggle → 2D (auto-by-viewport for now)
+- qc_runs annotation overlay (📎 on cells)
+- Realtime / WebSocket updates
+- Project sidebar entry (HamburgerMenu uses tabs only — no nav
+  to extend; CTA on QC home is sole entry point in 2A)
+- Floors metadata embed in #483 response (future backend polish)
+
+================================================================
+ROLLBACK
+================================================================
+git revert <commit-sha>
+- 8 NEW files removed
+- 3 file edits reverted (api.js, App.js, QCFloorSelectionPage.js)
+- /projects/:projectId/execution-matrix → 404
+- CTA disappears from QC home page
+- ZERO backend impact. ZERO impact on QC, handover, plans, safety,
+  billing, defects, auth.
 
 ================================================================
 AWAITING ZAHI APPROVAL — DO NOT auto-commit / auto-deploy.
-After approval: git commit + push + ./deploy.sh --stag → V8 → --prod.
+After approval: git commit + push + ./deploy.sh --stag → V6/V7 → --prod.
 ================================================================

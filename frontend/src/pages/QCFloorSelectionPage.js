@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { projectService, qcService } from '../services/api';
 import HamburgerMenu from '../components/HamburgerMenu';
@@ -7,7 +7,8 @@ import NotificationBell from '../components/NotificationBell';
 
 import {
   ArrowRight, Loader2, ClipboardCheck, Building2, Search,
-  AlertCircle, ChevronLeft, ChevronDown, BarChart3
+  AlertCircle, ChevronLeft, ChevronDown, BarChart3,
+  LayoutGrid, ArrowLeft
 } from 'lucide-react';
 
 const getFloorBadge = (qcData) => {
@@ -229,6 +230,34 @@ export default function QCFloorSelectionPage() {
       {headerBlock}
 
       <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+        {/* Execution Matrix CTA — Phase 2A entry. Visible to all roles
+            (no isContractorRole pattern in this page; backend 403
+            provides defense-in-depth per spec FALLBACK clause). */}
+        <Link
+          to={`/projects/${projectId}/execution-matrix`}
+          className="block bg-gradient-to-l from-violet-50 to-white border border-violet-200 rounded-xl p-4 hover:border-violet-300 hover:shadow-sm transition-all group"
+        >
+          <div className="flex items-center gap-3" dir="rtl">
+            <div className="p-2.5 bg-violet-100 rounded-lg shrink-0 group-hover:bg-violet-200 transition-colors">
+              <LayoutGrid className="w-5 h-5 text-violet-700" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm sm:text-base font-bold text-slate-900">
+                  מטריצת ביצוע
+                </span>
+                <span className="text-[10px] font-medium text-violet-600 bg-violet-100 px-1.5 py-0.5 rounded-full">
+                  חדש
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                צפייה מפורטת לפי דירה ושלב
+              </p>
+            </div>
+            <ArrowLeft className="w-5 h-5 text-violet-400 group-hover:text-violet-600 group-hover:-translate-x-0.5 transition-all shrink-0" />
+          </div>
+        </Link>
+
         {execSummary && execSummary.stages && execSummary.stages.length > 0 && (
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
             <button

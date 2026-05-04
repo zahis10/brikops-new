@@ -5,6 +5,7 @@ const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '')
 const API = `${BACKEND_URL}/api`;
 
 export { BACKEND_URL };
+export { API };
 
 const _cache = new Map();
 const _CACHE_TTL_MS = 30_000;
@@ -67,7 +68,7 @@ axios.interceptors.response.use(
   }
 );
 
-const getAuthHeader = () => {
+export const getAuthHeader = () => {
   const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
