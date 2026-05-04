@@ -1,512 +1,486 @@
 ================================================================================
-BATCH S2B v2 — Safety Project Personnel — REVIEW
+BATCH execution-control — Show ALL unit-scope stages on floor view — REVIEW
 ================================================================================
-Commit:  532bc6000de7510d3bffa7bb540f42142ea161d2
-Branch:  main (merged from staging task agent)
+Date:    2026-05-04
+Branch:  staging (target)
 Base:    origin/staging (049723c)
-Pattern: mirrors managers (#468) — embedded list on safety_project_settings
+Files:   3 (1 backend refactor + 1 frontend page + 1 NEW backend test)
+         — frontend/src/services/api.js verify-only (NO edit, V8c=0)
 
 ================================================================================
-STEP 0 AUDIT (verified pre-build)
+STEP 0 PRE-FLIGHT AUDIT (verified 2026-05-04)
 ================================================================================
-0.1 safety_registration_router.py exists                     ✅ 165 LOC
-0.2 _get_or_init_registration init dict has managers:[]@L47   ✅
-0.2 upsert_registration managers PII block @L86-95            ✅
-0.2 imports already include _hash_id_number/_new_id/_now/...  ✅ (no new imports)
-0.4 schemas.py typing missing Literal                         ⚠ added on this batch
-0.4 SafetyProjectManager/Registration/Upsert exist            ✅
-0.5 VALID_SUB_ROLES @ invites_router.py:145 — 5 canonical     ✅ used verbatim
-0.6 SafetyProjectRegistrationPage.js sections @ 175/181/196/222 ✅
-0.7 SafetyProjectPersonnel collisions                         0 (greenfield)
-DRIFT: none
+0.1 get_floor_units_status @ qc_router.py:883-984           ✅
+0.2 hardcoded tiling_stage refs @ L918, L919, L920, L926, L956 ✅ (target of refactor)
+0.2 seed template stage_tiling @ L226                       ✅ DATA — untouched
+0.2 emoji map stage_tiling @ L1942                          ✅ DATA — untouched
+0.3 ONLY consumer = api.js:1329 (3-line axios passthrough)  ✅
+0.4 hardcoded ריצוף block @ FloorDetailPage.js:286-321 + 🟫 ✅
+0.5 StageCard scope==='unit' branch @ L87 (dormant)         ✅ untouched per spec
+0.6 template ordering: explicit sorted(..., key=order)      ✅ amendment applied
+0.7 test infra: NO existing test_qc_*.py; safety_registration ✅ pattern replicable
+
+DRIFT: NONE — all 4 spec amendments implemented as written.
 
 ================================================================================
 VERIFY 1-8 RESULTS
 ================================================================================
-V1  schemas import (Personnel + Registration + Upsert)        ✅ OK
-V2  personnel field present on SafetyProjectRegistration       ✅ OK
-V3  pytest tests/test_safety_registration.py                  ✅ 13 passed (incl 2 new)
-    - test_upsert_persists_personnel                           PASSED
-    - test_upsert_hashes_personnel_id_numbers                  PASSED
-V4  Babel parse on 2 changed JS files (@babel/parser)         ✅ OK component, OK page
-V5  py-3 count in SafetyProjectPersonnelSection.js             10 (≥10 ✅)
-V6  SafetyProjectPersonnelSection refs in registration page    2  (≥2  ✅ import+instance)
-V7  '5. אסמכתאות' renumber                                     1  (≥1  ✅)
-V8a 5 canonical roles in component (5 labels + 5 order)        10 (≥10 ✅)
-V8b safety_consultant occurrences (must be 0 — invented v1)    0  (✅ NOT present)
+V1  qc_router import                                        ✅ OK
+V2  /floors/{floor_id}/units-status registered in app.routes ✅ OK
+V3  'tiling' refs in fn body L880-1050 (must be 0)          ✅ 0
+V4  pytest tests/test_qc_units_status.py                    ✅ 1 passed
+    (regression: tests/test_safety_registration.py also OK — 14 passed total)
+V5  Babel parse FloorDetailPage.js (@babel/parser)           ✅ OK
+    (yarn build skipped — recurring REACT_APP_BACKEND_URL env-gating in sandbox)
+V6  'ריצוף דירה' in FloorDetailPage.js (must be 0)          ✅ 0 (label removed; uses unitStage.stage_title dynamically)
+V7  'unitsStatus.stages' in FloorDetailPage.js (must be ≥2) ✅ 3 occurrences
+    (grep -c reports 1 because all 3 are on the same JSX line:
+     'unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.map(...)'
+     grep -o | wc -l confirms 3.)
+V8a admin_router.py diff (must be empty)                    ✅ 0 lines
+V8b AdminQCTemplatesPage.js diff (must be empty)            ✅ 0 lines
+V8c api.js diff (verify-only, must be empty)                ✅ 0 lines
 
-V9  Visual smoke (12 scenarios a-l) — DEFERRED to Zahi after staging deploy:
-    a) /projects/{id}/safety/registration → 5 sections visible (1 כללי / 2 מען / 3 מנהלי החברה / 4 אחראי בטיחות / 5 אסמכתאות)
-    b) Open §4 → 5 role groups: מנהל אתר / מהנדס ביצוע / עוזר בטיחות / מנהל עבודה / ממונה בטיחות
-    c) '+ הוסף מהנדס ביצוע' → inline form, all inputs ≥44px
-    d) Fill 'ישראל ישראלי' + ת.ז '123456789' → main שמור → toast
-    e) Reload → personnel persists; ת.ז shown as '1***789' (masked)
-    f) Add 2nd מהנדס ביצוע → both under '(2)'
-    g) Add 1 ממונה בטיחות → '(1)'
-    h) Trash + confirm → row gone after שמור + reload
-    i) §5 (אסמכתאות) loads + saves — no regression
-    j) §3 (מנהלי החברה) loads + saves — no regression
-    k) Mobile 375px → role groups stack, no horizontal scroll
-    l) PDF download still works (without personnel section — that's S2B v3)
+V9  Visual smoke 12 scenarios a-l — DEFERRED to Zahi after staging deploy:
+    a) super_admin → admin QC templates editor
+    b) Add 2 unit-scope stages to active template:
+       - 'אמבטיה + אינטרפוץ' (2 items)
+       - 'מטבחים' (1 item)
+    c) Save template
+    d) Navigate to /projects/{id}/floors/{floor_id}
+    e) Verify stage grid shows: floor stages (בלוקים, טיח, חשמל…) +
+       3 unit-scope cards: ריצוף דירה, אמבטיה+אינטרפוץ, מטבחים
+    f) Card order matches template editor order field
+    g) Click any unit-scope card → /qc/units?stage_id=… (query param ready for
+       future polish; selection page may consume later)
+    h) Mobile 375px DevTools — cards stack, no overflow
+    i) Open a unit → unit detail shows ALL unit-scope stages (regression — 
+       _backfill_missing_items unchanged)
+    j) Floor-scope stages render correctly (regression)
+    k) Existing ריצוף data preserved — past pass/fail counts intact
+    l) Project-level execution-summary view counts unchanged (regression)
 
 ================================================================================
-FILES CHANGED (5)
+VISUAL LIMITATION NOTE (per spec amendment + Zahi 2026-05-04 confirmation)
 ================================================================================
- .../contractor_ops/safety_registration_router.py   |  12 ++
- backend/contractor_ops/schemas.py                  |  24 ++-
- backend/tests/test_safety_registration.py          |  81 +++++++++
- .../safety/SafetyProjectPersonnelSection.js        | 193 +++++++++++++++++++++
- .../src/pages/SafetyProjectRegistrationPage.js     |  13 +-
- 5 files changed, 321 insertions(+), 2 deletions(-)
+🟫 emoji prefix REMOVED from ALL unit-scope cards including ריצוף דירה.
+Cards now use only the existing <Home> icon inside the violet 'לפי דירות' badge.
+UI consistency takes priority over preserving the legacy emoji.
+
+Zahi's call (2026-05-04 approval message):
+  > 'REMOVE the 🟫 emoji from all unit-scope cards including existing ריצוף.'
+  > 'Future polish batch will extend the emoji map (qc_router.py:1942) to'
+  > 'provide per-stage emojis for ALL unit-scope stages — at which point ריצוף'
+  > 'will get its 🟫 back alongside אמבטיה 🛁, מטבחים 🍳, etc.'
+
+Documented limitation, not a bug. Future polish: extend emoji map @ L1942 +
+render <span>{emoji}</span> if mapped.
 
 ================================================================================
-FULL UNIFIED DIFF (before → after, all hunks)
+FILES CHANGED (3)
+================================================================================
+ backend/contractor_ops/qc_router.py   | 157 ++++++++++++++++++++++++----------
+ frontend/src/pages/FloorDetailPage.js |  42 ++++++---
+ 2 files changed, 138 insertions(+), 61 deletions(-)
+
+Note: backend/tests/test_qc_units_status.py is NEW (90 LOC) — does not show in
+diff --stat against origin/staging (file did not previously exist).
+Size: 4996 bytes
+
+================================================================================
+FULL UNIFIED DIFF — backend + frontend (existing files)
 ================================================================================
 
-diff --git a/backend/contractor_ops/safety_registration_router.py b/backend/contractor_ops/safety_registration_router.py
-index 8af0d0f..173b786 100644
---- a/backend/contractor_ops/safety_registration_router.py
-+++ b/backend/contractor_ops/safety_registration_router.py
-@@ -45,6 +45,7 @@ async def _get_or_init_registration(db, project_id: str) -> dict:
-         "contractor_registry_number": None,
-         "office_address": None,
-         "managers": [],
-+        "personnel": [],
-         "permit_number": None,
-         "form_4_target_date": None,
-         "created_at": now,
-@@ -94,6 +95,17 @@ async def upsert_registration(
-                 else:
-                     mgr["id_number"] = "***"
+diff --git a/backend/contractor_ops/qc_router.py b/backend/contractor_ops/qc_router.py
+index 92b2b1a..73fd767 100644
+--- a/backend/contractor_ops/qc_router.py
++++ b/backend/contractor_ops/qc_router.py
+@@ -882,6 +882,15 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
  
-+    if "personnel" in updates and updates["personnel"] is not None:
-+        for person in updates["personnel"]:
-+            raw_id = person.get("id_number")
-+            if raw_id:
-+                person["id_number_hash"] = _hash_id_number(raw_id)
-+                stripped = raw_id.strip()
-+                if len(stripped) >= 4:
-+                    person["id_number"] = f"{stripped[:1]}***{stripped[-3:]}"
-+                else:
-+                    person["id_number"] = "***"
+ @router.get("/floors/{floor_id}/units-status")
+ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current_user)):
++    """Per-stage rollup of unit-scope progress for a floor.
 +
-     updates["updated_at"] = _now()
-     updates["updated_by"] = user["id"]
- 
-diff --git a/backend/contractor_ops/schemas.py b/backend/contractor_ops/schemas.py
-index 615c87b..37a9517 100644
---- a/backend/contractor_ops/schemas.py
-+++ b/backend/contractor_ops/schemas.py
-@@ -1,5 +1,5 @@
- from enum import Enum
--from typing import Optional, List, Dict
-+from typing import Optional, List, Dict, Literal
- from pydantic import BaseModel, Field, validator
- 
- 
-@@ -300,6 +300,7 @@ class Task(BaseModel):
-     force_closed_reason: Optional[str] = None
-     force_closed_at: Optional[str] = None
-     force_closed_type: Optional[str] = None
-+    is_safety: Optional[bool] = False
- 
- 
- class TaskCreate(BaseModel):
-@@ -314,6 +315,7 @@ class TaskCreate(BaseModel):
-     company_id: Optional[str] = None
-     assignee_id: Optional[str] = None
-     due_date: Optional[str] = None
-+    is_safety: Optional[bool] = False
- 
- 
- class TaskUpdate(BaseModel):
-@@ -324,6 +326,7 @@ class TaskUpdate(BaseModel):
-     company_id: Optional[str] = None
-     assignee_id: Optional[str] = None
-     category: Optional[Category] = None
-+    is_safety: Optional[bool] = None
- 
- 
- class TaskAssign(BaseModel):
-@@ -830,6 +833,23 @@ class SafetyProjectManager(BaseModel):
-     notes: Optional[str] = Field(None, max_length=500)
- 
- 
-+class SafetyProjectPersonnel(BaseModel):
-+    """One safety personnel entry embedded on the registration document.
-+    Repeat group — N per role. 5 canonical roles from VALID_SUB_ROLES."""
-+    role: Literal[
-+        'site_manager',
-+        'execution_engineer',
-+        'safety_assistant',
-+        'work_manager',
-+        'safety_officer',
-+    ]
-+    first_name: str = Field(..., min_length=1, max_length=60)
-+    last_name: str = Field(..., min_length=1, max_length=60)
-+    id_number: Optional[str] = None
-+    license_number: Optional[str] = Field(None, max_length=30)
-+    notes: Optional[str] = Field(None, max_length=500)
++    Returns a list of unit-scope stages (in template `order`), each with
++    per-unit breakdown of completion. Replaces the old single-stage
++    behavior that ignored all but the first unit-scope stage.
 +
++    Used by FloorDetailPage to render one card per unit-scope stage in
++    the floor's stage grid.
++    """
+     db = get_db()
+ 
+     floor = await db.floors.find_one({"id": floor_id, "archived": {"$ne": True}}, {"_id": 0})
+@@ -900,7 +909,6 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
+         {"_id": 0}
+     ).to_list(200)
+     units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+-
+     unit_ids = [u["id"] for u in units]
+ 
+     unit_runs = {}
+@@ -912,64 +920,119 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
+         async for r in runs_cursor:
+             unit_runs[r["unit_id"]] = r
+ 
++    run_ids = [r["id"] for r in unit_runs.values()]
 +
- class SafetyProjectAddress(BaseModel):
-     """Section 2 — מען המשרד הראשי / המשרד הרשום."""
-     city: Optional[str] = Field(None, max_length=80)
-@@ -850,6 +870,7 @@ class SafetyProjectRegistration(BaseModel):
-     contractor_registry_number: Optional[str] = Field(None, max_length=20)
-     office_address: Optional[SafetyProjectAddress] = None
-     managers: List[SafetyProjectManager] = Field(default_factory=list)
-+    personnel: List[SafetyProjectPersonnel] = Field(default_factory=list)
-     permit_number: Optional[str] = Field(None, max_length=30)
-     form_4_target_date: Optional[str] = None
-     updated_at: Optional[str] = None
-@@ -863,5 +884,6 @@ class SafetyProjectRegistrationUpsert(BaseModel):
-     contractor_registry_number: Optional[str] = None
-     office_address: Optional[SafetyProjectAddress] = None
-     managers: Optional[List[SafetyProjectManager]] = None
-+    personnel: Optional[List[SafetyProjectPersonnel]] = None
-     permit_number: Optional[str] = None
-     form_4_target_date: Optional[str] = None
-diff --git a/backend/tests/test_safety_registration.py b/backend/tests/test_safety_registration.py
-index c041c13..f76e98f 100644
---- a/backend/tests/test_safety_registration.py
-+++ b/backend/tests/test_safety_registration.py
-@@ -161,3 +161,84 @@ def test_registration_address_optional():
-     reg = SafetyProjectRegistration(office_address=None, managers=[])
-     assert reg.office_address is None
-     assert reg.managers == []
-+
-+
-+def test_upsert_persists_personnel():
-+    """Batch S2B v2 — personnel array persists via $set in update_one."""
-+    async def run():
-+        existing = {
-+            "id": "x", "project_id": "p1", "deletedAt": None,
-+            "developer_name": None, "main_contractor_name": None,
-+            "contractor_registry_number": None, "office_address": None,
-+            "managers": [], "personnel": [], "permit_number": None,
-+            "form_4_target_date": None,
-+        }
-+        after = dict(existing)
-+        after["personnel"] = [
-+            {"role": "site_manager", "first_name": "א", "last_name": "ב"}
-+        ]
-+
-+        db = MagicMock()
-+        db.safety_project_settings.find_one = AsyncMock(
-+            side_effect=[existing, after]
-+        )
-+        db.safety_project_settings.insert_one = AsyncMock()
-+        db.safety_project_settings.update_one = AsyncMock()
-+
-+        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
-+        payload = SafetyProjectRegistrationUpsert(
-+            personnel=[{"role": "site_manager", "first_name": "א", "last_name": "ב"}]
-+        )
-+        user = {"id": "u1"}
-+
-+        with patch.object(srr, '_check_project_access', AsyncMock(return_value=None)), \
-+             patch.object(srr, '_audit', AsyncMock(return_value=None)), \
-+             patch.object(srr, 'get_db', return_value=db):
-+            result = await srr.upsert_registration("p1", payload, user)
-+
-+        assert any(p.get("role") == "site_manager" for p in result["personnel"])
-+        call = db.safety_project_settings.update_one.call_args
-+        set_doc = call.args[1]["$set"]
-+        assert "personnel" in set_doc
-+        assert set_doc["personnel"][0]["role"] == "site_manager"
-+    asyncio.run(run())
-+
-+
-+def test_upsert_hashes_personnel_id_numbers():
-+    """Batch S2B v2 — personnel id_number is masked + id_number_hash present."""
-+    async def run():
-+        existing = {
-+            "id": "x", "project_id": "p1", "deletedAt": None,
-+            "managers": [], "personnel": [],
++    # Template — all unit-scope stages, IN TEMPLATE ORDER.
++    # AMENDMENT (Replit feedback 2026-05-04): explicit sort by `order`
++    # field instead of relying on Python list insertion order. The
++    # `order` field is admin-controlled via the template editor and is
++    # the authoritative source of stage sequence. Defensive against any
++    # future change to template editor save behavior.
+     tpl = await _get_template(db, project_id=project_id)
+-    unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
+-    unit_stage_ids = [s["id"] for s in unit_stages]
+-    tiling_stage = unit_stages[0] if unit_stages else None
+-    tiling_stage_id = tiling_stage["id"] if tiling_stage else "stage_tiling"
+-    tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
++    unit_stages_list = sorted(
++        [s for s in tpl["stages"] if s.get("scope") == "unit"],
++        key=lambda s: s.get("order", 999)
++    )
+ 
+-    run_ids = [r["id"] for r in unit_runs.values()]
+-    items_by_run = {}
++    if not unit_stages_list:
++        return {
++            "floor_id": floor_id,
++            "floor_name": floor.get("name", ""),
++            "building_id": building["id"],
++            "building_name": building.get("name", ""),
++            "stages": [],
 +        }
 +
-+        db = MagicMock()
-+        db.safety_project_settings.find_one = AsyncMock(
-+            side_effect=[existing, existing, existing]
-+        )
-+        db.safety_project_settings.insert_one = AsyncMock()
-+        db.safety_project_settings.update_one = AsyncMock()
++    unit_stage_ids = [s["id"] for s in unit_stages_list]
 +
-+        from contractor_ops.schemas import SafetyProjectRegistrationUpsert
-+        payload = SafetyProjectRegistrationUpsert(
-+            personnel=[{
-+                "role": "safety_officer",
-+                "first_name": "א",
-+                "last_name": "ב",
-+                "id_number": "123456789",
-+            }]
-+        )
-+        user = {"id": "u1"}
-+
-+        with patch.object(srr, '_check_project_access', AsyncMock(return_value=None)), \
-+             patch.object(srr, '_audit', AsyncMock(return_value=None)), \
-+             patch.object(srr, 'get_db', return_value=db):
-+            await srr.upsert_registration("p1", payload, user)
-+
-+        call = db.safety_project_settings.update_one.call_args
-+        set_doc = call.args[1]["$set"]
-+        person = set_doc["personnel"][0]
-+        assert person["id_number"] == "1***789"
-+        assert "id_number_hash" in person
-+        assert person["id_number_hash"] != "123456789"
-+    asyncio.run(run())
-diff --git a/frontend/src/components/safety/SafetyProjectPersonnelSection.js b/frontend/src/components/safety/SafetyProjectPersonnelSection.js
-new file mode 100644
-index 0000000..cb93ee9
---- /dev/null
-+++ b/frontend/src/components/safety/SafetyProjectPersonnelSection.js
-@@ -0,0 +1,193 @@
-+import React from 'react';
-+import { ChevronDown, ChevronUp, Trash2, Plus } from 'lucide-react';
-+
-+const ROLE_ORDER = [
-+  'site_manager',
-+  'execution_engineer',
-+  'safety_assistant',
-+  'work_manager',
-+  'safety_officer',
-+];
-+
-+const ROLE_LABELS = {
-+  site_manager: 'מנהל אתר',
-+  execution_engineer: 'מהנדס ביצוע',
-+  safety_assistant: 'עוזר בטיחות',
-+  work_manager: 'מנהל עבודה',
-+  safety_officer: 'ממונה בטיחות',
-+};
-+
-+const EMPTY_PERSON = {
-+  first_name: '',
-+  last_name: '',
-+  id_number: '',
-+  license_number: '',
-+  notes: '',
-+};
-+
-+export default function SafetyProjectPersonnelSection({
-+  personnel,
-+  onChange,
-+  isOpen,
-+  onToggle,
-+}) {
-+  const list = Array.isArray(personnel) ? personnel : [];
-+  const totalCount = list.length;
-+
-+  const addPerson = (role) => {
-+    onChange([...list, { ...EMPTY_PERSON, role }]);
-+  };
-+
-+  const removePerson = (absoluteIdx) => {
-+    if (!window.confirm('להסיר את האחראי הזה?')) return;
-+    onChange(list.filter((_, i) => i !== absoluteIdx));
-+  };
-+
-+  const setPersonField = (absoluteIdx, field, value) => {
-+    onChange(
-+      list.map((p, i) => (i === absoluteIdx ? { ...p, [field]: value } : p))
-+    );
-+  };
-+
-+  const indexedByRole = ROLE_ORDER.map((role) => ({
-+    role,
-+    items: list
-+      .map((p, idx) => ({ p, idx }))
-+      .filter(({ p }) => p.role === role),
-+  }));
-+
-+  return (
-+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-3">
-+      <button
-+        onClick={onToggle}
-+        className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
-+      >
-+        <span className="font-bold text-slate-800">
-+          4. אחראי בטיחות בפרויקט ({totalCount})
-+        </span>
-+        {isOpen ? (
-+          <ChevronUp className="w-5 h-5 text-slate-500" />
-+        ) : (
-+          <ChevronDown className="w-5 h-5 text-slate-500" />
-+        )}
-+      </button>
-+      {isOpen && (
-+        <div className="px-4 pb-4 border-t border-slate-100 pt-3" dir="rtl">
-+          {indexedByRole.map(({ role, items }) => (
-+            <div key={role} className="mb-5">
-+              <div className="flex items-center justify-between mb-2 py-3">
-+                <span className="font-semibold text-slate-800">
-+                  {ROLE_LABELS[role]} ({items.length})
-+                </span>
-+              </div>
-+
-+              {items.map(({ p, idx }, posIdx) => (
-+                <div
-+                  key={idx}
-+                  className="bg-slate-50 rounded-lg px-3 py-3 mb-3"
-+                >
-+                  <div className="flex items-center justify-between mb-2">
-+                    <span className="font-medium text-slate-700">
-+                      {ROLE_LABELS[role]} #{posIdx + 1}
-+                    </span>
-+                    <button
-+                      onClick={() => removePerson(idx)}
-+                      className="text-red-500 hover:text-red-700 px-3 py-3"
-+                      aria-label="הסר"
-+                    >
-+                      <Trash2 className="w-4 h-4" />
-+                    </button>
-+                  </div>
-+
-+                  <div className="grid grid-cols-2 gap-3 mb-3">
-+                    <div>
-+                      <label className="block text-sm font-medium text-slate-700 mb-1">
-+                        שם פרטי
-+                      </label>
-+                      <input
-+                        type="text"
-+                        value={p.first_name || ''}
-+                        onChange={(e) =>
-+                          setPersonField(idx, 'first_name', e.target.value)
-+                        }
-+                        dir="rtl"
-+                        className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-+                      />
-+                    </div>
-+                    <div>
-+                      <label className="block text-sm font-medium text-slate-700 mb-1">
-+                        שם משפחה
-+                      </label>
-+                      <input
-+                        type="text"
-+                        value={p.last_name || ''}
-+                        onChange={(e) =>
-+                          setPersonField(idx, 'last_name', e.target.value)
-+                        }
-+                        dir="rtl"
-+                        className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-+                      />
-+                    </div>
-+                  </div>
-+
-+                  <div className="mb-3">
-+                    <label className="block text-sm font-medium text-slate-700 mb-1">
-+                      ת.ז
-+                    </label>
-+                    <input
-+                      type="text"
-+                      value={p.id_number || ''}
-+                      onChange={(e) =>
-+                        setPersonField(idx, 'id_number', e.target.value)
-+                      }
-+                      placeholder="9 ספרות (יוצפן בשמירה)"
-+                      dir="rtl"
-+                      className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-+                    />
-+                  </div>
-+
-+                  <div className="mb-3">
-+                    <label className="block text-sm font-medium text-slate-700 mb-1">
-+                      מספר רישיון / הסמכה
-+                    </label>
-+                    <input
-+                      type="text"
-+                      value={p.license_number || ''}
-+                      onChange={(e) =>
-+                        setPersonField(idx, 'license_number', e.target.value)
-+                      }
-+                      dir="rtl"
-+                      className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-+                    />
-+                  </div>
-+
-+                  <div className="mb-1">
-+                    <label className="block text-sm font-medium text-slate-700 mb-1">
-+                      הערות
-+                    </label>
-+                    <textarea
-+                      rows={2}
-+                      value={p.notes || ''}
-+                      onChange={(e) =>
-+                        setPersonField(idx, 'notes', e.target.value)
-+                      }
-+                      dir="rtl"
-+                      className="w-full px-3 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-+                    />
-+                  </div>
-+                </div>
-+              ))}
-+
-+              <button
-+                onClick={() => addPerson(role)}
-+                className="w-full py-3 px-3 border-2 border-dashed border-slate-300 rounded-lg text-slate-600 hover:border-blue-500 hover:text-blue-600 flex items-center justify-center gap-2"
-+              >
-+                <Plus className="w-4 h-4" /> הוסף {ROLE_LABELS[role]}
-+              </button>
-+            </div>
-+          ))}
-+        </div>
-+      )}
-+    </div>
-+  );
-+}
-diff --git a/frontend/src/pages/SafetyProjectRegistrationPage.js b/frontend/src/pages/SafetyProjectRegistrationPage.js
-index 01f8b8a..8238118 100644
---- a/frontend/src/pages/SafetyProjectRegistrationPage.js
-+++ b/frontend/src/pages/SafetyProjectRegistrationPage.js
-@@ -5,6 +5,7 @@ import { toast } from 'sonner';
- import { useAuth } from '../contexts/AuthContext';
- import { safetyService } from '../services/api';
- import { downloadBlob } from '../utils/fileDownload';
-+import SafetyProjectPersonnelSection from '../components/safety/SafetyProjectPersonnelSection';
++    # Single query — fetch ALL items for ALL unit-scope stages on these runs.
++    items_by_run_and_stage = {}  # {(run_id, stage_id): [items]}
+     if run_ids:
+         all_items = await db.qc_items.find(
+-            {"run_id": {"$in": run_ids}, "stage_id": tiling_stage_id},
+-            {"_id": 0, "run_id": 1, "status": 1}
+-        ).to_list(5000)
++            {"run_id": {"$in": run_ids}, "stage_id": {"$in": unit_stage_ids}},
++            {"_id": 0, "run_id": 1, "stage_id": 1, "status": 1}
++        ).to_list(50000)
+         for item in all_items:
+-            items_by_run.setdefault(item["run_id"], []).append(item)
++            key = (item["run_id"], item["stage_id"])
++            items_by_run_and_stage.setdefault(key, []).append(item)
  
- const EMPTY_MANAGER = {
-   first_name: '',
-@@ -69,6 +70,7 @@ export default function SafetyProjectRegistrationPage() {
-     contractor_registry_number: '',
-     office_address: { ...EMPTY_ADDRESS },
-     managers: [],
-+    personnel: [],
-     permit_number: '',
-     form_4_target_date: '',
-   });
-@@ -81,6 +83,7 @@ export default function SafetyProjectRegistrationPage() {
-     general: true,
-     address: false,
-     managers: false,
-+    personnel: false,
-     regulatory: false,
-   });
- 
-@@ -94,6 +97,7 @@ export default function SafetyProjectRegistrationPage() {
-         contractor_registry_number: data.contractor_registry_number || '',
-         office_address: data.office_address || { ...EMPTY_ADDRESS },
-         managers: data.managers || [],
-+        personnel: data.personnel || [],
-         permit_number: data.permit_number || '',
-         form_4_target_date: data.form_4_target_date || '',
-       });
-@@ -219,7 +223,14 @@ export default function SafetyProjectRegistrationPage() {
-           </button>
-         </Section>
- 
--        <Section title="4. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
-+        <SafetyProjectPersonnelSection
-+          personnel={reg.personnel || []}
-+          onChange={(p) => setReg(prev => ({ ...prev, personnel: p }))}
-+          isOpen={openSections.personnel}
-+          onToggle={() => toggleSection('personnel')}
-+        />
+-    result = []
+-    for unit in units:
+-        uid = unit["id"]
+-        run = unit_runs.get(uid)
+-        if not run:
+-            result.append({
++    # Build per-stage rollup, in template order.
++    stages_out = []
++    for stage in unit_stages_list:
++        stage_id = stage["id"]
++        stage_items_count = len(stage.get("items", []))
 +
-+        <Section title="5. אסמכתאות רגולטוריות" isOpen={openSections.regulatory} onToggle={() => toggleSection('regulatory')}>
-           <Field label="מספר היתר בנייה" value={reg.permit_number} onChange={(v) => setField('permit_number', v)} />
-           <Field label="תאריך יעד טופס 4" value={reg.form_4_target_date} onChange={(v) => setField('form_4_target_date', v)} type="date" />
-         </Section>
++        units_breakdown = []
++        for unit in units:
++            uid = unit["id"]
++            run = unit_runs.get(uid)
++
++            if not run:
++                units_breakdown.append({
++                    "unit_id": uid,
++                    "unit_name": unit.get("name", ""),
++                    "unit_no": unit.get("unit_no", ""),
++                    "status": "not_started",
++                    "pass_count": 0,
++                    "fail_count": 0,
++                    "handled_count": 0,
++                    "total": stage_items_count,
++                })
++                continue
++
++            key = (run["id"], stage_id)
++            stage_items = items_by_run_and_stage.get(key, [])
++            pass_count = sum(1 for i in stage_items if i.get("status") == "pass")
++            fail_count = sum(1 for i in stage_items if i.get("status") == "fail")
++            handled_count = pass_count + fail_count
++
++            stage_statuses = run.get("stage_statuses", {})
++            stored_status = stage_statuses.get(stage_id, "draft")
++
++            if stored_status == "approved":
++                unit_status = "approved"
++            elif handled_count > 0 or stored_status not in ("draft", "not_started"):
++                unit_status = "in_progress"
++            else:
++                unit_status = "not_started"
++
++            units_breakdown.append({
+                 "unit_id": uid,
+                 "unit_name": unit.get("name", ""),
+                 "unit_no": unit.get("unit_no", ""),
+-                "status": "not_started",
+-                "pass_count": 0,
+-                "fail_count": 0,
+-                "handled_count": 0,
+-                "total": tiling_item_count,
++                "status": unit_status,
++                "pass_count": pass_count,
++                "fail_count": fail_count,
++                "handled_count": handled_count,
++                "total": stage_items_count,
+             })
+-            continue
+ 
+-        run_items = items_by_run.get(run["id"], [])
+-        pass_count = sum(1 for i in run_items if i.get("status") == "pass")
+-        fail_count = sum(1 for i in run_items if i.get("status") == "fail")
+-        handled_count = pass_count + fail_count
+-        total = tiling_item_count
++        total_units = len(units)
++        approved_units = sum(1 for u in units_breakdown if u["status"] == "approved")
++        in_progress_units = sum(1 for u in units_breakdown if u["status"] == "in_progress")
++        not_started_units = sum(1 for u in units_breakdown if u["status"] == "not_started")
+ 
+-        stage_statuses = run.get("stage_statuses", {})
+-        tiling_status = stage_statuses.get(tiling_stage_id, "draft")
+-        if tiling_status == "approved":
+-            status = "approved"
+-        elif handled_count > 0 or tiling_status not in ("draft", "not_started"):
+-            status = "in_progress"
+-        else:
+-            status = "not_started"
++        total_items_handled = sum(u["handled_count"] for u in units_breakdown)
++        total_items_possible = total_units * stage_items_count
++        pct = int((total_items_handled / total_items_possible) * 100) if total_items_possible > 0 else 0
+ 
+-        result.append({
+-            "unit_id": uid,
+-            "unit_name": unit.get("name", ""),
+-            "unit_no": unit.get("unit_no", ""),
+-            "status": status,
+-            "pass_count": pass_count,
+-            "fail_count": fail_count,
+-            "handled_count": handled_count,
+-            "total": total,
++        stages_out.append({
++            "stage_id": stage_id,
++            "stage_title": stage.get("title", ""),
++            "stage_order": stage.get("order", 0),
++            "items_per_unit": stage_items_count,
++            # AMENDMENT (Replit feedback 2026-05-04): is_empty flag for
++            # stages with no items. Frontend shows a friendly
++            # "אין פריטי בדיקה" message instead of misleading "0/X".
++            "is_empty": stage_items_count == 0,
++            "total_units": total_units,
++            "approved_units": approved_units,
++            "in_progress_units": in_progress_units,
++            "not_started_units": not_started_units,
++            "total_items_handled": total_items_handled,
++            "total_items_possible": total_items_possible,
++            "completion_pct": pct,
++            "units": units_breakdown,
+         })
+ 
+     return {
+@@ -977,7 +1040,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
+         "floor_name": floor.get("name", ""),
+         "building_id": building["id"],
+         "building_name": building.get("name", ""),
+-        "units": result,
++        "stages": stages_out,
+     }
+ 
+ 
+diff --git a/frontend/src/pages/FloorDetailPage.js b/frontend/src/pages/FloorDetailPage.js
+index cd198d5..5f66624 100644
+--- a/frontend/src/pages/FloorDetailPage.js
++++ b/frontend/src/pages/FloorDetailPage.js
+@@ -283,23 +283,28 @@ export default function FloorDetailPage() {
+           ))}
+         </div>
+ 
+-        {unitsStatus && unitsStatus.units && unitsStatus.units.length > 0 && (() => {
+-          const units = unitsStatus.units;
+-          const completedUnits = units.filter(u => u.status === 'approved').length;
+-          const totalUnits = units.length;
+-          const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
+-          const totalItemsUnit = units.reduce((s, u) => s + u.total, 0);
+-          const pct = totalItemsUnit > 0 ? Math.round((totalHandled / totalItemsUnit) * 100) : 0;
++        {/* Batch execution-control unit-scope-fix — render one card per
++             unit-scope stage from the new units-status response shape.
++             Replaces the old hardcoded single-stage block. */}
++        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
++          const total = unitStage.total_units || 0;
++          const approved = unitStage.approved_units || 0;
++          const inProgress = unitStage.in_progress_units || 0;
++          const pct = unitStage.completion_pct || 0;
++          const stageBadgeColor =
++            pct === 100 ? 'bg-emerald-400'
++            : pct > 0 ? 'bg-violet-400'
++            : 'bg-slate-200';
+ 
+           return (
+             <button
+-              onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`)}
++              key={unitStage.stage_id}
++              onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`)}
+               className="w-full text-right p-4 rounded-xl border border-violet-200 bg-white hover:border-violet-300 hover:shadow-sm transition-all border-r-4 border-r-violet-400"
+             >
+               <div className="flex items-center justify-between mb-2">
+                 <div className="flex items-center gap-2">
+-                  <span className="text-lg">🟫</span>
+-                  <span className="text-sm font-bold text-slate-700">ריצוף דירה</span>
++                  <span className="text-sm font-bold text-slate-700">{unitStage.stage_title}</span>
+                   <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+                     <Home className="w-3 h-3" />
+                     לפי דירות
+@@ -308,17 +313,26 @@ export default function FloorDetailPage() {
+                 <ChevronLeft className="w-4 h-4 text-slate-400" />
+               </div>
+               <div className="text-xs text-slate-500 mb-1.5">
+-                {completedUnits}/{totalUnits} דירות הושלמו
++                {/* AMENDMENT (Replit feedback 2026-05-04): show friendly
++                     message for empty stages instead of misleading "0/X". */}
++                {unitStage.is_empty ? (
++                  <span className="text-amber-600">אין פריטי בדיקה — הוסף בתבנית</span>
++                ) : (
++                  <>
++                    {approved}/{total} דירות הושלמו
++                    {inProgress > 0 && ` · ${inProgress} בעבודה`}
++                  </>
++                )}
+               </div>
+-              <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ריצוף ${pct}%`}>
++              <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${unitStage.stage_title} ${pct}%`}>
+                 <div
+-                  className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : pct > 0 ? 'bg-violet-400' : 'bg-slate-200'}`}
++                  className={`h-1.5 rounded-full transition-all ${stageBadgeColor}`}
+                   style={{ width: `${pct}%` }}
+                 />
+               </div>
+             </button>
+           );
+-        })()}
++        })}
+       </div>
+     </div>
+   );
+
+================================================================================
+NEW FILE — backend/tests/test_qc_units_status.py
+================================================================================
+
+"""Tests for execution-control unit-scope-fix — per-stage rollup on /floors/{id}/units-status."""
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from contractor_ops import qc_router as qcr
+
+
+def test_floor_units_status_returns_per_stage_rollup():
+    """Endpoint returns array of unit-scope stages in template `order`, not just the first."""
+    async def run():
+        tpl = {
+            "id": "tpl1",
+            "stages": [
+                {"id": "stage_floor_blocks", "title": "בלוקים", "scope": "floor", "order": 1, "items": [{"id": "i1"}]},
+                {"id": "stage_kitchen", "title": "מטבחים", "scope": "unit", "order": 10, "items": [{"id": "k1"}]},
+                {"id": "stage_tiling", "title": "ריצוף דירה", "scope": "unit", "order": 8, "items": [{"id": "tl_1"}, {"id": "tl_2"}]},
+                {"id": "stage_bath", "title": "אמבטיה", "scope": "unit", "order": 9, "items": [{"id": "b1"}]},
+            ],
+        }
+        units = [
+            {"id": "u1", "name": "1", "unit_no": "1", "floor_id": "f1", "archived": False},
+            {"id": "u2", "name": "2", "unit_no": "2", "floor_id": "f1", "archived": False},
+        ]
+        unit_runs = [
+            {"id": "r1", "unit_id": "u1", "scope": "unit", "stage_statuses": {"stage_tiling": "in_progress"}},
+        ]
+        items = [
+            {"run_id": "r1", "stage_id": "stage_tiling", "status": "pass"},
+            {"run_id": "r1", "stage_id": "stage_tiling", "status": "fail"},
+        ]
+
+        db = MagicMock()
+        db.floors.find_one = AsyncMock(return_value={"id": "f1", "name": "1", "building_id": "b1"})
+        db.buildings.find_one = AsyncMock(return_value={"id": "b1", "name": "B1", "project_id": "p1"})
+
+        units_cursor = MagicMock()
+        units_cursor.to_list = AsyncMock(return_value=units)
+        db.units.find = MagicMock(return_value=units_cursor)
+
+        class _AsyncIter:
+            def __init__(self, items):
+                self._items = list(items)
+            def __aiter__(self):
+                return self
+            async def __anext__(self):
+                if not self._items:
+                    raise StopAsyncIteration
+                return self._items.pop(0)
+
+        db.qc_runs.find = MagicMock(return_value=_AsyncIter(unit_runs))
+
+        items_cursor = MagicMock()
+        items_cursor.to_list = AsyncMock(return_value=items)
+        db.qc_items.find = MagicMock(return_value=items_cursor)
+
+        with patch.object(qcr, "get_db", return_value=db), \
+             patch.object(qcr, "_check_qc_access", new=AsyncMock()), \
+             patch.object(qcr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res = await qcr.get_floor_units_status("f1", user={"id": "admin", "role": "super_admin"})
+
+        # 3 unit-scope stages (floor-scope filtered out)
+        assert len(res["stages"]) == 3, f"expected 3 unit-scope stages, got {len(res['stages'])}"
+
+        # Order by `order` field: tiling(8) → bath(9) → kitchen(10)
+        assert res["stages"][0]["stage_id"] == "stage_tiling"
+        assert res["stages"][1]["stage_id"] == "stage_bath"
+        assert res["stages"][2]["stage_id"] == "stage_kitchen"
+
+        # tiling: u1 has 2 handled items → in_progress; u2 has no run → not_started
+        tiling = res["stages"][0]
+        assert tiling["stage_title"] == "ריצוף דירה"
+        assert tiling["items_per_unit"] == 2
+        assert tiling["is_empty"] is False
+        assert tiling["total_units"] == 2
+        assert tiling["total_items_handled"] == 2
+        assert tiling["total_items_possible"] == 4
+        assert tiling["completion_pct"] == 50
+        assert len(tiling["units"]) == 2
+
+        u1_breakdown = next(u for u in tiling["units"] if u["unit_id"] == "u1")
+        assert u1_breakdown["status"] == "in_progress"
+        assert u1_breakdown["pass_count"] == 1
+        assert u1_breakdown["fail_count"] == 1
+        assert u1_breakdown["handled_count"] == 2
+        assert u1_breakdown["total"] == 2
+
+        u2_breakdown = next(u for u in tiling["units"] if u["unit_id"] == "u2")
+        assert u2_breakdown["status"] == "not_started"
+        assert u2_breakdown["handled_count"] == 0
+
+        # bath + kitchen: no items in qc_items → all units not_started, 0 handled
+        bath = res["stages"][1]
+        assert bath["stage_title"] == "אמבטיה"
+        assert bath["is_empty"] is False
+        assert bath["total_items_handled"] == 0
+        assert bath["completion_pct"] == 0
+        assert all(u["status"] == "not_started" for u in bath["units"])
+
+        kitchen = res["stages"][2]
+        assert kitchen["stage_title"] == "מטבחים"
+        assert kitchen["total_items_handled"] == 0
+
+        # response top-level shape
+        assert res["floor_id"] == "f1"
+        assert res["building_id"] == "b1"
+        assert "stages" in res
+        assert "units" not in res, "old `units` key must be gone — replaced by `stages`"
+
+    asyncio.run(run())
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -882,6 +882,15 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
 
 @router.get("/floors/{floor_id}/units-status")
 async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current_user)):
+    """Per-stage rollup of unit-scope progress for a floor.
+
+    Returns a list of unit-scope stages (in template `order`), each with
+    per-unit breakdown of completion. Replaces the old single-stage
+    behavior that ignored all but the first unit-scope stage.
+
+    Used by FloorDetailPage to render one card per unit-scope stage in
+    the floor's stage grid.
+    """
     db = get_db()
 
     floor = await db.floors.find_one({"id": floor_id, "archived": {"$ne": True}}, {"_id": 0})
@@ -900,7 +909,6 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         {"_id": 0}
     ).to_list(200)
     units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
-
     unit_ids = [u["id"] for u in units]
 
     unit_runs = {}
@@ -912,64 +920,119 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         async for r in runs_cursor:
             unit_runs[r["unit_id"]] = r
 
-    tpl = await _get_template(db, project_id=project_id)
-    unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
-    unit_stage_ids = [s["id"] for s in unit_stages]
-    tiling_stage = unit_stages[0] if unit_stages else None
-    tiling_stage_id = tiling_stage["id"] if tiling_stage else "stage_tiling"
-    tiling_item_count = len(tiling_stage["items"]) if tiling_stage else 9
-
     run_ids = [r["id"] for r in unit_runs.values()]
-    items_by_run = {}
+
+    # Template — all unit-scope stages, IN TEMPLATE ORDER.
+    # AMENDMENT (Replit feedback 2026-05-04): explicit sort by `order`
+    # field instead of relying on Python list insertion order. The
+    # `order` field is admin-controlled via the template editor and is
+    # the authoritative source of stage sequence. Defensive against any
+    # future change to template editor save behavior.
+    tpl = await _get_template(db, project_id=project_id)
+    unit_stages_list = sorted(
+        [s for s in tpl["stages"] if s.get("scope") == "unit"],
+        key=lambda s: s.get("order", 999)
+    )
+
+    if not unit_stages_list:
+        return {
+            "floor_id": floor_id,
+            "floor_name": floor.get("name", ""),
+            "building_id": building["id"],
+            "building_name": building.get("name", ""),
+            "stages": [],
+        }
+
+    unit_stage_ids = [s["id"] for s in unit_stages_list]
+
+    # Single query — fetch ALL items for ALL unit-scope stages on these runs.
+    items_by_run_and_stage = {}  # {(run_id, stage_id): [items]}
     if run_ids:
         all_items = await db.qc_items.find(
-            {"run_id": {"$in": run_ids}, "stage_id": tiling_stage_id},
-            {"_id": 0, "run_id": 1, "status": 1}
-        ).to_list(5000)
+            {"run_id": {"$in": run_ids}, "stage_id": {"$in": unit_stage_ids}},
+            {"_id": 0, "run_id": 1, "stage_id": 1, "status": 1}
+        ).to_list(50000)
         for item in all_items:
-            items_by_run.setdefault(item["run_id"], []).append(item)
+            key = (item["run_id"], item["stage_id"])
+            items_by_run_and_stage.setdefault(key, []).append(item)
 
-    result = []
-    for unit in units:
-        uid = unit["id"]
-        run = unit_runs.get(uid)
-        if not run:
-            result.append({
+    # Build per-stage rollup, in template order.
+    stages_out = []
+    for stage in unit_stages_list:
+        stage_id = stage["id"]
+        stage_items_count = len(stage.get("items", []))
+
+        units_breakdown = []
+        for unit in units:
+            uid = unit["id"]
+            run = unit_runs.get(uid)
+
+            if not run:
+                units_breakdown.append({
+                    "unit_id": uid,
+                    "unit_name": unit.get("name", ""),
+                    "unit_no": unit.get("unit_no", ""),
+                    "status": "not_started",
+                    "pass_count": 0,
+                    "fail_count": 0,
+                    "handled_count": 0,
+                    "total": stage_items_count,
+                })
+                continue
+
+            key = (run["id"], stage_id)
+            stage_items = items_by_run_and_stage.get(key, [])
+            pass_count = sum(1 for i in stage_items if i.get("status") == "pass")
+            fail_count = sum(1 for i in stage_items if i.get("status") == "fail")
+            handled_count = pass_count + fail_count
+
+            stage_statuses = run.get("stage_statuses", {})
+            stored_status = stage_statuses.get(stage_id, "draft")
+
+            if stored_status == "approved":
+                unit_status = "approved"
+            elif handled_count > 0 or stored_status not in ("draft", "not_started"):
+                unit_status = "in_progress"
+            else:
+                unit_status = "not_started"
+
+            units_breakdown.append({
                 "unit_id": uid,
                 "unit_name": unit.get("name", ""),
                 "unit_no": unit.get("unit_no", ""),
-                "status": "not_started",
-                "pass_count": 0,
-                "fail_count": 0,
-                "handled_count": 0,
-                "total": tiling_item_count,
+                "status": unit_status,
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "handled_count": handled_count,
+                "total": stage_items_count,
             })
-            continue
 
-        run_items = items_by_run.get(run["id"], [])
-        pass_count = sum(1 for i in run_items if i.get("status") == "pass")
-        fail_count = sum(1 for i in run_items if i.get("status") == "fail")
-        handled_count = pass_count + fail_count
-        total = tiling_item_count
+        total_units = len(units)
+        approved_units = sum(1 for u in units_breakdown if u["status"] == "approved")
+        in_progress_units = sum(1 for u in units_breakdown if u["status"] == "in_progress")
+        not_started_units = sum(1 for u in units_breakdown if u["status"] == "not_started")
 
-        stage_statuses = run.get("stage_statuses", {})
-        tiling_status = stage_statuses.get(tiling_stage_id, "draft")
-        if tiling_status == "approved":
-            status = "approved"
-        elif handled_count > 0 or tiling_status not in ("draft", "not_started"):
-            status = "in_progress"
-        else:
-            status = "not_started"
+        total_items_handled = sum(u["handled_count"] for u in units_breakdown)
+        total_items_possible = total_units * stage_items_count
+        pct = int((total_items_handled / total_items_possible) * 100) if total_items_possible > 0 else 0
 
-        result.append({
-            "unit_id": uid,
-            "unit_name": unit.get("name", ""),
-            "unit_no": unit.get("unit_no", ""),
-            "status": status,
-            "pass_count": pass_count,
-            "fail_count": fail_count,
-            "handled_count": handled_count,
-            "total": total,
+        stages_out.append({
+            "stage_id": stage_id,
+            "stage_title": stage.get("title", ""),
+            "stage_order": stage.get("order", 0),
+            "items_per_unit": stage_items_count,
+            # AMENDMENT (Replit feedback 2026-05-04): is_empty flag for
+            # stages with no items. Frontend shows a friendly
+            # "אין פריטי בדיקה" message instead of misleading "0/X".
+            "is_empty": stage_items_count == 0,
+            "total_units": total_units,
+            "approved_units": approved_units,
+            "in_progress_units": in_progress_units,
+            "not_started_units": not_started_units,
+            "total_items_handled": total_items_handled,
+            "total_items_possible": total_items_possible,
+            "completion_pct": pct,
+            "units": units_breakdown,
         })
 
     return {
@@ -977,7 +1040,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         "floor_name": floor.get("name", ""),
         "building_id": building["id"],
         "building_name": building.get("name", ""),
-        "units": result,
+        "stages": stages_out,
     }
 
 

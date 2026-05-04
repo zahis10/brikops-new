@@ -283,23 +283,28 @@ export default function FloorDetailPage() {
           ))}
         </div>
 
-        {unitsStatus && unitsStatus.units && unitsStatus.units.length > 0 && (() => {
-          const units = unitsStatus.units;
-          const completedUnits = units.filter(u => u.status === 'approved').length;
-          const totalUnits = units.length;
-          const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
-          const totalItemsUnit = units.reduce((s, u) => s + u.total, 0);
-          const pct = totalItemsUnit > 0 ? Math.round((totalHandled / totalItemsUnit) * 100) : 0;
+        {/* Batch execution-control unit-scope-fix — render one card per
+             unit-scope stage from the new units-status response shape.
+             Replaces the old hardcoded single-stage block. */}
+        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+          const total = unitStage.total_units || 0;
+          const approved = unitStage.approved_units || 0;
+          const inProgress = unitStage.in_progress_units || 0;
+          const pct = unitStage.completion_pct || 0;
+          const stageBadgeColor =
+            pct === 100 ? 'bg-emerald-400'
+            : pct > 0 ? 'bg-violet-400'
+            : 'bg-slate-200';
 
           return (
             <button
-              onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`)}
+              key={unitStage.stage_id}
+              onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`)}
               className="w-full text-right p-4 rounded-xl border border-violet-200 bg-white hover:border-violet-300 hover:shadow-sm transition-all border-r-4 border-r-violet-400"
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-lg">🟫</span>
-                  <span className="text-sm font-bold text-slate-700">ריצוף דירה</span>
+                  <span className="text-sm font-bold text-slate-700">{unitStage.stage_title}</span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
                     <Home className="w-3 h-3" />
                     לפי דירות
@@ -308,17 +313,26 @@ export default function FloorDetailPage() {
                 <ChevronLeft className="w-4 h-4 text-slate-400" />
               </div>
               <div className="text-xs text-slate-500 mb-1.5">
-                {completedUnits}/{totalUnits} דירות הושלמו
+                {/* AMENDMENT (Replit feedback 2026-05-04): show friendly
+                     message for empty stages instead of misleading "0/X". */}
+                {unitStage.is_empty ? (
+                  <span className="text-amber-600">אין פריטי בדיקה — הוסף בתבנית</span>
+                ) : (
+                  <>
+                    {approved}/{total} דירות הושלמו
+                    {inProgress > 0 && ` · ${inProgress} בעבודה`}
+                  </>
+                )}
               </div>
-              <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ריצוף ${pct}%`}>
+              <div className="w-full bg-slate-100 rounded-full h-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`התקדמות ${unitStage.stage_title} ${pct}%`}>
                 <div
-                  className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : pct > 0 ? 'bg-violet-400' : 'bg-slate-200'}`}
+                  className={`h-1.5 rounded-full transition-all ${stageBadgeColor}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
             </button>
           );
-        })()}
+        })}
       </div>
     </div>
   );
