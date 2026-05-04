@@ -1682,6 +1682,12 @@ export default function StageDetailPage() {
                       {reviewBadge.label}
                     </span>
                   )}
+                  {runData?.stage_actors?.[stageId]?.via_override && (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                      <Shield className="w-3 h-3" />
+                      אושר ב-Override על־ידי {runData?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'}
+                    </span>
+                  )}
                   {runData?.building_name && (
                     <span className="text-[10px] text-slate-400">{runData.building_name} / {runData.floor_name}</span>
                   )}
@@ -1834,6 +1840,48 @@ export default function StageDetailPage() {
 
         {timelineData?.audit_summary && (
           <AuditSummaryCard auditSummary={timelineData.audit_summary} canSeeFull={timelineData.can_see_full} />
+        )}
+
+        {runData?.stage_actors?.[stageId]?.via_override && (
+          <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200" dir="rtl">
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="w-4 h-4 text-amber-700" />
+              <span className="text-sm font-bold text-amber-900">
+                סגור באמצעות Override
+              </span>
+            </div>
+            <table className="w-full text-xs text-amber-900">
+              <tbody>
+                <tr>
+                  <td className="py-1 pl-2 text-amber-700 align-top whitespace-nowrap">אישר:</td>
+                  <td className="py-1">
+                    {runData?.stage_actors?.[stageId]?.approved_by_name || 'משתמש לא ידוע'}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1 pl-2 text-amber-700 align-top whitespace-nowrap">תאריך:</td>
+                  <td className="py-1">
+                    {(() => {
+                      const at = runData?.stage_actors?.[stageId]?.approved_at;
+                      if (!at) return '—';
+                      try {
+                        const d = new Date(at);
+                        return d.toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' });
+                      } catch (e) {
+                        return at;
+                      }
+                    })()}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1 pl-2 text-amber-700 align-top whitespace-nowrap">סיבה:</td>
+                  <td className="py-1 break-words">
+                    {runData?.stage_actors?.[stageId]?.override_reason || '—'}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         )}
 
         {isRejected && (canApproveThis || isPM) && (
