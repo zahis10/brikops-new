@@ -5,10 +5,11 @@ import { getStageVisualStatus, getQualityBadge, getReviewBadge } from '../utils/
 import { toast } from 'sonner';
 import {
   ArrowRight, Loader2, ClipboardCheck, CheckCircle2, XCircle, Clock,
-  Save, RefreshCw, Camera, Send, Lock, AlertCircle, ShieldCheck, ShieldX, ShieldAlert, Navigation,
+  Save, RefreshCw, Camera, Send, Lock, AlertCircle, Shield, ShieldCheck, ShieldX, ShieldAlert, Navigation,
   RotateCcw, History, User, Filter, Eye, ImagePlus, ChevronDown, ChevronUp, Settings, Info, Users,
   Paperclip, FileText, Phone, X
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import WhatsAppRejectionModal from '../components/WhatsAppRejectionModal';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { compressImage } from '../utils/imageCompress';
@@ -787,6 +788,10 @@ export default function StageDetailPage() {
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [reopening, setReopening] = useState(false);
+  const [showOverrideDialog, setShowOverrideDialog] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+  const { user } = useAuth();
   const [timelineData, setTimelineData] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
   const [lastRejectedItemId, setLastRejectedItemId] = useState(null);
@@ -1001,6 +1006,26 @@ export default function StageDetailPage() {
       toast.error(err.response?.data?.detail || 'שגיאה בדחיית השלב');
     } finally {
       setRejecting(false);
+    }
+  };
+
+  const handleOverrideApprove = async () => {
+    const reason = (overrideReason || '').trim();
+    if (reason.length < 10) {
+      alert('סיבה חייבת להכיל לפחות 10 תווים');
+      return;
+    }
+    try {
+      setOverrideSubmitting(true);
+      await qcService.overrideApproveStage(runId, stageId, reason);
+      setShowOverrideDialog(false);
+      setOverrideReason('');
+      await load();
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'שגיאה בסגירת השלב';
+      alert(msg);
+    } finally {
+      setOverrideSubmitting(false);
     }
   };
 
@@ -2253,10 +2278,86 @@ export default function StageDetailPage() {
                   שלב נדחה — ניתן לתקן ולשלוח שוב
                 </div>
               )}
+
+              {!isApproved && (runData?.role === 'project_manager' || user?.platform_role === 'super_admin') && (
+                <button onClick={() => setShowOverrideDialog(true)}
+                  aria-label="סגור שלב ב-Override (מנהל פרויקט)"
+                  className="flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm bg-violet-100 hover:bg-violet-200 text-violet-800 border border-violet-300 shadow-sm transition-all">
+                  <Shield className="w-4 h-4" />
+                  סגור שלב ב-Override (PM)
+                </button>
+              )}
+
+              {isApproved && runData?.stage_actors?.[stageId]?.via_override && (
+                <div className="flex-1 flex items-center justify-center gap-2 min-h-[36px] bg-violet-50 border border-violet-200 rounded-xl text-violet-700 text-xs font-medium">
+                  <Shield className="w-3.5 h-3.5" />
+                  אושר ב-Override על־ידי {runData?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'}
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      <DialogPrimitive.Root open={showOverrideDialog} onOpenChange={(open) => { setShowOverrideDialog(open); if (!open) setOverrideReason(''); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40 z-50" />
+          <DialogPrimitive.Content className="fixed inset-x-0 bottom-0 sm:inset-0 z-50 sm:flex sm:items-center sm:justify-center outline-none">
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md sm:mx-auto">
+              <DialogPrimitive.Title className="sr-only">סגירת שלב ב-Override</DialogPrimitive.Title>
+              <DialogPrimitive.Description className="sr-only">סגירת שלב ב-Override על־ידי מנהל פרויקט ללא בדיקת סעיפים</DialogPrimitive.Description>
+              <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-violet-600" />
+                  סגירת שלב ב-Override
+                </h3>
+                <DialogPrimitive.Close asChild>
+                  <button className="p-1 hover:bg-slate-100 rounded-lg" aria-label="סגור">
+                    <XCircle className="w-5 h-5 text-slate-400" />
+                  </button>
+                </DialogPrimitive.Close>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                  <div className="flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <div className="font-bold mb-0.5">פעולה זו תסגור את השלב ללא בדיקת סעיפים.</div>
+                      <div>כל הסעיפים יסומנו "תקין" אוטומטית עם דגל override. הפעולה תיכתב לאודיט.</div>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">סיבת ה-Override (חובה — לפחות 10 תווים)</label>
+                  <textarea
+                    value={overrideReason}
+                    onChange={e => setOverrideReason(e.target.value)}
+                    placeholder="למשל: נכנסתי לפרויקט מאוחר; השלב הסתיים פיזית לפני שהאפליקציה הוטמעה."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300"
+                    rows={4}
+                    dir="rtl"
+                    maxLength={500}
+                  />
+                  <div className="text-[10px] text-slate-400 mt-1 text-left">{overrideReason.length}/500</div>
+                </div>
+                <div className="flex gap-2">
+                  <DialogPrimitive.Close asChild>
+                    <button className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 active:bg-slate-100 min-h-[44px]">
+                      ביטול
+                    </button>
+                  </DialogPrimitive.Close>
+                  <button onClick={handleOverrideApprove} disabled={overrideSubmitting || overrideReason.trim().length < 10}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
+                      overrideReason.trim().length >= 10 ? 'bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}>
+                    {overrideSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'סגור שלב ב-Override'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
       {whatsAppModal && (
         <WhatsAppRejectionModal

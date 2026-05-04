@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1117,6 +1117,7 @@ async def get_run_detail(run_id: str, user: dict = Depends(get_current_user)):
         "template_id": run["template_id"],
         "scope": run.get("scope", "floor"),
         "stage_statuses": stage_statuses,
+        "stage_actors": run.get("stage_actors", {}),
         "created_at": run.get("created_at"),
     }
     if run.get("unit_id"):
@@ -2706,6 +2707,11 @@ class ReopenBody(BaseModel):
     reason: str
 
 
+class OverrideApproveBody(BaseModel):
+    """Body for stage override-approve. Reason mandatory."""
+    reason: str = Field(..., min_length=10, max_length=500)
+
+
 @router.post("/run/{run_id}/stage/{stage_id}/reopen")
 async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -2770,6 +2776,118 @@ async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict 
 
     logger.info(f"[QC] Stage {stage_id} reopened in run {run_id} by user {user['id']}: {body.reason}")
     return {"status": "reopened", "stage_id": stage_id}
+
+
+@router.post("/run/{run_id}/stage/{stage_id}/override-approve")
+async def override_approve_stage(
+    run_id: str,
+    stage_id: str,
+    body: OverrideApproveBody,
+    user: dict = Depends(get_current_user),
+):
+    """PM Override — close a stage WITHOUT per-item validation.
+
+    Use case: PM joins existing project mid-construction; old stages
+    physically done but no in-app documentation. Normal submit/approve
+    flow blocks because items have no photos/notes/status.
+
+    Restricted to:
+      - membership.role == 'project_manager' on this project
+      - OR super_admin
+    Junior management_team CANNOT override. 'owner' role is also blocked
+    (per spec D4 — override is PM-scoped only).
+
+    Side effects:
+      - All items in the stage marked 'pass' with marked_via_override=true
+      - stage_statuses[stage_id] = 'approved'
+      - stage_actors[stage_id] populated with override metadata
+      - Audit log entry: 'qc_stage_override_approved'
+      - Notifications: action='approved_via_override' (actor filtered out)
+    """
+    db = get_db()
+
+    run = await db.qc_runs.find_one({"id": run_id}, {"_id": 0})
+    if not run:
+        raise HTTPException(status_code=404, detail="QC run not found")
+
+    project_id = run["project_id"]
+
+    role = await _get_project_role(user, project_id)
+    if role != "project_manager" and not _is_super_admin(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Override close requires project manager role",
+        )
+
+    reason = (body.reason or "").strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=400, detail="סיבה חייבת להכיל לפחות 10 תווים")
+
+    stage_statuses = run.get("stage_statuses", {})
+    if stage_statuses.get(stage_id) == "approved":
+        raise HTTPException(status_code=400, detail="שלב זה כבר אושר")
+
+    tpl = await _get_template(db, run=run, project_id=project_id)
+    tpl_stage = next((s for s in tpl["stages"] if s["id"] == stage_id), None)
+    if not tpl_stage:
+        raise HTTPException(status_code=404, detail="Stage not found in template")
+
+    actor = _actor_name(user)
+    now = _now()
+
+    await db.qc_items.update_many(
+        {"run_id": run_id, "stage_id": stage_id},
+        {"$set": {
+            "status": "pass",
+            "marked_via_override": True,
+            "updated_by": user["id"],
+            "updated_at": now,
+        }},
+    )
+
+    await db.qc_runs.update_one(
+        {"id": run_id},
+        {"$set": {
+            f"stage_statuses.{stage_id}": "approved",
+            f"stage_actors.{stage_id}.approved_by": user["id"],
+            f"stage_actors.{stage_id}.approved_by_name": actor,
+            f"stage_actors.{stage_id}.approved_at": now,
+            f"stage_actors.{stage_id}.via_override": True,
+            f"stage_actors.{stage_id}.override_reason": reason,
+        }},
+    )
+
+    await _audit("qc_stage", stage_id, "qc_stage_override_approved", user["id"], {
+        "run_id": run_id,
+        "floor_id": run.get("floor_id"),
+        "project_id": project_id,
+        "stage_id": stage_id,
+        "override_reason": reason,
+        "actor_name": actor,
+        "stage_label": _stage_label(tpl, stage_id),
+    })
+
+    try:
+        recipients = await _get_stage_recipients(db, project_id, stage_id, "approved")
+        recipients = [r for r in recipients if r.get("user_id") != user["id"]]
+        if recipients:
+            await _create_qc_notification(
+                db, recipients,
+                project_id=project_id, stage_id=stage_id,
+                floor_id=run.get("floor_id"), building_id=run.get("building_id"),
+                stage_code=stage_id, stage_label_he=_stage_label(tpl, stage_id),
+                actor_id=user["id"], actor_name_str=actor,
+                action="approved_via_override", run_id=run_id,
+            )
+    except Exception as e:
+        logger.error(f"[QC] Failed to create notifications for override: {e}")
+
+    logger.info(
+        f"[QC] Stage {stage_id} OVERRIDE APPROVED in run {run_id} "
+        f"by user {user['id']}, reason: {reason[:50]}"
+    )
+
+    return {"status": "approved", "stage_id": stage_id, "via_override": True}
 
 
 STAGE_TIMELINE_ACTIONS = {"submit_for_review", "qc_approved", "qc_rejected", "qc_reopened"}

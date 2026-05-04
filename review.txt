@@ -1,159 +1,127 @@
-================================================================================
-HOTFIX P0 — UnitQCSelectionPage adapts to #476 units-status shape
-================================================================================
-Date:    2026-05-04
-Branch:  staging (target)
-Base:    origin/staging (post-#476 merge)
-Files:   1 — frontend/src/pages/UnitQCSelectionPage.js (+56 / -2)
-Tests:   NO new test (UI/UX only). Backend untouched.
-Mobile:  Frontend OTA only (Capgo). NO native files. NO migration.
+TASK #478 — PM OVERRIDE CLOSE (P1)
+========================================
+Status: BUILT — awaiting Zahi commit/deploy
+Branch: staging
+Files changed: 3 modified + 1 new (4 total)
+Diff: +229 / -2
 
-================================================================================
-STEP 0 PRE-FLIGHT AUDIT (verified 2026-05-04)
-================================================================================
-0.1 Broken refs in UnitQCSelectionPage:
-    L33 qcService.getUnitsStatus(floorId)
-    L95 const { units, floor_name } = data;             ✅ confirmed broken
-0.2 ALL getUnitsStatus consumers (3 hits — no surprise 4th):
-    api.js:1328              (definition)
-    FloorDetailPage.js:140   (already fixed in #476)
-    UnitQCSelectionPage.js:33 (this hotfix target)      ✅
-0.3 New response shape: qc_router.py:1043 returns 'stages': stages_out ✅
-0.4 Direct fetch/axios bypass: 1 hit only — api.js:1329 (the wrapper) ✅
-    NEW IRON RULE: STEP 0 endpoint contract changes must check 3 layers —
-    (1) URL string  (2) service method name  (3) direct fetch/axios.
+──────────────────────────────────────────
+WHAT
+──────────────────────────────────────────
+PMs that join an existing project mid-construction can now close stages
+that are already physically done but never documented in the app. New
+"סגור שלב ב-Override (PM)" button (violet) opens a dialog requiring a
+reason (≥10 chars, ≤500). On submit, all items in the stage are bulk-set
+to "pass" with marked_via_override=true, the stage flips to "approved",
+and an audit event + notification (with action="approved_via_override")
+is fired. Approved stages display a violet "אושר ב-Override על־ידי X"
+badge so the override is never silently invisible.
 
-DRIFT: NONE. All 4 audit greps match spec expectations exactly.
+──────────────────────────────────────────
+WHO CAN OVERRIDE (RBAC — strict)
+──────────────────────────────────────────
+ALLOWED:
+  • membership.role == "project_manager" on this specific project
+  • platform_role == "super_admin" (any project)
 
-================================================================================
-ROOT CAUSE
-================================================================================
-#476 changed /floors/{id}/units-status response from {units:[]} → {stages:[{units:[]}]}.
-#476's STEP 0.3 grepped only the URL string 'units-status' and missed the
-service method qcService.getUnitsStatus, which is consumed by 2 pages:
-  ✅ FloorDetailPage.js:140  — fixed in #476
-  ❌ UnitQCSelectionPage.js:33 — MISSED (this hotfix)
-Production-deploy result of #476 alone: clicking any unit-scope card →
-navigate to UnitQCSelectionPage → data.units.filter(…) on undefined →
-React error boundary → 'משהו השתבש' for ALL users.
+BLOCKED (403):
+  • role == "owner"           (per spec D4 — override is PM-scoped only)
+  • role == "management_team" (junior management — not authorized)
+  • role == "site_manager", "viewer", contractor, etc.
 
-================================================================================
-VERIFY 1-4 RESULTS
-================================================================================
-V1  Babel parse UnitQCSelectionPage.js                          ✅ OK
-    (yarn build skipped — recurring REACT_APP_BACKEND_URL env-gating in sandbox)
-V2  'data.units' refs in UnitQCSelectionPage.js (must be 0)     ✅ 0
-V3  'data.stages|unitAggMap' refs (must be ≥2)                  ✅ 6
-V4  pytest tests/test_qc_units_status.py                        ✅ 1 passed
-    (no backend regression — backend untouched)
+Frontend gate mirrors backend RBAC EXACTLY using runData.role
+(returned by qcService.getRun → _get_project_role) — no new endpoint,
+no extension to /my-approver-status. Verified during planning that the
+existing approverStatus.is_pm_implicit field is too loose (includes
+'owner', false-negative on PMs with explicit project_approvers doc) and
+not suitable as a gate. runData.role is the authoritative source.
 
-V5  Visual smoke 9 scenarios a-i — DEFERRED to Zahi after staging deploy:
-    a) /projects/{id}/floors/{floor_id} → all unit-scope cards visible (#476)
-    b) Click 'אמבטיה+אינטרפוץ' → URL becomes .../qc/units?stage_id=stage_bath_xxx
-    c) Page loads without 'משהו השתבש' — units list renders
-    d) Header shows aggregate counts 'X/Y דירות הושלמו' + sensible % bar
-    e) Click a unit → URL .../stage/stage_bath_xxx → StageDetailPage shows
-       אמבטיה+אינטרפוץ items (NOT ריצוף).         ← Path B win
-    f) Browser back → returns to UnitQCSelectionPage with ?stage_id= intact;
-       click another unit → again lands on אמבטיה. Consistency.
-    g) Click ריצוף דירה card → URL .../qc/units?stage_id=stage_tiling →
-       click a unit → lands on ריצוף. Path B works for ריצוף too.
-    h) Direct entry (no ?stage_id) → page works (Path A aggregate). Click
-       a unit → falls back to first stage of unit run (legacy preserved).
-    i) Mobile 375px DevTools → no overflow, units list scrolls.
+──────────────────────────────────────────
+PER-FILE DIFF
+──────────────────────────────────────────
+backend/contractor_ops/qc_router.py  (+120 / -1)
+  • L2: import Field from pydantic (alongside existing BaseModel)
+  • L1123: +1 line in get_run_detail response — exposes
+           "stage_actors": run.get("stage_actors", {}) so frontend can
+           read via_override flag for the badge. (Approved by Zahi.)
+  • L2713-2715: new OverrideApproveBody(BaseModel) with
+                reason: str = Field(..., min_length=10, max_length=500)
+  • L2784-2898: new POST /run/{run_id}/stage/{stage_id}/override-approve
+                - 404 if run not found
+                - 403 if role != "project_manager" AND not super_admin
+                - 400 if reason < 10 chars
+                - 400 if stage already "approved"
+                - 404 if stage not in template
+                - bulk-update qc_items: status="pass",
+                  marked_via_override=true, updated_by, updated_at
+                - run.stage_statuses[stage_id]="approved"
+                - run.stage_actors[stage_id]: approved_by, approved_by_name,
+                  approved_at, via_override=true, override_reason
+                - audit "qc_stage_override_approved"
+                - notifications with action="approved_via_override",
+                  actor filtered out from recipients
 
-V8  verify-only files unchanged:
-    backend/contractor_ops/qc_router.py    ✅ 0 lines diff vs origin/staging
-    frontend/src/pages/FloorDetailPage.js  ✅ 0 lines diff vs origin/staging
-    frontend/src/services/api.js           ✅ 0 lines diff vs origin/staging
+frontend/src/services/api.js  (+8 / -0)
+  • L1381-1388: new qcService.overrideApproveStage(runId, stageId, reason)
+                POSTs to /qc/run/{id}/stage/{id}/override-approve
 
-================================================================================
-FILES CHANGED (1)
-================================================================================
- frontend/src/pages/UnitQCSelectionPage.js |  58 +++-
- review.txt                                | 527 ++++--------------------------
- 2 files changed, 112 insertions(+), 473 deletions(-)
+frontend/src/pages/StageDetailPage.js  (+103 / -1)
+  • L11: add Shield to lucide imports
+  • L15: import { useAuth } from '../contexts/AuthContext'
+  • L794-797: 3 useState (showOverrideDialog, overrideReason,
+              overrideSubmitting) + const { user } = useAuth()
+  • L1015-1033: handleOverrideApprove — validates length, POSTs,
+                clears state, calls load() to refresh runData
+  • L2285-2292: violet "סגור שלב ב-Override (PM)" button — gated
+                !isApproved && (runData?.role === 'project_manager'
+                || user?.platform_role === 'super_admin')
+  • L2294-2299: violet badge "אושר ב-Override על־ידי X" — shown when
+                isApproved && runData.stage_actors[stageId].via_override
+  • L2305-2384: Radix Dialog modal — amber warning, textarea (rows=4,
+                maxLength=500, char counter), cancel + submit buttons.
+                Submit disabled when reason.trim().length < 10.
 
-================================================================================
-FULL UNIFIED DIFF
-================================================================================
-diff --git a/frontend/src/pages/UnitQCSelectionPage.js b/frontend/src/pages/UnitQCSelectionPage.js
-index 4680faf..c899ffa 100644
---- a/frontend/src/pages/UnitQCSelectionPage.js
-+++ b/frontend/src/pages/UnitQCSelectionPage.js
-@@ -50,7 +50,13 @@ export default function UnitQCSelectionPage() {
-       setNavigatingUnit(unit.unit_id);
-       const runData = await qcService.getUnitRun(unit.unit_id);
-       const run = runData.run;
--      const stageId = runData.stages?.[0]?.id || 'stage_tiling';
-+      // Hotfix Path B (post-#476): if user came from a specific
-+      // unit-scope card on the floor view (FloorDetailPage adds
-+      // ?stage_id=X), respect that stage. Fallback to first stage
-+      // of the unit run for legacy/direct entries.
-+      const urlParams = new URLSearchParams(window.location.search);
-+      const explicitStageId = urlParams.get('stage_id');
-+      const stageId = explicitStageId || runData.stages?.[0]?.id || 'stage_tiling';
-       navigate(
-         `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`,
-         {
-@@ -92,7 +98,55 @@ export default function UnitQCSelectionPage() {
- 
-   if (!data) return null;
- 
--  const { units, floor_name } = data;
-+  // Hotfix (post-#476): the units-status endpoint now returns
-+  // { stages: [{units: [...]}] } instead of { units: [...] }.
-+  // We flatten stages back to per-unit aggregates here so the
-+  // existing unit-picker UX stays intact. PATH B (per-stage view
-+  // when ?stage_id=X is present in URL) is wired in handleUnitClick.
-+  const stages = Array.isArray(data.stages) ? data.stages : [];
-+  const floor_name = data.floor_name || '';
-+
-+  // Aggregate across all unit-scope stages, per unit:
-+  //   - handled_count, total, pass_count, fail_count → SUM
-+  //   - status: 'approved' only if ALL stages approved for this unit;
-+  //             'in_progress' if any handled OR any in_progress/approved;
-+  //             'not_started' otherwise
-+  const unitAggMap = new Map();
-+  stages.forEach(stage => {
-+    (stage.units || []).forEach(u => {
-+      const existing = unitAggMap.get(u.unit_id);
-+      if (!existing) {
-+        unitAggMap.set(u.unit_id, {
-+          unit_id: u.unit_id,
-+          unit_name: u.unit_name,
-+          unit_no: u.unit_no,
-+          handled_count: u.handled_count || 0,
-+          total: u.total || 0,
-+          pass_count: u.pass_count || 0,
-+          fail_count: u.fail_count || 0,
-+          _statuses: [u.status || 'not_started'],
-+        });
-+      } else {
-+        existing.handled_count += u.handled_count || 0;
-+        existing.total += u.total || 0;
-+        existing.pass_count += u.pass_count || 0;
-+        existing.fail_count += u.fail_count || 0;
-+        existing._statuses.push(u.status || 'not_started');
-+      }
-+    });
-+  });
-+
-+  // Derive aggregate unit status from per-stage statuses
-+  const units = Array.from(unitAggMap.values()).map(u => {
-+    const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
-+    const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
-+    const status = allApproved ? 'approved'
-+                 : anyInProgress ? 'in_progress'
-+                 : 'not_started';
-+    const { _statuses, ...rest } = u;
-+    return { ...rest, status };
-+  });
-+
-   const completedCount = units.filter(u => u.status === 'approved').length;
-   const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
-   const totalItems = units.reduce((s, u) => s + u.total, 0);
+backend/tests/test_qc_override_close.py  (NEW, 3 mock tests)
+  1. test_override_approve_succeeds_for_project_manager
+     - Verifies items bulk-update with marked_via_override=true
+     - Verifies run.stage_statuses + stage_actors with via_override
+     - Verifies audit "qc_stage_override_approved" + notification
+       with action="approved_via_override"
+  2. test_override_approve_rejects_owner_and_management_team
+     - Loops over: owner, management_team, site_manager, viewer
+     - All MUST 403
+  3. test_override_approve_blocks_already_approved_and_super_admin_bypass
+     - Already-approved stage → 400
+     - super_admin with non-PM project role (e.g. "viewer") → succeeds
 
-================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
+──────────────────────────────────────────
+VERIFICATION
+──────────────────────────────────────────
+V1 ✅  pytest tests/test_qc_override_close.py — 3 passed in 1.48s
+V2 ✅  pytest regression on test_qc_units_status.py + new — 4 passed in 1.63s
+V3 ✅  Route registered: /api/qc/run/{run_id}/stage/{stage_id}/override-approve
+V4 ✅  Python syntax: ast.parse OK on qc_router.py + test file
+V5 ✅  JS syntax: StageDetailPage.js readable
+V6 ✅  Backend RBAC matches frontend gate exactly
+       (role=='project_manager' || super_admin)
+V7 ✅  No regression to existing approve/reject/reopen flow — separate
+       endpoint, separate UI block, separate state
+
+──────────────────────────────────────────
+DEFERRED / OUT OF SCOPE
+──────────────────────────────────────────
+• Live e2e (V8 a-p) — defer to staging smoke per Zahi
+• /my-approver-status field extension — NOT NEEDED
+  (runData.role is sufficient; cleaner than is_strict_project_manager)
+• Owner override — explicitly excluded per spec D4
+• Per-item visibility of marked_via_override flag in UI — only the
+  stage-level badge is shown; item-level indicator can ship later
+
+──────────────────────────────────────────
+ZAHI NEXT STEPS
+──────────────────────────────────────────
+1. Review diff: git diff HEAD
+2. git add -A && git commit
+3. git push origin staging
+4. ./deploy.sh --stag    (smoke V8 a-p on staging)
+5. ./deploy.sh --prod    (after staging green)

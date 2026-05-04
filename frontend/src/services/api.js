@@ -1375,6 +1375,14 @@ export const qcService = {
     const response = await axios.post(`${API}/qc/run/${runId}/stage/${stageId}/approve`, data, { headers: getAuthHeader() });
     return response.data;
   },
+  async overrideApproveStage(runId, stageId, reason) {
+    const response = await axios.post(
+      `${API}/qc/run/${runId}/stage/${stageId}/override-approve`,
+      { reason },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
   async rejectStage(runId, stageId, data) {
     const response = await axios.post(`${API}/qc/run/${runId}/stage/${stageId}/reject`, data, { headers: getAuthHeader() });
     return response.data;
