@@ -50,7 +50,13 @@ export default function UnitQCSelectionPage() {
       setNavigatingUnit(unit.unit_id);
       const runData = await qcService.getUnitRun(unit.unit_id);
       const run = runData.run;
-      const stageId = runData.stages?.[0]?.id || 'stage_tiling';
+      // Hotfix Path B (post-#476): if user came from a specific
+      // unit-scope card on the floor view (FloorDetailPage adds
+      // ?stage_id=X), respect that stage. Fallback to first stage
+      // of the unit run for legacy/direct entries.
+      const urlParams = new URLSearchParams(window.location.search);
+      const explicitStageId = urlParams.get('stage_id');
+      const stageId = explicitStageId || runData.stages?.[0]?.id || 'stage_tiling';
       navigate(
         `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`,
         {
@@ -92,7 +98,55 @@ export default function UnitQCSelectionPage() {
 
   if (!data) return null;
 
-  const { units, floor_name } = data;
+  // Hotfix (post-#476): the units-status endpoint now returns
+  // { stages: [{units: [...]}] } instead of { units: [...] }.
+  // We flatten stages back to per-unit aggregates here so the
+  // existing unit-picker UX stays intact. PATH B (per-stage view
+  // when ?stage_id=X is present in URL) is wired in handleUnitClick.
+  const stages = Array.isArray(data.stages) ? data.stages : [];
+  const floor_name = data.floor_name || '';
+
+  // Aggregate across all unit-scope stages, per unit:
+  //   - handled_count, total, pass_count, fail_count → SUM
+  //   - status: 'approved' only if ALL stages approved for this unit;
+  //             'in_progress' if any handled OR any in_progress/approved;
+  //             'not_started' otherwise
+  const unitAggMap = new Map();
+  stages.forEach(stage => {
+    (stage.units || []).forEach(u => {
+      const existing = unitAggMap.get(u.unit_id);
+      if (!existing) {
+        unitAggMap.set(u.unit_id, {
+          unit_id: u.unit_id,
+          unit_name: u.unit_name,
+          unit_no: u.unit_no,
+          handled_count: u.handled_count || 0,
+          total: u.total || 0,
+          pass_count: u.pass_count || 0,
+          fail_count: u.fail_count || 0,
+          _statuses: [u.status || 'not_started'],
+        });
+      } else {
+        existing.handled_count += u.handled_count || 0;
+        existing.total += u.total || 0;
+        existing.pass_count += u.pass_count || 0;
+        existing.fail_count += u.fail_count || 0;
+        existing._statuses.push(u.status || 'not_started');
+      }
+    });
+  });
+
+  // Derive aggregate unit status from per-stage statuses
+  const units = Array.from(unitAggMap.values()).map(u => {
+    const allApproved = u._statuses.length > 0 && u._statuses.every(s => s === 'approved');
+    const anyInProgress = u._statuses.some(s => s === 'in_progress' || s === 'approved');
+    const status = allApproved ? 'approved'
+                 : anyInProgress ? 'in_progress'
+                 : 'not_started';
+    const { _statuses, ...rest } = u;
+    return { ...rest, status };
+  });
+
   const completedCount = units.filter(u => u.status === 'approved').length;
   const totalHandled = units.reduce((s, u) => s + u.handled_count, 0);
   const totalItems = units.reduce((s, u) => s + u.total, 0);
