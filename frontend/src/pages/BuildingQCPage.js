@@ -65,6 +65,7 @@ export default function BuildingQCPage() {
   const { projectId, buildingId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const fromParam = searchParams.get('from');
 
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(null);
@@ -377,7 +378,11 @@ export default function BuildingQCPage() {
             return (
               <button
                 key={floor.id}
-                onClick={() => navigate(`/projects/${projectId}/floors/${floor.id}`)}
+                onClick={() => {
+                  const url = `/projects/${projectId}/floors/${floor.id}`;
+                  const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+                  navigate(withFrom);
+                }}
                 className={`w-full flex items-center justify-between px-3.5 py-3 bg-white rounded-xl border border-slate-100 ${floorAccent} hover:border-amber-200 hover:shadow active:bg-slate-50 transition-all text-right`}
               >
                 <div className="flex items-center gap-2.5 min-w-0 flex-1">

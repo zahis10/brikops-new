@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { qcService } from '../services/api';
 import {
   ArrowRight, Loader2, ClipboardCheck,
@@ -125,6 +125,8 @@ const StageCard = ({ stage, onClick, isActive }) => {
 export default function FloorDetailPage() {
   const { projectId, floorId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const fromParam = searchParams.get('from');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -219,7 +221,13 @@ export default function FloorDetailPage() {
         <div className="max-w-2xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button onClick={() => navigate(buildingId ? `/projects/${projectId}/buildings/${buildingId}/qc` : `/projects/${projectId}/qc`)} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
+              <button onClick={() => {
+                const base = buildingId
+                  ? `/projects/${projectId}/buildings/${buildingId}/qc`
+                  : `/projects/${projectId}/qc`;
+                const url = fromParam === 'qc' && buildingId ? `${base}?from=qc` : base;
+                navigate(url);
+              }} className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
                 <ArrowRight className="w-5 h-5" />
               </button>
               <div>
@@ -299,7 +307,11 @@ export default function FloorDetailPage() {
           return (
             <button
               key={unitStage.stage_id}
-              onClick={() => navigate(`/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`)}
+              onClick={() => {
+                const url = `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units?stage_id=${unitStage.stage_id}`;
+                const withFrom = fromParam === 'qc' ? `${url}&from=qc` : url;
+                navigate(withFrom);
+              }}
               className="w-full text-right p-4 rounded-xl border border-violet-200 bg-white hover:border-violet-300 hover:shadow-sm transition-all border-r-4 border-r-violet-400"
             >
               <div className="flex items-center justify-between mb-2">
