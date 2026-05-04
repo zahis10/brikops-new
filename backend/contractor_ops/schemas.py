@@ -887,3 +887,107 @@ class SafetyProjectRegistrationUpsert(BaseModel):
     personnel: Optional[List[SafetyProjectPersonnel]] = None
     permit_number: Optional[str] = None
     form_4_target_date: Optional[str] = None
+
+
+# =====================================================================
+# Execution Matrix (Batch Execution Matrix Phase 1, 2026-05-04)
+# PMs / execution engineers track project state in a 2D grid
+# (units × stages) with 6 status values + custom columns.
+# =====================================================================
+
+MATRIX_STATUS_VALUES = (
+    'completed',     # ✓ בוצע
+    'partial',       # ⚠ חלקי
+    'in_progress',   # ◷ בעבודה
+    'not_done',      # ✗ לא בוצע
+    'not_relevant',  # − אין צורך
+    'no_findings',   # ⊘ אין חוסרים
+)
+
+MATRIX_STAGE_TYPES = ('status', 'tag')
+
+
+class MatrixStageCreate(BaseModel):
+    """Custom stage added by approver/PM (NOT part of qc_template)."""
+    title: str = Field(..., min_length=1, max_length=80)
+    type: Literal['status', 'tag'] = 'status'
+    order: Optional[int] = None
+    id: Optional[str] = None
+
+
+class MatrixStage(BaseModel):
+    """Stage entry in the matrix — either base (from qc_template) or custom."""
+    id: str
+    title: str
+    type: Literal['status', 'tag']
+    order: int
+    source: Literal['base', 'custom']
+    scope: Optional[Literal['floor', 'unit']] = None
+
+
+class MatrixStagesUpdate(BaseModel):
+    """PATCH-style update for the project matrix's stage list."""
+    custom_stages_added: Optional[List[MatrixStageCreate]] = None
+    base_stages_removed: Optional[List[str]] = None
+
+
+class MatrixCellAuditEntry(BaseModel):
+    actor_id: str
+    actor_name: str
+    timestamp: str
+    status_before: Optional[str] = None
+    status_after: Optional[str] = None
+    note_before: Optional[str] = None
+    note_after: Optional[str] = None
+    text_before: Optional[str] = None
+    text_after: Optional[str] = None
+
+
+class MatrixCellUpdate(BaseModel):
+    """PATCH-style update for a single matrix cell."""
+    status: Optional[Literal[
+        'completed', 'partial', 'in_progress',
+        'not_done', 'not_relevant', 'no_findings',
+    ]] = None
+    note: Optional[str] = Field(None, max_length=500)
+    text_value: Optional[str] = Field(None, max_length=200)
+
+
+class MatrixCell(BaseModel):
+    """Cell in the matrix — one (unit_id × stage_id) entry."""
+    project_id: str
+    unit_id: str
+    stage_id: str
+    status: Optional[str] = None
+    text_value: Optional[str] = None
+    note: Optional[str] = None
+    audit: List[MatrixCellAuditEntry] = Field(default_factory=list)
+    last_updated_at: Optional[str] = None
+    last_updated_by: Optional[str] = None
+
+
+class MatrixSavedViewFilters(BaseModel):
+    """Filter configuration for a saved view."""
+    building_ids: Optional[List[str]] = None
+    floor_ids: Optional[List[str]] = None
+    unit_ids: Optional[List[str]] = None
+    stage_status_filters: Optional[Dict[str, List[str]]] = None
+    tag_value_filters: Optional[Dict[str, List[str]]] = None
+    search_text: Optional[str] = None
+
+
+class MatrixSavedViewCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=80)
+    icon: Optional[str] = Field(None, max_length=10)
+    filters: MatrixSavedViewFilters
+
+
+class MatrixSavedView(BaseModel):
+    id: str
+    project_id: str
+    user_id: str
+    title: str
+    icon: Optional[str] = None
+    filters: MatrixSavedViewFilters
+    created_at: str
+    updated_at: Optional[str] = None

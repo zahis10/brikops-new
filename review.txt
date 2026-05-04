@@ -1,159 +1,199 @@
-TASK #482 — PRESERVE ?from=qc THROUGH STAGE LAYER (#480 followup)
-========================================
-Status: BUILT — awaiting Zahi commit/deploy
+================================================================
+BATCH: Execution Matrix — PHASE 1 BACKEND  (Task #483)
 Branch: staging
-Files changed: 2 (frontend only)
-Diff: ~+13 / -3 LOC across 2 files
-Backend change: NONE
-Family: #480 followup → great-grandchild of Batch 5K (#451)
+Date: 2026-05-04
+================================================================
 
-──────────────────────────────────────────
-STEP 0 — PRE-FLIGHT AUDIT (incl. Zahi-requested defensive scan)
-──────────────────────────────────────────
-0.1 ✅ Floor-scope stage card click in FloorDetailPage — single hit at L289:
-       onClick={() => navigate(`/projects/${projectId}/qc/floors/${floorId}/run/${data.run.id}/stage/${stage.id}`)}
-       Confirmed dropping the param. (#480's L302 unit-scope click already
-       correct via `&from=qc`.)
-
-0.2 ✅ #480 wiring in FloorDetailPage fully present:
-       L2:   useSearchParams imported
-       L128: const [searchParams] = useSearchParams();
-       L129: const fromParam = searchParams.get('from');
-       L228: back-nav conditional from #480 PART 2
-       L312: unit-scope card conditional from #480 PART 2.4
-       Reuse existing fromParam — no new hook.
-
-0.3 ✅ StageDetailPage back-nav located:
-       L1601-1603 (pre-edit): goBack = plain function (NOT useCallback)
-       → navigate(`/projects/${projectId}/floors/${floorId}`).
-       Three callers: L1618 (error-state), L1629 (not-found-state),
-       L1662 (header ArrowRight). Wrapping goBack body fixes all 3
-       atomically — no caller changes needed.
-
-0.4 ✅ StageDetailPage L2 — did NOT import useSearchParams (only
-       useParams, useNavigate, useLocation). Added.
-
-0.5 ✅ Zero existing `from=qc` / `fromParam` references in
-       StageDetailPage pre-edit — clean slate.
-
-0.6 ✅ DEFENSIVE SCAN (Zahi mid-spec request) —
-       grep -n "navigate(" frontend/src/pages/StageDetailPage.js | grep -v "//"
-       returned 3 navigate() call sites:
-         L642  — onClick to /projects/${projectId}/control?tab=settings
-                 (forward link to project settings; shown when stage has
-                 no items configured. Leaves QC tree entirely — out of
-                 scope per spec D4.)
-         L1602 — goBack (covered by PART 2 of this task)
-         L1738 — same /control?tab=settings link as L642
-       NO additional back-out paths from the QC tree. Safe to proceed
-       as planned with only goBack wrap.
-
-──────────────────────────────────────────
 WHAT
-──────────────────────────────────────────
-Followup to #480 closing the Stage layer one level deeper. #480 fixed
-Building → Floor → Building round-trip; this batch fixes Floor → Stage
-→ Floor so the chain composes end-to-end:
+----
+Net-new backend foundation for an in-app 2D matrix grid
+(units × stages) that PMs / execution engineers will use to track
+project state with 6 status values + custom columns + per-user
+saved views. PHASE 1 = backend only. PHASE 2 (frontend) separate.
 
-  /qc → /buildings/{b}/qc?from=qc → /floors/{f}?from=qc →
-  /qc/floors/{f}/run/{r}/stage/{s}?from=qc (NEW) →
-  back → /floors/{f}?from=qc (NEW) →
-  back → #480 fires → /buildings/{b}/qc?from=qc →
-  back → 5K fires → /projects/{p}/qc ✅
+Architectural anchors (Zahi):
+  - Matrix is INDEPENDENT data store (3 new collections).
+  - NO modification of qc_template / qc_runs / qc_items / safety
+    routers / project_memberships / billing.
+  - qc_router.py untouched (V7 = 0 lines diff).
+  - Reads qc_template.stages live (computed at render time —
+    no migration when admin edits the template).
 
-Direct entries (no `?from=qc`) keep clean URLs at every hop.
+================================================================
+STEP 0 AUDIT (canonical-code-based, captured during planning)
+================================================================
+0.1 ✅ tpl["stages"] shape: list of {id, title, scope, order, items}.
+       _get_template helper at qc_router L253. scope ∈ {floor, unit}.
+       REUSED unchanged via `from contractor_ops.qc_router import
+       _get_template`.
 
-──────────────────────────────────────────
+0.2/0.9 ✅ project_approvers shape verified from THREE canonical
+       call sites (no live DB needed; spec STEP 0.9 placeholder
+       query replaced by the verified one BEFORE commit):
+         qc_router L80  _get_stage_recipients: {project_id, active=True}
+         qc_router L1153 qc_contacts:           {project_id, user_id, active=True}
+         qc_router L1853 list_approvers:        {project_id, active=True}
+       → matrix-edit approver = ANY active approver, regardless of
+         mode (mode="all" OR mode="stages"). Stage-scope on the
+         approver doc is irrelevant for the project-level matrix.
+       _get_matrix_approver_user_ids final shape:
+         find({"project_id": pid, "active": True}, {"_id":0,"user_id":1})
+       (REPLACES spec placeholder which omitted "active": True.)
+
+0.3 ✅ Helpers _get_project_role / _is_super_admin / MANAGEMENT_ROLES
+       live in contractor_ops.router (qc_router L10 re-imports).
+       Imported DIRECTLY from router.py (D1 — see divergences).
+       MANAGEMENT_ROLES = ('project_manager', 'management_team') only.
+
+0.4 ✅ Floor/Unit schemas confirmed; archived field absent in schemas
+       but qc_router queries with {"archived": {"$ne": True}} (matches
+       missing). Same pattern used here.
+
+0.5 ✅ Zero existing matrix code (grep "execution_matrix\|
+       ExecutionMatrix\|matrix_cell" = 0 hits). Clean slate.
+
+0.6 ✅ Pydantic v1-style (BaseModel, Field, validator, .dict()).
+       schemas.py L2 already imports Optional/List/Dict/Literal.
+
+0.7 ✅ server.py registration pattern: top-level
+       `from X import router as Y; app.include_router(Y)`
+       (e.g. config_router L443-444). Safety routers gated by
+       `if ENABLE_SAFETY_MODULE:` — matrix is NOT feature-gated,
+       registers UNCONDITIONALLY at L446-447 (right after config_router).
+
+0.8 ✅ STEP 0 audit at TOP of this review.txt (you are reading it).
+
+================================================================
+DIVERGENCES FROM SPEC (also documented at top of router.py)
+================================================================
+D1. Imports from contractor_ops.router (NOT via qc_router).
+    Cleaner dependency graph — qc_router (2,936 LOC) is a consumer
+    of these helpers, not their source.
+
+D2. _get_matrix_approver_user_ids includes "active": True filter.
+    Spec placeholder omitted it; canonical pattern at qc_router
+    L80/L1153/L1853 always filters by active. Inactive (revoked)
+    approvers must NOT get matrix-edit access.
+
+D3. "viewer" role removed from _check_matrix_view.
+    No "viewer" role exists in the codebase. Aligned to existing
+    QC_VIEW_ROLES pattern: super_admin + project_manager + owner +
+    management_team. Contractor blocked explicitly.
+
+D4. Stage-scoped approvers (mode="stages") get FULL matrix-edit access.
+    Per Zahi 2026-05-04: trust given for any stage approval = trust
+    given for matrix annotation. Matrix is project-level, so
+    stage-scope on the approver doc is irrelevant.
+
+================================================================
 PER-FILE DIFF
-──────────────────────────────────────────
-frontend/src/pages/FloorDetailPage.js  (+4 / -1)
-  • L289-296: floor-scope stage card onClick wrapped per spec PART 1.
-              Reuses existing #480 `fromParam`. Appends `?from=qc`
-              (no `&` — URL has no existing query string).
+================================================================
+backend/contractor_ops/schemas.py        +104  / -0
+backend/contractor_ops/execution_matrix_router.py  NEW (540 LOC)
+backend/server.py                        +3    / -0
+backend/tests/test_execution_matrix.py   NEW (~440 LOC, 11 tests)
 
-frontend/src/pages/StageDetailPage.js  (+9 / -2)
-  • L2:        `useSearchParams` added to react-router-dom destructure
-               (alongside useParams, useNavigate, useLocation).
-  • L764-765:  NEW — `const [searchParams] = useSearchParams();` +
-               `const fromParam = searchParams.get('from');` placed
-               immediately after the `useLocation()` line at L763.
-  • L1606-1610: `goBack` body wrapped per spec PART 2 LOCATION 2.3
-               (inline pattern, matches existing plain-function style;
-               kept as plain function — NOT useCallback — to avoid
-               touching its 3 callers at L1618/1629/1662). Appends
-               `?from=qc` only when current URL has it.
+backend/contractor_ops/qc_router.py      0 lines diff  ← V7
 
-──────────────────────────────────────────
-DRIFT
-──────────────────────────────────────────
-None. Spec executed verbatim. Defensive grep added per Zahi mid-spec
-request confirmed no other back-out path exists, validating the
-"only goBack" approach.
+================================================================
+ENDPOINTS REGISTERED (all under /api/execution-matrix)
+================================================================
+  GET    /{project_id}                                   matrix data
+  PATCH  /{project_id}/stages                            add custom + hide base
+  PUT    /{project_id}/cells/{unit_id}/{stage_id}        update cell + audit
+  GET    /{project_id}/cells/{unit_id}/{stage_id}/history audit chain
+  GET    /{project_id}/views                             list user's views
+  POST   /{project_id}/views                             create view
+  PATCH  /{project_id}/views/{view_id}                   update view
+  DELETE /{project_id}/views/{view_id}                   soft-delete view
 
-──────────────────────────────────────────
-VERIFICATION
-──────────────────────────────────────────
-V1 ✅  JS readable on both files (Babel-parsed at build time).
-V2 ✅  useSearchParams count in StageDetailPage = 2 (≥2 required).
-V3 ✅  `from=qc` / `fromParam === 'qc'` count in StageDetailPage = 2
-       (≥1 required): 1 conditional + 1 string literal in goBack.
-V4 ✅  `from=qc` / `fromParam === 'qc'` line count in FloorDetailPage = 3
-       (≥3 required after this batch — spec's "≥4" target was based on a
-       miscount of #480 sites; #480 actually added 2 sites, not 3):
-         L228 — back-nav (from #480 PART 2.1)
-         L291 — floor-scope stage card (NEW, this task PART 1)
-         L316 — unit-scope card (from #480 PART 2.4, uses `&from=qc`)
-V5 ✅  Backend regression: pytest test_qc_override_close.py +
-       test_qc_units_status.py → 4 passed (backend untouched).
-V6 ⏳  Visual smoke (Zahi to run on staging after deploy):
+8 paths total (V2 confirmed).
 
-       Round-trip — the bug:
-       a) Login as super_admin
-       b) Navigate to /projects/{p}/qc
-       c) Click building → /buildings/{b}/qc?from=qc ✅ (5K)
-       d) Click floor → /floors/{f}?from=qc ✅ (#480)
-       e) Click a floor-scope stage card →
-          /projects/{p}/qc/floors/{f}/run/{r}/stage/{s}?from=qc ← NEW
-       f) Click back arrow on StageDetailPage →
-          /projects/{p}/floors/{f}?from=qc ← NEW
-       g) Click back arrow on FloorDetailPage →
-          /projects/{p}/buildings/{b}/qc?from=qc ✅ (#480)
-       h) Click back arrow on BuildingQCPage →
-          /projects/{p}/qc ✅ (5K)
+================================================================
+COLLECTIONS (lazy-init, created on first access)
+================================================================
+  execution_matrix          one doc per project (custom_stages, base_stages_removed)
+  execution_matrix_cells    one doc per (project_id, unit_id, stage_id)
+  execution_matrix_views    per-user saved views (soft-delete via deletedAt)
 
-       Negative — direct entry (no from=qc):
-       i) Direct to /projects/{p}/qc/floors/{f}/run/{r}/stage/{s}
-       j) Click back → /projects/{p}/floors/{f} (no param) ✅
-       k) Continue back → /projects/{p}/buildings/{b} eventually ✅
-          (existing behavior preserved)
+================================================================
+RBAC SUMMARY
+================================================================
+View   = super_admin + project_manager + owner + management_team
+         (contractor → 403 explicit)
+Edit   = super_admin + project_manager + ANY active project_approver
+         (regardless of mode — D4)
 
-       Mobile (375px): nav buttons tappable, no overflow.
+================================================================
+VERIFICATIONS
+================================================================
+V1 router import .................. OK
+V2 routes registered .............. OK (8 paths)
+V3 new test file (11 tests) ....... 11 passed in 2.38s
+V4 regression suite ............... 17 passed in 4.08s
+       test_qc_override_close.py / test_qc_units_status.py /
+       test_safety_registration.py — all green, no flake
+V5 schema imports (11 symbols) .... OK
+V6 router file size ............... 540 LOC (in 400-800 target range)
+V7 git diff qc_router.py .......... 0 lines  ←  qc_router untouched
+V8 curl smoke a-k ................. ⏳ DEFERRED — Zahi runs post-deploy
+       Suggested smoke order:
+         a. GET  /api/execution-matrix/{pid}                  (PM)
+         b. PATCH /stages with custom_stages_added (PM)
+         c. PATCH /stages with base_stages_removed (PM)
+         d. PUT  /cells/{u}/{s} status=in_progress (PM)
+         e. PUT  /cells/{u}/{s} status=completed   (PM)
+         f. GET  /cells/{u}/{s}/history → 2 entries
+         g. PUT  /cells/{u}/{s} as contractor → 403
+         h. POST /views with filters (PM)
+         i. GET  /views as same user → 1 entry
+         j. GET  /views as DIFFERENT user → 0 entries (per-user iso)
+         k. DELETE /views/{vid} → 204 then GET → 0 entries
 
-──────────────────────────────────────────
-NO-TOUCH CONFIRMATION
-──────────────────────────────────────────
-Untouched (verified by diff stat):
-  - BuildingQCPage handleBack (Batch 5K)
-  - FloorDetailPage back-nav L222 + unit-scope card L312 (#480)
-  - The 3 callers of goBack (L1618, L1629, L1662) — body change only
-  - The 2 `/control?tab=settings` forward links at StageDetailPage
-    L642 + L1738 (intentionally leave QC tree, out of scope per D4)
-  - All stage data/items/audit/override dialog/approve/reject/submit/
-    reopen flows
-  - All state, useEffect, data fetching
-  - Backend code (no changes)
-  - Any other page or component
+================================================================
+TEST INVENTORY (backend/tests/test_execution_matrix.py)
+================================================================
+  1. test_get_matrix_returns_resolved_stages       ✅
+  2. test_get_matrix_blocks_contractor             ✅
+  3. test_update_stages_adds_custom                ✅
+  4. test_update_stages_removes_base               ✅
+  5. test_update_stages_blocks_non_approver        ✅
+  6. test_update_cell_creates_with_audit           ✅
+  7. test_update_cell_appends_audit_on_change      ✅
+  8. test_invalid_status_value_rejected_400        ✅
+  9. test_cell_history_returns_full_audit_chain    ✅
+ 10. test_saved_view_create_list_delete_per_user   ✅
+ 11. test_approver_can_edit_matrix  (D4 confirmation)  ✅
 
-──────────────────────────────────────────
-ZAHI NEXT STEPS
-──────────────────────────────────────────
-1. Review diff:
-   git diff HEAD -- frontend/src/pages/FloorDetailPage.js \
-                    frontend/src/pages/StageDetailPage.js
-2. git add -A && git commit
-3. git push origin staging
-4. ./deploy.sh --stag    (Capgo OTA — no native rebuild)
-5. Run V6 smoke (a-k) on staging
-6. ./deploy.sh --prod    (after staging green)
+================================================================
+OUT OF SCOPE (PHASE 2 / Tier 2 / rejected)
+================================================================
+- Any frontend (PHASE 2)
+- Read-only 📎 annotation overlay from qc_runs (PHASE 2)
+- Excel/PDF export (Tier 2)
+- Realtime WebSocket collaboration (Tier 3)
+- Per-user matrix variants (rejected — one matrix per project)
+- is_shared flag on saved views (PHASE 2 if requested)
+- Stage reordering endpoint (PHASE 2 — order set on create only,
+  changed only via full custom_stages_added replace)
+- Cleanup of orphaned cells when custom stage deleted (PHASE 2)
+- GDPR audit anonymization (Tier 2 cross-collection sweep)
+- Server-side pagination >100 units / >3MB (PHASE 2)
 
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================
+RISK NOTES
+================================================================
+- Pydantic deprecation warnings (.dict() → model_dump) match the
+  rest of the codebase (schemas.py + safety_registration_router.py
+  emit identical warnings). NOT addressed in this batch — do it
+  project-wide when migrating off Pydantic v1.
+- /api/execution-matrix is NOT feature-gated. If you need a kill
+  switch before frontend ships, add ENABLE_EXECUTION_MATRIX env
+  flag mirroring the safety pattern at server.py L455-468.
+- Tests use mocks — no live MongoDB. V8 curl smoke (post-deploy)
+  exercises the real path.
+
+================================================================
+AWAITING ZAHI APPROVAL — DO NOT auto-commit / auto-deploy.
+After approval: git commit + push + ./deploy.sh --stag → V8 → --prod.
+================================================================

@@ -440,6 +440,9 @@ app.include_router(qc_notif_router)
 from contractor_ops.config_router import router as config_router
 app.include_router(config_router)
 
+from contractor_ops.execution_matrix_router import router as execution_matrix_router
+app.include_router(execution_matrix_router)
+
 # -----------------------------------------------------------------
 # Safety module — Phase 1 (feature-gated)
 # When ENABLE_SAFETY_MODULE is False, router is NEVER imported and
