@@ -1,9 +1,26 @@
 TASK #478 — PM OVERRIDE CLOSE (P1)
 ========================================
-Status: BUILT — awaiting Zahi commit/deploy
+Status: BUILT (rev2 — amber palette restored) — awaiting Zahi commit/deploy
 Branch: staging
 Files changed: 3 modified + 1 new (4 total)
 Diff: +229 / -2
+
+──────────────────────────────────────────
+REV2 CHANGE — COLOR REVERT (Zahi feedback)
+──────────────────────────────────────────
+Reverted button + badge + dialog accents from violet → amber per
+BrikOps design rule: violet is reserved for unit-scope theme
+(FloorDetailPage "לפי דירות" cards). Amber is the established
+warning color for cautionary actions, which fits PM override.
+
+Final palette in StageDetailPage.js:
+  • Button:  bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300
+  • Badge:   bg-amber-100 text-amber-800 border-amber-200
+  • Dialog header icon: text-amber-700
+  • Textarea focus ring: ring-amber-200 border-amber-300
+  • Submit button: bg-amber-600 hover:bg-amber-700 active:bg-amber-800
+
+Verified: zero `violet` occurrences remain in StageDetailPage.js.
 
 ──────────────────────────────────────────
 WHAT
@@ -72,14 +89,15 @@ frontend/src/pages/StageDetailPage.js  (+103 / -1)
               overrideSubmitting) + const { user } = useAuth()
   • L1015-1033: handleOverrideApprove — validates length, POSTs,
                 clears state, calls load() to refresh runData
-  • L2285-2292: violet "סגור שלב ב-Override (PM)" button — gated
+  • L2285-2292: AMBER "סגור שלב ב-Override (PM)" button — gated
                 !isApproved && (runData?.role === 'project_manager'
                 || user?.platform_role === 'super_admin')
-  • L2294-2299: violet badge "אושר ב-Override על־ידי X" — shown when
+  • L2294-2299: AMBER badge "אושר ב-Override על־ידי X" — shown when
                 isApproved && runData.stage_actors[stageId].via_override
-  • L2305-2384: Radix Dialog modal — amber warning, textarea (rows=4,
-                maxLength=500, char counter), cancel + submit buttons.
-                Submit disabled when reason.trim().length < 10.
+  • L2305-2384: Radix Dialog modal (amber palette throughout) —
+                warning box, textarea (rows=4, maxLength=500, char
+                counter), cancel + submit buttons. Submit disabled
+                when reason.trim().length < 10.
 
 backend/tests/test_qc_override_close.py  (NEW, 3 mock tests)
   1. test_override_approve_succeeds_for_project_manager

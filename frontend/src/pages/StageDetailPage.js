@@ -2282,14 +2282,14 @@ export default function StageDetailPage() {
               {!isApproved && (runData?.role === 'project_manager' || user?.platform_role === 'super_admin') && (
                 <button onClick={() => setShowOverrideDialog(true)}
                   aria-label="סגור שלב ב-Override (מנהל פרויקט)"
-                  className="flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm bg-violet-100 hover:bg-violet-200 text-violet-800 border border-violet-300 shadow-sm transition-all">
+                  className="flex-1 flex items-center justify-center gap-2 font-bold min-h-[48px] rounded-xl text-sm bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-sm transition-all">
                   <Shield className="w-4 h-4" />
                   סגור שלב ב-Override (PM)
                 </button>
               )}
 
               {isApproved && runData?.stage_actors?.[stageId]?.via_override && (
-                <div className="flex-1 flex items-center justify-center gap-2 min-h-[36px] bg-violet-50 border border-violet-200 rounded-xl text-violet-700 text-xs font-medium">
+                <div className="flex-1 flex items-center justify-center gap-2 min-h-[36px] bg-amber-100 border border-amber-200 rounded-xl text-amber-800 text-xs font-medium">
                   <Shield className="w-3.5 h-3.5" />
                   אושר ב-Override על־ידי {runData?.stage_actors?.[stageId]?.approved_by_name || 'מנהל פרויקט'}
                 </div>
@@ -2308,7 +2308,7 @@ export default function StageDetailPage() {
               <DialogPrimitive.Description className="sr-only">סגירת שלב ב-Override על־ידי מנהל פרויקט ללא בדיקת סעיפים</DialogPrimitive.Description>
               <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                 <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-violet-600" />
+                  <Shield className="w-4 h-4 text-amber-700" />
                   סגירת שלב ב-Override
                 </h3>
                 <DialogPrimitive.Close asChild>
@@ -2333,7 +2333,7 @@ export default function StageDetailPage() {
                     value={overrideReason}
                     onChange={e => setOverrideReason(e.target.value)}
                     placeholder="למשל: נכנסתי לפרויקט מאוחר; השלב הסתיים פיזית לפני שהאפליקציה הוטמעה."
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-300"
                     rows={4}
                     dir="rtl"
                     maxLength={500}
@@ -2348,7 +2348,7 @@ export default function StageDetailPage() {
                   </DialogPrimitive.Close>
                   <button onClick={handleOverrideApprove} disabled={overrideSubmitting || overrideReason.trim().length < 10}
                     className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
-                      overrideReason.trim().length >= 10 ? 'bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                      overrideReason.trim().length >= 10 ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                     }`}>
                     {overrideSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'סגור שלב ב-Override'}
                   </button>
