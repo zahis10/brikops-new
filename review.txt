@@ -1,158 +1,152 @@
-TASK #480 — PRESERVE ?from=qc THROUGH BuildingQC → Floor → BuildingQC ROUND-TRIP
+TASK #481 — P0 HOTFIX: Override badges + audit block read wrong response path
 ========================================
 Status: BUILT — awaiting Zahi commit/deploy
 Branch: staging
-Files changed: 2 (frontend only)
-Diff: ~+22 / -3 LOC across 2 files (slightly larger than spec's "~8 LOC"
-      because each single-line `navigate(...)` was wrapped in a 4-line
-      block per the spec's exact replacement text)
+Files changed: 1 (frontend only)
+Diff: +8 / -8 LOC (mechanical path replacement, no logic change)
 Backend change: NONE
-Family: Batch 5K (#451) — closes the round-trip gap
 
 ──────────────────────────────────────────
-STEP 0 — PRE-FLIGHT AUDIT (run on Replit's actual deployed checkout)
+STEP 0 — PRE-FLIGHT AUDIT
 ──────────────────────────────────────────
-0.1 ✅ BuildingQCPage handleBack + Batch 5K logic CONFIRMED PRESENT:
-       L80-86: handleBack = useCallback(() => {
-                 if (searchParams.get('from') === 'qc') {
-                   navigate(`/projects/${projectId}/qc`);
-                 } else {
-                   navigate(`/projects/${projectId}/buildings/${buildingId}`);
-                 }
-               }, [navigate, projectId, buildingId, searchParams]);
-       Batch 5K is deployed. handleBack reads `from === 'qc'` and routes
-       to /projects/{p}/qc when present. NO need to expand spec for 5K.
+0.1 ✅ Read sites in StageDetailPage.js — 8 hits found (NOT the spec's
+       "3-6" estimate; spec's defensive note triggered, ALL 8 migrated):
+       L1685 — top status badge condition (#479)
+       L1688 — top status badge approver name (#479)
+       L1845 — audit block outer condition (#479)
+       L1858 — audit block אישר row (#479)
+       L1865 — audit block תאריך row (#479)
+       L1879 — audit block סיבה row (#479)
+       L2339 — bottom action-bar badge condition (#478 rev2)
+       L2342 — bottom action-bar badge approver name (#478 rev2)
 
-0.2 ✅ Floor click navigation in BuildingQCPage — single hit at L380:
-       onClick={() => navigate(`/projects/${projectId}/floors/${floor.id}`)}
-       Confirmed dropping the param.
+0.2 ✅ Actual response shape verified by Zahi via DevTools Network preview
+       (sample data quoted in spec ROOT CAUSE) — `stage_actors` lives at
+       `response.run.stage_actors`, NOT top-level `response.stage_actors`.
 
-0.3 ✅ FloorDetailPage back-to-BuildingQC — single hit at L222:
-       <button onClick={() => navigate(buildingId
-         ? `/projects/${projectId}/buildings/${buildingId}/qc`
-         : `/projects/${projectId}/qc`)} ...>
-       Confirmed dropping the param. Also confirmed L302 unit-scope card
-       (per LOCATION 2.4 amendment) drops the param too.
+0.3 ✅ Backend code path confirms diagnosis at qc_router.py:1110-1124:
+         run_out = {
+             "id": run["id"],
+             ...
+             "stage_actors": run.get("stage_actors", {}),   ← #478's +1 line
+             "created_at": run.get("created_at"),
+         }
+         ...
+         return {
+             "run": run_out,                                 ← nested under "run"
+             "template_name": tpl["name"],
+             "stages": stages_out,
+             ...
+         }
+       The +1 line approved during #478 IS effective (puts the field on
+       run_out), but run_out is then nested under the `"run"` key — so
+       it never reaches top-level. Spec author's analysis is exact.
 
-0.4 ✅ useSearchParams import status:
-       BuildingQCPage L2: ALREADY imports useSearchParams + L67 hook
-                          call already present → PART 1 LOCATION 1.1 +
-                          1.2 SKIPPED (only added the `fromParam` const
-                          on L71 since spec's full hook block was not
-                          there in full).
-       FloorDetailPage L2: did NOT import useSearchParams → ADDED.
-                           Hook call ADDED at L131-132.
+       Other backend reads of `stage_actors` (qc_router.py L1397, 2355,
+       2416, 2498, 2763, 3009) all use `run.get("stage_actors", {})` —
+       same source. All consistent. No backend touch needed.
 
-0.5 ✅ This audit precedes all edits.
+0.4 ✅ This audit precedes all edits.
 
 ──────────────────────────────────────────
 WHAT
 ──────────────────────────────────────────
-Family-of-5K bug Zahi observed in production today. The `?from=qc` URL
-param introduced by Batch 5K (#451) survived the first hop
-(/projects/{p}/qc → /buildings/{b}/qc?from=qc) but was dropped on the
-round-trip via /floors/{f}. By the time the user clicked back on
-BuildingQCPage, the param was gone and 5K's smart handleBack fell back
-to /buildings/{b} instead of /projects/{p}/qc.
+P0 hotfix to #478 + #479. Override functionality works end-to-end (data
+persisted in DB, audit log written, notifications fire), but ALL 3
+visibility surfaces (top status badge, bottom action-bar badge, audit
+block with reason) DID NOT RENDER on staging because the frontend read
+`runData.stage_actors` at top-level while the actual API response nests
+`stage_actors` inside `runData.run`.
 
-Fix: 2 frontend files, ~22 LOC total. Backend untouched. Capgo OTA only.
-- BuildingQCPage: floor click navigation propagates ?from=qc.
-- FloorDetailPage: back-to-BuildingQC navigation preserves ?from=qc.
-- FloorDetailPage: unit-scope card navigation propagates &from=qc
-  (LOCATION 2.4 amendment — sibling concern, same `fromParam` reused).
+Discovered by Zahi via DevTools Network preview during 2026-05-04
+staging smoke. Fix-forward on the frontend (Option A from spec); Option
+B (reshape backend) explicitly rejected to avoid coupling.
 
 ──────────────────────────────────────────
 PER-FILE DIFF
 ──────────────────────────────────────────
-frontend/src/pages/BuildingQCPage.js  (+5 / -1)
-  • L71:    NEW — `const fromParam = searchParams.get('from');`
-  • L383-387: floor click onClick wrapped per spec PART 1 LOCATION 1.3 —
-              appends `?from=qc` only when current URL has `from=qc`.
+frontend/src/pages/StageDetailPage.js  (+8 / -8)
 
-frontend/src/pages/FloorDetailPage.js  (+17 / -2)
-  • L2:     `useSearchParams` added to react-router-dom destructure.
-  • L131-132: NEW — `const [searchParams] = useSearchParams();` +
-              `const fromParam = searchParams.get('from');`
-  • L227-233: back-to-BuildingQC button onClick wrapped per spec PART 2
-              LOCATION 2.3 — appends `?from=qc` only when current URL
-              has `from=qc` AND `buildingId` exists. The
-              `/projects/{p}/qc` fallback branch never gets the param
-              (it IS the destination).
-  • L313-317: unit-scope card onClick wrapped per spec PART 2 LOCATION
-              2.4 — appends `&from=qc` (ampersand, since `?stage_id=`
-              is already present) when current URL has `from=qc`.
+  Mechanical replacement, all 8 sites:
+    OLD:  runData?.stage_actors?.[stageId]?.X
+    NEW:  runData?.run?.stage_actors?.[stageId]?.X
+
+  Sites:
+  • L1685: top badge `via_override` condition (#479)
+  • L1688: top badge `approved_by_name` (#479)
+  • L1845: audit block outer `via_override` condition (#479)
+  • L1858: audit block `approved_by_name` (#479)
+  • L1865: audit block `approved_at` (#479)
+  • L1879: audit block `override_reason` (#479)
+  • L2339: bottom action-bar badge `via_override` condition (#478 rev2)
+  • L2342: bottom action-bar badge `approved_by_name` (#478 rev2)
+
+  No logic, layout, condition, styling, or copy change — only the
+  property path was corrected. Single tool call (`replace_all`) with
+  exact match string `runData?.stage_actors?.[stageId]` →
+  `runData?.run?.stage_actors?.[stageId]` — touched all 8 sites
+  atomically with zero risk of partial migration.
 
 ──────────────────────────────────────────
-DRIFT (one item, minor)
+DRIFT
 ──────────────────────────────────────────
-Spec said "Files changed: ~3 LOC + ~5 LOC = ~8 LOC". Actual diff is
-+22 / -3 because each replacement onClick is a 4-line arrow body, not
-a single line. Same logic as spec verbatim — no behavioural drift, just
-line accounting. The spec writer's count was conservative.
+None. Spec executed verbatim. Spec estimated 3-6 sites but predicted
+this exact case via the defensive note ("if STEP 0.1 finds MORE than 3
+read sites, update ALL of them"). 8 found, 8 migrated.
 
 ──────────────────────────────────────────
 VERIFICATION
 ──────────────────────────────────────────
-V1 ✅  JS parse OK on both files.
-V2 ✅  useSearchParams count BuildingQCPage = 2 (≥2 required: 1 import
-       + 1 hook call). useSearchParams count FloorDetailPage = 2 (≥2
-       required: 1 import + 1 hook call).
-V3 ✅  `from=qc` / `fromParam === 'qc'` propagation logic count = 4
-       total (≥3 required after LOCATION 2.4): 1 in BuildingQCPage
-       (floor click) + 2 in FloorDetailPage (back nav + unit-scope
-       card) + 1 pre-existing 5K ref in BuildingQCPage handleBack.
-V4 ⏳  Visual smoke (Zahi to run on staging after deploy):
+V1 ✅  JS parse OK on StageDetailPage.js.
+V2 ✅  grep -cE "runData\?\.stage_actors|runData\.stage_actors"
+       StageDetailPage.js = 0 (no leftover broken reads).
+V3 ✅  grep -cE "runData\?\.run\?\.stage_actors" StageDetailPage.js = 8
+       (≥3 required by spec; all 8 sites migrated).
+V4 ✅  Backend regression: pytest tests/test_qc_override_close.py +
+       tests/test_qc_units_status.py → 4 passed in 2.40s (backend
+       untouched, regression-clean).
+V5 ⏳  Visual smoke (Zahi to run on staging after deploy):
 
-       Round-trip test (the bug):
-       a) Login as super_admin
-       b) Navigate to /projects/{p}/qc — QC home
-       c) Click any building → /projects/{p}/buildings/{b}/qc?from=qc ✅
-       d) Click any floor → /projects/{p}/floors/{f}?from=qc ← NEW
-       e) Click back on FloorDetailPage →
-          /projects/{p}/buildings/{b}/qc?from=qc ← NEW
-       f) Click back on BuildingQCPage → /projects/{p}/qc ✅
-          (5K's handleBack reads from=qc and routes correctly)
-
-       Sub-path — unit-scope card from floor (LOCATION 2.4):
-       g) From /floors/{f}?from=qc, click a unit-scope card →
-          /projects/{p}/buildings/{b}/floors/{f}/qc/units?stage_id=X&from=qc
-          ← NEW
-
-       Negative — direct entry (no from=qc):
-       h) Direct to /projects/{p}/buildings/{b}/qc (no ?from=qc)
-       i) Click any floor → /projects/{p}/floors/{f} (no ?from=qc clean)
-       j) Click back from floor → /projects/{p}/buildings/{b}/qc (no
-          param) ✅
-       k) Click back from BuildingQC → /projects/{p}/buildings/{b} ✅
-          (existing behavior preserved)
-       l) Direct to /floors/{f} → click unit-scope card → URL has only
-          ?stage_id=X (no &from=qc clean)
-
-       Mobile (375px): nav buttons still tappable, no overflow.
+       a) Login as super_admin → go to a stage already override-approved
+          during prior staging smoke (e.g. "טיח בקומה" / "הכנות חשמל
+          בקומה" — whichever was hit during #478 rev2 testing).
+       b) AT TOP of stage page, in the status badges row near
+          "אושר ביקורת", see the AMBER pill
+          "🛡 אושר ב-Override על־ידי Super Admin". ✅ (was missing)
+       c) BELOW "סיכום פעולות" card, see the AMBER block titled
+          "🛡 סגור באמצעות Override" with אישר / תאריך / סיבה rows. ✅
+          (was missing)
+       d) The reason field shows the EXACT text typed in the original
+          override dialog. ✅
+       e) Bottom action-bar shows the override badge variant (instead
+          of generic "שלב אושר"). ✅ (was missing)
+       f) On a NORMALLY approved stage (no override) — NEITHER badge
+          NOR audit block renders (only standard "סיכום פעולות"). ✅
+       g) Override flow itself still works (button visible, dialog
+          opens, submit succeeds, items marked, stage closes). ✅
+       h) Mobile viewport (375px DevTools): no overflow, audit table
+          wraps via `break-words`.
 
 ──────────────────────────────────────────
 NO-TOUCH CONFIRMATION
 ──────────────────────────────────────────
-Untouched (verified by diff):
-  - BuildingQCPage handleBack L80-86 (Batch 5K work)
-  - All other navigate(...) calls in BuildingQCPage (building detail,
-    project detail, etc.)
-  - FloorDetailPage error-state "חזרה לבקרת ביצוע" button at L167
-    (always returns to /projects/{p}/qc — correct as-is)
-  - FloorDetailPage stage-card onClick at L281 (different namespace)
-  - All state, useEffect, data fetching in both files
-  - Backend code (no changes)
+Untouched (verified by diff stat — 1 file, +8 / -8):
+  - Backend code (qc_router.py +1 line at L1120 stays as-is per spec
+    Option A; cleanup deferred to future refactor batch)
+  - Override endpoint, RBAC, audit log, notifications
+  - All UI conditions, layouts, styling, copy, icons
+  - "סיכום פעולות" / AuditSummaryCard component
+  - Items rendering, approve/reject/submit/reopen/normal-close flows
   - Any other page or component
 
 ──────────────────────────────────────────
 ZAHI NEXT STEPS
 ──────────────────────────────────────────
-1. Review diff: git diff HEAD -- frontend/src/pages/BuildingQCPage.js
-                                  frontend/src/pages/FloorDetailPage.js
+1. Review diff: git diff HEAD -- frontend/src/pages/StageDetailPage.js
 2. git add -A && git commit
 3. git push origin staging
 4. ./deploy.sh --stag    (Capgo OTA — no native rebuild)
-5. Run V4 smoke (a-l) on staging
+5. Run V5 smoke (a-h) on staging — this time ALL 3 surfaces should render
 6. ./deploy.sh --prod    (after staging green)
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
