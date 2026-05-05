@@ -1,141 +1,193 @@
-REVIEW — Hotfix to #487 / Followup-2 to #485 (numeric sort)
-Numeric sort for building names in execution matrix
+REVIEW — #490 Mobile MatrixListView redesign
+Collapsible cards + vertical stage list (followup to #487)
 ============================================================
 Branch: staging
-Scope: 2 backend files, 6 LOC of code + 1 new test (~46 LOC test).
-Frontend untouched. DB untouched.
+Scope: 1 frontend file (`MatrixListView.js`). Backend untouched.
+       Desktop `MatrixGridView` untouched. Single-file UX redesign.
 
 ================================================================
 STEP 0 — PRE-FLIGHT AUDIT
 ================================================================
-0.1  _unit_sort_key location (rg "_unit_sort_key"):
-       backend/contractor_ops/execution_matrix_router.py
-         L233  def _unit_sort_key(u):
-         L248  units.sort(key=_unit_sort_key)
-     Pre-edit shape (5-tuple, post-#486):
-       (sort_index, name_str, floor_number, unit_no_num, unit_no_str)
-     → numeric tiebreak only on unit_no, building name was string-only.
+0.1  MatrixListView pre-edit anti-patterns (rg overflow-x-auto / text-[9px] / w-12):
+       L82  flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1   (horizontal stage row)
+       L86  flex flex-col items-center shrink-0 w-12       (50px stage column)
+       L88  text-[9px] text-slate-500 ... truncate          (unreadable label)
+     → All three constructs being replaced.
 
-0.2  Existing matrix sort tests:
-       L133  test_get_matrix_unit_sort_by_building   (#486 — sort_index axis)
-       L181  test_get_matrix_unit_sort_numeric        (#485 — unit_no axis)
-     Both stay as-is; our change is additive (new tuple slot inserted
-     between sort_index and the existing name_str slot), so neither
-     existing assertion can shift order.
+0.2  MatrixCell sizes (rg "size === 'sm'|h-8 w-8"):
+       L16  size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+       L33  size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+       L46  size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
+     → 'sm' = 32×32. Reused as-is, no new size added.
 
-0.3  No previous "building_name_num" hits in router (clean slate).
+0.3  React imports pre-edit:
+       L1  import React, { useMemo } from 'react';
+     → useMemo only. Adding useState.
 
-================================================================
-DIFF — 2 files
-================================================================
-
-backend/contractor_ops/execution_matrix_router.py  (+11 LOC at L244-260)
-------------------------------------------------------------------------
-     def _unit_sort_key(u):
-         b = buildings_by_id.get(u.get("building_id"), {})
-         f = floors_by_id.get(u.get("floor_id"), {})
-         unit_no_str = u.get("unit_no", "") or ""
-         try:
-             unit_no_num = int(unit_no_str)
-         except (ValueError, TypeError):
-             unit_no_num = 9999  # non-numeric unit_no sorts to end
-+        # #489 — numeric tiebreak for building name (parity with #485
-+        # unit_no fix). Handles projects where buildings are named with
-+        # pure digits (e.g. "8","9","10","11"). Without this, lex sort
-+        # places "10" before "8". Non-numeric names → 9999 → fall through
-+        # to the existing string tiebreak.
-+        building_name_str = b.get("name", "") or ""
-+        try:
-+            building_name_num = int(building_name_str)
-+        except (ValueError, TypeError):
-+            building_name_num = 9999
-         return (
-             b.get("sort_index", 9999),
--            b.get("name", "") or "",
-+            building_name_num,
-+            building_name_str,
-             f.get("floor_number", 0),
-             unit_no_num,
-             unit_no_str,
-         )
-
-Sort tuple: 5-tuple → 6-tuple
-  (sort_index, building_name_num, building_name_str,
-   floor_number, unit_no_num, unit_no_str)
-
-Backward compatibility:
-  - sort_index still wins as element 0 → projects that populate it are
-    untouched.
-  - For projects without sort_index, all rows share 9999 there, so
-    building_name_num decides; numeric names compare numerically,
-    non-numeric names all collapse to 9999 and fall through to the
-    string tiebreak (same lex behavior as before for that case).
-
-backend/tests/test_execution_matrix.py  (+46 LOC at L216-261)
--------------------------------------------------------------
-+ test_get_matrix_unit_sort_numeric_building_names
-  - Buildings inserted in lex-broken order ["10","11","8","9"], all with
-    sort_index=0, one floor + one unit each.
-  - Asserts returned units arrive as [u-8, u-9, u-10, u-11].
-  - Without the fix this test fails with [u-10, u-11, u-8, u-9].
+0.4  Chevron icons availability (rg ChevronDown/Up in matrix folder):
+       StatusLegend.js L2  import { ChevronDown, ChevronUp, Info } from 'lucide-react';
+     → Same import path used by sibling component. No new dep.
 
 ================================================================
-VERIFY 1-4 — All green
+DIFF — 1 file
 ================================================================
 
-V1  python -c "from contractor_ops.execution_matrix_router import router"
-      → "OK"
+frontend/src/components/matrix/MatrixListView.js  (full file rewrite,
+  100 → 137 LOC, +37 net)
+-----------------------------------------------------------------------
+- import React, { useMemo } from 'react';
++ import React, { useMemo, useState } from 'react';
++ import { ChevronDown, ChevronUp } from 'lucide-react';
+  import MatrixCell from './MatrixCell';
 
-V2  pytest backend/tests/test_execution_matrix.py -v
-      → 14 passed (was 13; +1 new test)
+  Inside component, after cellsByUnitStage useMemo:
++ // #490 — per-unit expanded state. Default all collapsed. Multiple
++ // units may be expanded simultaneously (useful for comparing 2-3).
++ const [expandedUnits, setExpandedUnits] = useState(new Set());
++ const toggleUnit = (unitId) => {
++   setExpandedUnits((prev) => {
++     const next = new Set(prev);
++     if (next.has(unitId)) next.delete(unitId);
++     else next.add(unitId);
++     return next;
++   });
++ };
 
-V3  pytest backend/tests/test_qc_override_close.py
+  Card body (replaces L41-95 entirely):
+- <div className="bg-white rounded-xl border border-slate-200 p-3">
+-   <div className="flex items-center justify-between mb-2">…header…</div>
+-   <div className="h-1.5 bg-slate-100 …mb-3"><div … /></div>
+-   <div className="flex gap-1.5 overflow-x-auto …">  ← horizontal scroll
+-     {stages.map(stage => (
+-       <div className="… shrink-0 w-12">              ← 50px column
+-         <MatrixCell … size="sm" />
+-         <span className="text-[9px] … truncate">    ← unreadable label
+-           {stage.title}
+-         </span>
+-       </div>
+-     ))}
+-   </div>
+- </div>
+
++ <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
++   <button onClick={() => toggleUnit(unit.id)}
++           className="w-full px-3 py-3 hover:bg-slate-50 active:bg-slate-100 …">
++     {/* header — building badge + unit + floor + count + chevron */}
++     {/* progress bar (visible in BOTH states) */}
++   </button>
++   {isExpanded && (
++     <div className="border-t border-slate-100 px-3 py-2">
++       {stages.map((stage, idx) => (
++         <div className={`flex items-center justify-between gap-3 py-3
++                           ${idx < stages.length - 1 ? 'border-b border-slate-50' : ''}`}>
++           <span className="text-[13px] text-slate-700 leading-snug min-w-0 flex-1">
++             {stage.title}                            ← full Hebrew name
++           </span>
++           <div className="shrink-0">
++             <MatrixCell cell={cell} stage={stage} size="sm" />
++           </div>
++         </div>
++       ))}
++     </div>
++   )}
++ </div>
+
+Key properties:
+- Header is a single <button> spanning the entire row → tap target
+  ≈ py-3 + content + py-3 ≈ 56px (above 44px Apple HIG minimum).
+- Progress bar moved INSIDE the button (visible always — good
+  at-a-glance scan, no expansion required).
+- Expanded body sits OUTSIDE the button (separator + vertical list).
+- Stage rows use py-3 (~48px each) — Phase 2B tap-to-edit ready.
+- `border-b border-slate-50` between stage rows; last row skipped via
+  `idx < stages.length - 1`.
+- Per-unit `Set` state — multiple units may be expanded at once, by
+  design.
+- Empty state, progressForUnit, cellsByUnitStage useMemo, and the
+  component signature ({units, stages, cells, floorsById,
+  buildingsById}) are all unchanged.
+
+================================================================
+VERIFY 1-5 — All green
+================================================================
+
+V1  yarn build (REACT_APP_BACKEND_URL=placeholder)
+      → "Done in 33.60s." Compiled successfully, no new warnings.
+
+V2  rg -c 'overflow-x-auto|text-\[9px\]|shrink-0 w-12'
+      MatrixListView.js
+      → 0   (was 3 hits across L82/L86/L88; all gone ✅)
+
+V3  rg -c 'useState|expandedUnits|toggleUnit|ChevronDown|ChevronUp'
+      MatrixListView.js
+      → 8   (≥5 ✅)
+
+V4  rg -c 'text-\[13px\]' MatrixListView.js
+      → 1   (≥1 ✅ — readable stage labels)
+
+V5  pytest backend/tests/test_execution_matrix.py
+            backend/tests/test_qc_override_close.py
             backend/tests/test_qc_units_status.py -q
-      → 4 passed (no QC code touched)
-
-V4  rg -c "building_name_num|int\(building_name_str\)"
-      backend/contractor_ops/execution_matrix_router.py
-      → 3  (≥2 ✅)
+      → 18 passed (matrix 14 + QC 4; backend untouched ✅)
 
 ================================================================
-VERIFY 5 — DEFERRED TO ZAHI (visual smoke after stag deploy)
+VERIFY 6 — DEFERRED TO ZAHI (visual smoke after stag deploy)
 ================================================================
 
-a) Login → open project "מגרש 810" (or any project where buildings are
-   named with pure digits like "8","9","10","11" and sort_index is empty).
-b) /projects/{p}/execution-matrix on desktop → matrix shows building
-   "8" units FIRST (top), then "9", then "10", then "11".
-c) Mobile list view → same numeric building order in the card sequence.
+Default collapsed state (mobile 375px DevTools / actual phone):
+  a) /projects/{p}/execution-matrix on mobile → all cards default
+     COLLAPSED. Each card ≈70px (badge + unit + floor + count +
+     progress bar + chevron-down).
+  b) Total page height for 30 units ≈2,100px (down from ~3,900px).
+  c) NO horizontal scroll inside any card.
+  d) Stage names NOT visible in collapsed state (intentional).
 
-Negative regressions:
-d) Project with explicit `sort_index` populated on every building → still
-   honors sort_index (this change does NOT override it).
-e) Project with non-numeric building names (e.g., "בניין A","מגדל הצפון")
-   → string lex sort applies, identical to pre-#489 behavior.
-f) Mixed names ("1","2","בניין A") → numeric names sort before
-   non-numeric (which collapse to 9999 and lex-sort among themselves).
-   Acceptable by design — numeric naming wins when it exists.
+Expand interaction:
+  e) Tap any card → expands smoothly. Chevron flips to up.
+  f) Each stage row shows full Hebrew name (text-[13px]) on right,
+     status icon (32×32) on left.
+  g) Tap header again → collapses.
+  h) Multiple units may be expanded simultaneously (per-unit Set).
+
+Stage names readable (no truncation):
+  i) "הכנה ליציקת תקרה"
+  j) "בלוקים — שורה ראשונה"
+  k) "אישור סומסום אחרי בלוקים"
+
+Touch targets:
+  l) Header tap area ≥56px (well above 44px minimum).
+  m) Each stage row ≥48px (Phase 2B tap-to-edit ready).
+
+Desktop unchanged:
+  n) ≥768px viewport: MatrixGridView still rendered. No regression.
+
+Edge cases:
+  o) Project with 0 units → "אין דירות בפרויקט" still shown.
+  p) Unit with 0 stages → expanded body renders empty cleanly.
 
 ================================================================
 DESIGN NOTES
 ================================================================
-
-- Pure parity with #485: same `int(...)` parse + same 9999 fallback,
-  same "numeric BEFORE string fallback" insertion order. Maintaining a
-  single mental model for "numeric-aware tiebreak" across the codebase.
-- 6-tuple stays cheap to compare; tuple comparison still short-circuits
-  on the first non-equal element.
-- Comment in code explicitly references #489 + #485 so the next
-  maintainer sees the family lineage.
+- Reused `MatrixCell size="sm"` rather than introducing a new size →
+  visual parity with the desktop grid icons.
+- `<button type="button">` for the header avoids the "submit" default
+  inside any future form ancestor (defensive).
+- `text-right` on the button keeps RTL alignment of inner content
+  (since native `<button>` defaults to text-align:center).
+- Set-based state is O(1) for has/add/delete, no array churn.
+- Animation/transition: only the existing CSS `transition-colors` on
+  hover + the progress-bar `transition-all`. No JS animation, no new
+  dep.
 
 ================================================================
 OUT OF SCOPE
 ================================================================
-- Frontend changes (response order drives render order — already correct).
-- Renaming buildings in the DB.
-- Floor-name numeric tiebreak (not requested; floor_number is already
-  an int field).
-- Other sort callsites or other endpoints.
+- "פתח/סגור הכל" global expand/collapse — Phase 2D.
+- Tap-to-edit popover on stage rows — Phase 2B.
+- MatrixGridView (desktop) — correct as-is.
+- MatrixCell, STATUS_CONFIG, ExecutionMatrixPage, backend, schema,
+  any other component or page.
+- New tests — pure UI redesign of one component; no logic added.
 
 ================================================================
 NEXT STEPS (Zahi)
@@ -143,6 +195,6 @@ NEXT STEPS (Zahi)
 1) Review review.txt + diff.
 2) git add -A && git commit -m "$(cat .local/.commit_message)"
 3) git push origin staging
-4) ./deploy.sh --stag → run VERIFY 5 (a–f) → ./deploy.sh --prod
+4) ./deploy.sh --stag → run VERIFY 6 (a–p) → ./deploy.sh --prod
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
