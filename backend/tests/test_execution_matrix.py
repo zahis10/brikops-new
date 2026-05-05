@@ -210,6 +210,54 @@ def test_get_matrix_unit_sort_numeric():
     asyncio.run(run())
 
 
+def test_get_matrix_unit_sort_numeric_building_names():
+    """#489 — buildings named with pure digits ("8","9","10","11") sort
+    numerically, not lexicographically. Regression guard mirroring #485's
+    unit_no fix at the building-name level. All buildings share the same
+    sort_index so the numeric tiebreak is what's exercised."""
+    async def run():
+        matrix_config = {
+            "id": "m1", "project_id": "p1",
+            "custom_stages": [], "base_stages_removed": [], "deletedAt": None,
+        }
+        tpl = _mk_tpl([
+            {"id": "s1", "title": "ריצוף", "scope": "unit", "order": 10},
+        ])
+        # Buildings inserted in lex order ("10" first) — without the fix
+        # the matrix would render them in that order.
+        buildings = [
+            {"id": "b10", "project_id": "p1", "name": "10", "sort_index": 0},
+            {"id": "b11", "project_id": "p1", "name": "11", "sort_index": 0},
+            {"id": "b8",  "project_id": "p1", "name": "8",  "sort_index": 0},
+            {"id": "b9",  "project_id": "p1", "name": "9",  "sort_index": 0},
+        ]
+        floors = [
+            {"id": "f-10", "project_id": "p1", "building_id": "b10", "floor_number": 1},
+            {"id": "f-11", "project_id": "p1", "building_id": "b11", "floor_number": 1},
+            {"id": "f-8",  "project_id": "p1", "building_id": "b8",  "floor_number": 1},
+            {"id": "f-9",  "project_id": "p1", "building_id": "b9",  "floor_number": 1},
+        ]
+        units = [
+            {"id": "u-10", "project_id": "p1", "building_id": "b10", "floor_id": "f-10", "unit_no": "1"},
+            {"id": "u-11", "project_id": "p1", "building_id": "b11", "floor_id": "f-11", "unit_no": "1"},
+            {"id": "u-8",  "project_id": "p1", "building_id": "b8",  "floor_id": "f-8",  "unit_no": "1"},
+            {"id": "u-9",  "project_id": "p1", "building_id": "b9",  "floor_id": "f-9",  "unit_no": "1"},
+        ]
+        db = _mk_db(matrix_config=matrix_config, units=units, floors=floors,
+                    buildings=buildings, cells=[])
+        with patch.object(emr, "get_db", return_value=db), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res = await emr.get_matrix("p1", user={"id": "pm1"})
+
+        ids = [u["id"] for u in res["units"]]
+        # Numeric building order: 8, 9, 10, 11 (NOT 10, 11, 8, 9)
+        assert ids == ["u-8", "u-9", "u-10", "u-11"], \
+            f"expected numeric building sort ['u-8','u-9','u-10','u-11'] got {ids}"
+    asyncio.run(run())
+
+
 def test_get_matrix_blocks_contractor():
     """Contractor → 403 on GET /matrix."""
     async def run():

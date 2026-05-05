@@ -238,9 +238,20 @@ async def get_matrix(
             unit_no_num = int(unit_no_str)
         except (ValueError, TypeError):
             unit_no_num = 9999  # non-numeric unit_no sorts to end
+        # #489 — numeric tiebreak for building name (parity with #485
+        # unit_no fix). Handles projects where buildings are named with
+        # pure digits (e.g. "8","9","10","11"). Without this, lex sort
+        # places "10" before "8". Non-numeric names → 9999 → fall through
+        # to the existing string tiebreak.
+        building_name_str = b.get("name", "") or ""
+        try:
+            building_name_num = int(building_name_str)
+        except (ValueError, TypeError):
+            building_name_num = 9999
         return (
             b.get("sort_index", 9999),
-            b.get("name", "") or "",
+            building_name_num,
+            building_name_str,
             f.get("floor_number", 0),
             unit_no_num,
             unit_no_str,
