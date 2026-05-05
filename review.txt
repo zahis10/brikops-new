@@ -1,97 +1,228 @@
 ================================================================================
-#498 — Matrix dialog radio labels (UX clarity polish)
-================================================================================
-Branch:   staging
-Status:   READY FOR REVIEW — V1-V4 green; visual smoke deferred to Zahi.
-Files:    2 frontend, 3 LOC swap, ZERO backend, ZERO tests, P5 cosmetic.
-
-================================================================================
-CONTEXT
+BATCH #500 — Phase 2D-1: Excel-style Filter Drawer + Saved Views
+Branch: staging  ·  Date: 2026-05-05  ·  AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
 
-Post-#497 prod test (mobile, Zahi 2026-05-05): "איך מוסיף עמודות בקרת ביצוע?"
-Two places said "בקרת ביצוע" (section 2 header + section 1 status radio
-caption), masking the fact that the section-1 radio IS what creates an
-execution-control column.
-
-Decision: rename radio + section-1 subtitle to Zahi's everyday terminology
-(תגית = מידע כללי / סטטוס = שלב בקרת ביצוע) and drop "(6 ערכים)" — the
-number means nothing without context. UI label decoupled from the
-"tag"/"status" enum that goes to the backend (contract preserved).
+GOAL (Zahi 2026-05-05): "מערכת הסינון זה הלב והליבה של כל המערכת...
+טבלת אקסל משופרת". Without per-column filtering the matrix can't replace
+Excel for management. This batch ships the FAB + drawer + 5 dynamic
+sections + per-user saved views (with delete pill).
 
 ================================================================================
-PER-FILE CHANGES
+STEP 0 — PRE-FLIGHT AUDIT (7 sub-greps — ADDENDUM #1 added 0.6)
 ================================================================================
 
-frontend/src/components/matrix/AddStageForm.js  (2 LOC)
-  L79  "תגית (טקסט חופשי)"
-       → "📝 מידע כללי (טקסט חופשי)"
-  L89  "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)"
-       → "🔨 שלב בקרת ביצוע"
-  Radio `value="tag"` / `value="status"` UNCHANGED — backend payload
-  identical to today.
+0.1 ✅ matrixService had exactly 4 methods (getMatrix, updateCell,
+       getCellHistory, updateStages). No saved-view leftovers — clean
+       slate for PART 6 to add 4 more.
 
-frontend/src/components/matrix/StageManagementDialog.js  (1 LOC)
-  L164 (Section 1 subtitle)
-       "תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)"
-       → "📝 מידע כללי על הדירה (מכור, מס׳ חדרים) או 🔨 שלבי בקרת ביצוע
-          נוספים (טיח, גז)"
-  Concrete examples PMs latch onto immediately.
-  `block sm:inline` wrap behavior preserved.
+0.2 ✅ Backend saved-views endpoints present at execution_matrix_router.py:
+         GET    /views                 L521
+         POST   /views                 L536
+         PATCH  /views/{view_id}       L561   ← PATCH not PUT (drift D1)
+         DELETE /views/{view_id}       L592
 
-NOT TOUCHED (per spec):
-  - Section 2 header "🔨 עמודות בקרת ביצוע".
-  - StageRow component, MatrixGridView, MatrixListView.
-  - "tag"/"status" enum values, schemas, MATRIX_STATUS_VALUES.
-  - Backend.
+0.2b ✅ Schema MatrixSavedViewFilters (schemas.py:969) accepts:
+         building_ids?, floor_ids?, unit_ids?,
+         stage_status_filters?, tag_value_filters?, search_text?
+       All Optional[] — frontend sends only the 5 fields it produces.
 
-================================================================================
-VERIFY OUTPUTS
-================================================================================
+0.3 ✅ ExecutionMatrixPage L11-210, structure: useMatrixData → memos →
+       early returns (loading/error) → JSX with views + dialogs. Wiring
+       point CLEAR — but hooks must be hoisted ABOVE early returns (V1
+       rules-of-hooks fix below).
 
-V1 — old strings purged:
-  grep -E "6 ערכים|תגית \(טקסט|תגיות \(טקסט" AddStageForm + Dialog
-  → 0 hits ✓ (exit code 1 from grep)
+0.4 ✅ @radix-ui/react-dialog ^1.1.11 already installed (used by
+       StageManagementDialog, CellEditDialog). Reused for drawer +
+       SavedViewSaveDialog (modal-in-modal).
 
-V2 — new strings present:
-  grep -E "📝|🔨 שלב|🔨 שלבי" AddStageForm + Dialog
-  → 3 hits (form L76 📝, form L86 🔨 שלב, dialog L161 📝+🔨 שלבי) ✓
+0.5 ✅ Status enum source = frontend/src/components/matrix/STATUS_CONFIG.js
+       Exports MATRIX_STATUS_LIST + MATRIX_STATUSES (drift D2 noted).
+       6 statuses with Hebrew labels — single source of truth for
+       drawer's status checkboxes.
 
-V3 — diff scope (only the 2 expected files, exact line counts):
-  AddStageForm.js          | 4 ++--
-  StageManagementDialog.js | 2 +-
-  2 files changed, 3 insertions(+), 3 deletions(-)  ✓
-
-V4 — backend / sibling matrix files untouched:
-  No edits to backend/, MatrixGridView.js, MatrixListView.js, StageRow.js.
-
-V5 — yarn build (deferred to deploy.sh preflight; pure string swap inside
-       existing JSX text nodes — no syntax risk).
+0.6 ✅ NEW per ADDENDUM #1 — FAB conflict pre-flight grep:
+       grep "position: fixed ... bottom" across components/layouts/pages.
+       Result: NO fixed-bottom element on ExecutionMatrixPage itself.
+       (Hits found are inside Radix Dialog/Sheet portals on OTHER pages
+       — they only render when their dialogs are open and don't share
+       the matrix layout shell.) FAB at bottom:max(16px, safe-area+16px)
+       is safe. No bottom offset adjustment needed.
 
 ================================================================================
-SMOKE (Zahi after deploy to staging)
+SPEC DRIFTS (all approved in ADDENDUM #1)
 ================================================================================
 
-a) Hard refresh.
-b) ⚙️ → Section 1 subtitle reads:
-   "📝 מידע כללי על הדירה (מכור, מס׳ חדרים) או 🔨 שלבי בקרת ביצוע נוספים (טיח, גז)"
-c) "+ הוסף עמודה חדשה" → form expands.
-d) Radios:
-     ○ 📝 מידע כללי (טקסט חופשי)
-     ○ 🔨 שלב בקרת ביצוע
-   No "6 ערכים", no "כמו עמודות בקרת ביצוע" anywhere.
-e) Functional regression (label-only change must not affect behavior):
-   - 🔨 + name "טיח חיצוני" → saves → 6-status execution-control column.
-   - 📝 + name "צבע דלתות" → saves → free-text tag column.
-f) Mobile 375px — radios don't overflow; subtitle wraps via `block sm:inline`.
+D1. Backend uses @router.patch (L561), spec PART 6 says PUT.
+    → Frontend matrixService.updateSavedView calls PATCH. Verified.
+
+D2. STATUS_CONFIG path is frontend/src/components/matrix/STATUS_CONFIG.js
+    not frontend/src/constants/. Spec STEP 0.5 had the wrong path.
+    → Drawer imports from the actual location.
+
+D3. Schema includes floor_ids/unit_ids the hook doesn't produce.
+    → Pydantic Optional[] handles missing keys correctly. Frontend
+      payload sends only the 5 fields the hook surfaces.
 
 ================================================================================
-RISK / ROLLBACK
+FILES — 6 NEW + 2 EDIT (zero backend, zero sibling matrix changes)
 ================================================================================
 
-Risk:    P5 cosmetic. Pure JSX text swap. No data, no API, no schema.
-Rollback: git revert <sha> → labels return to prior wording. Zero
-         user-data impact (radio enum unchanged).
+NEW
+  frontend/src/hooks/useMatrixFilters.js                       236 lines
+  frontend/src/hooks/__tests__/useMatrixFilters.test.js        158 lines
+  frontend/src/components/matrix/MatrixFilterSection.js        140 lines
+  frontend/src/components/matrix/MatrixFilterDrawer.js         292 lines
+  frontend/src/components/matrix/MatrixFilterFAB.js             34 lines
+  frontend/src/components/matrix/SavedViewSaveDialog.js         98 lines
+                                                       TOTAL:  958 lines
+  (estimate was ~625 LOC frontend + ~110 LOC tests = ~735.
+   Drawer and hook came in heavier — fine; no bloat, just thorough.)
+
+EDIT
+  frontend/src/services/matrixService.js                +50 lines / -0
+    Added 4 methods: listSavedViews, createSavedView, updateSavedView
+    (PATCH per drift D1), deleteSavedView. Sentinel conversion comment
+    points to useMatrixFilters.serializeFilters as the source.
+
+  frontend/src/pages/ExecutionMatrixPage.js             +91 / -7 = +84 net
+    Wiring only: 5 imports added; 6 hooks (cellsByUnitStage useMemo +
+    useMatrixFilters + 2 useState + useEffect + 2 useCallback) HOISTED
+    ABOVE early returns to satisfy rules-of-hooks; units → filteredUnits
+    in MatrixListView/GridView props; FAB + Drawer rendered after
+    matrix body. All existing handlers unchanged.
+
+================================================================================
+ARCHITECTURE
+================================================================================
+
+Filter logic — Excel pattern, AND between sections, OR within values:
+  - building_ids / stage_status / tag_value: OR within (any-match keeps row)
+  - apartment_search / search_text: substring filters
+  - All combine with AND — unit must satisfy every active section
+
+Empty-value sentinel '__empty__':
+  - Frontend-only marker for "(ריק)" checkbox
+  - serializeFilters converts '__empty__' → "" before backend send
+  - deserializeFilters converts "" → '__empty__' on saved-view load
+  - Round-trip integrity covered by test T6
+
+Sections collapsible (Zahi: "תוודא שיש חץ לקיפול נושאים... שלא יהיה
+עמוס מדי"):
+  - Default state = collapsed for ALL sections
+  - Header always visible (≥44px tap target)
+  - Auto-expand when activeCount > 0 (saved-view load triggers reveal)
+  - Group dividers: 📍 always; 📝 only if any tag stages; 🔨 only if
+    any status stages
+
+Saved views:
+  - Per-user (backend already filters by user_id from #483)
+  - Pill UI: click body → load; click × (NEW per ADDENDUM #1) → delete
+  - Save dialog is Radix modal-in-modal; ESC closes only the dialog
+  - "+ שמור" pill disabled when no filters active (prevents empty saves)
+  - Delete uses optimistic update with revert on error
+
+FAB:
+  - 56×56 violet circle, fixed bottom-left (RTL → visually right)
+  - Active count badge, capped at "99+"
+  - z-40 — sits below Radix Dialog overlays (z-50/60) so cell edit and
+    drawer cover it correctly
+
+================================================================================
+VERIFY 1-8
+================================================================================
+
+V1 ✅ yarn build clean
+   First run: 7 react-hooks/rules-of-hooks errors (hooks were placed
+   after early returns).
+   Fix: hoisted stages/units/cells (as useMemo for stable refs) +
+   cellsByUnitStage + filterAPI + filtersOpen + savedViews + useEffect
+   + 2 useCallback ABOVE the loading/error early-return blocks.
+   Re-run: clean compile, no warnings (CI=true treats warnings as errors).
+
+V2 ✅ wc -l of 6 NEW files: 958 total.
+
+V3 ✅ jest — useMatrixFilters tests: 7/7 pass (~3.7s).
+   T1 building+tag AND combo
+   T2 status OR within
+   T3 search matches text_value AND note
+   T4 activeCount per section
+   T5 loadSavedView atomic (no leak between switches)
+   T6 NEW — sentinel '__empty__' ↔ "" round-trip
+   T7 NEW — reset() clears all sections + activeCount.total === 0
+
+V4 ✅ git diff --stat backend/  → 0 lines diff. Backend untouched.
+
+V5 ✅ git diff --stat for sibling matrix files (MatrixCell, MatrixGridView,
+   MatrixListView, StageRow, StageManagementDialog, AddStageForm,
+   STATUS_CONFIG, StatusLegend, CellEditDialog) → 0 lines diff.
+
+V6 ✅ ExecutionMatrixPage diff: +91/-7 = +84 net.
+   Imports (5 new) + hoisted hooks block (~50 lines, including memos
+   and saved-view CRUD callbacks) + props swap (units → filteredUnits)
+   + FAB + Drawer JSX. NO change to existing handlers, header, error
+   paths, CellEditDialog, StageManagementDialog. matrixService diff:
+   +50/-0 (4 methods + comment block).
+
+V7 ✅ pytest tests/test_execution_matrix.py → 17 passed (unchanged).
+   Includes test_saved_view_create_list_delete_per_user — proves
+   backend CRUD already works as the frontend will call it.
+
+V8 ✅ Capacitor compliance:
+   - All section headers, checkboxes, footer buttons ≥44px (py-2.5 +
+     text padding)
+   - Drawer footer paddingBottom: max(12px, env(safe-area-inset-bottom))
+   - FAB bottom: max(16px, env(safe-area-inset-bottom) + 16px)
+   - Save dialog action buttons min-h-[44px]
+
+================================================================================
+SMOKE TEST (a)–(z) — DEFERRED to Zahi after staging deploy
+================================================================================
+
+Per standing rule, agent does not deploy. After Zahi runs ./deploy.sh
+--stag and hard-refreshes:
+
+  (a-d) FAB visible, drawer opens from right, sections collapsed
+  (e-f) Single building filter, FAB badge updates, live re-render
+  (g)   Building + status combo (2 active → FAB "2")
+  (h-l) HARDEST: 4-section combo (building + tag + 2 statuses + 1
+        status on different stage) → FAB "5", 4 sections active
+  (m-n) "+ שמור" → SavedViewSaveDialog → pill appears at end of row
+  (o-p) "נקה הכל" → tap saved-view pill → state restored exactly,
+        all 4 sections auto-expand
+  (q)   Delete-saved-view via × button on pill (NEW — ADDENDUM #1)
+  (r)   Free-text search live-filters across cells.text_value + note
+  (s-t) Hide a status stage via ⚙ → its filter section disappears;
+        switching projects → state resets, saved views are project-scoped
+  (u-x) Mobile DevTools 375px: FAB clears safe-area, drawer 90vw,
+        section bodies scroll, "החל (N)" updates label to "סגור"
+        when N=0
+  (y-z) No regressions on cell edit (#494) or stage management
+        (#495+#497+#498)
+
+================================================================================
+OPEN QUESTIONS — RESOLUTION
+================================================================================
+
+Q1 ✅ SavedViewSaveDialog as Radix modal-in-modal (not inline input —
+   focus-trap / accessibility)
+Q2 ✅ REVERSED per ADDENDUM #1 — minimal × delete-pill SHIPS in 2D-1
+   (5 LOC, e.stopPropagation, no confirm dialog)
+Q3 ✅ "פתח/סגור הכל" deferred to 2D-2
+Q4 ✅ Swipe-to-close deferred to 2D-2
+Q5 ✅ URL params deferred to 2E
+Q6 ✅ "(ריק)" not default-checked — explicit user opt-in only
+
+================================================================================
+ROLLBACK
+================================================================================
+
+git revert <commit-sha>
+6 file deletions + 2 file reverts. Matrix loses filter UI; data + saved
+views in DB remain intact (orphaned but harmless — separate collection).
+
+NO impact on cell editing (#494), stage management (#495+#497+#498),
+sibling matrix views, sticky columns, backend, auth, billing, safety.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

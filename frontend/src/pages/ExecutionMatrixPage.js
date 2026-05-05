@@ -1,12 +1,17 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings } from 'lucide-react';
+import { toast } from 'sonner';
 import { useMatrixData } from '../hooks/useMatrixData';
+import useMatrixFilters from '../hooks/useMatrixFilters';
+import { matrixService } from '../services/matrixService';
 import MatrixListView from '../components/matrix/MatrixListView';
 import MatrixGridView from '../components/matrix/MatrixGridView';
 import StatusLegend from '../components/matrix/StatusLegend';
 import CellEditDialog from '../components/matrix/CellEditDialog';
 import StageManagementDialog from '../components/matrix/StageManagementDialog';
+import MatrixFilterFAB from '../components/matrix/MatrixFilterFAB';
+import MatrixFilterDrawer from '../components/matrix/MatrixFilterDrawer';
 
 export default function ExecutionMatrixPage() {
   const { projectId } = useParams();
@@ -68,6 +73,56 @@ export default function ExecutionMatrixPage() {
     return updateStages(payload);
   }, [updateStages]);
 
+  // #500 Phase 2D-1 — filter state + saved views. MUST come before any early
+  // return so React hook order stays stable across renders.
+  const stages = useMemo(() => data?.stages || [], [data]);
+  const units = useMemo(() => data?.units || [], [data]);
+  const cells = useMemo(() => data?.cells || [], [data]);
+
+  const cellsByUnitStage = useMemo(() => {
+    const map = {};
+    for (const c of cells) map[`${c.unit_id}::${c.stage_id}`] = c;
+    return map;
+  }, [cells]);
+
+  const filterAPI = useMatrixFilters({ units, cellsByUnitStage, stages });
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [savedViews, setSavedViews] = useState([]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    matrixService.listSavedViews(projectId)
+      .then(views => { if (!cancelled) setSavedViews(views); })
+      .catch(() => { /* non-fatal — pills just won't show */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const handleSaveCurrentView = useCallback(async (title) => {
+    try {
+      const created = await matrixService.createSavedView(projectId, {
+        title, filters: filterAPI.currentFilterPayload,
+      });
+      setSavedViews(prev => [...prev, created]);
+      toast.success('התצוגה נשמרה');
+      return { ok: true };
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'שגיאה בשמירת התצוגה';
+      return { ok: false, error: msg };
+    }
+  }, [projectId, filterAPI.currentFilterPayload]);
+
+  const handleDeleteSavedView = useCallback(async (viewId) => {
+    const prev = savedViews;
+    setSavedViews(p => p.filter(v => v.id !== viewId));
+    try {
+      await matrixService.deleteSavedView(projectId, viewId);
+    } catch (err) {
+      setSavedViews(prev);
+      toast.error('שגיאה במחיקת התצוגה');
+    }
+  }, [projectId, savedViews]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
@@ -121,10 +176,6 @@ export default function ExecutionMatrixPage() {
     );
   }
 
-  const stages = data?.stages || [];
-  const units = data?.units || [];
-  const cells = data?.cells || [];
-
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <div className="max-w-7xl mx-auto p-4 sm:p-6">
@@ -164,7 +215,7 @@ export default function ExecutionMatrixPage() {
 
         <div className="md:hidden">
           <MatrixListView
-            units={units}
+            units={filterAPI.filteredUnits}
             stages={stages}
             cells={cells}
             floorsById={floorsById}
@@ -174,7 +225,7 @@ export default function ExecutionMatrixPage() {
         </div>
         <div className="hidden md:block">
           <MatrixGridView
-            units={units}
+            units={filterAPI.filteredUnits}
             stages={stages}
             cells={cells}
             floorsById={floorsById}
@@ -183,6 +234,32 @@ export default function ExecutionMatrixPage() {
           />
         </div>
       </div>
+
+      <MatrixFilterFAB
+        activeCount={filterAPI.activeCount.total}
+        onClick={() => setFiltersOpen(true)}
+      />
+
+      <MatrixFilterDrawer
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        filters={filterAPI.filters}
+        filteredCount={filterAPI.filteredUnits.length}
+        activeCount={filterAPI.activeCount}
+        toggleBuilding={filterAPI.toggleBuilding}
+        toggleStageStatus={filterAPI.toggleStageStatus}
+        toggleTagValue={filterAPI.toggleTagValue}
+        setApartmentSearch={filterAPI.setApartmentSearch}
+        setSearchText={filterAPI.setSearchText}
+        reset={filterAPI.reset}
+        loadSavedView={filterAPI.loadSavedView}
+        distinctTagValues={filterAPI.distinctTagValues}
+        buildings={data?.buildings || []}
+        stages={stages}
+        savedViews={savedViews}
+        onSaveCurrentView={handleSaveCurrentView}
+        onDeleteSavedView={handleDeleteSavedView}
+      />
 
       <CellEditDialog
         open={editing !== null}

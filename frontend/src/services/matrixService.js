@@ -59,6 +59,56 @@ export const matrixService = {
     );
     return response.data;
   },
+
+  // === Phase 2D-1 (#500) — saved views CRUD ===
+  // Backend endpoints already shipped in #483:
+  //   GET    /execution-matrix/{projectId}/views
+  //   POST   /execution-matrix/{projectId}/views
+  //   PATCH  /execution-matrix/{projectId}/views/{viewId}   (NOT PUT — verified
+  //                                                          execution_matrix_router.py:561)
+  //   DELETE /execution-matrix/{projectId}/views/{viewId}
+  //
+  // payload.filters MUST match MatrixSavedViewFilters (schemas.py:969):
+  //   { building_ids?, floor_ids?, unit_ids?,
+  //     stage_status_filters?: {stageId: string[]},
+  //     tag_value_filters?:    {stageId: string[]},
+  //     search_text? }
+  // Frontend sentinel '__empty__' → "" conversion happens in
+  // useMatrixFilters.serializeFilters (callers pass already-serialized payloads).
+  async listSavedViews(projectId) {
+    const response = await axios.get(
+      `${API}/execution-matrix/${projectId}/views`,
+      { headers: getAuthHeader() }
+    );
+    return response.data?.views || [];
+  },
+
+  async createSavedView(projectId, payload) {
+    // payload: { title, icon?, filters }
+    const response = await axios.post(
+      `${API}/execution-matrix/${projectId}/views`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+
+  async updateSavedView(projectId, viewId, payload) {
+    const response = await axios.patch(
+      `${API}/execution-matrix/${projectId}/views/${viewId}`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
+
+  async deleteSavedView(projectId, viewId) {
+    await axios.delete(
+      `${API}/execution-matrix/${projectId}/views/${viewId}`,
+      { headers: getAuthHeader() }
+    );
+    return { ok: true };
+  },
 };
 
 export default matrixService;
