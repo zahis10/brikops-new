@@ -48,16 +48,12 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
                 {(() => {
                   const building = buildingsById?.[unit.building_id];
                   if (!building) return null;
-                  const badgeText =
-                    building.sort_index != null
-                      ? String(building.sort_index)
-                      : (building.name || '?').trim().charAt(0) || '?';
                   return (
                     <span
-                      className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-medium text-[10px] shrink-0"
+                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 font-medium text-[11px] shrink-0 max-w-[120px] truncate"
                       title={building.name}
                     >
-                      {badgeText}
+                      {building.name}
                     </span>
                   );
                 })()}

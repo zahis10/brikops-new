@@ -27,10 +27,10 @@ export default function MatrixGridView({ units, stages, cells, floorsById, build
       <table className="border-collapse w-full" style={{ direction: 'rtl' }}>
         <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
           <tr>
-            <th className="sticky right-0 z-30 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[80px] w-[80px]">
+            <th className="sticky right-0 z-30 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px] w-[120px]">
               בניין
             </th>
-            <th className="sticky right-[80px] z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
+            <th className="sticky right-[120px] z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
               דירה
             </th>
             {stages.map((stage) => (
@@ -52,25 +52,21 @@ export default function MatrixGridView({ units, stages, cells, floorsById, build
             const floor = floorsById[unit.floor_id];
             return (
               <tr key={unit.id} className={idx % 2 ? 'bg-slate-50/30' : 'bg-white'}>
-                <td className="sticky right-0 z-20 bg-inherit border-l border-slate-200 px-3 py-2 text-center text-xs">
+                <td className="sticky right-0 z-20 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
                   {(() => {
                     const building = buildingsById?.[unit.building_id];
-                    if (!building) return null;
-                    const badgeText =
-                      building.sort_index != null
-                        ? String(building.sort_index)
-                        : (building.name || '?').trim().charAt(0) || '?';
+                    const name = building?.name || '—';
                     return (
                       <span
-                        className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-medium"
-                        title={building.name || 'בניין לא ידוע'}
+                        className="inline-block max-w-full truncate px-2 py-1 rounded-md bg-violet-50 text-violet-700 border border-violet-200 font-medium text-[11px] leading-tight"
+                        title={name}
                       >
-                        {badgeText}
+                        {name}
                       </span>
                     );
                   })()}
                 </td>
-                <td className="sticky right-[80px] z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
+                <td className="sticky right-[120px] z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
                   <div className="font-medium text-slate-900">דירה {unit.unit_no}</div>
                   {floor && (
                     <div className="text-[10px] text-slate-500 mt-0.5">
