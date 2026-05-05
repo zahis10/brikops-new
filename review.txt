@@ -1,169 +1,111 @@
-REVIEW — #491 Back button in ExecutionMatrixPage
-Followup to #484 Phase 2A; fills nav gap surfaced by #487-#490 staging smoke
+REVIEW — #492 Safety pill in ApartmentDashboardPage card list
+Followup-4 to #469 (defect "בטיחות" tag); closes the last surface gap
 ============================================================
 Branch: staging
-Scope: 1 frontend file (`ExecutionMatrixPage.js`). Backend untouched.
-       ~25 LOC across 3 render branches (main, loading, error).
+Scope: 1 frontend file, 5 LOC. Backend untouched.
 
 ================================================================
 STEP 0 — PRE-FLIGHT AUDIT
 ================================================================
-0.1  ExecutionMatrixPage header pre-edit (rg "מטריצת ביצוע|LayoutGrid|max-w-7xl mx-auto"):
-       L51  loading branch  <div className="max-w-7xl mx-auto">
-       L66  error branch    <div className="max-w-7xl mx-auto">
-       L93  main branch     <div className="max-w-7xl mx-auto p-4 sm:p-6">
-       L96  LayoutGrid icon
-       L99  <h1> "מטריצת ביצוע"
-     → Three render branches, all need a back button. Header has only
-       LayoutGrid+title — no back affordance.
+0.1  ApartmentDashboardPage card pills row (rg "filteredTasks.map|priorityInfo.label|task.location"):
+       L761  {filteredTasks.map(task => {
+       L791  {priorityInfo.label}
+       L793  {task.location && (
+       L794  <span className="text-[10px] text-slate-400">{task.location}</span>
+     → Insertion point confirmed: between the closing </span> of the
+       priority badge (L792) and the `task.location &&` conditional
+       (L793). Same insertion order as #491.
 
-0.2  StageDetailPage canonical (rg "ArrowRight"):
-       L7    import { ArrowRight, … } from 'lucide-react';
-       L1667 <ArrowRight className="w-5 h-5" />
-     → Same icon family, same size class. Pattern confirmed.
+0.2  Clean slate (rg "task.is_safety|🛡️"):
+       0 hits → no prior safety pill on this page.
 
-0.3  ArrowRight in ExecutionMatrixPage (rg "ArrowRight"):
-       0 hits → must add to lucide-react import.
-
-0.4  Navigation hooks pre-edit (rg "useNavigate|useParams"):
-       L2  import { useParams } from 'react-router-dom';
-       L10 const { projectId } = useParams();
-     → useParams only. Adding useNavigate to react-router-dom import
-       and a `const navigate = useNavigate()` line at the top of the
-       component.
+0.3  Route confirmation (per spec, App.js routing):
+       /projects/:projectId/units/:unitId/defects → ApartmentDashboardPage
+       (NOT UnitDetailPage — that's why #491 missed it).
 
 ================================================================
 DIFF — 1 file
 ================================================================
 
-frontend/src/pages/ExecutionMatrixPage.js  (+24 LOC, 4 edits)
--------------------------------------------------------------
+frontend/src/pages/ApartmentDashboardPage.js  (+5 LOC at L796-800)
+-------------------------------------------------------------------
+                       <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+                         {priorityInfo.label}
+                       </span>
++                      {task.is_safety && (
++                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
++                          🛡️ בטיחות
++                        </span>
++                      )}
+                       {task.location && (
+                         <span className="text-[10px] text-slate-400">{task.location}</span>
+                       )}
 
-Edit 1 — Imports:
-- import { useParams } from 'react-router-dom';
-- import { Loader2, AlertCircle, LayoutGrid } from 'lucide-react';
-+ import { useParams, useNavigate } from 'react-router-dom';
-+ import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
-
-Edit 2 — Hook in component body:
-  export default function ExecutionMatrixPage() {
-    const { projectId } = useParams();
-+   const navigate = useNavigate();
-    const { data, loading, error, refresh } = useMatrixData(projectId);
-
-Edit 3 — Loading state (before loader card):
-+ <button
-+   onClick={() => navigate(`/projects/${projectId}/qc`)}
-+   className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors mb-3 inline-flex"
-+   aria-label="חזרה לבקרת ביצוע"
-+ >
-+   <ArrowRight className="w-5 h-5 text-slate-600" />
-+ </button>
-
-Edit 4 — Error state (before red error card):
-+ (same back button as Edit 3, mb-3 inline-flex variant)
-
-Edit 5 — Main render (FIRST element inside the header flex row):
-+ <button
-+   onClick={() => navigate(`/projects/${projectId}/qc`)}
-+   className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors"
-+   aria-label="חזרה לבקרת ביצוע"
-+ >
-+   <ArrowRight className="w-5 h-5 text-slate-600" />
-+ </button>
-  <div className="p-2 bg-violet-100 rounded-lg">
-    <LayoutGrid className="w-5 h-5 text-violet-700" />
-  </div>
-
-Variant note: loading/error branches use `mb-3 inline-flex` (free-standing,
-needs its own bottom margin); the main-render variant lives inside the
-existing `flex items-center gap-3 mb-4` header row, so it inherits spacing
-and doesn't need `mb-3 inline-flex`.
-
-Touch / a11y:
-- `p-2` (8px) padding around the 20×20 icon → ~36px clickable region;
-  combined with the rounded `hover:bg-slate-100` background it reads as
-  a comfortably tappable affordance (StageDetailPage uses the same
-  pattern with p-1.5).
-- `aria-label="חזרה לבקרת ביצוע"` on all three buttons → screen
-  readers announce the destination, not just "button".
-- Hardcoded `/projects/${projectId}/qc` (D3): robust against direct-URL
-  / bookmark / push-notification entry points, where `navigate(-1)`
-  would dump users out of the app.
+Byte-identical Tailwind to ProjectControlPage L3913 / TaskDetailPage
+(#488) / UnitDetailPage L327 (#491) / ProjectTasksPage L544 (#491):
+  text-[10px] px-2 py-0.5 rounded-full font-medium
+  bg-orange-100 text-orange-700 border border-orange-200
+Visual consistency across all 5 surfaces is now guaranteed.
 
 ================================================================
-VERIFY 1-5 — All green
+VERIFY 1-4 — All green
 ================================================================
 
 V1  yarn build (REACT_APP_BACKEND_URL=placeholder)
-      → "Done in 33.43s." Compiled successfully, no new warnings.
+      → "Done in 31.33s." Compiled successfully, no new warnings.
 
-V2  rg -c "useNavigate|ArrowRight" ExecutionMatrixPage.js
-      → 6   (≥4 ✅; 1 import + 1 hook + 4 icon uses minus dedup)
+V2  rg -c "task.is_safety|🛡️ בטיחות" ApartmentDashboardPage.js
+      → 2   (≥2 ✅; 1 conditional + 1 emoji label)
 
-V3  rg -c "navigate.*projects.*qc" ExecutionMatrixPage.js
-      → 3   (≥3 ✅; main + loading + error)
+V3  rg -c "bg-orange-100 text-orange-700 border border-orange-200"
+      ApartmentDashboardPage.js
+      → 1   (≥1 ✅; canonical Tailwind matches the other 4 surfaces)
 
-V4  rg -c "חזרה לבקרת ביצוע" ExecutionMatrixPage.js
-      → 3   (≥3 ✅; one aria-label per state)
-
-V5  pytest backend/tests/test_execution_matrix.py -q
-      → 14 passed (unchanged from #489; backend untouched)
+V4  pytest backend/tests/test_defect_safety_tag.py -q
+      → 6 passed (unchanged from #488; backend untouched)
 
 ================================================================
-VERIFY 6 — DEFERRED TO ZAHI (visual smoke after stag deploy)
+VERIFY 5 — DEFERRED TO ZAHI (visual smoke after stag deploy)
 ================================================================
 
-Default render:
-  a) Login → /projects/{p}/execution-matrix.
-  b) TOP-RIGHT of header (RTL natural "back"): ArrowRight icon visible,
-     positioned BEFORE the violet LayoutGrid box.
-  c) Click → navigates to /projects/{p}/qc (QC home).
-  d) Hover (desktop): bg-slate-100 background appears.
-  e) Active (mobile tap): bg-slate-200 flash.
+ApartmentDashboardPage:
+  a) Login → from BuildingDefectsPage tap a unit (or navigate directly
+     to /projects/{p}/units/{u}/defects).
+  b) Defect cards in the list show:
+     - "כבל קרוע" (is_safety=true) → orange "🛡️ בטיחות" pill visible
+       in the pills row, immediately after the priority badge ("בינוני").
+     - "נזילה מצינור מים חמים" (non-safety) → no pill.
+  c) Tap a card → still navigates to TaskDetailPage as before
+     (no behavior change).
 
-Loading state:
-  f) Hard refresh / slow network → during the spinner card, back button
-     visible top-right above it. Click → navigates back even before data
-     loads.
-
-Error state:
-  g) Login as a contractor without project access → 403 → red error
-     card shown, back button still visible top-right above it. Click →
-     navigates back to /qc.
+Visual consistency:
+  d) Pill style identical to ProjectControlPage / UnitDetailPage /
+     ProjectTasksPage / TaskDetailPage. Same orange, same size, same
+     border, same emoji.
 
 Mobile (375px):
-  h) No layout overlap with LayoutGrid icon to its left; header line
-     remains single row, title + subtitle don't wrap awkwardly.
-
-Accessibility:
-  i) Tab → focus ring on back button → Enter → navigates back.
-  j) Screen reader announces "חזרה לבקרת ביצוע".
+  e) Pill wraps gracefully on narrow viewport (parent has `flex-wrap`).
+     If the row gets crowded (category + priority + safety + location),
+     the safety pill drops to its own line cleanly.
 
 ================================================================
 DESIGN NOTES
 ================================================================
-- Same component pattern as StageDetailPage / BuildingQCPage /
-  FloorDetailPage → visual consistency across the QC tree.
-- D3 (hardcoded path, not navigate(-1)): if the user reached
-  /execution-matrix via a Capgo deep-link or bookmark,
-  history.state is empty and navigate(-1) would exit the app.
-- All three branches share the same path expression — no risk of
-  drifting destinations.
-- Icon `w-5 h-5 text-slate-600` matches the LayoutGrid sibling size
-  and keeps visual weight balanced (slate-600 is muted vs
-  violet-700 for the active page indicator).
+- Same insertion order across all 5 surfaces ("status → category →
+  priority → safety → extras") so users build a single mental model.
+- Conditional `task.is_safety && (...)` short-circuits cleanly — no
+  empty <span> when false.
+- No dependency on filter logic (#488 BuildingDefects safety filter
+  works at the data layer; this is purely a render addition).
 
 ================================================================
 OUT OF SCOPE
 ================================================================
-- Breadcrumb component (project name → QC → matrix) — would be a
-  cross-cutting refactor across all QC pages.
-- Renaming `/qc` to a friendlier label.
-- Back-button micro-animation.
-- StatusLegend, MatrixListView, MatrixGridView, useMatrixData,
-  buildingsById/floorsById/buildingCount memos, refresh logic.
-- Backend, schema, tests.
+- Other Apartment* / Building* / Floor* pages — none have the same
+  task card render that's missing the pill.
+- New tests — existing 6 tests in test_defect_safety_tag.py guard the
+  schema; this is pure UI.
+- Filter additions, toggle controls, or any data-layer changes.
 
 ================================================================
 NEXT STEPS (Zahi)
@@ -171,6 +113,6 @@ NEXT STEPS (Zahi)
 1) Review review.txt + diff.
 2) git add -A && git commit -m "$(cat .local/.commit_message)"
 3) git push origin staging
-4) ./deploy.sh --stag → run VERIFY 6 (a–j) → ./deploy.sh --prod
+4) ./deploy.sh --stag → run VERIFY 5 (a–e) → ./deploy.sh --prod
 
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
