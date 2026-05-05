@@ -158,7 +158,7 @@ export default function StageManagementDialog({
               <h3 className="text-xs font-bold text-slate-700 mb-2">
                 📋 עמודות מותאמות
                 <span className="text-[10px] font-normal text-slate-500 mr-2 block sm:inline">
-                  תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)
+                  📝 מידע כללי על הדירה (מכור, מס׳ חדרים) או 🔨 שלבי בקרת ביצוע נוספים (טיח, גז)
                 </span>
               </h3>
               <div className="mb-3">

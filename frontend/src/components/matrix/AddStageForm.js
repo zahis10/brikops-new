@@ -73,7 +73,7 @@ export default function AddStageForm({ onAdd }) {
             checked={type === 'tag'}
             onChange={() => setType('tag')}
           />
-          <span>תגית (טקסט חופשי)</span>
+          <span>📝 מידע כללי (טקסט חופשי)</span>
         </label>
         <label className="flex items-center gap-1.5 cursor-pointer">
           <input
@@ -83,7 +83,7 @@ export default function AddStageForm({ onAdd }) {
             checked={type === 'status'}
             onChange={() => setType('status')}
           />
-          <span>סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)</span>
+          <span>🔨 שלב בקרת ביצוע</span>
         </label>
       </div>
       <button

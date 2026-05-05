@@ -1,198 +1,97 @@
 ================================================================================
-#497 — Phase 2C POLISH — unhide visibility + UX clarity (hotfix to #495)
+#498 — Matrix dialog radio labels (UX clarity polish)
 ================================================================================
 Branch:   staging
-Status:   READY FOR REVIEW — VERIFY 1-6 green; visual+integrity smoke deferred to Zahi.
-Files:    1 backend + 3 frontend + 1 new test = ~22 LOC
+Status:   READY FOR REVIEW — V1-V4 green; visual smoke deferred to Zahi.
+Files:    2 frontend, 3 LOC swap, ZERO backend, ZERO tests, P5 cosmetic.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT AUDIT
+CONTEXT
 ================================================================================
 
-0.1 Root cause confirmed in `_resolve_visible_stages` (L156-183):
-      L161-163:  for s in tpl.get("stages", []) or []:
-                     if s["id"] in base_removed:
-                         continue          ← hidden filtered OUT
-    `stages` field never contains hidden base stages → dialog can't render
-    them with unhide toggle. DB data intact (cells + base_stages_removed).
+Post-#497 prod test (mobile, Zahi 2026-05-05): "איך מוסיף עמודות בקרת ביצוע?"
+Two places said "בקרת ביצוע" (section 2 header + section 1 status radio
+caption), masking the fact that the section-1 radio IS what creates an
+execution-control column.
 
-0.2 GET /matrix response dict at L283-300 (post-#495):
-      stages, units, cells, floors, buildings,
-      base_stages_removed, permissions, matrix_config_id
-    → ADD `template_stages` (additive, no break).
-
-0.3 StageManagementDialog L28-30 (post-#495):
-      const initialBase = (stages || []).filter(s => s.source === 'base');
-    → REPLACE with prop-fed `initialAllBaseStages` + fallback to old.
-
-0.4 ExecutionMatrixPage L200-206 (post-#495):
-      <StageManagementDialog ... initialBaseRemoved={...} />
-    → ADD `initialAllBaseStages={data?.template_stages || []}`.
-
-0.5 Existing #495 tests baseline: 16 passed → after this batch: 17.
+Decision: rename radio + section-1 subtitle to Zahi's everyday terminology
+(תגית = מידע כללי / סטטוס = שלב בקרת ביצוע) and drop "(6 ערכים)" — the
+number means nothing without context. UI label decoupled from the
+"tag"/"status" enum that goes to the backend (contract preserved).
 
 ================================================================================
 PER-FILE CHANGES
 ================================================================================
 
-backend/contractor_ops/execution_matrix_router.py  (+18 LOC)
-   After `stages = _resolve_visible_stages(matrix_config, tpl)` at L210:
-     + template_stages list-comp over `tpl.get("stages", []) or []`
-       (no hide filter; same shape as base entries in _resolve_visible).
-   Response dict gains:
-     + "template_stages": template_stages,
-   Comment cites #497 + reason. `_resolve_visible_stages` UNTOUCHED —
-   `stages` field semantics preserved (no breaking change).
+frontend/src/components/matrix/AddStageForm.js  (2 LOC)
+  L79  "תגית (טקסט חופשי)"
+       → "📝 מידע כללי (טקסט חופשי)"
+  L89  "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)"
+       → "🔨 שלב בקרת ביצוע"
+  Radio `value="tag"` / `value="status"` UNCHANGED — backend payload
+  identical to today.
 
-backend/tests/test_execution_matrix.py  (+~110 LOC, 1 new test)
-   + test_hide_then_unhide_template_stage_preserves_cells
-       Setup: 3 base stages (A,B,C), 1 unit, 3 cells (one per stage).
-       Step 1 PATCH /stages base_stages_removed=["stage_b"] →
-              matrix_config.base_stages_removed updates.
-       Step 2 GET /matrix:
-              - stages           = [stage_a, stage_c]   (filtered)
-              - template_stages  = [stage_a, stage_b, stage_c]  (FULL ✅)
-              - base_stages_removed = ["stage_b"]
-       Step 3 PATCH /stages base_stages_removed=[] → un-hide.
-       Step 4 GET /matrix:
-              - stages = [a,b,c] back to all 3
-              - cell_b in response with status="completed", note="test cell b"
-                ✅ DATA INTEGRITY — hidden cell never deleted.
-       Failure messages tagged 🚨 DATA LOSS for grep visibility.
+frontend/src/components/matrix/StageManagementDialog.js  (1 LOC)
+  L164 (Section 1 subtitle)
+       "תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)"
+       → "📝 מידע כללי על הדירה (מכור, מס׳ חדרים) או 🔨 שלבי בקרת ביצוע
+          נוספים (טיח, גז)"
+  Concrete examples PMs latch onto immediately.
+  `block sm:inline` wrap behavior preserved.
 
-frontend/src/components/matrix/StageManagementDialog.js  (+10 LOC)
-   Props gain `initialAllBaseStages = []`.
-   `initialBase` computed from new prop with defensive fallback to
-   legacy `stages.filter(source==='base')` when prop empty (deploy-lag
-   safe — dialog still works without unhide UI on old backend).
-   Section 1 heading: "📋 עמודות מטה-דאטה" → "📋 עמודות מותאמות"
-   Section 1 subtitle: now "תגיות (טקסט חופשי) או סטטוסים
-       (6 ערכים — כמו עמודות בקרת ביצוע)" with `block sm:inline`
-       so it wraps on mobile.
-   Section 2 subtitle: "(מהתבנית — סדר קבוע, אפשר רק להציג/להסתיר)"
-       → "(מהתבנית — סדר קבוע, אפשר להציג/להסתיר. שלבים מוסתרים
-       יוצגו עמומים)" with `block sm:inline`.
-
-frontend/src/components/matrix/AddStageForm.js  (1 LOC label)
-   Status radio: "סטטוס (6 ערכים)" → "סטטוס (6 ערכים — כמו
-   עמודות בקרת ביצוע)". Closes the "where do I add execution
-   stages" UX gap from Zahi's prod test.
-
-frontend/src/pages/ExecutionMatrixPage.js  (+1 LOC)
-   <StageManagementDialog ... initialAllBaseStages={data?.template_stages || []} />
-   No other prop touched.
+NOT TOUCHED (per spec):
+  - Section 2 header "🔨 עמודות בקרת ביצוע".
+  - StageRow component, MatrixGridView, MatrixListView.
+  - "tag"/"status" enum values, schemas, MATRIX_STATUS_VALUES.
+  - Backend.
 
 ================================================================================
-VERIFY 1-6 OUTPUTS
+VERIFY OUTPUTS
 ================================================================================
 
-VERIFY 1 — Backend syntax + import:
-    python -c "from contractor_ops.execution_matrix_router import router; print('OK')"
-    →  OK
+V1 — old strings purged:
+  grep -E "6 ערכים|תגית \(טקסט|תגיות \(טקסט" AddStageForm + Dialog
+  → 0 hits ✓ (exit code 1 from grep)
 
-VERIFY 2 — Backend tests (16 from #495 + 1 new):
-    cd backend && python -m pytest tests/test_execution_matrix.py -q
-    →  17 passed, 8 warnings in 2.13s
-    New: test_hide_then_unhide_template_stage_preserves_cells
+V2 — new strings present:
+  grep -E "📝|🔨 שלב|🔨 שלבי" AddStageForm + Dialog
+  → 3 hits (form L76 📝, form L86 🔨 שלב, dialog L161 📝+🔨 שלבי) ✓
 
-VERIFY 3 — QC regression (none touched):
-    cd backend && python -m pytest tests/test_qc_override_close.py tests/test_qc_units_status.py -q
-    →  4 passed, 2 warnings in 1.49s
+V3 — diff scope (only the 2 expected files, exact line counts):
+  AddStageForm.js          | 4 ++--
+  StageManagementDialog.js | 2 +-
+  2 files changed, 3 insertions(+), 3 deletions(-)  ✓
 
-VERIFY 4 — Frontend build:
-    cd frontend && REACT_APP_BACKEND_URL=https://example.com yarn build
-    →  Done in 34.51s. No new warnings or errors.
+V4 — backend / sibling matrix files untouched:
+  No edits to backend/, MatrixGridView.js, MatrixListView.js, StageRow.js.
 
-VERIFY 5 — Dialog references template_stages / initialAllBaseStages:
-    grep -c "initialAllBaseStages|template_stages" dialog + page
-    →  Dialog: 3   Page: 1   (total 4 ≥ 4) ✓
-
-VERIFY 6 — Hebrew label changes present:
-    grep -c "עמודות מותאמות|כמו עמודות בקרת ביצוע" dialog + AddStageForm
-    →  Dialog: 3 (heading + section1 subtitle + section2 subtitle)
-       AddStageForm: 1 (status radio)
-       (total 4 ≥ 3) ✓
+V5 — yarn build (deferred to deploy.sh preflight; pure string swap inside
+       existing JSX text nodes — no syntax risk).
 
 ================================================================================
-VERIFY 7 — VISUAL + DATA INTEGRITY SMOKE (deferred to Zahi after staging)
+SMOKE (Zahi after deploy to staging)
 ================================================================================
 
-a) Pre-flight: super_admin + project with template stage + 1 unit.
-
-🚨 DATA INTEGRITY CRITICAL:
-
-b) UNHIDE FLOW + CELL PERSISTENCE (the main #497 fix):
-   1. Fill cell of "טיח": status=completed, note="test cell". Save.
-   2. Verify cell visible.
-   3. ⚙️ open dialog.
-   4. Section 2: find "טיח" → click eye → dims + strikethrough. Save.
-   5. ✅ Matrix renders WITHOUT "טיח".
-   6. Re-open dialog.
-   7. ✅ "טיח" appears in section 2 with eye-OFF (THE FIX — was missing pre-#497).
-   8. Click eye-off → lights up. Save.
-   9. ✅ Matrix re-renders WITH "טיח".
-   10-11. ✅ Cell of "טיח" still status=completed + note="test cell".
-   12. ❌ If status empty → STOP DEPLOY, file critical bug.
-
-c) RENAME PRESERVES CELL DATA (regression of #495 Bug 1):
-   1. Add custom column "סוג מכירה" (tag). Save.
-   2. Fill 3 cells: "שוק חופשי", "מחיר משתכן", "ציבורי".
-   3. Reopen dialog → row exists with same id.
-   4. Drag-reorder. Save.
-   5. ✅ Cell values still in matrix.
-
-d) UX CLARITY:
-   1. Open dialog.
-   2. Section 1 reads "📋 עמודות מותאמות" with subtitle
-      "תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)".
-   3. Click "+ הוסף עמודה חדשה".
-   4. Status radio reads "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)".
-   5-6. Pick status, type "אינסטלציה גמרים", submit → row with status badge.
-   7-8. Save → matrix shows new column with 6-status icons.
-
-e) MOBILE 375px:
-   1. Bottom sheet. Repeat (b)6-9 — drag handles ≥44px.
-   3. ✅ Subtitles wrap to own line.
-
-Negative regression:
-f) Hide → save without unhide → column hidden (basic hide intact).
-g) Add custom column → save → column shows (#495 add intact).
-h) Delete custom column → orphaned cells (Phase 2D cleanup item).
-
-================================================================================
-DESIGN NOTES / DEVIATIONS FROM SPEC
-================================================================================
-
-D1  Test setup uses cells_store WITHOUT cell_b in step 2 (mirroring real
-    backend behavior — `cells_docs` query filters by `stage_id IN [visible]`
-    so cell_b is naturally absent during hidden state). Step 4 uses the
-    full cells_store to assert that on un-hide the cell is back. This
-    matches what the real DB+endpoint do (cell never deleted, just not
-    fetched while parent stage is hidden).
-
-D2  Dialog has a defensive fallback (`initialAllBaseStages.length > 0`
-    short-circuit) so the frontend keeps working if a future deploy
-    somehow lands frontend before backend. Same observable behavior as
-    today (no unhide UI), no regression.
+a) Hard refresh.
+b) ⚙️ → Section 1 subtitle reads:
+   "📝 מידע כללי על הדירה (מכור, מס׳ חדרים) או 🔨 שלבי בקרת ביצוע נוספים (טיח, גז)"
+c) "+ הוסף עמודה חדשה" → form expands.
+d) Radios:
+     ○ 📝 מידע כללי (טקסט חופשי)
+     ○ 🔨 שלב בקרת ביצוע
+   No "6 ערכים", no "כמו עמודות בקרת ביצוע" anywhere.
+e) Functional regression (label-only change must not affect behavior):
+   - 🔨 + name "טיח חיצוני" → saves → 6-status execution-control column.
+   - 📝 + name "צבע דלתות" → saves → free-text tag column.
+f) Mobile 375px — radios don't overflow; subtitle wraps via `block sm:inline`.
 
 ================================================================================
 RISK / ROLLBACK
 ================================================================================
 
-Rollback: git revert <commit-sha>
-  - Backend response loses `template_stages` field — purely additive
-    so no consumer breaks (frontend fallback kicks in).
-  - Frontend reverts to "stages-only" base list — unhide UI breaks
-    again, but DB data (cells + hidden state) stays intact.
-  - No DB migration to undo. Cell data preserved end-to-end.
-
-NO impact on:
-- Cell editing (#491/#494)
-- Custom stage IDs / preservation logic (#495 Bug 1 fix)
-- Hidden state persistence (#495 Bug 2 fix)
-- MatrixListView / MatrixGridView / MatrixCell render
-- Sticky cols (#486+#487), back button (#492)
-- Auth, billing, safety routers, plans
+Risk:    P5 cosmetic. Pure JSX text swap. No data, no API, no schema.
+Rollback: git revert <sha> → labels return to prior wording. Zero
+         user-data impact (radio enum unchanged).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
