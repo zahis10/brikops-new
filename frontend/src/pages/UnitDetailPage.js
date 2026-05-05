@@ -324,6 +324,11 @@ const UnitDetailPage = () => {
                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
                           {priorityInfo.label}
                         </span>
+                        {task.is_safety && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+                            🛡️ בטיחות
+                          </span>
+                        )}
                         {task.source && task.source.startsWith('handover_') && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200">
                             מסירה

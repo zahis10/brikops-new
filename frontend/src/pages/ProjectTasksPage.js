@@ -541,6 +541,11 @@ const ProjectTasksPage = () => {
                   <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
                     <CategoryPill>{tCategory(task.category)}</CategoryPill>
                     <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
+                    {task.is_safety && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
+                        🛡️ בטיחות
+                      </span>
+                    )}
                     {task.due_date && (
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3" /> {task.due_date}

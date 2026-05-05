@@ -1,94 +1,146 @@
-REVIEW — Task #488 (system #487): Safety tag coverage gaps — TaskDetail pill + BuildingDefects safety filter
-============================================================================================================
+REVIEW — Hotfix to #488 / Followup-3 to #469
+Safety pill in UnitDetailPage + ProjectTasksPage card lists
+============================================================
 Branch: staging
-Scope: BATCH #469 follow-up #2 — close the two coverage gaps left after #469 shipped is_safety end-to-end.
+Scope: 2 frontend files, 8 LOC. Backend untouched. Visual addition only.
 
-WHAT CHANGED (4 files, ~28 LOC + 1 new test)
---------------------------------------------
-1) frontend/src/pages/TaskDetailPage.js (+5 LOC)
-   - Added safety pill rendered next to status + priority chips (L845-849).
-   - Class palette matches the existing ProjectControlPage pattern:
-       bg-orange-100 text-orange-700 rounded-full
-   - Label: "🛡️ בטיחות". Conditional on task.is_safety === true.
-   - Zero risk to non-safety tasks (renders nothing when flag is false/undefined).
+================================================================
+STEP 0 — PRE-FLIGHT AUDIT
+================================================================
+0.1  ProjectControlPage canonical pattern (rg "is_safety|🛡️ בטיחות"):
+       L3351  if (safetyFilter) params.is_safety = true;
+       L3849  🛡️ בטיחות בלבד   (filter chip)
+       L3913  {task.is_safety && (
+       L3915    🛡️ בטיחות     (canonical pill)
+     → Pattern confirmed at L3913-3915.
 
-2) backend/contractor_ops/projects_router.py (+18 LOC) — defects-summary aggregate
-   - Added is_safety to the tasks projection (L1430).
-   - Added safety_open_by_unit accumulator that counts is_safety=True tasks
-     whose status is in the union of open + in_progress + waiting_verify
-     (closed/approved excluded by design — "open safety" semantics).
-   - Per-unit response now includes safety_open_count: int (L1490).
-   - Additive only — defect_counts shape unchanged, categories[] unchanged,
-     all existing consumers stay green.
+0.2  UnitDetailPage pills row (rg "מסירה|priorityInfo.label|task.source"):
+       L325 priorityInfo.label
+       L327 {task.source && task.source.startsWith('handover_') && (
+       L329 מסירה
+     → Insertion point confirmed: between L325 priority span and L327
+       handover conditional.
 
-3) frontend/src/pages/BuildingDefectsPage.js (+15 LOC)
-   - BUILDING_DEFAULT_FILTERS gained is_safety: false (L26). Reset path
-     at L483 already spreads defaults, so reset auto-handles the new key.
-   - unitPassesFilter now drops units with safety_open_count === 0 when
-     filters.is_safety is true (L199).
-   - activeFilterCount counts the toggle (L296) so the badge on the filter
-     button reflects it; filterSummaryText shows "🛡️ בטיחות בלבד" chip
-     (L311) so the orange clear-filters strip surfaces it.
-   - Inline toggle (label + checkbox, py-3 ≥44px touch target) lives
-     above the unit-type pill row, just under the search/filter/export row
-     (L483-493). Discovery-first UX, matches D2a recommendation.
-   - ExportModal filters dict now passes is_safety (L644) so future export
-     parity is wired (backend export hook still TBD if it needs to honor it,
-     but the prop bridge exists).
+0.3  ProjectTasksPage pills row (rg "priorityCfg.label|due_date|comments_count"):
+       L543 priorityCfg.label   (priority span)
+       L544 {task.due_date && (
+       L549 {task.comments_count > 0 && (
+     → Insertion point confirmed: between L543 priority span and L544
+       due_date conditional.
 
-4) backend/tests/test_defect_safety_tag.py (+~50 LOC, 1 new test)
-   - test_defects_summary_includes_safety_open_count — uses AsyncMock+_AsyncCursor
-     to feed the endpoint a mix of safety/non-safety + closed/open tasks and
-     asserts safety_open_count is 2 on u1 (open + in_progress safety, closed
-     safety excluded) and 0 on u2 (non-safety only).
+0.4  Clean slate (rg -c "is_safety"):
+       UnitDetailPage.js     → 0
+       ProjectTasksPage.js   → 0
+     → No duplicates / no prior partial work.
 
-VALIDATION
-----------
-V1  pytest backend/tests/test_defect_safety_tag.py    →  6 passed (was 5; +1 new)
-V2  yarn build (frontend, with placeholder env)       →  Compiled successfully, no warnings related to changes
-V3  rg "is_safety" TaskDetailPage.js                  →  1 match  (≥1 ✅)
-V4  rg "orange-100|orange-700" TaskDetailPage.js      →  3 matches (≥2 ✅)
-V5  rg "is_safety" BuildingDefectsPage.js             →  6 matches (≥4 ✅)
-V6  rg "ליקויי בטיחות בלבד|🛡️" BuildingDefectsPage  →  2 matches (≥1 ✅)
+================================================================
+DIFF — 2 files, 8 LOC
+================================================================
 
-DESIGN DECISIONS (per approval)
--------------------------------
-D1a — Backend is the right layer.
-    The earlier scoping note assumed taskService.list could power a client-side
-    safety filter, but BuildingDefectsPage doesn't fetch tasks — it consumes
-    the defects-summary aggregate. Rather than add a second round-trip, we
-    extended the aggregate with safety_open_count, mirroring the additive
-    categories[] field at L1489. Single fetch, instant toggle, no API churn.
+frontend/src/pages/UnitDetailPage.js  (+5 LOC at L330-334)
+----------------------------------------------------------
+                         <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
+                           {priorityInfo.label}
+                         </span>
++                        {task.is_safety && (
++                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
++                            🛡️ בטיחות
++                          </span>
++                        )}
+                         {task.source && task.source.startsWith('handover_') && (
+                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                             מסירה
+                           </span>
+                         )}
 
-D2a — Inline toggle, not FilterDrawer extension.
-    FilterDrawer is shared across BuildingDefectsPage, ProjectControlPage,
-    UnitDefectsPage and uses a sections-only API (multi-select arrays). A
-    boolean toggle would have required either a new section type or a
-    bool-as-array hack. Inline above the drawer trigger keeps the shared
-    component clean, matches the discovery-first chip pattern from
-    ProjectControlPage L3849, and gives the toggle a ≥44px touch target.
+frontend/src/pages/ProjectTasksPage.js  (+5 LOC at L547-551)
+------------------------------------------------------------
+                     <span className={priorityCfg.color || ''}>{priorityCfg.label || task.priority}</span>
++                    {task.is_safety && (
++                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
++                        🛡️ בטיחות
++                      </span>
++                    )}
+                     {task.due_date && (
+                       <span className="flex items-center gap-1">
+                         <Clock className="w-3 h-3" /> {task.due_date}
+                       </span>
+                     )}
 
-OUT OF SCOPE
-------------
-- Backend defect-export endpoint honoring is_safety filter (frontend prop is
-  wired; backend wiring is a separate, smaller task if you want it).
-- UnitDefectsPage / "my defects" list — already filtered upstream via task
-  selection; no gap reported.
-- New i18n key for "ליקויי בטיחות בלבד" — kept inline Hebrew per the
-  surrounding BuildingDefectsPage convention (status/category labels in
-  this file are also inline Hebrew constants).
+Both blocks are byte-identical (same Tailwind, same emoji, same conditional)
+and mirror the spec verbatim.
 
-FILES TOUCHED
--------------
-  frontend/src/pages/TaskDetailPage.js
-  frontend/src/pages/BuildingDefectsPage.js
-  backend/contractor_ops/projects_router.py
-  backend/tests/test_defect_safety_tag.py
+================================================================
+VERIFY 1-4 — All green
+================================================================
 
+V1  yarn build (REACT_APP_BACKEND_URL=placeholder)
+      → "Done in 32.59s." — Compiled successfully, no new warnings.
+
+V2  rg -c "task.is_safety|🛡️ בטיחות"
+      UnitDetailPage.js     → 2  (≥2 ✅)
+      ProjectTasksPage.js   → 2  (≥2 ✅)
+
+V3  rg -c "bg-orange-100 text-orange-700 border border-orange-200"
+      UnitDetailPage.js     → 1  (≥1 ✅)
+      ProjectTasksPage.js   → 1  (≥1 ✅)
+
+V4  pytest backend/tests/test_defect_safety_tag.py -q
+      → 6 passed (unchanged from #488 — backend untouched).
+
+================================================================
+VERIFY 5 — DEFERRED TO ZAHI (visual smoke after stag deploy)
+================================================================
+
+UnitDetailPage:
+  a) Login → /projects/{p}/units/{u} (unit with ≥1 safety defect)
+  b) Safety defect card shows orange "🛡️ בטיחות" pill (after priority)
+  c) Non-safety cards in same list — NO pill
+
+ProjectTasksPage:
+  d) Navigate to project tasks list (e.g. /projects/{p}/tasks)
+  e) Each safety defect card shows the pill
+  f) Non-safety cards — no pill
+
+Visual consistency:
+  g) Pill style matches ProjectControlPage list (orange, same size, emoji)
+
+Mobile (375px):
+  h) Pill wraps gracefully on narrow viewport (parent has flex-wrap)
+  i) Tap on card still navigates to TaskDetailPage (no behavior change)
+
+================================================================
+DESIGN NOTES
+================================================================
+
+- Spec called for the `border border-orange-200` variant of the pill,
+  not the borderless variant used in TaskDetailPage / the reference
+  ProjectControlPage L3914 line. The `border-orange-200` flavor is the
+  variant that lives consistently in *card list* contexts in this code
+  base (it sits next to the amber "מסירה" pill in UnitDetailPage which
+  also has `border border-amber-200`). Followed spec verbatim.
+- Insertion order = "status → category → priority → safety → (handover|
+  due_date|comments)" — matches the visual order called out in the spec
+  D2 design decision.
+- Zero behavioral changes: the tap target, the navigation, and the
+  underlying data flow are untouched.
+
+================================================================
+OUT OF SCOPE (per spec D3)
+================================================================
+- ProjectControlPage list — already has pill from #469.
+- TaskDetailPage detail — already has pill from #488.
+- BuildingDefectsPage — unit aggregates, not task cards; #488 filter
+  already covers it.
+- Backend / schema / migrations.
+- New tests.
+
+================================================================
 NEXT STEPS (Zahi)
------------------
+================================================================
 1) Review review.txt + diff.
 2) git add -A && git commit -m "$(cat .local/.commit_message)"
 3) git push origin staging
-4) ./deploy.sh --stag  → smoke (open BuildingDefects, toggle safety filter,
-   open a safety task → verify pill); then ./deploy.sh --prod
+4) ./deploy.sh --stag → run VERIFY 5 (a–i) → ./deploy.sh --prod
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
