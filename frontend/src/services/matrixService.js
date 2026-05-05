@@ -43,6 +43,22 @@ export const matrixService = {
     );
     return response.data;
   },
+
+  async updateStages(projectId, payload) {
+    // Phase 2C — replace the project's stage list (custom + hidden bases).
+    // payload: {
+    //   custom_stages_added: [{ id?, title, type, order }],
+    //   base_stages_removed: [stage_id, ...],
+    // }
+    // Returns: { project_id, stages: [...resolved stages] }
+    // NOTE: API constant already includes `/api` (per #491 D-svc finding).
+    const response = await axios.patch(
+      `${API}/execution-matrix/${projectId}/stages`,
+      payload,
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  },
 };
 
 export default matrixService;

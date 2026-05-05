@@ -287,6 +287,10 @@ async def get_matrix(
         "cells": cells_summary,
         "floors": floors,
         "buildings": buildings,
+        # Phase 2C Bug 2 fix — frontend hydrates the hide-toggle state in
+        # StageManagementDialog from this list. Without it, every save
+        # un-hides previously hidden base stages.
+        "base_stages_removed": list(matrix_config.get("base_stages_removed", []) or []),
         "permissions": {
             "role": role,
             "can_view": True,
@@ -319,10 +323,20 @@ async def update_stages(
             (s.get("order", 0) for s in matrix_config.get("custom_stages", []) or []),
             default=999,
         )
+        # Phase 2C Bug 1 fix — only honor an incoming custom stage id when
+        # it already exists in this project's custom_stages. Preserves the
+        # ID across saves (cells stay reachable) and rejects ID-hijacking
+        # attempts from sibling projects. New stages always get a fresh id.
+        existing_custom_ids = {
+            s["id"] for s in (matrix_config.get("custom_stages") or [])
+            if s.get("id")
+        }
         new_custom = []
         for i, s in enumerate(updates_in["custom_stages_added"] or []):
+            sid = s.get("id")
+            keep_id = sid if (sid and sid in existing_custom_ids) else f"custom_{uuid.uuid4().hex[:12]}"
             new_custom.append({
-                "id": s.get("id") or f"custom_{uuid.uuid4().hex[:12]}",
+                "id": keep_id,
                 "title": (s["title"] or "").strip(),
                 "type": s.get("type", "status"),
                 "order": s.get("order") if s.get("order") is not None else max_existing_order + i + 1,

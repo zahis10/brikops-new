@@ -80,5 +80,21 @@ export function useMatrixData(projectId) {
     }
   }, [projectId, data]);
 
-  return { data, loading, error, refresh: load, updateCell };
+  // #495 Phase 2C — stage management (add/hide/reorder columns).
+  // No optimistic update: the server reshapes the entire stage list
+  // (negative orders, hidden cells filtered out), so a full refetch
+  // is simpler and correct. Callers handle ok/error via toast.
+  const updateStages = useCallback(async (payload) => {
+    if (!projectId) return { ok: false, error: 'no_project' };
+    try {
+      await matrixService.updateStages(projectId, payload);
+      await load();
+      return { ok: true };
+    } catch (err) {
+      const detail = err?.response?.data?.detail || 'שגיאה בשמירת העמודות';
+      return { ok: false, error: detail };
+    }
+  }, [projectId, load]);
+
+  return { data, loading, error, refresh: load, updateCell, updateStages };
 }

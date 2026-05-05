@@ -342,6 +342,85 @@ def test_update_stages_removes_base():
     asyncio.run(run())
 
 
+def test_update_stages_preserves_existing_custom_ids():
+    """#495 Bug 1 fix — when PATCH /stages includes a custom id that
+    already exists in the project's custom_stages, backend preserves it
+    so cells stay reachable. New stages without an id (or with an id
+    that doesn't exist in the project) get a fresh `custom_*` id —
+    defense against ID hijacking from sibling projects."""
+    async def run():
+        matrix_config = {
+            "id": "m1", "project_id": "p1",
+            "custom_stages": [
+                {"id": "custom_aaa", "title": "סוג מכירה", "type": "tag", "order": -1},
+            ],
+            "base_stages_removed": [], "deletedAt": None,
+        }
+        tpl = _mk_tpl([{"id": "s1", "title": "ריצוף", "order": 10}])
+        db = _mk_db(matrix_config=matrix_config)
+        captured = {}
+
+        async def _capture_update(filt, payload):
+            captured["payload"] = payload
+            return MagicMock(matched_count=1)
+        db.execution_matrix.update_one = AsyncMock(side_effect=_capture_update)
+
+        payload = MatrixStagesUpdate(custom_stages_added=[
+            # Existing stage — id MUST be preserved
+            MatrixStageCreate(id="custom_aaa", title="סוג מכירה", type="tag", order=-2),
+            # ID-hijacking attempt — id from another project, MUST be replaced
+            MatrixStageCreate(id="custom_HIJACK", title="זדוני", type="tag", order=-1),
+            # New stage without id — MUST get a fresh custom_* id
+            MatrixStageCreate(title="חדרים", type="status"),
+        ])
+        with patch.object(emr, "get_db", return_value=db), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)), \
+             patch.object(emr, "_audit", new=AsyncMock()):
+            await emr.update_stages("p1", payload, user={"id": "pm1"})
+
+        new_stages = captured["payload"]["$set"]["custom_stages"]
+        assert len(new_stages) == 3
+        # Existing id preserved
+        assert new_stages[0]["id"] == "custom_aaa", \
+            f"existing id must be preserved, got {new_stages[0]['id']}"
+        # Hijack rejected — id replaced with a fresh one
+        assert new_stages[1]["id"] != "custom_HIJACK"
+        assert new_stages[1]["id"].startswith("custom_")
+        # No id → fresh
+        assert new_stages[2]["id"].startswith("custom_")
+        assert new_stages[2]["id"] != "custom_aaa"
+    asyncio.run(run())
+
+
+def test_get_matrix_returns_base_stages_removed():
+    """#495 Bug 2 fix — GET /matrix response includes base_stages_removed
+    so the frontend can hydrate the dialog hide-state correctly. Without
+    this, every save un-hides previously hidden base stages."""
+    async def run():
+        matrix_config = {
+            "id": "m1", "project_id": "p1",
+            "custom_stages": [],
+            "base_stages_removed": ["stage_a", "stage_b"],
+            "deletedAt": None,
+        }
+        tpl = _mk_tpl([
+            {"id": "s1", "title": "ריצוף", "order": 10},
+        ])
+        db = _mk_db(matrix_config=matrix_config, units=[], floors=[], cells=[])
+        with patch.object(emr, "get_db", return_value=db), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res = await emr.get_matrix("p1", user={"id": "pm1"})
+
+        assert "base_stages_removed" in res, \
+            "Response must expose base_stages_removed for frontend hydration"
+        assert res["base_stages_removed"] == ["stage_a", "stage_b"]
+    asyncio.run(run())
+
+
 def test_update_stages_blocks_non_approver():
     """site_manager (not PM, not in approvers) → 403."""
     async def run():

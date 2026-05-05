@@ -1,16 +1,17 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
+import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings } from 'lucide-react';
 import { useMatrixData } from '../hooks/useMatrixData';
 import MatrixListView from '../components/matrix/MatrixListView';
 import MatrixGridView from '../components/matrix/MatrixGridView';
 import StatusLegend from '../components/matrix/StatusLegend';
 import CellEditDialog from '../components/matrix/CellEditDialog';
+import StageManagementDialog from '../components/matrix/StageManagementDialog';
 
 export default function ExecutionMatrixPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error, refresh, updateCell } = useMatrixData(projectId);
+  const { data, loading, error, refresh, updateCell, updateStages } = useMatrixData(projectId);
 
   // #483 returns units with floor_id but NOT floor metadata.
   // Phase 2A: synthesize minimal floorsById from units. Future
@@ -51,6 +52,9 @@ export default function ExecutionMatrixPage() {
   const [editing, setEditing] = useState(null); // { unit, stage, cell } | null
   const canEdit = data?.permissions?.can_edit ?? false;
 
+  // #495 Phase 2C — stage management dialog state.
+  const [stageManageOpen, setStageManageOpen] = useState(false);
+
   const handleCellClick = useCallback((unit, stage, cell) => {
     setEditing({ unit, stage, cell });
   }, []);
@@ -59,6 +63,10 @@ export default function ExecutionMatrixPage() {
     if (!editing) return { ok: false, error: 'no_editing' };
     return updateCell(editing.unit.id, editing.stage.id, payload);
   }, [editing, updateCell]);
+
+  const handleSaveStages = useCallback(async (payload) => {
+    return updateStages(payload);
+  }, [updateStages]);
 
   if (loading) {
     return (
@@ -138,6 +146,16 @@ export default function ExecutionMatrixPage() {
               {units.length} דירות • {stages.length} שלבים
             </p>
           </div>
+          {canEdit && (
+            <button
+              onClick={() => setStageManageOpen(true)}
+              className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors"
+              aria-label="ניהול עמודות"
+              title="ניהול עמודות"
+            >
+              <Settings className="w-5 h-5 text-slate-600" />
+            </button>
+          )}
         </div>
 
         <div className="mb-4">
@@ -177,6 +195,14 @@ export default function ExecutionMatrixPage() {
         building={editing ? buildingsById[editing.unit.building_id] : null}
         floor={editing ? floorsById[editing.unit.floor_id] : null}
         canEdit={canEdit}
+      />
+
+      <StageManagementDialog
+        open={stageManageOpen}
+        onClose={() => setStageManageOpen(false)}
+        onSave={handleSaveStages}
+        stages={stages}
+        initialBaseRemoved={data?.base_stages_removed || []}
       />
     </div>
   );
