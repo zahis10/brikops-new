@@ -20,6 +20,7 @@ const BUILDING_DEFAULT_FILTERS = {
   category: [],
   floor: [],
   unit: [],
+  is_safety: false,
 };
 
 const STATUS_FILTER_OPTIONS = [
@@ -192,6 +193,7 @@ const BuildingDefectsPage = () => {
         (filters.status.includes('blocking') && ((c.open || 0) + (c.in_progress || 0)) > 0);
       if (!matchesAny) return false;
     }
+    if (filters.is_safety && (unit.safety_open_count || 0) === 0) return false;
     const searchLower = searchQuery.trim().toLowerCase();
     if (searchLower) {
       const label = (unit.display_label || unit.unit_no || '').toLowerCase();
@@ -288,6 +290,7 @@ const BuildingDefectsPage = () => {
     if (filters.category.length > 0) count++;
     if (filters.floor.length > 0) count++;
     if (filters.unit.length > 0) count++;
+    if (filters.is_safety) count++;
     if (searchQuery.trim()) count++;
     return count;
   }, [filters, searchQuery]);
@@ -302,6 +305,7 @@ const BuildingDefectsPage = () => {
         parts.push(`${section.label}: ${joined}`);
       }
     });
+    if (filters.is_safety) parts.push('🛡️ בטיחות בלבד');
     if (searchQuery.trim()) parts.push(`חיפוש: "${searchQuery.trim()}"`);
     if (parts.length === 0) return '';
     if (parts.length <= 3) return parts.join(' · ');
@@ -475,6 +479,18 @@ const BuildingDefectsPage = () => {
             </button>
           </div>
 
+          <label className="flex items-center justify-between gap-2 cursor-pointer py-3 px-3 rounded-xl border border-slate-200 bg-white">
+            <span className="text-sm font-medium text-slate-700">
+              🛡️ ליקויי בטיחות בלבד
+            </span>
+            <input
+              type="checkbox"
+              checked={filters.is_safety || false}
+              onChange={(e) => setFilters(prev => ({ ...prev, is_safety: e.target.checked }))}
+              className="w-5 h-5 rounded text-orange-500 focus:ring-orange-500 cursor-pointer"
+            />
+          </label>
+
           {hasActiveFilters && filterSummaryText && (
             <div className="flex items-center gap-2 text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
               <span className="flex-1 truncate">{filterSummaryText}</span>
@@ -622,6 +638,7 @@ const BuildingDefectsPage = () => {
           category: filters.category.length === 1 ? filters.category[0] : 'all',
           floor: filters.floor.length === 1 ? filters.floor[0] : 'all',
           unit: filters.unit.length === 1 ? filters.unit[0] : 'all',
+          is_safety: filters.is_safety || false,
           search: searchQuery,
         }}
         meta={{

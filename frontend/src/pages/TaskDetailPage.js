@@ -839,6 +839,11 @@ const TaskDetailPage = () => {
               <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${priority.color}`}>
                 {priority.label}
               </span>
+              {task.is_safety && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
+                  🛡️ בטיחות
+                </span>
+              )}
             </div>
             <span className="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">
               {tCategory(task.category)}

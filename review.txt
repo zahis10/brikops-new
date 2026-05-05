@@ -1,155 +1,94 @@
-================================================================
-BATCH: Execution Matrix — show full building name (#487)
+REVIEW — Task #488 (system #487): Safety tag coverage gaps — TaskDetail pill + BuildingDefects safety filter
+============================================================================================================
 Branch: staging
-Date: 2026-05-04
-Followup to: #486 (which was followup to #485 / #484 Phase 2A)
-================================================================
+Scope: BATCH #469 follow-up #2 — close the two coverage gaps left after #469 shipped is_safety end-to-end.
 
-WHAT
-----
-Per Zahi staging smoke 2026-05-04 after #486 deploy: project's
-buildings are named "בניין A" and "בניין B" — both produce the
-SAME single-letter badge "ב" because sort_index is unset on these
-docs and fallback uses first letter. User can't tell the two
-buildings apart visually. Replace single-letter circle badge with
-full building name in a violet pill (truncate + tooltip for very
-long names). Widen "בניין" sticky column 80px → 120px to fit.
+WHAT CHANGED (4 files, ~28 LOC + 1 new test)
+--------------------------------------------
+1) frontend/src/pages/TaskDetailPage.js (+5 LOC)
+   - Added safety pill rendered next to status + priority chips (L845-849).
+   - Class palette matches the existing ProjectControlPage pattern:
+       bg-orange-100 text-orange-700 rounded-full
+   - Label: "🛡️ בטיחות". Conditional on task.is_safety === true.
+   - Zero risk to non-safety tasks (renders nothing when flag is false/undefined).
 
-================================================================
-STEP 0 AUDIT
-================================================================
-0.1 ✅ MatrixGridView post-#486 confirmed:
-       L30: thead "בניין" min-w-[80px] w-[80px]
-       L33: thead "דירה" right-[80px] min-w-[120px]
-       L55-72: tbody building badge cell + unit cell (right-[80px])
-       L65: w-7 h-7 circle with sort_index → charAt(0) fallback.
+2) backend/contractor_ops/projects_router.py (+18 LOC) — defects-summary aggregate
+   - Added is_safety to the tasks projection (L1430).
+   - Added safety_open_by_unit accumulator that counts is_safety=True tasks
+     whose status is in the union of open + in_progress + waiting_verify
+     (closed/approved excluded by design — "open safety" semantics).
+   - Per-unit response now includes safety_open_count: int (L1490).
+   - Additive only — defect_counts shape unchanged, categories[] unchanged,
+     all existing consumers stay green.
 
-0.2 ✅ MatrixListView post-#486 confirmed:
-       L48-63: badge with w-6 h-6 + sort_index/charAt(0) logic + 
-       text-[10px] inline before "דירה N".
+3) frontend/src/pages/BuildingDefectsPage.js (+15 LOC)
+   - BUILDING_DEFAULT_FILTERS gained is_safety: false (L26). Reset path
+     at L483 already spreads defaults, so reset auto-handles the new key.
+   - unitPassesFilter now drops units with safety_open_count === 0 when
+     filters.is_safety is true (L199).
+   - activeFilterCount counts the toggle (L296) so the badge on the filter
+     button reflects it; filterSummaryText shows "🛡️ בטיחות בלבד" chip
+     (L311) so the orange clear-filters strip surfaces it.
+   - Inline toggle (label + checkbox, py-3 ≥44px touch target) lives
+     above the unit-type pill row, just under the search/filter/export row
+     (L483-493). Discovery-first UX, matches D2a recommendation.
+   - ExportModal filters dict now passes is_safety (L644) so future export
+     parity is wired (backend export hook still TBD if it needs to honor it,
+     but the prop bridge exists).
 
-0.3 ✅ Backend buildings response includes `name` field — verified
-       by both schemas.py (Building.name: str at L142) and #486
-       fixture data (`{"id":"bA","name":"מגדל A","sort_index":1}`).
-       Real staging data: building names are "בניין A", "בניין B"
-       (Hebrew with English suffix) — verified by Zahi pre-spec.
+4) backend/tests/test_defect_safety_tag.py (+~50 LOC, 1 new test)
+   - test_defects_summary_includes_safety_open_count — uses AsyncMock+_AsyncCursor
+     to feed the endpoint a mix of safety/non-safety + closed/open tasks and
+     asserts safety_open_count is 2 on u1 (open + in_progress safety, closed
+     safety excluded) and 0 on u2 (non-safety only).
 
-================================================================
-PER-FILE DIFF (2 frontend files, ~16 LOC delta)
-================================================================
-frontend/src/components/matrix/MatrixGridView.js     +12 / -14
-  L33: thead "בניין" min-w-[80px] w-[80px] → min-w-[120px] w-[120px].
-  L36 (was L33): thead "דירה" right-[80px] → right-[120px].
-  L58-70: tbody building cell — replaced circle badge (w-7 h-7
-    rounded-full + sort_index/charAt logic) with violet rounded-md
-    pill containing full `building?.name || '—'`. text-right
-    (RTL natural), text-[11px] leading-tight, max-w-full truncate,
-    title attr for hover tooltip on long names. Removed
-    `if (!building) return null` — now renders "—" when missing
-    for visual consistency.
-  L72: tbody unit cell right-[80px] → right-[120px].
+VALIDATION
+----------
+V1  pytest backend/tests/test_defect_safety_tag.py    →  6 passed (was 5; +1 new)
+V2  yarn build (frontend, with placeholder env)       →  Compiled successfully, no warnings related to changes
+V3  rg "is_safety" TaskDetailPage.js                  →  1 match  (≥1 ✅)
+V4  rg "orange-100|orange-700" TaskDetailPage.js      →  3 matches (≥2 ✅)
+V5  rg "is_safety" BuildingDefectsPage.js             →  6 matches (≥4 ✅)
+V6  rg "ליקויי בטיחות בלבד|🛡️" BuildingDefectsPage  →  2 matches (≥1 ✅)
 
-frontend/src/components/matrix/MatrixListView.js     +6 / -10
-  L51-62: card-header building label — replaced w-6 h-6 circle
-    badge (with sort_index/charAt logic) with violet rounded-md
-    pill: px-2 py-0.5, text-[11px], shrink-0, max-w-[120px]
-    truncate, title attr. Renders {building.name} directly.
-    Kept `if (!building) return null` for null safety (mobile
-    rows can hide cleanly without an em-dash).
+DESIGN DECISIONS (per approval)
+-------------------------------
+D1a — Backend is the right layer.
+    The earlier scoping note assumed taskService.list could power a client-side
+    safety filter, but BuildingDefectsPage doesn't fetch tasks — it consumes
+    the defects-summary aggregate. Rather than add a second round-trip, we
+    extended the aggregate with safety_open_count, mirroring the additive
+    categories[] field at L1489. Single fetch, instant toggle, no API churn.
 
-================================================================
-DIVERGENCES FROM SPEC
-================================================================
-None functionally.
+D2a — Inline toggle, not FilterDrawer extension.
+    FilterDrawer is shared across BuildingDefectsPage, ProjectControlPage,
+    UnitDefectsPage and uses a sections-only API (multi-select arrays). A
+    boolean toggle would have required either a new section type or a
+    bool-as-array hack. Inline above the drawer trigger keeps the shared
+    component clean, matches the discovery-first chip pattern from
+    ProjectControlPage L3849, and gives the toggle a ≥44px touch target.
 
-Note on VERIFY 4: spec expected ≥4 grep hits on 120px patterns,
-actual = 3 (line 33: min-w-[120px] + w-[120px]; line 36:
-right-[120px] + min-w-[120px]; line 72: right-[120px]). Spec
-counted lines but expected 4; actual is 3 lines containing all 5
-spec'd substitutions (verified by manual diff). Functionality is
-correct — this is a counting nuance only.
-
-================================================================
-VERIFICATIONS
-================================================================
-V1 yarn build ................................. ✅ 44.04s, no new
-   warnings or errors. Build folder ready for OTA deploy.
-V2 building.name renders as text .............. ✅ 3 hits
-   (Grid: 1 line `building?.name` assigned to `name` and used 2x
-    via variable; List: 2 lines — render + title.) Effective uses
-   are 4+ across both files as spec intended.
-V3 stale single-letter logic removed .......... ✅ 0 hits in both
-   files (no more `sort_index.*null` or `charAt(0)`).
-V4 column width updated to 120px .............. ✅ 3 lines
-   covering 5 spec'd substitutions (thead בניין width, thead
-   דירה right; tbody דירה right). See divergence note.
-V5 backend regression suite ................... ✅ 17 passed in
-   2.66s (test_execution_matrix.py 13 + test_qc_override_close 2 +
-   test_qc_units_status 2). NO backend touched.
-V6 visual smoke a-k ........................... ⏳ deferred to Zahi
-
-================================================================
-V6 VISUAL SMOKE (Zahi runs after staging deploy)
-================================================================
-Desktop grid:
-  a) Login → /projects/{p}/execution-matrix.
-  b) "בניין" sticky column wider (~120px) — full name visible.
-  c) דירות 1-15: pill says "**בניין A**" (full name in violet).
-  d) דירות 16-30: pill says "**בניין B**" (full name).
-  e) Sort still groups Building A first, then Building B (no
-     regression from #486).
-  f) Hover on label → tooltip shows full name (redundant when
-     name fits, kept for very long names).
-  g) Long building name (if any) → truncates with ellipsis +
-     tooltip shows full text.
-
-Mobile list view:
-  h) Card header: "**בניין A** • דירה 1 • קומה 1 • 4 ח'".
-  i) Building B units: "**בניין B** • דירה 16 • קומה 1 • 4 ח'".
-  j) Long-press on building label → full name tooltip.
-
-Sort confirmation:
-  k) Building A's unit 15 (קומה 3) immediately followed by
-     Building B's unit 16 (קומה 1). Clear visual transition with
-     pill content changing from "בניין A" → "בניין B".
-
-================================================================
-RISK NOTES
-================================================================
-- Pure visual change. Backend untouched. Data unchanged.
-- Wider 120px column shifts unit column right by 40px in horizontal
-  scroll viewport; stage cells get 40px less visible width before
-  scrolling. Acceptable trade-off (full name > extra stage cell
-  width).
-- `text-[11px]` may feel tight; mitigated by `leading-tight` and
-  `px-2 py-1` padding. Tested in build — no overflow.
-- For desktop: missing building now renders "—" (was: nothing).
-  For mobile: missing building still renders nothing (kept null
-  return). Defensive — desktop's column is always present so
-  empty cells need a placeholder; mobile flows inline so can hide.
-- NO impact on cells / sort / RTL / popovers / Phase 1 endpoints /
-  QC / handover / safety / plans / defects / auth.
-
-================================================================
 OUT OF SCOPE
-================================================================
-- Phase 2D filter-by-building UI.
-- Hide-column-if-single-building logic.
-- Hebrew plural grammar ("1 מבנים").
-- Building badge color per building (all violet currently).
-- Pydantic v1→v2 migration.
+------------
+- Backend defect-export endpoint honoring is_safety filter (frontend prop is
+  wired; backend wiring is a separate, smaller task if you want it).
+- UnitDefectsPage / "my defects" list — already filtered upstream via task
+  selection; no gap reported.
+- New i18n key for "ליקויי בטיחות בלבד" — kept inline Hebrew per the
+  surrounding BuildingDefectsPage convention (status/category labels in
+  this file are also inline Hebrew constants).
 
-================================================================
-ROLLBACK
-================================================================
-git revert <commit-sha>
+FILES TOUCHED
+-------------
+  frontend/src/pages/TaskDetailPage.js
+  frontend/src/pages/BuildingDefectsPage.js
+  backend/contractor_ops/projects_router.py
+  backend/tests/test_defect_safety_tag.py
 
-2 files revert. Pill labels return to single-letter circle badges,
-column shrinks back to 80px. Visually regresses but functionally
-identical (sort + data unchanged).
-
-================================================================
-AWAITING ZAHI APPROVAL — DO NOT auto-commit / auto-deploy.
-After approval: git checkout staging && commit + push +
-./deploy.sh --stag → V6 → ./deploy.sh --prod.
-================================================================
+NEXT STEPS (Zahi)
+-----------------
+1) Review review.txt + diff.
+2) git add -A && git commit -m "$(cat .local/.commit_message)"
+3) git push origin staging
+4) ./deploy.sh --stag  → smoke (open BuildingDefects, toggle safety filter,
+   open a safety task → verify pill); then ./deploy.sh --prod
