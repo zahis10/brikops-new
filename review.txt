@@ -1,224 +1,156 @@
 ================================================================
-BATCH: Execution Matrix — PHASE 2A FRONTEND READ-ONLY (Task #484)
+BATCH: Execution Matrix Phase 2A HOTFIX (Task #485)
 Branch: staging
 Date: 2026-05-04
+Followup to: #484 (Phase 2A frontend)
 ================================================================
 
 WHAT
 ----
-Mobile-first read-only frontend on top of #483 backend.
-PMs / engineers see "מטריצת ביצוע" CTA on QC home page, tap it,
-land on a 2D matrix of units × stages with status icons.
-
-PHASE 2A of 4 — read only. 2B = cell editing. 2C = stage CRUD.
-2D = filters + saved views.
+3 polish fixes from Zahi's staging smoke 2026-05-04:
+  1. Header was missing building count.
+  2. Unit sort was lexicographic ("1, 16, 17, 18, 19, 2, 20, 3...").
+  3. Floor info showed "קומה ?" because backend didn't expose floors.
 
 ================================================================
 STEP 0 AUDIT
 ================================================================
-0.1 ✅ App.js routes use React.lazy + ProtectedRoute wrapper.
-       /projects/:projectId/qc → QCFloorSelectionPage at L372.
-       New matrix route inserted adjacent (L379-386).
+0.1 ✅ `_unit_sort_key` at execution_matrix_router.py L223-225,
+       sort invocation L226. Uses `u.get("unit_no", "")` (string).
 
-0.2 ✅ QC home page = QCFloorSelectionPage.js. "סטטוס ביצוע כללי"
-       header at L273 (was L244, shifted by CTA insertion). CTA Link
-       inserted at L237 (delta=36 lines), INSIDE the
-       `<div className="max-w-2xl mx-auto px-4 py-3 space-y-3">`
-       wrapper so it inherits page padding + spacing.
+0.2 ✅ `get_matrix` return dict at L250-261. Currently returns:
+       project_id, stages, units, cells, permissions,
+       matrix_config_id. NO floors field.
 
-0.3 ✅ services/api.js — does NOT default-export an axios instance.
-       Pattern is `export const xxxService = { method: async (...) =>
-       { return axios.get(\`${API}/...\`, { headers: getAuthHeader() })
-       .data } }` (verified projectService L75 + safetyService L170).
-       getAuthHeader was MODULE-LOCAL (L70 const, no export) — added
-       `export` keyword (+0 net LOC, just changed `const` → `export
-       const`). matrixService.js is the FIRST external consumer of
-       getAuthHeader → establishes the pattern for future services
-       living outside api.js.
+0.3 ✅ Floors already fetched at L217-220:
+       `floors = await db.floors.find(...).to_list(500)` →
+       `floors_by_id = {f["id"]: f for f in floors}` (L221).
+       Variable `floors` is in scope at the return — zero extra
+       DB query.
 
-0.4 ✅ Capacitor available; no platform-specific code needed for
-       read-only matrix view.
+0.4 ✅ Test fixture `_mk_db` at L51 accepts `floors=None` param,
+       mounts via `db.floors.find = MagicMock(return_value=
+       _AsyncCursor(floors or []))` at L67. Existing
+       `test_get_matrix_returns_resolved_stages` at L92 passes
+       `floors=[]` at L108 — assertion added.
 
-0.5 ✅ lucide-react ^0.507.0. All icons used confirmed available:
-       CheckCircle2, AlertCircle, Clock, XCircle, MinusCircle,
-       ShieldCheck, LayoutGrid, ArrowLeft, Info, ChevronDown/Up,
-       Loader2.
-
-0.6 ✅ Tailwind defaults; md=768px chosen for mobile/desktop split.
-       RTL via dir="rtl" per component (matches StageDetailPage).
-
-0.7 ✅ App.js uses React.lazy for ALL pages — D-lazy drift in plan
-       was incorrect. Used React.lazy to match (no drift).
-
-0.8 ✅ isContractorRole: no role-conditional pattern in
-       QCFloorSelectionPage. Per spec FALLBACK clause: CTA visible
-       to all, backend 403 = defense-in-depth. Documented inline
-       comment in the CTA block.
-
-================================================================
-DIVERGENCES FROM SPEC
-================================================================
-D-svc.  matrixService.js does NOT use `import api from './api'`
-        (api.js has no default export). Implemented using
-        `axios + API + getAuthHeader` pattern matching
-        projectService/safetyService. Required exporting
-        `getAuthHeader` from api.js (and re-exporting `API` —
-        previously module-local). No external consumer existed
-        before — matrixService is now the reference example.
-
-D-cta-role.  CTA visible to all roles (no `!isContractorRole`
-        wrap). QCFloorSelectionPage has no role-fetch hook in
-        scope; spec PART 9 FALLBACK explicitly permits this.
-        Backend RBAC at /api/execution-matrix/{pid} returns 403
-        for contractors — UI shows error state with retry.
-
-(D-lazy from plan was REMOVED — App.js does use React.lazy.)
+0.5 ✅ Frontend header at ExecutionMatrixPage.js L84:
+       `{units.length} דירות • {stages.length} שלבים`. Replaced
+       with conditional buildingCount prefix.
 
 ================================================================
 PER-FILE DIFF
 ================================================================
-NEW (8):
-  frontend/src/components/matrix/STATUS_CONFIG.js     ~65 LOC
-  frontend/src/components/matrix/MatrixCell.js        ~55 LOC
-  frontend/src/components/matrix/StatusLegend.js      ~40 LOC
-  frontend/src/components/matrix/MatrixListView.js    ~85 LOC
-  frontend/src/components/matrix/MatrixGridView.js    ~75 LOC
-  frontend/src/pages/ExecutionMatrixPage.js          ~115 LOC
-  frontend/src/services/matrixService.js              ~22 LOC
-  frontend/src/hooks/useMatrixData.js                 ~40 LOC
-                                              total ~497 LOC
+backend/contractor_ops/execution_matrix_router.py     +8 / -2
+  L223-234: _unit_sort_key now returns 3-tuple
+    (floor_number, unit_no_num_or_9999, unit_no_string)
+    with try/except int parse + 9999 fallback for non-numeric
+  L263: + `"floors": floors,` field in get_matrix return dict
 
-EDITS (3 files):
-  frontend/src/services/api.js                +2 / -1
-    - L10: + `export { API };`
-    - L74: `const getAuthHeader` → `export const getAuthHeader`
-  frontend/src/App.js                         +9 / -0
-    - L60: + lazy import for ExecutionMatrixPage
-    - L379-386: + new <Route> with ProtectedRoute
-  frontend/src/pages/QCFloorSelectionPage.js +29 / -2
-    - L2: added `Link` to react-router-dom import
-    - L11: added `LayoutGrid, ArrowLeft` to lucide imports
-    - L236-262: + CTA Link block (immediately before
-      "סטטוס ביצוע כללי" execSummary block)
+backend/tests/test_execution_matrix.py                +33 / -0
+  L125-127: + 2 assertions inside test_get_matrix_returns_resolved_stages
+    (`"floors" in res` + isinstance list)
+  L131-160: + NEW test_get_matrix_unit_sort_numeric (regression
+    guard — units "20","2","11","1","10" → ["1","2","10","11","20"])
 
-Backend: 0 lines diff (no backend touched).
+frontend/src/pages/ExecutionMatrixPage.js             +9 / -1
+  L34-40: + buildingCount useMemo (Set on units' building_id)
+  L95: + conditional `{buildingCount > 0 && \`${count} מבנים • \`}`
+       prefix on header subtitle
+
+Total: 3 files, ~50 LOC delta.
+
+================================================================
+DIVERGENCES FROM SPEC
+================================================================
+None. Spec matched verified line numbers + existing patterns
+exactly. Existing fixture already supported the floors mock — no
+new mock plumbing needed.
 
 ================================================================
 VERIFICATIONS
 ================================================================
-V1 yarn build (with REACT_APP_BACKEND_URL set) ... ✅ 34.53s, no
-   new warnings or errors. Build folder ready.
-V2 8 NEW files exist .............................. ✅ all 8
-V3 grep "execution-matrix\|ExecutionMatrixPage"
-   frontend/src/App.js ............................ ✅ 3 hits
-   (lazy import L60 + path L380 + element L383)
-V4 CTA on QC page .................................. ✅
-   - L237: `to=\`/projects/${projectId}/execution-matrix\``
-   - L250: "מטריצת ביצוע" Hebrew label
-   - Placement: CTA at L237, "סטטוס ביצוע כללי" at L273
-     (delta=36 lines, CTA precedes — verified via line numbers).
-V5 backend regression .............................. ✅ 15 passed
-   in 2.95s (11 matrix + 4 qc tests).
-V6 visual smoke a-u ............................... ⏳ deferred to
-   Zahi post-deploy.
-V7 RTL inspection ................................. ⏳ deferred to
-   Zahi post-deploy.
+V1 backend import ............................. ✅ prints OK
+V2 matrix test suite .......................... ✅ 12 passed in 1.94s
+   (was 11 in #484; +1 new test_get_matrix_unit_sort_numeric +
+   2 floors assertions added to existing stage-resolution test)
+V3 QC regression .............................. ✅ 4 passed in 1.42s
+   (test_qc_override_close.py + test_qc_units_status.py — no QC
+   code touched)
+V4 yarn build ................................. ✅ 35.01s, no new
+   warnings or errors. Build folder ready.
+V5 frontend buildingCount references .......... ✅ 2 hits
+   (1 useMemo declaration + 1 JSX usage in header)
+V6 floors in response ........................ ✅ implicit via V2
+   assertion on `"floors" in res`
+V7 visual smoke a-j .......................... ⏳ deferred to Zahi
 
 ================================================================
-V6 VISUAL SMOKE (Zahi runs after staging deploy)
+V7 VISUAL SMOKE (Zahi runs after staging deploy)
 ================================================================
-QC home — CTA discovery:
-  a) PM/admin → /projects/{p}/qc → see violet CTA card ABOVE the
-     "סטטוס ביצוע כללי" execSummary card.
-  b) CTA shows: 🔲 LayoutGrid icon + "מטריצת ביצוע" + "חדש" pill +
-     subtitle "צפייה מפורטת לפי דירה ושלב" + ArrowLeft.
-  c) Tap → navigates to /projects/{p}/execution-matrix.
-  d) Desktop hover → border darkens, ArrowLeft shifts left subtly.
-  e) execSummary card below CTA — UNCHANGED.
+Header check:
+  a) Login as super_admin → /projects/{p}/execution-matrix
+  b) Header subtitle now shows: "2 מבנים • 30 דירות • 10 שלבים"
+     (was: "30 דירות • 10 שלבים")
 
-Matrix on Mobile (375px):
-  f) Header: "מטריצת ביצוע" + "{N} דירות • {M} שלבים".
-  g) StatusLegend collapsed → tap to expand → 6 statuses visible
-     in 2-col grid (sm: 3-col).
-  h) Each unit = card with header (דירה N • קומה N • room_count) +
-     progress bar (completed/total based on STATUS columns only) +
-     horizontal scroll of 32x32 cells with stage labels.
-  i) Empty cell = gray dash; status cell = colored icon w/ tooltip
-     "בוצע • <actor name>"; tag cell = 3-char text snippet.
-  j) Horizontal scroll within unit card smooth.
-  k) Empty project → "אין דירות בפרויקט".
+Sort check (desktop grid):
+  c) First 10 unit rows in numeric order: דירה 1, 2, 3, ..., 10
+     (was: 1, 16, 17, 18, 19, 2, 20, 3, 4, 5)
+  d) Last unit row: דירה 30 (was: דירה 9 in lex sort)
 
-Matrix on Desktop (≥768px):
-  l) Grid mode (no list cards visible).
-  m) Sticky right column "דירה" (RTL: right-0) stays visible on
-     horizontal scroll.
-  n) Sticky top row stage names stays visible on vertical scroll.
-  o) Custom stages → "מותאם" sub-label under stage name.
-  p) Tag-type stages → text snippet, not status icon.
-  q) Zebra stripes (alternating bg-white / bg-slate-50/30).
+Floor metadata check:
+  e) Each unit row shows real floor: "קומה 1", "קומה 2", etc.
+     (was: "קומה ?" for all rows)
+  f) Mobile list view: same real floor number visible in card header
 
-Permissions:
-  r) Contractor → CTA still visible (D-cta-role fallback). Click →
-     navigate to matrix page → useMatrixData returns 403 → error
-     state with "נסה שוב" button + Hebrew error message from
-     err.response.data.detail.
-  s) PM / management_team / super_admin → matrix loads normally.
+Mobile (375px DevTools):
+  g) Header subtitle wraps properly on narrow viewport
+  h) Building count visible in mobile header
 
-Performance:
-  t) 50 units × 20 stages → renders in <2s on staging.
-  u) Mobile horizontal scroll 60fps.
-
-================================================================
-V7 RTL CHECKLIST (Zahi inspects)
-================================================================
-- All component roots have dir="rtl" (or inherit).
-- Stage column headers: text-center, no LTR-leakage.
-- Unit identifier column: sticky right-0 (NOT left-0).
-- Unit numbers + floor info: text-right inside the sticky column.
-- Mobile horizontal stage scroll: starts from RIGHT edge (first
-  stage) — relies on browser native RTL `overflow-x-auto`.
-- Hebrew text in CTA: violet card aligned dir="rtl" inside.
+Edge cases:
+  i) Project with 1 building → "1 מבנים • N דירות..."
+     (Hebrew plural grammar slight imperfection — defer to followup)
+  j) Project with 0 units → "0 דירות • M שלבים" (no buildings clause,
+     graceful render)
 
 ================================================================
 RISK NOTES
 ================================================================
-- floors metadata NOT in #483 response. ExecutionMatrixPage
-  synthesizes minimal floorsById from units[].floor_id (per spec
-  PART 8 fallback). Floor numbers may show "?" if unit lacks
-  floor_number — future polish: have backend embed floors[].
-- CTA visible to contractors (D-cta-role). They can navigate but
-  immediately hit the 403 error state. Acceptable per spec; clean
-  up in a future polish batch by adding role check.
-- yarn build needs REACT_APP_BACKEND_URL set (existing craco
-  guard from production safety). Doesn't affect deployment which
-  has the env var configured. Local dev `yarn start` unaffected.
-- No new tests added — frontend UI batch. V6 covers it.
+- Backward compat: adding `floors` to response is purely additive.
+  Frontend's existing PART-8 fallback at floorsById uses
+  `if (data?.floors) { ... }` first branch — when backend now
+  populates it, the synthesized "?" fallback never fires. Old
+  frontend code (pre-#484) ignores unknown response fields — no
+  risk to non-existent legacy consumers.
+- Numeric sort with 9999 fallback: assumes < 9999 numeric units per
+  floor (safe — biggest project in prod has ~50 units/floor).
+- `building_id` on units assumed present in DB. If absent on some
+  old units, `.filter(Boolean)` excludes them and buildingCount
+  reflects only units with the field. Defensive.
+- 1 LOC drift from spec: spec L229 said "filter(Boolean)" pattern
+  used in JS — implemented exactly.
 
 ================================================================
-OUT OF SCOPE (PHASE 2B / 2C / 2D)
+OUT OF SCOPE
 ================================================================
-- Cell editing popover (status select, note, audit history) → 2B
-- Add custom stage / hide base / reorder → 2C
-- Filters + saved views CRUD → 2D
-- Manual list↔grid toggle → 2D (auto-by-viewport for now)
-- qc_runs annotation overlay (📎 on cells)
-- Realtime / WebSocket updates
-- Project sidebar entry (HamburgerMenu uses tabs only — no nav
-  to extend; CTA on QC home is sole entry point in 2A)
-- Floors metadata embed in #483 response (future backend polish)
+- Hebrew plural grammar fix ("1 מבנה" vs "מבנים") — followup polish
+- Building names/numbers in response (only floors)
+- Any change to other matrix endpoints, components, or hooks
+- Pydantic v1 → v2 migration (deprecation warnings unchanged)
 
 ================================================================
 ROLLBACK
 ================================================================
 git revert <commit-sha>
-- 8 NEW files removed
-- 3 file edits reverted (api.js, App.js, QCFloorSelectionPage.js)
-- /projects/:projectId/execution-matrix → 404
-- CTA disappears from QC home page
-- ZERO backend impact. ZERO impact on QC, handover, plans, safety,
-  billing, defects, auth.
+- 3 files revert. The 3 fixes regress (header loses count, sort
+  back to lex, floors field removed from response → frontend
+  fallback shows "?" again).
+- ZERO impact on cell rendering / status icons / RTL layout /
+  MatrixListView / MatrixGridView / popovers / Phase 1 endpoints.
+- Backward compatible removal — frontend's data?.floors check
+  silently no-ops when field is absent.
 
 ================================================================
 AWAITING ZAHI APPROVAL — DO NOT auto-commit / auto-deploy.
-After approval: git commit + push + ./deploy.sh --stag → V6/V7 → --prod.
+After approval: git commit + push + ./deploy.sh --stag → V7 → --prod.
 ================================================================

@@ -222,7 +222,12 @@ async def get_matrix(
 
     def _unit_sort_key(u):
         f = floors_by_id.get(u.get("floor_id"), {})
-        return (f.get("floor_number", 0), u.get("unit_no", ""))
+        unit_no_str = u.get("unit_no", "") or ""
+        try:
+            unit_no_num = int(unit_no_str)
+        except (ValueError, TypeError):
+            unit_no_num = 9999  # non-numeric unit_no sorts to end
+        return (f.get("floor_number", 0), unit_no_num, unit_no_str)
     units.sort(key=_unit_sort_key)
 
     stage_ids = [s["id"] for s in stages]
@@ -252,6 +257,7 @@ async def get_matrix(
         "stages": stages,
         "units": units,
         "cells": cells_summary,
+        "floors": floors,
         "permissions": {
             "role": role,
             "can_view": True,

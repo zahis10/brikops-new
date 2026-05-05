@@ -28,6 +28,14 @@ export default function ExecutionMatrixPage() {
     return map;
   }, [data]);
 
+  // #485 — building count for header subtitle
+  const buildingCount = useMemo(() => {
+    if (!data?.units) return 0;
+    return new Set(
+      data.units.map(u => u.building_id).filter(Boolean)
+    ).size;
+  }, [data]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
@@ -81,6 +89,7 @@ export default function ExecutionMatrixPage() {
           <div className="flex-1 min-w-0">
             <h1 className="text-lg sm:text-xl font-bold text-slate-900">מטריצת ביצוע</h1>
             <p className="text-xs text-slate-500 mt-0.5">
+              {buildingCount > 0 && `${buildingCount} מבנים • `}
               {units.length} דירות • {stages.length} שלבים
             </p>
           </div>

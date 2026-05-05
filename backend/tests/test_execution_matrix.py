@@ -119,6 +119,41 @@ def test_get_matrix_returns_resolved_stages():
         assert res["stages"][2]["source"] == "custom"
         assert res["permissions"]["can_view"] is True
         assert res["permissions"]["can_edit"] is True
+        # #485 — backend exposes floors metadata for frontend
+        assert "floors" in res, "Response must include floors metadata"
+        assert isinstance(res["floors"], list)
+    asyncio.run(run())
+
+
+def test_get_matrix_unit_sort_numeric():
+    """#485 — units sorted numerically by unit_no, not lexicographically.
+    Expected: '1', '2', '10', '11', '20' — NOT '1', '10', '11', '2', '20'."""
+    async def run():
+        matrix_config = {
+            "id": "m1", "project_id": "p1",
+            "custom_stages": [], "base_stages_removed": [], "deletedAt": None,
+        }
+        tpl = _mk_tpl([
+            {"id": "s1", "title": "ריצוף", "scope": "unit", "order": 10},
+        ])
+        units = [
+            {"id": "u-20", "project_id": "p1", "floor_id": "f1", "unit_no": "20"},
+            {"id": "u-2",  "project_id": "p1", "floor_id": "f1", "unit_no": "2"},
+            {"id": "u-11", "project_id": "p1", "floor_id": "f1", "unit_no": "11"},
+            {"id": "u-1",  "project_id": "p1", "floor_id": "f1", "unit_no": "1"},
+            {"id": "u-10", "project_id": "p1", "floor_id": "f1", "unit_no": "10"},
+        ]
+        floors = [{"id": "f1", "project_id": "p1", "floor_number": 1}]
+        db = _mk_db(matrix_config=matrix_config, units=units, floors=floors, cells=[])
+        with patch.object(emr, "get_db", return_value=db), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res = await emr.get_matrix("p1", user={"id": "pm1"})
+
+        order = [u["unit_no"] for u in res["units"]]
+        assert order == ["1", "2", "10", "11", "20"], \
+            f"expected numeric sort ['1','2','10','11','20'] got {order}"
     asyncio.run(run())
 
 
