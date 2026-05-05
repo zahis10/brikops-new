@@ -421,6 +421,126 @@ def test_get_matrix_returns_base_stages_removed():
     asyncio.run(run())
 
 
+def test_hide_then_unhide_template_stage_preserves_cells():
+    """🚨 CRITICAL — DATA INTEGRITY (#497): cells of a template stage
+    survive a hide → unhide cycle. PM can toggle visibility without
+    ever losing cell data. Verifies template_stages field exposes ALL
+    base stages (not just visible ones)."""
+    async def run():
+        # ---- Setup: 3 template stages, 1 unit, 3 cells (one per stage) ----
+        tpl = _mk_tpl([
+            {"id": "stage_a", "title": "A", "order": 10},
+            {"id": "stage_b", "title": "B", "order": 20},
+            {"id": "stage_c", "title": "C", "order": 30},
+        ])
+        cell_b = {
+            "id": "cell_b", "project_id": "p1",
+            "unit_id": "u1", "stage_id": "stage_b",
+            "status": "completed", "note": "test cell b",
+            "audit": [],
+        }
+        cells_store = [
+            {"id": "cell_a", "project_id": "p1", "unit_id": "u1",
+             "stage_id": "stage_a", "status": "in_progress", "note": "a"},
+            cell_b,
+            {"id": "cell_c", "project_id": "p1", "unit_id": "u1",
+             "stage_id": "stage_c", "status": "completed", "note": "c"},
+        ]
+        unit = {"id": "u1", "project_id": "p1", "unit_no": "1",
+                "building_id": "b1", "floor_id": "f1"}
+        matrix_config_state = {
+            "id": "m1", "project_id": "p1",
+            "custom_stages": [], "base_stages_removed": [], "deletedAt": None,
+        }
+
+        # ---- Step 1: PATCH /stages with base_stages_removed=["stage_b"] ----
+        db = _mk_db(matrix_config=matrix_config_state)
+        captured = {}
+        async def _capture_update(filt, payload):
+            if "$set" in payload and "base_stages_removed" in payload["$set"]:
+                matrix_config_state["base_stages_removed"] = payload["$set"]["base_stages_removed"]
+            captured["payload"] = payload
+            return MagicMock(matched_count=1)
+        db.execution_matrix.update_one = AsyncMock(side_effect=_capture_update)
+
+        with patch.object(emr, "get_db", return_value=db), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)), \
+             patch.object(emr, "_audit", new=AsyncMock()):
+            await emr.update_stages(
+                "p1",
+                MatrixStagesUpdate(base_stages_removed=["stage_b"]),
+                user={"id": "pm1"},
+            )
+        assert matrix_config_state["base_stages_removed"] == ["stage_b"]
+
+        # ---- Step 2: GET /matrix while stage_b hidden ----
+        db2 = _mk_db(
+            matrix_config=matrix_config_state,
+            units=[unit],
+            cells=[c for c in cells_store if c["stage_id"] != "stage_b"],
+        )
+        with patch.object(emr, "get_db", return_value=db2), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res_hidden = await emr.get_matrix("p1", user={"id": "pm1"})
+
+        visible_ids = [s["id"] for s in res_hidden["stages"]]
+        assert visible_ids == ["stage_a", "stage_c"], \
+            f"hidden stage_b must be filtered from `stages`, got {visible_ids}"
+        assert "template_stages" in res_hidden, \
+            "GET /matrix MUST expose `template_stages` (#497)"
+        tpl_ids = [s["id"] for s in res_hidden["template_stages"]]
+        assert tpl_ids == ["stage_a", "stage_b", "stage_c"], \
+            f"`template_stages` MUST contain ALL base stages incl. hidden, got {tpl_ids}"
+        assert res_hidden["base_stages_removed"] == ["stage_b"]
+
+        # ---- Step 3: PATCH /stages with base_stages_removed=[] (un-hide) ----
+        db3 = _mk_db(matrix_config=matrix_config_state)
+        db3.execution_matrix.update_one = AsyncMock(side_effect=_capture_update)
+        with patch.object(emr, "get_db", return_value=db3), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)), \
+             patch.object(emr, "_audit", new=AsyncMock()):
+            await emr.update_stages(
+                "p1",
+                MatrixStagesUpdate(base_stages_removed=[]),
+                user={"id": "pm1"},
+            )
+        assert matrix_config_state["base_stages_removed"] == []
+
+        # ---- Step 4: GET /matrix again — cell of stage_b STILL THERE ----
+        # ✅ DATA INTEGRITY: hidden cell never deleted from execution_matrix_cells.
+        db4 = _mk_db(
+            matrix_config=matrix_config_state,
+            units=[unit],
+            cells=cells_store,  # all 3 cells, including the previously-hidden cell_b
+        )
+        with patch.object(emr, "get_db", return_value=db4), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res_unhidden = await emr.get_matrix("p1", user={"id": "pm1"})
+
+        visible_ids2 = [s["id"] for s in res_unhidden["stages"]]
+        assert visible_ids2 == ["stage_a", "stage_b", "stage_c"], \
+            f"un-hidden — all 3 must be visible again, got {visible_ids2}"
+        cells_returned = res_unhidden["cells"]
+        cell_b_returned = next(
+            (c for c in cells_returned if c["stage_id"] == "stage_b"), None,
+        )
+        assert cell_b_returned is not None, \
+            "🚨 DATA LOSS — cell of un-hidden stage_b missing from /matrix response"
+        assert cell_b_returned["status"] == "completed", \
+            f"🚨 DATA LOSS — status not preserved, got {cell_b_returned['status']}"
+        assert cell_b_returned["note"] == "test cell b", \
+            f"🚨 DATA LOSS — note not preserved, got {cell_b_returned['note']}"
+    asyncio.run(run())
+
+
 def test_update_stages_blocks_non_approver():
     """site_manager (not PM, not in approvers) → 403."""
     async def run():

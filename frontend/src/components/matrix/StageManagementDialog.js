@@ -26,8 +26,14 @@ import AddStageForm from './AddStageForm';
  */
 export default function StageManagementDialog({
   open, onClose, onSave, stages, initialBaseRemoved = [],
+  initialAllBaseStages = [],   // ← NEW (#497)
 }) {
-  const initialBase = (stages || []).filter(s => s.source === 'base');
+  // #497 — section 2 must show ALL base stages (including hidden)
+  // so PM can toggle hide/show. Falls back to filtered `stages`
+  // when older response shape (pre-#497).
+  const initialBase = initialAllBaseStages.length > 0
+    ? initialAllBaseStages
+    : (stages || []).filter(s => s.source === 'base');
   const initialCustom = (stages || []).filter(s => s.source === 'custom');
 
   const [customStages, setCustomStages] = useState([]);
@@ -150,9 +156,9 @@ export default function StageManagementDialog({
             {/* Section 1: Custom (metadata) stages */}
             <section>
               <h3 className="text-xs font-bold text-slate-700 mb-2">
-                📋 עמודות מטה-דאטה
-                <span className="text-[10px] font-normal text-slate-500 mr-2">
-                  (יוצגו ראשונות, מימין לשמאל)
+                📋 עמודות מותאמות
+                <span className="text-[10px] font-normal text-slate-500 mr-2 block sm:inline">
+                  תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)
                 </span>
               </h3>
               <div className="mb-3">
@@ -195,8 +201,8 @@ export default function StageManagementDialog({
             <section>
               <h3 className="text-xs font-bold text-slate-700 mb-2">
                 🔨 עמודות בקרת ביצוע
-                <span className="text-[10px] font-normal text-slate-500 mr-2">
-                  (מהתבנית — סדר קבוע, אפשר רק להציג/להסתיר)
+                <span className="text-[10px] font-normal text-slate-500 mr-2 block sm:inline">
+                  (מהתבנית — סדר קבוע, אפשר להציג/להסתיר. שלבים מוסתרים יוצגו עמומים)
                 </span>
               </h3>
               {initialBase.length === 0 ? (

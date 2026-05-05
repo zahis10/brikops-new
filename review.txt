@@ -1,237 +1,197 @@
 ================================================================================
-#495 — Execution Matrix Phase 2C — Stage Management (custom columns + hide/reorder)
+#497 — Phase 2C POLISH — unhide visibility + UX clarity (hotfix to #495)
 ================================================================================
 Branch:   staging
-Status:   READY FOR REVIEW — all VERIFY 1-7 green; visual smoke (a-w) deferred to Zahi.
-Files:    3 NEW frontend + 3 frontend edits + 2 backend edits + 2 new tests + 2 deps
+Status:   READY FOR REVIEW — VERIFY 1-6 green; visual+integrity smoke deferred to Zahi.
+Files:    1 backend + 3 frontend + 1 new test = ~22 LOC
 
 ================================================================================
 STEP 0 — PRE-FLIGHT AUDIT
 ================================================================================
 
-0.1 @dnd-kit before install:
-    grep -E "dnd-kit|dnd" frontend/package.json   →  no matches (NOT installed)
-    Action: yarn add @dnd-kit/core @dnd-kit/sortable
-    Result:
-      "@dnd-kit/core":     "^6.3.1"
-      "@dnd-kit/sortable": "^10.0.0"
-      (+ transitive: @dnd-kit/accessibility@3.1.1)
-      ~12KB gzipped, 24.6s install, lockfile updated.
+0.1 Root cause confirmed in `_resolve_visible_stages` (L156-183):
+      L161-163:  for s in tpl.get("stages", []) or []:
+                     if s["id"] in base_removed:
+                         continue          ← hidden filtered OUT
+    `stages` field never contains hidden base stages → dialog can't render
+    them with unhide toggle. DB data intact (cells + base_stages_removed).
 
-0.2 Radix Dialog pattern (reuse from #491 CellEditDialog) ✓
-    `@radix-ui/react-dialog` already imported; same Tailwind pattern reused
-    (mobile bottom-sheet `inset-x-0 bottom-0 rounded-t-2xl` ≤md, centered
-    `md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2` ≥md).
+0.2 GET /matrix response dict at L283-300 (post-#495):
+      stages, units, cells, floors, buildings,
+      base_stages_removed, permissions, matrix_config_id
+    → ADD `template_stages` (additive, no break).
 
-0.3 matrixService current shape (post-#491): getMatrix + updateCell + getCellHistory ✓
-    Action: add updateStages.
+0.3 StageManagementDialog L28-30 (post-#495):
+      const initialBase = (stages || []).filter(s => s.source === 'base');
+    → REPLACE with prop-fed `initialAllBaseStages` + fallback to old.
 
-0.4 useMatrixData current shape (post-#491): { data, loading, error, refresh, updateCell } ✓
-    Action: add updateStages.
+0.4 ExecutionMatrixPage L200-206 (post-#495):
+      <StageManagementDialog ... initialBaseRemoved={...} />
+    → ADD `initialAllBaseStages={data?.template_stages || []}`.
 
-0.5 ExecutionMatrixPage header (post-#492): back button + LayoutGrid + h1 + subtitle ✓
-    Action: append Settings ⚙️ icon at end of header (canEdit-gated).
-
-0.6 canEdit availability: derived from data.permissions.can_edit ✓
-    Settings icon hidden when !canEdit; backend RBAC remains source of truth.
-
-0.7 lucide-react icons (Settings, GripVertical, Eye, EyeOff, Trash2, Plus, ChevronUp) ✓
-    All present in installed lucide-react.
-
-0.8 Backend pre-existing state (verified before edits):
-    - schemas.py L915 — `MatrixStageCreate.id: Optional[str] = None` ALREADY in place
-      (Bug 1 schema half done previously; only handler half remained).
-    - execution_matrix_router.py L317-332 — `s.get("id") or f"custom_..."` had no
-      `existing_custom_ids` validation → ID-hijacking surface + Bug 1 handler half.
-    - execution_matrix_router.py L283-296 — GET /matrix did NOT expose
-      `base_stages_removed` → Bug 2.
+0.5 Existing #495 tests baseline: 16 passed → after this batch: 17.
 
 ================================================================================
 PER-FILE CHANGES
 ================================================================================
 
-backend/contractor_ops/execution_matrix_router.py
-   GET /matrix (L286-303):
-     + "base_stages_removed": list(matrix_config.get("base_stages_removed", []) or []),
-     Comment cites Bug 2 fix (frontend hydration).
+backend/contractor_ops/execution_matrix_router.py  (+18 LOC)
+   After `stages = _resolve_visible_stages(matrix_config, tpl)` at L210:
+     + template_stages list-comp over `tpl.get("stages", []) or []`
+       (no hide filter; same shape as base entries in _resolve_visible).
+   Response dict gains:
+     + "template_stages": template_stages,
+   Comment cites #497 + reason. `_resolve_visible_stages` UNTOUCHED —
+   `stages` field semantics preserved (no breaking change).
 
-   PATCH /stages (L324-349):
-     + existing_custom_ids = { s["id"] for s in (matrix_config.get("custom_stages")
-                                                 or []) if s.get("id") }
-     + sid = s.get("id")
-       keep_id = sid if (sid and sid in existing_custom_ids)
-                     else f"custom_{uuid.uuid4().hex[:12]}"
-     Defense-in-depth: ID hijacking from sibling project rejected; existing IDs
-     preserved so cells stay reachable across saves (Bug 1 handler half).
+backend/tests/test_execution_matrix.py  (+~110 LOC, 1 new test)
+   + test_hide_then_unhide_template_stage_preserves_cells
+       Setup: 3 base stages (A,B,C), 1 unit, 3 cells (one per stage).
+       Step 1 PATCH /stages base_stages_removed=["stage_b"] →
+              matrix_config.base_stages_removed updates.
+       Step 2 GET /matrix:
+              - stages           = [stage_a, stage_c]   (filtered)
+              - template_stages  = [stage_a, stage_b, stage_c]  (FULL ✅)
+              - base_stages_removed = ["stage_b"]
+       Step 3 PATCH /stages base_stages_removed=[] → un-hide.
+       Step 4 GET /matrix:
+              - stages = [a,b,c] back to all 3
+              - cell_b in response with status="completed", note="test cell b"
+                ✅ DATA INTEGRITY — hidden cell never deleted.
+       Failure messages tagged 🚨 DATA LOSS for grep visibility.
 
-backend/contractor_ops/schemas.py
-   No change in this batch — `id: Optional[str] = None` already present at L915.
+frontend/src/components/matrix/StageManagementDialog.js  (+10 LOC)
+   Props gain `initialAllBaseStages = []`.
+   `initialBase` computed from new prop with defensive fallback to
+   legacy `stages.filter(source==='base')` when prop empty (deploy-lag
+   safe — dialog still works without unhide UI on old backend).
+   Section 1 heading: "📋 עמודות מטה-דאטה" → "📋 עמודות מותאמות"
+   Section 1 subtitle: now "תגיות (טקסט חופשי) או סטטוסים
+       (6 ערכים — כמו עמודות בקרת ביצוע)" with `block sm:inline`
+       so it wraps on mobile.
+   Section 2 subtitle: "(מהתבנית — סדר קבוע, אפשר רק להציג/להסתיר)"
+       → "(מהתבנית — סדר קבוע, אפשר להציג/להסתיר. שלבים מוסתרים
+       יוצגו עמומים)" with `block sm:inline`.
 
-backend/tests/test_execution_matrix.py
-   + test_update_stages_preserves_existing_custom_ids — covers 3 cases in one PATCH:
-       - existing custom_aaa  → preserved
-       - hijack custom_HIJACK → replaced with fresh custom_*
-       - no-id new stage      → fresh custom_*
-   + test_get_matrix_returns_base_stages_removed — covers GET response field.
+frontend/src/components/matrix/AddStageForm.js  (1 LOC label)
+   Status radio: "סטטוס (6 ערכים)" → "סטטוס (6 ערכים — כמו
+   עמודות בקרת ביצוע)". Closes the "where do I add execution
+   stages" UX gap from Zahi's prod test.
 
-frontend/src/services/matrixService.js  (+15 LOC)
-   + async updateStages(projectId, payload)
-       PATCH `${API}/execution-matrix/${projectId}/stages` with auth header.
-       Note in source: API constant already includes `/api` (#491 D-svc).
-
-frontend/src/hooks/useMatrixData.js  (+15 LOC)
-   + const updateStages = useCallback(async (payload) => { ... }, [projectId, load]);
-       no optimistic update — server reshapes the entire stage list; full refetch
-       on success via the existing `load` fn. Hebrew error toast text default.
-   ~ return value gains `updateStages`.
-
-frontend/src/components/matrix/StageRow.js  (NEW, 100 LOC)
-   - useSortable always called (rules-of-hooks); base rows pass disabled:true.
-   - Drag handle: min-w-[44px] min-h-[44px], touch-none, cursor-grab/grabbing.
-   - Custom rows: violet bg, GripVertical handle, Trash2 delete (red, ≥44×44).
-   - Base rows: slate bg, eye placeholder, Eye/EyeOff toggle (≥44×44).
-   - Hidden state: opacity-60 + line-through title.
-   - Type badge: 'תגית' (amber) | 'סטטוס' (emerald).
-
-frontend/src/components/matrix/AddStageForm.js  (NEW, 98 LOC)
-   - Default collapsed: dashed-violet "+ הוסף עמודה חדשה" pill, ≥44px.
-   - Expanded: title input (max 80, autoFocus, RTL), tag/status radios
-     (default tag — most common metadata case), submit "הוסף לרשימה" ≥44px.
-   - Submit appends to parent's local state only; backend save deferred.
-
-frontend/src/components/matrix/StageManagementDialog.js  (NEW, 249 LOC)
-   - Radix Dialog: bottom sheet ≤md, centered modal ≥md (max-w-lg).
-   - Section 1 "📋 עמודות מטה-דאטה": AddStageForm + DndContext +
-     SortableContext (PointerSensor distance:4 + KeyboardSensor for a11y).
-   - Section 2 "🔨 עמודות בקרת ביצוע": eye-toggle list, no DnD.
-   - On save:
-       * custom_stages_added gets `order = i - N` (i.e. -N..-1) so all
-         custom (negative) precede all template (positive) — frontend-only
-         RTL-first ordering, zero backend change.
-       * `_isNew: true` rows omit `id` so backend mints a fresh one;
-         existing rows include `id` so backend (post-Bug-1 fix) preserves it.
-       * base_stages_removed = Array.from(hiddenBaseIds).
-   - Bug 2 fix: hiddenBaseIds = new Set(initialBaseRemoved) on every open
-     (NOT empty) — fed by data.base_stages_removed from page.
-   - Footer: paddingBottom max(12px, env(safe-area-inset-bottom)) + ≥44px buttons.
-   - Save closes on ok; toast.error + dialog stays open on fail.
-
-frontend/src/pages/ExecutionMatrixPage.js  (~25 LOC delta)
-   ~ import: + Settings (lucide), + StageManagementDialog
-   ~ hook destructure: + updateStages
-   + const [stageManageOpen, setStageManageOpen] = useState(false);
-   + const handleSaveStages = useCallback(async (payload) =>
-                                              updateStages(payload), [updateStages]);
-   + Settings ⚙️ icon button at the end of the header, gated `canEdit`,
-     `aria-label="ניהול עמודות"`, ≥44px.
-   + <StageManagementDialog open onClose onSave stages
-       initialBaseRemoved={data?.base_stages_removed || []} />
-   No touches to: back button (#492), LayoutGrid header, StatusLegend,
-   loading/error states, MatrixListView/GridView render, CellEditDialog wiring.
-
-frontend/package.json + yarn.lock
-   + @dnd-kit/core ^6.3.1
-   + @dnd-kit/sortable ^10.0.0
-   (+ @dnd-kit/accessibility ^3.1.1 transitive)
+frontend/src/pages/ExecutionMatrixPage.js  (+1 LOC)
+   <StageManagementDialog ... initialAllBaseStages={data?.template_stages || []} />
+   No other prop touched.
 
 ================================================================================
-VERIFY 1-7 OUTPUTS
+VERIFY 1-6 OUTPUTS
 ================================================================================
 
-VERIFY 1 — Frontend build:
-    REACT_APP_BACKEND_URL=https://example.com yarn build
-    →  "The build folder is ready to be deployed."
-    →  Done in 31.24s. No new warnings or errors.
+VERIFY 1 — Backend syntax + import:
+    python -c "from contractor_ops.execution_matrix_router import router; print('OK')"
+    →  OK
 
-VERIFY 2 — All 3 NEW files exist:
-    EXISTS: src/components/matrix/StageManagementDialog.js (249 LOC)
-    EXISTS: src/components/matrix/StageRow.js              (100 LOC)
-    EXISTS: src/components/matrix/AddStageForm.js          ( 98 LOC)
-
-VERIFY 3 — @dnd-kit packages installed in package.json:
-    "@dnd-kit/core":     "^6.3.1"
-    "@dnd-kit/sortable": "^10.0.0"
-    →  2 hits ✓
-
-VERIFY 4 — matrixService.updateStages added:
-    grep -c "updateStages" frontend/src/services/matrixService.js
-    →  1 ✓
-
-VERIFY 5 — useMatrixData.updateStages added + returned:
-    grep -c "updateStages" frontend/src/hooks/useMatrixData.js
-    →  3  (declaration + service call + return) ✓
-
-VERIFY 6 — ExecutionMatrixPage settings icon + dialog wiring:
-    grep -c "Settings|StageManagementDialog|stageManageOpen|handleSaveStages" page
-    →  8 ✓
-
-VERIFY 7 — Backend tests:
+VERIFY 2 — Backend tests (16 from #495 + 1 new):
     cd backend && python -m pytest tests/test_execution_matrix.py -q
-    →  16 passed, 6 warnings in 1.99s
-       (was 14, +2 new — both Bug 1 and Bug 2 covered)
-       New tests pass:
-         - test_update_stages_preserves_existing_custom_ids
-         - test_get_matrix_returns_base_stages_removed
-       All previously passing tests still pass (no regressions).
+    →  17 passed, 8 warnings in 2.13s
+    New: test_hide_then_unhide_template_stage_preserves_cells
+
+VERIFY 3 — QC regression (none touched):
+    cd backend && python -m pytest tests/test_qc_override_close.py tests/test_qc_units_status.py -q
+    →  4 passed, 2 warnings in 1.49s
+
+VERIFY 4 — Frontend build:
+    cd frontend && REACT_APP_BACKEND_URL=https://example.com yarn build
+    →  Done in 34.51s. No new warnings or errors.
+
+VERIFY 5 — Dialog references template_stages / initialAllBaseStages:
+    grep -c "initialAllBaseStages|template_stages" dialog + page
+    →  Dialog: 3   Page: 1   (total 4 ≥ 4) ✓
+
+VERIFY 6 — Hebrew label changes present:
+    grep -c "עמודות מותאמות|כמו עמודות בקרת ביצוע" dialog + AddStageForm
+    →  Dialog: 3 (heading + section1 subtitle + section2 subtitle)
+       AddStageForm: 1 (status radio)
+       (total 4 ≥ 3) ✓
 
 ================================================================================
-VERIFY 8 — VISUAL SMOKE (deferred to Zahi after staging deploy)
+VERIFY 7 — VISUAL + DATA INTEGRITY SMOKE (deferred to Zahi after staging)
 ================================================================================
 
-21 scenarios a-u defined in spec, plus 2 critical data-preservation flows v+w:
+a) Pre-flight: super_admin + project with template stage + 1 unit.
 
-    a-c  Settings icon visibility + dialog open (mobile sheet vs desktop modal)
-    d-f  Default state — sections, headings, eye toggles
-    g-i  Add custom stage flow (form expand → submit → row appears)
-    j-l  Drag-and-drop reorder (long-press, visual feedback, persistence)
-    m-n  Hide / un-hide template stage toggle
-    o-p  Save → matrix re-renders with custom-first RTL ordering, hidden col removed
-    q-r  Permissions: contractor sees no icon; backend 403s direct PATCH
-    s-u  Edge cases: no-op save; 5 custom + reorder; mobile 375px safe-area
+🚨 DATA INTEGRITY CRITICAL:
 
-    🚨 v  DATA PRESERVATION ON RESAVE  (Bug 1 fix proof)
-          Add column → fill 5 cells → reorder → save → cells STILL THERE.
-    🚨 w  HIDDEN STATES PRESERVED ON RESAVE  (Bug 2 fix proof)
-          Hide "טיח" → save → reopen → still hidden → add column → save →
-          "טיח" STILL HIDDEN.
+b) UNHIDE FLOW + CELL PERSISTENCE (the main #497 fix):
+   1. Fill cell of "טיח": status=completed, note="test cell". Save.
+   2. Verify cell visible.
+   3. ⚙️ open dialog.
+   4. Section 2: find "טיח" → click eye → dims + strikethrough. Save.
+   5. ✅ Matrix renders WITHOUT "טיח".
+   6. Re-open dialog.
+   7. ✅ "טיח" appears in section 2 with eye-OFF (THE FIX — was missing pre-#497).
+   8. Click eye-off → lights up. Save.
+   9. ✅ Matrix re-renders WITH "טיח".
+   10-11. ✅ Cell of "טיח" still status=completed + note="test cell".
+   12. ❌ If status empty → STOP DEPLOY, file critical bug.
+
+c) RENAME PRESERVES CELL DATA (regression of #495 Bug 1):
+   1. Add custom column "סוג מכירה" (tag). Save.
+   2. Fill 3 cells: "שוק חופשי", "מחיר משתכן", "ציבורי".
+   3. Reopen dialog → row exists with same id.
+   4. Drag-reorder. Save.
+   5. ✅ Cell values still in matrix.
+
+d) UX CLARITY:
+   1. Open dialog.
+   2. Section 1 reads "📋 עמודות מותאמות" with subtitle
+      "תגיות (טקסט חופשי) או סטטוסים (6 ערכים — כמו עמודות בקרת ביצוע)".
+   3. Click "+ הוסף עמודה חדשה".
+   4. Status radio reads "סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)".
+   5-6. Pick status, type "אינסטלציה גמרים", submit → row with status badge.
+   7-8. Save → matrix shows new column with 6-status icons.
+
+e) MOBILE 375px:
+   1. Bottom sheet. Repeat (b)6-9 — drag handles ≥44px.
+   3. ✅ Subtitles wrap to own line.
+
+Negative regression:
+f) Hide → save without unhide → column hidden (basic hide intact).
+g) Add custom column → save → column shows (#495 add intact).
+h) Delete custom column → orphaned cells (Phase 2D cleanup item).
 
 ================================================================================
 DESIGN NOTES / DEVIATIONS FROM SPEC
 ================================================================================
 
-D-spec-1  Schema half of Bug 1 already in place from a prior batch
-          (schemas.py L915 already has `id: Optional[str] = None` on
-          MatrixStageCreate). Only the handler-level ID validation was
-          missing, so this batch ships only the handler edit.
+D1  Test setup uses cells_store WITHOUT cell_b in step 2 (mirroring real
+    backend behavior — `cells_docs` query filters by `stage_id IN [visible]`
+    so cell_b is naturally absent during hidden state). Step 4 uses the
+    full cells_store to assert that on un-hide the cell is back. This
+    matches what the real DB+endpoint do (cell never deleted, just not
+    fetched while parent stage is hidden).
 
-D-spec-2  In StageManagementDialog.handleDragEnd I read `oldIndex`/`newIndex`
-          inside the setCustomStages updater (rather than from the outer
-          scope) so the swap is computed against the latest state — a
-          tiny robustness improvement over the spec snippet that has no
-          visible behavior change with React 18 batching but avoids a
-          stale-snapshot footgun if a follow-up change ever defers the
-          update. Same observable behavior.
-
-D-spec-3  Removed unused import `ChevronDown` from AddStageForm
-          (only ChevronUp is used; the collapse trigger is the dashed
-          button itself). Strictly cosmetic — no behavior change.
+D2  Dialog has a defensive fallback (`initialAllBaseStages.length > 0`
+    short-circuit) so the frontend keeps working if a future deploy
+    somehow lands frontend before backend. Same observable behavior as
+    today (no unhide UI), no regression.
 
 ================================================================================
 RISK / ROLLBACK
 ================================================================================
 
-Rollback:  git revert <commit-sha>
-           3 NEW files removed, 3 frontend edits + 2 backend edits reverted.
-           Settings icon disappears, no UI to add/hide/reorder columns.
-           Existing custom stages + hidden bases stay intact in DB
-           (no UI to undo, but data preserved).
+Rollback: git revert <commit-sha>
+  - Backend response loses `template_stages` field — purely additive
+    so no consumer breaks (frontend fallback kicks in).
+  - Frontend reverts to "stages-only" base list — unhide UI breaks
+    again, but DB data (cells + hidden state) stays intact.
+  - No DB migration to undo. Cell data preserved end-to-end.
 
 NO impact on:
-- Cell editing (#491 stays)
-- MatrixListView / MatrixGridView / sticky cols (#486+#487)
-- Numeric building sort (#489), mobile collapsible (#490)
-- Back button (#492), CellEditDialog (#491)
-- Backend (#483 endpoints — only the two bug-fix internals changed)
+- Cell editing (#491/#494)
+- Custom stage IDs / preservation logic (#495 Bug 1 fix)
+- Hidden state persistence (#495 Bug 2 fix)
+- MatrixListView / MatrixGridView / MatrixCell render
+- Sticky cols (#486+#487), back button (#492)
 - Auth, billing, safety routers, plans
 
 ================================================================================

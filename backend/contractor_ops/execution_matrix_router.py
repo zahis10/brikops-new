@@ -206,6 +206,22 @@ async def get_matrix(
     tpl = await _get_template(db, project_id=project_id)
     stages = _resolve_visible_stages(matrix_config, tpl)
 
+    # #497 — expose ALL template stages (incl. hidden ones) so the
+    # StageManagementDialog can render them with hide/show toggles.
+    # Note: this is qc_template's stages WITHOUT the hide filter.
+    # Hidden state is communicated separately via base_stages_removed.
+    template_stages = [
+        {
+            "id": s["id"],
+            "title": s.get("title", ""),
+            "type": "status",
+            "order": s.get("order", 0),
+            "source": "base",
+            "scope": s.get("scope"),
+        }
+        for s in (tpl.get("stages", []) or [])
+    ]
+
     units = await db.units.find(
         {"project_id": project_id, "archived": {"$ne": True}},
         {"_id": 0},
@@ -291,6 +307,7 @@ async def get_matrix(
         # StageManagementDialog from this list. Without it, every save
         # un-hides previously hidden base stages.
         "base_stages_removed": list(matrix_config.get("base_stages_removed", []) or []),
+        "template_stages": template_stages,  # #497 — all base stages incl. hidden
         "permissions": {
             "role": role,
             "can_view": True,

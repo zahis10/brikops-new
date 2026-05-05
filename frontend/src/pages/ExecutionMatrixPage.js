@@ -203,6 +203,7 @@ export default function ExecutionMatrixPage() {
         onSave={handleSaveStages}
         stages={stages}
         initialBaseRemoved={data?.base_stages_removed || []}
+        initialAllBaseStages={data?.template_stages || []}
       />
     </div>
   );

@@ -83,7 +83,7 @@ export default function AddStageForm({ onAdd }) {
             checked={type === 'status'}
             onChange={() => setType('status')}
           />
-          <span>סטטוס (6 ערכים)</span>
+          <span>סטטוס (6 ערכים — כמו עמודות בקרת ביצוע)</span>
         </label>
       </div>
       <button
