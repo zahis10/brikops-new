@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import MatrixCell from './MatrixCell';
 
-export default function MatrixListView({ units, stages, cells, floorsById, buildingsById }) {
+export default function MatrixListView({ units, stages, cells, floorsById, buildingsById, onCellClick = null }) {
   const cellsByUnitStage = useMemo(() => {
     const map = {};
     for (const c of cells) {
@@ -122,7 +122,12 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
                         {stage.title}
                       </span>
                       <div className="shrink-0">
-                        <MatrixCell cell={cell} stage={stage} size="sm" />
+                        <MatrixCell
+                          cell={cell}
+                          stage={stage}
+                          size="sm"
+                          onClick={onCellClick ? () => onCellClick(unit, stage, cell) : null}
+                        />
                       </div>
                     </div>
                   );

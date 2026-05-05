@@ -1,118 +1,107 @@
-REVIEW — #492 Safety pill in ApartmentDashboardPage card list
-Followup-4 to #469 (defect "בטיחות" tag); closes the last surface gap
-============================================================
+================================================================================
+Task #491 — Execution Matrix Phase 2B: Cell editing (popover/sheet + audit)
+================================================================================
 Branch: staging
-Scope: 1 frontend file, 5 LOC. Backend untouched.
+Date: 2026-05-05
 
-================================================================
+================================================================================
 STEP 0 — PRE-FLIGHT AUDIT
-================================================================
-0.1  ApartmentDashboardPage card pills row (rg "filteredTasks.map|priorityInfo.label|task.location"):
-       L761  {filteredTasks.map(task => {
-       L791  {priorityInfo.label}
-       L793  {task.location && (
-       L794  <span className="text-[10px] text-slate-400">{task.location}</span>
-     → Insertion point confirmed: between the closing </span> of the
-       priority badge (L792) and the `task.location &&` conditional
-       (L793). Same insertion order as #491.
+================================================================================
+0.1 @radix-ui/react-dialog ^1.1.11 in frontend/package.json L25 ✓
+    Existing usage pattern (Radix Dialog primitives, no shared wrapper)
+    confirmed acceptable — no project-level wrapper to share.
+0.2 matrixService.js had only getMatrix using axios + API + getAuthHeader ✓
+0.3 useMatrixData had data/loading/error/refresh + abortRef ✓
+0.4 MatrixCell signature was (cell, stage, size='sm') — added optional onClick ✓
+0.5 MatrixListView (post-#490) renders stage rows in expanded body — wired ✓
+0.6 MatrixGridView renders MatrixCell inside <td> at size="md" — wired ✓
+0.7 sonner toast confirmed (UnitDetailPage) ✓
 
-0.2  Clean slate (rg "task.is_safety|🛡️"):
-       0 hits → no prior safety pill on this page.
+================================================================================
+IMPLEMENTATION (9 PARTS, per spec L180–L980)
+================================================================================
+PART 1 — matrixService.js: added updateCell + getCellHistory.
+        Note: spec used `${API}/api/execution-matrix/...` but existing
+        getMatrix already uses `${API}/execution-matrix/...` (API const
+        already includes the `/api` prefix). Followed existing pattern
+        for consistency — verified the same path style in current code.
 
-0.3  Route confirmation (per spec, App.js routing):
-       /projects/:projectId/units/:unitId/defects → ApartmentDashboardPage
-       (NOT UnitDetailPage — that's why #491 missed it).
+PART 2 — useMatrixData.js: added optimistic updateCell with revert.
+        Snapshots prev cells, applies optimistic cell with marker
+        '__optimistic__' + 'אתה' actor name, calls API, replaces with
+        server response on success, reverts to snapshot on error.
+        Returned in hook contract: { data, loading, error, refresh,
+        updateCell }.
 
-================================================================
-DIFF — 1 file
-================================================================
+PART 3 — NEW StatusButtonGrid.js (40 LOC). 2-col mobile / 3-col sm+.
+        Min-height 56px buttons, selected = bg+2px border+bold,
+        disabled = opacity-50 + cursor-not-allowed.
 
-frontend/src/pages/ApartmentDashboardPage.js  (+5 LOC at L796-800)
--------------------------------------------------------------------
-                       <span className={`text-[10px] font-medium ${priorityInfo.color}`}>
-                         {priorityInfo.label}
-                       </span>
-+                      {task.is_safety && (
-+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
-+                          🛡️ בטיחות
-+                        </span>
-+                      )}
-                       {task.location && (
-                         <span className="text-[10px] text-slate-400">{task.location}</span>
-                       )}
+PART 4 — NEW CellHistoryList.js (66 LOC). Reverse-chronological,
+        max-h 200px scroll, Hebrew status labels, dt formatted
+        with toLocaleString('he-IL'), note shown only when changed.
 
-Byte-identical Tailwind to ProjectControlPage L3913 / TaskDetailPage
-(#488) / UnitDetailPage L327 (#491) / ProjectTasksPage L544 (#491):
-  text-[10px] px-2 py-0.5 rounded-full font-medium
-  bg-orange-100 text-orange-700 border border-orange-200
-Visual consistency across all 5 surfaces is now guaranteed.
+PART 5 — NEW CellEditDialog.js (236 LOC). Radix Dialog with
+        responsive Tailwind (bottom sheet ≤md, centered popover ≥md).
+        Mobile drag handle, sticky footer with safe-area-inset-bottom
+        for Capacitor, touch targets ≥44px (py-3 + min-h-[44px]),
+        history fetched on demand with AbortController cleanup.
+        For tag stages: text input (max 200) instead of StatusButtonGrid.
+        Note textarea max 500, character counters.
+        Save button disabled if no change / read-only / saving.
+        Read-only banner when !canEdit.
+        On save: closes dialog on ok, toast.error + stays open on fail.
 
-================================================================
-VERIFY 1-4 — All green
-================================================================
+PART 6 — MatrixCell.js: added optional onClick prop. When present,
+        wraps inner render in <button> with hover/active styles +
+        aria-label. Phase 2A static behavior preserved when onClick
+        is not passed.
 
-V1  yarn build (REACT_APP_BACKEND_URL=placeholder)
-      → "Done in 31.33s." Compiled successfully, no new warnings.
+PART 7 — MatrixListView.js: added onCellClick prop, wired to
+        MatrixCell.onClick in expanded stage rows.
 
-V2  rg -c "task.is_safety|🛡️ בטיחות" ApartmentDashboardPage.js
-      → 2   (≥2 ✅; 1 conditional + 1 emoji label)
+PART 8 — MatrixGridView.js: added onCellClick prop, wired to
+        MatrixCell.onClick inside <td>.
 
-V3  rg -c "bg-orange-100 text-orange-700 border border-orange-200"
-      ApartmentDashboardPage.js
-      → 1   (≥1 ✅; canonical Tailwind matches the other 4 surfaces)
+PART 9 — ExecutionMatrixPage.js: added editing state, canEdit from
+        data.permissions.can_edit, handleCellClick + handleSaveCell
+        callbacks, CellEditDialog rendered at end with building+floor
+        derived from buildingsById/floorsById maps.
 
-V4  pytest backend/tests/test_defect_safety_tag.py -q
-      → 6 passed (unchanged from #488; backend untouched)
+================================================================================
+VERIFICATION
+================================================================================
+V1  yarn build (REACT_APP_BACKEND_URL=http://placeholder) — SUCCESS, 41.29s,
+    "build folder is ready to be deployed", no warnings.
+V2  ls 3 NEW files — all present:
+      StatusButtonGrid.js, CellHistoryList.js, CellEditDialog.js
+V3  rg "updateCell|getCellHistory" matrixService.js → 3 matches
+V4  rg "updateCell" useMatrixData.js → 3 matches
+V5  rg "onClick" MatrixCell.js → 3 matches (prop, condition, button)
+V6  pytest backend/tests/test_execution_matrix.py — 14 passed in 3.52s
+    (5 deprecation warnings unrelated, pre-existing).
 
-================================================================
-VERIFY 5 — DEFERRED TO ZAHI (visual smoke after stag deploy)
-================================================================
+================================================================================
+PRESERVATION
+================================================================================
+✓ Backend untouched (#483 endpoints already serve everything)
+✓ qc_router.py / qc_template / qc_runs — untouched
+✓ STATUS_CONFIG.js — untouched
+✓ Empty/loading/error states in ExecutionMatrixPage — untouched
+✓ MatrixListView collapsible behavior (#490) — preserved
+✓ MatrixGridView sticky columns + zebra stripes — preserved
+✓ Auth, billing, safety routers, plans — untouched
 
-ApartmentDashboardPage:
-  a) Login → from BuildingDefectsPage tap a unit (or navigate directly
-     to /projects/{p}/units/{u}/defects).
-  b) Defect cards in the list show:
-     - "כבל קרוע" (is_safety=true) → orange "🛡️ בטיחות" pill visible
-       in the pills row, immediately after the priority badge ("בינוני").
-     - "נזילה מצינור מים חמים" (non-safety) → no pill.
-  c) Tap a card → still navigates to TaskDetailPage as before
-     (no behavior change).
-
-Visual consistency:
-  d) Pill style identical to ProjectControlPage / UnitDetailPage /
-     ProjectTasksPage / TaskDetailPage. Same orange, same size, same
-     border, same emoji.
-
-Mobile (375px):
-  e) Pill wraps gracefully on narrow viewport (parent has `flex-wrap`).
-     If the row gets crowded (category + priority + safety + location),
-     the safety pill drops to its own line cleanly.
-
-================================================================
-DESIGN NOTES
-================================================================
-- Same insertion order across all 5 surfaces ("status → category →
-  priority → safety → extras") so users build a single mental model.
-- Conditional `task.is_safety && (...)` short-circuits cleanly — no
-  empty <span> when false.
-- No dependency on filter logic (#488 BuildingDefects safety filter
-  works at the data layer; this is purely a render addition).
-
-================================================================
-OUT OF SCOPE
-================================================================
-- Other Apartment* / Building* / Floor* pages — none have the same
-  task card render that's missing the pill.
-- New tests — existing 6 tests in test_defect_safety_tag.py guard the
-  schema; this is pure UI.
-- Filter additions, toggle controls, or any data-layer changes.
-
-================================================================
-NEXT STEPS (Zahi)
-================================================================
-1) Review review.txt + diff.
-2) git add -A && git commit -m "$(cat .local/.commit_message)"
-3) git push origin staging
-4) ./deploy.sh --stag → run VERIFY 5 (a–e) → ./deploy.sh --prod
-
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
+NOTES FOR ZAHI
+================================================================================
+- API path style: spec wrote `${API}/api/execution-matrix/...` but the
+  existing getMatrix uses `${API}/execution-matrix/...` because the API
+  constant already includes `/api`. New methods follow existing pattern
+  (would 404 otherwise).
+- History "audit_count" badge: backend cell summary doesn't include
+  audit_count, so the count appears only after the user expands history
+  (then shows `(X)` from the fetched array length).
+- Optimistic update preserves all existing cell fields when server
+  responds (uses spread `{ ...c, ...result }`).
+- Visual smoke test deferred to you per spec line 30.

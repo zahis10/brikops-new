@@ -1,15 +1,16 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
 import { useMatrixData } from '../hooks/useMatrixData';
 import MatrixListView from '../components/matrix/MatrixListView';
 import MatrixGridView from '../components/matrix/MatrixGridView';
 import StatusLegend from '../components/matrix/StatusLegend';
+import CellEditDialog from '../components/matrix/CellEditDialog';
 
 export default function ExecutionMatrixPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error, refresh } = useMatrixData(projectId);
+  const { data, loading, error, refresh, updateCell } = useMatrixData(projectId);
 
   // #483 returns units with floor_id but NOT floor metadata.
   // Phase 2A: synthesize minimal floorsById from units. Future
@@ -45,6 +46,19 @@ export default function ExecutionMatrixPage() {
     }
     return map;
   }, [data]);
+
+  // #491 Phase 2B — cell edit dialog state.
+  const [editing, setEditing] = useState(null); // { unit, stage, cell } | null
+  const canEdit = data?.permissions?.can_edit ?? false;
+
+  const handleCellClick = useCallback((unit, stage, cell) => {
+    setEditing({ unit, stage, cell });
+  }, []);
+
+  const handleSaveCell = useCallback(async (payload) => {
+    if (!editing) return { ok: false, error: 'no_editing' };
+    return updateCell(editing.unit.id, editing.stage.id, payload);
+  }, [editing, updateCell]);
 
   if (loading) {
     return (
@@ -137,6 +151,7 @@ export default function ExecutionMatrixPage() {
             cells={cells}
             floorsById={floorsById}
             buildingsById={buildingsById}
+            onCellClick={handleCellClick}
           />
         </div>
         <div className="hidden md:block">
@@ -146,9 +161,23 @@ export default function ExecutionMatrixPage() {
             cells={cells}
             floorsById={floorsById}
             buildingsById={buildingsById}
+            onCellClick={handleCellClick}
           />
         </div>
       </div>
+
+      <CellEditDialog
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        onSave={handleSaveCell}
+        projectId={projectId}
+        unit={editing?.unit}
+        stage={editing?.stage}
+        cell={editing?.cell}
+        building={editing ? buildingsById[editing.unit.building_id] : null}
+        floor={editing ? floorsById[editing.unit.floor_id] : null}
+        canEdit={canEdit}
+      />
     </div>
   );
 }

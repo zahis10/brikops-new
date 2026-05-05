@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import MatrixCell from './MatrixCell';
 
-export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById }) {
+export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById, onCellClick = null }) {
   const cellsByUnitStage = useMemo(() => {
     const map = {};
     for (const c of cells) {
@@ -79,7 +79,12 @@ export default function MatrixGridView({ units, stages, cells, floorsById, build
                   return (
                     <td key={stage.id} className="p-1.5 border-l border-slate-100 last:border-l-0 text-center">
                       <div className="inline-flex">
-                        <MatrixCell cell={cell} stage={stage} size="md" />
+                        <MatrixCell
+                          cell={cell}
+                          stage={stage}
+                          size="md"
+                          onClick={onCellClick ? () => onCellClick(unit, stage, cell) : null}
+                        />
                       </div>
                     </td>
                   );
