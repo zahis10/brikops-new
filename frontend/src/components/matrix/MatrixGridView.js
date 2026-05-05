@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import MatrixCell from './MatrixCell';
 
-export default function MatrixGridView({ units, stages, cells, floorsById }) {
+export default function MatrixGridView({ units, stages, cells, floorsById, buildingsById }) {
   const cellsByUnitStage = useMemo(() => {
     const map = {};
     for (const c of cells) {
@@ -27,7 +27,10 @@ export default function MatrixGridView({ units, stages, cells, floorsById }) {
       <table className="border-collapse w-full" style={{ direction: 'rtl' }}>
         <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
           <tr>
-            <th className="sticky right-0 z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
+            <th className="sticky right-0 z-30 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[80px] w-[80px]">
+              בניין
+            </th>
+            <th className="sticky right-[80px] z-20 bg-slate-50 border-l border-slate-200 px-3 py-2 text-right text-xs font-medium text-slate-700 min-w-[120px]">
               דירה
             </th>
             {stages.map((stage) => (
@@ -49,7 +52,25 @@ export default function MatrixGridView({ units, stages, cells, floorsById }) {
             const floor = floorsById[unit.floor_id];
             return (
               <tr key={unit.id} className={idx % 2 ? 'bg-slate-50/30' : 'bg-white'}>
-                <td className="sticky right-0 z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
+                <td className="sticky right-0 z-20 bg-inherit border-l border-slate-200 px-3 py-2 text-center text-xs">
+                  {(() => {
+                    const building = buildingsById?.[unit.building_id];
+                    if (!building) return null;
+                    const badgeText =
+                      building.sort_index != null
+                        ? String(building.sort_index)
+                        : (building.name || '?').trim().charAt(0) || '?';
+                    return (
+                      <span
+                        className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-medium"
+                        title={building.name || 'בניין לא ידוע'}
+                      >
+                        {badgeText}
+                      </span>
+                    );
+                  })()}
+                </td>
+                <td className="sticky right-[80px] z-10 bg-inherit border-l border-slate-200 px-3 py-2 text-right text-xs">
                   <div className="font-medium text-slate-900">דירה {unit.unit_no}</div>
                   {floor && (
                     <div className="text-[10px] text-slate-500 mt-0.5">

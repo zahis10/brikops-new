@@ -36,6 +36,15 @@ export default function ExecutionMatrixPage() {
     ).size;
   }, [data]);
 
+  // #486 — buildingsById map for separate sticky column in views
+  const buildingsById = useMemo(() => {
+    const map = {};
+    if (data?.buildings) {
+      for (const b of data.buildings) map[b.id] = b;
+    }
+    return map;
+  }, [data]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
@@ -105,6 +114,7 @@ export default function ExecutionMatrixPage() {
             stages={stages}
             cells={cells}
             floorsById={floorsById}
+            buildingsById={buildingsById}
           />
         </div>
         <div className="hidden md:block">
@@ -113,6 +123,7 @@ export default function ExecutionMatrixPage() {
             stages={stages}
             cells={cells}
             floorsById={floorsById}
+            buildingsById={buildingsById}
           />
         </div>
       </div>

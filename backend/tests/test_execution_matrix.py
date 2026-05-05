@@ -49,6 +49,7 @@ def _mk_db(
     matrix_config=None,
     units=None,
     floors=None,
+    buildings=None,
     cells=None,
     approvers=None,
     views=None,
@@ -65,6 +66,7 @@ def _mk_db(
     db.units.find_one = AsyncMock(return_value=({"id": "u1", "project_id": "p1"} if units is None else (units[0] if units else None)))
 
     db.floors.find = MagicMock(return_value=_AsyncCursor(floors or []))
+    db.buildings.find = MagicMock(return_value=_AsyncCursor(buildings or []))
 
     db.execution_matrix_cells.find = MagicMock(return_value=_AsyncCursor(cells or []))
     db.execution_matrix_cells.find_one = AsyncMock(return_value=None)
@@ -122,6 +124,57 @@ def test_get_matrix_returns_resolved_stages():
         # #485 — backend exposes floors metadata for frontend
         assert "floors" in res, "Response must include floors metadata"
         assert isinstance(res["floors"], list)
+        # #486 — backend exposes buildings metadata for frontend
+        assert "buildings" in res, "Response must include buildings metadata"
+        assert isinstance(res["buildings"], list)
+    asyncio.run(run())
+
+
+def test_get_matrix_unit_sort_by_building():
+    """#486 — units sorted by (building_sort_index, floor_number, unit_no_num).
+    Building dimension takes precedence: all of building A renders first,
+    then all of building B."""
+    async def run():
+        matrix_config = {
+            "id": "m1", "project_id": "p1",
+            "custom_stages": [], "base_stages_removed": [], "deletedAt": None,
+        }
+        tpl = _mk_tpl([
+            {"id": "s1", "title": "ריצוף", "scope": "unit", "order": 10},
+        ])
+        # Buildings: A (sort_index=1), B (sort_index=2)
+        buildings = [
+            {"id": "bA", "project_id": "p1", "name": "מגדל A", "sort_index": 1},
+            {"id": "bB", "project_id": "p1", "name": "מגדל B", "sort_index": 2},
+        ]
+        # Floors: 2 per building
+        floors = [
+            {"id": "f-a1", "project_id": "p1", "building_id": "bA", "floor_number": 1},
+            {"id": "f-a2", "project_id": "p1", "building_id": "bA", "floor_number": 2},
+            {"id": "f-b1", "project_id": "p1", "building_id": "bB", "floor_number": 1},
+            {"id": "f-b2", "project_id": "p1", "building_id": "bB", "floor_number": 2},
+        ]
+        # Units: interleaved insertion order
+        units = [
+            {"id": "u1", "project_id": "p1", "building_id": "bB", "floor_id": "f-b1", "unit_no": "1"},
+            {"id": "u2", "project_id": "p1", "building_id": "bA", "floor_id": "f-a1", "unit_no": "1"},
+            {"id": "u3", "project_id": "p1", "building_id": "bA", "floor_id": "f-a2", "unit_no": "1"},
+            {"id": "u4", "project_id": "p1", "building_id": "bB", "floor_id": "f-b2", "unit_no": "1"},
+        ]
+        db = _mk_db(matrix_config=matrix_config, units=units, floors=floors,
+                    buildings=buildings, cells=[])
+        with patch.object(emr, "get_db", return_value=db), \
+             patch.object(emr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
+             patch.object(emr, "_is_super_admin", return_value=False), \
+             patch.object(emr, "_get_template", new=AsyncMock(return_value=tpl)):
+            res = await emr.get_matrix("p1", user={"id": "pm1"})
+
+        ids = [u["id"] for u in res["units"]]
+        # Building A first (floors 1→2), then Building B (floors 1→2)
+        assert ids == ["u2", "u3", "u1", "u4"], \
+            f"expected ['u2','u3','u1','u4'] got {ids}"
+        assert "buildings" in res
+        assert len(res["buildings"]) == 2
     asyncio.run(run())
 
 

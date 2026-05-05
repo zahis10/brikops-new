@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import MatrixCell from './MatrixCell';
 
-export default function MatrixListView({ units, stages, cells, floorsById }) {
+export default function MatrixListView({ units, stages, cells, floorsById, buildingsById }) {
   const cellsByUnitStage = useMemo(() => {
     const map = {};
     for (const c of cells) {
@@ -45,6 +45,22 @@ export default function MatrixListView({ units, stages, cells, floorsById }) {
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 min-w-0">
+                {(() => {
+                  const building = buildingsById?.[unit.building_id];
+                  if (!building) return null;
+                  const badgeText =
+                    building.sort_index != null
+                      ? String(building.sort_index)
+                      : (building.name || '?').trim().charAt(0) || '?';
+                  return (
+                    <span
+                      className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-violet-50 text-violet-700 border border-violet-200 font-medium text-[10px] shrink-0"
+                      title={building.name}
+                    >
+                      {badgeText}
+                    </span>
+                  );
+                })()}
                 <span className="text-sm font-bold text-slate-900 shrink-0">
                   דירה {unit.unit_no}
                 </span>
