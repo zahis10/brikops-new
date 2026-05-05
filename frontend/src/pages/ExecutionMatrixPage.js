@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { useParams } from 'react-router-dom';
-import { Loader2, AlertCircle, LayoutGrid } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Loader2, AlertCircle, LayoutGrid, ArrowRight } from 'lucide-react';
 import { useMatrixData } from '../hooks/useMatrixData';
 import MatrixListView from '../components/matrix/MatrixListView';
 import MatrixGridView from '../components/matrix/MatrixGridView';
@@ -8,6 +8,7 @@ import StatusLegend from '../components/matrix/StatusLegend';
 
 export default function ExecutionMatrixPage() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const { data, loading, error, refresh } = useMatrixData(projectId);
 
   // #483 returns units with floor_id but NOT floor metadata.
@@ -49,6 +50,13 @@ export default function ExecutionMatrixPage() {
     return (
       <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
         <div className="max-w-7xl mx-auto">
+          <button
+            onClick={() => navigate(`/projects/${projectId}/qc`)}
+            className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors mb-3 inline-flex"
+            aria-label="חזרה לבקרת ביצוע"
+          >
+            <ArrowRight className="w-5 h-5 text-slate-600" />
+          </button>
           <div className="bg-white rounded-xl border border-slate-200 p-6">
             <div className="flex items-center justify-center gap-2 text-slate-500">
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -64,6 +72,13 @@ export default function ExecutionMatrixPage() {
     return (
       <div className="min-h-screen bg-slate-50 p-4 sm:p-6" dir="rtl">
         <div className="max-w-7xl mx-auto">
+          <button
+            onClick={() => navigate(`/projects/${projectId}/qc`)}
+            className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors mb-3 inline-flex"
+            aria-label="חזרה לבקרת ביצוע"
+          >
+            <ArrowRight className="w-5 h-5 text-slate-600" />
+          </button>
           <div className="bg-white rounded-xl border border-red-200 p-6">
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
@@ -92,6 +107,13 @@ export default function ExecutionMatrixPage() {
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <div className="max-w-7xl mx-auto p-4 sm:p-6">
         <div className="flex items-center gap-3 mb-4">
+          <button
+            onClick={() => navigate(`/projects/${projectId}/qc`)}
+            className="p-2 hover:bg-slate-100 active:bg-slate-200 rounded-lg transition-colors"
+            aria-label="חזרה לבקרת ביצוע"
+          >
+            <ArrowRight className="w-5 h-5 text-slate-600" />
+          </button>
           <div className="p-2 bg-violet-100 rounded-lg">
             <LayoutGrid className="w-5 h-5 text-violet-700" />
           </div>
