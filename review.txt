@@ -1,5 +1,5 @@
 ================================================================================
-Task #491 — Execution Matrix Phase 2B: Cell editing (popover/sheet + audit)
+HOTFIX FOLLOWUP TO #494 — Whole stage row tappable in MatrixListView
 ================================================================================
 Branch: staging
 Date: 2026-05-05
@@ -7,101 +7,64 @@ Date: 2026-05-05
 ================================================================================
 STEP 0 — PRE-FLIGHT AUDIT
 ================================================================================
-0.1 @radix-ui/react-dialog ^1.1.11 in frontend/package.json L25 ✓
-    Existing usage pattern (Radix Dialog primitives, no shared wrapper)
-    confirmed acceptable — no project-level wrapper to share.
-0.2 matrixService.js had only getMatrix using axios + API + getAuthHeader ✓
-0.3 useMatrixData had data/loading/error/refresh + abortRef ✓
-0.4 MatrixCell signature was (cell, stage, size='sm') — added optional onClick ✓
-0.5 MatrixListView (post-#490) renders stage rows in expanded body — wired ✓
-0.6 MatrixGridView renders MatrixCell inside <td> at size="md" — wired ✓
-0.7 sonner toast confirmed (UnitDetailPage) ✓
+0.1 MatrixListView.js stage row (post-#494) confirmed:
+    L115 stages.map((stage, idx) => {
+    L117 cell = cellsByUnitStage[`${unit.id}::${stage.id}`]
+    L120 <div className="flex items-center justify-between gap-3 py-3 ...">
+    L127 <span ...>{stage.title}</span>
+    L130 <MatrixCell ... onClick={onCellClick ? () => ... : null} />
+    Matches spec exactly.
+0.2 MatrixGridView.js MatrixCell still receives onClick — NOT touched.
+0.3 STEP 0 audit at top ✓
 
 ================================================================================
-IMPLEMENTATION (9 PARTS, per spec L180–L980)
+PART 1 — Stage row → button + remove inner onClick (1 file, ~14 LOC)
 ================================================================================
-PART 1 — matrixService.js: added updateCell + getCellHistory.
-        Note: spec used `${API}/api/execution-matrix/...` but existing
-        getMatrix already uses `${API}/execution-matrix/...` (API const
-        already includes the `/api` prefix). Followed existing pattern
-        for consistency — verified the same path style in current code.
-
-PART 2 — useMatrixData.js: added optimistic updateCell with revert.
-        Snapshots prev cells, applies optimistic cell with marker
-        '__optimistic__' + 'אתה' actor name, calls API, replaces with
-        server response on success, reverts to snapshot on error.
-        Returned in hook contract: { data, loading, error, refresh,
-        updateCell }.
-
-PART 3 — NEW StatusButtonGrid.js (40 LOC). 2-col mobile / 3-col sm+.
-        Min-height 56px buttons, selected = bg+2px border+bold,
-        disabled = opacity-50 + cursor-not-allowed.
-
-PART 4 — NEW CellHistoryList.js (66 LOC). Reverse-chronological,
-        max-h 200px scroll, Hebrew status labels, dt formatted
-        with toLocaleString('he-IL'), note shown only when changed.
-
-PART 5 — NEW CellEditDialog.js (236 LOC). Radix Dialog with
-        responsive Tailwind (bottom sheet ≤md, centered popover ≥md).
-        Mobile drag handle, sticky footer with safe-area-inset-bottom
-        for Capacitor, touch targets ≥44px (py-3 + min-h-[44px]),
-        history fetched on demand with AbortController cleanup.
-        For tag stages: text input (max 200) instead of StatusButtonGrid.
-        Note textarea max 500, character counters.
-        Save button disabled if no change / read-only / saving.
-        Read-only banner when !canEdit.
-        On save: closes dialog on ok, toast.error + stays open on fail.
-
-PART 6 — MatrixCell.js: added optional onClick prop. When present,
-        wraps inner render in <button> with hover/active styles +
-        aria-label. Phase 2A static behavior preserved when onClick
-        is not passed.
-
-PART 7 — MatrixListView.js: added onCellClick prop, wired to
-        MatrixCell.onClick in expanded stage rows.
-
-PART 8 — MatrixGridView.js: added onCellClick prop, wired to
-        MatrixCell.onClick inside <td>.
-
-PART 9 — ExecutionMatrixPage.js: added editing state, canEdit from
-        data.permissions.can_edit, handleCellClick + handleSaveCell
-        callbacks, CellEditDialog rendered at end with building+floor
-        derived from buildingsById/floorsById maps.
+FILE: frontend/src/components/matrix/MatrixListView.js
+- Replaced the `<div>` row wrapper with a polymorphic `Wrapper`:
+    handleRowClick = onCellClick ? () => onCellClick(unit, stage, cell) : null
+    Wrapper = handleRowClick ? 'button' : 'div'
+- Added `type="button"` and `onClick={handleRowClick}` when active.
+- Added `w-full` + `text-right` (RTL natural alignment under <button>).
+- Added `hover:bg-slate-50 active:bg-slate-100 transition-colors
+  cursor-pointer` only when clickable.
+- Removed `onClick` from the inner `<MatrixCell>` (avoids nested
+  buttons / double handlers — outer wrapper handles all clicks now).
+- Layout (flex/gap/padding/border/font) IDENTICAL to before.
+- Read-only contexts without onCellClick stay as `<div>` (backward compat).
 
 ================================================================================
 VERIFICATION
 ================================================================================
-V1  yarn build (REACT_APP_BACKEND_URL=http://placeholder) — SUCCESS, 41.29s,
-    "build folder is ready to be deployed", no warnings.
-V2  ls 3 NEW files — all present:
-      StatusButtonGrid.js, CellHistoryList.js, CellEditDialog.js
-V3  rg "updateCell|getCellHistory" matrixService.js → 3 matches
-V4  rg "updateCell" useMatrixData.js → 3 matches
-V5  rg "onClick" MatrixCell.js → 3 matches (prop, condition, button)
-V6  pytest backend/tests/test_execution_matrix.py — 14 passed in 3.52s
-    (5 deprecation warnings unrelated, pre-existing).
+V1  yarn build (REACT_APP_BACKEND_URL=http://placeholder) — SUCCESS in 31.22s.
+    No new warnings/errors.
+V2  rg "Wrapper|handleRowClick" MatrixListView.js → 7 hits (declaration,
+    assignment, JSX open, type prop, onClick prop, className condition,
+    JSX close). ≥3 expected ✓
+V3  rg -A3 "MatrixCell" MatrixListView.js | grep -c "onClick" → 0 ✓
+    (MatrixCell is now a passive icon inside the row button)
+V4  git diff --stat MatrixGridView.js → 0 lines diff ✓
+V5  pytest backend/tests/test_execution_matrix.py → 14 passed (1.93s) ✓
+    (5 deprecation warnings unrelated, pre-existing)
+V6  Visual smoke deferred to Zahi:
+    a) Login → /projects/{p}/execution-matrix
+    b) Tap a unit card → expands
+    c) Tap on TITLE TEXT "הכנה ליציקת תקרה" → CellEditDialog opens
+    d) Tap on the small status icon → same dialog opens
+    e) Tap anywhere else on the row (gap) → dialog opens
+    f) Visual: row bg flashes lightly on tap (active:bg-slate-100)
+    g) Hover (desktop dev tools): bg-slate-50 appears
+    h) Desktop GridView: cell click → dialog opens (no regression)
 
 ================================================================================
 PRESERVATION
 ================================================================================
-✓ Backend untouched (#483 endpoints already serve everything)
-✓ qc_router.py / qc_template / qc_runs — untouched
-✓ STATUS_CONFIG.js — untouched
-✓ Empty/loading/error states in ExecutionMatrixPage — untouched
-✓ MatrixListView collapsible behavior (#490) — preserved
-✓ MatrixGridView sticky columns + zebra stripes — preserved
-✓ Auth, billing, safety routers, plans — untouched
+✓ Unit card header button (#490) — untouched
+✓ Progress bar — untouched
+✓ Empty state — untouched
+✓ MatrixCell component — untouched (still receives onClick from GridView)
+✓ MatrixGridView — untouched (V4 = 0 line diff)
+✓ ExecutionMatrixPage handler logic — untouched
+✓ Backend — untouched
 
-================================================================================
-NOTES FOR ZAHI
-================================================================================
-- API path style: spec wrote `${API}/api/execution-matrix/...` but the
-  existing getMatrix uses `${API}/execution-matrix/...` because the API
-  constant already includes `/api`. New methods follow existing pattern
-  (would 404 otherwise).
-- History "audit_count" badge: backend cell summary doesn't include
-  audit_count, so the count appears only after the user expands history
-  (then shows `(X)` from the fetched array length).
-- Optimistic update preserves all existing cell fields when server
-  responds (uses spread `{ ...c, ...result }`).
-- Visual smoke test deferred to you per spec line 30.
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY

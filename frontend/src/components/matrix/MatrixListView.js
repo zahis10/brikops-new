@@ -111,25 +111,26 @@ export default function MatrixListView({ units, stages, cells, floorsById, build
               <div className="border-t border-slate-100 px-3 py-2">
                 {stages.map((stage, idx) => {
                   const cell = cellsByUnitStage[`${unit.id}::${stage.id}`];
+                  const handleRowClick = onCellClick
+                    ? () => onCellClick(unit, stage, cell)
+                    : null;
+                  const Wrapper = handleRowClick ? 'button' : 'div';
                   return (
-                    <div
+                    <Wrapper
                       key={stage.id}
-                      className={`flex items-center justify-between gap-3 py-3 ${
-                        idx < stages.length - 1 ? 'border-b border-slate-50' : ''
-                      }`}
+                      type={handleRowClick ? 'button' : undefined}
+                      onClick={handleRowClick || undefined}
+                      className={`w-full flex items-center justify-between gap-3 py-3 text-right ${
+                        handleRowClick ? 'hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer' : ''
+                      } ${idx < stages.length - 1 ? 'border-b border-slate-50' : ''}`}
                     >
                       <span className="text-[13px] text-slate-700 leading-snug min-w-0 flex-1">
                         {stage.title}
                       </span>
                       <div className="shrink-0">
-                        <MatrixCell
-                          cell={cell}
-                          stage={stage}
-                          size="sm"
-                          onClick={onCellClick ? () => onCellClick(unit, stage, cell) : null}
-                        />
+                        <MatrixCell cell={cell} stage={stage} size="sm" />
                       </div>
-                    </div>
+                    </Wrapper>
                   );
                 })}
               </div>
