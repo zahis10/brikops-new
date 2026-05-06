@@ -294,3 +294,9 @@ id = "bH4MKWAP3loO3g0u8RqH_"
 uri = "file://.local/plans/503_followup_remove_floor_skip.md"
 type = "text"
 title = "#503-followup — remove floor-scope skip"
+
+[[outputs]]
+id = "fHo4lNlDUuwrHpwXcfRo5"
+uri = "file://.local/plans/503_followup_2_stage_level_mapping.md"
+type = "text"
+title = "#503-followup-2 — תוכנית מלאה: stage-level + reject hook + floor-scope + pending_review"
