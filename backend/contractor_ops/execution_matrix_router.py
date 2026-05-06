@@ -47,7 +47,9 @@ import uuid
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
+from contractor_ops.execution_matrix_export import build_matrix_xlsx
 from contractor_ops.router import (
     _now,
     _audit,
@@ -183,6 +185,27 @@ def _resolve_visible_stages(matrix_config: dict, tpl: dict) -> List[dict]:
     return merged
 
 
+def _summarize_cell(c):
+    """Project a raw execution_matrix_cells doc to the API summary shape.
+
+    Hoisted to module level (#502) so both /matrix (get_matrix) and
+    /export.xlsx (export_matrix_xlsx) consume the same canonical shape
+    — `last_actor_name` derived from the last audit entry is required
+    by build_matrix_xlsx for Excel comment authorship.
+    """
+    last_audit = (c.get("audit") or [])[-1] if c.get("audit") else None
+    return {
+        "unit_id": c["unit_id"],
+        "stage_id": c["stage_id"],
+        "status": c.get("status"),
+        "text_value": c.get("text_value"),
+        "note": c.get("note"),
+        "last_updated_at": c.get("last_updated_at"),
+        "last_updated_by": c.get("last_updated_by"),
+        "last_actor_name": last_audit.get("actor_name") if last_audit else None,
+    }
+
+
 # =====================================================================
 # ENDPOINTS — matrix view
 # =====================================================================
@@ -282,18 +305,6 @@ async def get_matrix(
             {"_id": 0},
         ).to_list(50000)
 
-    def _summarize_cell(c):
-        last_audit = (c.get("audit") or [])[-1] if c.get("audit") else None
-        return {
-            "unit_id": c["unit_id"],
-            "stage_id": c["stage_id"],
-            "status": c.get("status"),
-            "text_value": c.get("text_value"),
-            "note": c.get("note"),
-            "last_updated_at": c.get("last_updated_at"),
-            "last_updated_by": c.get("last_updated_by"),
-            "last_actor_name": last_audit.get("actor_name") if last_audit else None,
-        }
     cells_summary = [_summarize_cell(c) for c in cells_docs]
 
     return {
@@ -604,3 +615,112 @@ async def delete_view(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="תצוגה לא נמצאה")
     return None
+
+
+# =====================================================================
+# ENDPOINT — Excel (.xlsx) export of the current matrix view (#502)
+# =====================================================================
+
+@router.post("/{project_id}/export.xlsx")
+async def export_matrix_xlsx(
+    project_id: str,
+    payload: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Export the current filtered matrix view as .xlsx.
+
+    Frontend sends explicit `unit_ids` + `stage_ids` lists derived from
+    active filters in `useMatrixFilters` (#500). Empty lists = export
+    all visible. Hard cap of 2000 units per export — fast-fail rather
+    than silent truncation.
+
+    RBAC via _check_matrix_view (super_admin / PM / owner /
+    management_team). Contractor blocked.
+    """
+    import re
+    from datetime import datetime
+    from urllib.parse import quote
+
+    db = get_db()
+    await _check_matrix_view(user, project_id)
+
+    project = await db.projects.find_one({"id": project_id}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    requested_unit_ids = payload.get("unit_ids") or []
+    requested_stage_ids = payload.get("stage_ids") or []
+
+    unit_query = {"project_id": project_id, "archived": {"$ne": True}}
+    if requested_unit_ids:
+        unit_query["id"] = {"$in": requested_unit_ids}
+
+    total_count = await db.units.count_documents(unit_query)
+    if total_count > 2000:
+        raise HTTPException(
+            status_code=400,
+            detail="ייצוא של יותר מ-2000 דירות אינו נתמך. סנן את התצוגה לפני הייצוא.",
+        )
+
+    units = await db.units.find(unit_query, {"_id": 0}).to_list(2000)
+
+    matrix_config = await _get_or_init_matrix_config(db, project_id)
+    tpl = await _get_template(db, project_id=project_id)
+    all_stages = _resolve_visible_stages(matrix_config, tpl)
+    if requested_stage_ids:
+        stages = [s for s in all_stages if s["id"] in requested_stage_ids]
+    else:
+        stages = all_stages
+
+    building_ids = list({u["building_id"] for u in units if u.get("building_id")})
+    floor_ids = list({u["floor_id"] for u in units if u.get("floor_id")})
+    buildings = {
+        b["id"]: b for b in await db.buildings.find(
+            {"id": {"$in": building_ids}}, {"_id": 0}
+        ).to_list(100)
+    }
+    floors = {
+        f["id"]: f for f in await db.floors.find(
+            {"id": {"$in": floor_ids}}, {"_id": 0}
+        ).to_list(500)
+    }
+
+    unit_id_set = {u["id"] for u in units}
+    stage_id_set = {s["id"] for s in stages}
+    cells_docs = await db.execution_matrix_cells.find(
+        {
+            "unit_id": {"$in": list(unit_id_set)},
+            "stage_id": {"$in": list(stage_id_set)},
+        },
+        {"_id": 0},
+    ).to_list(50000)
+
+    # Enrich cells via shared module-level _summarize_cell — same shape
+    # as /matrix endpoint; build_matrix_xlsx needs last_actor_name for
+    # Excel comment authorship.
+    cells_summary = [_summarize_cell(c) for c in cells_docs]
+
+    buf = build_matrix_xlsx(project, units, stages, cells_summary, buildings, floors)
+
+    # Filename: sanitize illegal filesystem chars (Windows / iOS / macOS)
+    # — Hebrew + spaces + parentheses are safe; only the 9 reserved chars
+    # below break filenames. RFC 5987 filename* for Hebrew + ASCII fallback.
+    date_str = datetime.utcnow().strftime("%Y-%m-%d")
+    project_name_raw = project.get("name", "matrix")
+    project_name = re.sub(r'[/\\:*?"<>|]', "_", project_name_raw).strip() or "matrix"
+    filename_he = f"מטריצת ביצוע - {project_name} - {date_str}.xlsx"
+    filename_ascii = f"execution-matrix-{date_str}.xlsx"
+    encoded = quote(filename_he, safe="")
+    disposition = (
+        f'attachment; filename="{filename_ascii}"; '
+        f"filename*=UTF-8''{encoded}"
+    )
+
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": disposition},
+    )

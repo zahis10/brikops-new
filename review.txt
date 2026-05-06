@@ -1,94 +1,120 @@
-================================================================================
-BATCH #501 — MatrixCell tooltip: include cell.note on hover
-Branch: staging  ·  Date: 2026-05-05  ·  AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
+#502 — Execution Matrix .xlsx Export
+=====================================
 
-GOAL (Zahi #500 staging smoke 2026-05-05):
-"הייתי רוצה כשאני שם את העכבר הוא יראה לי בנוסף גם את הערה הכתובה
-בפנים, במקום שאני אצטרך להיכנס פיזית כדי לראות".
+WHAT & WHY
+----------
+PMs need to send the matrix view to stakeholders / archive snapshots /
+work offline. Current options (screenshot, manual rebuild) are unusable
+at >50 units. This adds a one-click .xlsx download of the currently-
+filtered matrix view, RTL with Hebrew status labels and notes as Excel
+comments.
 
-P3 UX polish — saves clicks for PMs scanning the matrix.
+GATES (both clean before writing this)
+--------------------------------------
+- pytest: 22 passed (5 new export tests + 17 regression) in 8.34s
+- yarn build: clean (no errors, only the existing chunk-size warnings)
 
-================================================================================
-STEP 0 — PRE-FLIGHT (3 sub-greps)
-================================================================================
+CHANGES
+-------
+backend/contractor_ops/execution_matrix_router.py
+  PART 0 — hoisted `_summarize_cell` from nested-in-get_matrix to
+    module level (L189-207). Same shape, same behavior. Both /matrix
+    and /export.xlsx now consume it. Get_matrix call site at L309
+    unchanged in semantics, just calls the module-level fn.
+  PART 2 — new POST /{project_id}/export.xlsx endpoint (L623-728).
+    RBAC via _check_matrix_view (PM/super_admin/owner/management_team;
+    contractor 403). Hard cap of 2000 units → 400 with Hebrew detail.
+    Filters honored via payload {unit_ids, stage_ids} (empty=all).
+    RFC 5987 Content-Disposition with Hebrew filename* + ASCII fallback.
+    Filename project-name sanitized (re.sub r'[/\\:*?"<>|]' → '_').
 
-0.1 ✅ Backend payload includes cell.note directly:
-       backend/contractor_ops/execution_matrix_router.py:292
-         "note": c.get("note"),
-       (_summarize_cell helper — same source CellEditDialog reads/writes)
+backend/contractor_ops/execution_matrix_export.py  (NEW, 144 LOC)
+  Pure builder — no DB / FastAPI. Single sheet "מטריצת ביצוע":
+    - RTL view, frozen E2 (header row + 3 location columns).
+    - Status cells: Hebrew label from STATUS_LABELS + light fill from
+      STATUS_FILLS (mirrors frontend STATUS_CONFIG ramp).
+    - Tag cells: text_value as plain text.
+    - Notes attached as openpyxl Comment with last_actor_name as author
+      (fallback "BrikOps").
+  _clean_note: strip + control-char regex r'[\x00-\x08\x0b-\x1f]' +
+  500-char cap. Preemptive guard against IllegalCharacterError when PMs
+  paste from Word/Email/WhatsApp (Fix #2 from approval).
 
-0.2 ✅ Current tooltip lines match spec exactly (no drift since #500):
-       L18: title={textValue || 'ללא תגית'}
-       L36: title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
-       L49: title="לא סומן"
+backend/tests/test_execution_matrix_export.py  (NEW, 332 LOC, 5 tests)
+  T1 build_matrix_xlsx structure (sheet name, RTL, frozen, header row).
+  T2 status label translation + fill colors (completed→green, not_done→red).
+  T3 note→Comment + whitespace strip + control-char strip + author fallback.
+  T4 endpoint RBAC (contractor 403, PM 200 with StreamingResponse).
+  T5 filename sanitization (slash, colon → underscore in RFC 5987 encoded
+     filename*) + 2000-unit cap (2001 → 400 with "2000 דירות").
 
-0.3 ✅ This audit at top of review.txt.
+frontend/src/services/matrixService.js
+  exportXlsx(projectId, {unit_ids, stage_ids}) → {blob, filename}.
+  RFC 5987 filename* parser with ASCII fallback. ResponseType:'blob'.
 
-================================================================================
-DIFF — 1 file, +6/-2 = 8 lines
-================================================================================
+frontend/src/pages/ExecutionMatrixPage.js
+  Download button before Settings in header (always visible — no canEdit
+  gate; viewers can also export). Loader2 spinner while exporting,
+  disabled state, 44×44 min hit area for mobile.
+  handleExport — preemptive blob-error parsing: on catch, reads
+  e.response.data as text, JSON.parse, surfaces backend `detail`
+  (e.g. the 2000-unit cap message). Falls back to generic Hebrew message
+  (Fix #3 from approval).
 
-frontend/src/components/matrix/MatrixCell.js
+ALL 3 PRE-T002 FIXES APPLIED
+----------------------------
+1. CRITICAL — _summarize_cell hoisted to module level. Both endpoints
+   share the same canonical shape. No NameError risk.
+2. PART 1 preemptive control-char strip in _clean_note. PM-pasted notes
+   with NULL/VT/etc no longer crash openpyxl.
+3. PART 4 preemptive blob-error parsing. Backend HTTPException details
+   surface to user instead of generic message.
 
-  L21 (was L18) — tag-cell tooltip:
-  - title={textValue || 'ללא תגית'}
-  + title={(textValue || 'ללא תגית') + (cell?.note ? `\n"${cell.note}"` : '')}
+DO NOT
+------
+- Do NOT modify _summarize_cell signature or output shape — both
+  endpoints depend on identical fields (especially last_actor_name).
+- Do NOT remove the 2000-unit cap without raising openpyxl memory limits
+  in the deploy env.
+- Do NOT switch responseType from 'blob' without removing the blob-error
+  parsing in handleExport.
 
-  L39-43 (was L36) — status-cell tooltip:
-  - title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
-  + title={
-  +   cfg.label
-  +   + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
-  +   + (cell?.note ? `\n"${cell.note}"` : '')
-  + }
+OUT OF SCOPE
+------------
+- Server-side persistent export jobs (immediate StreamingResponse only).
+- PDF export (separate ticket).
+- Per-user export rate limiting (no abuse pattern observed yet).
+- Multi-sheet Excel (single sheet matches the matrix view 1:1).
 
-  L49 empty-cell tooltip — UNCHANGED ("לא סומן"), empty cells can't carry a note.
+FAILURE PATHS COVERED
+---------------------
+1. Contractor tries to export → 403 (T4a).
+2. Project >2000 units → 400 with Hebrew detail surfaced via blob-parse
+   to alert (T5b + handleExport catch).
+3. Note has control chars → stripped, no IllegalCharacterError (T3).
+4. Hebrew project name with /:?* → sanitized in filename* (T5a).
+5. Network/blob-decode failure → generic Hebrew alert fallback.
 
-================================================================================
-VERIFY
-================================================================================
+VERIFY (already done — not asking you to re-run)
+------------------------------------------------
+1. cd backend && python -m pytest tests/test_execution_matrix_export.py
+   tests/test_execution_matrix.py -q
+   → 22 passed
+2. cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+   → clean
 
-V1 ✅ cd frontend && yarn build
-   → "The build folder is ready to be deployed." (Done in 33.31s)
-   No new warnings, CI=true clean.
+RELEVANT FILES
+--------------
+backend/contractor_ops/execution_matrix_router.py  (728 LOC, +110)
+backend/contractor_ops/execution_matrix_export.py  (NEW, 144 LOC)
+backend/tests/test_execution_matrix_export.py      (NEW, 332 LOC)
+frontend/src/services/matrixService.js             (145 LOC, +30)
+frontend/src/pages/ExecutionMatrixPage.js          (321 LOC, +45)
+.local/plans/502_excel_export_plan.md              (approved plan)
 
-V3 ✅ git diff --stat backend/                  → 0 lines
-     git diff --stat MatrixGridView/ListView,
-                     ExecutionMatrixPage         → 0 lines
-   Backend untouched, sibling matrix files untouched.
-
-V4 ✅ git diff --stat MatrixCell.js
-     → 1 file changed, 6 insertions(+), 2 deletions(-)
-   Within ~5 LOC budget (extra 3 from breaking the status-cell title
-   onto multiple lines per spec).
-
-V2 — visual smoke deferred to Zahi after deploy:
-   (a) status cell w/ status + note → 2 lines: "לא בוצע • Super Admin"
-       then `"לא תקין"` on second line
-   (b) status cell w/ status, no note → 1 line (current behavior)
-   (c) tag cell w/ text + note → 2 lines: "שוק חופשי" / `"בעלי 4 חדרים"`
-   (d) empty cell → "לא סומן" (unchanged)
-   (e) mobile (no hover) → graceful: native title simply doesn't render
-
-================================================================================
-WHAT'S NOT CHANGING
-================================================================================
-
-- L49 empty-cell tooltip
-- All other MatrixCell props (onClick, size, isTag, status)
-- MatrixGridView, MatrixListView, ExecutionMatrixPage
-- #500 filter drawer tooltips (separate component tree)
-- CellEditDialog (#494) — still the editor for status + note
-- Backend, schema, tests, auth, billing
-
-================================================================================
-ROLLBACK
-================================================================================
-
-git revert <commit-sha>  →  1-file revert, tooltip returns to current shape,
-zero data risk.
-
-================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================================
+דיווח
+-----
+מוכן ל-staging. ייצוא .xlsx עובד מצד ה-router דרך build_matrix_xlsx
+ל-StreamingResponse עם RFC 5987 filename* בעברית. כל 3 התיקונים
+שביקשת (hoist, control-char strip, blob-error parsing) הוטמעו.
+22/22 pytest + yarn build נקי. ממתין לאישורך לפני git commit + ./deploy.sh.

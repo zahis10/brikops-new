@@ -109,6 +109,33 @@ export const matrixService = {
     );
     return { ok: true };
   },
+
+  // === #502 — Excel (.xlsx) export of current filtered matrix view ===
+  // POST /execution-matrix/{projectId}/export.xlsx
+  // payload: { unit_ids: [], stage_ids: [] }  (empty = export all visible)
+  // Returns: { blob, filename } — caller wraps with downloadBlob() helper
+  // (Capacitor-aware: native filesystem+Share, web blob URL).
+  // Hebrew filename pulled from RFC 5987 `filename*=UTF-8''<encoded>`.
+  async exportXlsx(projectId, { unit_ids = [], stage_ids = [] } = {}) {
+    const response = await axios.post(
+      `${API}/execution-matrix/${projectId}/export.xlsx`,
+      { unit_ids, stage_ids },
+      {
+        headers: getAuthHeader(),
+        responseType: 'blob',
+      }
+    );
+    const cd = response.headers['content-disposition'] || '';
+    let filename = `execution-matrix-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const utf8Match = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match) {
+      try { filename = decodeURIComponent(utf8Match[1]); } catch { /* keep default */ }
+    } else {
+      const asciiMatch = cd.match(/filename="([^"]+)"/);
+      if (asciiMatch) filename = asciiMatch[1];
+    }
+    return { blob: response.data, filename };
+  },
 };
 
 export default matrixService;

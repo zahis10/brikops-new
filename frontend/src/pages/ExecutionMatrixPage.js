@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings } from 'lucide-react';
+import { Loader2, AlertCircle, LayoutGrid, ArrowRight, Settings, Download } from 'lucide-react';
+import { downloadBlob } from '../utils/fileDownload';
 import { toast } from 'sonner';
 import { useMatrixData } from '../hooks/useMatrixData';
 import useMatrixFilters from '../hooks/useMatrixFilters';
@@ -88,6 +89,40 @@ export default function ExecutionMatrixPage() {
   const filterAPI = useMatrixFilters({ units, cellsByUnitStage, stages });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [savedViews, setSavedViews] = useState([]);
+
+  // #502 — Excel export state
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const { blob, filename } = await matrixService.exportXlsx(projectId, {
+        unit_ids: filterAPI.filteredUnits.map(u => u.id),
+        stage_ids: stages.map(s => s.id),
+      });
+      await downloadBlob(
+        blob,
+        filename,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+    } catch (e) {
+      // responseType:'blob' prevents axios from auto-parsing JSON errors —
+      // read the blob as text and try to surface the backend `detail`
+      // (e.g. the 2000-unit cap message in Hebrew).
+      let msg = 'ייצוא נכשל. נסה שוב.';
+      if (e?.response?.data instanceof Blob) {
+        try {
+          const text = await e.response.data.text();
+          const json = JSON.parse(text);
+          if (json?.detail) msg = json.detail;
+        } catch { /* keep generic message */ }
+      }
+      alert(msg);
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, projectId, filterAPI.filteredUnits, stages]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -197,6 +232,18 @@ export default function ExecutionMatrixPage() {
               {units.length} דירות • {stages.length} שלבים
             </p>
           </div>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
+            aria-label="ייצוא לExcel"
+            title="ייצוא לExcel"
+          >
+            {exporting
+              ? <Loader2 className="w-5 h-5 text-slate-600 animate-spin" />
+              : <Download className="w-5 h-5 text-slate-600" />}
+          </button>
           {canEdit && (
             <button
               onClick={() => setStageManageOpen(true)}
