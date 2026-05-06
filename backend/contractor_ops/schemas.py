@@ -896,12 +896,13 @@ class SafetyProjectRegistrationUpsert(BaseModel):
 # =====================================================================
 
 MATRIX_STATUS_VALUES = (
-    'completed',     # ✓ בוצע
-    'partial',       # ⚠ חלקי
-    'in_progress',   # ◷ בעבודה
-    'not_done',      # ✗ לא בוצע
-    'not_relevant',  # − אין צורך
-    'no_findings',   # ⊘ אין חוסרים
+    'completed',       # ✓ בוצע
+    'partial',         # ⚠ חלקי
+    'in_progress',     # ◷ בעבודה
+    'pending_review',  # ⏳ ממתין לאישור (#503-followup-2 — sync-only from QC)
+    'not_done',        # ✗ לא בוצע
+    'not_relevant',    # − אין צורך
+    'no_findings',     # ⊘ אין חוסרים
 )
 
 MATRIX_STAGE_TYPES = ('status', 'tag')

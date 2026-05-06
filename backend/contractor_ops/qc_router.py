@@ -18,6 +18,43 @@ logger = logging.getLogger(__name__)
 # (sync-failure-protection). Sync is gated by MATRIX_QC_SYNC_ENABLED
 # env var (default OFF) — see qc_to_matrix_sync.py.
 from contractor_ops.qc_to_matrix_sync import sync_qc_stage_to_matrix
+
+
+async def _resolve_unit_ids_for_sync(db, run, items, stage_scope):
+    """Resolve the list of unit_ids for matrix-cell upserts.
+
+    #503-followup-2 — fixes the floor-scope silent no-op (Bug 2 from
+    Zahi smoke 2026-05-06): items are template-level for floor stages
+    (no unit_id field), and the run itself has no unit_id either, so
+    the previous `list({i.get("unit_id") ...})` aggregation iterated 0
+    times and the sync silently did nothing.
+
+    Resolution order:
+      1. Unit-scope: just [run.unit_id] (single cell).
+      2. Floor-scope items.unit_id distinct (handles per-item activity
+         where the item carries unit_id).
+      3. Floor-scope fallback: query units by floor_id from the run
+         (handles approve/reject on template-level items).
+      4. Empty list (no-op — caller's loop iterates 0 times safely).
+    """
+    if stage_scope != "floor":
+        uid = run.get("unit_id")
+        return [uid] if uid else []
+
+    unit_ids = list({i.get("unit_id") for i in items if i.get("unit_id")})
+    if unit_ids:
+        return unit_ids
+
+    floor_id = run.get("floor_id")
+    if not floor_id:
+        return []
+    units = await db.units.find(
+        {"floor_id": floor_id, "archived": {"$ne": True}},
+        {"_id": 0, "id": 1},
+    ).to_list(500)
+    return [u["id"] for u in units if u.get("id")]
+
+
 router = APIRouter(prefix="/api/qc", tags=["qc"])
 notif_router = APIRouter(prefix="/api/qc-notifications", tags=["qc-notifications"])
 
@@ -1298,39 +1335,52 @@ async def update_qc_item(
     # try/except so any sync failure is logged-only and never affects
     # the QC write. T9 verifies this protection.
     stage_id_for_sync = item["stage_id"]
-    unit_id_for_sync = item.get("unit_id") or run.get("unit_id")
     project_id_for_sync = run["project_id"]
     actor_for_sync = {"id": user["id"], "name": _actor_name(user)}
 
     async def _run_sync():
         try:
-            if not unit_id_for_sync:
-                return
             tpl_stage = next(
                 (s for s in tpl["stages"] if s["id"] == stage_id_for_sync), {}
             )
             stage_scope = tpl_stage.get("scope", "floor")
-            stage_items = await db.qc_items.find(
-                {
-                    "run_id": run_id,
-                    "stage_id": stage_id_for_sync,
-                    "unit_id": unit_id_for_sync,
-                },
-                {"_id": 0},
-            ).to_list(500)
-            stage_closed = run.get("stage_statuses", {}).get(
-                stage_id_for_sync
-            ) == "approved"
-            await sync_qc_stage_to_matrix(
-                db,
-                project_id=project_id_for_sync,
-                unit_id=unit_id_for_sync,
-                stage_id=stage_id_for_sync,
-                actor=actor_for_sync,
-                qc_items=stage_items,
-                stage_closed=stage_closed,
-                stage_scope=stage_scope,
+            # #503-followup-2 — stage-level mapping. Pass stage_status
+            # (None means "no decision yet" → mapping falls back to
+            # item-level activity check). update_qc_item is per-item
+            # activity, so for floor-scope we sync ONLY the affected
+            # unit's cell (not all units on the floor) — that's the
+            # narrow drift-C case where item carries unit_id.
+            stage_status = run.get("stage_statuses", {}).get(stage_id_for_sync)
+            items = [item] if item.get("unit_id") else []
+            # Single-unit resolve: prefer item.unit_id; fall back to
+            # run.unit_id; otherwise skip (floor-scope item-update on
+            # template item with no unit_id is rare — wait for stage
+            # decision to sync via approve/reject hooks).
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items, stage_scope
             )
+            for uid in unit_ids:
+                # Re-fetch this unit's items for the stage so the
+                # mapping sees the freshest state (item we just
+                # updated PLUS its siblings).
+                unit_items = await db.qc_items.find(
+                    {
+                        "run_id": run_id,
+                        "stage_id": stage_id_for_sync,
+                        "unit_id": uid,
+                    },
+                    {"_id": 0},
+                ).to_list(500)
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id_for_sync,
+                    actor=actor_for_sync,
+                    qc_items=unit_items,
+                    stage_status=stage_status,
+                    stage_scope=stage_scope,
+                )
         except Exception as e:
             logger.warning(
                 f"[#503] QC→matrix sync failed for stage_id={stage_id_for_sync}: {e}"
@@ -2432,9 +2482,11 @@ async def approve_stage(
 
     logger.info(f"[QC] Stage {stage_id} approved in run {run_id} by user {user['id']}")
 
-    # #503 — multi-cell matrix sync via BackgroundTasks. Stage closure
-    # affects every unit-scope item in this stage; enumerate distinct
-    # unit_ids and sync each cell with stage_closed=True.
+    # #503-followup-2 — multi-cell matrix sync via BackgroundTasks.
+    # Stage decision affects every unit-scope item AND every unit on
+    # the floor (for floor-scope). _resolve_unit_ids_for_sync handles
+    # both: items.unit_id distinct first, falling back to floor's
+    # units when items lack unit_id (template-level items).
     project_id_for_sync = run["project_id"]
     actor_for_sync = {"id": user["id"], "name": actor}
 
@@ -2444,15 +2496,13 @@ async def approve_stage(
                 (s for s in tpl["stages"] if s["id"] == stage_id), {}
             )
             stage_scope = tpl_stage.get("scope", "floor")
-            if stage_scope != "unit":
-                return
             items_all = await db.qc_items.find(
                 {"run_id": run_id, "stage_id": stage_id},
                 {"_id": 0},
             ).to_list(2000)
-            unit_ids = list({i.get("unit_id") for i in items_all if i.get("unit_id")})
-            if not unit_ids and run.get("unit_id"):
-                unit_ids = [run["unit_id"]]
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items_all, stage_scope
+            )
             for uid in unit_ids:
                 unit_items = [i for i in items_all if i.get("unit_id") == uid]
                 await sync_qc_stage_to_matrix(
@@ -2462,7 +2512,7 @@ async def approve_stage(
                     stage_id=stage_id,
                     actor=actor_for_sync,
                     qc_items=unit_items,
-                    stage_closed=True,
+                    stage_status="approved",
                     stage_scope=stage_scope,
                 )
         except Exception as e:
@@ -2475,7 +2525,13 @@ async def approve_stage(
 
 
 @router.post("/run/{run_id}/stage/{stage_id}/reject")
-async def reject_stage(run_id: str, stage_id: str, body: ApproveRejectBody, user: dict = Depends(get_current_user)):
+async def reject_stage(
+    run_id: str,
+    stage_id: str,
+    body: ApproveRejectBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     db = get_db()
 
     run = await db.qc_runs.find_one({"id": run_id}, {"_id": 0})
@@ -2532,6 +2588,44 @@ async def reject_stage(run_id: str, stage_id: str, body: ApproveRejectBody, user
         logger.error(f"[QC] Failed to create notifications for reject: {e}")
 
     logger.info(f"[QC] Stage {stage_id} rejected in run {run_id} by user {user['id']}: {body.reason}")
+
+    # #503-followup-2 — reject hook (Bug 1 from Zahi smoke 2026-05-06).
+    # Mirrors approve/override pattern: enumerate affected unit_ids
+    # via _resolve_unit_ids_for_sync and flip every cell to not_done.
+    project_id_for_sync = run["project_id"]
+    actor_for_sync = {"id": user["id"], "name": actor}
+
+    async def _run_sync_reject():
+        try:
+            tpl_stage = next(
+                (s for s in tpl["stages"] if s["id"] == stage_id), {}
+            )
+            stage_scope = tpl_stage.get("scope", "floor")
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id},
+                {"_id": 0},
+            ).to_list(2000)
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items_all, stage_scope
+            )
+            for uid in unit_ids:
+                unit_items = [i for i in items_all if i.get("unit_id") == uid]
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id,
+                    actor=actor_for_sync,
+                    qc_items=unit_items,
+                    stage_status="rejected",
+                    stage_scope=stage_scope,
+                )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync (reject) failed for stage_id={stage_id}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync_reject)
     return {"status": "rejected", "stage_id": stage_id}
 
 
@@ -3002,15 +3096,13 @@ async def override_approve_stage(
     async def _run_sync_override():
         try:
             stage_scope = tpl_stage.get("scope", "floor")
-            if stage_scope != "unit":
-                return
             items_all = await db.qc_items.find(
                 {"run_id": run_id, "stage_id": stage_id},
                 {"_id": 0},
             ).to_list(2000)
-            unit_ids = list({i.get("unit_id") for i in items_all if i.get("unit_id")})
-            if not unit_ids and run.get("unit_id"):
-                unit_ids = [run["unit_id"]]
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items_all, stage_scope
+            )
             for uid in unit_ids:
                 unit_items = [i for i in items_all if i.get("unit_id") == uid]
                 await sync_qc_stage_to_matrix(
@@ -3020,7 +3112,7 @@ async def override_approve_stage(
                     stage_id=stage_id,
                     actor=actor_for_sync,
                     qc_items=unit_items,
-                    stage_closed=True,
+                    stage_status="approved_via_override",
                     stage_scope=stage_scope,
                 )
         except Exception as e:

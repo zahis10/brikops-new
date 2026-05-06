@@ -1,24 +1,31 @@
-"""QC → Matrix continuous sync (one-way, item-level).
+"""QC → Matrix continuous sync (one-way, stage-level).
 
 Batch #503 — Phase A. Per Zahi 2026-05-06: PMs maintain duplicate state
 in QC and the Execution Matrix today, and inevitably abandon one. This
-module bridges them: any QC item update for a unit-scope stage is
-projected into the matrix cell for (unit_id, stage_id).
+module bridges them: any QC item update or stage decision projects
+into the matrix cell for (unit_id, stage_id).
 
 Direction lock (D1, PERMANENT): QC → Matrix only. The reverse direction
 will never be implemented — QC carries photo-evidence requirements that
 matrix edits would compromise.
 
-Mapping (D2, item-level continuous):
-  stage_closed (approved/override) AND any item failed → not_done
-  stage_closed AND no failures                          → completed
-  stage open AND any item failed                        → not_done
-  stage open AND no items touched                       → None  (no-op /
-                                                                 delete
-                                                                 sync-only
-                                                                 cell)
-  stage open AND all items pass                         → completed
-  stage open AND mix of pass + pending (no fail)        → in_progress
+Mapping (D1 #503-followup-2, stage-level — Zahi 2026-05-06):
+  stage_status="approved"             → completed       (green)
+  stage_status="approved_via_override"→ completed       (green)
+  stage_status="rejected"             → not_done        (red)
+  stage_status="pending_review"       → pending_review  (orange, NEW)
+  ANY item touched (pass|fail)        → in_progress     (blue)
+  no items + no status                → None            (empty cell)
+
+Reasoning (Zahi quote): "מבחינתי מרגע שיש סעיף אחד בתוך בקרת הביצוע
+שהוכנס, זה בעבודה. רק אם כל הסעיפים הסתיימו והסעיף הגדול אושר על ידי
+מי שיכול לאשר, מתעדכן למאושר. אותו דבר לגבי לא תקין, רק אחרי שבסעיף
+הראשי הגדול הוא לא תקין הוא יראה את זה."
+
+→ Matrix is now outcome-driven (PM-level visibility) instead of
+  item-detail-driven. A single failing item does NOT paint the cell red
+  any more — red appears only after a senior officially rejects the
+  stage.
 
 Conflict resolution (D3): QC always wins. Manual matrix edits on
 QC-template stages are transient — overwritten on next QC change.
@@ -42,42 +49,42 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _compute_matrix_status_from_qc_items(items, stage_closed: bool):
-    """Pure function — compute matrix status from a list of QC items.
+def _compute_matrix_status_from_qc(items, stage_status):
+    """Pure function — compute matrix status from QC items + stage status.
 
-    Returns one of {"completed", "in_progress", "not_done"} or None if
-    no sync should happen (untouched stage, no items).
+    `items` — list of qc_item dicts (only the .status field is used).
+    `stage_status` — value from run["stage_statuses"][stage_id].
+                     One of {None, "in_progress", "pending_review",
+                     "approved", "approved_via_override", "rejected"}.
+
+    Returns one of {"completed", "in_progress", "not_done",
+                    "pending_review"} or None (empty cell / no-op).
+
+    Stage-level mapping (D1 #503-followup-2):
+      approved / approved_via_override → completed
+      rejected                         → not_done
+      pending_review                   → pending_review (NEW)
+      any item touched (pass|fail)     → in_progress
+      nothing                          → None
 
     NOTE on QC item status values: codebase uses "pass" / "fail" /
     "pending" (NOT "passed" / "failed" as the original spec drafted).
     Authoritative source: VALID_QC_STATUSES in qc_router.py L1191.
-    Spec-drift A documented in review.txt + plan.
-
-    `stage_closed` semantics (spec-drift B): True iff the stage is
-    approved (natural close OR override-close per #478). The original
-    spec used `run.get("closed")` but the codebase tracks closure
-    per-stage in `run["stage_statuses"][stage_id] == "approved"`.
-    Caller derives the bool. Closed always overrides item-level
-    continuous logic — override-close marks every item "pass", but a
-    stage that closed with at least one fail still surfaces as
-    not_done so the matrix mirrors reality.
     """
-    if stage_closed:
-        if any(i.get("status") == "fail" for i in items):
-            return "not_done"
+    # Stage-level outcome wins (D1)
+    if stage_status in ("approved", "approved_via_override"):
         return "completed"
+    if stage_status == "rejected":
+        return "not_done"
+    if stage_status == "pending_review":
+        return "pending_review"
 
-    # Stage is open — item-level continuous logic
-    if any(i.get("status") == "fail" for i in items):
-        return "not_done"  # red on first failure
-    if not items:
-        return None
-    passed = [i for i in items if i.get("status") == "pass"]
-    if not passed:
-        return None  # all pending — leave cell empty
-    if len(passed) == len(items):
-        return "completed"
-    return "in_progress"
+    # Open-work flow — any item activity at all means "in progress"
+    if any(i.get("status") in ("pass", "fail") for i in items):
+        return "in_progress"
+
+    # Nothing touched
+    return None
 
 
 async def sync_qc_stage_to_matrix(
@@ -88,17 +95,27 @@ async def sync_qc_stage_to_matrix(
     stage_id: str,
     actor: dict,
     qc_items: list,
-    stage_closed: bool = False,
+    stage_status: str = None,
     stage_scope: str = "unit",
 ):
-    """Compute matrix status from QC items and upsert into
-    execution_matrix_cells. Returns the resulting cell dict, or None
-    if no sync was applied (flag off, floor-scope stage, or empty
-    state with no existing sync-only cell to delete).
+    """Compute matrix status from QC items + stage_status and upsert
+    into execution_matrix_cells. Returns the resulting cell dict, or
+    None if no sync was applied (flag off, untouched stage with no
+    sync-only cell to delete, etc.).
 
     Idempotent — safe to call multiple times for the same state.
     Audit array is pruned to the last 50 entries to prevent unbounded
     growth from rapid-fire QC updates.
+
+    `stage_status` (#503-followup-2) — caller passes the value from
+    `run["stage_statuses"][stage_id]`. Replaces the previous
+    `stage_closed: bool` parameter. None means no decision recorded
+    yet (in which case mapping falls back to item-level activity).
+
+    `stage_scope` retained for caller introspection / future logic;
+    helper itself is scope-agnostic — caller is responsible for
+    passing the right unit_id (resolved via _resolve_unit_ids_for_sync
+    in qc_router for floor-scope stages).
     """
     # FEATURE FLAG — default OFF for phased rollout (V6 of spec).
     # Code path is fully wired but never executes until ops sets
@@ -106,19 +123,7 @@ async def sync_qc_stage_to_matrix(
     if os.getenv("MATRIX_QC_SYNC_ENABLED", "false").lower() != "true":
         return None
 
-    # D5 — UPDATED 2026-05-06 (#503-followup): floor-scope stages now
-    # sync via per-unit aggregation in approve/override hooks (drift C
-    # from original #503 plan) and per-item unit_id extraction in
-    # update_qc_item. The helper itself is scope-agnostic — it
-    # operates on the (unit_id, stage_id, items) tuple given to it.
-    # Caller is responsible for passing the right unit_id for the
-    # current update. The `stage_scope` param is retained for future
-    # logic that might need to behave differently per scope, but the
-    # skip branch is removed. Without this fix, 7 of 8 base QC stages
-    # (those without explicit scope: "unit") never synced, leaving
-    # the feature ~12% functional.
-
-    new_status = _compute_matrix_status_from_qc_items(qc_items, stage_closed)
+    new_status = _compute_matrix_status_from_qc(qc_items, stage_status)
 
     cell = await db.execution_matrix_cells.find_one({
         "project_id": project_id,
@@ -147,6 +152,7 @@ async def sync_qc_stage_to_matrix(
         "status_before": cell.get("status") if cell else None,
         "status_after": new_status,
         "source": "qc_sync",
+        "stage_status": stage_status,  # #503-followup-2 — debug aid
     }
 
     if cell:

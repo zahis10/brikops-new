@@ -1,5 +1,5 @@
 import {
-  CheckCircle2, AlertCircle, Clock,
+  CheckCircle2, AlertCircle, Clock, SendHorizontal,
   XCircle, MinusCircle, ShieldCheck,
 } from 'lucide-react';
 
@@ -27,6 +27,15 @@ export const MATRIX_STATUSES = {
     bg: 'bg-blue-100',
     text: 'text-blue-700',
     border: 'border-blue-200',
+  },
+  pending_review: {
+    id: 'pending_review',
+    label: 'ממתין לאישור',
+    Icon: SendHorizontal,
+    bg: 'bg-orange-100',
+    text: 'text-orange-700',
+    border: 'border-orange-200',
+    syncOnly: true,
   },
   not_done: {
     id: 'not_done',

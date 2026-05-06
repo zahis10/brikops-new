@@ -14,7 +14,7 @@ import { MATRIX_STATUS_LIST } from './STATUS_CONFIG';
 export default function StatusButtonGrid({ value, onChange, disabled = false }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" dir="rtl">
-      {MATRIX_STATUS_LIST.map((s) => {
+      {MATRIX_STATUS_LIST.filter((s) => !s.syncOnly).map((s) => {
         const Icon = s.Icon;
         const isSelected = value === s.id;
         return (

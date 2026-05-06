@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "#503-followup review — floor skip removed (17+26 passed, build clean)"
+title = "#503-followup-2 review — stage-level mapping + reject hook + floor-scope fix + pending_review (V1=20, V2=26, build clean)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

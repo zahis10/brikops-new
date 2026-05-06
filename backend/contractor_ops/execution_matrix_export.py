@@ -26,21 +26,23 @@ from openpyxl.utils import get_column_letter
 
 
 STATUS_LABELS = {
-    "completed":     "הושלם",
-    "partial":       "בוצע חלקית",
-    "in_progress":   "בתהליך",
-    "not_done":      "לא בוצע",
-    "not_relevant":  "לא רלוונטי",
-    "no_findings":   "אין חוסרים",
+    "completed":      "הושלם",
+    "partial":        "בוצע חלקית",
+    "in_progress":    "בתהליך",
+    "pending_review": "ממתין לאישור",  # #503-followup-2
+    "not_done":       "לא בוצע",
+    "not_relevant":   "לא רלוונטי",
+    "no_findings":    "אין חוסרים",
 }
 
 STATUS_FILLS = {
-    "completed":     PatternFill("solid", fgColor="D1FAE5"),  # green-100
-    "partial":       PatternFill("solid", fgColor="FEF3C7"),  # amber-100
-    "in_progress":   PatternFill("solid", fgColor="DBEAFE"),  # blue-100
-    "not_done":      PatternFill("solid", fgColor="FEE2E2"),  # red-100
-    "not_relevant":  PatternFill("solid", fgColor="F1F5F9"),  # slate-100
-    "no_findings":   PatternFill("solid", fgColor="CCFBF1"),  # teal-100
+    "completed":      PatternFill("solid", fgColor="D1FAE5"),  # green-100
+    "partial":        PatternFill("solid", fgColor="FEF3C7"),  # amber-100
+    "in_progress":    PatternFill("solid", fgColor="DBEAFE"),  # blue-100
+    "pending_review": PatternFill("solid", fgColor="FFEDD5"),  # orange-100 (#503-followup-2)
+    "not_done":       PatternFill("solid", fgColor="FEE2E2"),  # red-100
+    "not_relevant":   PatternFill("solid", fgColor="F1F5F9"),  # slate-100
+    "no_findings":    PatternFill("solid", fgColor="CCFBF1"),  # teal-100
 }
 
 HEADER_FILL = PatternFill("solid", fgColor="F3F4F6")  # slate-100
