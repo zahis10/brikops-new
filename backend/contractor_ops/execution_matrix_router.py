@@ -206,6 +206,44 @@ def _summarize_cell(c):
     }
 
 
+def _unit_sort_key(unit, buildings_by_id, floors_by_id):
+    """Canonical 6-tuple sort key for matrix units.
+
+    Hoisted to module level (#502-followup) so both /matrix and
+    /export.xlsx share the same canonical sort. Pre-hoist this was
+    nested inside get_matrix with closure access to buildings_by_id +
+    floors_by_id; those are now explicit parameters.
+
+    Tiebreak ladder (per #485 + #486 + #489):
+      building.sort_index → building.name (numeric) → building.name
+      (string) → floor.floor_number → unit_no (numeric) → unit_no (string).
+    """
+    b = buildings_by_id.get(unit.get("building_id"), {})
+    f = floors_by_id.get(unit.get("floor_id"), {})
+    unit_no_str = unit.get("unit_no", "") or ""
+    try:
+        unit_no_num = int(unit_no_str)
+    except (ValueError, TypeError):
+        unit_no_num = 9999  # non-numeric unit_no sorts to end
+    # #489 — numeric tiebreak for building name (parity with #485 unit_no
+    # fix). Handles projects where buildings are named with pure digits
+    # (e.g. "8","9","10","11"). Without this, lex sort places "10" before
+    # "8". Non-numeric names → 9999 → fall through to string tiebreak.
+    building_name_str = b.get("name", "") or ""
+    try:
+        building_name_num = int(building_name_str)
+    except (ValueError, TypeError):
+        building_name_num = 9999
+    return (
+        b.get("sort_index", 9999),
+        building_name_num,
+        building_name_str,
+        f.get("floor_number", 0),
+        unit_no_num,
+        unit_no_str,
+    )
+
+
 # =====================================================================
 # ENDPOINTS — matrix view
 # =====================================================================
@@ -269,33 +307,7 @@ async def get_matrix(
         ).to_list(100)
     buildings_by_id = {b["id"]: b for b in buildings}
 
-    def _unit_sort_key(u):
-        b = buildings_by_id.get(u.get("building_id"), {})
-        f = floors_by_id.get(u.get("floor_id"), {})
-        unit_no_str = u.get("unit_no", "") or ""
-        try:
-            unit_no_num = int(unit_no_str)
-        except (ValueError, TypeError):
-            unit_no_num = 9999  # non-numeric unit_no sorts to end
-        # #489 — numeric tiebreak for building name (parity with #485
-        # unit_no fix). Handles projects where buildings are named with
-        # pure digits (e.g. "8","9","10","11"). Without this, lex sort
-        # places "10" before "8". Non-numeric names → 9999 → fall through
-        # to the existing string tiebreak.
-        building_name_str = b.get("name", "") or ""
-        try:
-            building_name_num = int(building_name_str)
-        except (ValueError, TypeError):
-            building_name_num = 9999
-        return (
-            b.get("sort_index", 9999),
-            building_name_num,
-            building_name_str,
-            f.get("floor_number", 0),
-            unit_no_num,
-            unit_no_str,
-        )
-    units.sort(key=_unit_sort_key)
+    units.sort(key=lambda u: _unit_sort_key(u, buildings_by_id, floors_by_id))
 
     stage_ids = [s["id"] for s in stages]
     cells_docs = []
@@ -699,6 +711,11 @@ async def export_matrix_xlsx(
     # as /matrix endpoint; build_matrix_xlsx needs last_actor_name for
     # Excel comment authorship.
     cells_summary = [_summarize_cell(c) for c in cells_docs]
+
+    # #502-followup — sort units by (building → floor → unit_no), numeric
+    # where possible. Mirrors /matrix endpoint behavior via the canonical
+    # module-level _unit_sort_key (#485+#486+#489 6-tuple).
+    units = sorted(units, key=lambda u: _unit_sort_key(u, buildings, floors))
 
     buf = build_matrix_xlsx(project, units, stages, cells_summary, buildings, floors)
 

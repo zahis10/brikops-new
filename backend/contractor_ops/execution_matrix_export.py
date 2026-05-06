@@ -138,6 +138,12 @@ def build_matrix_xlsx(project, units, stages, cells, buildings, floors):
                     max_len = vl
         ws.column_dimensions[col_letter].width = max(8, min(30, max_len + 2))
 
+    # #502-followup — Excel-native auto-filter arrows on every header
+    # column. Users get sort A-Z / value-filter / custom-filter UX for
+    # free inside Excel itself. ws.dimensions = bounding range of
+    # populated cells (e.g. "A1:O35").
+    ws.auto_filter.ref = ws.dimensions
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)

@@ -236,13 +236,14 @@ export default function ExecutionMatrixPage() {
             type="button"
             onClick={handleExport}
             disabled={exporting}
-            className="p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
+            className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-100 active:bg-slate-200 transition-colors disabled:opacity-50 min-h-[44px] flex items-center gap-2 text-sm font-medium text-slate-700"
             aria-label="ייצוא לExcel"
             title="ייצוא לExcel"
           >
             {exporting
-              ? <Loader2 className="w-5 h-5 text-slate-600 animate-spin" />
-              : <Download className="w-5 h-5 text-slate-600" />}
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Download className="w-4 h-4" />}
+            <span>ייצוא Excel</span>
           </button>
           {canEdit && (
             <button

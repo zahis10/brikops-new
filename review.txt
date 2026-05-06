@@ -1,120 +1,128 @@
-#502 — Execution Matrix .xlsx Export
-=====================================
+#502-FOLLOWUP — Excel export polish: button label + auto-filter + sort
+========================================================================
 
-WHAT & WHY
-----------
-PMs need to send the matrix view to stakeholders / archive snapshots /
-work offline. Current options (screenshot, manual rebuild) are unusable
-at >50 units. This adds a one-click .xlsx download of the currently-
-filtered matrix view, RTL with Hebrew status labels and notes as Excel
-comments.
+STEP 0 AUDIT
+------------
+0.1 ✅ `_unit_sort_key` was NESTED at L272 inside `get_matrix`, single
+       call site at L298. Closure vars: `buildings_by_id`, `floors_by_id`
+       (built at L260 + L270 from DB-fetched buildings/floors). Same
+       blocker pattern as #502's `_summarize_cell` hoist — endpoint
+       cannot reach a nested function.
+
+0.2 ✅ `ws.auto_filter.ref` pattern already used in repo:
+         backend/contractor_ops/export_router.py:375
+         backend/contractor_ops/export_router.py:461
+         backend/contractor_ops/safety_router.py:1478
+       openpyxl 3.x supports `ws.dimensions` for auto-range, used here.
+
+0.3 ✅ Download button at frontend/src/pages/ExecutionMatrixPage.js
+       L237-246 — current icon-only form from #502, with handleExport
+       callback at L96. Surrounding header structure intact.
 
 GATES (both clean before writing this)
 --------------------------------------
-- pytest: 22 passed (5 new export tests + 17 regression) in 8.34s
-- yarn build: clean (no errors, only the existing chunk-size warnings)
+- pytest: 22 passed (5 export + 17 matrix regression) in 2.66s
+- yarn build: clean
 
-CHANGES
--------
-backend/contractor_ops/execution_matrix_router.py
-  PART 0 — hoisted `_summarize_cell` from nested-in-get_matrix to
-    module level (L189-207). Same shape, same behavior. Both /matrix
-    and /export.xlsx now consume it. Get_matrix call site at L309
-    unchanged in semantics, just calls the module-level fn.
-  PART 2 — new POST /{project_id}/export.xlsx endpoint (L623-728).
-    RBAC via _check_matrix_view (PM/super_admin/owner/management_team;
-    contractor 403). Hard cap of 2000 units → 400 with Hebrew detail.
-    Filters honored via payload {unit_ids, stage_ids} (empty=all).
-    RFC 5987 Content-Disposition with Hebrew filename* + ASCII fallback.
-    Filename project-name sanitized (re.sub r'[/\\:*?"<>|]' → '_').
+CHANGES (3 files, ~25 LOC net)
+------------------------------
 
-backend/contractor_ops/execution_matrix_export.py  (NEW, 144 LOC)
-  Pure builder — no DB / FastAPI. Single sheet "מטריצת ביצוע":
-    - RTL view, frozen E2 (header row + 3 location columns).
-    - Status cells: Hebrew label from STATUS_LABELS + light fill from
-      STATUS_FILLS (mirrors frontend STATUS_CONFIG ramp).
-    - Tag cells: text_value as plain text.
-    - Notes attached as openpyxl Comment with last_actor_name as author
-      (fallback "BrikOps").
-  _clean_note: strip + control-char regex r'[\x00-\x08\x0b-\x1f]' +
-  500-char cap. Preemptive guard against IllegalCharacterError when PMs
-  paste from Word/Email/WhatsApp (Fix #2 from approval).
+backend/contractor_ops/execution_matrix_router.py  (+22 / -27)
+  PART 0 — hoisted `_unit_sort_key` from nested-in-get_matrix to module
+    level (new L212-247, right after `_summarize_cell`). Closure vars
+    `buildings_by_id` + `floors_by_id` converted to explicit function
+    parameters. Zero behavior change — same 6-tuple, same field reads.
+    Original 27-LOC nested def removed; get_matrix call site (was L298,
+    now L313) becomes a single-line lambda.
+  PART 1 — sort units before passing to build_matrix_xlsx in
+    export_matrix_xlsx (L718-721). Mirrors /matrix endpoint canonical
+    order. 4 LOC including comment.
 
-backend/tests/test_execution_matrix_export.py  (NEW, 332 LOC, 5 tests)
-  T1 build_matrix_xlsx structure (sheet name, RTL, frozen, header row).
-  T2 status label translation + fill colors (completed→green, not_done→red).
-  T3 note→Comment + whitespace strip + control-char strip + author fallback.
-  T4 endpoint RBAC (contractor 403, PM 200 with StreamingResponse).
-  T5 filename sanitization (slash, colon → underscore in RFC 5987 encoded
-     filename*) + 2000-unit cap (2001 → 400 with "2000 דירות").
+backend/contractor_ops/execution_matrix_export.py  (+5)
+  PART 2 — `ws.auto_filter.ref = ws.dimensions` added at end of
+    build_matrix_xlsx, before BytesIO save (L144-148). Excel-native
+    filter arrows on every header column.
 
-frontend/src/services/matrixService.js
-  exportXlsx(projectId, {unit_ids, stage_ids}) → {blob, filename}.
-  RFC 5987 filename* parser with ASCII fallback. ResponseType:'blob'.
+frontend/src/pages/ExecutionMatrixPage.js  (+4 / -3)
+  PART 3 — Download button replaced with text-label pill:
+    - `px-3 py-2` + `border border-slate-200` + `gap-2` for compact pill
+    - `min-h-[44px]` retained for Capacitor touch-target compliance
+    - Icon shrunk 5→4 to balance alongside text
+    - `<span>ייצוא Excel</span>` after icon — clear download CTA in HE
 
-frontend/src/pages/ExecutionMatrixPage.js
-  Download button before Settings in header (always visible — no canEdit
-  gate; viewers can also export). Loader2 spinner while exporting,
-  disabled state, 44×44 min hit area for mobile.
-  handleExport — preemptive blob-error parsing: on catch, reads
-  e.response.data as text, JSON.parse, surfaces backend `detail`
-  (e.g. the 2000-unit cap message). Falls back to generic Hebrew message
-  (Fix #3 from approval).
+V1 — backend tests
+------------------
+  cd backend && python -m pytest tests/test_execution_matrix_export.py \
+                                  tests/test_execution_matrix.py -q
+  → 22 passed, 8 warnings in 2.66s
+  (The hoist is API-neutral — existing 17 regression tests for /matrix
+   continue to pass, and the 5 #502 export tests are unaffected by the
+   sort/auto_filter additions since T1 only asserts sheet structure
+   not row order.)
 
-ALL 3 PRE-T002 FIXES APPLIED
-----------------------------
-1. CRITICAL — _summarize_cell hoisted to module level. Both endpoints
-   share the same canonical shape. No NameError risk.
-2. PART 1 preemptive control-char strip in _clean_note. PM-pasted notes
-   with NULL/VT/etc no longer crash openpyxl.
-3. PART 4 preemptive blob-error parsing. Backend HTTPException details
-   surface to user instead of generic message.
+V2 — frontend build
+-------------------
+  cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+  → clean (no errors, only existing chunk-size warnings)
+
+V3 — diff scope
+---------------
+  3 files touched:
+    backend/contractor_ops/execution_matrix_router.py
+    backend/contractor_ops/execution_matrix_export.py
+    frontend/src/pages/ExecutionMatrixPage.js
+
+V4 — sibling matrix files untouched
+-----------------------------------
+  No change to:
+    frontend/src/components/matrix/* (MatrixCell, Drawer, Grid, List, etc)
+    frontend/src/hooks/* (useMatrixData, useMatrixFilters)
+    frontend/src/services/matrixService.js
+    backend/contractor_ops/qc_router.py
+    backend/contractor_ops/schemas.py
+
+WHAT'S NOT CHANGING
+-------------------
+- /export.xlsx endpoint contract: payload + response shape identical.
+- All other matrix UI (cell editing, stage management, filter drawer, FAB).
+- Schema — no new fields, no new collections.
+- Tests — existing 22 still cover all behavior; sort + auto_filter +
+  button text are visual-smoke verifiable. No new tests added per spec.
+- Auth, billing, safety, plans, qc, handover, defects routers.
 
 DO NOT
 ------
-- Do NOT modify _summarize_cell signature or output shape — both
-  endpoints depend on identical fields (especially last_actor_name).
-- Do NOT remove the 2000-unit cap without raising openpyxl memory limits
-  in the deploy env.
-- Do NOT switch responseType from 'blob' without removing the blob-error
-  parsing in handleExport.
+- Do NOT modify `_unit_sort_key` signature or return-tuple shape — both
+  /matrix and /export.xlsx now depend on identical sort semantics.
+- Do NOT remove `ws.auto_filter.ref` without verifying Excel/Numbers
+  still allows manual column sort (it does, but UX regresses).
+- Do NOT shrink the button below `min-h-[44px]` (Capacitor touch target).
 
-OUT OF SCOPE
-------------
-- Server-side persistent export jobs (immediate StreamingResponse only).
-- PDF export (separate ticket).
-- Per-user export rate limiting (no abuse pattern observed yet).
-- Multi-sheet Excel (single sheet matches the matrix view 1:1).
-
-FAILURE PATHS COVERED
----------------------
-1. Contractor tries to export → 403 (T4a).
-2. Project >2000 units → 400 with Hebrew detail surfaced via blob-parse
-   to alert (T5b + handleExport catch).
-3. Note has control chars → stripped, no IllegalCharacterError (T3).
-4. Hebrew project name with /:?* → sanitized in filename* (T5a).
-5. Network/blob-decode failure → generic Hebrew alert fallback.
-
-VERIFY (already done — not asking you to re-run)
-------------------------------------------------
-1. cd backend && python -m pytest tests/test_execution_matrix_export.py
-   tests/test_execution_matrix.py -q
-   → 22 passed
-2. cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
-   → clean
+SMOKE TEST (Zahi after deploy)
+------------------------------
+(a) Hard refresh /execution-matrix.
+(b) Header shows "[⬇ ייצוא Excel]" pill button — text + icon.
+(c) Click → spinner inside button → file downloads.
+(d) Open file:
+    - Header row has DROPDOWN ARROWS (auto-filter). Click any →
+      Excel filter UI: select values, sort A-Z, custom filter.
+    - Building column ascending: 8 → 9 → 10 → 11 (numeric, even as strings).
+    - Within each building: floor ascending including negative.
+    - Within each floor: apartment ascending numerically.
+(e) Mobile (Capgo OTA) — button tappable, ≥44px height, fits iPhone width.
 
 RELEVANT FILES
 --------------
-backend/contractor_ops/execution_matrix_router.py  (728 LOC, +110)
-backend/contractor_ops/execution_matrix_export.py  (NEW, 144 LOC)
-backend/tests/test_execution_matrix_export.py      (NEW, 332 LOC)
-frontend/src/services/matrixService.js             (145 LOC, +30)
-frontend/src/pages/ExecutionMatrixPage.js          (321 LOC, +45)
-.local/plans/502_excel_export_plan.md              (approved plan)
+backend/contractor_ops/execution_matrix_router.py  (722 LOC, +22/-27 net)
+backend/contractor_ops/execution_matrix_export.py  (149 LOC, +5)
+frontend/src/pages/ExecutionMatrixPage.js          (322 LOC, +4/-3)
 
 דיווח
 -----
-מוכן ל-staging. ייצוא .xlsx עובד מצד ה-router דרך build_matrix_xlsx
-ל-StreamingResponse עם RFC 5987 filename* בעברית. כל 3 התיקונים
-שביקשת (hoist, control-char strip, blob-error parsing) הוטמעו.
-22/22 pytest + yarn build נקי. ממתין לאישורך לפני git commit + ./deploy.sh.
+3 הבעיות מהsmoke שלך טופלו: (1) כפתור עם הטקסט "ייצוא Excel" במקום
+אייקון בלבד, (2) פילטרים מובנים של Excel על שורת הכותרת
+(`ws.auto_filter.ref = ws.dimensions`), (3) שורות ממוינות לפי בניין
+(נומרי) → קומה → דירה (נומרי) — אותו `_unit_sort_key` שמשתמש /matrix,
+הוצא ל-module-level כתנאי מקדים. 22/22 pytest + yarn נקי.
+
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
