@@ -15,7 +15,7 @@ export default function MatrixCell({ cell, stage, size = 'sm', onClick = null })
               ? 'bg-violet-50 text-violet-700 border-violet-200'
               : `${EMPTY_CELL_CONFIG.bg} ${EMPTY_CELL_CONFIG.text} ${EMPTY_CELL_CONFIG.border}`
           } ${size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'}`}
-          title={textValue || 'ללא תגית'}
+          title={(textValue || 'ללא תגית') + (cell?.note ? `\n"${cell.note}"` : '')}
           dir="rtl"
         >
           <span className="text-[10px] font-medium truncate px-1">
@@ -33,7 +33,11 @@ export default function MatrixCell({ cell, stage, size = 'sm', onClick = null })
           className={`flex items-center justify-center rounded-md border ${cfg.bg} ${cfg.text} ${cfg.border} ${
             size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
           }`}
-          title={cfg.label + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')}
+          title={
+            cfg.label
+            + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
+            + (cell?.note ? `\n"${cell.note}"` : '')
+          }
           dir="rtl"
         >
           <Icon className={size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'} />
