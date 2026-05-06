@@ -206,7 +206,7 @@ export default function CellEditDialog({
                     source !== 'base' and don't show this. */}
                 {stage?.source === 'base' && canEdit && (
                   <div className="mt-2 px-3 py-2 rounded-md bg-amber-50 border border-amber-200 text-[12px] text-amber-800 leading-relaxed">
-                    שלב זה מתעדכן אוטומטית מבקרת ביצוע. עריכה ידנית עלולה להידרס בעדכון QC הבא.
+                    שלב זה מתעדכן אוטומטית מבקרת הביצוע. עריכה ידנית עלולה להידחק בעדכון בקרת הביצוע הבא.
                   </div>
                 )}
               </div>

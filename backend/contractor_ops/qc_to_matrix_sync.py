@@ -106,11 +106,17 @@ async def sync_qc_stage_to_matrix(
     if os.getenv("MATRIX_QC_SYNC_ENABLED", "false").lower() != "true":
         return None
 
-    # D5 — only unit-scope stages sync. Floor-scope stages (e.g.
-    # "אישור סומסום בקומה") deferred to a follow-up batch — they need
-    # multi-cell update logic.
-    if stage_scope != "unit":
-        return None
+    # D5 — UPDATED 2026-05-06 (#503-followup): floor-scope stages now
+    # sync via per-unit aggregation in approve/override hooks (drift C
+    # from original #503 plan) and per-item unit_id extraction in
+    # update_qc_item. The helper itself is scope-agnostic — it
+    # operates on the (unit_id, stage_id, items) tuple given to it.
+    # Caller is responsible for passing the right unit_id for the
+    # current update. The `stage_scope` param is retained for future
+    # logic that might need to behave differently per scope, but the
+    # skip branch is removed. Without this fix, 7 of 8 base QC stages
+    # (those without explicit scope: "unit") never synced, leaving
+    # the feature ~12% functional.
 
     new_status = _compute_matrix_status_from_qc_items(qc_items, stage_closed)
 

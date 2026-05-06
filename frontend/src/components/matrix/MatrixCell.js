@@ -36,7 +36,7 @@ export default function MatrixCell({ cell, stage, size = 'sm', onClick = null })
           title={
             cfg.label
             + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
-            + (cell?.synced_from_qc ? ' • מסונכרן מ-QC' : '')
+            + (cell?.synced_from_qc ? ' • מסונכרן מבקרת ביצוע' : '')
             + (cell?.note ? `\n"${cell.note}"` : '')
           }
           dir="rtl"

@@ -107,25 +107,86 @@ def test_T5b_compute_closed_with_failure_remains_not_done():
 # Helper tests with feature flag ON
 # =====================================================================
 
-def test_T6_floor_scope_stage_skipped(monkeypatch):
-    """scope='floor' → returns None, NO DB calls (D5)."""
+def test_T6_floor_scope_single_unit_syncs(monkeypatch):
+    """#503-followup: floor-scope stages sync correctly when caller
+    provides unit_id (drift C aggregation in approve/override; per-
+    item unit_id in update_qc_item). Helper is scope-agnostic — the
+    D5 skip was removed because 7 of 8 base QC stages defaulted to
+    floor scope and never synced.
+    """
     monkeypatch.setenv("MATRIX_QC_SYNC_ENABLED", "true")
 
     async def run():
         db, captured = _build_cells_db()
         result = await sync_qc_stage_to_matrix(
             db,
-            project_id="p1", unit_id="u1", stage_id="s1",
+            project_id="p1", unit_id="apt1", stage_id="stage_plaster",
             actor={"id": "u1", "name": "PM"},
-            qc_items=[{"status": "pass"}, {"status": "pass"}],
-            stage_closed=False,
-            stage_scope="floor",
+            qc_items=[{"status": "pass"}, {"status": "pass"}, {"status": "pass"}],
+            stage_closed=True,
+            stage_scope="floor",  # floor scope must NOT block sync any more
         )
-        assert result is None
-        db.execution_matrix_cells.find_one.assert_not_called()
-        assert captured["insert"] is None
-        assert captured["update"] is None
-        assert captured["delete"] is None
+        # Cell created
+        assert captured["insert"] is not None
+        doc = captured["insert"]
+        assert doc["status"] == "completed"
+        assert doc["synced_from_qc"] is True
+        assert doc["unit_id"] == "apt1"
+        assert doc["stage_id"] == "stage_plaster"
+        assert result is not None  # helper returns the inserted cell
+
+    asyncio.run(run())
+
+
+def test_T12_floor_scope_multi_cell_via_caller_aggregation(monkeypatch):
+    """#503-followup: when approve/override fires on a floor-scope
+    stage with items spanning N units, caller calls helper N times
+    (one per distinct unit_id). Each call upserts a separate cell —
+    they're independent. Verifies multi-cell aggregation works
+    end-to-end at the helper boundary.
+    """
+    monkeypatch.setenv("MATRIX_QC_SYNC_ENABLED", "true")
+
+    async def run():
+        # Simulate 3 distinct units on a floor-scope stage. Caller
+        # (qc_router approve/override hook) loops distinct unit_ids
+        # and calls helper per-unit with that unit's items.
+        units = ["apt1", "apt2", "apt3"]
+        items_by_unit = {
+            "apt1": [{"status": "pass"}, {"status": "pass"}],
+            "apt2": [{"status": "pass"}, {"status": "pass"}],
+            "apt3": [{"status": "pass"}, {"status": "pass"}],
+        }
+
+        inserted_docs = []
+        for uid in units:
+            db, captured = _build_cells_db(existing_cell=None)
+            await sync_qc_stage_to_matrix(
+                db,
+                project_id="p1",
+                unit_id=uid,
+                stage_id="stage_plumbing",
+                actor={"id": "pm1", "name": "PM"},
+                qc_items=items_by_unit[uid],
+                stage_closed=True,
+                stage_scope="floor",
+            )
+            assert captured["insert"] is not None, f"unit {uid} did not insert"
+            inserted_docs.append(captured["insert"])
+
+        # 3 distinct cells, all completed, audit per-cell (not shared)
+        assert len(inserted_docs) == 3
+        for doc, uid in zip(inserted_docs, units):
+            assert doc["unit_id"] == uid
+            assert doc["status"] == "completed"
+            assert doc["synced_from_qc"] is True
+            assert doc["stage_id"] == "stage_plumbing"
+            assert len(doc["audit"]) == 1
+            assert doc["audit"][0]["source"] == "qc_sync"
+            assert doc["audit"][0]["status_after"] == "completed"
+
+        # All cell IDs are unique (independent docs)
+        assert len({d["id"] for d in inserted_docs}) == 3
 
     asyncio.run(run())
 
