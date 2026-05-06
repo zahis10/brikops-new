@@ -276,3 +276,9 @@ id = "iA7SqFIATcfzejv4UY8KG"
 uri = "file://.local/tasks/task-500.md"
 type = "text"
 title = "#500 — Phase 2D-1 Filter System + Saved Views — תוכנית מלאה"
+
+[[outputs]]
+id = "QclvWyt5qQQIe1VvCC9Xd"
+uri = "file://.local/plans/502_excel_export_plan.md"
+type = "text"
+title = "#502 — Excel Export Plan"
