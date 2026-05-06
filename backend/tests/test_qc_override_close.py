@@ -11,7 +11,7 @@ without project_manager role are rejected with 403. Side effects:
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 import pytest
 
 from contractor_ops import qc_router as qcr
@@ -62,7 +62,7 @@ def test_override_approve_succeeds_for_project_manager():
              patch.object(qcr, "_audit", new=AsyncMock(side_effect=_audit_capture)), \
              patch.object(qcr, "_get_stage_recipients", new=AsyncMock(return_value=[{"user_id": "other1"}])), \
              patch.object(qcr, "_create_qc_notification", new=AsyncMock(side_effect=_notif_capture)):
-            res = await qcr.override_approve_stage("r1", "s1", body, user=user)
+            res = await qcr.override_approve_stage("r1", "s1", body, background_tasks=BackgroundTasks(), user=user)
 
         assert res == {"status": "approved", "stage_id": "s1", "via_override": True}
 
@@ -110,7 +110,7 @@ def test_override_approve_rejects_owner_and_management_team():
                  patch.object(qcr, "_get_project_role", new=AsyncMock(return_value=blocked_role)), \
                  patch.object(qcr, "_is_super_admin", return_value=False):
                 with pytest.raises(HTTPException) as exc_info:
-                    await qcr.override_approve_stage("r1", "s1", body, user={"id": "u1", "role": "user"})
+                    await qcr.override_approve_stage("r1", "s1", body, background_tasks=BackgroundTasks(), user={"id": "u1", "role": "user"})
                 assert exc_info.value.status_code == 403, f"role={blocked_role} should be 403"
 
     asyncio.run(run())
@@ -128,7 +128,7 @@ def test_override_approve_blocks_already_approved_and_super_admin_bypass():
              patch.object(qcr, "_get_project_role", new=AsyncMock(return_value="project_manager")), \
              patch.object(qcr, "_is_super_admin", return_value=False):
             with pytest.raises(HTTPException) as exc_info:
-                await qcr.override_approve_stage("r1", "s1", body, user={"id": "pm1", "role": "user"})
+                await qcr.override_approve_stage("r1", "s1", body, background_tasks=BackgroundTasks(), user={"id": "pm1", "role": "user"})
             assert exc_info.value.status_code == 400
 
         # Case B: super_admin bypasses non-PM project role
@@ -143,7 +143,7 @@ def test_override_approve_blocks_already_approved_and_super_admin_bypass():
              patch.object(qcr, "_audit", new=AsyncMock()), \
              patch.object(qcr, "_get_stage_recipients", new=AsyncMock(return_value=[])), \
              patch.object(qcr, "_create_qc_notification", new=AsyncMock()):
-            res = await qcr.override_approve_stage("r1", "s1", body, user={"id": "admin1", "role": "super_admin"})
+            res = await qcr.override_approve_stage("r1", "s1", body, background_tasks=BackgroundTasks(), user={"id": "admin1", "role": "super_admin"})
             assert res["status"] == "approved"
             assert res["via_override"] is True
             assert captured["run_update"][1]["$set"]["stage_actors.s1.via_override"] is True

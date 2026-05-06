@@ -143,6 +143,14 @@ export default function CellEditDialog({
               <Dialog.Title className="text-base font-bold text-slate-900 mt-0.5 truncate">
                 {stage?.title || 'שלב'}
               </Dialog.Title>
+              {/* #503 — sync badge: shown when current cell value was set
+                  by qc_to_matrix_sync (PMs see provenance immediately). */}
+              {cell?.synced_from_qc && (
+                <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium border border-blue-200">
+                  <span aria-hidden="true">🔗</span>
+                  <span>מסונכרן מבקרת ביצוע</span>
+                </div>
+              )}
             </div>
             <Dialog.Close asChild>
               <button
@@ -192,6 +200,15 @@ export default function CellEditDialog({
                   onChange={setStatus}
                   disabled={!canEdit}
                 />
+                {/* #503 — warning for QC-template stages (source='base').
+                    Manual matrix edits on these stages are transient —
+                    overwritten on next QC change. PM custom stages have
+                    source !== 'base' and don't show this. */}
+                {stage?.source === 'base' && canEdit && (
+                  <div className="mt-2 px-3 py-2 rounded-md bg-amber-50 border border-amber-200 text-[12px] text-amber-800 leading-relaxed">
+                    שלב זה מתעדכן אוטומטית מבקרת ביצוע. עריכה ידנית עלולה להידרס בעדכון QC הבא.
+                  </div>
+                )}
               </div>
             )}
 

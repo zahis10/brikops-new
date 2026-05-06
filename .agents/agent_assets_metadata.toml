@@ -77,7 +77,7 @@ title = "review-94.txt"
 id = "ocdrZig6YPfAjD1XCgrbr"
 uri = "file://review.txt"
 type = "text"
-title = "#502-Followup — Excel polish (button + auto_filter + sort)"
+title = "#503 review — QC→Matrix sync (42 passed, build clean)"
 
 [[outputs]]
 id = "WdwtqNCiZpAAlX9e9Sq9Z"

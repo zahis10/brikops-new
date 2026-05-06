@@ -30,17 +30,25 @@ export default function MatrixCell({ cell, stage, size = 'sm', onClick = null })
       const Icon = cfg.Icon;
       return (
         <div
-          className={`flex items-center justify-center rounded-md border ${cfg.bg} ${cfg.text} ${cfg.border} ${
+          className={`relative flex items-center justify-center rounded-md border ${cfg.bg} ${cfg.text} ${cfg.border} ${
             size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
           }`}
           title={
             cfg.label
             + (cell?.last_actor_name ? ` • ${cell.last_actor_name}` : '')
+            + (cell?.synced_from_qc ? ' • מסונכרן מ-QC' : '')
             + (cell?.note ? `\n"${cell.note}"` : '')
           }
           dir="rtl"
         >
           <Icon className={size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'} />
+          {/* #503 — blue dot bottom-left when value came from QC sync. */}
+          {cell?.synced_from_qc && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-blue-500 ring-1 ring-white"
+            />
+          )}
         </div>
       );
     }

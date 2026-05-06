@@ -203,6 +203,11 @@ def _summarize_cell(c):
         "last_updated_at": c.get("last_updated_at"),
         "last_updated_by": c.get("last_updated_by"),
         "last_actor_name": last_audit.get("actor_name") if last_audit else None,
+        # #503 — surface QC sync metadata for frontend badge + dot
+        # (drift-D: not in original spec, but without this projection
+        # the new fields would sit in DB unreachable to the frontend).
+        "synced_from_qc": bool(c.get("synced_from_qc", False)),
+        "last_qc_sync_at": c.get("last_qc_sync_at"),
     }
 
 

@@ -964,6 +964,12 @@ class MatrixCell(BaseModel):
     audit: List[MatrixCellAuditEntry] = Field(default_factory=list)
     last_updated_at: Optional[str] = None
     last_updated_by: Optional[str] = None
+    # #503 — QC→Matrix sync metadata. `synced_from_qc=True` means the
+    # current `status` was set by qc_to_matrix_sync; manual PM edits
+    # set it back to False (or unset). Frontend uses these to render
+    # the "מסונכרן מבקרת ביצוע" badge + warning in CellEditDialog.
+    synced_from_qc: Optional[bool] = False
+    last_qc_sync_at: Optional[str] = None
 
 
 class MatrixSavedViewFilters(BaseModel):

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
@@ -12,6 +12,12 @@ from contractor_ops.msg_logger import mask_phone
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
 
 logger = logging.getLogger(__name__)
+
+# #503 — QC → Matrix continuous sync (one-way). Module-level import so
+# tests can `patch.object(qcr, "sync_qc_stage_to_matrix", ...)` for T9
+# (sync-failure-protection). Sync is gated by MATRIX_QC_SYNC_ENABLED
+# env var (default OFF) — see qc_to_matrix_sync.py.
+from contractor_ops.qc_to_matrix_sync import sync_qc_stage_to_matrix
 router = APIRouter(prefix="/api/qc", tags=["qc"])
 notif_router = APIRouter(prefix="/api/qc-notifications", tags=["qc-notifications"])
 
@@ -1192,7 +1198,13 @@ VALID_QC_STATUSES = {"pending", "pass", "fail"}
 
 
 @router.patch("/run/{run_id}/item/{item_id}")
-async def update_qc_item(run_id: str, item_id: str, update: QCItemUpdate, user: dict = Depends(get_current_user)):
+async def update_qc_item(
+    run_id: str,
+    item_id: str,
+    update: QCItemUpdate,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     db = get_db()
 
     if update.status is None and update.note is None:
@@ -1279,6 +1291,52 @@ async def update_qc_item(run_id: str, item_id: str, update: QCItemUpdate, user: 
     })
 
     updated = await db.qc_items.find_one({"id": item_id}, {"_id": 0})
+
+    # #503 — best-effort matrix sync via FastAPI BackgroundTasks. Runs
+    # AFTER the HTTP response is sent → QC client doesn't block on
+    # sync's 2-3 DB ops (~100-300ms saved per item update). Wrapped in
+    # try/except so any sync failure is logged-only and never affects
+    # the QC write. T9 verifies this protection.
+    stage_id_for_sync = item["stage_id"]
+    unit_id_for_sync = item.get("unit_id") or run.get("unit_id")
+    project_id_for_sync = run["project_id"]
+    actor_for_sync = {"id": user["id"], "name": _actor_name(user)}
+
+    async def _run_sync():
+        try:
+            if not unit_id_for_sync:
+                return
+            tpl_stage = next(
+                (s for s in tpl["stages"] if s["id"] == stage_id_for_sync), {}
+            )
+            stage_scope = tpl_stage.get("scope", "floor")
+            stage_items = await db.qc_items.find(
+                {
+                    "run_id": run_id,
+                    "stage_id": stage_id_for_sync,
+                    "unit_id": unit_id_for_sync,
+                },
+                {"_id": 0},
+            ).to_list(500)
+            stage_closed = run.get("stage_statuses", {}).get(
+                stage_id_for_sync
+            ) == "approved"
+            await sync_qc_stage_to_matrix(
+                db,
+                project_id=project_id_for_sync,
+                unit_id=unit_id_for_sync,
+                stage_id=stage_id_for_sync,
+                actor=actor_for_sync,
+                qc_items=stage_items,
+                stage_closed=stage_closed,
+                stage_scope=stage_scope,
+            )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync failed for stage_id={stage_id_for_sync}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync)
     return updated
 
 
@@ -2286,7 +2344,13 @@ class ApproveRejectBody(BaseModel):
 
 
 @router.post("/run/{run_id}/stage/{stage_id}/approve")
-async def approve_stage(run_id: str, stage_id: str, body: ApproveRejectBody, user: dict = Depends(get_current_user)):
+async def approve_stage(
+    run_id: str,
+    stage_id: str,
+    body: ApproveRejectBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     db = get_db()
 
     run = await db.qc_runs.find_one({"id": run_id}, {"_id": 0})
@@ -2367,6 +2431,46 @@ async def approve_stage(run_id: str, stage_id: str, body: ApproveRejectBody, use
         logger.error(f"[QC] Failed to create notifications for approve: {e}")
 
     logger.info(f"[QC] Stage {stage_id} approved in run {run_id} by user {user['id']}")
+
+    # #503 — multi-cell matrix sync via BackgroundTasks. Stage closure
+    # affects every unit-scope item in this stage; enumerate distinct
+    # unit_ids and sync each cell with stage_closed=True.
+    project_id_for_sync = run["project_id"]
+    actor_for_sync = {"id": user["id"], "name": actor}
+
+    async def _run_sync_approve():
+        try:
+            tpl_stage = next(
+                (s for s in tpl["stages"] if s["id"] == stage_id), {}
+            )
+            stage_scope = tpl_stage.get("scope", "floor")
+            if stage_scope != "unit":
+                return
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id},
+                {"_id": 0},
+            ).to_list(2000)
+            unit_ids = list({i.get("unit_id") for i in items_all if i.get("unit_id")})
+            if not unit_ids and run.get("unit_id"):
+                unit_ids = [run["unit_id"]]
+            for uid in unit_ids:
+                unit_items = [i for i in items_all if i.get("unit_id") == uid]
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id,
+                    actor=actor_for_sync,
+                    qc_items=unit_items,
+                    stage_closed=True,
+                    stage_scope=stage_scope,
+                )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync (approve) failed for stage_id={stage_id}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync_approve)
     return {"status": "approved", "stage_id": stage_id}
 
 
@@ -2783,6 +2887,7 @@ async def override_approve_stage(
     run_id: str,
     stage_id: str,
     body: OverrideApproveBody,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
     """PM Override — close a stage WITHOUT per-item validation.
@@ -2887,6 +2992,43 @@ async def override_approve_stage(
         f"by user {user['id']}, reason: {reason[:50]}"
     )
 
+    # #503 — multi-cell matrix sync (override path). Same pattern as
+    # approve_stage but stage_closed=True regardless of item statuses
+    # (override-close marks every item "pass" via update_many above,
+    # so the mapping yields "completed" for all affected cells).
+    project_id_for_sync = project_id
+    actor_for_sync = {"id": user["id"], "name": actor}
+
+    async def _run_sync_override():
+        try:
+            stage_scope = tpl_stage.get("scope", "floor")
+            if stage_scope != "unit":
+                return
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id},
+                {"_id": 0},
+            ).to_list(2000)
+            unit_ids = list({i.get("unit_id") for i in items_all if i.get("unit_id")})
+            if not unit_ids and run.get("unit_id"):
+                unit_ids = [run["unit_id"]]
+            for uid in unit_ids:
+                unit_items = [i for i in items_all if i.get("unit_id") == uid]
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id,
+                    actor=actor_for_sync,
+                    qc_items=unit_items,
+                    stage_closed=True,
+                    stage_scope=stage_scope,
+                )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync (override) failed for stage_id={stage_id}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync_override)
     return {"status": "approved", "stage_id": stage_id, "via_override": True}
 
 

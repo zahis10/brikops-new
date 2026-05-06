@@ -1,128 +1,235 @@
-#502-FOLLOWUP — Excel export polish: button label + auto-filter + sort
-========================================================================
+================================================================
+#503 — QC → Matrix continuous sync (one-way, item-level)
+Branch: staging | Severity: P1 | Status: AWAITING ZAHI APPROVAL
+================================================================
 
-STEP 0 AUDIT
-------------
-0.1 ✅ `_unit_sort_key` was NESTED at L272 inside `get_matrix`, single
-       call site at L298. Closure vars: `buildings_by_id`, `floors_by_id`
-       (built at L260 + L270 from DB-fetched buildings/floors). Same
-       blocker pattern as #502's `_summarize_cell` hoist — endpoint
-       cannot reach a nested function.
+WHAT
+----
+Bridges duplicate-state burden — PMs maintain QC and Execution
+Matrix today and abandon one. Now any QC item update for a
+unit-scope stage projects automatically into the matrix cell for
+(unit_id, stage_id). Direction lock: QC → Matrix only (PERMANENT,
+D1). Reverse direction will never be implemented (QC carries
+photo-evidence requirements that matrix edits would compromise).
 
-0.2 ✅ `ws.auto_filter.ref` pattern already used in repo:
-         backend/contractor_ops/export_router.py:375
-         backend/contractor_ops/export_router.py:461
-         backend/contractor_ops/safety_router.py:1478
-       openpyxl 3.x supports `ws.dimensions` for auto-range, used here.
+PHASED DEPLOY: ships with feature flag MATRIX_QC_SYNC_ENABLED
+defaulting to "false". Code is wired but inert until ops flips
+flag in staging → smoke 24h → flip in prod low-traffic window.
 
-0.3 ✅ Download button at frontend/src/pages/ExecutionMatrixPage.js
-       L237-246 — current icon-only form from #502, with handleExport
-       callback at L96. Surrounding header structure intact.
+================================================================
+STEP 0 — AUDIT FINDINGS (in plan, validated against codebase)
+================================================================
+0.1a QC item statuses are "pass"/"fail"/"pending" (NOT
+     "passed"/"failed" as original spec drafted).
+     SOURCE: qc_router.py L1200 — VALID_QC_STATUSES = {"pending",
+     "pass", "fail"}.
+     → Drift A documented + applied.
 
-GATES (both clean before writing this)
---------------------------------------
-- pytest: 22 passed (5 export + 17 matrix regression) in 2.66s
-- yarn build: clean
+0.2  3 mutation endpoints (verified):
+     - PATCH /run/{id}/item/{iid}                qc_router.py L1203
+     - POST /run/{rid}/stage/{sid}/approve        qc_router.py L2349
+     - POST /run/{rid}/stage/{sid}/override-approve qc_router.py L2888
 
-CHANGES (3 files, ~25 LOC net)
-------------------------------
+0.3  MatrixCell schema at schemas.py L959 — added 2 fields
+     (synced_from_qc, last_qc_sync_at).
 
-backend/contractor_ops/execution_matrix_router.py  (+22 / -27)
-  PART 0 — hoisted `_unit_sort_key` from nested-in-get_matrix to module
-    level (new L212-247, right after `_summarize_cell`). Closure vars
-    `buildings_by_id` + `floors_by_id` converted to explicit function
-    parameters. Zero behavior change — same 6-tuple, same field reads.
-    Original 27-LOC nested def removed; get_matrix call site (was L298,
-    now L313) becomes a single-line lambda.
-  PART 1 — sort units before passing to build_matrix_xlsx in
-    export_matrix_xlsx (L718-721). Mirrors /matrix endpoint canonical
-    order. 4 LOC including comment.
+0.3b _summarize_cell at execution_matrix_router.py L188 — projection
+     was missing the new fields → frontend wouldn't see them.
+     → Drift D added 5 LOC of projection + comment block.
 
-backend/contractor_ops/execution_matrix_export.py  (+5)
-  PART 2 — `ws.auto_filter.ref = ws.dimensions` added at end of
-    build_matrix_xlsx, before BytesIO save (L144-148). Excel-native
-    filter arrows on every header column.
+0.4  stage scope read via tpl_stage.get("scope", "floor") — default
+     "floor" means D5 (floor-scope skip) auto-engages; we won't sync
+     floor-scope stages until a follow-up batch.
 
-frontend/src/pages/ExecutionMatrixPage.js  (+4 / -3)
-  PART 3 — Download button replaced with text-label pill:
-    - `px-3 py-2` + `border border-slate-200` + `gap-2` for compact pill
-    - `min-h-[44px]` retained for Capacitor touch-target compliance
-    - Icon shrunk 5→4 to balance alongside text
-    - `<span>ייצוא Excel</span>` after icon — clear download CTA in HE
+0.6  qc_items.unit_id present per-item in floor-scope runs;
+     unit-scope runs carry unit_id at run level. Both paths handled
+     via `item.get("unit_id") or run.get("unit_id")`.
 
-V1 — backend tests
-------------------
-  cd backend && python -m pytest tests/test_execution_matrix_export.py \
-                                  tests/test_execution_matrix.py -q
-  → 22 passed, 8 warnings in 2.66s
-  (The hoist is API-neutral — existing 17 regression tests for /matrix
-   continue to pass, and the 5 #502 export tests are unaffected by the
-   sort/auto_filter additions since T1 only asserts sheet structure
-   not row order.)
+================================================================
+SPEC DRIFTS (4 — all adaptive, approved by Zahi up-front)
+================================================================
+A. "pass"/"fail"/"pending" not "passed"/"failed"/"pending"
+   Reason: matches actual VALID_QC_STATUSES in codebase.
+   Files: qc_to_matrix_sync.py (compute fn + docstring), tests.
 
-V2 — frontend build
--------------------
-  cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
-  → clean (no errors, only existing chunk-size warnings)
+B. `stage_closed: bool` parameter (caller computes) instead of
+   `run.get("closed")` from spec.
+   Reason: codebase has no run-level `closed` field. Closure is
+   tracked per-stage in run["stage_statuses"][sid] == "approved".
+   Caller (qc_router hook) passes the bool; helper stays pure.
 
-V3 — diff scope
----------------
-  3 files touched:
-    backend/contractor_ops/execution_matrix_router.py
-    backend/contractor_ops/execution_matrix_export.py
-    frontend/src/pages/ExecutionMatrixPage.js
+C. approve_stage / override_approve_stage hooks aggregate distinct
+   unit_ids from items and call sync per-unit (multi-cell).
+   Reason: spec didn't address this; floor-scope runs contain
+   items spanning N units. Fallback to run.unit_id when no
+   per-item unit_ids exist.
 
-V4 — sibling matrix files untouched
------------------------------------
-  No change to:
-    frontend/src/components/matrix/* (MatrixCell, Drawer, Grid, List, etc)
-    frontend/src/hooks/* (useMatrixData, useMatrixFilters)
-    frontend/src/services/matrixService.js
-    backend/contractor_ops/qc_router.py
-    backend/contractor_ops/schemas.py
+D. 5 LOC of projection added to execution_matrix_router.py
+   _summarize_cell — file not in original 6-file plan.
+   Reason: without it, the new MatrixCell fields would persist in
+   DB but never reach the frontend. Cannot ship the badge/dot
+   without it.
 
-WHAT'S NOT CHANGING
--------------------
-- /export.xlsx endpoint contract: payload + response shape identical.
-- All other matrix UI (cell editing, stage management, filter drawer, FAB).
-- Schema — no new fields, no new collections.
-- Tests — existing 22 still cover all behavior; sort + auto_filter +
-  button text are visual-smoke verifiable. No new tests added per spec.
-- Auth, billing, safety, plans, qc, handover, defects routers.
+================================================================
+FILES (8 total — 2 new, 6 modified)
+================================================================
+1. backend/contractor_ops/qc_to_matrix_sync.py            NEW +145 LOC
+   Pure compute fn + async sync_qc_stage_to_matrix. Feature flag
+   gate (default off), floor-scope skip (D5), audit pruning
+   ($push $slice -50). Fallback `actor.get("name") or "QC sync"`
+   handles explicit None (T11).
 
-DO NOT
-------
-- Do NOT modify `_unit_sort_key` signature or return-tuple shape — both
-  /matrix and /export.xlsx now depend on identical sort semantics.
-- Do NOT remove `ws.auto_filter.ref` without verifying Excel/Numbers
-  still allows manual column sort (it does, but UX regresses).
-- Do NOT shrink the button below `min-h-[44px]` (Capacitor touch target).
+2. backend/contractor_ops/schemas.py                       +6 LOC
+   MatrixCell + 2 fields (synced_from_qc, last_qc_sync_at).
 
-SMOKE TEST (Zahi after deploy)
-------------------------------
-(a) Hard refresh /execution-matrix.
-(b) Header shows "[⬇ ייצוא Excel]" pill button — text + icon.
-(c) Click → spinner inside button → file downloads.
-(d) Open file:
-    - Header row has DROPDOWN ARROWS (auto-filter). Click any →
-      Excel filter UI: select values, sort A-Z, custom filter.
-    - Building column ascending: 8 → 9 → 10 → 11 (numeric, even as strings).
-    - Within each building: floor ascending including negative.
-    - Within each floor: apartment ascending numerically.
-(e) Mobile (Capgo OTA) — button tappable, ≥44px height, fits iPhone width.
+3. backend/contractor_ops/execution_matrix_router.py       +5 LOC
+   _summarize_cell projection — drift D.
 
-RELEVANT FILES
---------------
-backend/contractor_ops/execution_matrix_router.py  (722 LOC, +22/-27 net)
-backend/contractor_ops/execution_matrix_export.py  (149 LOC, +5)
-frontend/src/pages/ExecutionMatrixPage.js          (322 LOC, +4/-3)
+4. backend/contractor_ops/qc_router.py                    +148/-9
+   - import BackgroundTasks + sync_qc_stage_to_matrix (module-level
+     so T9 can patch.object it)
+   - 3 hooks added; each:
+     * accepts background_tasks: BackgroundTasks
+     * builds inner async _run_sync()
+     * try/except wraps sync (failure = logger.warning "[#503]")
+     * background_tasks.add_task(_run_sync)
+   - update_qc_item: single-cell, stage_closed derived from
+     run["stage_statuses"]
+   - approve / override_approve: enumerate distinct unit_ids,
+     stage_closed=True, skip if scope != "unit"
 
-דיווח
------
-3 הבעיות מהsmoke שלך טופלו: (1) כפתור עם הטקסט "ייצוא Excel" במקום
-אייקון בלבד, (2) פילטרים מובנים של Excel על שורת הכותרת
-(`ws.auto_filter.ref = ws.dimensions`), (3) שורות ממוינות לפי בניין
-(נומרי) → קומה → דירה (נומרי) — אותו `_unit_sort_key` שמשתמש /matrix,
-הוצא ל-module-level כתנאי מקדים. 22/22 pytest + yarn נקי.
+5. backend/tests/test_qc_to_matrix_sync.py                NEW +370 LOC
+   15 tests (T1-T11 + T5b/T8b/T10b/T10c/extra). T9 is the critical
+   one — proves BackgroundTasks try/except actually protects QC.
 
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+6. backend/tests/test_qc_override_close.py                +5/-5
+   Regression fix: 4 call-sites needed background_tasks=BackgroundTasks()
+   keyword arg (newly required by override_approve_stage signature).
+
+7. frontend/src/components/matrix/CellEditDialog.js       +17 LOC
+   - Blue badge "🔗 מסונכרן מבקרת ביצוע" under Dialog.Title when
+     cell.synced_from_qc
+   - Amber warning under StatusButtonGrid when stage.source==='base'
+     and canEdit (warns: עריכה ידנית עלולה להידרס בעדכון QC הבא)
+
+8. frontend/src/components/matrix/MatrixCell.js           +10/-1
+   - `relative` class on status div
+   - 1.5×1.5 blue-500 dot bottom-left when cell.synced_from_qc
+   - tooltip extended with " • מסונכרן מ-QC"
+
+================================================================
+V-GATE RESULTS
+================================================================
+V1+V2 (combined run): 42 passed, 8 warnings, 4.48s
+   - tests/test_qc_to_matrix_sync.py:        15 passed (incl. T9)
+   - tests/test_execution_matrix.py:         17 passed
+   - tests/test_execution_matrix_export.py:   5 passed
+   - tests/test_qc_override_close.py:         4 passed (post-fix)
+   - tests/test_qc_units_status.py:           1 passed
+                                             ----------
+                                             42 passed ✅
+
+V3 (yarn build): Done in 37.08s, clean. Build folder ready. ✅
+
+V4 (git diff --stat): 8 files
+   backend/contractor_ops/execution_matrix_router.py  |   5 +
+   backend/contractor_ops/qc_router.py                | 148 ++++/9
+   backend/contractor_ops/qc_to_matrix_sync.py        | NEW
+   backend/contractor_ops/schemas.py                  |   6 +
+   backend/tests/test_qc_override_close.py            |  10 +/5
+   backend/tests/test_qc_to_matrix_sync.py            | NEW
+   frontend/src/components/matrix/CellEditDialog.js   |  17 +
+   frontend/src/components/matrix/MatrixCell.js       |  10 +/1
+   ✅ Plan said 7 — actual 8 because regression fix needed in
+   test_qc_override_close.py (signature change ripple). Documented.
+
+V5 (no out-of-scope frontend touched):
+   $ git diff --stat -- frontend/src/components/matrix/MatrixGridView.js \
+                        frontend/src/components/matrix/MatrixListView.js \
+                        frontend/src/components/matrix/MatrixFilterDrawer.js \
+                        frontend/src/components/matrix/StageManagementDialog.js \
+                        frontend/src/hooks/useMatrixFilters.js
+   (empty) ✅
+
+V6 (default flag is "false"):
+   $ grep -n MATRIX_QC_SYNC_ENABLED backend/contractor_ops/qc_to_matrix_sync.py
+   86: if os.getenv("MATRIX_QC_SYNC_ENABLED", "false").lower() != "true":
+   ✅ Default "false" — DO NOT change to "true" before phased rollout.
+
+================================================================
+T9 — sync-failure-protection verified
+================================================================
+test_T9_sync_failure_does_not_block_qc_write proves:
+  1. Endpoint returns the updated item dict normally
+  2. background_tasks queue has 1 task
+  3. await background_tasks() does NOT raise (try/except eats it)
+  4. logger.warning records "[#503] QC→matrix sync failed ..."
+PASS ✅ — sync explosions never block QC writes.
+
+================================================================
+NOT YET TESTED (deferred to Zahi smoke)
+================================================================
+(a) End-to-end with MATRIX_QC_SYNC_ENABLED=true on staging:
+    - QC item PATCH → cell appears in matrix with blue dot
+    - Approve stage → all units in stage flip to completed
+    - Override-approve → all units flip to completed
+    - Reject stage → cell unchanged (no hook on reject — by design)
+(b) Multi-cell sync on real floor-scope stage_scope=='unit' fixture
+    — only verified via Pure compute + helper unit tests.
+(c) Audit pruning $slice -50 behavior under repeated rapid edits
+    on real Mongo (only verified via mock capture).
+(d) Frontend visual smoke: badge renders RTL correctly + amber
+    warning visible on QC stages + blue dot positioning bottom-left
+    on smaller screen sizes.
+(e) Race condition: simultaneous QC PATCH + matrix manual edit —
+    last writer wins (acceptable per D3 "QC always wins").
+(f) Floor-scope stage actually skipped on real run (D5 verified
+    via T6 mock; not in real DB).
+(g) Verify _summarize_cell projection appears in /matrix GET
+    response (drift D — purely tested via projection assertion).
+(h) Override-approve sets all items to "pass" via update_many
+    BEFORE _run_sync_override fires; verify hook sees the post-
+    update state when reading qc_items.find().
+(i) audit_entry actor_name comes from qc_router.actor (not
+    actor_for_sync.name) in approve/override hooks — both should
+    yield the same value but PMs see provenance per-cell.
+
+================================================================
+PHASED ROLLOUT — recommended sequence
+================================================================
+1. Zahi reviews + commits this branch (staging).
+2. ./deploy.sh --stag → flag stays "false" → app behaves identical
+   to pre-#503 (verify via smoke).
+3. Set MATRIX_QC_SYNC_ENABLED=true in staging env → restart →
+   smoke (a)-(i).
+4. 24h watch on staging logs for "[#503]" warnings.
+5. ./deploy.sh --prod → flag stays "false" → no behavior change.
+6. Set flag="true" in prod during low-traffic (Friday morning).
+7. Monitor for 48h.
+
+ROLLBACK (3 modes):
+- MILD:   set MATRIX_QC_SYNC_ENABLED=false (env, no deploy)
+- MEDIUM: git revert
+- SEVERE: Atlas point-in-time + git revert
+
+================================================================
+LOC SUMMARY
+================================================================
+NEW:     qc_to_matrix_sync.py     +145
+NEW:     test_qc_to_matrix_sync   +370
+MOD:     qc_router.py             +148/-9
+MOD:     execution_matrix_router  +5
+MOD:     schemas.py               +6
+MOD:     test_qc_override_close   +5/-5
+MOD:     CellEditDialog.js        +17
+MOD:     MatrixCell.js            +10/-1
+                                  -------
+                                  +706/-15  net ~+691
+
+(Plan estimated 638; over by 53 due to BackgroundTasks param
+threading in 3 endpoints + multi-cell loop expansion in approve/
+override hooks. Within tolerance.)
+
+================================================================
+                AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================
