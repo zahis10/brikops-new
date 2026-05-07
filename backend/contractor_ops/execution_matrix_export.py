@@ -28,6 +28,7 @@ from openpyxl.utils import get_column_letter
 STATUS_LABELS = {
     "completed":      "הושלם",
     "partial":        "בוצע חלקית",
+    "ready_for_work": "מוכן לעבודה",  # #503-followup-3
     "in_progress":    "בתהליך",
     "pending_review": "ממתין לאישור",  # #503-followup-2
     "not_done":       "לא בוצע",
@@ -38,6 +39,7 @@ STATUS_LABELS = {
 STATUS_FILLS = {
     "completed":      PatternFill("solid", fgColor="D1FAE5"),  # green-100
     "partial":        PatternFill("solid", fgColor="FEF3C7"),  # amber-100
+    "ready_for_work": PatternFill("solid", fgColor="CFFAFE"),  # cyan-100 (#503-followup-3)
     "in_progress":    PatternFill("solid", fgColor="DBEAFE"),  # blue-100
     "pending_review": PatternFill("solid", fgColor="FFEDD5"),  # orange-100 (#503-followup-2)
     "not_done":       PatternFill("solid", fgColor="FEE2E2"),  # red-100

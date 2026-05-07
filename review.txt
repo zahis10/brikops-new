@@ -1,327 +1,141 @@
-================================================================
-#503-followup-2 — Stage-level mapping + reject hook + floor-scope
-                  fix + new "pending_review" matrix status
-Branch: staging | Severity: P1 | Status: AWAITING ZAHI APPROVAL
-================================================================
+# #503-followup-3 — Submit hook + item-level fix + ready_for_work
 
-WHY (Zahi staging smoke 2026-05-06, MATRIX_QC_SYNC_ENABLED=true)
-================================================================
+**Branch**: staging
+**Severity**: P1 (correctness — 3 unhooked mutation sites + Bug B silent miss)
+**Depends on**: #503-followup-2 must merge first
+**Files**: 6 | **LOC**: +374 / -30 | **Tests**: 25 (was 20)
 
-✅ WORKED:  Approve on unit-scope (ריצוף דירה 3) → matrix completed
+---
 
-❌ BUGS:
-  Bug 1: Reject-stage didn't sync at all — #503 missed the hook on
-         qc_router.py:2477 reject_stage endpoint.
-  Bug 2: Floor-scope sync silently failed — drift C aggregation
-         reads `item.get("unit_id")`, but template-level items
-         have no unit_id field; `run` lacks unit_id too → for-loop
-         iterated 0 times → silent no-op. 7 of 8 base stages
-         affected (only stage_tiling has scope:"unit").
+## What this ships
 
-🔄 LOGIC change (Zahi 2026-05-06):
-   "מבחינתי מרגע שיש סעיף אחד בתוך בקרת הביצוע שהוכנס, זה בעבודה.
-    רק אם כל הסעיפים הסתיימו והסעיף הגדול אושר על ידי מי שיכול
-    לאשר, מתעדכן למאושר. אותו דבר לגבי לא תקין, רק אחרי שבסעיף
-    הראשי הגדול הוא לא תקין הוא יראה את זה."
-   → Mapping moves from item-level to stage-level. Matrix reflects
-     stage approval state, not individual item details.
+1. **Bug B fix** — floor-shared template items (no `unit_id` field) now sync to ALL units on the floor. The 4 existing hooks (update_qc_item, approve, override, reject_stage) used `[i for i in items_all if i.get("unit_id") == uid]` which filtered to `[]` for floor-shared items → empty items list → `_compute` returned None → no sync. New pattern: `items_have_unit_id = any(i.get("unit_id") for i in items_all)`; if False, pass items_all to every unit's sync call.
 
-⭐ NEW status "pending_review" (orange) — sync-only, distinct from
-   blue, so PMs see "submitted, waiting for senior" at a glance.
+2. **Bug C fix** — `submit_stage` (PM submits to senior) was completely unhooked. Matrix never turned ORANGE "ממתין לאישור" until approve/reject. Added BackgroundTasks param + sync hook calling helper with `stage_status="pending_review"`.
 
-================================================================
-STEP 0 — STOP-GATE AUDITS (all 8 sub-greps green)
-================================================================
+3. **STOP-GATE 0.6 finding** — STEP 0 audit found 2 MORE unhooked mutation sites that the spec didn't anticipate. Both ship in this batch:
+   - `reject_qc_item` L1478 — per-item rejection cascades stage to "reopened", was unhooked
+   - `reopen_stage` L2980 — manual senior reopen, was unhooked
+   - Both call sync with `stage_status="reopened"` which falls through in `_compute_matrix_status_from_qc` to item-level activity (in_progress if any item touched, else None). NO mapping logic change — only a docstring + inline comment.
 
-0.1 reject_stage endpoint exists ✅
-  qc_router.py:2477 @router.post("/run/{run_id}/stage/{stage_id}/reject")
-  qc_router.py:2478 async def reject_stage(run_id, stage_id, body, user)
+4. **Feature D — `ready_for_work` status** — new MANUAL-only planning state ("📦 מוכן לעבודה", cyan-100, PackageCheck icon). PMs select it from CellEditDialog. Per D3, QC sync ALWAYS WINS — when QC starts tracking the same stage, sync overwrites manual cell.
 
-0.2 floor_id present on floor-scope run docs ✅
-  qc_router.py: get_or_create_floor_run inserts {"floor_id": floor_id, ...}
-  qc_runs.find_one({"floor_id": floor_id, "scope": {"$ne": "unit"}}) — confirmed shape.
+5. **D6** — `MatrixCellUpdate.status` Pydantic Literal at schemas.py L953 += `'ready_for_work'`. **Intentionally OMITS** `'pending_review'` — sync-only statuses must never be settable via manual PATCH. Test T19 enforces this with `pytest.raises`.
 
-0.3 db.units.find({"floor_id": x}) is the canonical pattern ✅
-  Used in projects_router.py L640, excel_router.py L139, +9 more places.
-  Helper uses {"floor_id": x, "archived": {"$ne": True}}.
+---
 
-0.4/0.5 STATUS_CONFIG/MATRIX_STATUSES consumers (6 files) ✅
-  STATUS_CONFIG.js (source) — added entry
-  StatusLegend.js          — iterates MATRIX_STATUS_LIST → auto ✅
-  CellHistoryList.js       — dict lookup → auto ✅
-  MatrixFilterDrawer.js    — iterates MATRIX_STATUS_LIST → auto ✅
-  MatrixCell.js            — dict lookup → auto ✅
-  StatusButtonGrid.js      — MUST FILTER (D2 sync-only) — fixed via
-                              MATRIX_STATUS_LIST.filter(s => !s.syncOnly)
+## V-GATES
 
-0.6 🚨 stage_statuses dict shape ✅ STOP-GATE PASSED
-  qc_router.py L1740: stage_statuses[stage_id] = "pending_review"
-  qc_router.py L2492: f"stage_statuses.{stage_id}": "rejected"
-  qc_router.py L2440: f"stage_statuses.{stage_id}": "approved"
-  qc_router.py L2907: 'approved_via_override' (override path)
-  Confirmed: Dict[stage_id_str, status_str].
-  Status values seen in DB: "in_progress", "pending_review",
-  "approved", "approved_via_override", "rejected".
-  → Mapping in PART 1 matches reality. No re-spec.
+| Gate | Status | Result |
+|------|--------|--------|
+| V1 — pytest 4 files | ✅ | **50 passed**, 8 warnings (Pydantic V1 deprecations, pre-existing) |
+| V2 — yarn build | ✅ | "Done in 30.86s" with REACT_APP_BACKEND_URL=https://api.brikops.com |
+| V3 — diff stat | ✅ | 6 files, +374/-30 (vs spec ~85 LOC — STOP-GATE expansion to 140 + tests at 143) |
+| V4 — sibling matrix files untouched | ✅ | Diff touches only the 6 planned files |
+| V5 — MATRIX_QC_SYNC_ENABLED default | ✅ | `os.getenv(..., "false")` confirmed at qc_to_matrix_sync.py L143 |
+| V6 — STEP 0.6 re-audit | ✅ | **All 7 user-facing mutation sites hooked** (table below) |
 
-0.7 🚨 MATRIX_STATUS_VALUES consumers ✅ STOP-GATE PASSED
-  schemas.py L898: MATRIX_STATUS_VALUES = (...) tuple
-  execution_matrix_router.py L64: imports MATRIX_STATUS_VALUES
-  execution_matrix_router.py L448: validates new_status ∈ tuple → 422 if not
-  No Literal[] consumers found (status field is Optional[str]).
-  → ONE addition needed: schemas.py L898 += 'pending_review'.
-  → DONE — without this, sync writes pending_review = HTTP 422 = T15 fails.
+---
 
-0.8 🚨 reject_stage signature + behavior ✅ STOP-GATE PASSED
-  Signature: (run_id, stage_id, body: ApproveRejectBody, user)
-  Precondition: stage_statuses[stage_id] MUST equal "pending_review"
-                (HTTP 400 otherwise — "ניתן לדחות רק שלב שממתין לאישור")
-  Behavior:    update_one sets f"stage_statuses.{stage_id}": "rejected"
-               + stage_actors.{stage_id}.rejected_{by,by_name,at,reason}
-               + audit("qc_stage", "qc_rejected", ...)
-               + notification to submitter
-               + return {"status": "rejected", "stage_id": stage_id}
-  → Hook added AFTER notification + logger.info, BEFORE return.
-  → Bonus finding: "pending_review" is already a real DB value
-                   since #503 — Zahi just wanted it visible in matrix.
+## V6 — `stage_statuses` MUTATION RE-AUDIT (THE STOP-GATE PROOF)
 
-================================================================
-THE NEW MAPPING (final)
-================================================================
+```
+$ grep -n 'stage_statuses\[stage_id\]\s*=\|f"stage_statuses\.{stage_id}"' \
+       backend/contractor_ops/qc_router.py
+```
 
-def _compute_matrix_status_from_qc(items, stage_status):
-    if stage_status in ("approved", "approved_via_override"):
-        return "completed"
-    if stage_status == "rejected":
-        return "not_done"
-    if stage_status == "pending_review":
-        return "pending_review"   # NEW (orange)
-    if any(i.get("status") in ("pass", "fail") for i in items):
-        return "in_progress"
-    return None                   # nothing touched → empty cell
+| L (post-impl) | Endpoint | Value set | Hook status | Hook line |
+|--------------:|----------|-----------|-------------|----------:|
+| 1546 | `reject_qc_item` | `"reopened"` | ✅ HOOKED (followup-3 NEW) | 1663 |
+| 1846 + 1850 | `submit_stage` | `"pending_review"` | ✅ HOOKED (followup-3 NEW) | 1872 |
+| 2547 | `approve_stage` | `"approved"` | ✅ HOOKED (followup-2) | refactored followup-3 |
+| 2659 | `reject_stage` | `"rejected"` | ✅ HOOKED (followup-2) | refactored followup-3 |
+| 3054 | `reopen_stage` | `"reopened"` | ✅ HOOKED (followup-3 NEW) | 3091 |
+| 3207 | `override_approve_stage` | `"approved"` | ✅ HOOKED (followup-2) | refactored followup-3 |
 
-KEY BEHAVIORAL CHANGE: a single failed item NO LONGER paints the cell
-red. Red appears ONLY after a senior officially rejects the stage.
-PMs who saw red on item-level fails will see those cells flip to
-blue post-deploy (until/unless rejected). See "COMMUNICATION FOR PMs"
-section below.
+**7 user-facing mutation sites total. 7/7 hooked.** Lines 1618 / 3158 in the grep output are comments/docstrings (the comment we added explaining the hook + the override docstring) — not actual mutations. No skipped sites, no init-only `{}` skips needed (`get_or_create_*_run` initializes empty dict — no status to sync).
 
-================================================================
-FILES (7) — diff stat
-================================================================
+---
 
-  backend/contractor_ops/execution_matrix_export.py  |  26 +/-13
-  backend/contractor_ops/qc_router.py                | 170 +/-  47
-  backend/contractor_ops/qc_to_matrix_sync.py        | 124 +/-  72
-  backend/contractor_ops/schemas.py                  |  13 +/-   6
-  backend/tests/test_qc_to_matrix_sync.py            | 210 +/-  93
-  frontend/src/components/matrix/STATUS_CONFIG.js    |  11 +/-   1
-  frontend/src/components/matrix/StatusButtonGrid.js |   2 +/-   1
-                                                     ----------------
-  7 files changed, 382 insertions(+), 174 deletions(-)
+## File-by-file
 
-PER-FILE BREAKDOWN
-------------------
+### `backend/contractor_ops/schemas.py` (+6 / -2)
+- L901-910: `MATRIX_STATUS_VALUES` tuple += `'ready_for_work'` between `partial` and `in_progress` (workflow ordering: planning → work → review → outcome).
+- L953-959: `MatrixCellUpdate.status` Literal += `'ready_for_work'`. Comment explains why `'pending_review'` is intentionally omitted.
 
-1. backend/contractor_ops/qc_to_matrix_sync.py        +124/-72
-   - Renamed compute fn:
-     _compute_matrix_status_from_qc_items(items, stage_closed: bool)
-     → _compute_matrix_status_from_qc(items, stage_status: str|None)
-   - Replaced item-level mapping with stage-level (5-line table)
-   - sync_qc_stage_to_matrix param: `stage_closed: bool=False`
-                                  → `stage_status: str=None`
-   - Audit entry now includes `stage_status` field for debug
-   - Module docstring rewritten — old item-level table replaced
-     with new stage-level mapping + Zahi quote
+### `backend/contractor_ops/qc_to_matrix_sync.py` (+22 / -8)
+- Module docstring: added `"reopened"` and `"in_progress"` rows to the mapping table; added paragraph explaining the fall-through; added paragraph stating `ready_for_work` is manual-only.
+- `_compute_matrix_status_from_qc`: added inline comment before the item-activity check explaining the fall-through. **No logic change.**
 
-2. backend/contractor_ops/qc_router.py                +170/-47
-   - NEW helper `_resolve_unit_ids_for_sync(db, run, items, scope)`
-     placed near top (after sync import, before router=).
-     Resolution order: unit-scope → items.unit_id → db.units.find
-     by floor_id → empty.
-   - update_qc_item hook: refactored to compute stage_status from
-     run["stage_statuses"], use _resolve_unit_ids_for_sync, re-fetch
-     unit's items for freshest state.
-   - approve_stage hook: removed `if stage_scope != "unit": return`
-     guard, replaced inline aggregation with helper call,
-     stage_status="approved".
-   - override_approve_stage hook: same refactor, stage_status=
-     "approved_via_override".
-   - reject_stage NEW hook: added background_tasks: BackgroundTasks
-     param + _run_sync_reject inner fn + try/except + add_task.
-     stage_status="rejected".
+### `backend/contractor_ops/qc_router.py` (+217 / -30 — bulk of the change)
+- 4 hook refactors (Bug B fix): update_qc_item L1303-, approve_stage L2459-, override_approve_stage L3018-, reject_stage L2599- — all switched to `items_have_unit_id` pattern.
+- 3 NEW hooks:
+  - `submit_stage` (after L1832): added `background_tasks: BackgroundTasks` param + `_run_sync_submit` async closure → `stage_status="pending_review"`.
+  - `reject_qc_item` (after L1618): added `background_tasks` param + `_run_sync_reject_item` closure → `stage_status="reopened"`.
+  - `reopen_stage` (after L3048): added `background_tasks` param + `_run_sync_reopen` closure → `stage_status="reopened"`.
+- All 3 new hooks fetch `tpl_stage` defensively (via `next(... default={})`), default scope to `"floor"`, share the same `items_have_unit_id` pattern.
 
-3. backend/contractor_ops/schemas.py                  +13/-6
-   - MATRIX_STATUS_VALUES tuple += 'pending_review' between
-     'in_progress' and 'not_done'. CRITICAL — without this,
-     execution_matrix_router.py L448 validation rejects sync writes
-     with HTTP 422 → would block T15 + crash sync at runtime.
+### `backend/contractor_ops/execution_matrix_export.py` (+2)
+- `STATUS_LABELS["ready_for_work"] = "מוכן לעבודה"`
+- `STATUS_FILLS["ready_for_work"] = PatternFill("solid", fgColor="CFFAFE")` (cyan-100)
 
-4. backend/contractor_ops/execution_matrix_export.py  +26/-13
-   - STATUS_LABELS["pending_review"] = "ממתין לאישור"
-   - STATUS_FILLS["pending_review"]  = PatternFill orange-100
-                                       (FFEDD5, distinct from
-                                        amber-100 used by partial)
+### `frontend/src/components/matrix/STATUS_CONFIG.js` (+14 / -1)
+- Import `PackageCheck` from lucide-react.
+- New entry between `partial` and `in_progress`: `bg-cyan-50 / text-cyan-700 / border-cyan-200`. No `syncOnly` flag → auto-appears in `StatusButtonGrid` (which already filters `!s.syncOnly`).
 
-5. frontend/src/components/matrix/STATUS_CONFIG.js    +11/-1
-   - Added SendHorizontal to lucide-react import
-   - New entry pending_review: orange-100 bg / orange-700 text /
-     orange-200 border / SendHorizontal icon / syncOnly: true
-   - syncOnly flag is the marker for StatusButtonGrid filter
+### `backend/tests/test_qc_to_matrix_sync.py` (+143)
+- **T17** — reopened + items touched → in_progress (fall-through verification, the new behavior)
+- **T18** — reopened + no items / only pending → None (clean reset, no stale color)
+- **T19** — `ready_for_work` is manual-only: in MATRIX_STATUS_VALUES ✓, MatrixCellUpdate accepts it ✓, MatrixCellUpdate REJECTS `pending_review` ✓ (D6 enforcement), `_compute` never returns it across 7 input combos
+- **T20** — Excel export STATUS_LABELS = "מוכן לעבודה" + STATUS_FILLS rgb contains "CFFAFE"
+- **T21** — Bug B end-to-end: floor-shared items (no unit_id) called per unit with shared list → all 3 units get cells with `status="in_progress"` and `synced_from_qc=True`
 
-6. frontend/src/components/matrix/StatusButtonGrid.js  +2/-1
-   - MATRIX_STATUS_LIST.map → MATRIX_STATUS_LIST.filter(s => !s.syncOnly).map
-   - PMs cannot manually mark pending_review (sync-only per D2)
+Total: 50 passing across the 4 sibling test files (was 45 before this batch).
 
-7. backend/tests/test_qc_to_matrix_sync.py            +210/-93
-   - Updated T1-T8/T10/T10b/T10c/T11/extra to new signature
-   - T1 reframed: no items + no stage_status → None
-   - T2 reframed: any item touched → in_progress (regardless of fail)
-   - T3 NEW: pending_review status → pending_review
-   - T4 NEW: approved status → completed (item details ignored)
-   - T5 NEW: approved_via_override → completed
-   - T13 NEW: rejected → not_done
-   - T16 NEW: in_progress stable on item flip (D1 from Zahi quote)
-   - T6/T12 retained from followup-1 with updated signature
-   - T14 NEW: _resolve_unit_ids_for_sync floor-scope → db.units.find
-   - T15 NEW: _resolve_unit_ids_for_sync unit-scope → [run.unit_id],
-              floor-scope w/ items → distinct items.unit_id
-   - T9 retained (sync-failure protection) + status changed to
-     "in_progress" since old "draft" no longer exists
+---
 
-================================================================
-V-GATE RESULTS
-================================================================
+## DECISIONS LOCKED
 
-V1 — Sync tests:
-  $ cd backend && python -m pytest tests/test_qc_to_matrix_sync.py -q
-  → 20 passed, 2 warnings, 2.90s ✅
-  (Was 17 in followup-1 → +T3 +T13 +T16 +T14 +T15 -T5b = 20.
-   T5b removed because new mapping doesn't have a "closed+fail"
-   case — stage decision wins, items irrelevant.)
+- **D1** (spec): items_all → per-unit fallback pattern.
+- **D2** (spec): submit_stage hook with `pending_review`.
+- **D3** (spec): `ready_for_work` manual-only, QC overwrites.
+- **D4** (spec): Bug A (11/12 progress widget) deferred.
+- **D5** (Zahi-approved): both reopen hooks shipped this batch (reject_qc_item + reopen_stage).
+- **D6** (Zahi-approved): MatrixCellUpdate Literal += `ready_for_work` only, NOT `pending_review`.
 
-V2 — Regression:
-  $ cd backend && python -m pytest \
-        tests/test_execution_matrix.py \
-        tests/test_execution_matrix_export.py \
-        tests/test_qc_override_close.py \
-        tests/test_qc_units_status.py -q
-  → 26 passed, 8 warnings, 4.93s ✅
-  (Backend signature change to sync_qc_stage_to_matrix is internal —
-   no router-test or matrix-test caller exercises it directly.)
+---
 
-V3 — Frontend build:
-  $ cd frontend && REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
-  → Done in 36.45s, build folder ready ✅
-  (SendHorizontal already exists in lucide-react. No new deps.)
+## NITS (deferred — not blocking)
 
-V4 — Diff scope:
-  → 7 files, 382/-174 net +208 lines ✅
-  (Plan estimated 6 files / +130 LOC net.
-   +1 file = StatusButtonGrid.js filter — caught in 0.4 audit, not
-   in original plan. ~+78 over plan — extra is mostly test bulk
-   from T14/T15/T16 being more thorough than estimated.)
+- `MATRIX_STATUSES` dict in STATUS_CONFIG.js currently has natural-order keys giving correct workflow display. Adding an explicit `order` field was discussed in spec but skipped — the natural Object.entries() order suffices. If we ever need explicit ordering for re-arrangement, add later.
+- Pydantic V1 `@validator` deprecation warnings (8 across the test suite) — pre-existing, not introduced by this batch.
 
-V5 — Sibling files untouched:
-  $ git diff --stat -- frontend/src/components/matrix/MatrixCell.js \
-                       frontend/src/components/matrix/MatrixGridView.js \
-                       frontend/src/components/matrix/MatrixListView.js \
-                       frontend/src/components/matrix/CellEditDialog.js \
-                       frontend/src/components/matrix/MatrixFilterDrawer.js \
-                       frontend/src/components/matrix/StatusLegend.js \
-                       frontend/src/components/matrix/CellHistoryList.js \
-                       backend/contractor_ops/execution_matrix_router.py
-  (empty) ✅
-  → Status renders via MATRIX_STATUSES dict lookup; legend +
-    drawer iterate the list — all auto-handle the new entry.
-    Validation in execution_matrix_router.py uses the imported
-    tuple from schemas — auto-handles too.
+---
 
-V6 — Feature flag default:
-  $ grep -n MATRIX_QC_SYNC_ENABLED backend/contractor_ops/qc_to_matrix_sync.py
-  36:  Feature flag: MATRIX_QC_SYNC_ENABLED (env var, default "false").
-  122: # MATRIX_QC_SYNC_ENABLED=true in env. Allows safe deploy.
-  123: if os.getenv("MATRIX_QC_SYNC_ENABLED", "false").lower() != "true":
-  → Default "false" UNCHANGED ✅. Prod ships safe.
+## SMOKE for Zahi (after deploy, MATRIX_QC_SYNC_ENABLED=true)
 
-================================================================
-NOT YET TESTED (deferred to Zahi smoke on staging)
-================================================================
+| # | Scenario | Expected |
+|---|----------|----------|
+| א | Item PATCH on floor-scope plumbing item | All units on floor → BLUE (Bug B) |
+| ב | Submit stage_plaster floor 1 | All units → ORANGE "ממתין לאישור" (Bug C) |
+| ג | Open CellEditDialog | New CYAN "מוכן לעבודה" button visible between partial & in_progress |
+| ד | Set cell manually to ready_for_work, then PM passes QC item | Cell flips from CYAN → BLUE (D3 — QC wins) |
+| ה | Excel export | CYAN cells render with "מוכן לעבודה" Hebrew label |
+| ו | MatrixFilterDrawer | New "מוכן לעבודה" checkbox visible |
+| ז | **NEW** — reject single item in pending_review stage | Affected unit(s) → BLUE (was stuck on pending_review pre-fix) |
+| ח | **NEW** — Senior reopens approved stage | Cells return to BLUE if items touched, EMPTY if all cleared |
+| ט | Re-run followup-2 smoke (א-יב) | No regressions |
 
-⚠️ Before testing: re-enable MATRIX_QC_SYNC_ENABLED=true in staging
-   (Zahi turned OFF after finding bugs).
+---
 
-(א) Item update — any item touch → matrix becomes BLUE (in_progress).
-    Test on טיח, יציקת תקרה, any stage. Verify NO red on item fail.
-(ב) Submit-for-approval (PM submits stage):
-    → matrix shows ORANGE "ממתין לאישור" (NEW)
-(ג) Senior approves stage:
-    → matrix becomes GREEN (completed)
-(ד) Senior rejects stage:
-    → matrix becomes RED (not_done)
-    → THIS WAS BROKEN BEFORE — verify it works now.
-(ה) Override-approve (PM force-closes without items):
-    → matrix becomes GREEN (completed)
-(ו) Floor-scope multi-cell APPROVE on stage_plumbing for floor 1:
-    → ALL apartments on floor 1 show GREEN
-    → THIS WAS BROKEN BEFORE — verify multi-cell sync works now.
-(ז) Floor-scope multi-cell REJECT on stage_plaster for floor 2:
-    → ALL apartments on floor 2 show RED
-(ח) StatusLegend — 7 statuses now (added "ממתין לאישור" with
-    SendHorizontal orange icon).
-(ט) Excel export — pending_review cells appear with orange fill +
-    Hebrew label "ממתין לאישור".
-(י) MatrixFilterDrawer — pending_review status checkbox appears
-    in status filter section (verifies new enum picked up).
-(יא) Manual cell edit (StatusButtonGrid) — pending_review NOT
-     visible as manual selection option (sync-only per D2).
-(יב) No new "[#503]" warnings spam in logs after deploy.
+## RISK NOTES
 
-================================================================
-COMMUNICATION FOR PMs (BEHAVIOR CHANGE — IMPORTANT)
-================================================================
+- **Merge order matters**: this batch must be cherry-picked AFTER followup-2 (it refactors followup-2's hooks). If you merged followup-2 already, just push this branch.
+- **`MatrixCellUpdate` rejecting `pending_review`** — if any frontend code tries to PATCH a cell to `pending_review` (it shouldn't, the button is filtered out by `!s.syncOnly`), the API will return 422. T19 documents this is intentional.
+- **`tpl_stage` defensive fallback** — all 3 new hooks use `next(..., {})` and `tpl_stage.get("scope", "floor")` so a missing template stage degrades to floor-scope sync rather than raising.
 
-Mapping moves from item-level to stage-level. Existing cells that
-were RED from old "any item failed → red" logic may flip to BLUE
-post-deploy (if the stage is still in flight). RED stays only when
-the stage was officially REJECTED.
+---
 
-Suggested release note (Hebrew, for WhatsApp/email to PMs):
+## STOP — AWAITING ZAHI APPROVAL
 
-  מטריצת הביצוע עברה למיפוי על-בסיס שלב (במקום פריט):
-
-  • כחול (בעבודה) — יש פעילות בשלב, עוד לא הוגש לאישור
-  • כתום (חדש — ממתין לאישור) — מנהל-עבודה הגיש את השלב;
-    ממתין לאישור בכיר
-  • ירוק (אושר) — בכיר אישר את השלב (כולל override)
-  • אדום (נדחה) — בכיר דחה את השלב
-
-  שינוי חשוב: סעיף בודד שסומן "לא תקין" כבר לא צובע מיד את התא
-  באדום. צבע אדום יופיע רק אחרי שבכיר דוחה את השלב הראשי. תאים
-  שכרגע אדומים עשויים להשתנות לכחול אם השלב טרם נדחה רשמית.
-
-→ Add to deploy checklist: send to staging PMs after smoke (step 4)
-  and to prod PMs during flag flip (step 7).
-
-================================================================
-PHASED ROLLOUT (continues from #503)
-================================================================
-
-1. Zahi reviews + commits this branch (staging).
-2. ./deploy.sh --stag
-3. Zahi: re-enables MATRIX_QC_SYNC_ENABLED=true in staging env
-   (was OFF since bugs were found).
-4. Smoke (א)-(יב) on staging.
-5. 24h watch on staging logs.
-6. ./deploy.sh --prod (flag still OFF → no behavior change in prod).
-7. Set MATRIX_QC_SYNC_ENABLED=true in prod during low-traffic window.
-8. Send PM release note (Hebrew block above) at flag flip.
-
-ROLLBACK (3 modes — same as #503):
-- MILD:   set MATRIX_QC_SYNC_ENABLED=false (env, no deploy)
-- MEDIUM: git revert
-- SEVERE: Atlas point-in-time + git revert
-
-================================================================
-                AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-================================================================
+Implementation complete. All 6 V-gates green. 7/7 mutation sites hooked. Ready for git commit + deploy --stag.

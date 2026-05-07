@@ -1351,33 +1351,34 @@ async def update_qc_item(
             # unit's cell (not all units on the floor) — that's the
             # narrow drift-C case where item carries unit_id.
             stage_status = run.get("stage_statuses", {}).get(stage_id_for_sync)
-            items = [item] if item.get("unit_id") else []
-            # Single-unit resolve: prefer item.unit_id; fall back to
-            # run.unit_id; otherwise skip (floor-scope item-update on
-            # template item with no unit_id is rare — wait for stage
-            # decision to sync via approve/reject hooks).
+            # #503-followup-3 Bug B fix — fetch ALL items for the stage
+            # (not just the one we updated). For floor-shared template
+            # items (no unit_id field), every unit on the floor inherits
+            # the same item list and must be synced together.
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id_for_sync},
+                {"_id": 0},
+            ).to_list(2000)
             unit_ids = await _resolve_unit_ids_for_sync(
-                db, run, items, stage_scope
+                db, run, items_all, stage_scope
             )
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
             for uid in unit_ids:
-                # Re-fetch this unit's items for the stage so the
-                # mapping sees the freshest state (item we just
-                # updated PLUS its siblings).
-                unit_items = await db.qc_items.find(
-                    {
-                        "run_id": run_id,
-                        "stage_id": stage_id_for_sync,
-                        "unit_id": uid,
-                    },
-                    {"_id": 0},
-                ).to_list(500)
+                # If items carry unit_id (unit-scope), filter per-unit.
+                # Otherwise (floor-shared template items), all units
+                # share the same items list — Bug B fix.
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
                 await sync_qc_stage_to_matrix(
                     db,
                     project_id=project_id_for_sync,
                     unit_id=uid,
                     stage_id=stage_id_for_sync,
                     actor=actor_for_sync,
-                    qc_items=unit_items,
+                    qc_items=items_for_uid,
                     stage_status=stage_status,
                     stage_scope=stage_scope,
                 )
@@ -1472,7 +1473,13 @@ async def _send_qc_rejection_wa(
 
 
 @router.post("/run/{run_id}/item/{item_id}/reject")
-async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: dict = Depends(get_current_user)):
+async def reject_qc_item(
+    run_id: str,
+    item_id: str,
+    body: ItemRejectBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     db = get_db()
 
     if not (body.reason or "").strip():
@@ -1607,6 +1614,50 @@ async def reject_qc_item(run_id: str, item_id: str, body: ItemRejectBody, user: 
 
         returned_to = {"user_id": returned_to_user_id, "user_name": returned_to_user_name, "notified": notified}
 
+    # #503-followup-3 STOP-GATE 0.6 — reject_qc_item was unhooked.
+    # Per-item rejection cascades stage_statuses[stage_id]="reopened"
+    # (set earlier in this handler). Sync to matrix so the cell flips
+    # away from any prior approved/pending state to in_progress (or
+    # empty if no items remain touched).
+    project_id_for_sync = run["project_id"]
+    actor_for_sync = {"id": user["id"], "name": actor}
+
+    async def _run_sync_reject_item():
+        try:
+            tpl_stage = next(
+                (s for s in tpl["stages"] if s["id"] == stage_id), {}
+            )
+            stage_scope = tpl_stage.get("scope", "floor")
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id},
+                {"_id": 0},
+            ).to_list(2000)
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items_all, stage_scope
+            )
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
+            for uid in unit_ids:
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id,
+                    actor=actor_for_sync,
+                    qc_items=items_for_uid,
+                    stage_status="reopened",
+                    stage_scope=stage_scope,
+                )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync (reject_item) failed for stage_id={stage_id}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync_reject_item)
     return {"ok": True, "message": "הסעיף נדחה — השלב נפתח מחדש לתיקון", "returned_to": returned_to}
 
 
@@ -1693,7 +1744,12 @@ async def upload_qc_photo(
 
 
 @router.post("/run/{run_id}/stage/{stage_id}/submit")
-async def submit_stage(run_id: str, stage_id: str, user: dict = Depends(get_current_user)):
+async def submit_stage(
+    run_id: str,
+    stage_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     db = get_db()
 
     run = await db.qc_runs.find_one({"id": run_id}, {"_id": 0})
@@ -1821,6 +1877,46 @@ async def submit_stage(run_id: str, stage_id: str, user: dict = Depends(get_curr
         logger.error(f"[QC] Failed to create notifications for submit: {e}")
 
     logger.info(f"[QC] Stage {stage_id} submitted for review in run {run_id}")
+
+    # #503-followup-3 Bug C — submit_stage hook (was missing entirely).
+    # When PM submits a stage to senior, matrix should turn ORANGE
+    # "ממתין לאישור". Mirrors approve/reject pattern.
+    project_id_for_sync = run["project_id"]
+    actor_for_sync = {"id": user["id"], "name": actor}
+
+    async def _run_sync_submit():
+        try:
+            stage_scope = tpl_stage.get("scope", "floor")
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id},
+                {"_id": 0},
+            ).to_list(2000)
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items_all, stage_scope
+            )
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
+            for uid in unit_ids:
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id,
+                    actor=actor_for_sync,
+                    qc_items=items_for_uid,
+                    stage_status="pending_review",
+                    stage_scope=stage_scope,
+                )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync (submit) failed for stage_id={stage_id}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync_submit)
     return {"status": "pending_review", "stage_id": stage_id}
 
 
@@ -2503,15 +2599,21 @@ async def approve_stage(
             unit_ids = await _resolve_unit_ids_for_sync(
                 db, run, items_all, stage_scope
             )
+            # #503-followup-3 Bug B fix — floor-shared items pass items_all
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
             for uid in unit_ids:
-                unit_items = [i for i in items_all if i.get("unit_id") == uid]
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
                 await sync_qc_stage_to_matrix(
                     db,
                     project_id=project_id_for_sync,
                     unit_id=uid,
                     stage_id=stage_id,
                     actor=actor_for_sync,
-                    qc_items=unit_items,
+                    qc_items=items_for_uid,
                     stage_status="approved",
                     stage_scope=stage_scope,
                 )
@@ -2608,15 +2710,21 @@ async def reject_stage(
             unit_ids = await _resolve_unit_ids_for_sync(
                 db, run, items_all, stage_scope
             )
+            # #503-followup-3 Bug B fix — floor-shared items pass items_all
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
             for uid in unit_ids:
-                unit_items = [i for i in items_all if i.get("unit_id") == uid]
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
                 await sync_qc_stage_to_matrix(
                     db,
                     project_id=project_id_for_sync,
                     unit_id=uid,
                     stage_id=stage_id,
                     actor=actor_for_sync,
-                    qc_items=unit_items,
+                    qc_items=items_for_uid,
                     stage_status="rejected",
                     stage_scope=stage_scope,
                 )
@@ -2911,7 +3019,13 @@ class OverrideApproveBody(BaseModel):
 
 
 @router.post("/run/{run_id}/stage/{stage_id}/reopen")
-async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict = Depends(get_current_user)):
+async def reopen_stage(
+    run_id: str,
+    stage_id: str,
+    body: ReopenBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     db = get_db()
 
     if not (body.reason or "").strip():
@@ -2973,6 +3087,49 @@ async def reopen_stage(run_id: str, stage_id: str, body: ReopenBody, user: dict 
         logger.error(f"[QC] Failed to create notifications for reopen: {e}")
 
     logger.info(f"[QC] Stage {stage_id} reopened in run {run_id} by user {user['id']}: {body.reason}")
+
+    # #503-followup-3 STOP-GATE 0.6 — reopen_stage was unhooked.
+    # stage_status="reopened" falls through in the mapping to
+    # item-level activity (in_progress if any item touched, else None).
+    project_id_for_sync = run["project_id"]
+    actor_for_sync = {"id": user["id"], "name": actor}
+
+    async def _run_sync_reopen():
+        try:
+            tpl_stage = next(
+                (s for s in tpl["stages"] if s["id"] == stage_id), {}
+            )
+            stage_scope = tpl_stage.get("scope", "floor")
+            items_all = await db.qc_items.find(
+                {"run_id": run_id, "stage_id": stage_id},
+                {"_id": 0},
+            ).to_list(2000)
+            unit_ids = await _resolve_unit_ids_for_sync(
+                db, run, items_all, stage_scope
+            )
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
+            for uid in unit_ids:
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
+                await sync_qc_stage_to_matrix(
+                    db,
+                    project_id=project_id_for_sync,
+                    unit_id=uid,
+                    stage_id=stage_id,
+                    actor=actor_for_sync,
+                    qc_items=items_for_uid,
+                    stage_status="reopened",
+                    stage_scope=stage_scope,
+                )
+        except Exception as e:
+            logger.warning(
+                f"[#503] QC→matrix sync (reopen) failed for stage_id={stage_id}: {e}"
+            )
+
+    background_tasks.add_task(_run_sync_reopen)
     return {"status": "reopened", "stage_id": stage_id}
 
 
@@ -3103,15 +3260,21 @@ async def override_approve_stage(
             unit_ids = await _resolve_unit_ids_for_sync(
                 db, run, items_all, stage_scope
             )
+            # #503-followup-3 Bug B fix — floor-shared items pass items_all
+            items_have_unit_id = any(i.get("unit_id") for i in items_all)
             for uid in unit_ids:
-                unit_items = [i for i in items_all if i.get("unit_id") == uid]
+                items_for_uid = (
+                    [i for i in items_all if i.get("unit_id") == uid]
+                    if items_have_unit_id
+                    else items_all
+                )
                 await sync_qc_stage_to_matrix(
                     db,
                     project_id=project_id_for_sync,
                     unit_id=uid,
                     stage_id=stage_id,
                     actor=actor_for_sync,
-                    qc_items=unit_items,
+                    qc_items=items_for_uid,
                     stage_status="approved_via_override",
                     stage_scope=stage_scope,
                 )

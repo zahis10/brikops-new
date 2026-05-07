@@ -578,3 +578,146 @@ def test_T9_sync_failure_does_not_block_qc_write(monkeypatch, caplog):
         )
 
     asyncio.run(run())
+
+
+# =====================================================================
+# #503-followup-3 — Submit hook + item-level fix + ready_for_work
+# =====================================================================
+
+def test_T17_compute_reopened_with_items_falls_through_to_in_progress():
+    """STOP-GATE 0.6 — stage_status="reopened" (set by reject_qc_item
+    cascade and reopen_stage endpoint) intentionally falls through to
+    item-level activity. If any item is touched (pass/fail), cell goes
+    BLUE. This verifies followup-3 D5 fall-through behavior — no
+    special case in the mapping is needed.
+    """
+    # Reopened + at least one item touched → in_progress (BLUE)
+    assert _compute_matrix_status_from_qc(
+        [{"status": "pass"}], stage_status="reopened"
+    ) == "in_progress"
+    assert _compute_matrix_status_from_qc(
+        [{"status": "fail"}], stage_status="reopened"
+    ) == "in_progress"
+    assert _compute_matrix_status_from_qc(
+        [{"status": "pass"}, {"status": "fail"}, {"status": "pending"}],
+        stage_status="reopened",
+    ) == "in_progress"
+
+
+def test_T18_compute_reopened_with_no_items_returns_none():
+    """Reopened + nothing touched yet → empty cell. Tests that
+    reopening a stage does NOT leave a stale color. The fall-through
+    correctly returns None when no item has pass/fail status.
+    """
+    # Reopened + no items at all
+    assert _compute_matrix_status_from_qc(
+        [], stage_status="reopened"
+    ) is None
+    # Reopened + only pending items (e.g. PM cleared all answers)
+    assert _compute_matrix_status_from_qc(
+        [{"status": "pending"}, {"status": "pending"}],
+        stage_status="reopened",
+    ) is None
+
+
+def test_T19_ready_for_work_is_manual_only_never_a_sync_output():
+    """ready_for_work is a MANUAL planning state — _compute never
+    returns it. PMs set it via CellEditDialog. If QC starts tracking
+    the same stage later, sync OVERWRITES per D3 ("QC always wins").
+
+    Also asserts the constant landed in MATRIX_STATUS_VALUES so the
+    matrix PATCH validator accepts it.
+    """
+    from contractor_ops.schemas import MATRIX_STATUS_VALUES, MatrixCellUpdate
+
+    # Constant present
+    assert "ready_for_work" in MATRIX_STATUS_VALUES
+    assert "pending_review" in MATRIX_STATUS_VALUES  # followup-2 sanity
+
+    # MatrixCellUpdate Literal accepts ready_for_work …
+    assert MatrixCellUpdate(status="ready_for_work").status == "ready_for_work"
+    # … but REJECTS pending_review (sync-only, manual PATCH must not set)
+    with pytest.raises(Exception):  # ValidationError
+        MatrixCellUpdate(status="pending_review")
+
+    # Sync mapping never produces ready_for_work
+    sync_outputs = {
+        _compute_matrix_status_from_qc([], stage_status=None),
+        _compute_matrix_status_from_qc([], stage_status="approved"),
+        _compute_matrix_status_from_qc([], stage_status="rejected"),
+        _compute_matrix_status_from_qc([], stage_status="pending_review"),
+        _compute_matrix_status_from_qc([], stage_status="reopened"),
+        _compute_matrix_status_from_qc([{"status": "pass"}], stage_status=None),
+        _compute_matrix_status_from_qc(
+            [{"status": "pass"}], stage_status="reopened"
+        ),
+    }
+    assert "ready_for_work" not in sync_outputs
+
+
+def test_T20_excel_export_has_ready_for_work_label_and_cyan_fill():
+    """followup-3 PART D — Excel export STATUS_LABELS + STATUS_FILLS
+    must include ready_for_work with Hebrew label and cyan-100 fill.
+    """
+    from contractor_ops.execution_matrix_export import (
+        STATUS_LABELS, STATUS_FILLS,
+    )
+
+    assert STATUS_LABELS.get("ready_for_work") == "מוכן לעבודה"
+    fill = STATUS_FILLS.get("ready_for_work")
+    assert fill is not None, "ready_for_work missing from STATUS_FILLS"
+    # openpyxl PatternFill stores fgColor as Color object; rgb attr is "00CFFAFE"
+    fg = fill.fgColor
+    rgb = getattr(fg, "rgb", None) or getattr(fg, "value", None) or ""
+    assert "CFFAFE" in str(rgb).upper(), (
+        f"Expected cyan-100 (CFFAFE), got: {rgb}"
+    )
+
+
+def test_T21_bug_b_floor_shared_items_sync_per_unit(monkeypatch):
+    """followup-3 Bug B — floor-shared template items (no unit_id
+    field on qc_items docs) must sync to ALL units on the floor, not
+    just the one a PATCH happened on. The hook now passes items_all
+    when no item carries unit_id.
+
+    Verifies sync_qc_stage_to_matrix is callable per-unit with the
+    SHARED items list and produces an identical cell for each unit.
+    """
+    monkeypatch.setenv("MATRIX_QC_SYNC_ENABLED", "true")
+
+    async def run():
+        # Shared items — NO unit_id field (floor-shared template items)
+        shared_items = [
+            {"id": "i1", "stage_id": "s1", "status": "pass"},
+            {"id": "i2", "stage_id": "s1", "status": "pending"},
+        ]
+        actor = {"id": "pm1", "name": "PM"}
+
+        # Simulate hook behavior — call helper once per unit with
+        # the SAME items_all list (since items_have_unit_id is False).
+        captured_inserts = []
+        for uid in ["apt-101", "apt-102", "apt-103"]:
+            db, captured = _build_cells_db()
+            await sync_qc_stage_to_matrix(
+                db,
+                project_id="p1",
+                unit_id=uid,
+                stage_id="s1",
+                actor=actor,
+                qc_items=shared_items,
+                stage_status=None,  # in_progress flow
+                stage_scope="floor",
+            )
+            captured_inserts.append((uid, captured["insert"]))
+
+        # All 3 units got cells inserted with status=in_progress
+        for uid, doc in captured_inserts:
+            assert doc is not None, f"unit {uid} got no insert"
+            assert doc["unit_id"] == uid
+            assert doc["stage_id"] == "s1"
+            assert doc["status"] == "in_progress", (
+                f"unit {uid} got {doc['status']!r} not 'in_progress'"
+            )
+            assert doc.get("synced_from_qc") is True
+
+    asyncio.run(run())

@@ -13,9 +13,23 @@ Mapping (D1 #503-followup-2, stage-level — Zahi 2026-05-06):
   stage_status="approved"             → completed       (green)
   stage_status="approved_via_override"→ completed       (green)
   stage_status="rejected"             → not_done        (red)
-  stage_status="pending_review"       → pending_review  (orange, NEW)
+  stage_status="pending_review"       → pending_review  (orange)
+  stage_status="reopened"             → (fall-through)  see below
+  stage_status="in_progress"          → (fall-through)  see below
   ANY item touched (pass|fail)        → in_progress     (blue)
   no items + no status                → None            (empty cell)
+
+#503-followup-3 — "reopened" handling: when a senior reopens a
+previously-decided stage (or PM rejects an individual item which
+cascades stage to "reopened"), the stage decision is discarded and
+the cell should reflect current item activity. The fall-through
+below handles this correctly — no special case needed: if any item
+is touched it returns "in_progress", otherwise None (empty cell).
+
+NOTE: "ready_for_work" (#503-followup-3) is MANUAL-only — it never
+appears as a sync output. PMs set it via CellEditDialog. If QC
+later starts tracking the same stage, QC sync overwrites it per D3
+("QC always wins").
 
 Reasoning (Zahi quote): "מבחינתי מרגע שיש סעיף אחד בתוך בקרת הביצוע
 שהוכנס, זה בעבודה. רק אם כל הסעיפים הסתיימו והסעיף הגדול אושר על ידי
@@ -78,6 +92,12 @@ def _compute_matrix_status_from_qc(items, stage_status):
         return "not_done"
     if stage_status == "pending_review":
         return "pending_review"
+
+    # #503-followup-3 — "reopened" and "in_progress" stage statuses
+    # intentionally fall through to the item-level activity check
+    # below: a reopened stage is "back to work", so the cell should
+    # reflect current item activity (in_progress if any item touched,
+    # else None).
 
     # Open-work flow — any item activity at all means "in progress"
     if any(i.get("status") in ("pass", "fail") for i in items):

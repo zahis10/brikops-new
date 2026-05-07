@@ -898,6 +898,7 @@ class SafetyProjectRegistrationUpsert(BaseModel):
 MATRIX_STATUS_VALUES = (
     'completed',       # ✓ בוצע
     'partial',         # ⚠ חלקי
+    'ready_for_work',  # 🚚 מוכן לעבודה (#503-followup-3 — manual-only, planning state)
     'in_progress',     # ◷ בעבודה
     'pending_review',  # ⏳ ממתין לאישור (#503-followup-2 — sync-only from QC)
     'not_done',        # ✗ לא בוצע
@@ -947,8 +948,11 @@ class MatrixCellAuditEntry(BaseModel):
 class MatrixCellUpdate(BaseModel):
     """PATCH-style update for a single matrix cell."""
     status: Optional[Literal[
-        'completed', 'partial', 'in_progress',
+        'completed', 'partial', 'ready_for_work', 'in_progress',
         'not_done', 'not_relevant', 'no_findings',
+        # NOTE (#503-followup-3): 'pending_review' INTENTIONALLY omitted
+        # — sync-only from QC submit_stage. Manual PATCH must not set it.
+        # 'ready_for_work' IS allowed (manual-only, planning state).
     ]] = None
     note: Optional[str] = Field(None, max_length=500)
     text_value: Optional[str] = Field(None, max_length=200)

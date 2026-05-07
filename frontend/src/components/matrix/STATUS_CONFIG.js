@@ -1,5 +1,5 @@
 import {
-  CheckCircle2, AlertCircle, Clock, SendHorizontal,
+  CheckCircle2, AlertCircle, Clock, SendHorizontal, PackageCheck,
   XCircle, MinusCircle, ShieldCheck,
 } from 'lucide-react';
 
@@ -19,6 +19,18 @@ export const MATRIX_STATUSES = {
     bg: 'bg-amber-100',
     text: 'text-amber-700',
     border: 'border-amber-200',
+  },
+  ready_for_work: {
+    id: 'ready_for_work',
+    label: 'מוכן לעבודה',
+    Icon: PackageCheck,
+    bg: 'bg-cyan-50',
+    text: 'text-cyan-700',
+    border: 'border-cyan-200',
+    // No syncOnly flag → manually selectable in StatusButtonGrid.
+    // #503-followup-3 — planning state ("all materials on site,
+    // contractor can start"). QC sync wins per D3 if QC starts
+    // tracking the same stage.
   },
   in_progress: {
     id: 'in_progress',
