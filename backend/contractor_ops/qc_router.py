@@ -343,6 +343,77 @@ def _template_ids(tpl):
     return FLOOR_TEMPLATE_ID, None
 
 
+async def _resolve_run_template_with_upgrade(
+    db,
+    run: dict,
+    project_id: str,
+    actor: dict | None,
+) -> dict:
+    """Load the CURRENT template for the project. If `run` is pinned to
+    an older template_version_id, upgrade the run doc in DB AND in the
+    in-memory dict, then return the current template.
+
+    Idempotent: if run is already on current, no DB write.
+
+    #601 — fixes the case where admin edits qc_template AFTER existing
+    runs were created. The OLD pinning made _backfill_missing_items
+    blind to new stages/items. After this helper runs, the run points
+    to the current template and _backfill_missing_items can add the
+    new items.
+
+    NOTE: Only called from get_or_create_floor_run and
+    get_or_create_unit_run. The other 17 mutation endpoints
+    (approve/reject/override/submit/update_item/reject_item) keep
+    using `_get_template(db, run=run, ...)` — by the time they fire,
+    the run was already upgraded by the get_or_create call that
+    loaded it. Race window: if admin edits the template while a
+    user has the page open, the next mutation uses the old template
+    until the page reloads. Acceptable.
+    """
+    current = await _get_template(db, project_id=project_id)
+    current_id = (current or {}).get("id")
+    run_version_id = run.get("template_version_id")
+
+    if not current_id or run_version_id == current_id:
+        return current  # No-op — already current OR no project template
+
+    now = _now()
+    actor_id = actor.get("id") if actor else None
+    new_template_id = current.get("template_id") or current_id
+
+    await db.qc_runs.update_one(
+        {"id": run["id"]},
+        {"$set": {
+            "template_version_id": current_id,
+            "template_id": new_template_id,
+            "template_upgraded_at": now,
+            "template_upgraded_by": actor_id,
+            "template_upgraded_from": run_version_id,
+        }},
+    )
+    # Refresh local copy so caller sees upgraded fields without re-fetch
+    run["template_version_id"] = current_id
+    run["template_id"] = new_template_id
+    run["template_upgraded_at"] = now
+    run["template_upgraded_by"] = actor_id
+    run["template_upgraded_from"] = run_version_id
+
+    try:
+        await _audit("qc_run", run["id"], "template_upgraded", actor_id, {
+            "from": run_version_id,
+            "to": current_id,
+            "project_id": project_id,
+        })
+    except Exception as e:
+        logger.warning(f"[#601] audit failed for run={run['id']}: {e}")
+
+    logger.info(
+        f"[#601] upgraded run={run['id']} "
+        f"template {run_version_id} → {current_id}"
+    )
+    return current
+
+
 def _build_item_map(tpl):
     m = {}
     for stage in tpl["stages"]:
@@ -672,7 +743,9 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
         run.pop("_id", None)
         logger.info(f"[QC] Created run {run_id} for floor {floor_id} tpl_version={tpl_version_id} with {len(items)} items")
 
-    tpl = await _get_template(db, run=run, project_id=project_id)
+    # #601 — upgrade stale runs to current template before backfill,
+    # so admin's recent template additions actually create items.
+    tpl = await _resolve_run_template_with_upgrade(db, run, project_id, user)
     stage_statuses = run.get("stage_statuses", {})
     run_items = await db.qc_items.find({"run_id": run["id"]}, {"_id": 0}).to_list(500)
     run_items = await _ensure_inline_prework_items(run["id"], run_items, db, tpl)
@@ -819,7 +892,8 @@ async def get_or_create_unit_run(unit_id: str, user: dict = Depends(get_current_
         run.pop("_id", None)
         logger.info(f"[QC] Created unit run {run_id} for unit {unit_id} tpl_version={tpl_version_id} with {len(items)} items")
 
-    tpl = await _get_template(db, run=run, project_id=project_id)
+    # #601 — upgrade stale runs to current template before backfill.
+    tpl = await _resolve_run_template_with_upgrade(db, run, project_id, user)
     unit_stages = [s for s in tpl["stages"] if s.get("scope") == "unit"]
 
     stage_statuses = run.get("stage_statuses", {})
