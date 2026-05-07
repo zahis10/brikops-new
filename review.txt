@@ -1,157 +1,143 @@
-# #601 — Auto-upgrade existing QC runs to current template version
+# BATCH — QC UX fixes (3 bugs / 2 files)
 
+**Date**: 2026-05-07
 **Branch**: staging
-**Severity**: P1 (Zahi prod 2026-05-07 — admin template edit didn't propagate)
-**Family**: stand-alone fix (NOT a #503 followup) — closes a long-standing
-template-immutability bug exposed by the QC↔Matrix sync feature
-**Files**: 2 | **LOC**: +76 / -2 + new test file (~220 LOC) | **Tests**: 3 new
+**Severity**: P2 — discovered by Zahi during plot 810 walk-through
+**Family**: standalone QC UX cleanup. Builds on #480 + 5K + #503 + #601 (all in prod).
+**Plan**: `.local/plans/qc_ux_3bugs_2026_05_07.md`
 
 ---
 
-## What this ships
-
-A single new helper `_resolve_run_template_with_upgrade` and 2 wire-in
-sites. When the user opens a QC run via `get_or_create_floor_run` or
-`get_or_create_unit_run`, the helper checks if the run's pinned
-`template_version_id` matches the project's CURRENT template. If stale,
-it upgrades the run doc + emits an audit entry + returns the current
-template, so the existing `_backfill_missing_items` can add items for
-new stages admin added after the run was created.
-
-Idempotent (no DB write when already current). Reversible (one-line
-Atlas rename if needed). No schema change. No frontend change. No new
-feature flag.
-
----
-
-## STEP 0 audit (pre-impl, read-only)
+## STEP 0 AUDIT (pre-impl, read-only)
 
 | # | Check | Result |
 |---|-------|--------|
-| 0.1 | `_get_template` pinning behavior | ✅ Confirmed — when `run.template_version_id` set, returns OLD snapshot (also via `_template_version_cache` at L300/305) |
-| 0.2 | All `_get_template(... run= ...)` call sites | ⚠️ **19 sites** (spec said 3-5). 2 entry points (L675 floor, L822 unit) — fixed. 17 mutation endpoints — left as-is per D3 |
-| 0.3 | `template_version_id` writes | ✅ Set at run creation: L662 (floor), L809 (unit) |
-| 0.4 | `_backfill_missing_items` additivity | ✅ Keys on `(stage_id, item_id)` tuple — existing items preserved, new items added. Filters `stage.scope` against `run_scope` |
-| 0.5 | Fresh vs stale flow | ✅ Fresh→`project_id=` (current). Stale→`run=run` (OLD). **Exact bug.** |
-| 0.6 | `_audit` signature | 🚨 **POSITIONAL not kwargs**: `_audit(entity_type, entity_id, action, actor_id, payload)`. Spec drafted kwargs+db+actor_name — corrected per D1 |
-| extra | `get_or_create_floor_run` sig | ⚠️ No `project_id` param — derived inline from `building["project_id"]`. Helper takes it as explicit arg — caller passes the local var |
-| extra | `_template_version_cache` | ⚠️ Module-level dict with no eviction. Upgrade does NOT corrupt it (we read CURRENT not stale vid). Skipped per D5 |
+| 0.1 | summaryCollapsed / storageKey / "סטטוס ביצוע כללי" | ✅ L35 storageKey, L36-38 useState, L42-44 useEffect, L265-278 click+JSX, L273 Hebrew literal |
+| 0.2 | Other consumers of summaryCollapsed/qc_summary_collapsed_ outside QCFloorSelectionPage.js | ✅ **0 hits** — safe to refactor in place |
+| 0.3 | UnitQCSelectionPage state | ✅ useSearchParams NOT imported; L57 local urlParams (KEEP); L106 stages aggregated (the bug); L166 hardcoded "🟫 ריצוף" |
+| 0.4 | Callers of qc/units | ✅ FloorDetailPage L315 sends `?stage_id=X`; UnitQCSelectionPage L64 had returnTo w/o stage_id |
+| 0.5 | getFloorRun/getUnitRun in services/api.js | ✅ L1321/L1325/L1329 |
 
 ---
 
-## V-GATES
+## V-GATES — ALL GREEN
 
 | Gate | Status | Result |
 |------|--------|--------|
-| V1 — pytest 5 files | ✅ | **49 passed**, 8 warnings (Pydantic V1 deprecations, pre-existing) |
-| V2 — yarn build | ✅ | "Done in 41.24s" with REACT_APP_BACKEND_URL=https://api.brikops.com |
-| V3 — diff stat | ✅ | 1 tracked file (qc_router.py +76/-2) + 1 new test file (~220 LOC) |
-| V4 — sibling files untouched | ✅ | execution_matrix_router.py / qc_to_matrix_sync.py / schemas.py / execution_matrix_export.py / frontend = 0 diff |
-| V5 — feature flag | ✅ | None added/changed. MATRIX_QC_SYNC_ENABLED unchanged |
+| V1 — `yarn build` (REACT_APP_BACKEND_URL=https://api.brikops.com) | ✅ | **Done in 34.80s** — no new warnings |
+| V2 — QCFloorSelectionPage greps | ✅ | summaryCollapsed=**4**, "סטטוס ביצוע כללי"=**1**, `!== '0'` at **L37 + L43** |
+| V3 — UnitQCSelectionPage greps | ✅ | useSearchParams=**2**, fromParam\|stageIdParam=**7**, "ריצוף — "=**0**, currentStageTitle=**2**, from=qc=**4** |
+| V4 — `pytest tests/test_qc_units_status.py -v` | ✅ | **1 passed** in 1.61s (defensive — backend untouched) |
+| V5 — Visual smoke a-q | ⏸ | **DEFERRED to Zahi after deploy** |
 
 ---
 
-## DECISIONS LOCKED
+## DIFF STAT
 
-- **D1** (corrects spec) — `_audit` POSITIONAL: `_audit("qc_run", run["id"], "template_upgraded", actor_id, payload)`. Wrapped in try/except per existing pattern. T_UPGRADE_2 enforces this signature.
-- **D2** — `db.qc_runs.update_one({"id": run["id"]}, {"$set": {...}})` pattern matches the rest of the file. Local `run` dict mutated so caller sees upgraded fields without re-fetch.
-- **D3** — Helper wired into 2 entry points only (get_or_create_floor_run L751, get_or_create_unit_run L899). Other 17 mutation `_get_template(db, run=run, ...)` calls left as-is — by the time they fire, the run was already upgraded by the get_or_create call that loaded it. Race window documented (admin edit while user has page open → mutation uses old tpl until reload). Acceptable.
-- **D4** — Spec test 3.3 (full TestClient endpoint test) replaced with T_UPGRADE_3 (direct call to `_backfill_missing_items` with v2 template, asserts only the new (stage_id, item_id) tuples are inserted). Cheaper, same coverage.
-- **D5** — `_template_version_cache` left alone. Other runs may still legitimately use OLD vid until they're upgraded too. Defensive.
-
----
-
-## File-by-file
-
-### `backend/contractor_ops/qc_router.py` (+76 / -2)
-
-**Insert at L349** (after `_template_ids`, before `_build_item_map`):
-new `_resolve_run_template_with_upgrade` async helper (~70 LOC). Reads
-current via `_get_template(db, project_id=project_id)`, short-circuits
-if already current, otherwise updates DB + local dict + emits audit
-(positional sig). All operations defensive: try/except around audit,
-no-op when current_id missing.
-
-**Replace at L751** (`get_or_create_floor_run`):
-```python
-- tpl = await _get_template(db, run=run, project_id=project_id)
-+ tpl = await _resolve_run_template_with_upgrade(db, run, project_id, user)
+```
+ frontend/src/pages/QCFloorSelectionPage.js | 86 +++++++++++++++---------------
+ frontend/src/pages/UnitQCSelectionPage.js  | 37 ++++++++++---
+ 2 files changed, 74 insertions(+), 49 deletions(-)
 ```
 
-**Replace at L899** (`get_or_create_unit_run`): same swap.
-
-### `backend/tests/test_qc_template_upgrade.py` (NEW, ~220 LOC)
-
-- **T_UPGRADE_1** — idempotent path. Run already on current → returns
-  current, NO `db.qc_runs.update_one` call, NO `_audit` call, local
-  dict unchanged (no `template_upgraded_at` injected).
-- **T_UPGRADE_2** — actual upgrade. Stale run on v1, current is v2.
-  Asserts: returns v2; `update_one` called with `{"id": ...}` filter +
-  full `$set` payload (template_version_id=v2, template_id, _at, _by,
-  _from=v1); local dict mutated for caller; `_audit` called with
-  EXACT positional sig `("qc_run", "run-xyz", "template_upgraded",
-  "pm-7", {"from": "v1", "to": "v2", "project_id": "p1"})`.
-- **T_UPGRADE_3** — end-to-end semantic. With v2 template containing
-  s1 (existing) + s2_new (added by admin), `_backfill_missing_items`
-  inserts EXACTLY the 2 s2_new items as "pending"; old s1 item not
-  duplicated. Proves the bug is fixed: stale runs that were 100%
-  complete on v1 now get the new v2 items.
+**Net new code**: ~25 LOC (rest is the JSX block move A3 — same content, different position).
+**Files**: 2 frontend pages. **0 backend. 0 tests. 0 schema.**
 
 ---
 
-## SMOKE for Zahi (after deploy, no flag toggle needed)
+## EDITS APPLIED
 
-| # | Scenario | Expected |
-|---|----------|----------|
-| א | Pre-fix state on staging | Building 8 floor 1 = 25/25 stuck on old template |
-| ב | Deploy this batch | Workflow restart |
-| ג | Open QC of building 8 floor 1 | ✅ New stages visible (התקנת משקופים etc.); total count grew (25/25 → e.g. 25/35); new items "pending" |
-| ד | Mark one new item תקין | ✅ Matrix cell flips BLUE — sync works |
-| ה | Atlas: `db.qc_runs.findOne({floor_id: <bldg8 f1>})` | ✅ template_version_id=current, template_upgraded_at=recent, template_upgraded_from=old |
-| ו | `db.qc_items.countDocuments({run_id})` | ✅ Higher than before |
-| ז | Building 9 (was already on current) | ✅ No log spam, no DB write — idempotent path |
-| ח | Re-run #503-followup-3 smoke (א-ט) | ✅ No regressions |
+### A1 — QCFloorSelectionPage L36-38: useState default flipped
+`'1' → false` ⇒ `'0' → true` (missing key now defaults to **collapsed**).
 
-Watch for log entries: `[#601] upgraded run=<id> template <old> → <new>`
-should fire on first visit per stale run, then never again for that run.
+### A2 — QCFloorSelectionPage L42-44: useEffect mirror — same flip.
+Convention preserved: `'1'`=collapsed, `'0'`=expanded. Users with explicit `'0'` keep expanded.
 
----
+### A3 — QCFloorSelectionPage: section moved from L261-300 to L366-405
+Cut the entire `{execSummary && execSummary.stages...}` block from above the 4 status counters; pasted as the **last child** of the outer container, AFTER the building list (`<div className="space-y-2">`). Block content / styling / icons / chevron behavior / state mgmt: untouched.
 
-## RISK NOTES
+### B1 — UnitQCSelectionPage L2: import useSearchParams
+```js
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+```
 
-- **Idempotent + reversible**. To undo upgrades:
-  ```js
-  db.qc_runs.updateMany(
-    { template_upgraded_at: { $exists: true } },
-    { $rename: { "template_upgraded_from": "template_version_id" } }
-  )
-  ```
-- **Race window** (D3): admin edits template while user has page open →
-  next mutation uses OLD template until reload. Documented. Not new —
-  same race existed pre-fix.
-- **Stage REMOVAL by admin**: items for the removed stage stay in DB
-  (orphaned). Matrix doesn't render the removed column. Harmless.
-- **Stage RENAME** (rare): old items orphan, new items get added on
-  next get_or_create_*_run. Cosmetic only.
-- **Audit failure non-blocking** — try/except keeps the upgrade alive
-  even if `_audit` raises (matches existing pattern).
-- **Caching note**: `_template_version_cache` may still hold OLD vid
-  for OTHER runs that haven't been upgraded yet — desirable.
+### B2 — UnitQCSelectionPage L26-28: hooks
+```js
+const [searchParams] = useSearchParams();
+const fromParam = searchParams.get('from');
+const stageIdParam = searchParams.get('stage_id');
+```
 
----
+### B3 — UnitQCSelectionPage L121-135: stage filter + dynamic title
+- Renamed `const stages` → `const allStages`.
+- Inserted: `const stages = stageIdParam ? allStages.filter(s => s.stage_id === stageIdParam) : allStages;`
+- Inserted: `const currentStageTitle = stages.length > 0 ? (stages[0].stage_title || 'בקרת ביצוע') : 'בקרת ביצוע';`
+- Aggregation logic at L137+ **unchanged** — only the input array filtered upstream.
 
-## NITS (deferred — not blocking)
+### B4 — UnitQCSelectionPage L193-195: dynamic header title
+```js
+// BEFORE: 🟫 ריצוף — {floor_name}
+// AFTER:  📋 {currentStageTitle} — {floor_name}
+```
 
-- The 17 mutation endpoints still call `_get_template(db, run=run, ...)`.
-  If we ever need stronger consistency under admin template edits, we can
-  cheaply wrap each with `_resolve_run_template_with_upgrade` (~50 LOC).
-  Not justified now.
-- Pydantic V1 `@validator` deprecation warnings (8 across the test
-  suite) — pre-existing, not introduced by this batch.
+### B5 — UnitQCSelectionPage L89-93: goBack propagates ?from=qc
+```js
+const url = `/projects/${projectId}/floors/${floorId}`;
+const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+navigate(withFrom);
+```
+
+### B6 — UnitQCSelectionPage L66-82: handleUnitClick propagates ?from=qc
+- stageWithFrom appends `?from=qc` if `fromParam==='qc'`.
+- returnTo always carries `?stage_id=${stageId}`, then `&from=qc` if applicable.
+- L57-59 local `urlParams.get('stage_id')` for stageId **kept** (D3) — no refactor conflict with new hook.
 
 ---
 
-## STOP — AWAITING ZAHI APPROVAL
+## DECISIONS LOCKED (zero deviation)
 
-Implementation complete. All 5 V-gates green. Ready for git commit +
-deploy --stag → smoke (ג)/(ד)/(ה)/(ו) on building 8 floor 1.
+- **D1** — Convention `'1'`=collapsed, `'0'`=expanded preserved exactly. Only missing-key default flips.
+- **D2** — Aggregation logic L137+ unchanged. Only input `stages` filtered upstream.
+- **D3** — Local `urlParams` read at L63-65 stays. New `useSearchParams` hook used only for `fromParam` — no refactor of stage_id reading.
+- **D4** — Icon 🟫 → 📋 (generic clipboard). Per-stage icons require backend `stage_icon` field — explicitly out of scope.
+- **D5** — `state.returnTo` becomes `${returnToBase}?stage_id=${stageId}`, then `&from=qc` if applicable. Order: `?stage_id` first, `&from` second.
+
+---
+
+## V5 — VISUAL SMOKE (deferred to Zahi after deploy)
+
+### Part A — QCFloorSelectionPage
+- (a) `/projects/{p}/qc` → header + matrix + counters + count + search + buildings → "סטטוס ביצוע כללי" at **BOTTOM, collapsed**
+- (b) Click section → expands inline
+- (c) Click again → collapses
+- (d) Reload (same tab) → state persists per sessionStorage
+- (e) New tab → defaults to collapsed
+
+### Part B — UnitQCSelectionPage with params
+- (f) `/projects/{p}/qc` → bldg → floor → "ריצוף" stage card → URL includes `?stage_id=stage_tiling&from=qc`
+- (g) Header reads "📋 <stage_title> — קומה X" — NOT "🟫 ריצוף"
+- (h) Each unit row: X/Y where Y = items in tiling stage only (≈1-3, NOT 18)
+- (i) Back → `/projects/{p}/floors/{f}?from=qc`
+- (j) Back → `/projects/{p}/buildings/{b}/qc?from=qc`
+- (k) Back → `/projects/{p}/qc` ← **THE BUG IS FIXED**
+- (l) From (f) click into unit → `/qc/floors/{f}/run/{r}/stage/stage_tiling?from=qc` → StageDetailPage shows correct stage
+- (m) Back from StageDetailPage → `/floors/{f}?from=qc` → chain (i)(j)(k) continues
+
+### Part B — direct entry (no params)
+- (n) `/buildings/{b}/floors/{f}/qc/units` (no params)
+- (o) Title falls back to first stage's title (or "בקרת ביצוע")
+- (p) Numbers aggregated across all stages (existing behavior)
+- (q) Back → `/floors/{f}` (clean, no `from=qc`)
+
+---
+
+## RISK & ROLLBACK
+
+- **Pure UX**, no data path. Zero schema, zero backend, zero new tests.
+- **Mobile**: OTA via Capgo only — no native files.
+- **Rollback**: `git revert <sha>` — 2 files revert, 3 bugs return, no data loss.
+- **No impact on**: #480, 5K, #503, #601, direct-entry flows, other QC/handover/matrix/project pages, backend.
+
+---
+
+## STOP — AWAITING ZAHI APPROVAL — DO NOT DEPLOY

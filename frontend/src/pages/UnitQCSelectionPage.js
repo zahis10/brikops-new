@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { qcService } from '../services/api';
 import {
   ArrowRight, Loader2, Home, CheckCircle2, Clock, AlertCircle, RefreshCw
@@ -20,6 +20,9 @@ const STATUS_ICONS = {
 export default function UnitQCSelectionPage() {
   const { projectId, buildingId, floorId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const fromParam = searchParams.get('from');
+  const stageIdParam = searchParams.get('stage_id');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -57,11 +60,18 @@ export default function UnitQCSelectionPage() {
       const urlParams = new URLSearchParams(window.location.search);
       const explicitStageId = urlParams.get('stage_id');
       const stageId = explicitStageId || runData.stages?.[0]?.id || 'stage_tiling';
+      // FIX 2026-05-07: propagate ?from=qc to stage URL + state.returnTo
+      // so the back-chain (Floor → Building → /qc) survives nested nav.
+      const stageUrl = `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`;
+      const stageWithFrom = fromParam === 'qc' ? `${stageUrl}?from=qc` : stageUrl;
+      const returnToBase = `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`;
+      const returnToWithStage = `${returnToBase}?stage_id=${stageId}`;
+      const returnToFinal = fromParam === 'qc' ? `${returnToWithStage}&from=qc` : returnToWithStage;
       navigate(
-        `/projects/${projectId}/qc/floors/${floorId}/run/${run.id}/stage/${stageId}`,
+        stageWithFrom,
         {
           state: {
-            returnTo: `/projects/${projectId}/buildings/${buildingId}/floors/${floorId}/qc/units`,
+            returnTo: returnToFinal,
             unitName: unit.unit_name || unit.unit_no,
             scope: 'unit',
           }
@@ -74,7 +84,9 @@ export default function UnitQCSelectionPage() {
   };
 
   const goBack = () => {
-    navigate(`/projects/${projectId}/floors/${floorId}`);
+    const url = `/projects/${projectId}/floors/${floorId}`;
+    const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+    navigate(withFrom);
   };
 
   if (loading) {
@@ -103,8 +115,21 @@ export default function UnitQCSelectionPage() {
   // We flatten stages back to per-unit aggregates here so the
   // existing unit-picker UX stays intact. PATH B (per-stage view
   // when ?stage_id=X is present in URL) is wired in handleUnitClick.
-  const stages = Array.isArray(data.stages) ? data.stages : [];
+  const allStages = Array.isArray(data.stages) ? data.stages : [];
   const floor_name = data.floor_name || '';
+
+  // FIX 2026-05-07: when ?stage_id=X is in URL, filter to ONLY that
+  // stage. Previously aggregated across ALL stages → unit counts
+  // showed e.g. 1/18 instead of 0/1 for the URL-filtered stage.
+  const stages = stageIdParam
+    ? allStages.filter(s => s.stage_id === stageIdParam)
+    : allStages;
+
+  // Dynamic title from API stage_title. Falls back to first stage when
+  // no filter, or generic label when no stages at all.
+  const currentStageTitle = stages.length > 0
+    ? (stages[0].stage_title || 'בקרת ביצוע')
+    : 'בקרת ביצוע';
 
   // Aggregate across all unit-scope stages, per unit:
   //   - handled_count, total, pass_count, fail_count → SUM
@@ -163,7 +188,7 @@ export default function UnitQCSelectionPage() {
               </button>
               <div>
                 <h1 className="text-base font-bold flex items-center gap-2">
-                  🟫 ריצוף — {floor_name}
+                  📋 {currentStageTitle} — {floor_name}
                 </h1>
                 <p className="text-xs text-slate-300 mt-0.5">
                   {completedCount}/{units.length} דירות הושלמו
