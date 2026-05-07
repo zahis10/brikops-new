@@ -300,3 +300,9 @@ id = "fHo4lNlDUuwrHpwXcfRo5"
 uri = "file://.local/plans/503_followup_2_stage_level_mapping.md"
 type = "text"
 title = "#503-followup-2 — תוכנית מלאה: stage-level + reject hook + floor-scope + pending_review"
+
+[[outputs]]
+id = "06zwRzZIFriPJCaHiO5Zk"
+uri = "file://.local/plans/503_followup_3_submit_hook_item_fix_ready_status.md"
+type = "text"
+title = "#503-followup-3 PLAN — STEP 0 stop-gate found 2 unhooked reopen endpoints (D5+D6 need approval)"
