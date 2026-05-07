@@ -312,3 +312,9 @@ id = "HtEwWgG1CEQCRZK8EbU0Z"
 uri = "file://.local/plans/601_auto_upgrade_qc_run_template.md"
 type = "text"
 title = "#601 PLAN — auto-upgrade stale QC runs to current template (Zahi prod 2026-05-07 fix)"
+
+[[outputs]]
+id = "cnDWPPsTEFloeqYpz16FD"
+uri = "file://.local/plans/qc_ux_3bugs_2026_05_07.md"
+type = "text"
+title = "QC UX 3 bugs / 2 files — plan ready, awaiting תתחיל"
