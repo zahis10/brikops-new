@@ -306,3 +306,9 @@ id = "06zwRzZIFriPJCaHiO5Zk"
 uri = "file://.local/plans/503_followup_3_submit_hook_item_fix_ready_status.md"
 type = "text"
 title = "#503-followup-3 PLAN — STEP 0 stop-gate found 2 unhooked reopen endpoints (D5+D6 need approval)"
+
+[[outputs]]
+id = "HtEwWgG1CEQCRZK8EbU0Z"
+uri = "file://.local/plans/601_auto_upgrade_qc_run_template.md"
+type = "text"
+title = "#601 PLAN — auto-upgrade stale QC runs to current template (Zahi prod 2026-05-07 fix)"
