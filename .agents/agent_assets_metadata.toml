@@ -318,3 +318,9 @@ id = "cnDWPPsTEFloeqYpz16FD"
 uri = "file://.local/plans/qc_ux_3bugs_2026_05_07.md"
 type = "text"
 title = "QC UX 3 bugs / 2 files — plan ready, awaiting תתחיל"
+
+[[outputs]]
+id = "FLSKfjKZHFm0GbLIyiAVu"
+uri = "file://.local/plans/matrix_qc_deeplink_2026_05_07.md"
+type = "text"
+title = "Matrix→QC deep-link — plan ready"
