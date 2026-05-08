@@ -160,7 +160,13 @@ const ProjectsHome = () => {
   // paywall — single global user.role isn't enough to know per-project
   // role). For now, ?src=wa is a reliable signal because contractor
   // digest is the ONLY current sender of WA links to /projects/:id.
-  const fromContractorReminder = searchParams.get('src') === 'wa';
+  // src=wa         → from WhatsApp contractor reminder (Batch 6C)
+  // src=contractor → from MyProjectsPage click on a project where
+  //                  the user has membership.role='contractor'
+  //                  (Batch 2026-05-08)
+  const fromContractorReminder =
+    searchParams.get('src') === 'wa' ||
+    searchParams.get('src') === 'contractor';
 
   // Bug B fix — invert the gate. PM/admin/super_admin see the PM dashboard;
   // EVERYONE ELSE (contractor + sub-roles like execution_engineer,
