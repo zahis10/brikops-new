@@ -233,6 +233,10 @@ const TaskDetailPage = () => {
   const isManagement = MGMT_ROLES.includes(projectRole);
   const isContractor = projectRole === 'contractor' || user?.role === 'contractor';
   const isAssignee = task?.assignee_id === user?.id;
+  // FIX 2026-05-08: backend now returns is_company_member on
+  // /tasks/{id}. Allows any contractor in the assigned company
+  // to submit proof, not just the explicit assignee.
+  const isCompanyMember = task?.is_company_member === true;
   const canManage = isManagement;
   const taskIsClosed = task?.status === 'closed' || task?.status === 'approved';
 
@@ -783,8 +787,10 @@ const TaskDetailPage = () => {
 
   const proofAllowedStatuses = ['open', 'assigned', 'in_progress', 'pending_contractor_proof', 'returned_to_contractor'];
   const proofLockedStatuses = ['pending_manager_approval', 'closed'];
-  const showContractorProof = isContractor && isAssignee && proofAllowedStatuses.includes(task.status);
-  const showProofLocked = isContractor && isAssignee && proofLockedStatuses.includes(task.status);
+  // FIX 2026-05-08: contractor in assigned company (not just assignee) can submit proof.
+  const canSubmitProof = isContractor && (isAssignee || isCompanyMember);
+  const showContractorProof = canSubmitProof && proofAllowedStatuses.includes(task.status);
+  const showProofLocked = canSubmitProof && proofLockedStatuses.includes(task.status);
 
   const showManagerDecision = isManagement && task.status === 'pending_manager_approval';
 
@@ -1006,7 +1012,7 @@ const TaskDetailPage = () => {
             <div className="flex items-center gap-2">
               <Briefcase className="w-4 h-4 text-slate-400" />
               <span className="text-slate-600">{t('taskDetail', 'company')}</span>
-              <span className="font-medium">{getCompanyName(task.company_id) || task.assignee_company_name || t('taskDetail', 'not_assigned')}</span>
+              <span className="font-medium">{task.company_name || getCompanyName(task.company_id) || task.assignee_company_name || t('taskDetail', 'not_assigned')}</span>
             </div>
             <div className="flex items-center gap-2">
               <User className="w-4 h-4 text-slate-400" />

@@ -9,6 +9,7 @@ from contractor_ops.router import (
     _audit, _now, _is_super_admin,
     get_notification_engine, _get_task_link,
     _get_contractor_trade_key, _trades_match,
+    _is_user_in_task_company, _resolve_task_company_name,
     MANAGEMENT_ROLES, logger,
     PRIORITY_SORT_MAP, _priority_sort_key,
 )
@@ -284,11 +285,19 @@ async def list_tasks(
             query.setdefault('$and', []).extend([{'$or': existing_or}, {'$or': text_or}])
         else:
             query['$or'] = text_or
+    # FIX 2026-05-08: is_contractor must consider per-project memberships,
+    # not just the global user.role. A contractor who registered with
+    # user.role='user' but membership.role='contractor' was previously
+    # bypassing the filter and seeing every defect in their projects.
     is_contractor = user['role'] == 'contractor'
-    if not is_contractor and project_id:
-        proj_role = await _get_project_role(user, project_id)
-        if proj_role == 'contractor':
+    if not is_contractor:
+        contractor_membership = await db.project_memberships.find_one(
+            {'user_id': user['id'], 'role': 'contractor'},
+            {'_id': 0, 'project_id': 1},
+        )
+        if contractor_membership:
             is_contractor = True
+
     if is_contractor:
         contractor_conditions = [{'assignee_id': user['id']}]
         if project_id:
@@ -298,6 +307,35 @@ async def list_tasks(
             )
             if user_mem and user_mem.get('company_id'):
                 contractor_conditions.append({'company_id': user_mem['company_id']})
+        else:
+            # Cross-project list: build per-project (project_id+company_id)
+            # conditions so the contractor sees only their own company's
+            # defects in each project they're a contractor in.
+            contractor_memberships = await db.project_memberships.find(
+                {'user_id': user['id'], 'role': 'contractor'},
+                {'_id': 0, 'project_id': 1, 'company_id': 1},
+            ).to_list(200)
+            for mem in contractor_memberships:
+                if mem.get('company_id'):
+                    contractor_conditions.append({
+                        'project_id': mem['project_id'],
+                        'company_id': mem['company_id'],
+                    })
+            # MIXED-ROLE FIX: a user who is contractor in project A but
+            # management in project B should still see ALL tasks in B
+            # (regardless of company). Without this, the strict
+            # is_contractor flag would clamp them to assignee_id only
+            # in project B.
+            MGMT_ROLES_FOR_LIST = (
+                'project_manager', 'management_team', 'super_admin',
+                'owner', 'org_admin',
+            )
+            mgmt_memberships = await db.project_memberships.find(
+                {'user_id': user['id'], 'role': {'$in': list(MGMT_ROLES_FOR_LIST)}},
+                {'_id': 0, 'project_id': 1},
+            ).to_list(200)
+            for mem in mgmt_memberships:
+                contractor_conditions.append({'project_id': mem['project_id']})
         if '$or' in query:
             existing_or = query.pop('$or')
             query.setdefault('$and', []).extend([{'$or': existing_or}, {'$or': contractor_conditions}])
@@ -368,6 +406,9 @@ async def list_tasks(
                 raw['category'] = 'general'
             td = Task(**raw).dict()
         resolve_urls_in_doc(td)
+        # FIX 2026-05-08: per-task flag for UI badge ("משויך אלי" vs "החברה שלי").
+        # WhatsApp / notifications behavior UNCHANGED — still go to assignee only.
+        td['is_my_assignee'] = (td.get('assignee_id') == user['id'])
         result.append(td)
     return {"items": result, "total": total, "limit": limit, "offset": offset}
 
@@ -499,6 +540,11 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     resolve_urls_in_doc(task_data)
     task_data['user_project_role'] = membership['role'] if membership['role'] != 'none' else ('contractor' if (is_assignee or is_company_member) else 'none')
     task_data['user_project_sub_role'] = membership.get('sub_role')
+    # FIX 2026-05-08: expose is_company_member + company_name so the
+    # contractor UI can render the company name and gate proof upload
+    # without depending on projectCompanies (which contractors can't load).
+    task_data['is_company_member'] = is_company_member
+    task_data['company_name'] = await _resolve_task_company_name(db, task.get('company_id'))
     
     # TODO: N+1 — 5 sequential queries here (project, building, floor, unit, assignee).
     # Optimize with $lookup aggregate when scale requires it.
@@ -860,7 +906,12 @@ async def contractor_proof(
     project_role = await _get_project_role(user, task['project_id'])
     if project_role != 'contractor' and user['role'] != 'contractor':
         raise HTTPException(status_code=403, detail='Only contractors can submit proof')
-    if task.get('assignee_id') != user['id']:
+    # FIX 2026-05-08: accept any contractor in the task's assigned company,
+    # not just the explicit assignee. assignee_id is NEVER changed here —
+    # WhatsApp / reminders still go to the original assignee only.
+    is_assignee = task.get('assignee_id') == user['id']
+    is_company_member = await _is_user_in_task_company(db, user['id'], task)
+    if not (is_assignee or is_company_member):
         raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
     trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
     if not _trades_match(task.get('category'), trade_key):

@@ -1,143 +1,208 @@
-# BATCH — QC UX fixes (3 bugs / 2 files)
+================================================================================
+P0 HOTFIX — contractor visibility, company name display, proof flow
+================================================================================
+Date:    2026-05-08
+Branch:  staging
+Plan:    .local/plans/p0_contractor_visibility_2026_05_08.md
+Tag:     #contractor_visibility_2026_05_08
 
-**Date**: 2026-05-07
-**Branch**: staging
-**Severity**: P2 — discovered by Zahi during plot 810 walk-through
-**Family**: standalone QC UX cleanup. Builds on #480 + 5K + #503 + #601 (all in prod).
-**Plan**: `.local/plans/qc_ux_3bugs_2026_05_07.md`
+Severity: P0 — production users blocked. Reported by Zahi 2026-05-07/08
+with WUyoughong (plot 810) logs.
 
----
+================================================================================
+THREE BUGS FIXED IN THIS BATCH
+================================================================================
 
-## STEP 0 AUDIT (pre-impl, read-only)
+#1  Company name shows "לא שויך" to contractors
+    Root cause: TaskDetailPage L1018 called getCompanyName(task.company_id)
+    which only resolves from `projectCompanies` — that array is loaded
+    inside the MGMT branch only (L240), so contractors got [] and
+    fell through to "לא שויך".
+    Fix:        Backend GET /tasks/{id} now returns task.company_name
+                directly, resolved server-side from project_companies
+                (fallback: global companies). Frontend reads it as
+                first preference.
 
-| # | Check | Result |
-|---|-------|--------|
-| 0.1 | summaryCollapsed / storageKey / "סטטוס ביצוע כללי" | ✅ L35 storageKey, L36-38 useState, L42-44 useEffect, L265-278 click+JSX, L273 Hebrew literal |
-| 0.2 | Other consumers of summaryCollapsed/qc_summary_collapsed_ outside QCFloorSelectionPage.js | ✅ **0 hits** — safe to refactor in place |
-| 0.3 | UnitQCSelectionPage state | ✅ useSearchParams NOT imported; L57 local urlParams (KEEP); L106 stages aggregated (the bug); L166 hardcoded "🟫 ריצוף" |
-| 0.4 | Callers of qc/units | ✅ FloorDetailPage L315 sends `?stage_id=X`; UnitQCSelectionPage L64 had returnTo w/o stage_id |
-| 0.5 | getFloorRun/getUnitRun in services/api.js | ✅ L1321/L1325/L1329 |
+#2  Contractor sees ALL defects in their projects (cross-company leak)
+    Root cause: tasks_router.py L287 strict `user['role']=='contractor'`
+                gate. A contractor with user.role='user' AND
+                membership.role='contractor' bypassed the filter on
+                cross-project list and saw every defect.
+    Fix:        Widen is_contractor detection to consider per-project
+                memberships. For cross-project list, build per-project
+                (project_id+company_id) $or conditions. MIXED-ROLE
+                fallback so a contractor-in-A who is PM-in-B still
+                sees ALL B tasks.
 
----
+#3  Contractor in company can't close company-assigned defect
+    Root cause: TaskDetailPage L786 + tasks_router.py L864 both
+                required strict isAssignee. Defects assigned to a
+                company (no specific user) gave 404 to ANY contractor.
+    Fix:        Both widen to (isAssignee OR isCompanyMember).
+                assignee_id is NEVER changed — WhatsApp/reminders
+                still go to the original assignee only.
 
-## V-GATES — ALL GREEN
+================================================================================
+STEP 0 — PRE-FLIGHT AUDIT (all expectations matched)
+================================================================================
 
-| Gate | Status | Result |
-|------|--------|--------|
-| V1 — `yarn build` (REACT_APP_BACKEND_URL=https://api.brikops.com) | ✅ | **Done in 34.80s** — no new warnings |
-| V2 — QCFloorSelectionPage greps | ✅ | summaryCollapsed=**4**, "סטטוס ביצוע כללי"=**1**, `!== '0'` at **L37 + L43** |
-| V3 — UnitQCSelectionPage greps | ✅ | useSearchParams=**2**, fromParam\|stageIdParam=**7**, "ריצוף — "=**0**, currentStageTitle=**2**, from=qc=**4** |
-| V4 — `pytest tests/test_qc_units_status.py -v` | ✅ | **1 passed** in 1.61s (defensive — backend untouched) |
-| V5 — Visual smoke a-q | ⏸ | **DEFERRED to Zahi after deploy** |
+0.1  TaskDetailPage company rendering         → L178 state, L240 mgmt-only load,
+                                                L1018 the bug line ✅
+0.2  tasks_router is_contractor               → L287 strict check (the bug),
+                                                L292-307 fallback ✅
+0.3  /contractor-proof guard                  → L848 decorator, L862 403,
+                                                L864 strict 404 (the bug),
+                                                L866-867 trade match (keep) ✅
+0.4  Contractor list page                     → ContractorDashboard.js,
+                                                TaskCard inline at L459 ✅
+0.5  Hardcoded 'contractor' checks            → 5 hits. Only L287 fixed in
+                                                this batch (per scope).
+                                                L160/L168/L481/L761 noted
+                                                for follow-up. ✅
+0.6  db.project_companies + db.companies      → both used in companies_router ✅
+0.7  (user_id, role) compound index           → MISSING — added in PART 5 ✅
+extra GET /tasks/{id} is_company_member       → L482-491 already computed,
+                                                just not exposed to client.
+                                                PART 2.2 = 2-line set. ✅
 
----
+================================================================================
+PER-FILE DIFF (5 files, +121/-8)
+================================================================================
 
-## DIFF STAT
+backend/contractor_ops/router.py                              | 38 ++++
+  +L77-92  _is_user_in_task_company(db, user_id, task) -> bool
+  +L95-112 _resolve_task_company_name(db, company_id) -> Optional[str]
 
-```
- frontend/src/pages/QCFloorSelectionPage.js | 86 +++++++++++++++---------------
- frontend/src/pages/UnitQCSelectionPage.js  | 37 ++++++++++---
- 2 files changed, 74 insertions(+), 49 deletions(-)
-```
+backend/contractor_ops/tasks_router.py                        | 59 +++++++++
+  L15      Imports: + _is_user_in_task_company,
+                    + _resolve_task_company_name
+  L291-348 GET /tasks list filter REWRITE:
+           - widened is_contractor (membership.role lookup)
+           - cross-project per-project (project_id+company_id) $or
+           - MIXED-ROLE fix (mgmt_memberships → project_id-only)
+  L412-414 GET /tasks list loop: +td['is_my_assignee']
+  L543-547 GET /tasks/{id} task_data: +is_company_member, +company_name
+  L909-915 POST /contractor-proof guard widen:
+           strict isAssignee → (isAssignee OR isCompanyMember)
+           trade_match check kept; assignee_id NEVER changes
 
-**Net new code**: ~25 LOC (rest is the JSX block move A3 — same content, different position).
-**Files**: 2 frontend pages. **0 backend. 0 tests. 0 schema.**
+backend/server.py                                             |  3 +
+  L595    +db.project_memberships.create_index([("user_id",1),("role",1)])
+          (covers PART 2.3 cross-project queries; idempotent)
 
----
+frontend/src/pages/TaskDetailPage.js                          | 12 +/-
+  L242    +const isCompanyMember = task?.is_company_member === true
+  L794    canSubmitProof = isContractor && (isAssignee || isCompanyMember)
+  L1018   {task.company_name || getCompanyName(...) || ...} (first pref)
 
-## EDITS APPLIED
+frontend/src/pages/ContractorDashboard.js                     | 17 +/-
+  L13     Imports: +User, +Users (lucide-react)
+  L473-486 Badge inserted ABOVE title row in sortedOpenTasks.map:
+          - is_my_assignee=true  → blue "👤 משויך אלי"
+          - is_my_assignee=false → slate "👥 החברה שלי"
 
-### A1 — QCFloorSelectionPage L36-38: useState default flipped
-`'1' → false` ⇒ `'0' → true` (missing key now defaults to **collapsed**).
+backend/tests/test_contractor_visibility.py                   | NEW (~200 LOC)
+  T1a-d   _is_user_in_task_company AsyncMock unit tests (4)
+  T2a-d   _resolve_task_company_name AsyncMock unit tests (4)
+  T3-T10  Source-level assertions confirming PART 2.2-2.5 + PART 3-5
+          were applied (avoids needing live FastAPI server)
 
-### A2 — QCFloorSelectionPage L42-44: useEffect mirror — same flip.
-Convention preserved: `'1'`=collapsed, `'0'`=expanded. Users with explicit `'0'` keep expanded.
+================================================================================
+V-GATES — RESULTS
+================================================================================
 
-### A3 — QCFloorSelectionPage: section moved from L261-300 to L366-405
-Cut the entire `{execSummary && execSummary.stages...}` block from above the 4 status counters; pasted as the **last child** of the outer container, AFTER the building list (`<div className="space-y-2">`). Block content / styling / icons / chevron behavior / state mgmt: untouched.
+V1  yarn build ............................................... ✅ Done in 37.63s
+    REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
+    Compiled with warnings (no NEW warnings vs baseline).
+    Build folder ready to be deployed.
 
-### B1 — UnitQCSelectionPage L2: import useSearchParams
-```js
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-```
+V2  pytest test_contractor_visibility.py -v ......... ✅ 17 passed in 1.16s
+    (4 helper unit tests + 4 helper unit tests + 9 source-level
+     assertions). NOTE: T1-T2 use asyncio.run() not pytest-asyncio
+     (plugin not installed in this env; anyio is the available one).
 
-### B2 — UnitQCSelectionPage L26-28: hooks
-```js
-const [searchParams] = useSearchParams();
-const fromParam = searchParams.get('from');
-const stageIdParam = searchParams.get('stage_id');
-```
+V3  pytest test_qc_units_status.py test_qc_template_upgrade.py
+    ........................................................ ✅ 4 passed in 1.54s
+    (regression sanity; nothing in QC affected)
 
-### B3 — UnitQCSelectionPage L121-135: stage filter + dynamic title
-- Renamed `const stages` → `const allStages`.
-- Inserted: `const stages = stageIdParam ? allStages.filter(s => s.stage_id === stageIdParam) : allStages;`
-- Inserted: `const currentStageTitle = stages.length > 0 ? (stages[0].stage_title || 'בקרת ביצוע') : 'בקרת ביצוע';`
-- Aggregation logic at L137+ **unchanged** — only the input array filtered upstream.
+V4a router.py helpers ...................................... = 2  ✅ (def×2)
+V4b tasks_router uses ...................................... = 3  ✅ (≥3)
+V4c is_my_assignee in tasks_router.py ...................... = 1  ✅ (≥1)
+V4d task.company_name + is_company_member in TaskDetailPage = 2   ✅ (≥2)
+V4e is_my_assignee + Hebrew badges in ContractorDashboard . = 3   ✅ (≥1)
+V4f (user_id,1),(role,1) index in server.py ............... = 1   ✅ (≥1)
+V4g MGMT_ROLES_FOR_LIST + mgmt_memberships ................ = 4   ✅ (≥2)
 
-### B4 — UnitQCSelectionPage L193-195: dynamic header title
-```js
-// BEFORE: 🟫 ריצוף — {floor_name}
-// AFTER:  📋 {currentStageTitle} — {floor_name}
-```
+V5  Visual smoke (a-p) .................................... DEFERRED to Zahi
+    To be performed post-deploy on staging then prod.
+    Phase A (staging easy reproducer): a-k
+    Phase B (production verification, plot 810/WUyoughong): l-p
 
-### B5 — UnitQCSelectionPage L89-93: goBack propagates ?from=qc
-```js
-const url = `/projects/${projectId}/floors/${floorId}`;
-const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
-navigate(withFrom);
-```
+================================================================================
+DECISIONS LOCKED (D1-D10)
+================================================================================
+D1  is_company_member already computed L482-491; PART 2.2 just exposes it.
+D2  _resolve_task_company_name adds 1-2 queries per /tasks/{id}. Acceptable.
+D3  Cross-project $or capped to_list(200) per spec.
+D4  MGMT_ROLES_FOR_LIST = (project_manager, management_team, super_admin,
+    owner, org_admin) — exact tuple from plan.
+D5  is_my_assignee set on td (Pydantic dict), not raw t.
+D6  /contractor-proof NEVER mutates assignee_id. WhatsApp unchanged.
+D7  task.company_name FIRST; getCompanyName + assignee_company_name as fallback.
+D8  Badge ONLY on open list, NOT completed list (read-only history).
+D9  User/Users icons from lucide (already used elsewhere in dashboard).
+D10 L160/L168/L481/L761 hardcoded contractor checks NOT touched (out of scope).
 
-### B6 — UnitQCSelectionPage L66-82: handleUnitClick propagates ?from=qc
-- stageWithFrom appends `?from=qc` if `fromParam==='qc'`.
-- returnTo always carries `?stage_id=${stageId}`, then `&from=qc` if applicable.
-- L57-59 local `urlParams.get('stage_id')` for stageId **kept** (D3) — no refactor conflict with new hook.
+================================================================================
+EXPLICITLY OUT OF SCOPE (deferred to follow-up batch)
+================================================================================
+- notification_router.py L105 strict 'contractor' check
+- stats_router.py L432 strict 'contractor' check
+- tasks_router.py L160, L168, L481, L761 hardcoded 'contractor' checks
+- /tasks/{id}/attachments, /updates, /reopen, /approve, /reject (strict gates KEPT)
+- N+1 in /tasks/{id} (5 sequential lookups) — TODO comment present, no change
+- Mobile native files — OTA via Capgo handles JS/CSS
 
----
+================================================================================
+RISK & ROLLBACK
+================================================================================
+- Surface: 4 endpoints touched (1 widened gate, 1 widened guard,
+           2 added fields). No DB writes added. No schema changes.
+- Performance: PART 2.3 +2-3 queries per /tasks call → covered by
+               new index (PART 5) so O(log n).
+               PART 2.2 +1-2 queries per /tasks/{id} call. Not a hot endpoint.
+- Rollback: git revert <sha> — all 5 files revert cleanly. 3 bugs return.
+            No data corruption (changes only broaden access + add non-PII fields).
+- Mobile: OTA via Capgo only. No native rebuild required.
+- No impact on: manager flows, WhatsApp/notifications, QC, matrix,
+                handover, safety modules, assignee_id values in DB.
 
-## DECISIONS LOCKED (zero deviation)
+================================================================================
+V5 — VISUAL SMOKE CHECKLIST (Zahi to perform post-deploy)
+================================================================================
 
-- **D1** — Convention `'1'`=collapsed, `'0'`=expanded preserved exactly. Only missing-key default flips.
-- **D2** — Aggregation logic L137+ unchanged. Only input `stages` filtered upstream.
-- **D3** — Local `urlParams` read at L63-65 stays. New `useSearchParams` hook used only for `fromParam` — no refactor of stage_id reading.
-- **D4** — Icon 🟫 → 📋 (generic clipboard). Per-stage icons require backend `stage_icon` field — explicitly out of scope.
-- **D5** — `state.returnTo` becomes `${returnToBase}?stage_id=${stageId}`, then `&from=qc` if applicable. Order: `?stage_id` first, `&from` second.
+Phase A — staging easy reproducer:
+  (a) Login super_admin
+  (b) Create defect: company X, no specific assignee (assignee_id=null)
+  (c) Login as contractor in company X
+  (d) Defect appears in dashboard with badge "👥 החברה שלי"
+  (e) Open defect → company shows "X" (not "לא שויך")
+  (f) Yellow proof card visible, can submit
+  (g) Find defect ALSO assigned to that contractor specifically
+  (h) Dashboard shows badge "👤 משויך אלי"
+  (i) Open it → proof flow works
+  (j) Find defect in DIFFERENT company
+  (k) NOT in contractor's dashboard
 
----
+Phase B — production verification (plot 810):
+  (l) WUyoughong opens dashboard → only גמרים defects;
+      a7e94375 = "👤 משויך אלי", others = "👥 החברה שלי"
+  (m) Open 8b503b73 → company = "גמרים", yellow proof card visible
+  (n) Submit proof → 200, status→pending_manager_approval,
+      assignee_id UNCHANGED in DB
+  (o) PM gets notified, can approve (existing flow)
+  (p) WhatsApp to original assignee unchanged
 
-## V5 — VISUAL SMOKE (deferred to Zahi after deploy)
-
-### Part A — QCFloorSelectionPage
-- (a) `/projects/{p}/qc` → header + matrix + counters + count + search + buildings → "סטטוס ביצוע כללי" at **BOTTOM, collapsed**
-- (b) Click section → expands inline
-- (c) Click again → collapses
-- (d) Reload (same tab) → state persists per sessionStorage
-- (e) New tab → defaults to collapsed
-
-### Part B — UnitQCSelectionPage with params
-- (f) `/projects/{p}/qc` → bldg → floor → "ריצוף" stage card → URL includes `?stage_id=stage_tiling&from=qc`
-- (g) Header reads "📋 <stage_title> — קומה X" — NOT "🟫 ריצוף"
-- (h) Each unit row: X/Y where Y = items in tiling stage only (≈1-3, NOT 18)
-- (i) Back → `/projects/{p}/floors/{f}?from=qc`
-- (j) Back → `/projects/{p}/buildings/{b}/qc?from=qc`
-- (k) Back → `/projects/{p}/qc` ← **THE BUG IS FIXED**
-- (l) From (f) click into unit → `/qc/floors/{f}/run/{r}/stage/stage_tiling?from=qc` → StageDetailPage shows correct stage
-- (m) Back from StageDetailPage → `/floors/{f}?from=qc` → chain (i)(j)(k) continues
-
-### Part B — direct entry (no params)
-- (n) `/buildings/{b}/floors/{f}/qc/units` (no params)
-- (o) Title falls back to first stage's title (or "בקרת ביצוע")
-- (p) Numbers aggregated across all stages (existing behavior)
-- (q) Back → `/floors/{f}` (clean, no `from=qc`)
-
----
-
-## RISK & ROLLBACK
-
-- **Pure UX**, no data path. Zero schema, zero backend, zero new tests.
-- **Mobile**: OTA via Capgo only — no native files.
-- **Rollback**: `git revert <sha>` — 2 files revert, 3 bugs return, no data loss.
-- **No impact on**: #480, 5K, #503, #601, direct-entry flows, other QC/handover/matrix/project pages, backend.
-
----
-
-## STOP — AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+================================================================================

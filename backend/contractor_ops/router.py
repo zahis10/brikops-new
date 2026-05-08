@@ -71,6 +71,44 @@ async def _get_contractor_trade_key(db, user_id: str, project_id: str) -> Option
     return mem.get('contractor_trade_key') if mem else None
 
 
+async def _is_user_in_task_company(db, user_id: str, task: dict) -> bool:
+    """True if user has a project_membership in the task's project
+    whose company_id matches task.company_id. Used to broaden access
+    to contractor flows (proof upload, visibility) to all members of
+    the assigned company. Returns False if task has no company_id.
+    """
+    task_company_id = task.get('company_id')
+    if not task_company_id:
+        return False
+    mem = await db.project_memberships.find_one(
+        {'user_id': user_id, 'project_id': task['project_id']},
+        {'_id': 0, 'company_id': 1},
+    )
+    if not mem:
+        return False
+    return mem.get('company_id') == task_company_id
+
+
+async def _resolve_task_company_name(db, company_id: str):
+    """Resolve a task's company_id to a display name. Tries
+    project_companies first (project-scoped), falls back to global
+    companies. Returns None if not found.
+    """
+    if not company_id:
+        return None
+    proj_company = await db.project_companies.find_one(
+        {'id': company_id}, {'_id': 0, 'name': 1}
+    )
+    if proj_company and proj_company.get('name'):
+        return proj_company['name']
+    global_company = await db.companies.find_one(
+        {'id': company_id}, {'_id': 0, 'name': 1}
+    )
+    if global_company and global_company.get('name'):
+        return global_company['name']
+    return None
+
+
 def _trades_match(task_category: Optional[str], contractor_trade_key: Optional[str]) -> bool:
     if not contractor_trade_key:
         return True

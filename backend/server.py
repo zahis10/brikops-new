@@ -587,6 +587,9 @@ async def create_indexes():
         await db.join_requests.create_index("user_id")
         await db.project_memberships.create_index([("project_id", 1), ("user_id", 1)], unique=True)
         await db.project_memberships.create_index([("project_id", 1), ("role", 1)])
+        # FIX 2026-05-08: covers cross-project queries from tasks_router.py
+        # (find by user_id+role for is_contractor widening + cross-project filter).
+        await db.project_memberships.create_index([("user_id", 1), ("role", 1)])
         await db.floors.create_index([("building_id", 1), ("sort_index", 1)])
         await db.units.create_index([("floor_id", 1), ("sort_index", 1)])
         await db.whatsapp_events.create_index([("received_at", -1)])

@@ -6,7 +6,8 @@ import { tCategory, tStatus, tPriority, t, getLanguage } from '../i18n';
 import { toast } from 'sonner';
 import {
   LogOut, Clock, CheckCircle2, AlertTriangle,
-  Camera, Eye, Settings, ChevronLeft, Flame
+  Camera, Eye, Settings, ChevronLeft, Flame,
+  User, Users
 } from 'lucide-react';
 import { Card } from '../components/ui/card';
 import NotificationBell from '../components/NotificationBell';
@@ -466,6 +467,20 @@ const ContractorDashboard = ({ initialProjectId } = {}) => {
                 return (
                   <Card key={task.id} className={`p-0 overflow-hidden border-r-4 ${priBorder}`}>
                     <div className="p-3">
+                      {/* FIX 2026-05-08: assignment-vs-company badge */}
+                      <div className="mb-1.5">
+                        {task.is_my_assignee ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700">
+                            <User className="w-3 h-3" />
+                            משויך אלי
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                            <Users className="w-3 h-3" />
+                            החברה שלי
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-start justify-between mb-1.5">
                         <h4 className="text-sm font-medium text-slate-800 flex-1 leading-snug">{task.title}</h4>
                         <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap mr-2 ${statusColor}`}>
