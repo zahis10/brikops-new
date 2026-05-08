@@ -230,6 +230,8 @@ class UserCreate(BaseModel):
     company_id: Optional[str] = None
     specialties: Optional[List[str]] = None
     phone_e164: Optional[str] = None
+    # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+    terms_accepted: bool = False
 
 
 class ProjectMembershipSummary(BaseModel):
@@ -468,6 +470,8 @@ class PhoneRegistration(BaseModel):
     track: Track
     requested_role: str
     requested_company_id: Optional[str] = None
+    # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+    terms_accepted: bool = False
 
 
 class ManagementRegistration(BaseModel):
@@ -477,6 +481,8 @@ class ManagementRegistration(BaseModel):
     phone_e164: str
     requested_role: str
     join_code: str
+    # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+    terms_accepted: bool = False
 
 
 class SetPasswordRequest(BaseModel):

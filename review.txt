@@ -1,211 +1,134 @@
 ================================================================================
-504 — TaskDetailPage management panel: split company + contractor dropdowns
-================================================================================
-Date:    2026-05-08 (after P1 #contractor_nav_company_only deployed)
-Branch:  staging
-Plan:    .local/plans/504_split_company_contractor_2026_05_08.md
-
-Severity: P1 — UX cleanup. Reported by Zahi 2026-05-08:
-          "שהכל יהיה ברור וחלק" — current dropdown mixes contractors
-          and "🏢 X — כל החברה" options under one "קבלן" header,
-          plus generic "קבלן משויך" fallback instead of actual name.
-
-Reference: Mirrors NewDefectModal.js L888-922 dual-dropdown pattern.
-Files changed: 2 (1 backend, 1 frontend) — +119 / -42 LOC.
-
-================================================================================
-TWO BUGS FIXED IN THIS BATCH
+BATCH 505 — UNIFIED AUTH (Open SSO + ToS Consent) — REVIEW
+2026-05-08 | Branch: staging | Awaiting Zahi approval before merge/deploy
 ================================================================================
 
-BUG A — Mixed dropdown is confusing
-  Today's "קבלן" dropdown in mgmt panel mixed in one bag: לא שויך,
-  specific contractors, company-only "🏢 X — כל החברה" options
-  (added in earlier P1 batch), legacy contact_name fallbacks.
-  Semantic mismatch — labeled "קבלן" but emits company assignments.
-  Fix: split into two dropdowns matching NewDefectModal.js:
-    1. "חברה" — picks project_company → sets task.company_id.
-    2. "קבלן ספציפי" — filtered by selected company → sets
-       task.assignee_id. Disabled / placeholder when no company picked.
-
-BUG B — Display shows generic "קבלן משויך"
-  Backend returned task.assignee_name='' for users with empty
-  user_name AND empty users.name (legacy / phone-only contractors),
-  causing frontend to fall through to "קבלן משויך" in mgmt panel
-  AND in the שיוך card above it.
-  Fix: extend backend fallback chain → name || phone || email.
-  Phone is most identifying for Israeli contractors.
+GOAL
+----
+1. Open SSO/social login to ALL roles (was PM-only).
+2. Enforce mandatory ToS + Privacy consent (Israeli Spam Law) on every
+   user-creating flow, capturing terms_accepted_at + consent_ip on user_doc.
+3. Backfill terms_accepted_at for existing users (one-time, idempotent).
+4. SSO accepts invite_token and consumes the invite atomically (role assigned
+   from invite, phone-match enforced, membership upserted, status flipped).
 
 ================================================================================
-STEP 0 — PRE-FLIGHT AUDIT (all expectations matched, line shifts noted)
+BACKEND CHANGES
 ================================================================================
 
-0.1  NewDefectModal pattern (reference impl)              → ✅
-     L263 handleCompanyChange, L299 filteredCompanies,
-     L888 label="חברה", L914 label="קבלן מבצע".
+backend/contractor_ops/schemas.py
+  - UserCreate:              + terms_accepted: bool = False
+  - PhoneRegistration:       + terms_accepted: bool = False
+  - ManagementRegistration:  + terms_accepted: bool = False
 
-0.2  TaskDetailPage current state (post P1 dropdown batch) → ✅
-     L1091-1132 assignableContractors+companyOnlyOptions+
-     contactFallbacks+InlineSelect; L639 handleAssignContractor
-     with 3 modes (__contact__, null, user_id).
+backend/contractor_ops/auth_router.py
+  POST /auth/register
+    - Added Request param (FastAPI dep injection).
+    - Top-of-handler gate: HTTP 400 'יש לאשר את תנאי השימוש' when not accepted.
+    - user_doc now persists terms_accepted_at + consent_ip
+      (consent_ip via _resolve_client_ip(request)).
 
-0.3  Backend assignee_name lookup                         → ✅
-     **L572-576 (lines +40 vs spec)** — a_name pulled from
-     assignee_mem.user_name, falls back to db.users.name only.
-     Phone/email never consulted.
+backend/contractor_ops/onboarding_router.py
+  POST /onboarding/register-with-phone   — gate + capture
+  POST /onboarding/register-management   — gate + capture
+  POST /onboarding/accept-invite         — gate + capture
+  POST /onboarding/create-org            — gate + capture (request param added)
+  POST /auth/social/auth (SocialAuthRequest)
+    - + invite_token: Optional[str] = None on request model.
+    - Invite validated: status=='pending', not expired (legacy w/o expires_at OK).
+    - invite_token forwarded into BOTH session payloads (link branch + register
+      branch) so verify-otp can consume it after phone confirmation.
+    - REMOVED 4 PM-only gates (L1798, L1851, L1935, L2029) — comment markers
+      "PM-only gate REMOVED" left for traceability.
+  POST /auth/social/verify-otp (SocialVerifyOtpRequest)
+    - + terms_accepted: bool = False on request model.
+    - Top-level terms gate (HTTP 400) for both link + register branches.
+    - LINK branch: consent captured ONLY IF missing
+      (`if not link_user.get("terms_accepted_at"):`) — never overwrites.
+    - REGISTER branch: full invite consumption when invite_token present:
+        * Phone match enforced (HTTP 400 'הטלפון לא תואם להזמנה').
+        * resolved_role := invite['role'] (overrides default).
+        * Membership upserted (project_id, role, status='active').
+        * Invite doc updated: status='accepted', accepted_user_id, accepted_at.
+        * ENABLE_AUTO_TRIAL skipped for invited users (only fires when
+          resolved_role=='project_manager' AND no invite).
+    - REGISTER branch user_doc: terms_accepted_at + consent_ip captured.
 
-0.4  InlineSelect supports `disabled` prop                → ✅
-     **InlineSelect is INLINE at TaskDetailPage.js L105** —
-     not a shared component. Accepts {value, options, onChange,
-     disabled, label}. disabled was already used at L1124.
+backend/server.py
+  + backfill_terms_accepted_at() — startup job.
+    - Pipeline-style update_many (Mongo 4.2+):
+        filter: {"terms_accepted_at": {"$exists": False}}
+        update: [{"$set": {"terms_accepted_at": "$created_at"}}]
+    - Idempotent: only touches docs missing the field.
+    - Wired into application startup (L1227).
 
-0.5  projectCompanies loads in main loadTask              → ✅
-     L259-264 (not gated to MGMT). projectCompanyService.list().
-
-0.6  Empty-state guard uses companies.length (not project) → noted
-     L1078 used `companies.length === 0`; new חברה dropdown uses
-     `projectCompanies.length === 0` (correct — project-scoped).
-
-================================================================================
-PER-FILE DIFF (2 files, +119 / -42)
-================================================================================
-
-backend/contractor_ops/tasks_router.py          | 16 +++-
-  L575-591  PART 1: assignee_name fallback chain extended
-            from `user_name → users.name`
-            to   `user_name → users.name || users.phone || users.email`
-            with .strip() guards. Comment explains Israeli construction
-            context (phone commonly shared). assignee_company_name
-            untouched.
-
-frontend/src/pages/TaskDetailPage.js            | 145 ++++++++++++--
-  L677-683   PART 2.3: defensive race-guard in handleAssignContractor —
-             rejects user_id picks where contractor.companyId
-             ≠ task.company_id (toast: "הקבלן לא משויך לחברה הנבחרת").
-  L715-749   PART 2.1: NEW handleAssignCompany handler
-             (savingField='company', clears assignee on company mismatch,
-             smart toast: "חברה שויכה", "שיוך חברה הוסר",
-             "חברה שויכה. הקבלן הוסר כי לא שייך לחברה החדשה.").
-  L1121-1201 PART 2.2: REPLACED single "קבלן" cell with 2 stacked cells:
-             - "חברה": projectCompanies dropdown (לא שויך + 🏢 per company),
-               empty-state preserved (אין חברות בפרויקט + הוסף חברה link).
-             - "קבלן ספציפי": placeholder "בחר חברה תחילה" when no company,
-               "אין קבלנים רשומים בחברה זו" when company has no contractors,
-               otherwise filteredContractors dropdown
-               ("לא שויך (כל החברה)" + WUyoughong / etc).
-             companyOnlyOptions / contactFallbacks REMOVED from code
-             (only mentioned in 1 explanatory comment).
-             Both dropdowns disabled during ANY save (D4 race protection).
-             handleAssignContractor's __contact__ branch L640-644 KEPT
-             for backward compat (no longer triggered by new UI).
+backend/tests/test_unified_auth_consent.py — NEW
+    11 tests covering: terms_accepted on schemas (3 endpoints), invite
+    phone-mismatch security, legacy invites (no expires_at), PM-only gate
+    removal verification, consent capture in user_doc (>=4 register paths),
+    backfill idempotency + filter shape, SocialAuthRequest invite_token field,
+    SocialVerifyOtpRequest terms_accepted field, link-branch conditional
+    consent capture.
 
 ================================================================================
-V-GATES — RESULTS
+FRONTEND CHANGES
 ================================================================================
 
-V1  yarn build .................................................. ✅ 40.17s
-    REACT_APP_BACKEND_URL=https://api.brikops.com yarn build
-    Build folder ready. No new warnings.
+frontend/src/services/api.js
+  - socialAuth(provider, credential, appleName, inviteToken) — invite_token
+    now forwarded to backend.
+  - socialVerifyOtp(sessionToken, otp, termsAccepted) — terms_accepted now
+    forwarded to backend.
 
-V2  pytest regression ........................................... ✅ 21 passed
-    backend: tests/test_qc_units_status.py +
-             tests/test_qc_template_upgrade.py +
-             tests/test_contractor_visibility.py
-    21 passed, 2 warnings (pre-existing pydantic V1 deprecations) in 2.44s.
+frontend/src/pages/OnboardingPage.js
+  - State: + termsAccepted (default false).
+  - handleSocialVerifyOtp / handleAcceptInvite / handleCreateOrg:
+      gate (toast 'יש לאשר את תנאי השימוש') + forward terms_accepted +
+      include termsAccepted in useCallback deps.
+  - Both socialAuth call sites pass inviteToken.
+  - Added consent checkbox to 4 forms:
+      1. Social register form (L1157)            — id="onb-social-terms"
+      2. Invite-login-needed form (L868)         — id="onb-invite-terms"
+      3. renderCreateOrgStep submit area (L1543) — id="onb-org-terms"
+      (link branch reuses register-branch state — single state, persists.)
 
-V3a grep "handleAssignCompany" TaskDetailPage.js .......... = 2  ✅ (≥1)
-    (def + onChange wiring)
-V3b grep "filteredContractors" TaskDetailPage.js .......... = 3  ✅ (≥1)
-    (declaration + length check + spread)
-V3c grep "companyOnlyOptions|contactFallbacks" .......... = 2  ✅ (=0 in code)
-    Both hits at L1120-1121 are inside the new explanatory
-    block-comment ("companyOnlyOptions / contactFallbacks
-    (added in earlier P1) removed"). Zero references in code.
-V3d grep "a_user.get('phone')" tasks_router.py .......... = 1  ✅ (≥1)
+frontend/src/pages/LoginPage.js
+  - State: + termsAccepted (default false).
+  - handleSocialVerifyOtp: gate + forwards termsAccepted +
+    deps include termsAccepted.
+  - Added consent checkbox to social register form (L857)
+    — id="login-social-terms".
 
-V4  Visual smoke (a-o) .................................... DEFERRED to Zahi
-
-================================================================================
-DECISIONS LOCKED (D1-D6)
-================================================================================
-D1  Mirror NewDefectModal.js dual-dropdown pattern for UX consistency.
-D2  __contact__<id> branch in handleAssignContractor KEPT for backward
-    compat (still valid taskService payload). Just no longer triggered
-    by the new UI.
-D3  handleAssignCompany clears assignee when contractor doesn't belong
-    to the new company. Toast explicitly mentions this so PM is not
-    confused.
-D4  Both dropdowns disabled during ANY save (savingField !== null) —
-    race protection.
-D5  Phone fallback in PART 1 may expose a contractor's phone number
-    to peer contractors viewing the same defect. Acceptable in Israeli
-    construction context where phones are commonly shared between
-    trade partners. Future polish: gate to MGMT_ROLES + use '—' for
-    non-mgmt.
-D6  c.role === 'contractor' redundant filter is intentional defensive
-    coding (projectContractors L258 already filters by role).
+frontend/src/pages/RegisterPage.js
+  - State: + termsAccepted (default false).
+  - handleSubmit: gate before payload build.
+  - Payload: + terms_accepted: termsAccepted.
+  - Added consent checkbox before submit Button (L305) — id="reg-terms".
 
 ================================================================================
-RISK & ROLLBACK
+LEGAL PAGES (DEVIATION)
 ================================================================================
-- Surface: 2 files (~119 LOC). Pure UI + 1 backend fallback line.
-- DB / schema / endpoints: unchanged. taskService.update handles both
-  flows (the API was already accepting {company_id, assignee_id}).
-- Performance: O(n) over projectContractors per render. Negligible.
-- Visual height: mgmt panel grows ~40px on mobile (1 cell → 2 stacked
-  cells in the same grid column). Acceptable.
-- Rollback: git revert <sha> — 2 files revert. Old confusing dropdown
-  returns. No data corruption.
-- Mobile: Capgo OTA only. No native rebuild.
-- No impact on: NewDefectModal (unchanged — pattern source),
-  WhatsApp/notifications, assignee_id/company_id values in DB, QC,
-  matrix, handover, safety modules, force-close button.
+Spec said "no .html extension" but CRA static serving doesn't rewrite paths.
+Using existing files at frontend/public/legal/{terms,privacy}.html with
+href="/legal/terms.html". Ship-blocker if Zahi wants extensionless URLs —
+would require either CRA config rewrites or moving to React Router pages.
 
 ================================================================================
-V4 — VISUAL SMOKE CHECKLIST (Zahi to perform post-deploy)
+V-GATES PASSED
 ================================================================================
-
-Setup:
-  (a) Login as PM. Open a defect.
-  (b) Verify mgmt panel shows: סטטוס + דחיפות + תחום + חברה (NEW)
-      + קבלן ספציפי (NEW, was "קבלן").
-
-Bug A — clean dropdown:
-  (c) "חברה" options: לא שויך + "🏢 X" per project_company.
-      NO contractors mixed in.
-  (d) "קבלן ספציפי" when no company picked: shows "בחר חברה תחילה"
-      placeholder, no select rendered.
-  (e) Pick "🏢 גמרים" in חברה. Toast "חברה שויכה בהצלחה". Page
-      refreshes. "חברה" label = "🏢 גמרים".
-  (f) "קבלן ספציפי" now active. Options: "לא שויך (כל החברה)" +
-      WUyoughong (only contractors of גמרים).
-  (g) Pick WUyoughong. Toast "קבלן שויך בהצלחה". "קבלן ספציפי"
-      label = "WUyoughong" (NOT "קבלן משויך").
-
-Bug B — display fixed:
-  (h) שיוך card above panel shows: "חברה: גמרים" / "קבלן: WUyoughong"
-      (was "קבלן משויך" generic before for legacy phone-only users).
-
-Edge — change company:
-  (i) From state of (g), change חברה to "🏢 מטלפרס".
-      Toast "חברה שויכה. הקבלן הוסר כי לא שייך לחברה החדשה."
-      "קבלן ספציפי" returns to "לא שויך (כל החברה)".
-
-Edge — clear company:
-  (j) Pick "לא שויך" in חברה. Both company_id + assignee_id cleared.
-      Toast "שיוך חברה הוסר".
-
-Regression — proof flow:
-  (k) From state where חברה=גמרים, no specific assignee → contractor
-      in גמרים opens defect → proof card visible (P0 flow).
-  (l) Submit proof → status advances to pending_manager_approval.
-  (m) PM approves → defect closes.
-
-Regression — WhatsApp:
-  (n) When assignee_id set explicitly (WUyoughong) → he gets WhatsApp
-      on defect_assigned event.
-  (o) When only company_id set (assignee_id=null) → no specific
-      person gets WhatsApp (current behavior — unchanged).
+- AST parse: onboarding_router.py / auth_router.py / schemas.py / server.py — OK
+- Brace balance: OnboardingPage / LoginPage / RegisterPage / api.js — balanced
+- All edits applied verbatim, no failed replacements remaining.
 
 ================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+NOT DONE / DEFERRED
+================================================================================
+- E2E test against running server (no curl runs in this batch).
+- Translations for new toast 'יש לאשר את תנאי השימוש' — hardcoded Hebrew
+  inline (consistent with neighboring strings in same handlers).
+- Workflow restart NOT performed (per standing rule — Zahi only).
+- Git commit / push / deploy NOT performed (per standing rule).
+
+================================================================================
+AWAITING ZAHI APPROVAL
 ================================================================================

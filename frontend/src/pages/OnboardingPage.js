@@ -58,6 +58,9 @@ const OnboardingPage = () => {
   const countdownRef = useRef(null);
 
   const googleButtonRef = useRef(null);
+  // 2026-05-08 — ToS consent (Israeli Spam Law). Mandatory checkbox on
+  // all register/link forms; backend rejects with 400 if not true.
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [socialFlow, setSocialFlow] = useState(null);
   const [socialSessionToken, setSocialSessionToken] = useState('');
   const [socialPhoneMasked, setSocialPhoneMasked] = useState('');
@@ -193,7 +196,8 @@ const OnboardingPage = () => {
       client_id: googleClientId,
       callback: async (response) => {
         try {
-          const result = await onboardingService.socialAuth('google', response.credential);
+          // 2026-05-08 — pass inviteToken so backend applies role/project on register.
+          const result = await onboardingService.socialAuth('google', response.credential, null, inviteToken || null);
           await handleSocialAuthResult(result);
         } catch (error) {
           const detail = error.response?.data?.detail;
@@ -294,7 +298,8 @@ const OnboardingPage = () => {
           : null;
       }
 
-      const result = await onboardingService.socialAuth('apple', idToken, appleName);
+      // 2026-05-08 — pass inviteToken so backend applies role/project on register.
+      const result = await onboardingService.socialAuth('apple', idToken, appleName, inviteToken || null);
       await handleSocialAuthResult(result);
     } catch (error) {
       if (error.error === 'popup_closed_by_user' || error.code === '1001') {
@@ -343,9 +348,14 @@ const OnboardingPage = () => {
       toast.error('יש להזין קוד בן 6 ספרות');
       return;
     }
+    // 2026-05-08 — ToS consent gate (mandatory on both register + link).
+    if (!termsAccepted) {
+      toast.error('יש לאשר את תנאי השימוש');
+      return;
+    }
     setSocialLoading(true);
     try {
-      const result = await onboardingService.socialVerifyOtp(socialSessionToken, socialOtp);
+      const result = await onboardingService.socialVerifyOtp(socialSessionToken, socialOtp, termsAccepted);
       if (result.status === 'authenticated' && result.token) {
         loginWithOtp(result.token, result.user);
         toast.success('התחברת בהצלחה!');
@@ -374,7 +384,7 @@ const OnboardingPage = () => {
     } finally {
       setSocialLoading(false);
     }
-  }, [socialOtp, socialSessionToken, loginWithOtp, navigate]);
+  }, [socialOtp, socialSessionToken, loginWithOtp, navigate, termsAccepted]);
 
   const handleSocialBack = useCallback(() => {
     setSocialFlow(null);
@@ -566,6 +576,12 @@ const OnboardingPage = () => {
     setPasswordError('');
     setLoading(true);
     try {
+      // 2026-05-08 — ToS consent gate (Israeli Spam Law).
+      if (!termsAccepted) {
+        toast.error('יש לאשר את תנאי השימוש');
+        setLoading(false);
+        return;
+      }
       const result = await onboardingService.createOrg({
         phone: phoneE164,
         full_name: fullName.trim(),
@@ -574,6 +590,7 @@ const OnboardingPage = () => {
         project_name: projectName.trim(),
         total_units: parseInt(totalUnits, 10),
         password,
+        terms_accepted: termsAccepted,
       });
       if (result.success && result.token) {
         loginWithOtp(result.token, result.user, result.user?.platform_role);
@@ -591,7 +608,7 @@ const OnboardingPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [phoneE164, fullName, email, orgName, projectName, totalUnits, password, validatePassword, loginWithOtp, navigate]);
+  }, [phoneE164, fullName, email, orgName, projectName, totalUnits, password, validatePassword, loginWithOtp, navigate, termsAccepted]);
 
   const handleAcceptInvite = useCallback(async (e) => {
     e.preventDefault();
@@ -613,11 +630,18 @@ const OnboardingPage = () => {
     }
     setLoading(true);
     try {
+      // 2026-05-08 — ToS consent gate (Israeli Spam Law).
+      if (!termsAccepted) {
+        toast.error('יש לאשר את תנאי השימוש');
+        setLoading(false);
+        return;
+      }
       const payload = {
         invite_id: invite.invite_id,
         phone: phoneE164,
         full_name: fullName.trim(),
         password: password || undefined,
+        terms_accepted: termsAccepted,
       };
       if (inviteEmail.trim()) payload.email = inviteEmail.trim();
       if (inviteLang) payload.preferred_language = inviteLang;
@@ -648,7 +672,7 @@ const OnboardingPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedInvite, inviteInfo, inviteToken, phoneE164, fullName, password, inviteEmail, inviteLang, loginWithOtp, navigate, authToken, validatePassword]);
+  }, [selectedInvite, inviteInfo, inviteToken, phoneE164, fullName, password, inviteEmail, inviteLang, loginWithOtp, navigate, authToken, validatePassword, termsAccepted]);
 
   const handleJoinByCode = useCallback(async (e) => {
     e.preventDefault();
@@ -839,6 +863,20 @@ const OnboardingPage = () => {
               <option value="ar">العربية</option>
               <option value="zh">中文</option>
             </select>
+          </div>
+
+          {/* 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY. */}
+          <div className="flex items-start gap-2 pt-2">
+            <input
+              id="onb-invite-terms"
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+            />
+            <label htmlFor="onb-invite-terms" className="text-xs text-slate-700">
+              אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+            </label>
           </div>
 
           <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
@@ -1127,6 +1165,19 @@ const OnboardingPage = () => {
               </span>
             ) : 'שלח קוד אימות'}
           </Button>
+          {/* 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY. */}
+          <div className="flex items-start gap-2 pt-2">
+            <input
+              id="onb-social-terms"
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+            />
+            <label htmlFor="onb-social-terms" className="text-xs text-slate-700">
+              אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+            </label>
+          </div>
         </form>
       )}
 
@@ -1500,6 +1551,19 @@ const OnboardingPage = () => {
           {loading ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
           {isNew ? t('onboarding', 'create_org_start') : isInvite ? t('onboarding', 'accept_invite') : t('onboarding', 'send_join_request')}
         </Button>
+        {/* 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY for create-org and accept-invite. */}
+        <div className="flex items-start gap-2 pt-2">
+          <input
+            id="onb-org-terms"
+            type="checkbox"
+            checked={termsAccepted}
+            onChange={(e) => setTermsAccepted(e.target.checked)}
+            className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+          />
+          <label htmlFor="onb-org-terms" className="text-xs text-slate-700">
+            אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+          </label>
+        </div>
 
         <button
           type="button"

@@ -718,11 +718,15 @@ export const onboardingService = {
     const response = await axios.post(`${API}/auth/verify-otp`, { phone_e164, code });
     return response.data;
   },
-  socialAuth: async (provider, idToken, appleName = null) => {
+  // 2026-05-08 — inviteToken added so contractors invited via WhatsApp
+  // can complete onboarding via SSO (Google/Apple). Backend uses it to
+  // apply role/project + verify target_phone.
+  socialAuth: async (provider, idToken, appleName = null, inviteToken = null) => {
     const res = await axios.post(`${API}/auth/social`, {
       provider,
       id_token: idToken,
       apple_name: appleName,
+      invite_token: inviteToken || undefined,
     }, { timeout: 15000 });
     return res.data;
   },
@@ -737,10 +741,12 @@ export const onboardingService = {
     }, { timeout: 10000 });
     return res.data;
   },
-  socialVerifyOtp: async (sessionToken, otpCode) => {
+  // 2026-05-08 — termsAccepted REQUIRED (Israeli Spam Law).
+  socialVerifyOtp: async (sessionToken, otpCode, termsAccepted = false) => {
     const res = await axios.post(`${API}/auth/social/verify-otp`, {
       session_token: sessionToken,
       otp_code: otpCode,
+      terms_accepted: !!termsAccepted,
     }, { timeout: 10000 });
     return res.data;
   },

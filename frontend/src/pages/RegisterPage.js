@@ -18,6 +18,8 @@ const RegisterPage = () => {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [rolesLoading, setRolesLoading] = useState(false);
+  // 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY.
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   const detectLanguage = () => {
     const lang = (navigator.language || '').toLowerCase();
@@ -120,6 +122,11 @@ const RegisterPage = () => {
       return;
     }
 
+    // 2026-05-08 — ToS consent gate (Israeli Spam Law).
+    if (!termsAccepted) {
+      toast.error('יש לאשר את תנאי השימוש');
+      return;
+    }
     setLoading(true);
     try {
       const payload = {
@@ -129,6 +136,7 @@ const RegisterPage = () => {
         role: formData.role,
         project_id: formData.project_id,
         preferred_language: detectLanguage(),
+        terms_accepted: termsAccepted,
       };
       if (track === 'subcontractor' && formData.company_id) {
         payload.company_id = formData.company_id;
@@ -289,6 +297,20 @@ const RegisterPage = () => {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY. */}
+          <div className="flex items-start gap-2 pt-2">
+            <input
+              id="reg-terms"
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+            />
+            <label htmlFor="reg-terms" className="text-xs text-slate-700">
+              אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+            </label>
           </div>
 
           <Button

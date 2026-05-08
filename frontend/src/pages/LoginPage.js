@@ -59,6 +59,8 @@ const LoginPage = () => {
   const [onboardingEnabled, setOnboardingEnabled] = useState(null);
 
   const googleButtonRef = useRef(null);
+  // 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY checkbox.
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [socialFlow, setSocialFlow] = useState(null);
   const [socialSessionToken, setSocialSessionToken] = useState('');
   const [socialPhoneMasked, setSocialPhoneMasked] = useState('');
@@ -466,7 +468,13 @@ const LoginPage = () => {
     }
     setSocialLoading(true);
     try {
-      const result = await onboardingService.socialVerifyOtp(socialSessionToken, socialOtp);
+      // 2026-05-08 — ToS consent gate (Israeli Spam Law).
+      if (!termsAccepted) {
+        toast.error('יש לאשר את תנאי השימוש');
+        setSocialLoading(false);
+        return;
+      }
+      const result = await onboardingService.socialVerifyOtp(socialSessionToken, socialOtp, termsAccepted);
       if (result.status === 'authenticated' && result.token) {
         loginWithOtp(result.token, result.user);
         toast.success('התחברת בהצלחה!');
@@ -495,7 +503,7 @@ const LoginPage = () => {
     } finally {
       setSocialLoading(false);
     }
-  }, [socialOtp, socialSessionToken, loginWithOtp, navigate]);
+  }, [socialOtp, socialSessionToken, loginWithOtp, navigate, termsAccepted]);
 
   const handleSocialBack = useCallback(() => {
     setSocialFlow(null);
@@ -842,6 +850,19 @@ const LoginPage = () => {
                 </span>
               ) : 'שלח קוד אימות'}
             </Button>
+            {/* 2026-05-08 — ToS consent (Israeli Spam Law). MANDATORY. */}
+            <div className="flex items-start gap-2 pt-2">
+              <input
+                id="login-social-terms"
+                type="checkbox"
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+                className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+              />
+              <label htmlFor="login-social-terms" className="text-xs text-slate-700">
+                אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+              </label>
+            </div>
           </form>
         )}
 

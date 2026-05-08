@@ -739,6 +739,26 @@ async def seed_super_admin_user():
     logger.info(f"[DEV-SEED] Created super admin user {user_id} + org {org['id']} (****{SUPER_ADMIN_PHONE[-4:]})")
 
 
+async def backfill_terms_accepted_at():
+    """2026-05-08 — backfill ToS consent timestamp for users created
+    before consent capture was added (Israeli Spam Law compliance).
+    All current users are test customers (no marketing consent ever,
+    tracked per Zahi 2026-05-08). Treat their original signup
+    timestamp as consent. Idempotent — only updates docs missing the
+    field. Pipeline-style update requires MongoDB 4.2+."""
+    try:
+        result = await db.users.update_many(
+            {"terms_accepted_at": {"$exists": False}},
+            [{"$set": {"terms_accepted_at": "$created_at"}}],
+        )
+        if result.modified_count:
+            logger.info(f"[STARTUP] backfilled terms_accepted_at on {result.modified_count} users")
+        else:
+            logger.info("[STARTUP] terms_accepted_at backfill — no docs needed update")
+    except Exception as e:
+        logger.warning(f"[STARTUP] terms_accepted_at backfill warning: {e}")
+
+
 async def bootstrap_super_admin():
     from config import SUPER_ADMIN_PHONE
     try:
@@ -1201,6 +1221,7 @@ async def _deferred_db_init():
         await migrate_billing_orgs()
         await migrate_remove_owner_admin_roles()
         await backfill_join_codes()
+        await backfill_terms_accepted_at()
         await seed_qc_templates()
         await migrate_qc_template_type()
         await seed_handover_template()

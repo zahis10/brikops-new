@@ -150,7 +150,10 @@ async def update_my_whatsapp_notifications(request: Request, user: dict = Depend
 
 
 @router.post("/auth/register", response_model=UserResponse)
-async def register(user: UserCreate):
+async def register(user: UserCreate, request: Request):
+    # 2026-05-08 — ToS consent gate (Israeli Spam Law).
+    if not user.terms_accepted:
+        raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
     db = get_db()
     if user.email:
         existing = await db.users.find_one({'email': user.email})
@@ -173,6 +176,11 @@ async def register(user: UserCreate):
             requested, user.email,
         )
     resolved_role = "viewer"
+    # 2026-05-08 — capture consent timestamp + IP per Israeli Spam Law.
+    # _resolve_client_ip respects x-forwarded-for via trusted proxy.
+    from contractor_ops.onboarding_router import _resolve_client_ip
+    consent_ts = _now()
+    consent_ip = _resolve_client_ip(request)
     user_doc = {
         'id': user_id,
         'password_hash': (await _hash_password(user.password)) if user.password else None,
@@ -182,7 +190,9 @@ async def register(user: UserCreate):
         'company_id': user.company_id,
         'specialties': user.specialties,
         'user_status': 'active',
-        'created_at': _now(),
+        'created_at': consent_ts,
+        'terms_accepted_at': consent_ts,
+        'consent_ip': consent_ip,
     }
     if user.email:
         user_doc['email'] = user.email

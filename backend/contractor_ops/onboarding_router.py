@@ -375,7 +375,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         }
 
     @router.post("/auth/register-with-phone")
-    async def register_with_phone(reg: PhoneRegistration):
+    async def register_with_phone(reg: PhoneRegistration, request: Request):
+        # 2026-05-08 — ToS consent gate (Israeli Spam Law).
+        if not reg.terms_accepted:
+            raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
         if not reg.phone_e164:
             raise HTTPException(status_code=400, detail='יש להזין מספר טלפון')
         try:
@@ -411,6 +414,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
         user_id = str(uuid.uuid4())
         ts = _now()
+        # 2026-05-08 — capture consent IP per Israeli Spam Law.
+        consent_ip = _resolve_client_ip(request)
 
         role = 'contractor' if reg.track == Track.subcontractor else 'viewer'
 
@@ -422,6 +427,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'user_status': 'pending_pm_approval',
             'company_id': reg.requested_company_id if reg.track == Track.subcontractor else None,
             'created_at': ts,
+            # 2026-05-08 — ToS consent capture.
+            'terms_accepted_at': ts,
+            'consent_ip': consent_ip,
         }
         await db.users.insert_one(user_doc)
 
@@ -870,7 +878,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         return SUBCONTRACTOR_ROLES
 
     @router.post("/auth/register-management", status_code=201)
-    async def register_management(reg: ManagementRegistration):
+    async def register_management(reg: ManagementRegistration, request: Request):
+        # 2026-05-08 — ToS consent gate (Israeli Spam Law).
+        if not reg.terms_accepted:
+            raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
         db = get_db()
 
         if not reg.full_name or len(reg.full_name.strip()) < 2:
@@ -920,6 +931,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             'user_status': 'pending_pm_approval',
             'platform_role': 'none',
             'created_at': ts,
+            # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+            'terms_accepted_at': ts,
+            'consent_ip': _resolve_client_ip(request),
         }
         if ENABLE_COMPLETE_ACCOUNT_GATE != 'off':
             user_doc['account_complete'] = False
@@ -1004,7 +1018,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         }
 
     @router.post("/onboarding/create-org")
-    async def onboarding_create_org(body: dict):
+    async def onboarding_create_org(body: dict, request: Request):
+        # 2026-05-08 — ToS consent gate (Israeli Spam Law).
+        if not body.get('terms_accepted'):
+            raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
         db = get_db()
         phone = body.get('phone')
         full_name = body.get('full_name', '').strip()
@@ -1083,6 +1100,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 'user_status': 'active',
                 'platform_role': 'none',
                 'created_at': ts,
+                # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+                'terms_accepted_at': ts,
+                'consent_ip': _resolve_client_ip(request),
             }
             if ENABLE_COMPLETE_ACCOUNT_GATE != 'off':
                 new_pm_doc['account_complete'] = False
@@ -1187,7 +1207,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         }
 
     @router.post("/onboarding/accept-invite")
-    async def onboarding_accept_invite(body: dict):
+    async def onboarding_accept_invite(body: dict, request: Request):
+        # 2026-05-08 — ToS consent gate (Israeli Spam Law).
+        if not body.get('terms_accepted'):
+            raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
         db = get_db()
         invite_id = body.get('invite_id')
         phone = body.get('phone')
@@ -1246,6 +1269,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 'user_status': 'active',
                 'platform_role': 'none',
                 'created_at': ts,
+                # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+                'terms_accepted_at': ts,
+                'consent_ip': _resolve_client_ip(request),
             }
             if opt_email:
                 new_invite_doc['email'] = opt_email
@@ -1749,6 +1775,10 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         provider: str = Field(..., pattern="^(google|apple)$")
         id_token: str
         apple_name: Optional[str] = None
+        # 2026-05-08 — invite_token flow through SSO (security critical
+        # — without this, removing PM-only gates causes privilege
+        # escalation for invited contractors picking SSO).
+        invite_token: Optional[str] = None
 
     class SocialSendOtpRequest(BaseModel):
         session_token: str
@@ -1758,6 +1788,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
     class SocialVerifyOtpRequest(BaseModel):
         session_token: str
         otp_code: str
+        # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+        terms_accepted: bool = False
 
     def _mask_phone_social(phone: str) -> str:
         """054-1234567 → 054***4567"""
@@ -1791,12 +1823,28 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         name = social_info.get("name", "")
         social_id_field = f"{body.provider}_id"
 
+        # 2026-05-08 — validate invite_token if provided (must happen
+        # before any DB user lookup so session can carry it forward).
+        # Legacy invites without expires_at field treated as no expiry.
+        invite_for_session = None
+        if body.invite_token:
+            invite_for_session = await db.invites.find_one(
+                {'id': body.invite_token, 'status': 'pending'},
+                {'_id': 0}
+            )
+            if not invite_for_session:
+                raise HTTPException(status_code=400, detail='הזמנה לא תקפה')
+            invite_exp = invite_for_session.get('expires_at')
+            if invite_exp and invite_exp < _now():
+                raise HTTPException(status_code=400, detail='ההזמנה פגה תוקף')
+
         existing_user = await db.users.find_one({social_id_field: social_id}, {"_id": 0})
 
         if existing_user:
-            if existing_user.get('role') != 'project_manager':
-                raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
-
+            # 2026-05-08 — PM-only gate REMOVED. Phone OTP remains the
+            # security anchor: anyone trying to register/link without
+            # holding the phone can't pass. Contractors invited via
+            # WhatsApp can now sign in via SSO.
             status = existing_user.get("user_status", "active")
             if status == "pending_deletion":
                 raise HTTPException(
@@ -1847,9 +1895,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
         if email:
             email_user = await db.users.find_one({"email": email.lower()}, {"_id": 0})
             if email_user:
-                if email_user.get('role') != 'project_manager':
-                    raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
-
+                # 2026-05-08 — PM-only gate REMOVED. See note above.
                 status = email_user.get("user_status", "active")
                 if status == "pending_deletion":
                     raise HTTPException(
@@ -1870,6 +1916,9 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                     "name": name,
                     "flow": "link",
                     "user_id": email_user["id"],
+                    # 2026-05-08 — invite_token (if any) carries through
+                    # so verify-otp register branch can apply role/project.
+                    "invite_token": body.invite_token,
                 })
 
                 logger.info(f"[SOCIAL-AUTH] link_required user={email_user['id']} provider={body.provider}")
@@ -1887,6 +1936,8 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             "email": email,
             "name": name,
             "flow": "register",
+            # 2026-05-08 — invite_token carries to verify-otp.
+            "invite_token": body.invite_token,
         })
 
         logger.info(f"[SOCIAL-AUTH] registration_required provider={body.provider} email={'yes' if email else 'no'}")
@@ -1931,9 +1982,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
             existing = await db.users.find_one({"phone_e164": phone}, {"_id": 0})
             if existing:
-                if existing.get('role') != 'project_manager':
-                    raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
-
+                # 2026-05-08 — PM-only gate REMOVED. See note above.
                 status = existing.get("user_status", "active")
                 if status == "pending_deletion":
                     raise HTTPException(
@@ -1985,6 +2034,11 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
 
     @router.post("/auth/social/verify-otp")
     async def social_verify_otp(body: SocialVerifyOtpRequest, request: Request):
+        # 2026-05-08 — ToS consent gate (Israeli Spam Law). For link
+        # flow we don't OVERWRITE existing user's terms_accepted_at,
+        # but the user must still tick the box on this submit.
+        if not body.terms_accepted:
+            raise HTTPException(status_code=400, detail='יש לאשר את תנאי השימוש')
         client_ip = _resolve_client_ip(request)
         db = get_db()
 
@@ -2025,8 +2079,7 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             link_user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0})
             if not link_user:
                 raise HTTPException(status_code=400, detail="משתמש לא נמצא")
-            if link_user.get('role') != 'project_manager':
-                raise HTTPException(status_code=403, detail='התחברות חברתית זמינה למנהלי פרויקט בלבד.')
+            # 2026-05-08 — PM-only gate REMOVED. See note in social_auth.
             link_status = link_user.get("user_status", "active")
             if link_status == "pending_deletion":
                 raise HTTPException(
@@ -2042,10 +2095,16 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
                 await delete_social_session(db, body.session_token)
                 return {"status": "rejected", "message": "הבקשה נדחתה. פנה למנהל הפרויקט."}
 
+            # 2026-05-08 — capture ToS consent on link if missing.
+            # $setOnInsert-style: only write if user has no record yet.
+            link_set = {social_id_field: session["social_id"]}
+            if not link_user.get("terms_accepted_at"):
+                link_set["terms_accepted_at"] = _now()
+                link_set["consent_ip"] = client_ip
             await db.users.update_one(
                 {"id": session["user_id"]},
                 {
-                    "$set": {social_id_field: session["social_id"]},
+                    "$set": link_set,
                     "$addToSet": {"auth_methods": {"$each": [session["provider"], "phone"]}},
                 }
             )
@@ -2060,14 +2119,37 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             email = session.get("email", "").lower().strip() if session.get("email") else ""
             name = session.get("name", "").strip() if session.get("name") else ""
 
+            # 2026-05-08 — invite_token: if session carries an invite,
+            # apply role/project linkage. Phone MUST match invite's
+            # target_phone (security anchor — protects against someone
+            # forwarding an invite link and claiming it with their own
+            # phone). Legacy invites without expires_at handled.
+            session_invite = None
+            if session.get("invite_token"):
+                session_invite = await db.invites.find_one(
+                    {'id': session['invite_token'], 'status': 'pending'},
+                    {'_id': 0}
+                )
+                if session_invite:
+                    sinv_exp = session_invite.get('expires_at')
+                    if sinv_exp and sinv_exp < ts:
+                        raise HTTPException(status_code=400, detail='ההזמנה פגה תוקף')
+                    if session_invite.get('target_phone') and session_invite['target_phone'] != phone:
+                        raise HTTPException(status_code=400, detail='הטלפון לא תואם להזמנה')
+
+            resolved_role = session_invite['role'] if session_invite else "project_manager"
+
             user_doc = {
                 "id": user_id,
                 "name": name,
                 "phone_e164": phone,
-                "role": "project_manager",
+                "role": resolved_role,
                 "user_status": "active",
                 "platform_role": "none",
                 "created_at": ts,
+                # 2026-05-08 — ToS consent capture (Israeli Spam Law).
+                "terms_accepted_at": ts,
+                "consent_ip": client_ip,
                 social_id_field: session["social_id"],
                 "auth_methods": ["phone", session["provider"]],
             }
@@ -2081,12 +2163,45 @@ def create_onboarding_router(get_current_user_fn, require_roles_fn):
             except DuplicateKeyError:
                 raise HTTPException(status_code=409, detail="אימייל או טלפון כבר רשומים במערכת. נסה להתחבר.")
 
-            if ENABLE_AUTO_TRIAL:
+            # 2026-05-08 — apply invite linkage post-insert. Mirrors
+            # onboarding_accept_invite (L1271-1305) membership upsert
+            # and invite status update.
+            if session_invite:
+                membership_doc = {
+                    'id': str(uuid.uuid4()),
+                    'project_id': session_invite['project_id'],
+                    'user_id': user_id,
+                    'role': session_invite['role'],
+                    'sub_role': session_invite.get('sub_role'),
+                    'created_at': ts,
+                }
+                if session_invite['role'] == 'contractor':
+                    if session_invite.get('trade_key'):
+                        membership_doc['contractor_trade_key'] = session_invite['trade_key']
+                    if session_invite.get('company_id'):
+                        membership_doc['company_id'] = session_invite['company_id']
+                await db.project_memberships.update_one(
+                    {'project_id': session_invite['project_id'], 'user_id': user_id},
+                    {'$set': membership_doc},
+                    upsert=True
+                )
+                await db.invites.update_one(
+                    {'id': session_invite['id']},
+                    {'$set': {
+                        'status': 'accepted',
+                        'accepted_by_user_id': user_id,
+                        'accepted_at': ts,
+                        'updated_at': ts,
+                    }}
+                )
+                logger.info(f"[SOCIAL-AUTH] invite_consumed user={user_id} invite={session_invite['id'][:8]} role={session_invite['role']}")
+
+            if ENABLE_AUTO_TRIAL and resolved_role == 'project_manager':
                 await ensure_user_org(user_id, name)
 
             user = await db.users.find_one({"id": user_id}, {"_id": 0})
 
-            logger.info(f"[SOCIAL-AUTH] registered user={user_id} provider={session['provider']} phone={_mask_phone_social(phone)}")
+            logger.info(f"[SOCIAL-AUTH] registered user={user_id} provider={session['provider']} phone={_mask_phone_social(phone)} role={resolved_role}")
 
         else:
             raise HTTPException(status_code=400, detail="flow לא חוקי")
