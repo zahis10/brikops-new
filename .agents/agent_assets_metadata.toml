@@ -336,3 +336,9 @@ id = "9e39vMTj1RSfz6rr6HZ4E"
 uri = "file://.local/plans/p1_split_company_contractor_2026_05_08.md"
 type = "text"
 title = "P1 plan — split management panel: חברה + קבלן ספציפי dropdowns + assignee_name fallback"
+
+[[outputs]]
+id = "Z0a8SYPi89dTZLNFjksG1"
+uri = "file://.local/plans/504_split_company_contractor_2026_05_08.md"
+type = "text"
+title = "504 — split mgmt panel: חברה + קבלן ספציפי + assignee_name fallback"
