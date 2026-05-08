@@ -324,3 +324,9 @@ id = "FLSKfjKZHFm0GbLIyiAVu"
 uri = "file://.local/plans/matrix_qc_deeplink_2026_05_07.md"
 type = "text"
 title = "Matrix→QC deep-link — plan ready"
+
+[[outputs]]
+id = "8QA5bNx-_GEmeEjYrZfhO"
+uri = "file://.local/plans/p0_contractor_visibility_2026_05_08.md"
+type = "text"
+title = "P0 contractor visibility — plan ready"
