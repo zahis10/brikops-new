@@ -671,6 +671,13 @@ const TaskDetailPage = () => {
       toast.error('לא נמצאה חברה עבור הקבלן');
       return;
     }
+    // FIX 2026-05-08 (Batch 504): defensive — UI now filters this list by
+    // task.company_id, but guard against race (PM clicks contractor before
+    // company state syncs after a חברה change).
+    if (task.company_id && task.company_id !== companyId) {
+      toast.error('הקבלן לא משויך לחברה הנבחרת');
+      return;
+    }
     setSavingField('assignee');
     try {
       const payload = { company_id: companyId, assignee_id: contractorUserId };
@@ -697,6 +704,42 @@ const TaskDetailPage = () => {
         const msg = typeof detail === 'string' ? detail : detail?.message || 'שגיאה בשיוך קבלן';
         toast.error(msg);
       }
+    } finally {
+      setSavingField(null);
+    }
+  };
+
+  // FIX 2026-05-08 (Batch 504): standalone company assignment for the
+  // split mgmt panel. Mirrors NewDefectModal.js L263 handleCompanyChange.
+  // If the currently assigned contractor doesn't belong to the new company,
+  // the assignee is cleared automatically and the toast says so explicitly.
+  const handleAssignCompany = async (newCompanyId) => {
+    setSavingField('company');
+    try {
+      const currentAssignee = task?.assignee_id;
+      let nextAssignee = currentAssignee;
+      if (currentAssignee) {
+        const contractor = projectContractors.find(c => c.user_id === currentAssignee);
+        const contractorCompany = contractor?.company_id || contractor?.user_company_id;
+        if (contractorCompany !== newCompanyId) {
+          nextAssignee = null;
+        }
+      }
+      const assigneeWasCleared = !!currentAssignee && nextAssignee === null;
+      await taskService.update(id, {
+        company_id: newCompanyId || null,
+        assignee_id: nextAssignee || null,
+      });
+      if (!newCompanyId) {
+        toast.success('שיוך חברה הוסר');
+      } else if (assigneeWasCleared) {
+        toast.success('חברה שויכה. הקבלן הוסר כי לא שייך לחברה החדשה.');
+      } else {
+        toast.success('חברה שויכה בהצלחה');
+      }
+      await loadTask();
+    } catch (err) {
+      toast.error('שיוך חברה נכשל');
     } finally {
       setSavingField(null);
     }
@@ -1072,60 +1115,82 @@ const TaskDetailPage = () => {
                 />
               </div>
 
+              {/* FIX 2026-05-08 (Batch 504): split into 2 dropdowns —
+                  חברה + קבלן ספציפי. Mirrors NewDefectModal.js L888-922
+                  pattern for UX consistency. companyOnlyOptions /
+                  contactFallbacks (added in earlier P1) removed —
+                  superseded by the dedicated חברה dropdown. */}
               <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">קבלן</label>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">חברה</label>
+                {projectCompanies.length === 0 ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center space-y-1.5">
+                    <p className="text-xs text-amber-800 font-medium">אין חברות בפרויקט</p>
+                    <button
+                      onClick={() => navigate(`/projects/${task.project_id}/control?tab=companies`)}
+                      className="text-xs text-amber-700 underline hover:text-amber-900"
+                    >
+                      הוסף חברה
+                    </button>
+                  </div>
+                ) : (
+                  <InlineSelect
+                    value={task.company_id || ''}
+                    options={[
+                      { value: '', label: 'לא שויך' },
+                      ...projectCompanies
+                        .filter(pc => pc.name)
+                        .map(pc => ({ value: pc.id, label: `🏢 ${pc.name}` })),
+                    ]}
+                    onChange={handleAssignCompany}
+                    disabled={taskIsClosed || savingField !== null}
+                    label={savingField === 'company' ? 'שומר...' : (
+                      task.company_id
+                        ? `🏢 ${task.company_name || projectCompanies.find(pc => pc.id === task.company_id)?.name || 'חברה משויכת'}`
+                        : 'לא שויך'
+                    )}
+                  />
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">קבלן ספציפי</label>
                 {(() => {
-                  if (companies.length === 0) {
+                  if (!task.company_id) {
                     return (
-                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center space-y-1.5">
-                        <p className="text-xs text-amber-800 font-medium">אין חברות בפרויקט</p>
-                        <button
-                          onClick={() => navigate(`/projects/${task.project_id}/control?tab=companies`)}
-                          className="text-xs text-amber-700 underline hover:text-amber-900"
-                        >
-                          הוסף חברה
-                        </button>
-                      </div>
+                      <p className="text-xs text-slate-400 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                        בחר חברה תחילה
+                      </p>
                     );
                   }
-                  const assignableContractors = projectContractors.filter(c => c.company_id && c.contractor_trade_key);
-                  // FIX 2026-05-08: company-only assignment.
-                  // Every project_company gets a "כל החברה" option, regardless of
-                  // whether it has contractors registered. After P0 batch, any
-                  // contractor in the assigned company can submit proof.
-                  const companyOnlyOptions = projectCompanies
-                    .filter(pc => pc.name)
-                    .map(pc => ({
-                      value: `__contact__${pc.id}`,
-                      label: `🏢 ${pc.name} — כל החברה`,
-                    }));
-                  // Legacy contact_name fallbacks (companies with NO contractor and
-                  // a registered contact person) — kept for the existing flow.
-                  const contactFallbacks = projectCompanies
-                    .filter(pc => pc.contact_name && !projectContractors.some(c => c.company_id === pc.id || c.user_company_id === pc.id))
-                    .map(pc => ({ value: `__contact__${pc.id}`, label: `${pc.contact_name} (${pc.name})` }));
-                  return assignableContractors.length === 0 && companyOnlyOptions.length === 0 && contactFallbacks.length === 0 && !task.assignee_id ? (
-                    <p className="text-xs text-red-500 mt-1">אין קבלנים משויכים. יש לשייך קבלן לחברה/תחום.</p>
-                  ) : (
+                  const filteredContractors = projectContractors.filter(c =>
+                    c.role === 'contractor' &&
+                    (c.company_id === task.company_id || c.user_company_id === task.company_id)
+                  );
+                  if (filteredContractors.length === 0) {
+                    return (
+                      <p className="text-xs text-amber-600 px-3 py-2 bg-amber-50 rounded-lg border border-amber-100">
+                        אין קבלנים רשומים בחברה זו
+                      </p>
+                    );
+                  }
+                  return (
                     <InlineSelect
                       value={task.assignee_id || ''}
                       options={[
-                        { value: '', label: 'לא שויך' },
-                        ...assignableContractors.map(c => ({
+                        { value: '', label: 'לא שויך (כל החברה)' },
+                        ...filteredContractors.map(c => ({
                           value: c.user_id,
-                          label: c.user_name || c.user_id
+                          label: c.user_name || c.user_id,
                         })),
-                        ...companyOnlyOptions,
-                        ...contactFallbacks,
                       ]}
                       onChange={handleAssignContractor}
-                      disabled={taskIsClosed || savingField === 'assignee'}
+                      disabled={taskIsClosed || savingField !== null}
                       label={savingField === 'assignee' ? 'שומר...' : (
                         task.assignee_id
-                          ? (task.assignee_name || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name || 'קבלן משויך')
-                          : (task.company_id
-                              ? `🏢 ${task.company_name || projectCompanies.find(pc => pc.id === task.company_id)?.name || 'חברה משויכת'} — כל החברה`
-                              : 'לא שויך')
+                          ? (task.assignee_name
+                              || projectContractors.find(c => c.user_id === task.assignee_id)?.user_name
+                              || 'קבלן משויך')
+                          : 'לא שויך (כל החברה)'
                       )}
                     />
                   );

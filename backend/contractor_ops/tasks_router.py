@@ -571,8 +571,20 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
         if assignee_mem:
             a_name = assignee_mem.get('user_name', '')
             if not a_name:
-                a_user = await db.users.find_one({'id': task['assignee_id']}, {'_id': 0, 'name': 1})
-                a_name = a_user.get('name', '') if a_user else ''
+                # FIX 2026-05-08: fall back to phone/email when name empty.
+                # Legacy / phone-only contractors had empty user.name causing
+                # frontend to render generic "קבלן משויך" instead of an
+                # identifying string. Phone is most identifying for Israeli
+                # contractors. Acceptable in construction context where phone
+                # numbers are commonly shared between trade partners.
+                a_user = await db.users.find_one(
+                    {'id': task['assignee_id']},
+                    {'_id': 0, 'name': 1, 'phone': 1, 'email': 1}
+                )
+                if a_user:
+                    a_name = (a_user.get('name') or '').strip() \
+                        or (a_user.get('phone') or '').strip() \
+                        or (a_user.get('email') or '').strip()
             task_data['assignee_name'] = a_name
             a_company_id = assignee_mem.get('company_id') or task.get('company_id')
             if a_company_id:
