@@ -150,6 +150,34 @@ would block legitimate logins). Only SSO buttons gated:
   + Apple btn:  disabled={socialLoading || !termsAccepted}
   (Phone send-otp Button left unchanged — login path.)
 
+================================================================================
+POST-REVIEW FIX 3 (2026-05-08) — LoginPage UX: don't gate existing logins
+================================================================================
+Previous fix gated initial Google/Apple on LoginPage with checkbox →
+forced existing users to re-accept terms during login. Bad UX.
+
+LoginPage.js:
+  - REMOVED initial-screen checkbox (was id="login-register-terms").
+  - Initial Google btn: disabled={socialLoading} (reverted).
+  - Initial Apple btn:  disabled={socialLoading} (reverted).
+  - MOVED checkbox into socialFlow === 'otp' form (id="login-otp-terms"),
+    above the verify Button. This form only renders for new users
+    completing SSO registration after phone-OTP confirmation.
+  - OTP submit Button: disabled={socialLoading || socialOtp.length !== 6
+    || !termsAccepted} (per spec, with our codebase's `socialOtp` field).
+  - handleSocialVerifyOtp: unchanged per spec.
+
+Note on link branch (existing user re-linking SSO to known phone):
+  socialFlow === 'link' form path also calls handleSocialVerifyOtp
+  which still has the termsAccepted gate (state defaults to false).
+  Existing users hitting the link path will see "יש לאשר את תנאי
+  השימוש" and have no checkbox. Backend already gates link branch too.
+  This was true before fix 3 and remains true; if needed, add a
+  checkbox to socialFlow === 'link' form in a follow-up batch.
+
+OnboardingPage.js: UNCHANGED — that page is registration only, initial
+checkbox stays.
+
 State reuse: same `termsAccepted` state per page — agreeing on initial
 screen carries through every subsequent form on that page.
 
