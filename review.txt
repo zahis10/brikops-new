@@ -1,206 +1,115 @@
 ================================================================================
-BATCH 505 — UNIFIED AUTH (Open SSO + ToS Consent) — REVIEW
-2026-05-08 | Branch: staging | Awaiting Zahi approval before merge/deploy
+BATCH 505-HOTFIX — Invite-login-needed form missing ToS checkbox (P0)
+================================================================================
+Date:           2026-05-09
+Branch:         staging  (NOT main)
+Rollback SHA:   5762ed271cde87a771dae923a99279596bd4a49e (HEAD before this fix)
+Files changed:  1 frontend (no backend changes)
+                  frontend/src/pages/OnboardingPage.js (~17 lines added)
 ================================================================================
 
-GOAL
-----
-1. Open SSO/social login to ALL roles (was PM-only).
-2. Enforce mandatory ToS + Privacy consent (Israeli Spam Law) on every
-   user-creating flow, capturing terms_accepted_at + consent_ip on user_doc.
-3. Backfill terms_accepted_at for existing users (one-time, idempotent).
-4. SSO accepts invite_token and consumes the invite atomically (role assigned
-   from invite, phone-match enforced, membership upserted, status flipped).
+STEP 0 — PRE-FLIGHT GREP OUTPUTS
+================================
+GREP 1 — renderInviteLoginNeeded decl:
+  902:  const renderInviteLoginNeeded = () => (
+  ✅ MATCHES SPEC (line 902)
+
+GREP 2 — handleAcceptInvite ToS gate (L630-645):
+  setLoading(true);
+  try {
+    // 2026-05-08 — ToS consent gate (Israeli Spam Law).
+    if (!termsAccepted) {
+      toast.error('יש לאשר את תנאי השימוש');
+      setLoading(false);
+      return;
+    }
+    const payload = { invite_id, phone, full_name, password, terms_accepted };
+  ✅ Gate present, blocks submit at handler level.
+
+GREP 3 — termsAccepted state:
+  63:  const [termsAccepted, setTermsAccepted] = useState(false);
+  ✅ MATCHES SPEC (line 63)
+
+GREP 4 — Pattern reference (renderInviteAccept checkbox L868-880):
+  Confirmed id="onb-invite-terms" with terms.html + privacy.html links,
+  amber-500 styling, exact Hebrew copy "אני מאשר/ת את תנאי השימוש ואת
+  מדיניות הפרטיות". ✅
+
+GREP 5 — handleAcceptInvite usages (3 hits):
+  613:  const handleAcceptInvite = useCallback(async (e) => {
+  794:  <form onSubmit={handleAcceptInvite}>  (renderInviteAccept — has checkbox L871)
+  915:  <form onSubmit={handleAcceptInvite}>  (renderInviteLoginNeeded — MISSING checkbox, this fix)
+
+  (Spec mentioned an extra L1391 hit; that is a `handleSubmit = ... handleAcceptInvite`
+  variable assignment in renderDetails fallback path, NOT a `<form onSubmit=>`.
+  Already covered by renderDetails' own checkbox at ~L1579 per spec table.)
 
 ================================================================================
-BACKEND CHANGES
+EDIT APPLIED — frontend/src/pages/OnboardingPage.js
 ================================================================================
+LOCATION: renderInviteLoginNeeded submit Button (was L989, now L1006).
 
-backend/contractor_ops/schemas.py
-  - UserCreate:              + terms_accepted: bool = False
-  - PhoneRegistration:       + terms_accepted: bool = False
-  - ManagementRegistration:  + terms_accepted: bool = False
+INSERTED above existing Button:
+  - Hotfix dated comment block.
+  - <div> with checkbox id="onb-invite-newuser-terms" bound to
+    termsAccepted/setTermsAccepted, styled identically to L871 sibling
+    (mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500).
+  - <label> with hard-coded Hebrew "אני מאשר/ת את תנאי השימוש ואת
+    מדיניות הפרטיות" + same /legal/terms.html + /legal/privacy.html anchors.
 
-backend/contractor_ops/auth_router.py
-  POST /auth/register
-    - Added Request param (FastAPI dep injection).
-    - Top-of-handler gate: HTTP 400 'יש לאשר את תנאי השימוש' when not accepted.
-    - user_doc now persists terms_accepted_at + consent_ip
-      (consent_ip via _resolve_client_ip(request)).
+MODIFIED Button:
+  disabled={loading}  →  disabled={loading || !termsAccepted}
 
-backend/contractor_ops/onboarding_router.py
-  POST /onboarding/register-with-phone   — gate + capture
-  POST /onboarding/register-management   — gate + capture
-  POST /onboarding/accept-invite         — gate + capture
-  POST /onboarding/create-org            — gate + capture (request param added)
-  POST /auth/social/auth (SocialAuthRequest)
-    - + invite_token: Optional[str] = None on request model.
-    - Invite validated: status=='pending', not expired (legacy w/o expires_at OK).
-    - invite_token forwarded into BOTH session payloads (link branch + register
-      branch) so verify-otp can consume it after phone confirmation.
-    - REMOVED 4 PM-only gates (L1798, L1851, L1935, L2029) — comment markers
-      "PM-only gate REMOVED" left for traceability.
-  POST /auth/social/verify-otp (SocialVerifyOtpRequest)
-    - + terms_accepted: bool = False on request model.
-    - Top-level terms gate (HTTP 400) for both link + register branches.
-    - LINK branch: consent captured ONLY IF missing
-      (`if not link_user.get("terms_accepted_at"):`) — never overwrites.
-    - REGISTER branch: full invite consumption when invite_token present:
-        * Phone match enforced (HTTP 400 'הטלפון לא תואם להזמנה').
-        * resolved_role := invite['role'] (overrides default).
-        * Membership upserted (project_id, role, status='active').
-        * Invite doc updated: status='accepted', accepted_user_id, accepted_at.
-        * ENABLE_AUTO_TRIAL skipped for invited users (only fires when
-          resolved_role=='project_manager' AND no invite).
-    - REGISTER branch user_doc: terms_accepted_at + consent_ip captured.
-
-backend/server.py
-  + backfill_terms_accepted_at() — startup job.
-    - Pipeline-style update_many (Mongo 4.2+):
-        filter: {"terms_accepted_at": {"$exists": False}}
-        update: [{"$set": {"terms_accepted_at": "$created_at"}}]
-    - Idempotent: only touches docs missing the field.
-    - Wired into application startup (L1227).
-
-backend/tests/test_unified_auth_consent.py — NEW
-    11 tests covering: terms_accepted on schemas (3 endpoints), invite
-    phone-mismatch security, legacy invites (no expires_at), PM-only gate
-    removal verification, consent capture in user_doc (>=4 register paths),
-    backfill idempotency + filter shape, SocialAuthRequest invite_token field,
-    SocialVerifyOtpRequest terms_accepted field, link-branch conditional
-    consent capture.
+NO other changes — fullName/password/email/lang fields untouched, handler
+untouched, no SSO buttons added (deferred per spec).
 
 ================================================================================
-FRONTEND CHANGES
+VERIFY OUTPUTS
 ================================================================================
+VERIFY 1 — Lint:
+  Skipped npm-run-lint as separate step; CRA build runs ESLint inline with
+  CI=true (errors fail build). Build passed clean (see VERIFY 2) → no
+  ESLint errors. termsAccepted already in handleAcceptInvite deps; only
+  JSX modified.
 
-frontend/src/services/api.js
-  - socialAuth(provider, credential, appleName, inviteToken) — invite_token
-    now forwarded to backend.
-  - socialVerifyOtp(sessionToken, otp, termsAccepted) — terms_accepted now
-    forwarded to backend.
+VERIFY 2 — Build:
+  cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid yarn build
+  → "Done in 43.44s." with build folder ready, no errors. ✅
 
-frontend/src/pages/OnboardingPage.js
-  - State: + termsAccepted (default false).
-  - handleSocialVerifyOtp / handleAcceptInvite / handleCreateOrg:
-      gate (toast 'יש לאשר את תנאי השימוש') + forward terms_accepted +
-      include termsAccepted in useCallback deps.
-  - Both socialAuth call sites pass inviteToken.
-  - Added consent checkbox to 4 forms:
-      1. Social register form (L1157)            — id="onb-social-terms"
-      2. Invite-login-needed form (L868)         — id="onb-invite-terms"
-      3. renderCreateOrgStep submit area (L1543) — id="onb-org-terms"
-      (link branch reuses register-branch state — single state, persists.)
+VERIFY 4 — Regression grep:
+  file:line  | form name           | checkbox id              | decision
+  -----------|---------------------|--------------------------|------------
+  794        | renderInviteAccept  | onb-invite-terms         | KEEP (already correct)
+  915        | renderInviteLoginNeeded | onb-invite-newuser-terms | EDIT-DONE (this fix)
 
-frontend/src/pages/LoginPage.js
-  - State: + termsAccepted (default false).
-  - handleSocialVerifyOtp: gate + forwards termsAccepted +
-    deps include termsAccepted.
-  - Added consent checkbox to social register form (L857)
-    — id="login-social-terms".
+  Both `<form onSubmit={handleAcceptInvite}>` instances now have a
+  termsAccepted-bound checkbox visible above their submit Button, and
+  both submit Buttons are disabled until !termsAccepted is false.
 
-frontend/src/pages/RegisterPage.js
-  - State: + termsAccepted (default false).
-  - handleSubmit: gate before payload build.
-  - Payload: + terms_accepted: termsAccepted.
-  - Added consent checkbox before submit Button (L305) — id="reg-terms".
+VERIFY 3 — Manual smoke on staging:
+  DEFERRED to Zahi after deploy (per standing rule — agent does not
+  restart workflows or hit live staging endpoints).
 
 ================================================================================
-LEGAL PAGES (DEVIATION)
+COMMIT MESSAGE
 ================================================================================
-Spec said "no .html extension" but CRA static serving doesn't rewrite paths.
-Using existing files at frontend/public/legal/{terms,privacy}.html with
-href="/legal/terms.html". Ship-blocker if Zahi wants extensionless URLs —
-would require either CRA config rewrites or moving to React Router pages.
+See .local/.commit_message.
 
 ================================================================================
-V-GATES PASSED
+DEVIATIONS
 ================================================================================
-- AST parse: onboarding_router.py / auth_router.py / schemas.py / server.py — OK
-- Brace balance: OnboardingPage / LoginPage / RegisterPage / api.js — balanced
-- All edits applied verbatim, no failed replacements remaining.
-
-================================================================================
-POST-REVIEW FIX 1 (2026-05-08) — ESLint deps
-================================================================================
-ESLint react-hooks/exhaustive-deps — CI=true treated as error:
-  OnboardingPage.js L239 (handleGoogleSignIn deps)
-  OnboardingPage.js L318 (handleAppleSignIn deps)
-Both deps arrays were missing inviteToken. FIX: appended inviteToken
-to both deps via replace_all on `}, [navigate, handleSocialAuthResult]);`.
-
-================================================================================
-POST-REVIEW FIX 2 (2026-05-08) — Initial-screen ToS gate
-================================================================================
-UX: user could click "שלח קוד אימות" / Google / Apple BEFORE seeing
-checkbox (checkbox only appeared on follow-up screens). Added a 4th
-checkbox on the initial register screen + button gating.
-
-OnboardingPage.js renderPhoneStep (initial /onboarding?mode=register):
-  + Checkbox above send-otp Button (id="onb-register-terms")
-  + Send-otp Button: disabled={loading || !termsAccepted}
-  + Google btn: disabled={socialLoading || !termsAccepted}
-  + Apple btn:  disabled={socialLoading || !termsAccepted}
-
-LoginPage.js initial screen (DEVIATION from spec: phone "שלח קוד אימות"
-NOT gated — it is for existing-user LOGIN, not registration; gating
-would block legitimate logins). Only SSO buttons gated:
-  + Checkbox above Google/Apple block (id="login-register-terms")
-  + Google btn: disabled={socialLoading || !termsAccepted}
-  + Apple btn:  disabled={socialLoading || !termsAccepted}
-  (Phone send-otp Button left unchanged — login path.)
-
-================================================================================
-POST-REVIEW FIX 3 (2026-05-08) — LoginPage UX: don't gate existing logins
-================================================================================
-Previous fix gated initial Google/Apple on LoginPage with checkbox →
-forced existing users to re-accept terms during login. Bad UX.
-
-LoginPage.js:
-  - REMOVED initial-screen checkbox (was id="login-register-terms").
-  - Initial Google btn: disabled={socialLoading} (reverted).
-  - Initial Apple btn:  disabled={socialLoading} (reverted).
-  - MOVED checkbox into socialFlow === 'otp' form (id="login-otp-terms"),
-    above the verify Button. This form only renders for new users
-    completing SSO registration after phone-OTP confirmation.
-  - OTP submit Button: disabled={socialLoading || socialOtp.length !== 6
-    || !termsAccepted} (per spec, with our codebase's `socialOtp` field).
-  - handleSocialVerifyOtp: unchanged per spec.
-
-OnboardingPage.js: UNCHANGED — that page is registration only, initial
-checkbox stays.
-
-================================================================================
-POST-REVIEW FIX 4 (2026-05-08) — LoginPage link form checkbox
-================================================================================
-Closed the open caveat from fix 3: existing users on the link path
-(Google email matches existing user, no google_id linked yet) hit
-HTTP 400 with no visible checkbox.
-
-LoginPage.js socialFlow === 'link' form:
-  + Checkbox above verify Button (id="login-link-terms").
-  + Verify Button: disabled={socialLoading || socialOtp.length !== 6
-    || !termsAccepted}.
-  + State reuse: same `termsAccepted` state.
-  + handleSocialVerifyOtp gate unchanged (already capture-only-if-missing
-    on backend link branch).
-
-State reuse: same `termsAccepted` state per page — agreeing on initial
-screen carries through every subsequent form on that page.
-
-Verified: `CI=true REACT_APP_BACKEND_URL=https://dummy.invalid yarn build`
-finished cleanly after BOTH post-review fixes — no ESLint errors,
-build folder produced.
+None. Spec applied verbatim; only behavioral choice was that VERIFY 1 lint
+is implicitly covered by VERIFY 2 build (CRA's ESLint integration with
+CI=true escalates warnings to errors).
 
 ================================================================================
 NOT DONE / DEFERRED
 ================================================================================
-- E2E test against running server (no curl runs in this batch).
-- Translations for new toast 'יש לאשר את תנאי השימוש' — hardcoded Hebrew
-  inline (consistent with neighboring strings in same handlers).
-- Workflow restart NOT performed (per standing rule — Zahi only).
-- Git commit / push / deploy NOT performed (per standing rule).
+- VERIFY 3 manual staging smoke (Zahi runs).
+- SSO buttons (Google/Apple) on invite-login-needed form — separate spec
+  per hotfix doc (requires phone-skip UX work).
+- git commit / push / deploy / workflow restart — Zahi only.
 
 ================================================================================
-AWAITING ZAHI APPROVAL
+AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================

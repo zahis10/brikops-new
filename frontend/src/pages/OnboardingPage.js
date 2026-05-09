@@ -984,7 +984,23 @@ const OnboardingPage = () => {
           </select>
         </div>
 
-        <Button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
+        {/* 2026-05-09 — Hotfix: ToS consent (Israeli Spam Law). MANDATORY.
+             Was missing in initial 505 ship — broke new-contractor invite flow
+             at the 400 gate in handleAcceptInvite L634. */}
+        <div className="flex items-start gap-2 pt-2">
+          <input
+            id="onb-invite-newuser-terms"
+            type="checkbox"
+            checked={termsAccepted}
+            onChange={(e) => setTermsAccepted(e.target.checked)}
+            className="mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500"
+          />
+          <label htmlFor="onb-invite-newuser-terms" className="text-xs text-slate-700">
+            אני מאשר/ת את <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">תנאי השימוש</a> ואת <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">מדיניות הפרטיות</a>
+          </label>
+        </div>
+
+        <Button type="submit" disabled={loading || !termsAccepted} className="w-full bg-green-600 hover:bg-green-700 text-white h-12 text-base font-bold">
           {loading ? <Loader2 className="w-5 h-5 animate-spin ml-2" /> : null}
           {t('onboarding', 'create_and_join')}
         </Button>
