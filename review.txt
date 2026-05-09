@@ -167,16 +167,23 @@ LoginPage.js:
     || !termsAccepted} (per spec, with our codebase's `socialOtp` field).
   - handleSocialVerifyOtp: unchanged per spec.
 
-Note on link branch (existing user re-linking SSO to known phone):
-  socialFlow === 'link' form path also calls handleSocialVerifyOtp
-  which still has the termsAccepted gate (state defaults to false).
-  Existing users hitting the link path will see "יש לאשר את תנאי
-  השימוש" and have no checkbox. Backend already gates link branch too.
-  This was true before fix 3 and remains true; if needed, add a
-  checkbox to socialFlow === 'link' form in a follow-up batch.
-
 OnboardingPage.js: UNCHANGED — that page is registration only, initial
 checkbox stays.
+
+================================================================================
+POST-REVIEW FIX 4 (2026-05-08) — LoginPage link form checkbox
+================================================================================
+Closed the open caveat from fix 3: existing users on the link path
+(Google email matches existing user, no google_id linked yet) hit
+HTTP 400 with no visible checkbox.
+
+LoginPage.js socialFlow === 'link' form:
+  + Checkbox above verify Button (id="login-link-terms").
+  + Verify Button: disabled={socialLoading || socialOtp.length !== 6
+    || !termsAccepted}.
+  + State reuse: same `termsAccepted` state.
+  + handleSocialVerifyOtp gate unchanged (already capture-only-if-missing
+    on backend link branch).
 
 State reuse: same `termsAccepted` state per page — agreeing on initial
 screen carries through every subsequent form on that page.

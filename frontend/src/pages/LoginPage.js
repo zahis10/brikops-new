@@ -791,10 +791,30 @@ const LoginPage = () => {
                 autoFocus
               />
             </div>
+            {/* 2026-05-08 — ToS consent (Israeli Spam Law). On link form for existing users linking new SSO method. */}
+            <div className="flex items-start gap-2 mb-3">
+              <input
+                type="checkbox"
+                id="login-link-terms"
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+                className="mt-1 w-4 h-4"
+              />
+              <label htmlFor="login-link-terms" className="text-xs text-slate-600">
+                קראתי ואני מאשר/ת את{' '}
+                <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">
+                  תנאי השימוש
+                </a>
+                {' '}ואת{' '}
+                <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">
+                  מדיניות הפרטיות
+                </a>
+              </label>
+            </div>
             <Button
               type="submit"
               className="w-full h-12 text-base font-medium mt-4 touch-manipulation bg-amber-500 hover:bg-amber-600 text-white"
-              disabled={socialLoading}
+              disabled={socialLoading || socialOtp.length !== 6 || !termsAccepted}
             >
               {socialLoading ? (
                 <span className="flex items-center justify-center gap-2">
