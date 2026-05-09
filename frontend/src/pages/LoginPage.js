@@ -723,11 +723,31 @@ const LoginPage = () => {
               </div>
             </div>
 
+            {/* 2026-05-08 — ToS consent (Israeli Spam Law). Gates SSO buttons (may create new account). */}
+            <div className="flex items-start gap-2 mb-3">
+              <input
+                type="checkbox"
+                id="login-register-terms"
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+                className="mt-1 w-4 h-4"
+              />
+              <label htmlFor="login-register-terms" className="text-xs text-slate-600">
+                קראתי ואני מאשר/ת את{' '}
+                <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">
+                  תנאי השימוש
+                </a>
+                {' '}ואת{' '}
+                <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">
+                  מדיניות הפרטיות
+                </a>
+              </label>
+            </div>
             <div className="flex gap-3">
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
-                disabled={socialLoading}
+                disabled={socialLoading || !termsAccepted}
                 className="flex-1 h-11 flex items-center justify-center gap-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700 disabled:opacity-50 touch-manipulation"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -742,7 +762,7 @@ const LoginPage = () => {
               <button
                 type="button"
                 onClick={handleAppleSignIn}
-                disabled={socialLoading}
+                disabled={socialLoading || !termsAccepted}
                 className="flex-1 h-11 flex items-center justify-center gap-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium disabled:opacity-50 touch-manipulation"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
