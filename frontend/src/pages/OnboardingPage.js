@@ -1682,6 +1682,13 @@ const OnboardingPage = () => {
   };
 
   const renderCurrentStep = () => {
+    // 2026-05-09 — 506 hotfix: when user clicks Google/Apple from the
+    // invite landing screen, handleSocialAuthResult sets socialFlow=
+    // 'link'/'register'. The OTP-input + phone-input UIs for SSO live
+    // in renderPhoneStep, NOT in renderInvitePhoneStep. Without this
+    // early return, the user gets stuck on the invite landing form
+    // with no way to enter OTP after OAuth.
+    if (socialFlow) return renderPhoneStep();
     if (isInviteFlow) {
       if (step === 'invite-accept') return renderInviteAccept();
       if (step === 'invite-error') return renderInviteError();

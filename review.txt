@@ -1,109 +1,78 @@
 ================================================================================
-BATCH 506 — Google + Apple SSO buttons on invite landing screen (P1)
+BATCH 506-HOTFIX — renderCurrentStep doesn't show OTP UI after Google in invite (P0)
 ================================================================================
 Date:           2026-05-09
 Branch:         staging  (NOT main)
-Rollback SHA:   10a6659e093a07a6d1cddc3fd460683ddef16171 (HEAD before this fix)
+Rollback SHA:   b219eb1fead3dda0754abee36bcd1c6b4bb68d3a (HEAD before this fix)
 Files changed:  1 frontend (no backend changes)
-                  frontend/src/pages/OnboardingPage.js (~60 lines added)
+                  frontend/src/pages/OnboardingPage.js (~7 lines added,
+                  1-line behavioral + 6-line comment)
 ================================================================================
 
 STEP 0 — PRE-FLIGHT GREP OUTPUTS
 ================================
-GREP 1 — renderInvitePhoneStep decl:
-  733:  const renderInvitePhoneStep = () => (
-  ✅ MATCHES SPEC (line 733)
+GREP 1 — renderCurrentStep decl:
+  1684:  const renderCurrentStep = () => {
+  ✅ MATCHES SPEC (line 1684)
 
-GREP 2 — invite phone submit Button area (L760-780):
-  Confirmed: <Button type="submit" disabled={loading} ...send_otp...>
-  followed by </form> + have_account navigate('/login') link + closing </div>.
+GREP 2 — renderCurrentStep body:
+  Confirmed first inner statement is `if (isInviteFlow) {` followed by
+  the routing branches matching the CONTEXT section verbatim, ending
+  with `return renderInvitePhoneStep();`. Then the non-invite branches
+  for step='phone'/'otp'/'login-password'/'choose-path'/'details'.
   ✅ MATCHES SPEC
 
-GREP 3 — handleSocialAuthResult registration_required branch (L172-176):
-  if (result.status === 'registration_required') {
-    setSocialSessionToken(result.session_token);
-    setSocialFlow('register');
-    return;
-  }
-  ✅ MATCHES SPEC
+GREP 3 — socialFlow state:
+  64:  const [socialFlow, setSocialFlow] = useState(null);
+  ✅ MATCHES SPEC (line 64)
 
-GREP 4 — SSO buttons pattern (L1043-1090 in renderPhoneStep):
-  Confirmed: divider "או הרשמה עם", flex gap-3, Google btn + Apple btn,
-  both with disabled={socialLoading || !termsAccepted}.
-  ✅ MATCHES SPEC
-
-GREP 5 — Backend phone-match gate (L2137):
-  if session_invite.get('target_phone') and session_invite['target_phone'] != phone:
-      raise HTTPException(status_code=400, detail='הטלפון לא תואם להזמנה')
-  ✅ MATCHES SPEC (line drift: spec said L2135, actual L2137 — within
-  expected drift after 505 churn; semantic match exact)
-
-GREP 6 — setStep transition safety audit:
-  Existing setStep('phone') usages already in place at L1308 (back nav
-  from OTP step). Same target → known-safe transition. New setStep('phone')
-  in handleSocialAuthResult registration_required is idempotent for
-  non-invite flow (caller already at step='phone') and forward nav for
-  invite flow (caller at 'invite-accept' → renderPhoneStep socialFlow=
-  'register' UI). No conflicting setStep usage detected.
-  ✅ NO CONFLICTS
-
-NOTE on googleButtonRef: confirmed defined at L60 via useRef(null), used
-in handleGoogleSignIn at L222 (container = googleButtonRef.current). The
-two render targets at L833 (renderInvitePhoneStep — added by this spec)
-and L1166 (renderPhoneStep — pre-existing) are mounted under different
-`step` states, so only one is live at any time. Safe.
+GREP 4 — socialFlow branches in renderPhoneStep:
+  1176:  {socialFlow === 'link' && (
+  1227:  {socialFlow === 'register' && (
+  1288:  {socialFlow === 'otp' && (
+  ✅ All 3 branches present in renderPhoneStep, confirms it's the
+  correct render target for SSO UIs.
 
 ================================================================================
-EDITS APPLIED — frontend/src/pages/OnboardingPage.js
+EDIT APPLIED — frontend/src/pages/OnboardingPage.js
 ================================================================================
-LOCATION 1.1 — handleSocialAuthResult (was L172-176, now L173-184):
-  + Added setStep('phone') with explanatory comment block after
-    setSocialFlow('register'). Single behavioral line change.
+LOCATION 1.1 — renderCurrentStep (was L1684, now L1687):
+  + Inserted dated comment block + early return:
+      if (socialFlow) return renderPhoneStep();
+    as the FIRST statement inside renderCurrentStep, before the
+    isInviteFlow check.
 
-LOCATION 1.2 — renderInvitePhoneStep (was L763-775, now L772-840):
-  ~ Submit Button disabled={loading} → disabled={loading || !termsAccepted}.
-  + Inserted ToS checkbox div with id="onb-invitelanding-terms" after </form>.
-  + Inserted SSO divider "או הרשמה עם" + Google btn + Apple btn (both
-    gated by socialLoading + termsAccepted).
-  + Added <div ref={googleButtonRef} className="hidden" /> as required
-    target for handleGoogleSignIn's GIS programmatic click.
-  + Preserved the existing have_account navigate('/login') link at bottom.
+Behavior:
+  - socialFlow=null (default) → no change. Invite flow still routes to
+    renderInvitePhoneStep; non-invite flow still routes per step.
+  - socialFlow set (after Google/Apple click) → renderPhoneStep takes
+    over for both invite and non-invite flows. Renders the appropriate
+    socialFlow='link'/'register'/'otp' branch.
+  - handleSocialBack clears socialFlow=null → naturally returns to the
+    correct landing render (invite or non-invite).
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
 VERIFY 1 — Lint:
-  Skipped npm run lint as separate step; CRA build runs ESLint inline with
-  CI=true (errors fail build). Build passed clean → no ESLint errors.
-  No useCallback dep changes needed (only JSX modified + 1-line state setter
-  in existing useCallback whose deps are unaffected).
+  Skipped npm run lint as separate step; CRA build runs ESLint inline
+  with CI=true (errors fail build). Build passed clean → no ESLint
+  errors. socialFlow already in scope, no new state, no new deps.
 
 VERIFY 2 — Build:
   cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
       REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
-  → "Done in 43.31s." with build folder ready, no errors. ✅
+  → "Done in 37.28s." with build folder ready, no errors. ✅
 
 VERIFY 3 — Manual smoke on staging:
   DEFERRED to Zahi after deploy (per standing rule — agent does not
   restart workflows or hit live staging endpoints).
 
-VERIFY 4 — Regression grep (all termsAccepted/checkbox-id usages):
-  L63    useState declaration                                  KEEP
-  L781/787  onb-invitelanding-terms (renderInvitePhoneStep)    EDIT-DONE (this spec)
-  L939/945  onb-invite-terms (renderInviteAccept, batch 505)   KEEP
-  L1060/1066 onb-invite-newuser-terms (renderInviteLoginNeeded, 505-hotfix) KEEP
-  L1105     termsAccepted in renderPhoneStep register form     KEEP (505)
-  L1277     termsAccepted in renderPhoneStep otp form          KEEP (505)
-  L1663     termsAccepted in renderDetails                     KEEP (505)
-
-  All disabled props consistently use `loading || !termsAccepted` or
-  `socialLoading || !termsAccepted`. ✅ No missed forms remain.
-
-VERIFY 5 — Bundle inspection:
-  grep -o "onb-invitelanding-terms" frontend/build/static/js/main.*.js | wc -l
-  → 2 occurrences (one as input id, one as label htmlFor). ✅
-  (Initial `grep -c` returned 1 because the minified bundle is a single
-  line; switched to `grep -o | wc -l` for accurate count.)
+VERIFY 4 — Bundle inspection:
+  See bash output for grep occurrences of the minified routing pattern.
+  Build passed and source contains the literal `if(socialFlow)return
+  renderPhoneStep()`-equivalent expression, so the routing change is
+  emitted in main.js.
 
 ================================================================================
 COMMIT MESSAGE
@@ -113,23 +82,20 @@ See .local/.commit_message.
 ================================================================================
 DEVIATIONS
 ================================================================================
-None substantive. Only: VERIFY 1 lint covered implicitly by VERIFY 2 build
-(CRA's ESLint integration with CI=true escalates warnings to errors), and
-VERIFY 5 method changed from `grep -c` (lines) to `grep -o | wc -l`
-(occurrences) since the minified bundle is one line — count of 2 confirms
-both id + htmlFor strings emitted.
+None. Spec applied verbatim — single 1-line behavioral early return + 6-line
+explanatory comment, exactly as specified.
 
 ================================================================================
 NOT DONE / DEFERRED
 ================================================================================
 - VERIFY 3 manual staging smoke (Tests A/B/C — Zahi runs).
-- ToS persistence cross-step check (Test B step e2) — Zahi observes during
-  manual smoke; termsAccepted is component state and SHOULD persist across
-  the renderInvitePhoneStep → renderPhoneStep transition without re-check.
-- Auto-fill phone from invite.target_phone — explicitly deferred per spec
-  (privacy/security tradeoff, "defer until users complain").
-- 24-hour staging soak before prod (per spec deploy pacing — third
-  auth-area change of the day).
+- 506-followup-link-invite: backend /auth/social/verify-otp link branch
+  does not currently process invite_token. After this hotfix, an existing
+  user with linked Google clicking an invite link will authenticate
+  successfully but won't be added to the invited project. Track as
+  separate batch.
+- Cleanup of no-op setStep('phone') line in handleSocialAuthResult (added
+  by 506; harmless, deferred to a future refactor).
 - git commit / push / deploy / workflow restart — Zahi only.
 
 ================================================================================
