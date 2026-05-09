@@ -121,6 +121,19 @@ V-GATES PASSED
 - All edits applied verbatim, no failed replacements remaining.
 
 ================================================================================
+POST-REVIEW FIX (2026-05-08)
+================================================================================
+ESLint react-hooks/exhaustive-deps — CI=true treated as error:
+  OnboardingPage.js L239 (handleGoogleSignIn deps)
+  OnboardingPage.js L318 (handleAppleSignIn deps)
+Both deps arrays were missing inviteToken (now read by both callbacks
+to forward to socialAuth). FIX: appended inviteToken to both deps via
+replace_all on `}, [navigate, handleSocialAuthResult]);`.
+
+Verified: `CI=true REACT_APP_BACKEND_URL=https://dummy.invalid yarn build`
+finished cleanly — no ESLint errors, build folder produced.
+
+================================================================================
 NOT DONE / DEFERRED
 ================================================================================
 - E2E test against running server (no curl runs in this batch).

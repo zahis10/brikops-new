@@ -233,7 +233,7 @@ const OnboardingPage = () => {
     } else {
       setSocialLoading(false);
     }
-  }, [navigate, handleSocialAuthResult]);
+  }, [navigate, handleSocialAuthResult, inviteToken]);
 
   const handleAppleSignIn = useCallback(async () => {
     setSocialLoading(true);
@@ -315,7 +315,7 @@ const OnboardingPage = () => {
     } finally {
       setSocialLoading(false);
     }
-  }, [navigate, handleSocialAuthResult]);
+  }, [navigate, handleSocialAuthResult, inviteToken]);
 
   const handleSocialSendOtp = useCallback(async (e) => {
     e.preventDefault();
