@@ -1,94 +1,109 @@
 ================================================================================
-BATCH 505-HOTFIX — Invite-login-needed form missing ToS checkbox (P0)
+BATCH 506 — Google + Apple SSO buttons on invite landing screen (P1)
 ================================================================================
 Date:           2026-05-09
 Branch:         staging  (NOT main)
-Rollback SHA:   5762ed271cde87a771dae923a99279596bd4a49e (HEAD before this fix)
+Rollback SHA:   10a6659e093a07a6d1cddc3fd460683ddef16171 (HEAD before this fix)
 Files changed:  1 frontend (no backend changes)
-                  frontend/src/pages/OnboardingPage.js (~17 lines added)
+                  frontend/src/pages/OnboardingPage.js (~60 lines added)
 ================================================================================
 
 STEP 0 — PRE-FLIGHT GREP OUTPUTS
 ================================
-GREP 1 — renderInviteLoginNeeded decl:
-  902:  const renderInviteLoginNeeded = () => (
-  ✅ MATCHES SPEC (line 902)
+GREP 1 — renderInvitePhoneStep decl:
+  733:  const renderInvitePhoneStep = () => (
+  ✅ MATCHES SPEC (line 733)
 
-GREP 2 — handleAcceptInvite ToS gate (L630-645):
-  setLoading(true);
-  try {
-    // 2026-05-08 — ToS consent gate (Israeli Spam Law).
-    if (!termsAccepted) {
-      toast.error('יש לאשר את תנאי השימוש');
-      setLoading(false);
-      return;
-    }
-    const payload = { invite_id, phone, full_name, password, terms_accepted };
-  ✅ Gate present, blocks submit at handler level.
+GREP 2 — invite phone submit Button area (L760-780):
+  Confirmed: <Button type="submit" disabled={loading} ...send_otp...>
+  followed by </form> + have_account navigate('/login') link + closing </div>.
+  ✅ MATCHES SPEC
 
-GREP 3 — termsAccepted state:
-  63:  const [termsAccepted, setTermsAccepted] = useState(false);
-  ✅ MATCHES SPEC (line 63)
+GREP 3 — handleSocialAuthResult registration_required branch (L172-176):
+  if (result.status === 'registration_required') {
+    setSocialSessionToken(result.session_token);
+    setSocialFlow('register');
+    return;
+  }
+  ✅ MATCHES SPEC
 
-GREP 4 — Pattern reference (renderInviteAccept checkbox L868-880):
-  Confirmed id="onb-invite-terms" with terms.html + privacy.html links,
-  amber-500 styling, exact Hebrew copy "אני מאשר/ת את תנאי השימוש ואת
-  מדיניות הפרטיות". ✅
+GREP 4 — SSO buttons pattern (L1043-1090 in renderPhoneStep):
+  Confirmed: divider "או הרשמה עם", flex gap-3, Google btn + Apple btn,
+  both with disabled={socialLoading || !termsAccepted}.
+  ✅ MATCHES SPEC
 
-GREP 5 — handleAcceptInvite usages (3 hits):
-  613:  const handleAcceptInvite = useCallback(async (e) => {
-  794:  <form onSubmit={handleAcceptInvite}>  (renderInviteAccept — has checkbox L871)
-  915:  <form onSubmit={handleAcceptInvite}>  (renderInviteLoginNeeded — MISSING checkbox, this fix)
+GREP 5 — Backend phone-match gate (L2137):
+  if session_invite.get('target_phone') and session_invite['target_phone'] != phone:
+      raise HTTPException(status_code=400, detail='הטלפון לא תואם להזמנה')
+  ✅ MATCHES SPEC (line drift: spec said L2135, actual L2137 — within
+  expected drift after 505 churn; semantic match exact)
 
-  (Spec mentioned an extra L1391 hit; that is a `handleSubmit = ... handleAcceptInvite`
-  variable assignment in renderDetails fallback path, NOT a `<form onSubmit=>`.
-  Already covered by renderDetails' own checkbox at ~L1579 per spec table.)
+GREP 6 — setStep transition safety audit:
+  Existing setStep('phone') usages already in place at L1308 (back nav
+  from OTP step). Same target → known-safe transition. New setStep('phone')
+  in handleSocialAuthResult registration_required is idempotent for
+  non-invite flow (caller already at step='phone') and forward nav for
+  invite flow (caller at 'invite-accept' → renderPhoneStep socialFlow=
+  'register' UI). No conflicting setStep usage detected.
+  ✅ NO CONFLICTS
+
+NOTE on googleButtonRef: confirmed defined at L60 via useRef(null), used
+in handleGoogleSignIn at L222 (container = googleButtonRef.current). The
+two render targets at L833 (renderInvitePhoneStep — added by this spec)
+and L1166 (renderPhoneStep — pre-existing) are mounted under different
+`step` states, so only one is live at any time. Safe.
 
 ================================================================================
-EDIT APPLIED — frontend/src/pages/OnboardingPage.js
+EDITS APPLIED — frontend/src/pages/OnboardingPage.js
 ================================================================================
-LOCATION: renderInviteLoginNeeded submit Button (was L989, now L1006).
+LOCATION 1.1 — handleSocialAuthResult (was L172-176, now L173-184):
+  + Added setStep('phone') with explanatory comment block after
+    setSocialFlow('register'). Single behavioral line change.
 
-INSERTED above existing Button:
-  - Hotfix dated comment block.
-  - <div> with checkbox id="onb-invite-newuser-terms" bound to
-    termsAccepted/setTermsAccepted, styled identically to L871 sibling
-    (mt-1 h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500).
-  - <label> with hard-coded Hebrew "אני מאשר/ת את תנאי השימוש ואת
-    מדיניות הפרטיות" + same /legal/terms.html + /legal/privacy.html anchors.
-
-MODIFIED Button:
-  disabled={loading}  →  disabled={loading || !termsAccepted}
-
-NO other changes — fullName/password/email/lang fields untouched, handler
-untouched, no SSO buttons added (deferred per spec).
+LOCATION 1.2 — renderInvitePhoneStep (was L763-775, now L772-840):
+  ~ Submit Button disabled={loading} → disabled={loading || !termsAccepted}.
+  + Inserted ToS checkbox div with id="onb-invitelanding-terms" after </form>.
+  + Inserted SSO divider "או הרשמה עם" + Google btn + Apple btn (both
+    gated by socialLoading + termsAccepted).
+  + Added <div ref={googleButtonRef} className="hidden" /> as required
+    target for handleGoogleSignIn's GIS programmatic click.
+  + Preserved the existing have_account navigate('/login') link at bottom.
 
 ================================================================================
 VERIFY OUTPUTS
 ================================================================================
 VERIFY 1 — Lint:
-  Skipped npm-run-lint as separate step; CRA build runs ESLint inline with
-  CI=true (errors fail build). Build passed clean (see VERIFY 2) → no
-  ESLint errors. termsAccepted already in handleAcceptInvite deps; only
-  JSX modified.
+  Skipped npm run lint as separate step; CRA build runs ESLint inline with
+  CI=true (errors fail build). Build passed clean → no ESLint errors.
+  No useCallback dep changes needed (only JSX modified + 1-line state setter
+  in existing useCallback whose deps are unaffected).
 
 VERIFY 2 — Build:
-  cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid yarn build
-  → "Done in 43.44s." with build folder ready, no errors. ✅
-
-VERIFY 4 — Regression grep:
-  file:line  | form name           | checkbox id              | decision
-  -----------|---------------------|--------------------------|------------
-  794        | renderInviteAccept  | onb-invite-terms         | KEEP (already correct)
-  915        | renderInviteLoginNeeded | onb-invite-newuser-terms | EDIT-DONE (this fix)
-
-  Both `<form onSubmit={handleAcceptInvite}>` instances now have a
-  termsAccepted-bound checkbox visible above their submit Button, and
-  both submit Buttons are disabled until !termsAccepted is false.
+  cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+      REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
+  → "Done in 43.31s." with build folder ready, no errors. ✅
 
 VERIFY 3 — Manual smoke on staging:
   DEFERRED to Zahi after deploy (per standing rule — agent does not
   restart workflows or hit live staging endpoints).
+
+VERIFY 4 — Regression grep (all termsAccepted/checkbox-id usages):
+  L63    useState declaration                                  KEEP
+  L781/787  onb-invitelanding-terms (renderInvitePhoneStep)    EDIT-DONE (this spec)
+  L939/945  onb-invite-terms (renderInviteAccept, batch 505)   KEEP
+  L1060/1066 onb-invite-newuser-terms (renderInviteLoginNeeded, 505-hotfix) KEEP
+  L1105     termsAccepted in renderPhoneStep register form     KEEP (505)
+  L1277     termsAccepted in renderPhoneStep otp form          KEEP (505)
+  L1663     termsAccepted in renderDetails                     KEEP (505)
+
+  All disabled props consistently use `loading || !termsAccepted` or
+  `socialLoading || !termsAccepted`. ✅ No missed forms remain.
+
+VERIFY 5 — Bundle inspection:
+  grep -o "onb-invitelanding-terms" frontend/build/static/js/main.*.js | wc -l
+  → 2 occurrences (one as input id, one as label htmlFor). ✅
+  (Initial `grep -c` returned 1 because the minified bundle is a single
+  line; switched to `grep -o | wc -l` for accurate count.)
 
 ================================================================================
 COMMIT MESSAGE
@@ -98,16 +113,23 @@ See .local/.commit_message.
 ================================================================================
 DEVIATIONS
 ================================================================================
-None. Spec applied verbatim; only behavioral choice was that VERIFY 1 lint
-is implicitly covered by VERIFY 2 build (CRA's ESLint integration with
-CI=true escalates warnings to errors).
+None substantive. Only: VERIFY 1 lint covered implicitly by VERIFY 2 build
+(CRA's ESLint integration with CI=true escalates warnings to errors), and
+VERIFY 5 method changed from `grep -c` (lines) to `grep -o | wc -l`
+(occurrences) since the minified bundle is one line — count of 2 confirms
+both id + htmlFor strings emitted.
 
 ================================================================================
 NOT DONE / DEFERRED
 ================================================================================
-- VERIFY 3 manual staging smoke (Zahi runs).
-- SSO buttons (Google/Apple) on invite-login-needed form — separate spec
-  per hotfix doc (requires phone-skip UX work).
+- VERIFY 3 manual staging smoke (Tests A/B/C — Zahi runs).
+- ToS persistence cross-step check (Test B step e2) — Zahi observes during
+  manual smoke; termsAccepted is component state and SHOULD persist across
+  the renderInvitePhoneStep → renderPhoneStep transition without re-check.
+- Auto-fill phone from invite.target_phone — explicitly deferred per spec
+  (privacy/security tradeoff, "defer until users complain").
+- 24-hour staging soak before prod (per spec deploy pacing — third
+  auth-area change of the day).
 - git commit / push / deploy / workflow restart — Zahi only.
 
 ================================================================================
