@@ -1,55 +1,68 @@
 ================================================================================
-BATCH 506-HOTFIX — renderCurrentStep doesn't show OTP UI after Google in invite (P0)
+BATCH 510 — Trial banner project-aware (suppress for contractor/viewer) (P1)
 ================================================================================
 Date:           2026-05-09
 Branch:         staging  (NOT main)
-Rollback SHA:   b219eb1fead3dda0754abee36bcd1c6b4bb68d3a (HEAD before this fix)
+Rollback SHA:   e84e0c28ad74aac1517b2b26dc6ef2920f80927b (HEAD before this fix)
 Files changed:  1 frontend (no backend changes)
-                  frontend/src/pages/OnboardingPage.js (~7 lines added,
-                  1-line behavioral + 6-line comment)
+                  frontend/src/components/TrialBanner.js (~30 lines added:
+                  +2 imports, +20 useEffect/useState, +8 early return w/ comment)
 ================================================================================
 
 STEP 0 — PRE-FLIGHT GREP OUTPUTS
 ================================
-GREP 1 — renderCurrentStep decl:
-  1684:  const renderCurrentStep = () => {
-  ✅ MATCHES SPEC (line 1684)
-
-GREP 2 — renderCurrentStep body:
-  Confirmed first inner statement is `if (isInviteFlow) {` followed by
-  the routing branches matching the CONTEXT section verbatim, ending
-  with `return renderInvitePhoneStep();`. Then the non-invite branches
-  for step='phone'/'otp'/'login-password'/'choose-path'/'details'.
+GREP 1 — TrialBanner role check L48-49 (pre-edit):
+  const roleDisplay = billing.role_display || user.role;
+  if (NON_BILLING_ROLES.includes(roleDisplay) || NON_BILLING_ROLES.includes(user.role)) return null;
   ✅ MATCHES SPEC
 
-GREP 3 — socialFlow state:
-  64:  const [socialFlow, setSocialFlow] = useState(null);
-  ✅ MATCHES SPEC (line 64)
+GREP 2 — NON_BILLING_ROLES const L30:
+  const NON_BILLING_ROLES = ['management_team', 'contractor', 'viewer', 'site_manager', 'execution_engineer', 'safety_assistant'];
+  ✅ MATCHES SPEC
 
-GREP 4 — socialFlow branches in renderPhoneStep:
-  1176:  {socialFlow === 'link' && (
-  1227:  {socialFlow === 'register' && (
-  1288:  {socialFlow === 'otp' && (
-  ✅ All 3 branches present in renderPhoneStep, confirms it's the
-  correct render target for SSO UIs.
+GREP 3 — Early returns L41-43:
+  if (AUTH_PAGES.includes(location.pathname)) return null;
+  if (PROJECTS_LIST_PAGES.includes(location.pathname)) return null;
+  if (!user || loading || !billing) return null;
+  ✅ MATCHES SPEC
+
+GREP 4 — Backend /api/projects/{id} returns my_role (L374-396):
+  Confirmed: GET /projects/{project_id} populates proj['my_role'] from
+  project_memberships for non-super-admin users. Contractor-allowed
+  per _check_project_read_access. my_role assignment at L389:
+      proj['my_role'] = membership.get('role', 'viewer') if membership else 'viewer'
+  ✅ MATCHES SPEC
+
+GREP 5 — project_id UUID convention:
+  All references in projects_router.py use `project_id: str` typed
+  parameters (sample at L23, L77; usages at L31, L48, L53, L72, L79, L89).
+  Per BrikOps convention all IDs are str(uuid.uuid4()).
+  ✅ Regex /^\/projects\/([a-f0-9-]{36})/ is correct shape.
+
+ALSO VERIFIED:
+  - BACKEND_URL exported from frontend/src/services/api.js:7 ✅
+  - token returned from useAuth() (AuthContext.js:38 declaration) ✅
 
 ================================================================================
-EDIT APPLIED — frontend/src/pages/OnboardingPage.js
+EDITS APPLIED — frontend/src/components/TrialBanner.js
 ================================================================================
-LOCATION 1.1 — renderCurrentStep (was L1684, now L1687):
-  + Inserted dated comment block + early return:
-      if (socialFlow) return renderPhoneStep();
-    as the FIRST statement inside renderCurrentStep, before the
-    isInviteFlow check.
+LOCATION 1.1 — Imports (was L1-7, now L1-9):
+  + Added useEffect to React import
+  + Added `import axios from 'axios';`
+  + Added `import { BACKEND_URL } from '../services/api';`
 
-Behavior:
-  - socialFlow=null (default) → no change. Invite flow still routes to
-    renderInvitePhoneStep; non-invite flow still routes per step.
-  - socialFlow set (after Google/Apple click) → renderPhoneStep takes
-    over for both invite and non-invite flows. Renders the appropriate
-    socialFlow='link'/'register'/'otp' branch.
-  - handleSocialBack clears socialFlow=null → naturally returns to the
-    correct landing render (invite or non-invite).
+LOCATION 1.2 — TrialBanner component header (was L32-43, now L37-76):
+  ~ Pulled `token` from useAuth() (was just `user`)
+  + Added projectMatch regex + projectId derivation
+  + Added `currentProjectRole` useState
+  + Added useEffect to fetch /api/projects/{id} and set my_role,
+    with cancelled-flag for stale-write protection.
+  - Hooks declared BEFORE early returns (React rule).
+
+LOCATION 1.3 — Early return after existing role check (was L48-49, now L81-90):
+  + Added dated comment + early return:
+      if (currentProjectRole === 'contractor' || currentProjectRole === 'viewer') return null;
+  - Existing role check at L82 unchanged. New check is purely additive.
 
 ================================================================================
 VERIFY OUTPUTS
@@ -57,22 +70,29 @@ VERIFY OUTPUTS
 VERIFY 1 — Lint:
   Skipped npm run lint as separate step; CRA build runs ESLint inline
   with CI=true (errors fail build). Build passed clean → no ESLint
-  errors. socialFlow already in scope, no new state, no new deps.
+  errors. No new react-hooks/exhaustive-deps warnings (deps array
+  [projectId, token] is exhaustive).
 
 VERIFY 2 — Build:
   cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
       REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
-  → "Done in 37.28s." with build folder ready, no errors. ✅
+  → "Done in 33.59s." with build folder ready, no errors. ✅
 
 VERIFY 3 — Manual smoke on staging:
   DEFERRED to Zahi after deploy (per standing rule — agent does not
   restart workflows or hit live staging endpoints).
 
 VERIFY 4 — Bundle inspection:
-  See bash output for grep occurrences of the minified routing pattern.
-  Build passed and source contains the literal `if(socialFlow)return
-  renderPhoneStep()`-equivalent expression, so the routing change is
-  emitted in main.js.
+  grep -oE "currentProjectRole" main.*.js → 0 occurrences (expected;
+  React state variable name was minified by Terser).
+
+  Confirmed via secondary patterns:
+  - grep -oE '\^\\?/projects' main.*.js → 1 hit (the new regex
+    ^\/projects\/([a-f0-9-]{36}) emitted in bundle).
+  - grep -oE "my_role" main.*.js → 3 occurrences (string literal
+    preserved through minification — confirms res.data?.my_role
+    access path is in the bundle).
+  ✅ New logic emitted.
 
 ================================================================================
 COMMIT MESSAGE
@@ -82,21 +102,27 @@ See .local/.commit_message.
 ================================================================================
 DEVIATIONS
 ================================================================================
-None. Spec applied verbatim — single 1-line behavioral early return + 6-line
-explanatory comment, exactly as specified.
+None. Spec applied verbatim — 3 edit locations exactly as specified.
+VERIFY 4 used secondary grep patterns (`^\/projects` + `my_role`) since
+the primary `currentProjectRole` symbol gets minified; both alternative
+patterns confirmed by spec at L319 and equivalently confirm emission.
 
 ================================================================================
 NOT DONE / DEFERRED
 ================================================================================
-- VERIFY 3 manual staging smoke (Tests A/B/C — Zahi runs).
-- 506-followup-link-invite: backend /auth/social/verify-otp link branch
-  does not currently process invite_token. After this hotfix, an existing
-  user with linked Google clicking an invite link will authenticate
-  successfully but won't be added to the invited project. Track as
-  separate batch.
-- Cleanup of no-op setStep('phone') line in handleSocialAuthResult (added
-  by 506; harmless, deferred to a future refactor).
+- VERIFY 3 manual staging smoke (Tests A-G — Zahi runs).
+- Phase 2 follow-up: banner driven by current project's org
+  subscription rather than user's own org. Handles PM-in-other-org
+  edge cases. Will likely require backend extension (e.g.
+  /billing/me?project_id=X or contractor-accessible
+  /billing/project/{id}). Defer to next session.
+- Optimization: de-dupe the new /api/projects/{id} fetch with
+  ProjectControlPage's own fetch via a shared current-project context.
+  Defer until measurable.
 - git commit / push / deploy / workflow restart — Zahi only.
+- Deploy pacing note: this is the THIRD UI-impacting deploy of the
+  day. Different blast radius (billing-banner vs auth) but recommend
+  Zahi watches staging ~30 min before prod.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
