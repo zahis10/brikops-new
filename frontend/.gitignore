@@ -22,6 +22,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# pdf.js worker — copied from node_modules by postinstall script,
+# tracks the installed pdfjs-dist version automatically
+public/pdf.worker.min.mjs
+
 # Capacitor Android build artifacts
 android/app/build/
 android/.gradle/

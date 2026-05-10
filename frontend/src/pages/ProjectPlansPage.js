@@ -7,8 +7,9 @@ import { t } from '../i18n';
 import {
   ArrowRight, Loader2, Upload, FileText, Download, Eye,
   Calendar, User, X, Plus, Search, AlertCircle, FolderOpen, Archive, RefreshCw, Clock, Users, CheckCircle,
-  Edit3, Image, Ruler, FileType, ChevronDown, Filter
+  Edit3, Image, Ruler, FileType, ChevronDown, Filter, Maximize2
 } from 'lucide-react';
+import PlanViewer from '../components/PlanViewer';
 
 const DEFAULT_DISCIPLINES = [
   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
@@ -112,6 +113,7 @@ const ProjectPlansPage = () => {
   const [seenModalPlanName, setSeenModalPlanName] = useState('');
 
   const [detailPlan, setDetailPlan] = useState(null);
+  const [fullscreenPlan, setFullscreenPlan] = useState(null);
   const [editingDetail, setEditingDetail] = useState(false);
   const [editFields, setEditFields] = useState({});
   const [saving, setSaving] = useState(false);
@@ -1118,6 +1120,13 @@ const ProjectPlansPage = () => {
                     )}
                   </div>
                   <div className="flex gap-2 pt-1 flex-wrap">
+                    <button
+                      onClick={() => setFullscreenPlan(detailPlan)}
+                      className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Maximize2 className="w-4 h-4" />
+                      צפייה במסך מלא
+                    </button>
                     <a
                       href={detailPlan.file_url}
                       download
@@ -1510,6 +1519,13 @@ const ProjectPlansPage = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {fullscreenPlan && (
+        <PlanViewer
+          plan={fullscreenPlan}
+          onClose={() => setFullscreenPlan(null)}
+        />
       )}
     </div>
   );

@@ -51,6 +51,7 @@
     "lucide-react": "^0.507.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-pdf": "^9.2.0",
     "react-router-dom": "^7.5.1",
     "react-scripts": "5.0.1",
     "recharts": "^3.6.0",
@@ -62,7 +63,9 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "postinstall-copy-pdfworker": "cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
+    "postinstall": "yarn run postinstall-copy-pdfworker"
   },
   "browserslist": {
     "production": [
