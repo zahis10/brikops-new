@@ -1,193 +1,194 @@
 ================================================================================
-BATCH P1.1-HOTFIX — Fit-to-width default scale — REVIEW
+BATCH P1.1-HOTFIX-2 — Pan after zoom + visible scrollbars + thumbnail preview
 ================================================================================
 Branch:           staging  (NOT main)
-Severity:         P1 — UX hotfix on top of P1.1 (clipped right edge of
-                  A0/A1 PDFs at scale=1.0).
-Rollback SHA:     97643d2c14df88108a87fef7f50e4c704d9670e2  (P1.1 head)
+Severity:         P1 — three small UX bugs found in P1.1 + hotfix-1 staging
+                  smoke (cannot pan after zoom on A1 PDFs; detail-modal PDF
+                  preview always blocked by CSP).
+Rollback SHA:     post-hotfix-1 staging HEAD (last accepted P1.1-HOTFIX
+                  task on this branch).
 Status:           AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Files changed:    1 frontend (no backend)
-                    - frontend/src/components/PlanViewer.js  (~50 LOC
-                      changed across 6 small edits — net +30 LOC including
-                      explanatory comments)
+Files changed:    2 frontend (no backend, no CSP change)
+                    - frontend/src/components/PlanViewer.js  (~12 LOC
+                      changed across 2 edits — Math.floor + scroll
+                      container className/dir + comments)
+                    - frontend/src/pages/ProjectPlansPage.js (~10 LOC
+                      added at L1010 — thumbnail_url branch + comment)
 
 ================================================================================
-PRE-FLIGHT — all 4 checks PASS
+PRE-FLIGHT — all 6 checks PASS
 ================================================================================
 
-1. PlanViewer.js exists at expected location:
-   $ wc -l frontend/src/components/PlanViewer.js
-   →  251 lines  (spec expected ~247 — match)
+1. P1.1-hotfix shipped (scale state = useState(null)):
+   $ grep -n "useState(null)" frontend/src/components/PlanViewer.js
+   →  35:  const [numPages, setNumPages] = useState(null);
+   →  41:  const [scale, setScale] = useState(null);
+   →  42:  const [loadError, setLoadError] = useState(null);
 
-2. Initial scale = 1.0 confirmed (the bug):
-   $ grep -n "useState(1.0" frontend/src/components/PlanViewer.js
-   →  37:  const [scale, setScale] = useState(1.0);
+2. Math.round in fit-scale calc (the bug):
+   $ grep -n "Math.round(fitScale" frontend/src/components/PlanViewer.js
+   →  89:      const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
 
-3. containerRef declared + wired:
-   $ grep -n "containerRef" frontend/src/components/PlanViewer.js
-   →  40:  const containerRef = useRef(null);
-   →  122:        ref={containerRef}
+3. dir="rtl" on outer modal (gets inherited):
+   $ grep -n 'dir="rtl"' frontend/src/components/PlanViewer.js
+   →  120:    <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900" dir="rtl">
 
-4. handleLoadSuccess current signature:
-   $ grep -n "handleLoadSuccess" frontend/src/components/PlanViewer.js
-   →  50:  const handleLoadSuccess = useCallback(({ numPages }) => {
-   →  151:              onLoadSuccess={handleLoadSuccess}
+4. Scroll container declaration:
+   $ grep -n 'flex-1 overflow-auto bg-slate-700' frontend/src/components/PlanViewer.js
+   →  171:        className="flex-1 overflow-auto bg-slate-700"
+
+5. ProjectPlansPage detail-modal preview ladder (no thumbnail check):
+   $ sed -n '1009,1018p' frontend/src/pages/ProjectPlansPage.js
+   →  <div className="overflow-y-auto p-4 space-y-4">
+   →    {(detailPlan.file_type || '').startsWith('image/') ? (
+   →      <div ...><img src={detailPlan.file_url} ... /></div>
+   →    ) : (detailPlan.file_type === 'application/pdf') ? (
+   →      <div ...><iframe src={detailPlan.file_url} ... /></div>
+   →    ) : (
+   →      <div ...><icon /></div>
+   →    )}
+   ✓ Confirmed: jumps from image straight to iframe — no thumbnail_url branch.
+
+6. UnitPlansPage already uses thumbnail_url (reference pattern):
+   $ sed -n '600,614p' frontend/src/pages/UnitPlansPage.js
+   →  {detailPlan.thumbnail_url ? (
+   →    <div ...><img src={detailPlan.thumbnail_url} ... /></div>
+   →  ) : (detailPlan.file_type || '').startsWith('image/') ? (
+   →    <div ...><img src={detailPlan.file_url} ... /></div>
+   →  ) : (detailPlan.file_type === 'application/pdf') ? (
+   →    <div ...><iframe src={detailPlan.file_url} ... /></div>
+   →  ) : ...
+   ✓ Pattern to mirror in ProjectPlansPage.
 
 ================================================================================
-EDITS (6 locations in PlanViewer.js)
+EDITS (3 locations across 2 files)
 ================================================================================
 
-LOCATION 1.1 — Initial scale state (~L37)
-    -  const [scale, setScale] = useState(1.0);
-    +  // 2026-05-10 hotfix — start at null, set to fit-to-width on first
-    +  // PDF load. Avoids flash-of-wrong-scale before fit calc completes.
-    +  // While null, render placeholder (loading spinner already covers
-    +  // this — don't render <Page> until scale is set).
-    +  const [scale, setScale] = useState(null);
+LOCATION 1.1 — Math.round → Math.floor in handleLoadSuccess (~L89)
+    -      // Round to nearest 5% so the displayed % is clean.
+    -      const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
+    +      // 2026-05-10 hotfix-2 — Math.floor (not Math.round) so we never
+    +      // round UP past the true fit-scale. Math.round(11.7)=12 → 0.60
+    +      // when actual fit is 0.585 → 0.60 already overflows by ~3%.
+    +      // floor(11.7)=11 → 0.55 → strictly within fit. User can zoom IN
+    +      // to show full-width if they want.
+    +      const rounded = Math.max(0.1, Math.floor(fitScale * 20) / 20);
 
-LOCATION 1.4 — Reset effect (~L42)
-    -    setScale(1.0);
-    +    setScale(null); // recomputed in handleLoadSuccess
+LOCATION 1.2 — dir="ltr" + always-visible scrollbars on scroll container (~L168)
+    -      <div
+    -        ref={containerRef}
+    -        className="flex-1 overflow-auto bg-slate-700"
+    -        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+    -      >
+    +      {/* 2026-05-10 hotfix-2 — three fixes layered here:
+    +           a) dir="ltr" on the scroll container so RTL inheritance from
+    +              the outer modal doesn't mess up Chrome's RTL scroll
+    +              handling with `flex justify-center`. PDF canvas content
+    +              is intrinsically LTR; only the chrome (top/bottom bars)
+    +              needs RTL.
+    +           b) Tailwind arbitrary `[&::-webkit-scrollbar]` modifiers so
+    +              macOS users see scrollbars permanently — visual cue that
+    +              pan is possible. Pattern aligned with calendar.jsx /
+    +              table.jsx (project convention, Tailwind 3.4+). No JS
+    +              injection, no module side-effect.
+    +           c) touchAction kept for native pinch-zoom on mobile. */}
+    +      <div
+    +        ref={containerRef}
+    +        className="flex-1 overflow-auto bg-slate-700 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-thumb]:bg-white/35 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb]:hover:bg-white/55 [&::-webkit-scrollbar-track]:bg-black/20 [&::-webkit-scrollbar-corner]:bg-black/20"
+    +        dir="ltr"
+    +        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+    +      >
 
-LOCATION 1.2 — handleLoadSuccess: PDFDocumentProxy + fit-scale calc (~L50)
-    -  const handleLoadSuccess = useCallback(({ numPages }) => {
-    -    setNumPages(numPages);
-    -    setLoading(false);
-    -  }, []);
-    +  // 2026-05-10 hotfix — react-pdf onLoadSuccess passes the full
-    +  // PDFDocumentProxy. Compute fit-to-width on load so users see
-    +  // the whole plan edge-to-edge by default. They can zoom in via
-    +  // the + button or pinch.
-    +  const handleLoadSuccess = useCallback(async (pdf) => {
-    +    setNumPages(pdf.numPages);
-    +    setLoading(false);
-    +    try {
-    +      if (!containerRef.current) {
-    +        setScale(1.0);
-    +        return;
-    +      }
-    +      // Subtract p-4 padding (16px each side = 32px) so content
-    +      // doesn't immediately overflow.
-    +      const containerWidth = containerRef.current.clientWidth - 32;
-    +      const containerHeight = containerRef.current.clientHeight - 32;
-    +      // Defensive guard: container may not be laid out yet when
-    +      // handleLoadSuccess fires (modal still animating in,
-    +      // display:none transition, mobile keyboard pushing viewport).
-    +      // clientWidth=0 → containerWidth=-32 → fitScale=negative →
-    +      // clamped to 0.1 → mystery "tiny PDF" bug. Fall back to 1.0.
-    +      if (containerWidth <= 0 || containerHeight <= 0) {
-    +        setScale(1.0);
-    +        return;
-    +      }
-    +      const page = await pdf.getPage(1);
-    +      const viewport = page.getViewport({ scale: 1.0 });
-    +      const widthScale = containerWidth / viewport.width;
-    +      const heightScale = containerHeight / viewport.height;
-    +      // Use min so the WHOLE page fits (both dimensions). Cap at 1.0
-    +      // — small PDFs (e.g. apartment-only sketch) shouldn't upscale
-    +      // above native size.
-    +      const fitScale = Math.min(widthScale, heightScale, 1.0);
-    +      // Round to nearest 5% so the displayed % is clean.
-    +      const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
-    +      setScale(rounded);
-    +    } catch (err) {
-    +      console.warn('[PlanViewer] fit-scale calculation failed, falling back to 1.0:', err);
-    +      setScale(1.0);
-    +    }
-    +  }, []);
-
-LOCATION 1.5 — Multiplicative zoom + lower bound 0.1 (~L64)
-    -  const zoomIn = useCallback(() => setScale(s => Math.min(s + 0.25, 4.0)), []);
-    -  const zoomOut = useCallback(() => setScale(s => Math.max(s - 0.25, 0.5)), []);
-    +  // 2026-05-10 hotfix — multiplicative steps (×1.25 / ×0.8) so each
-    +  // click feels equally significant regardless of starting scale.
-    +  // Lower bound 0.1 — A0 plans on phone screens legitimately need ~20%.
-    +  const zoomIn = useCallback(() => setScale(s => Math.min((s ?? 1.0) * 1.25, 4.0)), []);
-    +  const zoomOut = useCallback(() => setScale(s => Math.max((s ?? 1.0) * 0.8, 0.1)), []);
-
-LOCATION 1.3 — Conditional <Page> render (~L156)
-    -          <Page
-    -            pageNumber={pageNumber}
-    -            scale={scale}
-    -            renderTextLayer={false}
-    -            renderAnnotationLayer={false}
-    -          />
-    +          {scale !== null && (
-    +            <Page
-    +              pageNumber={pageNumber}
-    +              scale={scale}
-    +              renderTextLayer={false}
-    +              renderAnnotationLayer={false}
-    +            />
-    +          )}
-
-LOCATION 1.6 — Disabled state for zoom buttons (~L204, ~L215)
-    -        disabled={scale <= 0.5}
-    +        disabled={!scale || scale <= 0.1}
-    ...
-    -        disabled={scale >= 4.0}
-    +        disabled={!scale || scale >= 4.0}
+LOCATION 2.1 — ProjectPlansPage detail-modal: thumbnail_url branch (~L1010)
+    +      {/* 2026-05-10 hotfix-2 — prefer thumbnail_url (PNG, no CSP
+    +           frame-src restriction) over iframe (blocked by app CSP).
+    +           Mirrors the pattern in UnitPlansPage.js:601-604. iframe
+    +           stays as ultimate fallback for plans whose async
+    +           thumbnail hasn't generated yet. */}
+    +      {detailPlan.thumbnail_url ? (
+    +        <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+    +          <img src={detailPlan.thumbnail_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
+    +        </div>
+    +      ) : (detailPlan.file_type || '').startsWith('image/') ? (
+           ...existing image branch...
+         ) : (detailPlan.file_type === 'application/pdf') ? (
+           ...existing iframe branch (now ultimate fallback)...
+         ) : (...icon fallback...)}
 
 ================================================================================
 VERIFY 1 — Lint
 ================================================================================
-The frontend has no `npm run lint` script (project uses craco; ESLint runs
-inline as part of `react-scripts build`). Lint output is therefore
-captured by VERIFY 2 below: build emits any new ESLint warnings/errors
-during compilation. None were introduced by this hotfix.
+No standalone `npm run lint` script in this project. ESLint runs inline as
+part of `react-scripts build` — captured by VERIFY 2 below. No new
+errors/warnings introduced.
 
 ================================================================================
 VERIFY 2 — Build
 ================================================================================
 $ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
     REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
-   →  Compiled successfully.
-   →  Done in 40.86s. NO new errors, NO new warnings introduced.
+   →  Compiled successfully (Done in 39.45s).
+   →  No new warnings, no new errors.
+   →  Tailwind JIT picked up the arbitrary `[&::-webkit-scrollbar]:…`
+      modifiers (no plugin needed; pattern already used in
+      ui/calendar.jsx and ui/table.jsx).
 
 ================================================================================
 VERIFY 4 — Bundle inspection
 ================================================================================
 $ ls -lh frontend/build/static/js/main.*.js
-   →  -rw-r--r-- 799K main.7f482d55.js
-
-No bundle delta beyond minor logic edits (no new dependencies; the
-fit-scale calc reuses existing pdfjs-dist API exposed via the
-PDFDocumentProxy passed to onLoadSuccess). The pdfjs lazy chunks remain
-unchanged from the P1.1 baseline.
+   →  -rw-r--r-- 799K main.a467ca12.js
+   ✓ Identical to hotfix-1 baseline (799K) — purely logic + CSS edits,
+     no new dependencies, no new imports.
 
 ================================================================================
 VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
 ================================================================================
-A. A1 architectural PDF (e.g. 801A-6-003.pdf) → fullscreen viewer
-   EXPECT: whole plan visible edge-to-edge, ~40-60% on desktop.
-B. + once → multiplicative zoom (~25% larger). Pan to corners works.
-C. + repeatedly → caps at 400%, button disables.
-D. − repeatedly → shrinks toward 10%, disables at 0.1.
-E. Image (jpg/png) plan → unchanged width-based scaling, no regression.
-F. Multi-page PDF (same size) → scale persists across pages.
-   Multi-page PDF (mixed size) → KNOWN LIMITATION — pages 2+ at page-1
-   fit-scale; user can manually zoom. Tracked as follow-up.
-G. Real iPhone, A1 plan → ~20-25% fit-scale, pinch-zoom + pan still work.
+A. A1 PDF (e.g. 801A-6-003.pdf) → fullscreen viewer
+   EXPECT: whole plan visible edge-to-edge, ~50-60% on desktop, NO
+   horizontal clip (Math.floor guarantees strictly within fit).
+B. + once → ×1.25 → ~70%, content overflows, **visible scrollbars**
+   appear at bottom + right edge (white-on-dark, 12px, persistent).
+C. Drag scrollbar (or shift+wheel) → pan smoothly to right side, then
+   back to left — both edges fully reachable.
+D. + repeatedly to 400% → scrollbars track view, no stuck state.
+E. − back to fit → overflow gone, scrollbars may disappear or show
+   track-only (browser-dependent — both OK).
+F. ProjectPlansPage → click any PDF plan card → detail modal shows
+   **thumbnail PNG** (not CSP-blocked iframe). Identical to
+   UnitPlansPage behavior.
+G. PDF without generated thumbnail → falls back to iframe (still shows
+   "blocked"); user clicks "צפייה במסך מלא". Acceptable transient state.
+H. iPhone → ~25-30% fit-scale, pinch-zoom + swipe-pan work, native
+   iOS scrollbar behavior.
 
 ================================================================================
-KNOWN LIMITATION (per spec, accepted for V1)
+ARCHITECTURAL NOTES
 ================================================================================
-Multi-page PDFs with mixed page sizes: fit-scale is computed on page 1
-only. Pages 2+ render at the same scale, so a bundle that mixes A1 floor
-plans with A4 detail sheets will show pages 2+ visibly mis-scaled. User
-can zoom manually. Follow-up batch will track `userManuallyZoomed` and
-recompute fit-scale on page change when the user has not manually
-zoomed.
+- CSP unchanged — `frame-src` stays strict (security). Thumbnail PNG is
+  served as `<img>`, governed by `img-src` (S3 already allowed), not
+  `frame-src`. iframe remains the LAST fallback for the brief window
+  before the async thumbnail worker finishes (usually seconds).
+- Outer modal stays `dir="rtl"` for the Hebrew labels in the top/bottom
+  bars; only the inner scroll container flips to `dir="ltr"` for Chrome
+  scroll-handling consistency. PDF canvas content is intrinsically LTR.
+- Always-visible scrollbars use Tailwind 3.4 arbitrary modifiers, no
+  JS-injected `<style>` block. No module-level side effect, all styling
+  colocated. Firefox uses different pseudo-elements
+  (`scrollbar-color` / `scrollbar-width`) — accepted as a follow-up if
+  it surfaces; macOS Safari + Chrome cover the immediate bug report.
+- Math.floor never overshoots true fit, so we never silently re-create
+  the overflow bug. User can always zoom IN one click to reach the
+  rounded-up value if they want.
 
 ================================================================================
 RISK
 ================================================================================
-Very low. Single component. All changes are additive logic on top of the
-existing structure. Worst case: fit-scale calc throws → try/catch falls
-back to scale=1.0 (the pre-hotfix behavior). No backend, no schema, no
-new dependencies, no new imports.
+Very low. Three independent small edits across two files. Each can be
+partially rolled back. No new deps, no backend, no CSP change. Worst
+case: visual regression to post-hotfix-1 state (still functional).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
-Rollback: git reset --hard 97643d2c14df88108a87fef7f50e4c704d9670e2
+Rollback: git revert <commit-sha>

@@ -1004,7 +1004,16 @@ const ProjectPlansPage = () => {
               </button>
             </div>
             <div className="overflow-y-auto p-4 space-y-4">
-              {(detailPlan.file_type || '').startsWith('image/') ? (
+              {/* 2026-05-10 hotfix-2 — prefer thumbnail_url (PNG, no CSP
+                   frame-src restriction) over iframe (blocked by app CSP).
+                   Mirrors the pattern in UnitPlansPage.js:601-604. iframe
+                   stays as ultimate fallback for plans whose async
+                   thumbnail hasn't generated yet. */}
+              {detailPlan.thumbnail_url ? (
+                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                  <img src={detailPlan.thumbnail_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
+                </div>
+              ) : (detailPlan.file_type || '').startsWith('image/') ? (
                 <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
                   <img src={detailPlan.file_url} alt={detailPlan.name || ''} className="w-full max-h-64 object-contain" />
                 </div>

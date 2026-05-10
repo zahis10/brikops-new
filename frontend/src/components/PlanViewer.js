@@ -85,8 +85,12 @@ const PlanViewer = ({ plan, onClose }) => {
       // — small PDFs (e.g. apartment-only sketch) shouldn't upscale
       // above native size.
       const fitScale = Math.min(widthScale, heightScale, 1.0);
-      // Round to nearest 5% so the displayed % is clean.
-      const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
+      // 2026-05-10 hotfix-2 — Math.floor (not Math.round) so we never
+      // round UP past the true fit-scale. Math.round(11.7)=12 → 0.60
+      // when actual fit is 0.585 → 0.60 already overflows by ~3%.
+      // floor(11.7)=11 → 0.55 → strictly within fit. User can zoom IN
+      // to show full-width if they want.
+      const rounded = Math.max(0.1, Math.floor(fitScale * 20) / 20);
       setScale(rounded);
     } catch (err) {
       console.warn('[PlanViewer] fit-scale calculation failed, falling back to 1.0:', err);
@@ -166,9 +170,22 @@ const PlanViewer = ({ plan, onClose }) => {
            min-h-full flex center) is critical: putting `flex
            items-center justify-center` on the scrolling container fights
            overflow when content > viewport and breaks pan-to-corners. */}
+      {/* 2026-05-10 hotfix-2 — three fixes layered here:
+           a) dir="ltr" on the scroll container so RTL inheritance from
+              the outer modal doesn't mess up Chrome's RTL scroll
+              handling with `flex justify-center`. PDF canvas content
+              is intrinsically LTR; only the chrome (top/bottom bars)
+              needs RTL.
+           b) Tailwind arbitrary `[&::-webkit-scrollbar]` modifiers so
+              macOS users see scrollbars permanently — visual cue that
+              pan is possible. Pattern aligned with calendar.jsx /
+              table.jsx (project convention, Tailwind 3.4+). No JS
+              injection, no module side-effect.
+           c) touchAction kept for native pinch-zoom on mobile. */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-auto bg-slate-700"
+        className="flex-1 overflow-auto bg-slate-700 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-thumb]:bg-white/35 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb]:hover:bg-white/55 [&::-webkit-scrollbar-track]:bg-black/20 [&::-webkit-scrollbar-corner]:bg-black/20"
+        dir="ltr"
         style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
       >
         <div className="min-w-full min-h-full flex items-center justify-center p-4">
