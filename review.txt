@@ -1,131 +1,254 @@
 ================================================================================
-BATCH P1.1-HOTFIX-3 — Inner container w-fit so it grows with content
+BATCH P1.1-HOTFIX-4 — Native pinch-to-zoom on touch devices
 ================================================================================
 Branch:           staging  (NOT main)
-Severity:         P1 — A1 PDFs still clipped on the right edge after
-                  hotfix-2; user could see scrollbars but couldn't pan
-                  through them. Layout bug, not RTL/rounding.
-Rollback SHA:     post-hotfix-2 staging HEAD (last accepted P1.1-HOTFIX-2
+Severity:         P1 — blocks mobile UX of P1.1. iPhone users either
+                  saw no zoom (Capacitor / iOS Safari pinch suppressed)
+                  or got CSS-scaled rasterized canvas = pixelated text.
+                  Same root cause for both bugs (#32, #33).
+Rollback SHA:     post-hotfix-3 staging HEAD (last accepted P1.1-HOTFIX-3
                   task on this branch).
 Status:           AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Files changed:    1 frontend (no backend)
-                    - frontend/src/components/PlanViewer.js  (+1 Tailwind
-                      class on inner wrapper + explanatory comment block;
-                      no logic edits)
+Files changed:    Frontend only:
+                    - frontend/package.json       (+1 dep)
+                    - frontend/yarn.lock           (regenerated)
+                    - frontend/src/components/PlanViewer.js (3 edits)
 
 ================================================================================
-PRE-FLIGHT — all 4 checks PASS
+STEP 0 — PRE-FLIGHT (5 checks PASS)
 ================================================================================
 
-1. hotfix-2 deployed (Math.floor live):
-   $ grep -n "Math.floor" frontend/src/components/PlanViewer.js
-   →  96:      const rounded = Math.max(0.1, Math.floor(fitScale * 20) / 20);
+1. PlanViewer LOC pre-edit:
+   $ wc -l frontend/src/components/PlanViewer.js
+   →  326 lines (matches expectation).
 
-2. dir="ltr" only on the inner scroll container (not outer modal):
-   $ grep -n 'dir="ltr"' frontend/src/components/PlanViewer.js
-   →  191:        dir="ltr"
-   ✓ Single hit, on the scroll container <div>. Outer modal still RTL
-     (line 120: `dir="rtl"`).
+2. Current touchAction setting (the bug we're fixing):
+   $ grep -n "touchAction" frontend/src/components/PlanViewer.js
+   →  189:        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+   ✓ Single hit on the scroll container — confirmed.
 
-3. Inner wrapper className we'll edit:
-   $ grep -n "min-w-full min-h-full flex items-center justify-center" frontend/src/components/PlanViewer.js
-   →  (pre-edit) 1 hit on the wrapper line. ✓ Confirmed sole match.
+3. Existing zoomIn/zoomOut bounds (we reuse):
+   $ grep -nE "zoomIn|zoomOut|setScale.*Math\." frontend/src/components/PlanViewer.js
+   →  116: const zoomIn  = ... Math.min((s ?? 1.0) * 1.25, 4.0)
+   →  117: const zoomOut = ... Math.max((s ?? 1.0) * 0.8,  0.1)
+   ✓ Bounds [0.1, 4.0]. Pinch will use the same.
 
-4. Tailwind 3.4+ (supports `w-fit` natively):
-   $ grep '"tailwindcss"' frontend/package.json
-   →  "tailwindcss": "^3.4.17"
-   ✓ w-fit ships in 3.0+; no plugin or arbitrary value needed.
+4. @use-gesture/react NOT already installed:
+   $ grep -E '"@use-gesture' frontend/package.json
+   →  (empty pre-edit) ✓ Fresh add.
+
+5. React 19 + @use-gesture/react v10 compat:
+   $ react = ^19.0.0  ✓
+   $ yarn add @use-gesture/react → installed v10.3.1 cleanly.
+   No peer-dep error. No --force / --legacy-peer-deps used.
+
+STEP 0.6 — usePinch v10.3.1 API verification (CRITICAL):
+   $ find node_modules/@use-gesture -name "*.d.ts" | head
+   $ grep "from\|scaleBounds\|rubberband" .../types/config.d.ts
+   →  L42: from?: Vector2 | ((state: ...) => Vector2)        ✓ supported
+   →  L62: rubberband?: boolean | number | Vector2            ✓ supported
+   →  L107: scaleBounds?: PinchBounds | ((state) => ...)      ✓ supported
+   $ grep "first\|offset\|delta" .../types/state.d.ts
+   →  L112: offset: Vector2  (cumulative, anchored to `from`) ✓
+   →  L141: first: boolean                                    ✓ supported
+   ⇒ PATTERN A (`from` config) is the correct + cleanest path.
 
 ================================================================================
-EDIT (1 location, 1 file)
+LOCATION 1.1 — Install @use-gesture/react
 ================================================================================
+$ cd frontend && yarn add @use-gesture/react
+   → success Saved 2 new dependencies.
+       └─ @use-gesture/react@10.3.1
+       └─ @use-gesture/core@10.3.1
+   → postinstall-copy-pdfworker ran cleanly (pdf worker re-copied).
 
-LOCATION 1.1 — Add `w-fit` to inner wrapper className (~L172/L202)
+================================================================================
+LOCATION 1.2 — import usePinch (top of PlanViewer.js)
+================================================================================
+@@ frontend/src/components/PlanViewer.js
+ import React, { useState, useCallback, useRef, useEffect } from 'react';
+ import { Document, Page, pdfjs } from 'react-pdf';
++import { usePinch } from '@use-gesture/react';
+ import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye } from 'lucide-react';
 
-    +    {/* 2026-05-10 hotfix-3 — `w-fit` (width: fit-content) added so
-    +         the wrapper grows with the canvas when canvas is wider than
-    +         the viewport. Without this, the wrapper was pinned at 100%
-    +         (min-w-full) and the canvas overflowed it on both sides
-    +         with no way for the outer overflow-auto to see/scroll the
-    +         overflow. With w-fit + min-w-full, computed width is
-    +         max(content, viewport) — centered when content fits,
-    +         content-sized (and scrollable via outer) when overflows. */}
-    -    <div className="min-w-full min-h-full      flex items-center justify-center p-4">
-    +    <div className="min-w-full min-h-full w-fit flex items-center justify-center p-4">
+================================================================================
+LOCATION 1.3 — usePinch hook (after plan-change useEffect)
+================================================================================
+PATTERN A (verified-supported in v10.3.1) — `from: () => [scale ?? 1.0, 0]`
+makes `offset[0]` the ABSOLUTE current pinch state. NOT a multiplier.
+Avoids the exponential-drift bug where `prev * offset[0]` compounds
+(because offset is itself cumulative-from-gesture-start).
 
-That's the entire fix. One Tailwind class added.
+@@ inside PlanViewer component, after L52
++  // 2026-05-10 hotfix-4 — native pinch-to-zoom on touch devices.
++  // Captures the pinch gesture on the scroll container and updates
++  // `scale` state, so react-pdf re-renders the page at the new scale
++  // (sharp text, not CSS-scaled rasterized canvas). Solves both the
++  // "no pinch on iPhone" bug and the "browser pinch = pixelated text"
++  // bug with one change.
++  //
++  // PATTERN A — `from` config: offset[0] is treated as the absolute
++  // current pinch state, anchored to the scale value at gesture start
++  // (returned by `from`). NOT a multiplier. This avoids the
++  // exponential-drift bug where `scale * offset[0]` compounds each
++  // frame because offset is itself cumulative-from-gesture-start.
++  // Bounds [0.1, 4.0] match the +/- button bounds (hotfix-1). Rubberband
++  // gives soft-bounce feedback at the edges. eventOptions.passive=false
++  // is required so we can preventDefault to suppress browser-native
++  // pinch on iOS Safari edge cases.
++  usePinch(
++    ({ offset: [s], event }) => {
++      if (event && event.cancelable) event.preventDefault();
++      setScale(Math.min(Math.max(s, 0.1), 4.0));
++    },
++    {
++      target: containerRef,
++      eventOptions: { passive: false },
++      scaleBounds: { min: 0.1, max: 4.0 },
++      rubberband: true,
++      from: () => [scale ?? 1.0, 0],
++    }
++  );
+
+================================================================================
+LOCATION 1.4 — touchAction: drop pinch-zoom (so we own pinch)
+================================================================================
+@@ scroll container <div>
++      {/* 2026-05-10 hotfix-4 — `touch-action: pan-x pan-y` (without
++           pinch-zoom) tells the browser: "allow ONE-finger pan/scroll
++           on this element, but DON'T handle pinch yourself." Pinch is
++           now captured by the usePinch hook above, which calls setScale
++           to trigger react-pdf to re-render at higher resolution =
++           sharp text (instead of CSS-scaled raster = pixelated). */}
+       <div
+         ref={containerRef}
+         className="..."
+         dir="ltr"
+-        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
++        style={{ touchAction: 'pan-x pan-y' }}
+       >
+
+(JSX comment placed BEFORE the opening tag — JSX `{/* */}` is not valid
+between attributes inside an opening tag in CRA's parser.)
 
 ================================================================================
 VERIFY 1 — Lint
 ================================================================================
-No standalone `npm run lint`. ESLint runs inline as part of
-`react-scripts build` — captured by VERIFY 2 below. No new
-errors/warnings.
+ESLint runs inline as part of `react-scripts build` — captured by VERIFY
+2 below. No new errors / no new warnings.
 
 ================================================================================
 VERIFY 2 — Build
 ================================================================================
 $ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
     REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
-   →  Compiled successfully (Done in 42.63s).
-   →  No new warnings, no new errors.
-   →  Tailwind JIT picked up `w-fit` (default class in Tailwind 3.x,
-      not arbitrary).
+   →  EXIT=0
+   →  "The build folder is ready to be deployed." (Done in 39.58s)
+   →  No new errors, no new warnings introduced by hotfix-4.
 
 ================================================================================
 VERIFY 4 — Bundle inspection
 ================================================================================
+$ grep -lE 'use-gesture|usePinch' frontend/build/static/js/*.js | head
+   →  3055.0e512694.chunk.js
+   →  7822.7422aa30.chunk.js
+   →  8323.a1a95892.chunk.js
+   ✓ @use-gesture identifiers present in lazy chunks.
+
 $ ls -lh frontend/build/static/js/main.*.js
-   →  -rw-r--r-- 799K main.9cc31f2a.js
-   ✓ Identical size to hotfix-2 baseline (799K) — single-class CSS
-     change, no JS-side delta.
+   →  -rw-r--r-- 799K main.cd242d3b.js
+   ✓ Main bundle UNCHANGED at 799K — confirms @use-gesture went into
+     the lazy-loaded PlanViewer chunk path, NOT first paint.
+
+PlanViewer chunk (8323.a1a95892.chunk.js) = 66K with @use-gesture
+included. Pre-hotfix-4 PlanViewer chunk was ~53K → +~13K minified, in
+line with the +~13KB gzipped expectation for @use-gesture/react v10.
 
 ================================================================================
 VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
 ================================================================================
-A. A1 PDF (e.g. 801A-6-003.pdf) → fullscreen viewer
-   EXPECT: whole plan visible edge-to-edge at fit-scale (~50-60% on
-   desktop). NO horizontal clip (regression check from hotfix-2).
-B. + once → ×1.25 → ~70%, content overflows
-   EXPECT: scrollbars visible (hotfix-2). **Drag horizontal scrollbar
-   right → see right edge of plan (title block, revisions). Drag back
-   left → see left edge. Both fully reachable.** ⭐ This is the test
-   that has been failing through hotfix-1 and hotfix-2.
-C. + repeatedly to 400% → smooth pan in both directions, no stuck state.
-D. iPhone → ~25-30% fit-scale, pinch-zoom + swipe-pan reach all corners.
-E. Detail-modal preview (regression check) → thumbnail PNG still
-   showing (hotfix-2 fix preserved).
-F. Small PDF smaller than viewport → opens at scale 1.0, CENTERED in
-   viewport (w-fit + min-w-full = container width when content fits).
-   No scroll needed.
+⭐ MUST be tested on a REAL device. DevTools touch emulation does not
+   accurately simulate native iOS GestureEvent or Android touch ratios.
+
+Test cases (real iPhone + real Android):
+
+A. Open A1 PDF → "צפייה במסך מלא" → fit-scale (~25-30% on phone).
+B. Slow steady pinch OUT — page zooms IN smoothly, text stays SHARP
+   (re-rendered, not raster-scaled), 60fps.
+B-CRITICAL — Compounding-bug check:
+   Slow steady pinch out from 60% over ~2 seconds.
+   EXPECT: percentage rises smoothly 60% → 90% → 130%.
+   BROKEN: rockets to 400% within first second (compounding math).
+B-MULTI — Repeat-pinch check:
+   Pinch out (release), pinch out again. Second pinch starts from
+   current scale (not reset to fit-scale).
+C. Pinch IN — page zooms OUT smoothly, text stays sharp.
+D. Pinch past 400% → rubber-band, snaps back to 4.0 on release.
+E. Pinch past 10% → rubber-band, snaps back to 0.1 on release.
+F. Pinch IN, then one-finger swipe → pan works.
+G. After pinching, click + button → ×1.25 from current scale (shared
+   state, not reset).
+H. Open + close + reopen viewer with same plan → resets to fit-scale.
+I. iOS Safari + Capacitor (WKWebView) → same behavior as Safari mobile.
+I-ANDROID. Android Chrome web + Capacitor Android app → same behavior.
+   (Android uses touch-event branch of @use-gesture, iOS uses
+   GestureEvent branch — both must work.)
+J. Regression: +/- buttons, scrollbars, page nav, image plans, detail
+   modal thumbnail, "פתח בכרטיסייה חדשה" — all preserved.
 
 ================================================================================
 ARCHITECTURAL NOTES
 ================================================================================
-- The bug was purely layout. Everything else (Math.floor from hotfix-2,
-  dir="ltr" from hotfix-2, visible scrollbars from hotfix-2,
-  useState(null) from hotfix-1) was already correct.
-- `min-w-full` sets only a lower bound. With no `width` instruction the
-  wrapper defaulted to `width: auto` which in a block context = 100%
-  of parent. Result: wrapper pinned at viewport width even when canvas
-  was 2000px wide. Canvas leaked OUT of the wrapper (visible on screen
-  via flex centering with overflow), but invisible to the outer
-  overflow-auto's scroll machinery — so no scrollbars triggered, no
-  pan possible.
-- `w-fit` (= width: fit-content) tells the wrapper "size to content,
-  honoring min-width". Computed width becomes max(content, viewport).
-  This is the standard CSS pattern for "centered when fits, scroll
-  when overflows" used by Excel viewers, Figma, Photoshop's image
-  canvases, and the PDF.js reference viewer.
+- The bug was NOT in our zoom math — it was that we never owned the
+  pinch gesture. Browser-native pinch on react-pdf's <canvas> = CSS
+  scale of an already-rasterized image (blurry). On Capacitor iOS,
+  browser-native pinch is sometimes suppressed altogether (no zoom).
+- Fix: capture pinch in JS → setState(scale) → react-pdf re-renders
+  the page at the new scale → fresh canvas at correct resolution =
+  sharp text at any zoom level.
+- PATTERN A (from-config) is mathematically equivalent to PATTERN B
+  (gestureStartScaleRef + first-flag) but is more declarative and
+  avoids manual ref bookkeeping. Both are correct; we shipped A
+  because v10.3.1 supports `from` natively.
+- DO NOT regress to `setScale(prev => prev * offset[0])` — offset[0]
+  is cumulative-from-gesture-start, so multiplying it against the
+  live scale state compounds (Frame N: 1.0 * 1.1 * 1.2 * 1.3 = 1.72
+  instead of 1.30). PATTERN A's `from` config + clamping `s` directly
+  is the correct contract.
+- Drag-to-pan with one finger is OUT of scope. Visible scrollbars
+  (hotfix-2) + native one-finger touch scroll (touch-action: pan-x
+  pan-y) cover panning. Adding drag-to-pan would risk conflicts with
+  P1.2 tap-to-pin and annotation features.
+- Viewport meta tag in index.html UNCHANGED. We disable native pinch
+  ONLY on the PlanViewer scroll container (via touch-action), not
+  globally — keeps pinch available for any future feature.
+
+================================================================================
+DO NOT TOUCH (preserved as-is)
+================================================================================
+- ❌ Backend (zero changes).
+- ❌ ProjectPlansPage / UnitPlansPage (consumers — props unchanged).
+- ❌ +/- zoom buttons (same multiplicative bounds, shared scale state).
+- ❌ Math.floor fit-scale calc (hotfix-2).
+- ❌ dir="ltr" on scroll container (hotfix-2).
+- ❌ w-fit on inner wrapper (hotfix-3).
+- ❌ Tailwind arbitrary scrollbar modifiers (hotfix-2).
+- ❌ Image rendering branch (uses width-based scaling, no pixelation).
+- ❌ Worker setup, lazy chunk, thumbnail-first preview.
+- ❌ Viewport meta tag in index.html (no user-scalable=no).
+- ❌ CSP, env vars, security config.
 
 ================================================================================
 RISK
 ================================================================================
-Trivial. One Tailwind class added on one wrapper element. Worst case:
-visual regression to hotfix-2 (still functional — scrollbars visible,
-just couldn't pan through them).
+Low. One new JS dep (~13KB gzipped, used by Spring/Framer Motion in
+production at scale), one hook addition, one CSS attribute value
+narrowed. Worst case = pinch behaves the same as today (broken on
+mobile). No regression risk to desktop — +/- buttons untouched, scale
+state contract unchanged. PlanViewer chunk is lazy-loaded so first
+paint and main bundle are unaffected (799K → 799K).
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
-Rollback: git revert <commit-sha>
+Rollback: git revert <commit-sha>  +  yarn remove @use-gesture/react

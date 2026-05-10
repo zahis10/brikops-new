@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import { usePinch } from '@use-gesture/react';
 import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye } from 'lucide-react';
 
 // 2026-05-10 — react-pdf worker setup. CRITICAL: bundle the worker
@@ -50,6 +51,36 @@ const PlanViewer = ({ plan, onClose }) => {
     setLoadError(null);
     setLoading(true);
   }, [plan?.id, plan?.file_url]);
+
+  // 2026-05-10 hotfix-4 — native pinch-to-zoom on touch devices.
+  // Captures the pinch gesture on the scroll container and updates
+  // `scale` state, so react-pdf re-renders the page at the new scale
+  // (sharp text, not CSS-scaled rasterized canvas). Solves both the
+  // "no pinch on iPhone" bug and the "browser pinch = pixelated text"
+  // bug with one change.
+  //
+  // PATTERN A — `from` config: offset[0] is treated as the absolute
+  // current pinch state, anchored to the scale value at gesture start
+  // (returned by `from`). NOT a multiplier. This avoids the
+  // exponential-drift bug where `scale * offset[0]` compounds each
+  // frame because offset is itself cumulative-from-gesture-start.
+  // Bounds [0.1, 4.0] match the +/- button bounds (hotfix-1). Rubberband
+  // gives soft-bounce feedback at the edges. eventOptions.passive=false
+  // is required so we can preventDefault to suppress browser-native
+  // pinch on iOS Safari edge cases.
+  usePinch(
+    ({ offset: [s], event }) => {
+      if (event && event.cancelable) event.preventDefault();
+      setScale(Math.min(Math.max(s, 0.1), 4.0));
+    },
+    {
+      target: containerRef,
+      eventOptions: { passive: false },
+      scaleBounds: { min: 0.1, max: 4.0 },
+      rubberband: true,
+      from: () => [scale ?? 1.0, 0],
+    }
+  );
 
   // 2026-05-10 hotfix — react-pdf onLoadSuccess passes the full
   // PDFDocumentProxy (not just {numPages}). We use it to compute a
@@ -182,11 +213,17 @@ const PlanViewer = ({ plan, onClose }) => {
               table.jsx (project convention, Tailwind 3.4+). No JS
               injection, no module side-effect.
            c) touchAction kept for native pinch-zoom on mobile. */}
+      {/* 2026-05-10 hotfix-4 — `touch-action: pan-x pan-y` (without
+           pinch-zoom) tells the browser: "allow ONE-finger pan/scroll
+           on this element, but DON'T handle pinch yourself." Pinch is
+           now captured by the usePinch hook above, which calls setScale
+           to trigger react-pdf to re-render at higher resolution =
+           sharp text (instead of CSS-scaled raster = pixelated). */}
       <div
         ref={containerRef}
         className="flex-1 overflow-auto bg-slate-700 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-thumb]:bg-white/35 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb]:hover:bg-white/55 [&::-webkit-scrollbar-track]:bg-black/20 [&::-webkit-scrollbar-corner]:bg-black/20"
         dir="ltr"
-        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+        style={{ touchAction: 'pan-x pan-y' }}
       >
         {/* 2026-05-10 hotfix-3 — `w-fit` (width: fit-content) added so
              the wrapper grows with the canvas when canvas is wider than
