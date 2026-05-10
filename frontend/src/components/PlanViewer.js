@@ -188,7 +188,15 @@ const PlanViewer = ({ plan, onClose }) => {
         dir="ltr"
         style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
       >
-        <div className="min-w-full min-h-full flex items-center justify-center p-4">
+        {/* 2026-05-10 hotfix-3 — `w-fit` (width: fit-content) added so
+             the wrapper grows with the canvas when canvas is wider than
+             the viewport. Without this, the wrapper was pinned at 100%
+             (min-w-full) and the canvas overflowed it on both sides
+             with no way for the outer overflow-auto to see/scroll the
+             overflow. With w-fit + min-w-full, computed width is
+             max(content, viewport) — centered when content fits,
+             content-sized (and scrollable via outer) when overflows. */}
+        <div className="min-w-full min-h-full w-fit flex items-center justify-center p-4">
           {loading && isPdf && (
             <div className="flex flex-col items-center gap-2 text-white">
               <Loader2 className="w-8 h-8 animate-spin" />
