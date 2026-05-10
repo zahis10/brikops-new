@@ -1,171 +1,191 @@
 ================================================================================
-BATCH P1.1 — Plans react-pdf viewer foundation — REVIEW
+BATCH P1.1-HOTFIX — Fit-to-width default scale — REVIEW
 ================================================================================
 Branch:           staging  (NOT main)
-Severity:         P1 — feature add. Sub-batch 1 of 4 in Plans Phase 1 MVP.
-Rollback SHA:     97643d2c14df88108a87fef7f50e4c704d9670e2
+Severity:         P1 — UX hotfix on top of P1.1 (clipped right edge of
+                  A0/A1 PDFs at scale=1.0).
+Rollback SHA:     97643d2c14df88108a87fef7f50e4c704d9670e2  (P1.1 head)
 Status:           AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Files changed:    1 NEW + 4 EDIT (~280 LOC)
-                    - frontend/package.json (+1 dep, +2 scripts)
-                    - frontend/.gitignore (+3 lines)
-                    - frontend/src/components/PlanViewer.js (NEW, 247 LOC)
-                    - frontend/src/pages/ProjectPlansPage.js (~15 LOC)
-                    - frontend/src/pages/UnitPlansPage.js (~15 LOC)
-Backend:          ZERO changes. No schema, no endpoints, no migrations.
+Files changed:    1 frontend (no backend)
+                    - frontend/src/components/PlanViewer.js  (~50 LOC
+                      changed across 6 small edits — net +30 LOC including
+                      explanatory comments)
 
 ================================================================================
-PRE-FLIGHT — all 5 checks PASS
+PRE-FLIGHT — all 4 checks PASS
 ================================================================================
 
-1. React 19 confirmed:
-   $ grep -E '"react":\s*"\^?19' frontend/package.json
-   →   "react": "^19.0.0",
+1. PlanViewer.js exists at expected location:
+   $ wc -l frontend/src/components/PlanViewer.js
+   →  251 lines  (spec expected ~247 — match)
 
-2. No existing react-pdf:
-   $ grep -E '"react-pdf"|"pdfjs-dist"' frontend/package.json
-   →  (empty — fresh add)
+2. Initial scale = 1.0 confirmed (the bug):
+   $ grep -n "useState(1.0" frontend/src/components/PlanViewer.js
+   →  37:  const [scale, setScale] = useState(1.0);
 
-3. Iframe locations confirmed:
-   ProjectPlansPage.js:1011  <iframe src={detailPlan.file_url} ...
-   UnitPlansPage.js:610      <iframe src={detailPlan.file_url} ...
+3. containerRef declared + wired:
+   $ grep -n "containerRef" frontend/src/components/PlanViewer.js
+   →  40:  const containerRef = useRef(null);
+   →  122:        ref={containerRef}
 
-4. Modal pattern (z-50 fixed inset-0) confirmed at L995 (detail modal)
-   plus 4 other modals in ProjectPlansPage. PlanViewer uses z-[60] to
-   sit above.
-
-5. React 19 + react-pdf compatibility verified — react-pdf@9.2.1
-   installed cleanly with NO peer-dep errors, NO --force, NO
-   --legacy-peer-deps.
+4. handleLoadSuccess current signature:
+   $ grep -n "handleLoadSuccess" frontend/src/components/PlanViewer.js
+   →  50:  const handleLoadSuccess = useCallback(({ numPages }) => {
+   →  151:              onLoadSuccess={handleLoadSuccess}
 
 ================================================================================
-LOCATION 1.1 — Install react-pdf
+EDITS (6 locations in PlanViewer.js)
 ================================================================================
-$ cd frontend && yarn add react-pdf@^9.2.0
-   →  react-pdf@9.2.1
-   →  pdfjs-dist@4.8.69 (transitive)
-   →  Done in 29.81s. NO peer-dep errors.
+
+LOCATION 1.1 — Initial scale state (~L37)
+    -  const [scale, setScale] = useState(1.0);
+    +  // 2026-05-10 hotfix — start at null, set to fit-to-width on first
+    +  // PDF load. Avoids flash-of-wrong-scale before fit calc completes.
+    +  // While null, render placeholder (loading spinner already covers
+    +  // this — don't render <Page> until scale is set).
+    +  const [scale, setScale] = useState(null);
+
+LOCATION 1.4 — Reset effect (~L42)
+    -    setScale(1.0);
+    +    setScale(null); // recomputed in handleLoadSuccess
+
+LOCATION 1.2 — handleLoadSuccess: PDFDocumentProxy + fit-scale calc (~L50)
+    -  const handleLoadSuccess = useCallback(({ numPages }) => {
+    -    setNumPages(numPages);
+    -    setLoading(false);
+    -  }, []);
+    +  // 2026-05-10 hotfix — react-pdf onLoadSuccess passes the full
+    +  // PDFDocumentProxy. Compute fit-to-width on load so users see
+    +  // the whole plan edge-to-edge by default. They can zoom in via
+    +  // the + button or pinch.
+    +  const handleLoadSuccess = useCallback(async (pdf) => {
+    +    setNumPages(pdf.numPages);
+    +    setLoading(false);
+    +    try {
+    +      if (!containerRef.current) {
+    +        setScale(1.0);
+    +        return;
+    +      }
+    +      // Subtract p-4 padding (16px each side = 32px) so content
+    +      // doesn't immediately overflow.
+    +      const containerWidth = containerRef.current.clientWidth - 32;
+    +      const containerHeight = containerRef.current.clientHeight - 32;
+    +      // Defensive guard: container may not be laid out yet when
+    +      // handleLoadSuccess fires (modal still animating in,
+    +      // display:none transition, mobile keyboard pushing viewport).
+    +      // clientWidth=0 → containerWidth=-32 → fitScale=negative →
+    +      // clamped to 0.1 → mystery "tiny PDF" bug. Fall back to 1.0.
+    +      if (containerWidth <= 0 || containerHeight <= 0) {
+    +        setScale(1.0);
+    +        return;
+    +      }
+    +      const page = await pdf.getPage(1);
+    +      const viewport = page.getViewport({ scale: 1.0 });
+    +      const widthScale = containerWidth / viewport.width;
+    +      const heightScale = containerHeight / viewport.height;
+    +      // Use min so the WHOLE page fits (both dimensions). Cap at 1.0
+    +      // — small PDFs (e.g. apartment-only sketch) shouldn't upscale
+    +      // above native size.
+    +      const fitScale = Math.min(widthScale, heightScale, 1.0);
+    +      // Round to nearest 5% so the displayed % is clean.
+    +      const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
+    +      setScale(rounded);
+    +    } catch (err) {
+    +      console.warn('[PlanViewer] fit-scale calculation failed, falling back to 1.0:', err);
+    +      setScale(1.0);
+    +    }
+    +  }, []);
+
+LOCATION 1.5 — Multiplicative zoom + lower bound 0.1 (~L64)
+    -  const zoomIn = useCallback(() => setScale(s => Math.min(s + 0.25, 4.0)), []);
+    -  const zoomOut = useCallback(() => setScale(s => Math.max(s - 0.25, 0.5)), []);
+    +  // 2026-05-10 hotfix — multiplicative steps (×1.25 / ×0.8) so each
+    +  // click feels equally significant regardless of starting scale.
+    +  // Lower bound 0.1 — A0 plans on phone screens legitimately need ~20%.
+    +  const zoomIn = useCallback(() => setScale(s => Math.min((s ?? 1.0) * 1.25, 4.0)), []);
+    +  const zoomOut = useCallback(() => setScale(s => Math.max((s ?? 1.0) * 0.8, 0.1)), []);
+
+LOCATION 1.3 — Conditional <Page> render (~L156)
+    -          <Page
+    -            pageNumber={pageNumber}
+    -            scale={scale}
+    -            renderTextLayer={false}
+    -            renderAnnotationLayer={false}
+    -          />
+    +          {scale !== null && (
+    +            <Page
+    +              pageNumber={pageNumber}
+    +              scale={scale}
+    +              renderTextLayer={false}
+    +              renderAnnotationLayer={false}
+    +            />
+    +          )}
+
+LOCATION 1.6 — Disabled state for zoom buttons (~L204, ~L215)
+    -        disabled={scale <= 0.5}
+    +        disabled={!scale || scale <= 0.1}
+    ...
+    -        disabled={scale >= 4.0}
+    +        disabled={!scale || scale >= 4.0}
 
 ================================================================================
-LOCATION 1.5 — Self-host pdfjs worker (postinstall)
+VERIFY 1 — Lint
 ================================================================================
-frontend/package.json scripts:
-   "postinstall-copy-pdfworker": "cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
-   "postinstall": "yarn run postinstall-copy-pdfworker"
-
-frontend/.gitignore:
-   # pdf.js worker — copied from node_modules by postinstall script,
-   # tracks the installed pdfjs-dist version automatically
-   public/pdf.worker.min.mjs
-
-$ cd frontend && yarn install
-   →  $ yarn run postinstall-copy-pdfworker
-   →  $ cp -f node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs
-   →  Done.
-
-$ ls -lh frontend/public/pdf.worker.min.mjs
-   →  -rw-r--r-- 1.4M public/pdf.worker.min.mjs
-
-NOTE — spec said "~80 KB", actual is 1.4 MB. This is correct: pdfjs-dist
-4.x ships a much larger worker than v2.x (more rendering capabilities +
-no minification beyond the standard min build). 1.4 MB is the unminified-
-but-min-build size shipped by pdfjs-dist@4.8.69. The file is loaded once,
-cached, and sits OUTSIDE the main JS chunks. No action needed.
-
-$ ls -lh frontend/build/pdf.worker.min.mjs
-   →  -rw-r--r-- 1.4M build/pdf.worker.min.mjs   (CRA copies public/* into build/)
+The frontend has no `npm run lint` script (project uses craco; ESLint runs
+inline as part of `react-scripts build`). Lint output is therefore
+captured by VERIFY 2 below: build emits any new ESLint warnings/errors
+during compilation. None were introduced by this hotfix.
 
 ================================================================================
-LOCATION 1.2 — NEW component: frontend/src/components/PlanViewer.js
-================================================================================
-247 LOC. Per spec:
-   - workerSrc='/pdf.worker.min.mjs' (self-hosted, no CDN)
-   - z-[60] full-screen RTL modal, dark slate chrome
-   - Two-layer container (outer overflow-auto + inner min-w-full
-     min-h-full flex center) — pinch-zoom + pan-to-corners works
-   - <Document>/<Page> from react-pdf for PDF
-   - Image: width:${scale*100}% (re-flow, NOT transform:scale)
-   - Other types: fallback msg + "פתח בכרטיסייה חדשה"
-   - Zoom 50%–400% in 25% steps, page nav for multi-page PDFs
-   - touchAction: pan-x pan-y pinch-zoom for native pinch
-   - renderTextLayer + renderAnnotationLayer disabled
-   - Resets state on plan change (useEffect on plan?.id, plan?.file_url)
-
-================================================================================
-LOCATION 1.3 — ProjectPlansPage.js (eager import — no React.lazy in file)
-================================================================================
-+ import { ..., Maximize2 } from 'lucide-react';
-+ import PlanViewer from '../components/PlanViewer';                 (L15)
-+ const [fullscreenPlan, setFullscreenPlan] = useState(null);      (L119)
-+ <button onClick={() => setFullscreenPlan(detailPlan)} ...>
-+   <Maximize2 className="w-4 h-4" /> צפייה במסך מלא
-+ </button>                                          (L1126-1132, before "הורד")
-+ {fullscreenPlan && <PlanViewer plan={fullscreenPlan}
-+                                onClose={() => setFullscreenPlan(null)} />}
-+                                                              (L1527-1532)
-
-NOTE on button placement: ProjectPlansPage detail modal action row has
-NO existing "צפה" external-tab link (only "הורד" + manage buttons —
-the "open in tab" lives inside PlanViewer's top bar). The new button
-is placed FIRST in the row (before "הורד"), which is the spec's
-intent (most prominent action).
-
-Existing 256-px iframe at L1011 KEPT — graceful fallback + thumbnail.
-
-================================================================================
-LOCATION 1.4 — UnitPlansPage.js (eager import)
-================================================================================
-+ import { ..., Maximize2 } from 'lucide-react';
-+ import PlanViewer from '../components/PlanViewer';                 (L16)
-+ const [fullscreenPlan, setFullscreenPlan] = useState(null);       (L84)
-+ <button onClick={() => setFullscreenPlan(detailPlan)} ...>
-+   <Maximize2 className="w-4 h-4" /> צפייה במסך מלא
-+ </button>                                          (L655-661, before "הורד"+"צפה")
-+ Action row className changed: "flex gap-2 pt-1" → "flex gap-2 pt-1 flex-wrap"
-+ {fullscreenPlan && <PlanViewer plan={fullscreenPlan}
-+                                onClose={() => setFullscreenPlan(null)} />}
-+                                                              (L685-690)
-
-Existing 256-px iframe at L610 KEPT.
-
-================================================================================
-BUILD + BUNDLE VERIFICATION
+VERIFY 2 — Build
 ================================================================================
 $ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
     REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
    →  Compiled successfully.
-   →  Done in 51.12s. NO errors, NO new warnings introduced.
-
-$ grep -lE 'pdfjs|react-pdf|pdf\.worker' build/static/js/*.js
-   →  build/static/js/3448.d29509a1.chunk.js  (391 KB — pdfjs main)
-   →  build/static/js/7822.092002e0.chunk.js
-   →  build/static/js/8323.0dd9b204.chunk.js
-
-3 lazy-split chunks contain pdfjs/react-pdf identifiers, separated from
-the main bundle. The 391 KB chunk is the pdfjs core — loaded only when
-the user opens the fullscreen viewer, NOT on first paint of the plans
-page. Spec expected ~150-200 KB; actual is 391 KB (pdfjs 4.x is heavier
-than 2.x but provides better rendering + cleaner React 19 support).
-
-$ ls -lh build/pdf.worker.min.mjs
-   →  -rw-r--r-- 1.4M build/pdf.worker.min.mjs   (worker bundled into build/)
+   →  Done in 40.86s. NO new errors, NO new warnings introduced.
 
 ================================================================================
-WHAT IS NOT IN THIS BATCH (per spec — deferred to P1.2/P1.3/P1.4)
+VERIFY 4 — Bundle inspection
 ================================================================================
-- Pin/coordinate/defect linkage on plans  (P1.2)
-- Context-aware auto-open of right plan from a unit page  (P1.3)
-- Capacitor offline cache + LRU eviction  (P1.4)
-- DWG/DXF in-browser rendering  (deferred indefinitely)
-- Annotations / drawing tools
-- Backend changes (zero)
+$ ls -lh frontend/build/static/js/main.*.js
+   →  -rw-r--r-- 799K main.7f482d55.js
 
-User-visible delta:
-- Tap plan card → existing detail modal (UNCHANGED)
-- 256-px iframe thumbnail still in modal (UNCHANGED — graceful fallback)
-- NEW "צפייה במסך מלא" button (Maximize2 icon) sits in modal action row
-- Tap it → full-screen z-60 viewer with pinch-zoom, pan, page nav,
-  external-open, download, close — works for PDFs and images; clean
-  fallback for DWG/DXF/Excel.
+No bundle delta beyond minor logic edits (no new dependencies; the
+fit-scale calc reuses existing pdfjs-dist API exposed via the
+PDFDocumentProxy passed to onLoadSuccess). The pdfjs lazy chunks remain
+unchanged from the P1.1 baseline.
+
+================================================================================
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
+================================================================================
+A. A1 architectural PDF (e.g. 801A-6-003.pdf) → fullscreen viewer
+   EXPECT: whole plan visible edge-to-edge, ~40-60% on desktop.
+B. + once → multiplicative zoom (~25% larger). Pan to corners works.
+C. + repeatedly → caps at 400%, button disables.
+D. − repeatedly → shrinks toward 10%, disables at 0.1.
+E. Image (jpg/png) plan → unchanged width-based scaling, no regression.
+F. Multi-page PDF (same size) → scale persists across pages.
+   Multi-page PDF (mixed size) → KNOWN LIMITATION — pages 2+ at page-1
+   fit-scale; user can manually zoom. Tracked as follow-up.
+G. Real iPhone, A1 plan → ~20-25% fit-scale, pinch-zoom + pan still work.
+
+================================================================================
+KNOWN LIMITATION (per spec, accepted for V1)
+================================================================================
+Multi-page PDFs with mixed page sizes: fit-scale is computed on page 1
+only. Pages 2+ render at the same scale, so a bundle that mixes A1 floor
+plans with A4 detail sheets will show pages 2+ visibly mis-scaled. User
+can zoom manually. Follow-up batch will track `userManuallyZoomed` and
+recompute fit-scale on page change when the user has not manually
+zoomed.
+
+================================================================================
+RISK
+================================================================================
+Very low. Single component. All changes are additive logic on top of the
+existing structure. Worst case: fit-scale calc throws → try/catch falls
+back to scale=1.0 (the pre-hotfix behavior). No backend, no schema, no
+new dependencies, no new imports.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

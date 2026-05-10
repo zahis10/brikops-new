@@ -34,7 +34,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 const PlanViewer = ({ plan, onClose }) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
-  const [scale, setScale] = useState(1.0);
+  // 2026-05-10 hotfix — start at null, set to fit-to-width on first
+  // PDF load. Avoids flash-of-wrong-scale before fit calc completes.
+  // While null, render placeholder (loading spinner already covers
+  // this — don't render <Page> until scale is set).
+  const [scale, setScale] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(true);
   const containerRef = useRef(null);
@@ -42,14 +46,52 @@ const PlanViewer = ({ plan, onClose }) => {
   useEffect(() => {
     setNumPages(null);
     setPageNumber(1);
-    setScale(1.0);
+    setScale(null); // recomputed in handleLoadSuccess
     setLoadError(null);
     setLoading(true);
   }, [plan?.id, plan?.file_url]);
 
-  const handleLoadSuccess = useCallback(({ numPages }) => {
-    setNumPages(numPages);
+  // 2026-05-10 hotfix — react-pdf onLoadSuccess passes the full
+  // PDFDocumentProxy (not just {numPages}). We use it to compute a
+  // fit-to-width scale on load so users see the whole plan edge-to-edge
+  // by default. They can zoom in for details via the + button or pinch.
+  const handleLoadSuccess = useCallback(async (pdf) => {
+    setNumPages(pdf.numPages);
     setLoading(false);
+    try {
+      if (!containerRef.current) {
+        setScale(1.0);
+        return;
+      }
+      // Subtract p-4 padding (16px each side = 32px) so content
+      // doesn't immediately overflow.
+      const containerWidth = containerRef.current.clientWidth - 32;
+      const containerHeight = containerRef.current.clientHeight - 32;
+      // Defensive guard: container may not be laid out yet when
+      // handleLoadSuccess fires (modal still animating in,
+      // display:none transition, mobile keyboard pushing viewport).
+      // clientWidth=0 → containerWidth=-32 → fitScale=negative →
+      // clamped to 0.1 → mystery "tiny PDF" bug. Fall back to 1.0
+      // if dimensions look invalid; user can zoom in/out manually.
+      if (containerWidth <= 0 || containerHeight <= 0) {
+        setScale(1.0);
+        return;
+      }
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1.0 });
+      const widthScale = containerWidth / viewport.width;
+      const heightScale = containerHeight / viewport.height;
+      // Use min so the WHOLE page fits (both dimensions). Cap at 1.0
+      // — small PDFs (e.g. apartment-only sketch) shouldn't upscale
+      // above native size.
+      const fitScale = Math.min(widthScale, heightScale, 1.0);
+      // Round to nearest 5% so the displayed % is clean.
+      const rounded = Math.max(0.1, Math.round(fitScale * 20) / 20);
+      setScale(rounded);
+    } catch (err) {
+      console.warn('[PlanViewer] fit-scale calculation failed, falling back to 1.0:', err);
+      setScale(1.0);
+    }
   }, []);
 
   const handleLoadError = useCallback((error) => {
@@ -61,8 +103,14 @@ const PlanViewer = ({ plan, onClose }) => {
   const isPdf = plan?.file_type === 'application/pdf';
   const isImage = (plan?.file_type || '').startsWith('image/');
 
-  const zoomIn = useCallback(() => setScale(s => Math.min(s + 0.25, 4.0)), []);
-  const zoomOut = useCallback(() => setScale(s => Math.max(s - 0.25, 0.5)), []);
+  // 2026-05-10 hotfix — multiplicative steps (×1.25 / ×0.8) so each
+  // click feels equally significant regardless of starting scale. With
+  // additive +/- 0.25 and a fit-scale of (e.g.) 0.4, clicking + once
+  // jumps 62% but clicking again jumps 38% — uneven. Multiplicative
+  // keeps each click ~25%. Lower bound 0.1 — A0 plans on phone screens
+  // legitimately need ~20% to fit.
+  const zoomIn = useCallback(() => setScale(s => Math.min((s ?? 1.0) * 1.25, 4.0)), []);
+  const zoomOut = useCallback(() => setScale(s => Math.max((s ?? 1.0) * 0.8, 0.1)), []);
   const prevPage = useCallback(() => setPageNumber(p => Math.max(p - 1, 1)), []);
   const nextPage = useCallback(() => setPageNumber(p => Math.min(p + 1, numPages || 1)), [numPages]);
 
@@ -153,12 +201,14 @@ const PlanViewer = ({ plan, onClose }) => {
               loading=""
               error=""
             >
-              <Page
-                pageNumber={pageNumber}
-                scale={scale}
-                renderTextLayer={false}
-                renderAnnotationLayer={false}
-              />
+              {scale !== null && (
+                <Page
+                  pageNumber={pageNumber}
+                  scale={scale}
+                  renderTextLayer={false}
+                  renderAnnotationLayer={false}
+                />
+              )}
             </Document>
           )}
 
@@ -201,7 +251,7 @@ const PlanViewer = ({ plan, onClose }) => {
       <div className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 text-white shrink-0">
         <button
           onClick={zoomOut}
-          disabled={scale <= 0.5}
+          disabled={!scale || scale <= 0.1}
           className="p-2 hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
           aria-label="זום אאוט"
         >
@@ -212,7 +262,7 @@ const PlanViewer = ({ plan, onClose }) => {
         </span>
         <button
           onClick={zoomIn}
-          disabled={scale >= 4.0}
+          disabled={!scale || scale >= 4.0}
           className="p-2 hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
           aria-label="זום אין"
         >
