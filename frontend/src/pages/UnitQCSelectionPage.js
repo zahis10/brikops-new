@@ -170,6 +170,12 @@ export default function UnitQCSelectionPage() {
                  : 'not_started';
     const { _statuses, ...rest } = u;
     return { ...rest, status };
+  }).sort((a, b) => {
+    // Natural sort (numeric-aware). "10" sorts after "2", not after "1".
+    // Hebrew locale for predictable "ק-901" ordering.
+    const aKey = String(a.unit_no || a.unit_name || '');
+    const bKey = String(b.unit_no || b.unit_name || '');
+    return aKey.localeCompare(bKey, 'he', { numeric: true });
   });
 
   const completedCount = units.filter(u => u.status === 'approved').length;
@@ -178,7 +184,7 @@ export default function UnitQCSelectionPage() {
   const overallPct = totalItems > 0 ? Math.round((totalHandled / totalItems) * 100) : 0;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
       <div className="bg-slate-800 text-white sticky top-0 z-30">
         <div className="max-w-2xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
@@ -229,18 +235,18 @@ export default function UnitQCSelectionPage() {
                 disabled={isNavigating}
                 className={`w-full text-right p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm transition-all ${cfg.accent} ${isNavigating ? 'opacity-60' : ''}`}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     {isNavigating ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500 flex-shrink-0" />
                     ) : (
-                      <Home className="w-4 h-4 text-slate-400" />
+                      <Home className="w-4 h-4 text-slate-400 flex-shrink-0" />
                     )}
-                    <span className="text-sm font-bold text-slate-700">
+                    <span className="text-sm font-bold text-slate-700 truncate">
                       {unit.unit_name || `דירה ${unit.unit_no}`}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${cfg.color}`}>
                       <Icon className="w-3 h-3" />
                       {cfg.label}

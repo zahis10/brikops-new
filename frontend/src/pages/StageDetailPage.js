@@ -1601,6 +1601,28 @@ export default function StageDetailPage() {
   }, [stage, scrollToItem]);
 
   const goBack = () => {
+    // 2026-05-11 batch-acd #31 — respect returnToPath when source page
+    // (e.g. UnitQCSelectionPage) sent it via React Router state. Use
+    // URL.searchParams.set() for idempotent query handling so we never
+    // produce duplicate stage_id/from keys even if returnToPath gains
+    // pre-existing query params in the future. Fallback path is
+    // bit-for-bit identical to the original behavior.
+    if (returnToPath) {
+      try {
+        const parsed = new URL(returnToPath, window.location.origin);
+        if (stageId) parsed.searchParams.set('stage_id', stageId);
+        if (fromParam === 'qc') parsed.searchParams.set('from', 'qc');
+        navigate(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+      } catch (parseErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[StageDetailPage goBack] URL parse failed; using plain navigate', parseErr);
+        navigate(returnToPath);
+      }
+      return;
+    }
+    // FALLBACK: returnToPath empty (refresh wiped state, deep link, or
+    // floor-scope stage). Original behavior — go to FloorDetailPage.
+    // Refresh-tab recovery is a known limitation, deferred to future batch.
     const url = `/projects/${projectId}/floors/${floorId}`;
     const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
     navigate(withFrom);

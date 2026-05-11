@@ -1,377 +1,397 @@
 ================================================================================
-BATCH P1.1-HOTFIX-6 — Remove pinch handler, defer to P1.4
+BATCH A+C+D — Combined sweep: 4 UX bugs (#28, #30, #31, #34)
 ================================================================================
-Branch:           staging  (NOT main)
-Severity:         P1 — stability over feature. hotfix-4 + hotfix-5 attempted
-                  pinch-to-zoom via @use-gesture/react. Both shipped. Real-
-                  device testing showed pinch is "twitchy" — fires but feels
-                  nothing like native iOS Photos: 1% steps, limited range,
-                  not intuitive. Root cause is architectural (pinch via
-                  re-render @ 60Hz vs ~50-100ms react-pdf re-rasterization
-                  per A1 plan = 3-6 dropped frames per gesture step). Not
-                  fixable with another @use-gesture config permutation.
-                  Decision: REVERT pinch entirely, ship P1.1 with +/-
-                  buttons + scrollbar pan as the sole zoom UX, defer pinch
-                  to P1.4 polish (hybrid CSS-transform-during-gesture +
-                  re-render-on-release pattern, ~3 hours fresh-mind work).
+Date:           2026-05-11
+Branch:         staging  (NOT main)
+Severity:       P2 — 4 UX bugs from real-device testing. None block
+                workflow but all degrade trust/usability.
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Rollback SHA:     post-hotfix-5 staging HEAD (last accepted P1.1-HOTFIX-5
-                  task on this branch, currently in prod).
-Status:           AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-Files changed:    Frontend only:
-                    - frontend/src/components/PlanViewer.js
-                      (414 → 342 LOC, -72 LOC net: removed import,
-                      scaleRef, sync useEffect, gestureStartScaleRef,
-                      usePinch hook + DCE-gated debug log + the
-                      large hotfix-5 explanation comment block;
-                      added a short hotfix-6 explanatory note)
-                  No backend. No new dependencies. No removed
-                  dependencies (@use-gesture/react KEPT in package.json
-                  for P1.4 re-use). yarn.lock untouched.
+Bugs in scope:
+  #28 — Unit list lex sort: "10, 11, 7, 8, 9" instead of "7, 8, 9, 10, 11"
+        (confirmed by Zahi's screenshot of floor 0).
+  #30 — Unit-scope stages displayed on floors with 0 units (e.g. floor
+        -3 mechanical) showing meaningless "0/0 דירות הושלמו" cards.
+        Confirmed by Zahi's screenshot of floor -3.
+  #31 — Back arrow on StageDetailPage skips UnitQCSelectionPage and
+        jumps to FloorDetailPage. PM loses stage context, has to re-
+        click. Confirmed by Zahi's URL trace.
+  #34 — On iPhone Safari + Capacitor WebView, header row of unit card
+        overflows on long unit names + status badges, causing page-
+        level horizontal scroll.
 
-================================================================================
-STEP 0 — PRE-FLIGHT (4 checks PASS)
-================================================================================
+Files changed:  Backend:
+                  - backend/contractor_ops/qc_router.py
+                    (1 import line + 1 sort line — 2 LOC)
+                Frontend:
+                  - frontend/src/pages/UnitQCSelectionPage.js
+                    (3 locations: sort tail, overflow class, header row
+                     truncate/shrink classes — ~14 LOC)
+                  - frontend/src/pages/StageDetailPage.js
+                    (replace goBack body with URL-based idempotent
+                     query construction + try/catch — ~22 LOC)
+                  - frontend/src/pages/FloorDetailPage.js
+                    (1 inline .filter() insertion — 1 LOC)
+                Total: 4 files, ~39 LOC.
 
-1. hotfix-5 PATTERN B is the current state — usePinch + scaleRef +
-   gestureStartScaleRef all present:
-   $ grep -n "usePinch\|gestureStartScaleRef\|scaleRef" \
-       frontend/src/components/PlanViewer.js
-   →   3:   import { usePinch } from '@use-gesture/react';
-   →  53:   // ... reads the latest scale via `scaleRef.current`.
-   →  54:   const scaleRef = useRef(null);
-   →  64:   // 2026-05-10 hotfix-5 — keep scaleRef in sync with scale state.
-   →  69:   scaleRef.current = scale;
-   →  84:   // PATTERN B reads scale from `scaleRef.current` ...
-   →  86:   // capture the live ref value into gestureStartScaleRef ...
-   →  106:  const gestureStartScaleRef = useRef(1.0);
-   →  107:  usePinch(
-   →  111:  gestureStartScaleRef.current = scaleRef.current ?? 1.0;
-   →  113:  const next = gestureStartScaleRef.current * s;
-   →  119:  startScale: gestureStartScaleRef.current,
-   →  120:  liveScale: scaleRef.current,
-   →  269:  // (stale comment — referenced removed hook)
-   ✓ Confirmed hotfix-5 PATTERN B — about to be removed.
-
-2. @use-gesture/react still installed (KEEP after this hotfix):
-   $ grep '"@use-gesture/react"' frontend/package.json
-   →  "@use-gesture/react": "^10.3.1"
-   ✓ Present. Will REMAIN. P1.4 will re-use the lib with the hybrid pattern.
-
-3. touchAction is 'pan-x pan-y' (KEEP — one-finger pan/scroll depends on it):
-   $ grep -n "touchAction" frontend/src/components/PlanViewer.js
-   →  265:  c) touchAction kept for native pinch-zoom on mobile. */}
-   →  276:  style={{ touchAction: 'pan-x pan-y' }}
-   ✓ Present. Will REMAIN. (Comment at L265 referenced "pinch-zoom" but
-     touch-action value is 'pan-x pan-y' = pinch suppressed — comment
-     was misleading and is updated in this hotfix.)
-
-4. +/- zoom buttons intact (these become the SOLE zoom UX):
-   $ grep -nE "zoomIn|zoomOut|setScale.*Math" \
-       frontend/src/components/PlanViewer.js
-   →  197:  const zoomIn  = useCallback(() => setScale(s => Math.min((s ?? 1.0) * 1.25, 4.0)), []);
-   →  198:  const zoomOut = useCallback(() => setScale(s => Math.max((s ?? 1.0) * 0.8,  0.1)), []);
-   →  365:  onClick={zoomOut}
-   →  376:  onClick={zoomIn}
-   ✓ Multiplicative ×1.25 / ×0.8 with bounds [0.1, 4.0] preserved as-is.
+All 4 fixes are independent — no shared file across categories. Combined
+into a single batch because Zahi prefers one deploy / smoke pass.
 
 ================================================================================
-LOCATION 1.1 — Remove `usePinch` import
+STEP 0 — PRE-FLIGHT (10 checks PASS)
 ================================================================================
-@@ frontend/src/components/PlanViewer.js (top of file)
-   import React, { useState, useCallback, useRef, useEffect } from 'react';
-   import { Document, Page, pdfjs } from 'react-pdf';
--  import { usePinch } from '@use-gesture/react';
-   import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye } from 'lucide-react';
 
-useEffect, useRef are still needed (for the reset useEffect and
-containerRef respectively). lucide-react ZoomIn/ZoomOut icons still
-needed for the +/- buttons — left untouched per spec note.
+──────────────────  Bug #28 — Unit lex sort ──────────────────
 
-================================================================================
-LOCATION 1.2 — Remove scaleRef declaration + comment
-================================================================================
-@@ frontend/src/components/PlanViewer.js
-   const containerRef = useRef(null);
--
--  // 2026-05-10 hotfix-5 — explicit ref for pinch gesture start scale.
--  // Replaces hotfix-4 PATTERN A's `from` closure which was vulnerable
--  // to staleness (@use-gesture appears to cache the bound config and
--  // not re-evaluate `from()` on every render, so it kept returning the
--  // initial fit-scale → any touch reset scale to ~15%). The ref below
--  // is updated on every render via the sync useEffect, so the pinch
--  // handler always reads the latest scale via `scaleRef.current`.
--  const scaleRef = useRef(null);
+1. Backend lex sort confirmed at qc_router.py:1028 (spec said L911 —
+   stale; actual location verified):
+   $ grep -n "units.sort" backend/contractor_ops/qc_router.py
+   →  1028: units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+   ✓ Lex sort exists. Will replace with natural sort.
 
-   useEffect(() => { ...reset on plan change... }, [plan?.id, plan?.file_url]);
+2. _natural_sort_key helper exists in projects_router.py:112 — REUSE:
+   $ grep -n "def _natural_sort_key" backend/contractor_ops/projects_router.py
+   →  112: def _natural_sort_key(name: str):
+   ✓ Helper available; no need to duplicate.
 
-================================================================================
-LOCATION 1.3 — Remove scaleRef sync useEffect
-================================================================================
-@@ frontend/src/components/PlanViewer.js
-   useEffect(() => { ...reset on plan change... }, [plan?.id, plan?.file_url]);
--
--  // 2026-05-10 hotfix-5 — keep scaleRef in sync with scale state.
--  // The pinch handler reads from this ref (NOT from the `scale`
--  // closure) so it always sees the current value, regardless of
--  // whether @use-gesture's internal binding has been re-evaluated.
--  useEffect(() => {
--    scaleRef.current = scale;
--  }, [scale]);
+3. No circular import risk:
+   $ grep -n "from .qc_router\|from contractor_ops.qc_router" \
+       backend/contractor_ops/projects_router.py
+   →  (empty)
+   ✓ Safe to add `from contractor_ops.projects_router import _natural_sort_key`
+     in qc_router.py.
 
-================================================================================
-LOCATION 1.4 — Remove the entire usePinch hook + its preceding comment block
-================================================================================
-@@ frontend/src/components/PlanViewer.js
--  // 2026-05-10 hotfix-5 — PATTERN B (explicit ref + first flag).
--  // [... ~30 lines of comment about closure staleness, GestureEvent
--  //      suppression, pointer:{touch:true}, and DCE-gated logging ...]
--  // Bounds [0.1, 4.0] match the +/- button bounds (hotfix-1). Rubberband
--  // gives soft-bounce feedback at the edges. eventOptions.passive=false
--  // is required so we can preventDefault to suppress browser-native
--  // pinch on iOS Safari edge cases.
--  const gestureStartScaleRef = useRef(1.0);
--  usePinch(
--    ({ offset: [s], first, event, type }) => {
--      if (event && event.cancelable) event.preventDefault();
--      if (first) {
--        gestureStartScaleRef.current = scaleRef.current ?? 1.0;
--      }
--      const next = gestureStartScaleRef.current * s;
--      const clamped = Math.min(Math.max(next, 0.1), 4.0);
--      if (process.env.NODE_ENV !== 'production') {
--        // eslint-disable-next-line no-console
--        console.log('[PlanViewer pinch]', {
--          type, first, offset_s: s,
--          startScale: gestureStartScaleRef.current,
--          liveScale: scaleRef.current,
--          nextClamped: clamped,
--        });
--      }
--      setScale(clamped);
--    },
--    {
--      target: containerRef,
--      eventOptions: { passive: false },
--      scaleBounds: { min: 0.1, max: 4.0 },
--      rubberband: true,
--      pointer: { touch: true },
--    }
--  );
+4. UnitQCSelectionPage produces Map.values() in insertion order at L165
+   (spec said L140 — stale; actual location verified):
+   $ grep -n "Array.from(unitAggMap" frontend/src/pages/UnitQCSelectionPage.js
+   →  165: const units = Array.from(unitAggMap.values()).map(u => {
+   ✓ No sort applied — relies on backend order. Even with backend fix,
+     stage-aggregation re-orders by which stage first introduced each
+     unit, so explicit frontend sort is required.
 
-================================================================================
-LOCATION 1.5 — Add explanatory note where the hook used to live
-================================================================================
-@@ frontend/src/components/PlanViewer.js (just before handleLoadSuccess)
-+  // 2026-05-11 hotfix-6 — pinch-to-zoom REMOVED.
-+  // hotfix-4 + hotfix-5 attempted pinch via @use-gesture/react. Both
-+  // shipped but UX was jank-prone on real iPhone: each scale change
-+  // triggers a react-pdf re-render (~50-100ms per A1 plan), and pinch
-+  // fires at 60Hz — drop ~3-6 frames per gesture step, feels "1% at
-+  // a time". The fix is a hybrid pattern (CSS transform during
-+  // gesture for smooth feel + re-render on gesture-end for sharp
-+  // text), but that's significant work (~3 hours) and deferred to
-+  // P1.4 polish. For P1.1 ship: +/- zoom buttons + scrollbar pan
-+  // are the zoom UX. Field test will tell us if pinch is must-have.
-+  // (@use-gesture/react KEPT in package.json for P1.4 reuse.)
+──────────────────  Bug #34 — Card / header overflow ──────────────────
+
+5. UnitQCSelectionPage outer wrapper missing overflow-x-hidden at L181
+   (spec said L156 — stale; actual location verified):
+   $ grep -n "min-h-screen bg-slate-50" frontend/src/pages/UnitQCSelectionPage.js
+   →  181: <div className="min-h-screen bg-slate-50">
+   ✓ No horizontal overflow guard.
+
+6. Card header row uses flex with no min-w-0/truncate/flex-shrink-0,
+   anchored at L220 (spec said L207 — stale; actual location verified):
+   $ grep -n "STATUS_ICONS\[unit" frontend/src/pages/UnitQCSelectionPage.js
+   →  220: const Icon = STATUS_ICONS[unit.status] || AlertCircle;
+   ✓ Header flex container immediately follows at L232 (BEFORE block):
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            ...icons + name span without truncate...
+
+──────────────────  Bug #31 — Stage back-nav ──────────────────
+
+7. goBack ignores returnToPath at StageDetailPage.js:1603-1607 (matches
+   spec exactly):
+   $ sed -n '1603,1607p' frontend/src/pages/StageDetailPage.js
+   →  1603: const goBack = () => {
+   →  1604:   const url = `/projects/${projectId}/floors/${floorId}`;
+   →  1605:   const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+   →  1606:   navigate(withFrom);
+   →  1607: };
+   ✓ Bug confirmed. returnToPath read at L766 but never used.
+
+8. Required variables in scope for new goBack body:
+   $ grep -n "stageId\b\|returnToPath\|fromParam\|projectId\|floorId" \
+       frontend/src/pages/StageDetailPage.js | head -10
+   →  758: const { projectId, floorId, runId, stageId } = useParams();
+   →  762: const fromParam = searchParams.get('from');
+   →  766: const returnToPath = navState.returnTo || '';
+   ✓ stageId, fromParam, projectId, floorId, returnToPath all available
+     in goBack closure. URL constructor is browser-native (no import).
+
+──────────────────  Bug #30 — Empty unit-scope stages ──────────────────
+
+9. Unit-scope stages render at FloorDetailPage.js:301 (matches spec):
+   $ grep -n "unitsStatus.stages.length > 0" \
+       frontend/src/pages/FloorDetailPage.js
+   →  301: {unitsStatus && Array.isArray(unitsStatus.stages) &&
+   →       unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+   ✓ Confirmed map location.
+
+10. unitStage.total_units field exists at L302:
+    $ grep -n "total_units" frontend/src/pages/FloorDetailPage.js
+    →  302: const total = unitStage.total_units || 0;
+    ✓ Field available — safe to filter on `(s.total_units || 0) > 0`.
 
 ================================================================================
-LOCATION 1.6 — Bonus cleanup (stale comments referencing removed hook)
+LOCATION 1.1 — qc_router.py: import _natural_sort_key
 ================================================================================
-Two comments in the file became misleading after removing the hook:
-
-(a) L132 (now L72) said "via the + button or pinch" — updated to
-    "via the +/- buttons" since pinch no longer exists.
-
-(b) L265-271 (now L199-203) was a 7-line comment claiming
-    "Pinch is now captured by the usePinch hook above..." — updated
-    to a 5-line comment explaining touchAction is for native one-
-    finger pan/scroll only, with a pointer to the hotfix-6 note.
-
-These edits keep the file self-documenting and prevent future
-contributors from grep-finding "usePinch" in stale comments and
-trying to reintroduce it.
+@@ backend/contractor_ops/qc_router.py (top of file, after existing
+   from contractor_ops.* import block)
+   from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
++  from contractor_ops.projects_router import _natural_sort_key
 
 ================================================================================
-DO NOT TOUCH (preserved as-is from hotfix-1..5)
+LOCATION 1.2 — qc_router.py:1028 — replace lex sort with natural sort
 ================================================================================
-- ❌ Backend (zero changes).
-- ❌ @use-gesture/react dep in package.json (KEPT — P1.4 will re-use it).
-- ❌ touchAction: 'pan-x pan-y' on the scroll container (one-finger
-     pan/scroll + scrollbar drag depend on it).
-- ❌ +/- zoom buttons + multiplicative bounds [0.1, 4.0].
-- ❌ Math.floor fit-scale calc.
-- ❌ dir="ltr" on scroll container.
-- ❌ w-fit on inner wrapper.
-- ❌ Tailwind scrollbar modifiers.
-- ❌ Image rendering branch.
-- ❌ Worker setup, lazy chunk, thumbnail preview.
-- ❌ Viewport meta tag.
-- ❌ ProjectPlansPage / UnitPlansPage (consumers — props unchanged).
+@@ backend/contractor_ops/qc_router.py
+-  units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
++  units.sort(key=lambda u: _natural_sort_key(u.get("unit_no") or u.get("name") or ""))
+
+Effect on display ("1", "2", "10", "20", "A1", "A10"):
+- BEFORE: 1, 10, 2, 20, A1, A10  (lex)
+- AFTER:  1, 2, 10, 20, A1, A10  (natural)
 
 ================================================================================
-VERIFY 1 — Lint (implicit via build)
+LOCATION 2.1 — UnitQCSelectionPage.js:165 — append .sort() to aggregate
 ================================================================================
-ESLint runs inline as part of `react-scripts build` — no warnings about
-unused imports (useRef + useEffect still used by reset effect and
-containerRef). Captured by VERIFY 2 below.
+@@ frontend/src/pages/UnitQCSelectionPage.js
+   const units = Array.from(unitAggMap.values()).map(u => {
+     ...
+     return { ...rest, status };
+-  });
++  }).sort((a, b) => {
++    // Natural sort (numeric-aware). "10" sorts after "2", not after "1".
++    // Hebrew locale for predictable "ק-901" ordering.
++    const aKey = String(a.unit_no || a.unit_name || '');
++    const bKey = String(b.unit_no || b.unit_name || '');
++    return aKey.localeCompare(bKey, 'he', { numeric: true });
++  });
 
 ================================================================================
-VERIFY 2 — Build
+LOCATION 2.2 — UnitQCSelectionPage.js:181 — add overflow-x-hidden
+================================================================================
+@@ frontend/src/pages/UnitQCSelectionPage.js
+-  <div className="min-h-screen bg-slate-50">
++  <div className="min-h-screen bg-slate-50 overflow-x-hidden">
+
+================================================================================
+LOCATION 2.3 — UnitQCSelectionPage.js:~232 — header row truncate/shrink
+================================================================================
+@@ frontend/src/pages/UnitQCSelectionPage.js (5 class additions)
+-  <div className="flex items-center justify-between mb-2">
+-    <div className="flex items-center gap-2">
++  <div className="flex items-center justify-between mb-2 gap-2">
++    <div className="flex items-center gap-2 min-w-0 flex-1">
+       {isNavigating ? (
+-        <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
++        <Loader2 className="w-4 h-4 animate-spin text-amber-500 flex-shrink-0" />
+       ) : (
+-        <Home className="w-4 h-4 text-slate-400" />
++        <Home className="w-4 h-4 text-slate-400 flex-shrink-0" />
+       )}
+-      <span className="text-sm font-bold text-slate-700">
++      <span className="text-sm font-bold text-slate-700 truncate">
+         {unit.unit_name || `דירה ${unit.unit_no}`}
+       </span>
+     </div>
+-    <div className="flex items-center gap-2">
++    <div className="flex items-center gap-2 flex-shrink-0">
+       <span className={`inline-flex items-center gap-1 ...`}>...</span>
+       <span className="text-xs ...">{unit.handled_count}/{unit.total}</span>
+     </div>
+   </div>
+
+Changes summary:
+- outer flex:  + gap-2 (separation when truncated)
+- left group:  + min-w-0 flex-1 (allows shrink + truncate)
+- icons:       + flex-shrink-0 (icons stay fixed size)
+- unit name:   + truncate (ellipsis when overflow)
+- right group: + flex-shrink-0 (badge + count always visible)
+
+================================================================================
+LOCATION 3.1 — StageDetailPage.js:1603 — replace goBack body
+================================================================================
+@@ frontend/src/pages/StageDetailPage.js
+   const goBack = () => {
++    // 2026-05-11 batch-acd #31 — respect returnToPath when source page
++    // (e.g. UnitQCSelectionPage) sent it via React Router state. Use
++    // URL.searchParams.set() for idempotent query handling so we never
++    // produce duplicate stage_id/from keys even if returnToPath gains
++    // pre-existing query params in the future. Fallback path is
++    // bit-for-bit identical to the original behavior.
++    if (returnToPath) {
++      try {
++        const parsed = new URL(returnToPath, window.location.origin);
++        if (stageId) parsed.searchParams.set('stage_id', stageId);
++        if (fromParam === 'qc') parsed.searchParams.set('from', 'qc');
++        navigate(`${parsed.pathname}${parsed.search}${parsed.hash}`);
++      } catch (parseErr) {
++        // eslint-disable-next-line no-console
++        console.warn('[StageDetailPage goBack] URL parse failed; using plain navigate', parseErr);
++        navigate(returnToPath);
++      }
++      return;
++    }
++    // FALLBACK: returnToPath empty (refresh wiped state, deep link, or
++    // floor-scope stage). Original behavior — go to FloorDetailPage.
++    // Refresh-tab recovery is a known limitation, deferred to future batch.
+     const url = `/projects/${projectId}/floors/${floorId}`;
+     const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
+     navigate(withFrom);
+   };
+
+Why URL.searchParams.set() is the right tool:
+- `.set(key, value)` REPLACES existing key if present; never duplicates.
+- Compare with string-concat `${path}?stage_id=${new}` which would
+  produce `path?stage_id=old&stage_id=new` if path already had it
+  (pattern exists across codebase via ProjectControlPage.js:3897 and
+  ProjectTasksPage.js:528).
+- Browser-native, no dependencies, fully supported in all targets
+  (Capacitor WebView = iOS Safari).
+
+Why try/catch:
+- `new URL()` throws on malformed input (rare for our paths but cheap
+  insurance). console.warn for observability without breaking nav.
+
+KNOWN LIMITATION (documented, not fixed in this batch):
+If user refreshes browser tab on StageDetailPage, location.state is
+wiped → returnToPath empty → falls back to FloorDetailPage. Same as
+today's behavior. Future batch can add runData.scope + building_id
+support for refresh recovery.
+
+================================================================================
+LOCATION 4.1 — FloorDetailPage.js:301 — single .filter() insertion
+================================================================================
+@@ frontend/src/pages/FloorDetailPage.js
+-  {... unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
++  {... unitsStatus.stages.length > 0 && unitsStatus.stages.filter(s => (s.total_units || 0) > 0).map(unitStage => {
+
+Effect:
+- Floor WITH units → filter passes → all stages render as before.
+- Floor with 0 units (e.g. floor -3 mechanical) → unit-scope stages
+  hidden entirely; only floor-scope stages visible.
+
+================================================================================
+DO NOT TOUCH (preserved as-is)
+================================================================================
+- ❌ Sort logic outside qc_router.py:1028 — backend hierarchy at
+     projects_router.py already sorts by sort_index correctly.
+- ❌ ExecutionMatrixPage.js / ProjectControlPage.js — use hierarchy
+     directly, no per-page sort issue.
+- ❌ Local _natural_sort_key duplicate in qc_router.py — re-uses
+     projects_router.py:112 per CLAUDE.md "no local duplicates".
+- ❌ Progress bar fill div, max-w-2xl, sticky header, status badge
+     colors in UnitQCSelectionPage.
+- ❌ navState.scope / unitName / isUnitMode in StageDetailPage —
+     unrelated, used for UI labels.
+- ❌ Error state UI at StageDetailPage L1622, L1633.
+- ❌ Floor-scope stages render at FloorDetailPage:284 — separate map,
+     unaffected by Location 4.1.
+- ❌ Backend `is_empty` flag — different concept (no template items),
+     stays. Different from "no units on floor".
+
+================================================================================
+VERIFY 1 — Backend import sanity
+================================================================================
+$ cd backend && python -c "from contractor_ops.qc_router import *"
+   →  [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
+   →  EXIT=0
+   ✓ No ImportError. Cross-router import works (qc_router →
+     projects_router → _natural_sort_key resolved cleanly, no circular
+     dependency triggered).
+
+================================================================================
+VERIFY 2 — Frontend build
 ================================================================================
 $ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
     REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
    →  EXIT=0
-   →  "The build folder is ready to be deployed." (Done in 41.73s)
-   →  No new errors, no new warnings introduced by hotfix-6.
+   →  "The build folder is ready to be deployed." (Done in 38.02s)
+   →  Compiled with warnings — but ALL warnings are pre-existing
+     source-map issues from @capacitor-community/apple-sign-in
+     (definitions.ts, index.ts, web.ts not present in the published
+     npm package). Same warnings as previous successful builds. Zero
+     new warnings introduced by batch-acd changes.
+   ✓ No new ESLint warnings, no new errors.
 
 ================================================================================
 VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
 ================================================================================
-Focus: confirm pinch is GONE but buttons + pan still work.
 
-  A. Open A1 PDF, "צפייה במסך מלא".
-     EXPECT: opens at fit-scale (~50-60% desktop, ~25% iPhone).
+Focus areas — 4 distinct flows:
 
-  B. Try to pinch on iPhone.
-     EXPECT: NOTHING happens to the PDF canvas itself. No crash, no
-     jank, no zoom either. (Browser-default pinch may zoom the WHOLE
-     viewport since touch-action: 'pan-x pan-y' suppresses pinch on
-     the container; that's an acceptable side effect of this revert.)
+(A) #28 unit sort:
+  - Open a project with floor that has units 7-11 (or mix of single +
+    two-digit numbers like the floor 0 from Zahi's screenshot).
+  - Navigate: בקרת ביצוע → building → floor → "לפי דירות".
+  - EXPECT: units appear in order 7, 8, 9, 10, 11 (NOT 10, 11, 7, 8, 9).
+  - EXPECT (Hebrew/mixed): units like ק-901, ק-1001 sort by trailing
+    number; A1, A2, A10 sort A1 < A2 < A10.
 
-  C. Click + zoom button. Click again. Click again.
-     EXPECT: scale ×1.25 per click. Sharp text at every scale (each
-     click triggers a clean react-pdf re-render). Smooth, predictable.
+(B) #34 progress bar / overflow on iPhone:
+  - Same page as (A), on iPhone Capacitor app.
+  - EXPECT: NO horizontal page scroll. Try to swipe left-right on the
+    unit list — page is locked vertical only.
+  - EXPECT: Long unit names truncate with "...". Status badge + count
+    remain fully visible on the right.
+  - EXPECT: progress bar (below header) still spans full card width.
 
-  D. Click − zoom button to zoom out.
-     EXPECT: scale ×0.8 per click.
+(C) #31 stage back-nav:
+  - Open any unit-scope stage like "טיח דירתי":
+    - UnitQCSelectionPage at /qc/units?stage_id=stage_plaster
+    - Click on דירה 18 → StageDetailPage
+    - Click back arrow in header.
+  - EXPECT: returns to UnitQCSelectionPage with stage_id and from=qc
+    preserved. NOT to FloorDetailPage.
+  - Loop: open דירה 19, back, דירה 20, back. Should work for every unit.
+  - EXPECT URL HYGIENE: address bar after back should be exactly
+    `.../qc/units?stage_id=stage_plaster&from=qc` (single stage_id,
+    single from, no duplicates). If you see `?stage_id=X&stage_id=Y`
+    that's the bug case → URL.searchParams.set() didn't run.
 
-  E. Zoom in past viewport, then drag scrollbars or swipe one-finger
-     on touch devices to pan.
-     EXPECT: smooth pan. Visible scrollbars on macOS / iPhone.
+(D) #30 empty unit-scope stages:
+  - Open the project's floor -3 (mechanical, 0 דירות) — same floor
+    from Zahi's screenshot.
+  - EXPECT: floor-scope stages display (like "הצפה/אטימות").
+  - EXPECT: unit-scope stages (e.g. "ריצוף דירה" cards) DO NOT appear.
 
-  F. Regression sweep: detail-modal thumbnail preview, multi-page
-     nav, image plans, "פתח בכרטיסייה חדשה", external Eye/Download
-     icons.
-     EXPECT: all preserved from hotfix-3/2/1 state. No visual or
-     behavioral regressions.
-
-  G. CRITICAL: confirm NO console.log fires from PlanViewer.
-     Open Safari Web Inspector → Console → filter "PlanViewer".
-     EXPECT: no entries. Debug log was inside the removed pinch
-     block; it's gone from source AND verified absent from prod
-     bundles (see VERIFY 4).
-
-================================================================================
-VERIFY 4 — Bundle inspection
-================================================================================
-$ grep -l "PlanViewer pinch" frontend/build/static/js/*.js
-   →  (empty)
-   ✓ Debug log string fully gone from prod bundle (was DCE-stripped
-     in hotfix-5; now physically absent from source as well).
-
-$ grep -l "usePinch" frontend/build/static/js/*.js
-   →  (empty)
-   ✓ usePinch identifier no longer in any prod chunk. The only
-     consumer was in PlanViewer.js — with the import removed,
-     webpack's tree-shaker eliminated all @use-gesture code from the
-     PlanViewer lazy chunk and shared chunks. Confirms the dep is
-     installed but no longer bundled. (P1.4 will re-add the import,
-     and webpack will re-pull it into the chunk graph.)
-
-$ ls -lh frontend/build/static/js/main.*.js
-   →  -rw-r--r-- 799K main.6f06c295.js
-   ✓ Main bundle UNCHANGED at 799K vs hotfix-5 — confirms hotfix-6
-     touched only PlanViewer's lazy chunk, not the first-paint path.
-
-$ ls -lhS frontend/build/static/js/*.chunk.js | head -3
-   →  -rw-r--r-- 391K 3448.d29509a1.chunk.js   (largest chunk)
-   →  -rw-r--r-- 387K 8309.e6974529.chunk.js
-   →  -rw-r--r-- 222K 7632.ea710691.chunk.js
-   ✓ Largest chunk shrunk 411K → 391K (-20K) vs hotfix-5. The chunk
-     that previously contained @use-gesture/react now omits it
-     entirely (tree-shaken — no remaining consumer).
-
-================================================================================
-ARCHITECTURAL NOTES
-================================================================================
-- WHY revert, not iterate: the failure mode in hotfix-5 wasn't a
-  config bug — it was that pinch via setScale + react-pdf re-render
-  is fundamentally jank-prone. Pinch fires at 60Hz; A1 PDF re-render
-  takes 50-100ms. Math says we MUST drop frames. No @use-gesture
-  config permutation fixes that. Three @use-gesture iterations
-  (hotfix-4 PATTERN A, hotfix-5 PATTERN B, hotfix-5 with pointer:
-  {touch: true}) all hit the same wall on real iPhone.
-
-- Why P1.4 will succeed: the hybrid pattern decouples gesture
-  smoothness from re-render cost. During gesture: apply CSS
-  `transform: scale()` to the existing canvas (GPU-accelerated, 60fps
-  trivially). On gesture-end: setScale once, react-pdf re-renders
-  ONCE at the final scale = sharp text. Same approach Adobe Reader
-  Mobile uses. Estimated ~3 hours of focused work — deferred to P1.4
-  to avoid yet another rushed hotfix.
-
-- Why we kept @use-gesture/react in package.json: P1.4 will re-use
-  the same library with the hybrid pattern. Removing now and re-
-  adding later is busy-work that pollutes git history and risks a
-  version drift. The dep is ~13K minified and currently
-  TREE-SHAKEN OUT of the bundle (verified — VERIFY 4), so the cost
-  of keeping it in package.json is zero bytes shipped.
-
-- Why we kept touchAction: 'pan-x pan-y': two reasons.
-  (1) One-finger native scroll on touch devices needs it (browser
-      default for an overflow-auto container would still scroll, but
-      with this explicit value the behavior is unambiguous).
-  (2) Scrollbar drag on iOS depends on the container being a touch
-      pan target.
-  Removing it would regress hotfix-2 (visible scrollbars work) and
-  the one-finger pan UX. Keep.
-
-- Why we left LOCATION 1.5 as a comment block instead of a TODO:
-  TODO comments rot. A descriptive comment explaining WHY pinch was
-  removed (and pointing to the hybrid pattern + P1.4) is more useful
-  to a future contributor — they can decide whether to re-add pinch
-  with full context.
+Regression sweep:
+  - Open a normal floor with units (e.g. floor 2 with 6 דירות).
+    Confirm full stage list still renders (floor + unit scope, with
+    proper progress per stage).
+  - Open a unit-scope stage from FloorDetailPage (NOT from
+    UnitQCSelectionPage) → click back.
+    EXPECT: goes to FloorDetailPage (fallback path, no regression).
+  - Refresh StageDetailPage browser tab → click back.
+    EXPECT: goes to FloorDetailPage (known limitation, same as today).
 
 ================================================================================
 RISK
 ================================================================================
-Very low. This is a code REMOVAL, not a refactor. Worst case: pinch
-no longer works on iPhone (which is exactly what hotfix-5 already
-suffered from after Zahi's testing — "1% at a time"). But +/- buttons
-PROVABLY work (they did across hotfix-1/2/3 and aren't touched here),
-and one-finger native scroll PROVABLY works (touchAction kept). So
-the user-perceived behavior is: pinch quietly stops attempting +
-buttons take over as the only zoom UX. No new failure modes
-introduced.
+Low across all 4 bugs.
 
-Bundle: main 799K → 799K (unchanged). Top chunk 411K → 391K (-20K)
-because @use-gesture is no longer pulled into the bundle. Net shipped
-JS shrinks slightly. First paint unaffected.
+#28: Pure sort change. localeCompare with numeric:true is well-supported
+     (all evergreen + Safari 10+). Backend re-uses existing helper.
+     Worst case: a unit_no with weird Unicode sorts unexpectedly — but
+     the same _natural_sort_key powers project hierarchy already, so
+     behavior is consistent across the app.
+
+#30: Pure display filter on the frontend. Backend untouched. No data
+     mutation. Worst case: a backend response includes unit-scope
+     stages that legitimately should appear on a 0-unit floor (none
+     today by spec) — those would be hidden. Acceptable trade-off.
+
+#31: Function-level change with original behavior preserved in the
+     fallback path. New behavior triggers ONLY when source page sent
+     returnTo via React Router state, which today only happens from
+     UnitQCSelectionPage. URL parse wrapped in try/catch with safe
+     fallback. Refresh-tab limitation explicitly documented.
+
+#34: Additive CSS classes only. No removed classes. min-w-0 +
+     flex-shrink-0 + truncate are stable Tailwind utilities supported
+     in every target browser including iOS Safari + Capacitor WebView.
+
+Bundle size impact: zero (no new dependencies).
+Backend code size impact: 2 LOC.
+No schema changes, no migrations, no env vars added.
 
 ================================================================================
-PLANS PHASE 1 STATUS AFTER THIS HOTFIX
+ROLLBACK
 ================================================================================
-✅ P1.1 — Viewer foundation (DONE after hotfix-6 ships)
-   - react-pdf + lazy chunk + self-hosted worker
-   - Fit-to-width default scale (Math.floor)
-   - +/- multiplicative zoom buttons (sole zoom UX)
-   - LTR scroll container, visible scrollbars, w-fit wrapper
-   - Thumbnail preview in detail modal
-   - One-finger pan/scroll (native via touchAction)
-   - NO pinch (deferred to P1.4)
-
-📋 P1.2 — Tap-to-pin + Task schema (NOT STARTED)
-📋 P1.3 — Context-aware opening + pin density overlay (NOT STARTED)
-📋 P1.4 — Capacitor offline + pinch via hybrid pattern + field polish
-
-Decision rule for P1.2: ship P1.1 to a real contractor for field test.
-If feedback is "viewer is good enough" → proceed to P1.2.
-If "I can't read the plan" or "I need pinch" → bump P1.4 ahead.
+git revert <commit-sha>
+(Reverts all 4 fixes in a single commit. No data state changes.
+ Each fix can be partially un-reverted by editing the affected lines
+ manually if needed — they live in 4 different files.)
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 ================================================================================
-Rollback: git revert <commit-sha>
-         (Reverts to hotfix-5 PATTERN B — pinch fires but UX is jank.
-          No worse than current prod state.)

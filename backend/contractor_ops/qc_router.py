@@ -10,6 +10,7 @@ import httpx
 from contractor_ops.router import get_db, get_current_user, _get_project_role, _is_super_admin, _now, _audit, MANAGEMENT_ROLES, get_notification_engine, get_public_base_url
 from contractor_ops.msg_logger import mask_phone
 from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
+from contractor_ops.projects_router import _natural_sort_key
 
 logger = logging.getLogger(__name__)
 
@@ -1025,7 +1026,7 @@ async def get_floor_units_status(floor_id: str, user: dict = Depends(get_current
         {"floor_id": floor_id, "archived": {"$ne": True}},
         {"_id": 0}
     ).to_list(200)
-    units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
+    units.sort(key=lambda u: _natural_sort_key(u.get("unit_no") or u.get("name") or ""))
     unit_ids = [u["id"] for u in units]
 
     unit_runs = {}

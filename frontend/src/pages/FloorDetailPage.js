@@ -298,7 +298,7 @@ export default function FloorDetailPage() {
         {/* Batch execution-control unit-scope-fix — render one card per
              unit-scope stage from the new units-status response shape.
              Replaces the old hardcoded single-stage block. */}
-        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
+        {unitsStatus && Array.isArray(unitsStatus.stages) && unitsStatus.stages.length > 0 && unitsStatus.stages.filter(s => (s.total_units || 0) > 0).map(unitStage => {
           const total = unitStage.total_units || 0;
           const approved = unitStage.approved_units || 0;
           const inProgress = unitStage.in_progress_units || 0;
