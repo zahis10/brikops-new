@@ -850,9 +850,16 @@ async def change_task_status(task_id: str, change: TaskStatusChange, user: dict 
         'old': current_status.value, 'new': target_status.value, 'note': change.note
     })
 
+    # BATCH G (2026-05-11) — 'closed' removed.
+    # When PM manually sets status to closed (not via manager_decision),
+    # contractor previously got a WhatsApp. Same noise as the
+    # manager_approved path. The existing `if event_type:` guard below
+    # skips the entire enqueue block when target_status='closed'.
+    # Status transitions, history, audit, task_updates — all preserved.
+    # Note: this endpoint has never created a Bell notification — see
+    # "Known limitation" in review.txt (silent close on this path).
     notify_events = {
         'waiting_verify': 'status_waiting_verify',
-        'closed': 'status_closed',
     }
     event_type = notify_events.get(target_status.value)
     if event_type:
@@ -1201,17 +1208,23 @@ async def manager_decision(task_id: str, body: ManagerDecisionRequest, user: dic
         'actor_sub_role': membership.get('sub_role'),
     })
 
-    event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
-    engine = get_notification_engine()
-    if engine:
-        try:
-            task_link = _get_task_link(task_id)
-            job = await engine.enqueue(task_id, event_type, user['id'],
-                                       custom_message=body.reason or '', task_link=task_link)
-            if job and job.get('status') == 'queued':
-                await engine.process_job(job)
-        except Exception as e:
-            logger.warning(f"[NOTIFY] manager-decision notification failed: {e}")
+    # BATCH G (2026-05-11) — skip WhatsApp on approve (close).
+    # Contractor's work is done; sending WA with their own proof photo
+    # is noise. KEEP WA on reject — they need to know to redo.
+    # Bell notification above (the create_defect_notification call)
+    # still fires for both approve+reject paths, so contractor still
+    # gets in-app awareness on approve.
+    if decision == 'reject':
+        engine = get_notification_engine()
+        if engine:
+            try:
+                task_link = _get_task_link(task_id)
+                job = await engine.enqueue(task_id, 'manager_rejected', user['id'],
+                                           custom_message=body.reason or '', task_link=task_link)
+                if job and job.get('status') == 'queued':
+                    await engine.process_job(job)
+            except Exception as e:
+                logger.warning(f"[NOTIFY] manager-decision reject notification failed: {e}")
 
     updated = await db.tasks.find_one({'id': task_id}, {'_id': 0})
     return {

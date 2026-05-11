@@ -1,214 +1,342 @@
 ================================================================================
-BATCH E.1 — Building card progress % uses stage_summary (P2 follow-up to BATCH E)
+BATCH G — Stop WhatsApp on defect close (keep on reject/reopen) — P2 UX
 ================================================================================
 Date:           2026-05-11
 Branch:         staging  (NOT main)
-Severity:       P2 — DATA ACCURACY follow-up.
-                BATCH E (just shipped 2026-05-11) updated the backend
-                /qc/floors/batch-status response with stage_summary
-                AND fixed FloorDetailPage + BuildingQCPage. But it
-                explicitly left QCFloorSelectionPage (the PROJECT-level
-                view at `/projects/{id}/qc` showing buildings) out of
-                scope.
+Severity:       P2 — UX noise reduction.
+                Today: PM closes a defect → contractor receives a
+                WhatsApp message that includes their own proof photo.
+                Result: WhatsApp flood, zero value (contractor knows
+                they uploaded the photo), erodes trust in WA notifs.
 
-                Result: building cards on the project view still
-                show item-level percentages from old qd.pass_count /
-                qd.total fields. Building 8 shows "90%" when the
-                stage-based reality is ~52%. Confirmed by Zahi's
-                screenshot 2026-05-11 (prod view of מגרש 810,
-                building 8 card "90%" but inside floors are at
-                14/27, 17/27 שלבים).
+Approach:       (per Zahi's choice 2026-05-11 — Option B)
+                "אין צורך לעדכן אותו על סגירה זה סתם מציף בהודעות
+                ווטסאפ" — skip the WhatsApp notification ENTIRELY when
+                a defect is closed/approved. KEEP the WA notification
+                on reject/reopen — contractor needs to know to come
+                back to the work.
 
-Approach:       Mirror the same stage_summary-first pattern Batch E
-                applied to BuildingQCPage: prefer stage_summary fields
-                when present, fall back to legacy item counts for
-                rolling-deploy safety.
+                Bell (in-app) notifications are NOT touched — they're
+                fine, they don't flood, and they're useful for in-app
+                awareness.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Frontend only:
-                  - frontend/src/pages/QCFloorSelectionPage.js
-                    (~9 LOC: prepended stage_summary branch + 4-line
-                     comment to the buildingStats accumulator)
-                Total: 1 file, ~9 LOC. Backend untouched (already
-                returns stage_summary from BATCH E).
+Files changed:  Backend only:
+                  - backend/contractor_ops/tasks_router.py
+                    (~3 LOC net change + ~10 LOC explanatory comments
+                     across 2 surgical locations)
+                Total: 1 file. No frontend changes. No DB migrations.
+                No Meta WA template re-approval needed (we're removing
+                a send, not modifying message content).
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
 IN this batch:
-  ✅ QCFloorSelectionPage building card progress percentage —
-     prefer stage_summary.approved_stages / total_stages.
-  ✅ Fall back to legacy item counts (qd.total / qd.pass_count) if
-     stage_summary absent (rolling-deploy / cache-miss safety).
-  ✅ Final badge-only fallback branches preserved unchanged.
+  ✅ `manager_decision` endpoint (the WA enqueue at L1204): only fire
+     WhatsApp when `decision === 'reject'`. Skip WA entirely on approve.
+  ✅ `change_task_status` endpoint (L853): remove `'closed':
+     'status_closed'` from the `notify_events` mapping. Keep
+     `'waiting_verify'` (PM needs to know contractor uploaded proof).
 
-OUT of this batch (deferred):
-  ❌ ProjectControlPage loadStats (~L3568) — uses
-     `f.pass_count === f.total` as a "completed" heuristic. Same
-     anti-pattern but Zahi hasn't reported visible incorrectness
-     there yet. Separate batch if/when he spots it.
-  ❌ ProjectDashboardPage summary blocks — out of scope per BATCH E.
-  ❌ buildingStats `counts` accumulator (L117) — already CORRECT.
-     BATCH E fixed the badge value, so badge-counted buckets are
-     accurate.
-  ❌ failingFloors count (L118) — already CORRECT (badge + fail_count).
-  ❌ globalStats / totalFloors — unrelated, badge-driven.
-  ❌ Backend changes — none required.
-
-================================================================================
-STEP 0 — PRE-FLIGHT (3 PASS)
-================================================================================
-
-1. Bug confirmed at QCFloorSelectionPage.js L119-127 (the
-   `floors.forEach` inside `buildingStats` useMemo):
-   →  L119: if (qd && typeof qd === 'object' && qd.total > 0) {
-   →  L120:   totalItems += qd.total;
-   →  L121:   passItems += qd.pass_count || 0;
-   ✓ Confirmed — building rollup uses item counts (qd.total /
-     qd.pass_count). These are the legacy floor-scope-only fields.
-
-2. BATCH E delivered stage_summary at /qc/floors/batch-status:
-   →  qc_router.py batch-status loop now attaches stage_summary
-      to every result entry (verified L2305 region of the
-      post-BATCH-E file).
-   ✓ Backend already returns the field we need.
-
-3. `qd.badge` and the `counts` accumulator are CORRECT (BATCH E
-   fixed the badge for free — combined floor + unit stages):
-   →  L114-115: qd = qcStatuses[f.id]; st = getFloorBadge(qd);
-   →  L117: counts[normalized] = (counts[normalized] || 0) + 1;
-   ✓ The "X הושלמו / Y בביצוע" floor count on building cards uses
-     `counts` which is badge-derived — already correct.
-     Only the percentage indicator (passItems / totalItems) is broken.
+OUT of this batch (preserved):
+  ❌ Bell notification at L1168-1187 (`create_defect_notification`)
+     in manager_decision — KEEP firing for both approve+reject paths.
+     In-app notification is useful, doesn't flood. Zahi's complaint
+     is specifically WhatsApp.
+  ❌ Reject path (`manager_rejected` event + status_returned_to_contractor)
+     — KEEP firing WA. Contractor needs to know to redo work.
+  ❌ `waiting_verify` event — KEEP firing WA. PM needs to know
+     contractor uploaded proof.
+  ❌ Other notification events (`task_created`, `task_assigned`,
+     reminder digests) — unaffected.
+  ❌ Meta WhatsApp template content — unchanged (no template re-submit).
+  ❌ `force_close` endpoint, `reopen_task` endpoint — don't fire WA
+     today, no change.
+  ❌ Frontend — none.
+  ❌ DB / migrations / env vars — none.
 
 ================================================================================
-LOCATION 1 — QCFloorSelectionPage.js: prefer stage_summary in rollup
+STEP 0 — PRE-FLIGHT (4 PASS — actual line numbers verified, spec was stale)
 ================================================================================
-File: frontend/src/pages/QCFloorSelectionPage.js
-Lines: 119-127 (inner branch of floors.forEach inside buildingStats
-       useMemo)
 
-@@ frontend/src/pages/QCFloorSelectionPage.js (around L119-127)
-+        // BATCH E.1 (2026-05-11) — prefer stage_summary (Batch E
-+        // backend already returns it). Falls back to legacy item
-+        // counts if absent (e.g. rolling deploy lag). The third
-+        // branch (rare badge-only fallback) is unchanged.
-+        if (qd?.stage_summary && qd.stage_summary.total_stages > 0) {
-+          totalItems += qd.stage_summary.total_stages;
-+          passItems += qd.stage_summary.approved_stages;
-+        } else if (qd && typeof qd === 'object' && qd.total > 0) {
-           totalItems += qd.total;
-           passItems += qd.pass_count || 0;
-         } else if (normalized === 'approved') {
-           totalItems += 1;
-           passItems += 1;
-         } else if (normalized !== 'not_started') {
-           totalItems += 1;
-         }
+The spec's line refs were taken from an earlier checkout. Real
+locations confirmed by grep before changes:
 
-Why this is correct:
-- `qd.stage_summary.total_stages` includes BOTH floor-scope + unit-scope
-  stages (BATCH E aggregates them).
-- `qd.stage_summary.approved_stages` counts stages where ALL units
-  are approved (strict, Option A).
-- Their ratio is the true "what % of this floor's work is done"
-  measured in stages. Sum across all floors of a building gives the
-  building's STAGE-weighted progress (not item-weighted), so small
-  floors don't dominate.
+1. notify_events dict in change_task_status:
+   $ grep -nA 4 "notify_events = {" backend/contractor_ops/tasks_router.py
+   →  L853 (current)  (spec said L795 — stale)
+   →  L853: notify_events = {
+   →  L854:     'waiting_verify': 'status_waiting_verify',
+   →  L855:     'closed': 'status_closed',
+   →  L856: }
+   →  L857: event_type = notify_events.get(target_status.value)
+   →  L858: if event_type:
+   ✓ Confirmed — manual status change to 'closed' fires WA event.
+     Existing `if event_type:` guard at L858 means removing the dict
+     key is sufficient (no other change needed in this function).
 
-Edge cases preserved (verified by code-walk):
-- Floor with no qd entry at all → falls through to legacy branches
-  (approved with no data → counted as approved; in-progress with no
-  data → counted in denominator only).
-- Rolling deploy where backend returns stage_summary but old frontend
-  hits a cached request: legacy fallback ensures progressPct still
-  computed sanely.
-- Floor with qd but no stage_summary AND no items → falls through to
-  the badge-derived branches (unchanged).
+2. event_type for manager_decision (WA enqueue):
+   $ grep -n "event_type = 'manager_approved'" backend/contractor_ops/tasks_router.py
+   →  L1204 (current)  (spec said L1141 — stale)
+   →  L1204: event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
+   →  L1205-1214: engine.enqueue block (the bug — fires for both paths)
+   ✓ Confirmed — fires `manager_approved` event on approve path.
+
+3. Bell call in manager_decision (`create_defect_notification`):
+   $ grep -nC 1 "create_defect_notification" backend/contractor_ops/tasks_router.py | grep -A 2 "1170\|1173"
+   →  L1168-1187 (current)  (spec said L1107-1124 — stale; logic identical)
+   →  L1168: # Bell notification: PM made a decision, the assignee...
+   →  L1170: try:
+   →  L1171: assignee_id = task.get('assignee_id')
+   →  L1172: if assignee_id and assignee_id != user['id']:  ← NOT decision-specific
+   →  L1173: await create_defect_notification(...)
+   →  L1177: action=decision,  # 'approve' or 'reject'
+   ✓ **CRITICAL — Bell fires UNCONDITIONALLY on decision** (only guard
+     is assignee_id != user['id']). After this batch, approve path will
+     STILL have an in-app Bell notification — only WhatsApp is removed.
+     No silent-close risk for the manager-decision flow.
+
+4. Only one consumer of `manager_approved` event in codebase:
+   $ grep -rn "manager_approved" backend/contractor_ops/
+   →  tasks_router.py L1204: event_type = 'manager_approved' (THE bug)
+   →  schemas.py: enum value definition only
+   →  No external listeners or downstream switch on 'manager_approved'.
+   ✓ Single fix point covers it. No webhook / analytics consumer to
+     worry about.
+
+   **Vector 2 flag — change_task_status has NEVER had a Bell:**
+   $ grep -nC 3 "create_defect_notification" backend/contractor_ops/tasks_router.py | head
+   →  Bell call exists ONLY inside manager_decision (L1173). NOT inside
+      change_task_status (L745-870 region).
+   ⚠ After this batch, PM manually setting status='closed' via POST
+     /tasks/{id}/status produces ZERO notification. See "Known limitation"
+     below — accepted by spec.
+
+================================================================================
+LOCATION 1 — tasks_router.py: change_task_status notify_events dict (L853-856)
+================================================================================
+@@ backend/contractor_ops/tasks_router.py
+-  notify_events = {
+-      'waiting_verify': 'status_waiting_verify',
+-      'closed': 'status_closed',
+-  }
++  # BATCH G (2026-05-11) — 'closed' removed.
++  # When PM manually sets status to closed (not via manager_decision),
++  # contractor previously got a WhatsApp. Same noise as the
++  # manager_approved path. The existing `if event_type:` guard below
++  # skips the entire enqueue block when target_status='closed'.
++  # Status transitions, history, audit, task_updates — all preserved.
++  # Note: this endpoint has never created a Bell notification — see
++  # "Known limitation" in review.txt (silent close on this path).
++  notify_events = {
++      'waiting_verify': 'status_waiting_verify',
++  }
+
+Edge cases preserved:
+- `waiting_verify` event — still fires. PM gets WA when contractor
+  uploads proof. Desired flow.
+- `event_type = notify_events.get(target_status.value)` returns None
+  for 'closed' → existing `if event_type:` guard at L858 (now L863
+  after comment lines pushed it down) skips the entire enqueue block.
+  No code change needed in the guard.
+- Status transitions to 'closed' still allowed and recorded in
+  task_status_history + task_updates + audit_events. Only WA enqueue
+  is removed.
+
+================================================================================
+LOCATION 2 — tasks_router.py: manager_decision WA enqueue (L1204-1214)
+================================================================================
+@@ backend/contractor_ops/tasks_router.py
+-  event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
+-  engine = get_notification_engine()
+-  if engine:
+-      try:
+-          task_link = _get_task_link(task_id)
+-          job = await engine.enqueue(task_id, event_type, user['id'],
+-                                     custom_message=body.reason or '', task_link=task_link)
+-          if job and job.get('status') == 'queued':
+-              await engine.process_job(job)
+-      except Exception as e:
+-          logger.warning(f"[NOTIFY] manager-decision notification failed: {e}")
++  # BATCH G (2026-05-11) — skip WhatsApp on approve (close).
++  # Contractor's work is done; sending WA with their own proof photo
++  # is noise. KEEP WA on reject — they need to know to redo.
++  # Bell notification above (the create_defect_notification call)
++  # still fires for both approve+reject paths, so contractor still
++  # gets in-app awareness on approve.
++  if decision == 'reject':
++      engine = get_notification_engine()
++      if engine:
++          try:
++              task_link = _get_task_link(task_id)
++              job = await engine.enqueue(task_id, 'manager_rejected', user['id'],
++                                         custom_message=body.reason or '', task_link=task_link)
++              if job and job.get('status') == 'queued':
++                  await engine.process_job(job)
++          except Exception as e:
++              logger.warning(f"[NOTIFY] manager-decision reject notification failed: {e}")
+
+Changes:
+- Wrap engine.enqueue inside `if decision == 'reject':` block.
+- Use literal 'manager_rejected' instead of computed event_type
+  (clearer intent now we only fire on reject).
+- Update log message to mention "reject" explicitly.
+
+Edge cases preserved:
+- Approve path: engine never called → no WA → contractor doesn't get
+  a phone buzz on close.
+- Reject path: identical behavior to before.
+- Bell notification at L1168-1187 untouched — both approve+reject
+  still create in-app notification.
+- Audit, status update, task_updates, task_status_history — all
+  untouched.
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ counts[normalized] accumulator (L117) — already accurate via BATCH E.
-- ❌ failingFloors count (L118) — already accurate.
-- ❌ progressPct → accentBorder / ringColor formulas (L131-132) —
-     they consume the new (correct) progressPct as-is.
-- ❌ globalStats useMemo (L144+) — already badge-driven.
-- ❌ totalFloors calc — counts hierarchy floors, unrelated.
-- ❌ ProjectControlPage L3568+ loadStats — separate concern.
-- ❌ ProjectDashboardPage summary blocks — separate concern.
-- ❌ Backend qc_router.py — already correct (BATCH E).
+- ❌ Bell notification creation at L1168-1187 (`create_defect_notification`).
+     KEEP firing for both approve+reject. In-app, no flooding risk.
+- ❌ `'waiting_verify': 'status_waiting_verify'` mapping — preserved.
+- ❌ `manager_rejected` event — kept inside the new `if decision ==
+     'reject':` block. Still fires WA.
+- ❌ Other engine.enqueue calls (task_created, task_assigned, etc.)
+     — unrelated, unaffected.
+- ❌ `force_close` endpoint — doesn't fire WA event today. No change.
+- ❌ `reopen_task` endpoint — doesn't fire WA event today. No change.
+- ❌ Meta WhatsApp templates (WA_DEFECT_TEMPLATES in config.py). No
+     content change → no Meta re-approval cycle.
+- ❌ reminder_service.py (daily digest) — different path entirely.
+- ❌ Frontend — no changes needed.
 
 ================================================================================
-VERIFY 1 — Frontend build
+VERIFY 1 — Backend import sanity
 ================================================================================
-$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \\
-    REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
+$ cd backend && python -c "from contractor_ops.tasks_router import *; print('IMPORT_OK')"
 
-   →  Done. EXIT=0.
-   →  Compiled with warnings — but ALL warnings are pre-existing
-     source-map issues from @capacitor-community/apple-sign-in
-     (unchanged across BATCH E and BATCH E.1). Zero new warnings.
-   ✓ No new ESLint warnings, no new errors.
+   →  IMPORT_OK
+   →  EXIT=0
+   ✓ No SyntaxError, no broken imports.
+
+$ grep -nA 3 "notify_events = {" backend/contractor_ops/tasks_router.py
+   →  Confirms only `'waiting_verify': 'status_waiting_verify'` remains.
+
+$ grep -nC 1 "if decision == 'reject':" backend/contractor_ops/tasks_router.py
+   →  Confirms new guard exists wrapping the WA enqueue block.
+
+(Frontend build NOT run — zero frontend changes in this batch.)
 
 ================================================================================
-VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+VERIFY 2 — Backend unit tests (suggested for Zahi's CI)
 ================================================================================
-A. Open `/projects/{projectId}/qc` (QCFloorSelectionPage — project
-   view that lists buildings).
+Test scenarios for manager_decision endpoint:
+1. PM approves a task → notification_jobs collection has NO
+   'manager_approved' event for that task_id. Bell notification
+   (qc_notifications) still exists.
+2. PM rejects a task → notification_jobs has 'manager_rejected' event.
+   Bell notification also exists with `action='reject'`.
 
-B. For מגרש 810, building 8 (the card from Zahi's screenshot):
-   EXPECT BEFORE (current prod): card shows "90%" (the bug).
-   EXPECT AFTER: card shows ~50-55% (avg of stage-based pcts of
-   the building's floors which were 14/27, 17/27 etc.).
+Test scenarios for change_task_status endpoint:
+3. PM manually transitions task to 'closed' → notification_jobs has
+   NO event for that task. Status history + task_updates still recorded.
+4. Contractor uploads proof → status 'waiting_verify' → notification_jobs
+   has 'status_waiting_verify' event (PM notification). PRESERVED.
 
-C. Verify the floor counts ("1 הושלמו · 10 בביצוע") UNCHANGED —
-   they're badge-derived and were already correct.
+================================================================================
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+================================================================================
+**A — MOST CRITICAL (verifies Bell preservation):**
+   Zahi as PM, navigate to a project with a defect in
+   `pending_manager_approval` status (contractor uploaded proof).
+   Click "אשר" (approve).
+   EXPECT: defect status → closed.
+   EXPECT: contractor's phone receives **NO WhatsApp**.
+   EXPECT: contractor's in-app bell **DOES show** the approval
+   notification (text: "המנהל אישר את התיקון של ...").
 
-D. Click into building 8 → BuildingQCPage. Each floor card already
-   shows "X/Y שלבים" correctly (from BATCH E). The new building
-   percentage on the parent view should now correlate visually
-   (avg of those floor pcts).
+   ⚠ **CRITICAL — if Bell is ABSENT on approve:** STOP, do not proceed
+   to prod. That means STEP 0 reading was wrong and we just shipped a
+   silent-close path. Revert immediately and re-investigate.
+
+B. Same flow but click "דחה" + give a reason.
+   EXPECT: defect status → returned_to_contractor.
+   EXPECT: contractor's phone receives a WhatsApp with the rejection
+   reason (existing behavior, unchanged).
+   EXPECT: in-app bell shows rejection notification.
+
+C. PM manually changes a defect status from in_progress → closed via
+   POST /tasks/{id}/status (status dropdown if/where exposed).
+   EXPECT: defect status → closed.
+   EXPECT: NO WhatsApp to contractor.
+   EXPECT: NO Bell notification either (this path never had a Bell;
+   see "Known limitation" below).
+
+D. Contractor uploads proof on an in_progress defect (status →
+   waiting_verify).
+   EXPECT: PM receives a WhatsApp notification. PRESERVED.
 
 Regression sweep:
-- E. Building with all floors approved → still shows 100%.
-- F. Building with no started floors → still shows 0%.
-- G. Building containing a floor with NO unit-scope stages
-     (legacy / floor-scope-only data) → that floor's qd may not
-     have stage_summary; falls through to item-count branch and
-     still contributes correctly.
-- H. ProjectControlPage / ProjectDashboardPage — UNCHANGED on
-     purpose (out of scope). Zahi may notice their numbers still
-     drift; flag for separate batch if so.
+- E. task_created event — unaffected (still fires for new defects).
+- F. task_assigned event — unaffected.
+- G. Daily contractor reminder digest — unaffected.
+- H. Bell notifications panel — unaffected (in-app, both approve+reject
+     paths still create entries).
+
+================================================================================
+KNOWN LIMITATION (documented, not fixed in this batch)
+================================================================================
+The `change_task_status` endpoint (Vector 2 — POST /tasks/{id}/status
+with target_status='closed') has NEVER created a Bell notification —
+only a WhatsApp. After this batch removes the WhatsApp:
+  - Contractor gets ZERO notification when PM manually transitions a
+    defect to 'closed' via this endpoint.
+  - That's a silent close.
+
+Why this is acceptable for this batch:
+  1. The "manual status change to closed" path is rarely used in
+     practice. The canonical PM-close flow is `manager_decision`
+     (after contractor uploaded proof), which still creates a Bell.
+  2. If a PM is manually changing status (without going through the
+     proof-review flow), they're typically doing admin cleanup and
+     have already informed the contractor via other channels.
+  3. Adding a Bell to change_task_status would require extending its
+     existing dispatch logic (which currently has no Bell at all) —
+     larger scope and risk for an edge case.
+
+If observed as a problem in practice: separate follow-up batch to add
+a Bell to change_task_status for status='closed' transitions.
 
 ================================================================================
 RISK
 ================================================================================
-Very low. Single useMemo branch prepended. Fallback chain preserves
-all existing edge cases.
+Very low. Removing two WA dispatch points; no change to message
+content, no change to data model, no change to other notification
+paths.
 
-- ⚠ User-perceived "regression" (intentional): some building cards
-  will visibly drop from inflated percentages (e.g. 90%) to the
-  true stage-based pct (e.g. 50%). This is THE BUG BEING FIXED. No
-  in-app banner per Zahi's call (closed beta, 1:1 support).
-- ⚠ Backward compat: stage_summary access is guarded by `?.` and
-  `total_stages > 0` check; fallback to legacy item counts. So if
-  frontend ships before backend or hits a stale cache, building
-  cards still render correct pcts via the old path.
+Risk vectors:
+- ⚠ False expectation — a contractor who used to rely on the WA on
+  close to "confirm" the PM saw the work will no longer get it. But
+  they can still see the status in the app, and they got a WA when
+  the PM rejected previously. If a real user reports this is a loss,
+  we can add it back behind a different template (text-only, no photo).
+- ⚠ Edge case — if some downstream system (analytics, webhook
+  consumer, etc.) listens for 'manager_approved' or 'status_closed'
+  notification events, they'll stop firing. Verified no other
+  consumers in this codebase. If we have external listeners, this
+  spec needs an addendum.
 
-Bundle size impact: zero (no new imports).
-Performance impact: zero (same compute path, different fields read
-inside the same useMemo).
+Bundle size impact: zero (backend only).
+Backend code size impact: ~3 LOC net change (one branch added, one
+dict key removed, plus comments).
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-(Reverts QCFloorSelectionPage to item-count percentages. Building
-cards go back to inflated values. Backend stage_summary still served
-but unused on this page.)
+(Reverts to "WA on every PM decision and status close". Contractors
+go back to receiving photo-laden WA on every close.)
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
