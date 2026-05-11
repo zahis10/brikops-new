@@ -1,558 +1,214 @@
 ================================================================================
-BATCH E — Floor summary includes unit-scope stages (P1 — DATA ACCURACY)
+BATCH E.1 — Building card progress % uses stage_summary (P2 follow-up to BATCH E)
 ================================================================================
 Date:           2026-05-11
 Branch:         staging  (NOT main)
-Severity:       P1 — DATA ACCURACY bug.
-                Floor summary, percentage, and "תקין" badge were
-                calculated only from floor-scope stages. Unit-scope
-                stages were excluded entirely.
+Severity:       P2 — DATA ACCURACY follow-up.
+                BATCH E (just shipped 2026-05-11) updated the backend
+                /qc/floors/batch-status response with stage_summary
+                AND fixed FloorDetailPage + BuildingQCPage. But it
+                explicitly left QCFloorSelectionPage (the PROJECT-level
+                view at `/projects/{id}/qc` showing buildings) out of
+                scope.
 
-                Real-world impact (Zahi screenshot of floor 0):
-                "100% / 16/16 / תקין" displayed — but 5 of 6 unit-scope
-                stages had 0/5 דירות הושלמו. Dashboard lied. PM lost
-                trust, manually walked every floor to verify.
+                Result: building cards on the project view still
+                show item-level percentages from old qd.pass_count /
+                qd.total fields. Building 8 shows "90%" when the
+                stage-based reality is ~52%. Confirmed by Zahi's
+                screenshot 2026-05-11 (prod view of מגרש 810,
+                building 8 card "90%" but inside floors are at
+                14/27, 17/27 שלבים).
 
-Approach:       (per Zahi's choice on 2026-05-11)
-                STRICT (Option A): floor "approved" only when ALL
-                stages (floor-scope AND unit-scope) are approved AND
-                every unit in every unit-scope stage is approved.
-
-                STAGE-BASED COUNT (Option 2): summary shows count of
-                stages, not items. Each stage = 1 unit of work
-                regardless of how many QC items / units it contains.
+Approach:       Mirror the same stage_summary-first pattern Batch E
+                applied to BuildingQCPage: prefer stage_summary fields
+                when present, fall back to legacy item counts for
+                rolling-deploy safety.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Backend:
-                  - backend/contractor_ops/qc_router.py
-                    (~165 LOC added/modified: 4 helpers + 2 endpoint
-                     modifications + qc_items batch pre-fetch)
-                Frontend:
-                  - frontend/src/pages/FloorDetailPage.js
-                    (~10 LOC: replace item-count display with
-                     stage-count "X/Y שלבים" + comment)
-                  - frontend/src/pages/BuildingQCPage.js
-                    (~8 LOC: prefer stage_summary, legacy fallback)
-                Total: 3 files, ~183 LOC.
+Files changed:  Frontend only:
+                  - frontend/src/pages/QCFloorSelectionPage.js
+                    (~9 LOC: prepended stage_summary branch + 4-line
+                     comment to the buildingStats accumulator)
+                Total: 1 file, ~9 LOC. Backend untouched (already
+                returns stage_summary from BATCH E).
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
 IN this batch:
-  ✅ 4 backend helpers: _aggregate_unit_stages_in_memory (pure),
-     _compute_unit_scope_stage_statuses (per-floor, 2 queries),
-     _compute_unit_scope_stage_statuses_batch (multi-floor, 2 queries
-     TOTAL), _build_stage_summary.
-  ✅ /qc/floors/{floor_id}/run — combines floor + unit stages_data
-     for badge; adds stage_summary block.
-  ✅ /qc/floors/batch-status — batched unit-stage + qc_items pre-fetch
-     (4 queries TOTAL vs ~40 in the old per-floor loop); same
-     combine + stage_summary.
-  ✅ FloorDetailPage — display "X/Y שלבים" using stage_summary;
-     "100%" big number now driven by stage-based pct.
-  ✅ BuildingQCPage — swap qd.pass_count / qd.total → stage_summary
-     fields; display label already "שלבים".
-  ✅ Backward compat: stage_summary is additive. Frontend falls back
-     to legacy item counts for rolling-deploy safety.
+  ✅ QCFloorSelectionPage building card progress percentage —
+     prefer stage_summary.approved_stages / total_stages.
+  ✅ Fall back to legacy item counts (qd.total / qd.pass_count) if
+     stage_summary absent (rolling-deploy / cache-miss safety).
+  ✅ Final badge-only fallback branches preserved unchanged.
 
-OUT of this batch (deferred, per spec):
-  ❌ The 3-box "X הושלמו / Y נכשלו / Z בהמתנה" SummaryCard on
-     FloorDetailPage. Still uses item-level summary. Different UI
-     concept. Follow-up if needed.
-  ❌ ProjectControlPage / QCFloorSelectionPage / ProjectDashboardPage
-     summary blocks. They consume getFloorsBatchStatus and get the
-     corrected `badge` for free; their item-level totals (if shown)
-     handled case-by-case later.
-  ❌ Migration / recompute. Badge is computed on-demand at every
-     request — no DB write needed.
-  ❌ StageDetailPage refresh-tab support — already deferred from
-     Batch ACD. Independent issue.
+OUT of this batch (deferred):
+  ❌ ProjectControlPage loadStats (~L3568) — uses
+     `f.pass_count === f.total` as a "completed" heuristic. Same
+     anti-pattern but Zahi hasn't reported visible incorrectness
+     there yet. Separate batch if/when he spots it.
+  ❌ ProjectDashboardPage summary blocks — out of scope per BATCH E.
+  ❌ buildingStats `counts` accumulator (L117) — already CORRECT.
+     BATCH E fixed the badge value, so badge-counted buckets are
+     accurate.
+  ❌ failingFloors count (L118) — already CORRECT (badge + fail_count).
+  ❌ globalStats / totalFloors — unrelated, badge-driven.
+  ❌ Backend changes — none required.
 
 ================================================================================
-DEFINITIONS — what each status means
+STEP 0 — PRE-FLIGHT (3 PASS)
 ================================================================================
 
-For a UNIT-SCOPE stage on a given floor (e.g. "ריצוף דירה" with 5 units):
-  - "rejected"     ⟺ ANY unit has rejected status (PRIORITY — wins over
-                     all other states. Rejected = work failed QC,
-                     needs redo, NOT progress.)
-  - "approved"     ⟺ ALL units approved AND no rejections AND total > 0
-  - "in_progress"  ⟺ ≥1 unit has approved or active status; not all
-                     approved; no rejections
-  - "not_started"  ⟺ Zero units have any progress
-  - "is_empty"     ⟺ No QC items in template — excluded entirely
-  - "no_units"     ⟺ Floor with 0 units — excluded entirely (also
-                     overlaps with Batch D's filter; both safe)
+1. Bug confirmed at QCFloorSelectionPage.js L119-127 (the
+   `floors.forEach` inside `buildingStats` useMemo):
+   →  L119: if (qd && typeof qd === 'object' && qd.total > 0) {
+   →  L120:   totalItems += qd.total;
+   →  L121:   passItems += qd.pass_count || 0;
+   ✓ Confirmed — building rollup uses item counts (qd.total /
+     qd.pass_count). These are the legacy floor-scope-only fields.
 
-For the FLOOR's badge (delegated to existing _compute_floor_badge):
-  - "approved"      ⟺ ALL stages (floor + unit, non-empty) approved
-  - "rejected"      ⟺ ANY stage rejected (propagates from unit-stage)
-  - "pending_review"⟺ At least one stage pending_review
-  - "in_progress"   ⟺ At least one stage has progress; not all approved
-  - "not_started"   ⟺ All stages have zero progress
+2. BATCH E delivered stage_summary at /qc/floors/batch-status:
+   →  qc_router.py batch-status loop now attaches stage_summary
+      to every result entry (verified L2305 region of the
+      post-BATCH-E file).
+   ✓ Backend already returns the field we need.
 
-================================================================================
-STEP 0 — PRE-FLIGHT (5 PASS — actual line numbers verified)
-================================================================================
-
-Spec line numbers were stale (reflected an earlier checkout). Real
-locations confirmed by grep before changes:
-
-1. batch-status excluded scope=unit:
-   $ grep -n 'scope.*\$ne.*unit' backend/contractor_ops/qc_router.py
-   →  L1041 (current): {"floor_id": {"$in": ids}, "scope": {"$ne":"unit"}}
-      (spec said L1761 — stale)
-   ✓ Confirmed unit-scope runs were excluded in batch-status.
-
-2. Template filter floor-only inside batch loop:
-   $ grep -nE 'floor_stages = \[s for s' backend/contractor_ops/qc_router.py
-   →  L2066 (inside the batch-status per-floor loop)
-      (spec said L1787 — stale)
-   ✓ Confirmed unit-scope stages were filtered out at template level too.
-
-3. get_floor_run effective_stages floor-only:
-   $ grep -n 'effective_stages = .* floor.*scope' backend/contractor_ops/qc_router.py
-   →  L759 (current)  (spec said L642 — stale)
-   ✓ Same filter at the per-floor detail endpoint.
-
-4. units-status returns approved_units / total_units:
-   $ grep -nC 1 'approved_units = sum' backend/contractor_ops/qc_router.py
-   →  L1129 (spec said L1011 — stale; logic identical)
-   ✓ Per-stage approved_units/total_units available — could derive
-     "stage_approved" but we use the canonical aggregator instead.
-
-5. Frontend consumers:
-   →  BuildingQCPage.js L361-365 — uses qd.pass_count, qd.total
-   →  FloorDetailPage.js L177 destructures `summary` from getFloorRun;
-      L212-213 derives totalDone/totalItems from stages[].done/total
-   ✓ Both consumers identified. Both updated.
-
-Bonus check — _compute_floor_badge already shape-agnostic:
-   $ grep -n 'def _compute_floor_badge' backend/contractor_ops/qc_router.py
-   →  L568. Inspected body — accepts ANY stages_data list with
-      `computed_status` field. NO CHANGE NEEDED to the badge function;
-      we just feed it the COMBINED list (floor + unit). Spec L361-368
-      flagged this correctly.
-
-Bonus check — _compute_stage_status helper exists:
-   $ grep -n 'def _compute_stage_status' backend/contractor_ops/qc_router.py
-   →  L535. Used at L777, L947, L1204, L2074 (inside batch-status loop).
-      Reused as-is for floor-scope items inside the modified loop.
+3. `qd.badge` and the `counts` accumulator are CORRECT (BATCH E
+   fixed the badge for free — combined floor + unit stages):
+   →  L114-115: qd = qcStatuses[f.id]; st = getFloorBadge(qd);
+   →  L117: counts[normalized] = (counts[normalized] || 0) + 1;
+   ✓ The "X הושלמו / Y בביצוע" floor count on building cards uses
+     `counts` which is badge-derived — already correct.
+     Only the percentage indicator (passItems / totalItems) is broken.
 
 ================================================================================
-LOCATION 1 — qc_router.py: insert 4 helpers (after _compute_floor_badge)
+LOCATION 1 — QCFloorSelectionPage.js: prefer stage_summary in rollup
 ================================================================================
-@@ backend/contractor_ops/qc_router.py
-   (after `_compute_floor_badge` at L568-608, before `_resolve_photo_url`)
-+
-+  # BATCH E (2026-05-11) — Unit-scope stage aggregation helpers
-+  # Status priority: rejected > approved > in_progress > not_started.
-+  # Rejected = work failed QC, NOT progress; ANY rejection on ANY
-+  # unit propagates to the stage's badge and from there to the floor
-+  # badge via _compute_floor_badge (which already treats "rejected"
-+  # as winning).
-+
-+  def _aggregate_unit_stages_in_memory(project_tpl, unit_ids, runs_by_unit):
-+      """Pure function — no DB. Shared between per-floor and batch
-+      versions so logic stays single-sourced. Output shape mirrors
-+      floor-scope stages_data so _compute_floor_badge can consume the
-+      combined list directly.
-+      """
-+      unit_stages = [s for s in project_tpl["stages"]
-+                     if s.get("scope") == "unit"
-+                     and len(s.get("items", [])) > 0]
-+      total_units = len(unit_ids)
-+      stages_data = []
-+      for stage in unit_stages:
-+          stage_id = stage["id"]
-+          approved = in_progress = not_started = rejected = 0
-+          for unit_id in unit_ids:
-+              run = runs_by_unit.get(unit_id)
-+              if not run:
-+                  not_started += 1
-+                  continue
-+              stage_status = run.get("stage_statuses", {}).get(stage_id, "draft")
-+              if stage_status == "approved":
-+                  approved += 1
-+              elif stage_status == "rejected":
-+                  rejected += 1
-+              elif stage_status in ("draft", "not_started"):
-+                  not_started += 1
-+              else:
-+                  in_progress += 1
-+          if rejected > 0:
-+              computed = "rejected"
-+          elif approved == total_units and total_units > 0:
-+              computed = "approved"
-+          elif approved == 0 and in_progress == 0:
-+              computed = "not_started"
-+          else:
-+              computed = "in_progress"
-+          stages_data.append({
-+              "id": stage_id,
-+              "done": approved + in_progress + rejected,
-+              "computed_status": computed,
-+              "_scope": "unit",
-+              "_approved_units": approved,
-+              "_in_progress_units": in_progress,
-+              "_not_started_units": not_started,
-+              "_rejected_units": rejected,
-+              "_total_units": total_units,
-+          })
-+      return stages_data
-+
-+  async def _compute_unit_scope_stage_statuses(db, project_tpl, floor_id, floor=None):
-+      """Per-floor version. 2 DB queries (units + unit-runs).
-+      Returns [] when the floor has no units (overlaps with Batch D's
-+      empty-stage filter — both safe)."""
-+      ...  # (queries floor->units, then unit-scope runs, then aggregate)
-+
-+  async def _compute_unit_scope_stage_statuses_batch(db, project_tpl, floor_ids):
-+      """Batch version. 2 DB queries TOTAL regardless of N floors.
-+      Replaces what would have been N*2 round trips inside the
-+      per-floor loop in batch-status."""
-+      ...  # (single $in on floor_id, single $in on unit_id, then aggregate per-floor)
-+
-+  def _build_stage_summary(floor_stages_data, unit_stages_data):
-+      """Returns: {total_stages, approved_stages, in_progress_stages,
-+      not_started_stages, pending_review_stages (rolls up
-+      pending_review + submitted), rejected_stages}."""
-+      all_stages = floor_stages_data + unit_stages_data
-+      return {
-+          "total_stages": len(all_stages),
-+          "approved_stages": sum(1 for s in all_stages if s["computed_status"] == "approved"),
-+          ...
-+      }
+File: frontend/src/pages/QCFloorSelectionPage.js
+Lines: 119-127 (inner branch of floors.forEach inside buildingStats
+       useMemo)
 
-================================================================================
-LOCATION 2 — qc_router.py: get_or_create_floor_run endpoint (L685)
-================================================================================
-@@ backend/contractor_ops/qc_router.py (around the return at ~L800)
-   total_items = total_pass + total_fail + total_pending
--  floor_badge = _compute_floor_badge(stages_out, stage_statuses)
-+
-+  # BATCH E (2026-05-11) — include unit-scope stages in floor badge
-+  # and add stage_summary block. Existing `floor_badge` field becomes
-+  # CORRECT for free; consumers reading it get the fix automatically.
-+  floor_stages_data = [
-+      {"id": s["id"], "done": s.get("done", 0),
-+       "computed_status": s.get("computed_status", "draft"),
-+       "_scope": "floor"}
-+      for s in stages_out
-+  ]
-+  unit_stages_data = await _compute_unit_scope_stage_statuses(
-+      db, tpl, floor_id, floor=floor
-+  )
-+  combined_stages_data = floor_stages_data + unit_stages_data
-+  floor_badge = _compute_floor_badge(combined_stages_data, stage_statuses)
-+  stage_summary = _build_stage_summary(floor_stages_data, unit_stages_data)
+@@ frontend/src/pages/QCFloorSelectionPage.js (around L119-127)
++        // BATCH E.1 (2026-05-11) — prefer stage_summary (Batch E
++        // backend already returns it). Falls back to legacy item
++        // counts if absent (e.g. rolling deploy lag). The third
++        // branch (rare badge-only fallback) is unchanged.
++        if (qd?.stage_summary && qd.stage_summary.total_stages > 0) {
++          totalItems += qd.stage_summary.total_stages;
++          passItems += qd.stage_summary.approved_stages;
++        } else if (qd && typeof qd === 'object' && qd.total > 0) {
+           totalItems += qd.total;
+           passItems += qd.pass_count || 0;
+         } else if (normalized === 'approved') {
+           totalItems += 1;
+           passItems += 1;
+         } else if (normalized !== 'not_started') {
+           totalItems += 1;
+         }
 
-   return {
-       ...
-       "summary": {...},
-+      "stage_summary": stage_summary,
-       "floor_badge": floor_badge,
-   }
+Why this is correct:
+- `qd.stage_summary.total_stages` includes BOTH floor-scope + unit-scope
+  stages (BATCH E aggregates them).
+- `qd.stage_summary.approved_stages` counts stages where ALL units
+  are approved (strict, Option A).
+- Their ratio is the true "what % of this floor's work is done"
+  measured in stages. Sum across all floors of a building gives the
+  building's STAGE-weighted progress (not item-weighted), so small
+  floors don't dominate.
 
-================================================================================
-LOCATION 3 — qc_router.py: /qc/floors/batch-status endpoint (L1998)
-================================================================================
-@@ backend/contractor_ops/qc_router.py (the per-floor loop)
-   runs = await db.qc_runs.find(...).to_list(500)
-   runs_by_floor = {r["floor_id"]: r for r in runs}
-   project_tpl = await _get_template(db, project_id=project_id)
-+
-+  # BATCH E (2026-05-11) — pre-fetch unit-scope stage statuses for
-+  # ALL floors in 2 DB queries (vs N*2 in the per-floor loop).
-+  unit_stages_by_floor = await _compute_unit_scope_stage_statuses_batch(
-+      db, project_tpl, ids
-+  )
-+
-+  # BATCH E (2026-05-11) — pre-fetch qc_items for ALL floor-scope runs
-+  # in a single $in query (vs N queries inside the per-floor loop).
-+  run_ids = [r["id"] for r in runs]
-+  items_by_run_and_stage = {}
-+  if run_ids:
-+      all_items = await db.qc_items.find(
-+          {"run_id": {"$in": run_ids}},
-+          {"_id": 0, "run_id": 1, "stage_id": 1, "status": 1, "photos": 1, "note": 1, "item_id": 1}
-+      ).to_list(5000)
-+      for it in all_items:
-+          key = (it.get("run_id"), it.get("stage_id"))
-+          items_by_run_and_stage.setdefault(key, []).append(it)
-
-   result = {}
-   for fid in ids:
-       run = runs_by_floor.get(fid)
-+      unit_stages_data = unit_stages_by_floor.get(fid, [])
-+
-       if not run:
--          result[fid] = {"badge": "not_started", "pass_count": 0, "fail_count": 0, "total": 0}
-+          # No floor-scope run yet — but unit-scope stages might still
-+          # have progress. Compute badge from unit stages alone.
-+          badge = _compute_floor_badge(unit_stages_data, {}) if unit_stages_data else "not_started"
-+          stage_summary = _build_stage_summary([], unit_stages_data)
-+          result[fid] = {
-+              "badge": badge, "pass_count": 0, "fail_count": 0, "total": 0,
-+              "stage_summary": stage_summary,
-+          }
-           continue
-
--      run_items = await db.qc_items.find({"run_id": run["id"]}, ...).to_list(500)
--      items_by_stage = {}
--      for it in run_items:
--          items_by_stage.setdefault(it.get("stage_id"), []).append(it)
-+      # Read pre-fetched items (no DB call inside loop).
-+      items_by_stage = {}
-+      for stage_id_iter in (s["id"] for s in project_tpl["stages"]):
-+          items_by_stage[stage_id_iter] = items_by_run_and_stage.get(
-+              (run["id"], stage_id_iter), []
-+          )
-
-       stage_statuses = run.get("stage_statuses", {})
-       tpl = project_tpl
-       floor_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
--      stages_data = []
-+      floor_stages_data = []
-       ...
-       for stage in floor_stages:
-           ...
--          stages_data.append({"id": stage["id"], "done": done_count, "computed_status": computed})
-+          floor_stages_data.append({"id": stage["id"], "done": done_count,
-+                                    "computed_status": computed, "_scope": "floor"})
-
--      badge = _compute_floor_badge(stages_data, stage_statuses)
-+      # Combine floor + unit stages_data so _compute_floor_badge sees
-+      # the full picture. Rejected priority propagates from unit-stage
-+      # rejection up to floor badge.
-+      combined_stages_data = floor_stages_data + unit_stages_data
-+      badge = _compute_floor_badge(combined_stages_data, stage_statuses)
-+      stage_summary = _build_stage_summary(floor_stages_data, unit_stages_data)
-
-       result[fid] = {
--          "badge": badge, "pass_count": total_pass, "fail_count": total_fail, "total": total_items,
-+          "badge": badge, "pass_count": total_pass, "fail_count": total_fail,
-+          "total": total_items, "stage_summary": stage_summary,
-       }
-
-================================================================================
-LOCATION 4 — FloorDetailPage.js (L212-214 derive + L258 display)
-================================================================================
-@@ frontend/src/pages/FloorDetailPage.js
--  const totalDone = stages.reduce((s, st) => s + st.done, 0);
--  const totalItems = stages.reduce((s, st) => s + st.total, 0);
--  const totalPct = totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
-+  // BATCH E (2026-05-11) — count stages, not items, and include
-+  // unit-scope stages via backend's stage_summary block. Old item-count
-+  // display lied: floors with 100% of floor-scope items pass but 0/5
-+  // units done on unit-scope stages still showed "100%".
-+  // Fallback to floor-scope-only stage counts if backend hasn't been
-+  // upgraded yet (rolling-deploy safety).
-+  const stageSummary = data?.stage_summary || null;
-+  const totalStages = stageSummary?.total_stages ?? stages.length;
-+  const approvedStages = stageSummary?.approved_stages ?? stages.filter(s => s.computed_status === 'approved').length;
-+  const totalPct = totalStages > 0 ? Math.round((approvedStages / totalStages) * 100) : 0;
-   const floorVisual = getFloorVisualStatus(stages);
-
-@@ (display, ~L258)
--  <div className="text-[10px] text-slate-400">{totalDone}/{totalItems}</div>
-+  <div className="text-[10px] text-slate-400">{approvedStages}/{totalStages} שלבים</div>
-
-The "100%" big number stays — driven by new totalPct (now stage-based).
-
-================================================================================
-LOCATION 5 — BuildingQCPage.js (L361-365)
-================================================================================
-@@ frontend/src/pages/BuildingQCPage.js
-   const qd = qcStatuses[floor.id];
-   const failCount = qd?.fail_count || 0;
--  const floorTotal = qd?.total || 0;
--  const floorPass = qd?.pass_count || 0;
-+  // BATCH E (2026-05-11) — prefer stage_summary (includes unit-scope
-+  // stages); fall back to legacy item counts if backend hasn't been
-+  // upgraded (rolling-deploy safety). Display label at L400 already
-+  // says "שלבים".
-+  const stageSummary = qd?.stage_summary || null;
-+  const floorTotal = stageSummary?.total_stages ?? (qd?.total || 0);
-+  const floorPass = stageSummary?.approved_stages ?? (qd?.pass_count || 0);
-   const floorPct = floorTotal > 0 ? Math.round((floorPass / floorTotal) * 100) : 0;
-
-L400 display unchanged — already reads "{floorPass}/{floorTotal} שלבים".
+Edge cases preserved (verified by code-walk):
+- Floor with no qd entry at all → falls through to legacy branches
+  (approved with no data → counted as approved; in-progress with no
+  data → counted in denominator only).
+- Rolling deploy where backend returns stage_summary but old frontend
+  hits a cached request: legacy fallback ensures progressPct still
+  computed sanely.
+- Floor with qd but no stage_summary AND no items → falls through to
+  the badge-derived branches (unchanged).
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ _compute_floor_badge body (L568-608) — already shape-agnostic.
-     Spec L361-368 confirmed.
-- ❌ _compute_stage_status (L535) — works correctly for floor-scope
-     items, no change needed. Reused at L2074/2288 inside the loop.
-- ❌ SummaryCard component on FloorDetailPage. Uses summary.total/pass/
-     fail/pending — item-level counts. Different UI concept. Stays.
-- ❌ Stage cards on FloorDetailPage (each card shows "X/Y דירות
-     הושלמו" for unit-scope or item-level for floor-scope). Per-stage
-     UI unchanged.
-- ❌ getFloorVisualStatus / getFloorQualityBadge in qcVisualStatus.js.
-     Continue to operate on `stages` array. Where backend's
-     `floor_badge` is authoritative (BuildingQCPage), we prefer the
-     backend value via qcStatuses[id].badge.
-- ❌ getFloorRun signature / other response fields — additive only.
-- ❌ ProjectControlPage / QCFloorSelectionPage / ProjectDashboardPage
-     summary blocks (out of scope; their badges fix automatically).
-- ❌ StageDetailPage refresh-tab handling — separate deferred limitation.
-- ❌ Sort logic, trade-emoji map, navigation logic on FloorDetailPage.
-- ❌ Unit run creation/upgrade paths, _ensure_inline_prework_items,
-     _backfill_missing_items, _enrich_items.
+- ❌ counts[normalized] accumulator (L117) — already accurate via BATCH E.
+- ❌ failingFloors count (L118) — already accurate.
+- ❌ progressPct → accentBorder / ringColor formulas (L131-132) —
+     they consume the new (correct) progressPct as-is.
+- ❌ globalStats useMemo (L144+) — already badge-driven.
+- ❌ totalFloors calc — counts hierarchy floors, unrelated.
+- ❌ ProjectControlPage L3568+ loadStats — separate concern.
+- ❌ ProjectDashboardPage summary blocks — separate concern.
+- ❌ Backend qc_router.py — already correct (BATCH E).
 
 ================================================================================
-VERIFY 1 — Backend import sanity
-================================================================================
-$ cd backend && python -c "from contractor_ops.qc_router import \\
-    _compute_unit_scope_stage_statuses, \\
-    _compute_unit_scope_stage_statuses_batch, \\
-    _aggregate_unit_stages_in_memory, \\
-    _build_stage_summary; print('ALL_HELPERS_IMPORTED_OK')"
-
-   →  [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
-   →  ALL_HELPERS_IMPORTED_OK
-   →  EXIT=0
-   ✓ All 4 helpers exist, no syntax errors, no circular imports.
-
-================================================================================
-VERIFY 2 — Frontend build
+VERIFY 1 — Frontend build
 ================================================================================
 $ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \\
     REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
 
-   →  Done in 32.43s. Build folder ready.
-   →  EXIT=0
+   →  Done. EXIT=0.
    →  Compiled with warnings — but ALL warnings are pre-existing
      source-map issues from @capacitor-community/apple-sign-in
-     (definitions.ts, index.ts, web.ts not present in the published
-     npm package). Same warnings as previous successful builds. Zero
-     new warnings introduced by BATCH E changes.
+     (unchanged across BATCH E and BATCH E.1). Zero new warnings.
    ✓ No new ESLint warnings, no new errors.
 
 ================================================================================
-VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
 ================================================================================
-Use the exact project Zahi screenshotted (מגרש 810, building, floor 0).
+A. Open `/projects/{projectId}/qc` (QCFloorSelectionPage — project
+   view that lists buildings).
 
-A. Before deploy: confirm FloorDetailPage shows "100% / 16/16" and
-   "תקין".
+B. For מגרש 810, building 8 (the card from Zahi's screenshot):
+   EXPECT BEFORE (current prod): card shows "90%" (the bug).
+   EXPECT AFTER: card shows ~50-55% (avg of stage-based pcts of
+   the building's floors which were 14/27, 17/27 etc.).
 
-B. After deploy: open the same floor.
-   EXPECT: percentage shows the correct ratio (e.g. "57% / 8/14 שלבים")
-   if 8 of 14 stages are approved (8 floor-scope + 0 of the 6 unit-
-   scope stages that have 0/5 דירות done).
-   EXPECT: badge no longer says "תקין" — should say "in_progress" or
-   "בעבודה".
+C. Verify the floor counts ("1 הושלמו · 10 בביצוע") UNCHANGED —
+   they're badge-derived and were already correct.
 
-C. Approve all units in all unit-scope stages of that floor.
-   EXPECT: percentage moves toward 100%, badge returns to "תקין"
-   ONCE all 14 stages are approved (including all 5 דירות in each of
-   the 6 unit-scope stages = 30 approvals total).
+D. Click into building 8 → BuildingQCPage. Each floor card already
+   shows "X/Y שלבים" correctly (from BATCH E). The new building
+   percentage on the parent view should now correlate visually
+   (avg of those floor pcts).
 
-D. Open BuildingQCPage (parent of this floor).
-   EXPECT: that floor's card shows "8/14 שלבים" instead of "16/16
-   שלבים". EXPECT: badge color matches actual state.
-
-E. **REJECTED PRIORITY TEST:**
-   On any unit-scope stage, intentionally reject 1 דירה.
-   EXPECT: that stage's badge becomes red/rejected.
-   EXPECT: floor badge becomes "rejected" (red) — propagates upward.
-   EXPECT: BuildingQCPage shows that floor with red accent border.
-   Approve the rejection → badges return to in_progress / approved.
-
-F. **Performance smoke (manual visual):**
-   Open BuildingQCPage with 10+ floors. Should load in well under 2s
-   on mobile 4G. If observed > 3s, flag for optimization. (DB queries
-   should be 4 total, regardless of floor count.)
-
-G. Regression: floor with NO unit-scope stages (e.g. roof technical
-   floor with only floor-scope work).
-   EXPECT: behavior unchanged — shows correct stage count of
-   floor-scope only.
-
-H. Regression: floor with 0 units (e.g. floor -3 with no דירות).
-   EXPECT: unit-scope stages excluded (per Batch D + this batch's
-   no_units handling). Shows only floor-scope stages.
-
-I. Regression: ProjectControlPage / QCFloorSelectionPage /
-   ProjectDashboardPage. They consume getFloorsBatchStatus output.
-   Their summary blocks may still show item-level totals (out of
-   scope). Their FLOOR BADGES should now be accurate.
-
-================================================================================
-PERFORMANCE — addressed in this batch (NOT follow-up)
-================================================================================
-Net query count for batch-status:
-  - BEFORE: ~40 queries for 20-floor project (1 floor-runs query +
-    N qc_items queries inside loop).
-  - AFTER:   4 queries TOTAL — runs + qc_items + units + unit-runs.
-  - Dashboard / ControlPage / MapView calling batch-status in parallel
-    (3 callers): ~12 queries total instead of ~120.
-
-Per-floor endpoint /qc/floors/{floor_id}/run:
-  - BEFORE: existing N queries (run + items + ...).
-  - AFTER:  +2 queries (units + unit-runs). Per-floor only — fine.
-
-If we observe further slowness, future optimization:
-  - Single Redis cache for batch-status with 60s TTL keyed by project_id
-  - MongoDB aggregation pipeline for stage-level rollup
-Both out of scope; current 4-query design sufficient for typical
-project sizes (up to ~50 floors × ~10 units = 500 units).
+Regression sweep:
+- E. Building with all floors approved → still shows 100%.
+- F. Building with no started floors → still shows 0%.
+- G. Building containing a floor with NO unit-scope stages
+     (legacy / floor-scope-only data) → that floor's qd may not
+     have stage_summary; falls through to item-count branch and
+     still contributes correctly.
+- H. ProjectControlPage / ProjectDashboardPage — UNCHANGED on
+     purpose (out of scope). Zahi may notice their numbers still
+     drift; flag for separate batch if so.
 
 ================================================================================
 RISK
 ================================================================================
-Medium. Backend logic change touching badge computation.
+Very low. Single useMemo branch prepended. Fallback chain preserves
+all existing edge cases.
 
-- ⚠ **User-perceived "regression"** (intentional): Floors that
-  previously showed "תקין 100%" will now show their real state. For
-  many floors this means a sudden drop to "in_progress 50-70%". Some
-  may even flip to "rejected" (red) if any unit-stage was rejected
-  long ago and silently masked by the old buggy aggregation.
-  THIS IS THE BUG BEING FIXED. No in-app banner / release note (per
-  Zahi's call — closed beta, small user base, can answer 1:1).
+- ⚠ User-perceived "regression" (intentional): some building cards
+  will visibly drop from inflated percentages (e.g. 90%) to the
+  true stage-based pct (e.g. 50%). This is THE BUG BEING FIXED. No
+  in-app banner per Zahi's call (closed beta, 1:1 support).
+- ⚠ Backward compat: stage_summary access is guarded by `?.` and
+  `total_stages > 0` check; fallback to legacy item counts. So if
+  frontend ships before backend or hits a stale cache, building
+  cards still render correct pcts via the old path.
 
-- ⚠ Performance: addressed in this batch. 4 queries for batch-status
-  regardless of floor count. Per-floor endpoint adds 2 queries (units
-  + unit-runs) — acceptable for single-floor view.
-
-- ⚠ Edge case — floor with units but NO unit-scope runs yet:
-  Helper returns stages with `not_started` status. Combined with
-  approved floor-scope → badge "in_progress" (not "approved"). This
-  is correct behavior — there's unit work to do.
-  Side effect: floors that completed only floor-scope work years ago
-  will now correctly show as incomplete (assuming the project still
-  has unit-scope stages in template).
-
-- ⚠ **Rejected priority** — by design, ONE rejected unit on ONE
-  unit-stage flips the whole floor to "rejected" (red). May feel
-  aggressive for PMs who haven't noticed old rejections. If we
-  observe noise ("everything is red"), can soften by:
-    - Allow PMs to "acknowledge" a rejection (state field)
-    - Distinguish "old rejection" (>7d) visually from fresh
-  Out of scope for this batch. Document and observe.
-
-- ⚠ Backward compat: stage_summary is additive on the API. Frontend
-  falls back to legacy qd.pass_count/qd.total if absent. So if
-  backend deploy lags frontend (or vice versa), no broken UI — only
-  the metrics differ.
-
-Bundle size impact: zero on frontend (no new dependencies).
-Backend code size impact: ~165 LOC added.
-No schema changes. No migrations. No env vars. No new dependencies.
+Bundle size impact: zero (no new imports).
+Performance impact: zero (same compute path, different fields read
+inside the same useMemo).
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-(Reverts to floor-scope-only badge computation. No data state changes.
- Floors will go back to showing "100%" when in reality unit-scope work
- is incomplete — i.e. back to the bug.)
+(Reverts QCFloorSelectionPage to item-count percentages. Building
+cards go back to inflated values. Backend stage_summary still served
+but unused on this page.)
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

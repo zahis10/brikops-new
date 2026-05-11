@@ -116,7 +116,14 @@ export default function QCFloorSelectionPage() {
         const normalized = st === 'submitted' ? 'pending_review' : st;
         counts[normalized] = (counts[normalized] || 0) + 1;
         if (normalized === 'rejected' || (qd?.fail_count || 0) > 0) failingFloors++;
-        if (qd && typeof qd === 'object' && qd.total > 0) {
+        // BATCH E.1 (2026-05-11) — prefer stage_summary (Batch E
+        // backend already returns it). Falls back to legacy item
+        // counts if absent (e.g. rolling deploy lag). The third
+        // branch (rare badge-only fallback) is unchanged.
+        if (qd?.stage_summary && qd.stage_summary.total_stages > 0) {
+          totalItems += qd.stage_summary.total_stages;
+          passItems += qd.stage_summary.approved_stages;
+        } else if (qd && typeof qd === 'object' && qd.total > 0) {
           totalItems += qd.total;
           passItems += qd.pass_count || 0;
         } else if (normalized === 'approved') {
