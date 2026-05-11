@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { usePinch } from '@use-gesture/react';
 import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Loader2, X, Download, Eye } from 'lucide-react';
 
 // 2026-05-10 — react-pdf worker setup. CRITICAL: bundle the worker
@@ -44,15 +43,6 @@ const PlanViewer = ({ plan, onClose }) => {
   const [loading, setLoading] = useState(true);
   const containerRef = useRef(null);
 
-  // 2026-05-10 hotfix-5 — explicit ref for pinch gesture start scale.
-  // Replaces hotfix-4 PATTERN A's `from` closure which was vulnerable
-  // to staleness (@use-gesture appears to cache the bound config and
-  // not re-evaluate `from()` on every render, so it kept returning the
-  // initial fit-scale → any touch reset scale to ~15%). The ref below
-  // is updated on every render via the sync useEffect, so the pinch
-  // handler always reads the latest scale via `scaleRef.current`.
-  const scaleRef = useRef(null);
-
   useEffect(() => {
     setNumPages(null);
     setPageNumber(1);
@@ -61,81 +51,22 @@ const PlanViewer = ({ plan, onClose }) => {
     setLoading(true);
   }, [plan?.id, plan?.file_url]);
 
-  // 2026-05-10 hotfix-5 — keep scaleRef in sync with scale state.
-  // The pinch handler reads from this ref (NOT from the `scale`
-  // closure) so it always sees the current value, regardless of
-  // whether @use-gesture's internal binding has been re-evaluated.
-  useEffect(() => {
-    scaleRef.current = scale;
-  }, [scale]);
-
-  // 2026-05-10 hotfix-5 — PATTERN B (explicit ref + first flag).
-  //
-  // Hotfix-4's PATTERN A (`from: () => [scale ?? 1.0, 0]`) had two
-  // regressions on real iPhone:
-  //   1. Pinch didn't fire at all (iOS GestureEvent path suppressed
-  //      in Capacitor WKWebView when content sits in a scroll container
-  //      with custom touch-action).
-  //   2. Single touch on the canvas reset scale to fit (~15%) —
-  //      @use-gesture appears to cache the bound config and not
-  //      re-evaluate `from()` after re-renders, so `from()` kept
-  //      returning the INITIAL fit-scale.
-  //
-  // PATTERN B reads scale from `scaleRef.current` (updated every render
-  // via useEffect, see above). On gesture start (`first` flag), we
-  // capture the live ref value into gestureStartScaleRef, then multiply
-  // by the cumulative `offset[0]` each frame to compute the new
-  // absolute scale. Same math as PATTERN A, but immune to closure
-  // staleness and config-caching.
-  //
-  // ALSO: `pointer: { touch: true }` forces the cross-platform Touch
-  // Event code path. Default uses iOS GestureEvent which is sometimes
-  // suppressed on Capacitor WKWebView. Touch Events are what Android
-  // already uses; standardizing on them gives consistent behavior.
-  //
-  // Debug log: helps verify the handler IS firing on iPhone/Android.
-  // Wrapped in `process.env.NODE_ENV !== 'production'` so CRA's
-  // build-time DefinePlugin substitutes the string and the minifier
-  // strips the entire `if` block from the production bundle. No manual
-  // "remember to remove" step, no risk of log shipping to prod.
-  //
-  // Bounds [0.1, 4.0] match the +/- button bounds (hotfix-1). Rubberband
-  // gives soft-bounce feedback at the edges. eventOptions.passive=false
-  // is required so we can preventDefault to suppress browser-native
-  // pinch on iOS Safari edge cases.
-  const gestureStartScaleRef = useRef(1.0);
-  usePinch(
-    ({ offset: [s], first, event, type }) => {
-      if (event && event.cancelable) event.preventDefault();
-      if (first) {
-        gestureStartScaleRef.current = scaleRef.current ?? 1.0;
-      }
-      const next = gestureStartScaleRef.current * s;
-      const clamped = Math.min(Math.max(next, 0.1), 4.0);
-      if (process.env.NODE_ENV !== 'production') {
-        // eslint-disable-next-line no-console
-        console.log('[PlanViewer pinch]', {
-          type, first, offset_s: s,
-          startScale: gestureStartScaleRef.current,
-          liveScale: scaleRef.current,
-          nextClamped: clamped,
-        });
-      }
-      setScale(clamped);
-    },
-    {
-      target: containerRef,
-      eventOptions: { passive: false },
-      scaleBounds: { min: 0.1, max: 4.0 },
-      rubberband: true,
-      pointer: { touch: true },
-    }
-  );
+  // 2026-05-11 hotfix-6 — pinch-to-zoom REMOVED.
+  // hotfix-4 + hotfix-5 attempted pinch via @use-gesture/react. Both
+  // shipped but UX was jank-prone on real iPhone: each scale change
+  // triggers a react-pdf re-render (~50-100ms per A1 plan), and pinch
+  // fires at 60Hz — drop ~3-6 frames per gesture step, feels "1% at
+  // a time". The fix is a hybrid pattern (CSS transform during
+  // gesture for smooth feel + re-render on gesture-end for sharp
+  // text), but that's significant work (~3 hours) and deferred to
+  // P1.4 polish. For P1.1 ship: +/- zoom buttons + scrollbar pan
+  // are the zoom UX. Field test will tell us if pinch is must-have.
+  // (@use-gesture/react KEPT in package.json for P1.4 reuse.)
 
   // 2026-05-10 hotfix — react-pdf onLoadSuccess passes the full
   // PDFDocumentProxy (not just {numPages}). We use it to compute a
   // fit-to-width scale on load so users see the whole plan edge-to-edge
-  // by default. They can zoom in for details via the + button or pinch.
+  // by default. They can zoom in for details via the +/- buttons.
   const handleLoadSuccess = useCallback(async (pdf) => {
     setNumPages(pdf.numPages);
     setLoading(false);
@@ -262,13 +193,11 @@ const PlanViewer = ({ plan, onClose }) => {
               pan is possible. Pattern aligned with calendar.jsx /
               table.jsx (project convention, Tailwind 3.4+). No JS
               injection, no module side-effect.
-           c) touchAction kept for native pinch-zoom on mobile. */}
-      {/* 2026-05-10 hotfix-4 — `touch-action: pan-x pan-y` (without
-           pinch-zoom) tells the browser: "allow ONE-finger pan/scroll
-           on this element, but DON'T handle pinch yourself." Pinch is
-           now captured by the usePinch hook above, which calls setScale
-           to trigger react-pdf to re-render at higher resolution =
-           sharp text (instead of CSS-scaled raster = pixelated). */}
+           c) touchAction: 'pan-x pan-y' allows one-finger native
+              pan/scroll on touch devices (also what scrollbar drag
+              depends on). Pinch is intentionally NOT handled here as
+              of hotfix-6 — see the comment block above. +/- buttons
+              are the sole zoom UX for P1.1. */}
       <div
         ref={containerRef}
         className="flex-1 overflow-auto bg-slate-700 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-thumb]:bg-white/35 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb]:hover:bg-white/55 [&::-webkit-scrollbar-track]:bg-black/20 [&::-webkit-scrollbar-corner]:bg-black/20"
