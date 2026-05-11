@@ -287,12 +287,18 @@ const TaskDetailPage = () => {
 
   useEffect(() => {
     if (externalEntry && task?.project_id && !location.state?.returnTo) {
-      const contractorBack = task.building_id
-        ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
-        : `/projects/${task.project_id}/control?tab=defects`;
+      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
+      // to the building-defects page (they'd see other companies' work).
+      // Contractors land on their dashboard; management keeps the
+      // existing building-default behavior.
+      const contractorBack = isContractor
+        ? '/'
+        : (task.building_id
+            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+            : `/projects/${task.project_id}/control?tab=defects`);
       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
     }
-  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo]);
+  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
 
   const handleAddComment = async () => {
     if (!comment.trim()) return;
@@ -858,6 +864,13 @@ const TaskDetailPage = () => {
               if (returnTo) {
                 sessionStorage.removeItem(RETURN_TO_KEY);
                 navigate(returnTo);
+              } else if (isContractor) {
+                // BATCH I (2026-05-11) — P0 SECURITY: contractors never
+                // land on the building-defects page (cross-contractor
+                // data leak). Defense in depth: backend also returns
+                // 403 if URL is hand-crafted. Order: explicit returnTo
+                // > isContractor > building default > project default.
+                navigate('/');
               } else if (task?.building_id && task?.project_id) {
                 navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
               } else if (task?.project_id) {

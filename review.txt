@@ -1,342 +1,370 @@
 ================================================================================
-BATCH G — Stop WhatsApp on defect close (keep on reject/reopen) — P2 UX
+BATCH I — Building defects contractor leak (P0 SECURITY hotfix)
 ================================================================================
 Date:           2026-05-11
 Branch:         staging  (NOT main)
-Severity:       P2 — UX noise reduction.
-                Today: PM closes a defect → contractor receives a
-                WhatsApp message that includes their own proof photo.
-                Result: WhatsApp flood, zero value (contractor knows
-                they uploaded the photo), erodes trust in WA notifs.
+Severity:       P0 — DATA LEAK / privacy violation.
+                Two-bug compound (caught by Zahi smoke during BATCH G):
+                1. Frontend (TaskDetailPage back nav): contractor entering
+                   via WhatsApp deep-link routes back to
+                   `/projects/{}/buildings/{}/defects` (BuildingDefectsPage).
+                2. Backend (`/buildings/{id}/defects-summary`): allows ANY
+                   project member, including contractors, via the
+                   permissive `_check_project_read_access` helper.
+                Combined: contractor sees all building defects across
+                companies — reportable under Israeli privacy law if
+                shipped to prod.
 
-Approach:       (per Zahi's choice 2026-05-11 — Option B)
-                "אין צורך לעדכן אותו על סגירה זה סתם מציף בהודעות
-                ווטסאפ" — skip the WhatsApp notification ENTIRELY when
-                a defect is closed/approved. KEEP the WA notification
-                on reject/reopen — contractor needs to know to come
-                back to the work.
-
-                Bell (in-app) notifications are NOT touched — they're
-                fine, they don't flood, and they're useful for in-app
-                awareness.
+Approach:       Defense-in-depth (per Zahi 2026-05-11):
+                - Backend: 403 for non-management roles (canonical guard).
+                - Frontend: contractors never navigate to building defects
+                  page (deep-link safety branch + don't pre-set
+                  sessionStorage to it).
+                Either layer alone would prevent the leak; both together
+                protect against URL hand-crafting, bookmarks, cached FE,
+                future regressions, undiscovered entry points.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Backend only:
-                  - backend/contractor_ops/tasks_router.py
-                    (~3 LOC net change + ~10 LOC explanatory comments
-                     across 2 surgical locations)
-                Total: 1 file. No frontend changes. No DB migrations.
-                No Meta WA template re-approval needed (we're removing
-                a send, not modifying message content).
+Files changed:  Backend:
+                  - backend/contractor_ops/projects_router.py
+                    (1 import edit + 1 management-role gate insertion;
+                     ~12 LOC incl. comments)
+                Frontend:
+                  - frontend/src/pages/TaskDetailPage.js
+                    (2 surgical edits: useEffect contractor skip +
+                     onClick isContractor branch; ~15 LOC incl. comments)
+                Total: 2 files. No DB migrations. No env vars. No new
+                dependencies. No Meta WA template changes.
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
 IN this batch:
-  ✅ `manager_decision` endpoint (the WA enqueue at L1204): only fire
-     WhatsApp when `decision === 'reject'`. Skip WA entirely on approve.
-  ✅ `change_task_status` endpoint (L853): remove `'closed':
-     'status_closed'` from the `notify_events` mapping. Keep
-     `'waiting_verify'` (PM needs to know contractor uploaded proof).
+  ✅ Backend `building_defects_summary` (L1390): add MANAGEMENT_ROLES
+     gate via `_get_project_role`. Keep `_check_project_read_access`
+     above as first layer (validates membership / token freshness).
+  ✅ Backend import: add `MANAGEMENT_ROLES` to existing import block
+     from contractor_ops.router (already exports the symbol at L451).
+  ✅ Frontend useEffect (TaskDetailPage L288-295 → now L291-304):
+     externalEntry sessionStorage pre-set — contractors get '/'
+     instead of building-defects path.
+  ✅ Frontend back-button onClick (L856-868 → now L865-884): add
+     `else if (isContractor) navigate('/')` branch BEFORE the
+     `task?.building_id` default branch.
 
-OUT of this batch (preserved):
-  ❌ Bell notification at L1168-1187 (`create_defect_notification`)
-     in manager_decision — KEEP firing for both approve+reject paths.
-     In-app notification is useful, doesn't flood. Zahi's complaint
-     is specifically WhatsApp.
-  ❌ Reject path (`manager_rejected` event + status_returned_to_contractor)
-     — KEEP firing WA. Contractor needs to know to redo work.
-  ❌ `waiting_verify` event — KEEP firing WA. PM needs to know
-     contractor uploaded proof.
-  ❌ Other notification events (`task_created`, `task_assigned`,
-     reminder digests) — unaffected.
-  ❌ Meta WhatsApp template content — unchanged (no template re-submit).
-  ❌ `force_close` endpoint, `reopen_task` endpoint — don't fire WA
-     today, no change.
-  ❌ Frontend — none.
-  ❌ DB / migrations / env vars — none.
-
-================================================================================
-STEP 0 — PRE-FLIGHT (4 PASS — actual line numbers verified, spec was stale)
-================================================================================
-
-The spec's line refs were taken from an earlier checkout. Real
-locations confirmed by grep before changes:
-
-1. notify_events dict in change_task_status:
-   $ grep -nA 4 "notify_events = {" backend/contractor_ops/tasks_router.py
-   →  L853 (current)  (spec said L795 — stale)
-   →  L853: notify_events = {
-   →  L854:     'waiting_verify': 'status_waiting_verify',
-   →  L855:     'closed': 'status_closed',
-   →  L856: }
-   →  L857: event_type = notify_events.get(target_status.value)
-   →  L858: if event_type:
-   ✓ Confirmed — manual status change to 'closed' fires WA event.
-     Existing `if event_type:` guard at L858 means removing the dict
-     key is sufficient (no other change needed in this function).
-
-2. event_type for manager_decision (WA enqueue):
-   $ grep -n "event_type = 'manager_approved'" backend/contractor_ops/tasks_router.py
-   →  L1204 (current)  (spec said L1141 — stale)
-   →  L1204: event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
-   →  L1205-1214: engine.enqueue block (the bug — fires for both paths)
-   ✓ Confirmed — fires `manager_approved` event on approve path.
-
-3. Bell call in manager_decision (`create_defect_notification`):
-   $ grep -nC 1 "create_defect_notification" backend/contractor_ops/tasks_router.py | grep -A 2 "1170\|1173"
-   →  L1168-1187 (current)  (spec said L1107-1124 — stale; logic identical)
-   →  L1168: # Bell notification: PM made a decision, the assignee...
-   →  L1170: try:
-   →  L1171: assignee_id = task.get('assignee_id')
-   →  L1172: if assignee_id and assignee_id != user['id']:  ← NOT decision-specific
-   →  L1173: await create_defect_notification(...)
-   →  L1177: action=decision,  # 'approve' or 'reject'
-   ✓ **CRITICAL — Bell fires UNCONDITIONALLY on decision** (only guard
-     is assignee_id != user['id']). After this batch, approve path will
-     STILL have an in-app Bell notification — only WhatsApp is removed.
-     No silent-close risk for the manager-decision flow.
-
-4. Only one consumer of `manager_approved` event in codebase:
-   $ grep -rn "manager_approved" backend/contractor_ops/
-   →  tasks_router.py L1204: event_type = 'manager_approved' (THE bug)
-   →  schemas.py: enum value definition only
-   →  No external listeners or downstream switch on 'manager_approved'.
-   ✓ Single fix point covers it. No webhook / analytics consumer to
-     worry about.
-
-   **Vector 2 flag — change_task_status has NEVER had a Bell:**
-   $ grep -nC 3 "create_defect_notification" backend/contractor_ops/tasks_router.py | head
-   →  Bell call exists ONLY inside manager_decision (L1173). NOT inside
-      change_task_status (L745-870 region).
-   ⚠ After this batch, PM manually setting status='closed' via POST
-     /tasks/{id}/status produces ZERO notification. See "Known limitation"
-     below — accepted by spec.
+OUT of this batch (deferred):
+  ❌ Audit batch for the 3 other `_check_project_read_access` call
+     sites in projects_router.py (L380, L1006, L1202). Each may need
+     the same gate. Schedule SEPARATE batch IMMEDIATELY after this
+     ships — each unaudited endpoint is a potential P0. Listed as
+     follow-up task proposal.
+  ❌ Other frontend entry points to BuildingDefectsPage (the page
+     itself, links from ProjectControlPage, etc.). Backend 403 is the
+     canonical guard; FE layer here is defense-in-depth.
+  ❌ TaskDetailPage L777-779 errorBackUrl — uses same building-defects
+     default but only fires on TaskDetailPage error states (not the
+     reported scenario). Will inherit benefit from backend 403 if
+     contractor hits the rendered BuildingDefectsPage anyway. Out of
+     immediate scope.
+  ❌ BATCH G WA-on-close removal — already shipped (Task #503),
+     unrelated but coincident. If both pending in same staging cycle,
+     deploy together (different files, no conflict). Verify
+     SEPARATELY in smoke (see "BATCH G + I sequencing" below).
 
 ================================================================================
-LOCATION 1 — tasks_router.py: change_task_status notify_events dict (L853-856)
+STEP 0 — PRE-FLIGHT (5 PASS — actual line numbers verified)
 ================================================================================
-@@ backend/contractor_ops/tasks_router.py
--  notify_events = {
--      'waiting_verify': 'status_waiting_verify',
--      'closed': 'status_closed',
--  }
-+  # BATCH G (2026-05-11) — 'closed' removed.
-+  # When PM manually sets status to closed (not via manager_decision),
-+  # contractor previously got a WhatsApp. Same noise as the
-+  # manager_approved path. The existing `if event_type:` guard below
-+  # skips the entire enqueue block when target_status='closed'.
-+  # Status transitions, history, audit, task_updates — all preserved.
-+  # Note: this endpoint has never created a Bell notification — see
-+  # "Known limitation" in review.txt (silent close on this path).
-+  notify_events = {
-+      'waiting_verify': 'status_waiting_verify',
-+  }
+
+1. Vulnerable backend endpoint:
+   $ grep -n "building_defects_summary\|_check_project_read_access" backend/contractor_ops/projects_router.py
+   →  L1390-1391: `@router.get("/buildings/{building_id}/defects-summary")`
+                  `async def building_defects_summary(...)`
+   →  L1397: `await _check_project_read_access(user, project_id)`
+   ✓ Confirmed — uses the permissive helper. No role gate today.
+
+2. `_get_project_role` already imported in projects_router:
+   $ sed -n '7,11p' backend/contractor_ops/projects_router.py
+   →  L7-11: `from contractor_ops.router import (... _get_project_role ...)`
+   ✓ Confirmed — no new import needed for the helper itself.
+
+3. `MANAGEMENT_ROLES` constant exists, NOT yet imported in projects_router:
+   $ rg -n "MANAGEMENT_ROLES\s*=" backend/contractor_ops/
+   →  router.py:451: `MANAGEMENT_ROLES = ('project_manager', 'management_team')`
+   →  plans_router.py:34, execution_matrix_router.py:31 — same tuple.
+   ✓ Single source of truth in router.py. Import adds it to existing block.
+
+4. Frontend defect detail with `isContractor` + WA back nav:
+   $ grep -n "isContractor\|externalEntry\|RETURN_TO_KEY\|/buildings/.*defects" frontend/src/pages/TaskDetailPage.js
+   →  L234: `const isContractor = projectRole === 'contractor' || user?.role === 'contractor';`
+   →  L288-295: useEffect that pre-sets sessionStorage RETURN_TO_KEY to
+                building-defects path on externalEntry.
+   →  L856-868: back-button onClick chain (returnTo → building_id default
+                → project default → /projects).
+   ✓ Confirmed both touch points. Single new branch in onClick + one
+     contractor-skip in useEffect.
+
+5. Other endpoints using `_check_project_read_access` (audit candidates):
+   $ grep -n "_check_project_read_access" backend/contractor_ops/projects_router.py
+   →  L380, L1006, L1202, L1397 (we're fixing 1397 only)
+   ✓ 3 candidates noted. OUT of this batch — separate audit follow-up.
+
+   **Bonus — verified safety of management gate:**
+   - Per spec: org owner + super_admin go through `_get_project_role`
+     and effectively return `'project_manager'`, so they pass the new
+     check. Same pattern used elsewhere in the router (the existing
+     `_check_project_access` already relies on this).
+
+================================================================================
+LOCATION 1 — projects_router.py: import line (L7-11)
+================================================================================
+@@ backend/contractor_ops/projects_router.py
+   from contractor_ops.router import (
+       get_db, get_current_user, require_roles, require_super_admin,
+       _check_project_access, _check_project_read_access, _check_structure_admin,
+       _get_project_role, _audit, _now, _is_super_admin, _priority_sort_key, logger,
++      MANAGEMENT_ROLES,
+   )
+
+================================================================================
+LOCATION 2 — projects_router.py: building_defects_summary 403 gate (L1397+)
+================================================================================
+@@ backend/contractor_ops/projects_router.py
+   project_id = building['project_id']
+   await _check_project_read_access(user, project_id)
++  # BATCH I (2026-05-11) — P0 SECURITY hotfix.
++  # Building-level defect rollups expose cross-contractor data.
++  # Restrict to management roles only. _check_project_read_access
++  # above stays as the first defense layer (validates project
++  # membership / token freshness); this layer narrows by role.
++  # Per spec: org owner + super_admin return 'project_manager' from
++  # _get_project_role, so they pass.
++  project_role = await _get_project_role(user, project_id)
++  if project_role not in MANAGEMENT_ROLES:
++      raise HTTPException(status_code=403, detail='Insufficient role for building defects summary')
+   project = await db.projects.find_one({'id': project_id}, {'_id': 0})
 
 Edge cases preserved:
-- `waiting_verify` event — still fires. PM gets WA when contractor
-  uploads proof. Desired flow.
-- `event_type = notify_events.get(target_status.value)` returns None
-  for 'closed' → existing `if event_type:` guard at L858 (now L863
-  after comment lines pushed it down) skips the entire enqueue block.
-  No code change needed in the guard.
-- Status transitions to 'closed' still allowed and recorded in
-  task_status_history + task_updates + audit_events. Only WA enqueue
-  is removed.
+- Project membership / token validity check unchanged
+  (_check_project_read_access still runs first).
+- 404 on missing building still fires before any role check.
+- Org owner / super_admin / project_manager / management_team — pass.
+- Contractor / client / unrelated user — 403.
 
 ================================================================================
-LOCATION 2 — tasks_router.py: manager_decision WA enqueue (L1204-1214)
+LOCATION 3 — TaskDetailPage.js: useEffect contractor pre-set skip (L291-304)
 ================================================================================
-@@ backend/contractor_ops/tasks_router.py
--  event_type = 'manager_approved' if decision == 'approve' else 'manager_rejected'
--  engine = get_notification_engine()
--  if engine:
--      try:
--          task_link = _get_task_link(task_id)
--          job = await engine.enqueue(task_id, event_type, user['id'],
--                                     custom_message=body.reason or '', task_link=task_link)
--          if job and job.get('status') == 'queued':
--              await engine.process_job(job)
--      except Exception as e:
--          logger.warning(f"[NOTIFY] manager-decision notification failed: {e}")
-+  # BATCH G (2026-05-11) — skip WhatsApp on approve (close).
-+  # Contractor's work is done; sending WA with their own proof photo
-+  # is noise. KEEP WA on reject — they need to know to redo.
-+  # Bell notification above (the create_defect_notification call)
-+  # still fires for both approve+reject paths, so contractor still
-+  # gets in-app awareness on approve.
-+  if decision == 'reject':
-+      engine = get_notification_engine()
-+      if engine:
-+          try:
-+              task_link = _get_task_link(task_id)
-+              job = await engine.enqueue(task_id, 'manager_rejected', user['id'],
-+                                         custom_message=body.reason or '', task_link=task_link)
-+              if job and job.get('status') == 'queued':
-+                  await engine.process_job(job)
-+          except Exception as e:
-+              logger.warning(f"[NOTIFY] manager-decision reject notification failed: {e}")
+@@ frontend/src/pages/TaskDetailPage.js
+   useEffect(() => {
+     if (externalEntry && task?.project_id && !location.state?.returnTo) {
+-      const contractorBack = task.building_id
+-        ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+-        : `/projects/${task.project_id}/control?tab=defects`;
++      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
++      // to the building-defects page (they'd see other companies' work).
++      // Contractors land on their dashboard; management keeps the
++      // existing building-default behavior.
++      const contractorBack = isContractor
++        ? '/'
++        : (task.building_id
++            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
++            : `/projects/${task.project_id}/control?tab=defects`);
+       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
+     }
+-  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo]);
++  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
 
-Changes:
-- Wrap engine.enqueue inside `if decision == 'reject':` block.
-- Use literal 'manager_rejected' instead of computed event_type
-  (clearer intent now we only fire on reject).
-- Update log message to mention "reject" explicitly.
+Why this matters:
+- The original useEffect WROTE the building-defects path into
+  sessionStorage on externalEntry. Then the back-button onClick reads
+  sessionStorage as the highest-priority returnTo source. Without this
+  fix, the new isContractor branch in onClick (Location 4) NEVER
+  fires for the actual reported scenario — the populated sessionStorage
+  always wins.
+- Adding `isContractor` to the dep array keeps the effect honest.
+
+================================================================================
+LOCATION 4 — TaskDetailPage.js: back-button onClick isContractor branch (L865-884)
+================================================================================
+@@ frontend/src/pages/TaskDetailPage.js
+   onClick={() => {
+     const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
+     if (returnTo) {
+       sessionStorage.removeItem(RETURN_TO_KEY);
+       navigate(returnTo);
++    } else if (isContractor) {
++      // BATCH I (2026-05-11) — P0 SECURITY: contractors never
++      // land on the building-defects page (cross-contractor
++      // data leak). Defense in depth: backend also returns
++      // 403 if URL is hand-crafted. Order: explicit returnTo
++      // > isContractor > building default > project default.
++      navigate('/');
+     } else if (task?.building_id && task?.project_id) {
+       navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
+     } else if (task?.project_id) {
+       navigate(`/projects/${task.project_id}/control?tab=defects`);
+     } else {
+       navigate('/projects');
+     }
+   }}
 
 Edge cases preserved:
-- Approve path: engine never called → no WA → contractor doesn't get
-  a phone buzz on close.
-- Reject path: identical behavior to before.
-- Bell notification at L1168-1187 untouched — both approve+reject
-  still create in-app notification.
-- Audit, status update, task_updates, task_status_history — all
-  untouched.
+- Test C (PM regression): not contractor → falls through to building_id
+  default → navigates to BuildingDefectsPage. UNCHANGED.
+- Test D (returnTo regression): explicit `location.state?.returnTo`
+  from BuildingDefectsPage entry → uses that path → returns to
+  BuildingDefectsPage. UNCHANGED.
+- Bell label logic at L872-877 (now ~L888-893): still correct — the
+  "back to dashboard" string fires when returnTo includes /dashboard;
+  for our new '/' navigate, externalEntry contractors still see
+  "back_to_my_defects" label which is acceptable copy.
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ Bell notification creation at L1168-1187 (`create_defect_notification`).
-     KEEP firing for both approve+reject. In-app, no flooding risk.
-- ❌ `'waiting_verify': 'status_waiting_verify'` mapping — preserved.
-- ❌ `manager_rejected` event — kept inside the new `if decision ==
-     'reject':` block. Still fires WA.
-- ❌ Other engine.enqueue calls (task_created, task_assigned, etc.)
-     — unrelated, unaffected.
-- ❌ `force_close` endpoint — doesn't fire WA event today. No change.
-- ❌ `reopen_task` endpoint — doesn't fire WA event today. No change.
-- ❌ Meta WhatsApp templates (WA_DEFECT_TEMPLATES in config.py). No
-     content change → no Meta re-approval cycle.
-- ❌ reminder_service.py (daily digest) — different path entirely.
-- ❌ Frontend — no changes needed.
+- ❌ `_check_project_read_access` body / definition. Stays as the first
+     defense layer; we only add the role gate after it.
+- ❌ The 3 OTHER `_check_project_read_access` call sites in
+     projects_router.py (L380, L1006, L1202) — see follow-up task.
+- ❌ TaskDetailPage L777-779 errorBackUrl block — same default but
+     different code path; out of immediate scope.
+- ❌ L234 `isContractor` derivation — reused as-is.
+- ❌ Back-button label logic at L872-877 (now ~L888-893).
+- ❌ BuildingDefectsPage component / route — backend 403 is enough; FE
+     may render an empty page or error state if hand-crafted, OK.
+- ❌ All Bell / WA flows from BATCH G.
+- ❌ Schemas, migrations, env vars, dependencies — none.
 
 ================================================================================
-VERIFY 1 — Backend import sanity
+VERIFY 1 — Backend import + gate sanity
 ================================================================================
-$ cd backend && python -c "from contractor_ops.tasks_router import *; print('IMPORT_OK')"
+$ cd backend && python -c "from contractor_ops.projects_router import building_defects_summary; from contractor_ops.router import MANAGEMENT_ROLES; print('IMPORT_OK', MANAGEMENT_ROLES)"
 
-   →  IMPORT_OK
+   →  IMPORT_OK ('project_manager', 'management_team')
    →  EXIT=0
-   ✓ No SyntaxError, no broken imports.
+   ✓ No SyntaxError, no broken imports, MANAGEMENT_ROLES tuple matches expected.
 
-$ grep -nA 3 "notify_events = {" backend/contractor_ops/tasks_router.py
-   →  Confirms only `'waiting_verify': 'status_waiting_verify'` remains.
-
-$ grep -nC 1 "if decision == 'reject':" backend/contractor_ops/tasks_router.py
-   →  Confirms new guard exists wrapping the WA enqueue block.
-
-(Frontend build NOT run — zero frontend changes in this batch.)
-
-================================================================================
-VERIFY 2 — Backend unit tests (suggested for Zahi's CI)
-================================================================================
-Test scenarios for manager_decision endpoint:
-1. PM approves a task → notification_jobs collection has NO
-   'manager_approved' event for that task_id. Bell notification
-   (qc_notifications) still exists.
-2. PM rejects a task → notification_jobs has 'manager_rejected' event.
-   Bell notification also exists with `action='reject'`.
-
-Test scenarios for change_task_status endpoint:
-3. PM manually transitions task to 'closed' → notification_jobs has
-   NO event for that task. Status history + task_updates still recorded.
-4. Contractor uploads proof → status 'waiting_verify' → notification_jobs
-   has 'status_waiting_verify' event (PM notification). PRESERVED.
+$ grep -nC 1 "MANAGEMENT_ROLES" backend/contractor_ops/projects_router.py
+   →  L13-15: import line includes MANAGEMENT_ROLES
+   →  L1409-1411: `project_role = await _get_project_role(...)`
+                   `if project_role not in MANAGEMENT_ROLES:`
+                   `raise HTTPException(status_code=403, ...)`
+   ✓ Confirmed — both import and gate present at correct locations.
 
 ================================================================================
-VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+VERIFY 2 — Frontend build
 ================================================================================
-**A — MOST CRITICAL (verifies Bell preservation):**
-   Zahi as PM, navigate to a project with a defect in
-   `pending_manager_approval` status (contractor uploaded proof).
-   Click "אשר" (approve).
-   EXPECT: defect status → closed.
-   EXPECT: contractor's phone receives **NO WhatsApp**.
-   EXPECT: contractor's in-app bell **DOES show** the approval
-   notification (text: "המנהל אישר את התיקון של ...").
+$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+                  REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
 
-   ⚠ **CRITICAL — if Bell is ABSENT on approve:** STOP, do not proceed
-   to prod. That means STEP 0 reading was wrong and we just shipped a
-   silent-close path. Revert immediately and re-investigate.
-
-B. Same flow but click "דחה" + give a reason.
-   EXPECT: defect status → returned_to_contractor.
-   EXPECT: contractor's phone receives a WhatsApp with the rejection
-   reason (existing behavior, unchanged).
-   EXPECT: in-app bell shows rejection notification.
-
-C. PM manually changes a defect status from in_progress → closed via
-   POST /tasks/{id}/status (status dropdown if/where exposed).
-   EXPECT: defect status → closed.
-   EXPECT: NO WhatsApp to contractor.
-   EXPECT: NO Bell notification either (this path never had a Bell;
-   see "Known limitation" below).
-
-D. Contractor uploads proof on an in_progress defect (status →
-   waiting_verify).
-   EXPECT: PM receives a WhatsApp notification. PRESERVED.
-
-Regression sweep:
-- E. task_created event — unaffected (still fires for new defects).
-- F. task_assigned event — unaffected.
-- G. Daily contractor reminder digest — unaffected.
-- H. Bell notifications panel — unaffected (in-app, both approve+reject
-     paths still create entries).
+   →  EXIT=0
+   →  No NEW warnings or errors related to TaskDetailPage.
+   →  Pre-existing apple-sign-in source-map noise expected and unchanged.
 
 ================================================================================
-KNOWN LIMITATION (documented, not fixed in this batch)
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
 ================================================================================
-The `change_task_status` endpoint (Vector 2 — POST /tasks/{id}/status
-with target_status='closed') has NEVER created a Bell notification —
-only a WhatsApp. After this batch removes the WhatsApp:
-  - Contractor gets ZERO notification when PM manually transitions a
-    defect to 'closed' via this endpoint.
-  - That's a silent close.
+Per Zahi's commentary, all 4 must pass:
 
-Why this is acceptable for this batch:
-  1. The "manual status change to closed" path is rarely used in
-     practice. The canonical PM-close flow is `manager_decision`
-     (after contractor uploaded proof), which still creates a Bell.
-  2. If a PM is manually changing status (without going through the
-     proof-review flow), they're typically doing admin cleanup and
-     have already informed the contractor via other channels.
-  3. Adding a Bell to change_task_status would require extending its
-     existing dispatch logic (which currently has no Bell at all) —
-     larger scope and risk for an edge case.
+A. THE REPORTED BUG (frontend deep-link safety):
+   - Login as a contractor.
+   - Tap a WA notification link → opens TaskDetailPage for one of
+     their assigned defects (externalEntry=true).
+   - Tap the back arrow.
+   EXPECT: lands on `/` (ContractorDashboard).
+   EXPECT NOT: `/projects/.../buildings/.../defects`.
+   ⚠ FAIL → frontend not deployed correctly.
 
-If observed as a problem in practice: separate follow-up batch to add
-a Bell to change_task_status for status='closed' transitions.
+B. DEFENSE-IN-DEPTH (backend 403):
+   - Same contractor session as A.
+   - Manually paste `/projects/{pid}/buildings/{bid}/defects` in URL bar.
+   - Page loads; calls `GET /api/buildings/{bid}/defects-summary`.
+   EXPECT: 403 from backend.
+   EXPECT: page bounces to safe state (existing FE error handling) or
+   shows error UI; NEVER renders other contractors' defects.
+   ⚠ FAIL → backend not deployed correctly. Do NOT proceed to prod.
+
+C. MANAGEMENT REGRESSION:
+   - Login as PM (project_manager).
+   - Open a defect via TaskDetailPage (no returnTo state, no
+     externalEntry).
+   - Tap back arrow.
+   EXPECT: navigates to BuildingDefectsPage normally (existing
+   behavior). Renders all defects for the building.
+   ⚠ FAIL → management broken (regression).
+
+D. returnTo REGRESSION:
+   - Login as PM (or any management role).
+   - Open BuildingDefectsPage → click into a defect (passes
+     `location.state.returnTo` = building defects URL).
+   - On TaskDetailPage, tap back arrow.
+   EXPECT: returns to BuildingDefectsPage (the explicit returnTo wins
+   over the new isContractor branch — but the user isn't a contractor
+   anyway, so this is purely the explicit-state path).
+   ⚠ FAIL → returnTo logic broken (regression).
+
+Bonus regression sweep:
+- E. Org owner / super_admin opening WA link as themselves → backend
+  passes (returns project_manager-equivalent role); FE back nav works
+  per their actual role.
+- F. Contractor in two different projects with different roles
+  (rare) → per-project role lookup is correct (uses
+  `_get_project_role(user, project_id)`).
+
+================================================================================
+BATCH G + BATCH I SEQUENCING
+================================================================================
+- BATCH G (Task #503) and BATCH I (Task #504) touch DIFFERENT files
+  (tasks_router.py vs projects_router.py + TaskDetailPage.js).
+  No merge conflict.
+- If both pending in same staging deploy: ship together.
+- VERIFY SEPARATELY in smoke — don't conflate the WA-noise tests
+  (BATCH G) with the building-defects access tests (BATCH I).
+- If BATCH G already in prod: deploy BATCH I alone, fast.
 
 ================================================================================
 RISK
 ================================================================================
-Very low. Removing two WA dispatch points; no change to message
-content, no change to data model, no change to other notification
-paths.
+Very low (defense-in-depth design):
+- ⚠ Deploy ordering — both orders are safe:
+  - FE first, BE later: contractors stop navigating to building-defects;
+    if anyone hand-crafts URL, BE still allows (no worse than today).
+  - BE first, FE later: contractors hand-crafting URL get 403 (good);
+    contractors via WA back-nav also get 403 when they land on
+    BuildingDefectsPage (BE call fails) — not a leak, just a worse
+    error UX for ~minutes.
+- ⚠ Role drift — `MANAGEMENT_ROLES = ('project_manager', 'management_team')`
+  is the same tuple in 4 places (router.py L451, plans_router.py L34,
+  execution_matrix_router.py, our import). Verified consistent.
+- ⚠ Mixed roles across projects — `_get_project_role(user, project_id)`
+  is per-project (correct scoping); a contractor on project A and PM
+  on project B will see project A's building-defects 403'd and
+  project B's allowed.
+- ⚠ Audit followups — 3 OTHER `_check_project_read_access` call sites
+  in projects_router.py (L380, L1006, L1202) may have the same
+  pattern. Each unaudited = potential P0. Follow-up task proposed.
 
-Risk vectors:
-- ⚠ False expectation — a contractor who used to rely on the WA on
-  close to "confirm" the PM saw the work will no longer get it. But
-  they can still see the status in the app, and they got a WA when
-  the PM rejected previously. If a real user reports this is a loss,
-  we can add it back behind a different template (text-only, no photo).
-- ⚠ Edge case — if some downstream system (analytics, webhook
-  consumer, etc.) listens for 'manager_approved' or 'status_closed'
-  notification events, they'll stop firing. Verified no other
-  consumers in this codebase. If we have external listeners, this
-  spec needs an addendum.
-
-Bundle size impact: zero (backend only).
-Backend code size impact: ~3 LOC net change (one branch added, one
-dict key removed, plus comments).
+Bundle / perf impact: zero (one extra DB lookup in the management
+gate, but `_get_project_role` is already used everywhere).
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-(Reverts to "WA on every PM decision and status close". Contractors
-go back to receiving photo-laden WA on every close.)
+- Reverts to permissive read-access (the leak returns).
+- If backend revert needed alone: comment out the gate block at
+  L1402-1411 and the import line addition at L14.
+- If frontend revert needed alone: revert TaskDetailPage.js diff.
+
+================================================================================
+FOLLOW-UP TASKS (proposed alongside this batch)
+================================================================================
+1. Audit `_check_project_read_access` call sites in projects_router.py
+   (L380, L1006, L1202). For each, decide whether contractor read is
+   acceptable or whether a similar MANAGEMENT_ROLES gate is needed.
+   Each one is a potential P0 if same leak pattern repeats. Schedule
+   IMMEDIATELY after this deploys.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

@@ -8,6 +8,7 @@ from contractor_ops.router import (
     get_db, get_current_user, require_roles, require_super_admin,
     _check_project_access, _check_project_read_access, _check_structure_admin,
     _get_project_role, _audit, _now, _is_super_admin, _priority_sort_key, logger,
+    MANAGEMENT_ROLES,
 )
 from contractor_ops.billing import get_user_org, get_subscription
 from contractor_ops.schemas import (
@@ -1395,6 +1396,16 @@ async def building_defects_summary(building_id: str, user: dict = Depends(get_cu
         raise HTTPException(status_code=404, detail='Building not found')
     project_id = building['project_id']
     await _check_project_read_access(user, project_id)
+    # BATCH I (2026-05-11) — P0 SECURITY hotfix.
+    # Building-level defect rollups expose cross-contractor data.
+    # Restrict to management roles only. _check_project_read_access
+    # above stays as the first defense layer (validates project
+    # membership / token freshness); this layer narrows by role.
+    # Per spec: org owner + super_admin return 'project_manager' from
+    # _get_project_role, so they pass.
+    project_role = await _get_project_role(user, project_id)
+    if project_role not in MANAGEMENT_ROLES:
+        raise HTTPException(status_code=403, detail='Insufficient role for building defects summary')
     project = await db.projects.find_one({'id': project_id}, {'_id': 0})
     if not project:
         raise HTTPException(status_code=404, detail='Project not found')
