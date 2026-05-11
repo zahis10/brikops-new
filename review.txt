@@ -5,7 +5,7 @@ Date:           2026-05-11
 Branch:         staging  (NOT main)
 Severity:       P0 — DATA LEAK / privacy violation.
                 Two-bug compound (caught by Zahi smoke during BATCH G):
-                1. Frontend (TaskDetailPage back nav): contractor entering
+                1. Frontend (TaskDetailPסשage back nav): contractor entering
                    via WhatsApp deep-link routes back to
                    `/projects/{}/buildings/{}/defects` (BuildingDefectsPage).
                 2. Backend (`/buildings/{id}/defects-summary`): allows ANY
