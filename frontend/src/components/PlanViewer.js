@@ -44,6 +44,15 @@ const PlanViewer = ({ plan, onClose }) => {
   const [loading, setLoading] = useState(true);
   const containerRef = useRef(null);
 
+  // 2026-05-10 hotfix-5 — explicit ref for pinch gesture start scale.
+  // Replaces hotfix-4 PATTERN A's `from` closure which was vulnerable
+  // to staleness (@use-gesture appears to cache the bound config and
+  // not re-evaluate `from()` on every render, so it kept returning the
+  // initial fit-scale → any touch reset scale to ~15%). The ref below
+  // is updated on every render via the sync useEffect, so the pinch
+  // handler always reads the latest scale via `scaleRef.current`.
+  const scaleRef = useRef(null);
+
   useEffect(() => {
     setNumPages(null);
     setPageNumber(1);
@@ -52,33 +61,74 @@ const PlanViewer = ({ plan, onClose }) => {
     setLoading(true);
   }, [plan?.id, plan?.file_url]);
 
-  // 2026-05-10 hotfix-4 — native pinch-to-zoom on touch devices.
-  // Captures the pinch gesture on the scroll container and updates
-  // `scale` state, so react-pdf re-renders the page at the new scale
-  // (sharp text, not CSS-scaled rasterized canvas). Solves both the
-  // "no pinch on iPhone" bug and the "browser pinch = pixelated text"
-  // bug with one change.
+  // 2026-05-10 hotfix-5 — keep scaleRef in sync with scale state.
+  // The pinch handler reads from this ref (NOT from the `scale`
+  // closure) so it always sees the current value, regardless of
+  // whether @use-gesture's internal binding has been re-evaluated.
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+
+  // 2026-05-10 hotfix-5 — PATTERN B (explicit ref + first flag).
   //
-  // PATTERN A — `from` config: offset[0] is treated as the absolute
-  // current pinch state, anchored to the scale value at gesture start
-  // (returned by `from`). NOT a multiplier. This avoids the
-  // exponential-drift bug where `scale * offset[0]` compounds each
-  // frame because offset is itself cumulative-from-gesture-start.
+  // Hotfix-4's PATTERN A (`from: () => [scale ?? 1.0, 0]`) had two
+  // regressions on real iPhone:
+  //   1. Pinch didn't fire at all (iOS GestureEvent path suppressed
+  //      in Capacitor WKWebView when content sits in a scroll container
+  //      with custom touch-action).
+  //   2. Single touch on the canvas reset scale to fit (~15%) —
+  //      @use-gesture appears to cache the bound config and not
+  //      re-evaluate `from()` after re-renders, so `from()` kept
+  //      returning the INITIAL fit-scale.
+  //
+  // PATTERN B reads scale from `scaleRef.current` (updated every render
+  // via useEffect, see above). On gesture start (`first` flag), we
+  // capture the live ref value into gestureStartScaleRef, then multiply
+  // by the cumulative `offset[0]` each frame to compute the new
+  // absolute scale. Same math as PATTERN A, but immune to closure
+  // staleness and config-caching.
+  //
+  // ALSO: `pointer: { touch: true }` forces the cross-platform Touch
+  // Event code path. Default uses iOS GestureEvent which is sometimes
+  // suppressed on Capacitor WKWebView. Touch Events are what Android
+  // already uses; standardizing on them gives consistent behavior.
+  //
+  // Debug log: helps verify the handler IS firing on iPhone/Android.
+  // Wrapped in `process.env.NODE_ENV !== 'production'` so CRA's
+  // build-time DefinePlugin substitutes the string and the minifier
+  // strips the entire `if` block from the production bundle. No manual
+  // "remember to remove" step, no risk of log shipping to prod.
+  //
   // Bounds [0.1, 4.0] match the +/- button bounds (hotfix-1). Rubberband
   // gives soft-bounce feedback at the edges. eventOptions.passive=false
   // is required so we can preventDefault to suppress browser-native
   // pinch on iOS Safari edge cases.
+  const gestureStartScaleRef = useRef(1.0);
   usePinch(
-    ({ offset: [s], event }) => {
+    ({ offset: [s], first, event, type }) => {
       if (event && event.cancelable) event.preventDefault();
-      setScale(Math.min(Math.max(s, 0.1), 4.0));
+      if (first) {
+        gestureStartScaleRef.current = scaleRef.current ?? 1.0;
+      }
+      const next = gestureStartScaleRef.current * s;
+      const clamped = Math.min(Math.max(next, 0.1), 4.0);
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.log('[PlanViewer pinch]', {
+          type, first, offset_s: s,
+          startScale: gestureStartScaleRef.current,
+          liveScale: scaleRef.current,
+          nextClamped: clamped,
+        });
+      }
+      setScale(clamped);
     },
     {
       target: containerRef,
       eventOptions: { passive: false },
       scaleBounds: { min: 0.1, max: 4.0 },
       rubberband: true,
-      from: () => [scale ?? 1.0, 0],
+      pointer: { touch: true },
     }
   );
 
