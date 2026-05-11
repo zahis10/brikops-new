@@ -360,8 +360,13 @@ export default function BuildingQCPage() {
             const showQuality = quality && quality.label !== qcFloorStatusLabel(status);
             const qd = qcStatuses[floor.id];
             const failCount = qd?.fail_count || 0;
-            const floorTotal = qd?.total || 0;
-            const floorPass = qd?.pass_count || 0;
+            // BATCH E (2026-05-11) — prefer stage_summary (includes
+            // unit-scope stages); fall back to legacy item counts if
+            // backend hasn't been upgraded (rolling-deploy safety).
+            // Display label at L400 already says "שלבים".
+            const stageSummary = qd?.stage_summary || null;
+            const floorTotal = stageSummary?.total_stages ?? (qd?.total || 0);
+            const floorPass = stageSummary?.approved_stages ?? (qd?.pass_count || 0);
             const floorPct = floorTotal > 0 ? Math.round((floorPass / floorTotal) * 100) : 0;
             const floorAccent = failCount > 0 ? 'border-r-4 border-red-400'
               : status === 'in_progress' ? 'border-r-4 border-amber-400'

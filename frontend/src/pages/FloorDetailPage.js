@@ -209,9 +209,16 @@ export default function FloorDetailPage() {
     return pctB - pctA;
   });
 
-  const totalDone = stages.reduce((s, st) => s + st.done, 0);
-  const totalItems = stages.reduce((s, st) => s + st.total, 0);
-  const totalPct = totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
+  // BATCH E (2026-05-11) — count stages, not items, and include
+  // unit-scope stages via backend's stage_summary block. Old item-count
+  // display lied: floors with 100% of floor-scope items pass but 0/5
+  // units done on unit-scope stages still showed "100%".
+  // Fallback to floor-scope-only stage counts if backend hasn't been
+  // upgraded yet (rolling-deploy safety).
+  const stageSummary = data?.stage_summary || null;
+  const totalStages = stageSummary?.total_stages ?? stages.length;
+  const approvedStages = stageSummary?.approved_stages ?? stages.filter(s => s.computed_status === 'approved').length;
+  const totalPct = totalStages > 0 ? Math.round((approvedStages / totalStages) * 100) : 0;
   const floorVisual = getFloorVisualStatus(stages);
   const floorQBadge = getFloorQualityBadge(stages);
 
@@ -255,7 +262,7 @@ export default function FloorDetailPage() {
               </button>
               <div className="text-left">
                 <div className={`text-lg font-bold ${floorVisual.pctColor}`}>{totalPct}%</div>
-                <div className="text-[10px] text-slate-400">{totalDone}/{totalItems}</div>
+                <div className="text-[10px] text-slate-400">{approvedStages}/{totalStages} שלבים</div>
               </div>
             </div>
           </div>

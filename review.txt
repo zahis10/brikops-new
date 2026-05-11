@@ -1,396 +1,558 @@
 ================================================================================
-BATCH A+C+D — Combined sweep: 4 UX bugs (#28, #30, #31, #34)
+BATCH E — Floor summary includes unit-scope stages (P1 — DATA ACCURACY)
 ================================================================================
 Date:           2026-05-11
 Branch:         staging  (NOT main)
-Severity:       P2 — 4 UX bugs from real-device testing. None block
-                workflow but all degrade trust/usability.
-Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+Severity:       P1 — DATA ACCURACY bug.
+                Floor summary, percentage, and "תקין" badge were
+                calculated only from floor-scope stages. Unit-scope
+                stages were excluded entirely.
 
-Bugs in scope:
-  #28 — Unit list lex sort: "10, 11, 7, 8, 9" instead of "7, 8, 9, 10, 11"
-        (confirmed by Zahi's screenshot of floor 0).
-  #30 — Unit-scope stages displayed on floors with 0 units (e.g. floor
-        -3 mechanical) showing meaningless "0/0 דירות הושלמו" cards.
-        Confirmed by Zahi's screenshot of floor -3.
-  #31 — Back arrow on StageDetailPage skips UnitQCSelectionPage and
-        jumps to FloorDetailPage. PM loses stage context, has to re-
-        click. Confirmed by Zahi's URL trace.
-  #34 — On iPhone Safari + Capacitor WebView, header row of unit card
-        overflows on long unit names + status badges, causing page-
-        level horizontal scroll.
+                Real-world impact (Zahi screenshot of floor 0):
+                "100% / 16/16 / תקין" displayed — but 5 of 6 unit-scope
+                stages had 0/5 דירות הושלמו. Dashboard lied. PM lost
+                trust, manually walked every floor to verify.
+
+Approach:       (per Zahi's choice on 2026-05-11)
+                STRICT (Option A): floor "approved" only when ALL
+                stages (floor-scope AND unit-scope) are approved AND
+                every unit in every unit-scope stage is approved.
+
+                STAGE-BASED COUNT (Option 2): summary shows count of
+                stages, not items. Each stage = 1 unit of work
+                regardless of how many QC items / units it contains.
+
+Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
 Files changed:  Backend:
                   - backend/contractor_ops/qc_router.py
-                    (1 import line + 1 sort line — 2 LOC)
+                    (~165 LOC added/modified: 4 helpers + 2 endpoint
+                     modifications + qc_items batch pre-fetch)
                 Frontend:
-                  - frontend/src/pages/UnitQCSelectionPage.js
-                    (3 locations: sort tail, overflow class, header row
-                     truncate/shrink classes — ~14 LOC)
-                  - frontend/src/pages/StageDetailPage.js
-                    (replace goBack body with URL-based idempotent
-                     query construction + try/catch — ~22 LOC)
                   - frontend/src/pages/FloorDetailPage.js
-                    (1 inline .filter() insertion — 1 LOC)
-                Total: 4 files, ~39 LOC.
-
-All 4 fixes are independent — no shared file across categories. Combined
-into a single batch because Zahi prefers one deploy / smoke pass.
-
-================================================================================
-STEP 0 — PRE-FLIGHT (10 checks PASS)
-================================================================================
-
-──────────────────  Bug #28 — Unit lex sort ──────────────────
-
-1. Backend lex sort confirmed at qc_router.py:1028 (spec said L911 —
-   stale; actual location verified):
-   $ grep -n "units.sort" backend/contractor_ops/qc_router.py
-   →  1028: units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
-   ✓ Lex sort exists. Will replace with natural sort.
-
-2. _natural_sort_key helper exists in projects_router.py:112 — REUSE:
-   $ grep -n "def _natural_sort_key" backend/contractor_ops/projects_router.py
-   →  112: def _natural_sort_key(name: str):
-   ✓ Helper available; no need to duplicate.
-
-3. No circular import risk:
-   $ grep -n "from .qc_router\|from contractor_ops.qc_router" \
-       backend/contractor_ops/projects_router.py
-   →  (empty)
-   ✓ Safe to add `from contractor_ops.projects_router import _natural_sort_key`
-     in qc_router.py.
-
-4. UnitQCSelectionPage produces Map.values() in insertion order at L165
-   (spec said L140 — stale; actual location verified):
-   $ grep -n "Array.from(unitAggMap" frontend/src/pages/UnitQCSelectionPage.js
-   →  165: const units = Array.from(unitAggMap.values()).map(u => {
-   ✓ No sort applied — relies on backend order. Even with backend fix,
-     stage-aggregation re-orders by which stage first introduced each
-     unit, so explicit frontend sort is required.
-
-──────────────────  Bug #34 — Card / header overflow ──────────────────
-
-5. UnitQCSelectionPage outer wrapper missing overflow-x-hidden at L181
-   (spec said L156 — stale; actual location verified):
-   $ grep -n "min-h-screen bg-slate-50" frontend/src/pages/UnitQCSelectionPage.js
-   →  181: <div className="min-h-screen bg-slate-50">
-   ✓ No horizontal overflow guard.
-
-6. Card header row uses flex with no min-w-0/truncate/flex-shrink-0,
-   anchored at L220 (spec said L207 — stale; actual location verified):
-   $ grep -n "STATUS_ICONS\[unit" frontend/src/pages/UnitQCSelectionPage.js
-   →  220: const Icon = STATUS_ICONS[unit.status] || AlertCircle;
-   ✓ Header flex container immediately follows at L232 (BEFORE block):
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            ...icons + name span without truncate...
-
-──────────────────  Bug #31 — Stage back-nav ──────────────────
-
-7. goBack ignores returnToPath at StageDetailPage.js:1603-1607 (matches
-   spec exactly):
-   $ sed -n '1603,1607p' frontend/src/pages/StageDetailPage.js
-   →  1603: const goBack = () => {
-   →  1604:   const url = `/projects/${projectId}/floors/${floorId}`;
-   →  1605:   const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
-   →  1606:   navigate(withFrom);
-   →  1607: };
-   ✓ Bug confirmed. returnToPath read at L766 but never used.
-
-8. Required variables in scope for new goBack body:
-   $ grep -n "stageId\b\|returnToPath\|fromParam\|projectId\|floorId" \
-       frontend/src/pages/StageDetailPage.js | head -10
-   →  758: const { projectId, floorId, runId, stageId } = useParams();
-   →  762: const fromParam = searchParams.get('from');
-   →  766: const returnToPath = navState.returnTo || '';
-   ✓ stageId, fromParam, projectId, floorId, returnToPath all available
-     in goBack closure. URL constructor is browser-native (no import).
-
-──────────────────  Bug #30 — Empty unit-scope stages ──────────────────
-
-9. Unit-scope stages render at FloorDetailPage.js:301 (matches spec):
-   $ grep -n "unitsStatus.stages.length > 0" \
-       frontend/src/pages/FloorDetailPage.js
-   →  301: {unitsStatus && Array.isArray(unitsStatus.stages) &&
-   →       unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
-   ✓ Confirmed map location.
-
-10. unitStage.total_units field exists at L302:
-    $ grep -n "total_units" frontend/src/pages/FloorDetailPage.js
-    →  302: const total = unitStage.total_units || 0;
-    ✓ Field available — safe to filter on `(s.total_units || 0) > 0`.
+                    (~10 LOC: replace item-count display with
+                     stage-count "X/Y שלבים" + comment)
+                  - frontend/src/pages/BuildingQCPage.js
+                    (~8 LOC: prefer stage_summary, legacy fallback)
+                Total: 3 files, ~183 LOC.
 
 ================================================================================
-LOCATION 1.1 — qc_router.py: import _natural_sort_key
+SCOPE — what's IN, what's OUT
 ================================================================================
-@@ backend/contractor_ops/qc_router.py (top of file, after existing
-   from contractor_ops.* import block)
-   from contractor_ops.upload_safety import validate_upload, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_IMAGE_TYPES
-+  from contractor_ops.projects_router import _natural_sort_key
+
+IN this batch:
+  ✅ 4 backend helpers: _aggregate_unit_stages_in_memory (pure),
+     _compute_unit_scope_stage_statuses (per-floor, 2 queries),
+     _compute_unit_scope_stage_statuses_batch (multi-floor, 2 queries
+     TOTAL), _build_stage_summary.
+  ✅ /qc/floors/{floor_id}/run — combines floor + unit stages_data
+     for badge; adds stage_summary block.
+  ✅ /qc/floors/batch-status — batched unit-stage + qc_items pre-fetch
+     (4 queries TOTAL vs ~40 in the old per-floor loop); same
+     combine + stage_summary.
+  ✅ FloorDetailPage — display "X/Y שלבים" using stage_summary;
+     "100%" big number now driven by stage-based pct.
+  ✅ BuildingQCPage — swap qd.pass_count / qd.total → stage_summary
+     fields; display label already "שלבים".
+  ✅ Backward compat: stage_summary is additive. Frontend falls back
+     to legacy item counts for rolling-deploy safety.
+
+OUT of this batch (deferred, per spec):
+  ❌ The 3-box "X הושלמו / Y נכשלו / Z בהמתנה" SummaryCard on
+     FloorDetailPage. Still uses item-level summary. Different UI
+     concept. Follow-up if needed.
+  ❌ ProjectControlPage / QCFloorSelectionPage / ProjectDashboardPage
+     summary blocks. They consume getFloorsBatchStatus and get the
+     corrected `badge` for free; their item-level totals (if shown)
+     handled case-by-case later.
+  ❌ Migration / recompute. Badge is computed on-demand at every
+     request — no DB write needed.
+  ❌ StageDetailPage refresh-tab support — already deferred from
+     Batch ACD. Independent issue.
 
 ================================================================================
-LOCATION 1.2 — qc_router.py:1028 — replace lex sort with natural sort
+DEFINITIONS — what each status means
+================================================================================
+
+For a UNIT-SCOPE stage on a given floor (e.g. "ריצוף דירה" with 5 units):
+  - "rejected"     ⟺ ANY unit has rejected status (PRIORITY — wins over
+                     all other states. Rejected = work failed QC,
+                     needs redo, NOT progress.)
+  - "approved"     ⟺ ALL units approved AND no rejections AND total > 0
+  - "in_progress"  ⟺ ≥1 unit has approved or active status; not all
+                     approved; no rejections
+  - "not_started"  ⟺ Zero units have any progress
+  - "is_empty"     ⟺ No QC items in template — excluded entirely
+  - "no_units"     ⟺ Floor with 0 units — excluded entirely (also
+                     overlaps with Batch D's filter; both safe)
+
+For the FLOOR's badge (delegated to existing _compute_floor_badge):
+  - "approved"      ⟺ ALL stages (floor + unit, non-empty) approved
+  - "rejected"      ⟺ ANY stage rejected (propagates from unit-stage)
+  - "pending_review"⟺ At least one stage pending_review
+  - "in_progress"   ⟺ At least one stage has progress; not all approved
+  - "not_started"   ⟺ All stages have zero progress
+
+================================================================================
+STEP 0 — PRE-FLIGHT (5 PASS — actual line numbers verified)
+================================================================================
+
+Spec line numbers were stale (reflected an earlier checkout). Real
+locations confirmed by grep before changes:
+
+1. batch-status excluded scope=unit:
+   $ grep -n 'scope.*\$ne.*unit' backend/contractor_ops/qc_router.py
+   →  L1041 (current): {"floor_id": {"$in": ids}, "scope": {"$ne":"unit"}}
+      (spec said L1761 — stale)
+   ✓ Confirmed unit-scope runs were excluded in batch-status.
+
+2. Template filter floor-only inside batch loop:
+   $ grep -nE 'floor_stages = \[s for s' backend/contractor_ops/qc_router.py
+   →  L2066 (inside the batch-status per-floor loop)
+      (spec said L1787 — stale)
+   ✓ Confirmed unit-scope stages were filtered out at template level too.
+
+3. get_floor_run effective_stages floor-only:
+   $ grep -n 'effective_stages = .* floor.*scope' backend/contractor_ops/qc_router.py
+   →  L759 (current)  (spec said L642 — stale)
+   ✓ Same filter at the per-floor detail endpoint.
+
+4. units-status returns approved_units / total_units:
+   $ grep -nC 1 'approved_units = sum' backend/contractor_ops/qc_router.py
+   →  L1129 (spec said L1011 — stale; logic identical)
+   ✓ Per-stage approved_units/total_units available — could derive
+     "stage_approved" but we use the canonical aggregator instead.
+
+5. Frontend consumers:
+   →  BuildingQCPage.js L361-365 — uses qd.pass_count, qd.total
+   →  FloorDetailPage.js L177 destructures `summary` from getFloorRun;
+      L212-213 derives totalDone/totalItems from stages[].done/total
+   ✓ Both consumers identified. Both updated.
+
+Bonus check — _compute_floor_badge already shape-agnostic:
+   $ grep -n 'def _compute_floor_badge' backend/contractor_ops/qc_router.py
+   →  L568. Inspected body — accepts ANY stages_data list with
+      `computed_status` field. NO CHANGE NEEDED to the badge function;
+      we just feed it the COMBINED list (floor + unit). Spec L361-368
+      flagged this correctly.
+
+Bonus check — _compute_stage_status helper exists:
+   $ grep -n 'def _compute_stage_status' backend/contractor_ops/qc_router.py
+   →  L535. Used at L777, L947, L1204, L2074 (inside batch-status loop).
+      Reused as-is for floor-scope items inside the modified loop.
+
+================================================================================
+LOCATION 1 — qc_router.py: insert 4 helpers (after _compute_floor_badge)
 ================================================================================
 @@ backend/contractor_ops/qc_router.py
--  units.sort(key=lambda u: u.get("unit_no", u.get("name", "")))
-+  units.sort(key=lambda u: _natural_sort_key(u.get("unit_no") or u.get("name") or ""))
-
-Effect on display ("1", "2", "10", "20", "A1", "A10"):
-- BEFORE: 1, 10, 2, 20, A1, A10  (lex)
-- AFTER:  1, 2, 10, 20, A1, A10  (natural)
-
-================================================================================
-LOCATION 2.1 — UnitQCSelectionPage.js:165 — append .sort() to aggregate
-================================================================================
-@@ frontend/src/pages/UnitQCSelectionPage.js
-   const units = Array.from(unitAggMap.values()).map(u => {
-     ...
-     return { ...rest, status };
--  });
-+  }).sort((a, b) => {
-+    // Natural sort (numeric-aware). "10" sorts after "2", not after "1".
-+    // Hebrew locale for predictable "ק-901" ordering.
-+    const aKey = String(a.unit_no || a.unit_name || '');
-+    const bKey = String(b.unit_no || b.unit_name || '');
-+    return aKey.localeCompare(bKey, 'he', { numeric: true });
-+  });
-
-================================================================================
-LOCATION 2.2 — UnitQCSelectionPage.js:181 — add overflow-x-hidden
-================================================================================
-@@ frontend/src/pages/UnitQCSelectionPage.js
--  <div className="min-h-screen bg-slate-50">
-+  <div className="min-h-screen bg-slate-50 overflow-x-hidden">
-
-================================================================================
-LOCATION 2.3 — UnitQCSelectionPage.js:~232 — header row truncate/shrink
-================================================================================
-@@ frontend/src/pages/UnitQCSelectionPage.js (5 class additions)
--  <div className="flex items-center justify-between mb-2">
--    <div className="flex items-center gap-2">
-+  <div className="flex items-center justify-between mb-2 gap-2">
-+    <div className="flex items-center gap-2 min-w-0 flex-1">
-       {isNavigating ? (
--        <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
-+        <Loader2 className="w-4 h-4 animate-spin text-amber-500 flex-shrink-0" />
-       ) : (
--        <Home className="w-4 h-4 text-slate-400" />
-+        <Home className="w-4 h-4 text-slate-400 flex-shrink-0" />
-       )}
--      <span className="text-sm font-bold text-slate-700">
-+      <span className="text-sm font-bold text-slate-700 truncate">
-         {unit.unit_name || `דירה ${unit.unit_no}`}
-       </span>
-     </div>
--    <div className="flex items-center gap-2">
-+    <div className="flex items-center gap-2 flex-shrink-0">
-       <span className={`inline-flex items-center gap-1 ...`}>...</span>
-       <span className="text-xs ...">{unit.handled_count}/{unit.total}</span>
-     </div>
-   </div>
-
-Changes summary:
-- outer flex:  + gap-2 (separation when truncated)
-- left group:  + min-w-0 flex-1 (allows shrink + truncate)
-- icons:       + flex-shrink-0 (icons stay fixed size)
-- unit name:   + truncate (ellipsis when overflow)
-- right group: + flex-shrink-0 (badge + count always visible)
-
-================================================================================
-LOCATION 3.1 — StageDetailPage.js:1603 — replace goBack body
-================================================================================
-@@ frontend/src/pages/StageDetailPage.js
-   const goBack = () => {
-+    // 2026-05-11 batch-acd #31 — respect returnToPath when source page
-+    // (e.g. UnitQCSelectionPage) sent it via React Router state. Use
-+    // URL.searchParams.set() for idempotent query handling so we never
-+    // produce duplicate stage_id/from keys even if returnToPath gains
-+    // pre-existing query params in the future. Fallback path is
-+    // bit-for-bit identical to the original behavior.
-+    if (returnToPath) {
-+      try {
-+        const parsed = new URL(returnToPath, window.location.origin);
-+        if (stageId) parsed.searchParams.set('stage_id', stageId);
-+        if (fromParam === 'qc') parsed.searchParams.set('from', 'qc');
-+        navigate(`${parsed.pathname}${parsed.search}${parsed.hash}`);
-+      } catch (parseErr) {
-+        // eslint-disable-next-line no-console
-+        console.warn('[StageDetailPage goBack] URL parse failed; using plain navigate', parseErr);
-+        navigate(returnToPath);
+   (after `_compute_floor_badge` at L568-608, before `_resolve_photo_url`)
++
++  # BATCH E (2026-05-11) — Unit-scope stage aggregation helpers
++  # Status priority: rejected > approved > in_progress > not_started.
++  # Rejected = work failed QC, NOT progress; ANY rejection on ANY
++  # unit propagates to the stage's badge and from there to the floor
++  # badge via _compute_floor_badge (which already treats "rejected"
++  # as winning).
++
++  def _aggregate_unit_stages_in_memory(project_tpl, unit_ids, runs_by_unit):
++      """Pure function — no DB. Shared between per-floor and batch
++      versions so logic stays single-sourced. Output shape mirrors
++      floor-scope stages_data so _compute_floor_badge can consume the
++      combined list directly.
++      """
++      unit_stages = [s for s in project_tpl["stages"]
++                     if s.get("scope") == "unit"
++                     and len(s.get("items", [])) > 0]
++      total_units = len(unit_ids)
++      stages_data = []
++      for stage in unit_stages:
++          stage_id = stage["id"]
++          approved = in_progress = not_started = rejected = 0
++          for unit_id in unit_ids:
++              run = runs_by_unit.get(unit_id)
++              if not run:
++                  not_started += 1
++                  continue
++              stage_status = run.get("stage_statuses", {}).get(stage_id, "draft")
++              if stage_status == "approved":
++                  approved += 1
++              elif stage_status == "rejected":
++                  rejected += 1
++              elif stage_status in ("draft", "not_started"):
++                  not_started += 1
++              else:
++                  in_progress += 1
++          if rejected > 0:
++              computed = "rejected"
++          elif approved == total_units and total_units > 0:
++              computed = "approved"
++          elif approved == 0 and in_progress == 0:
++              computed = "not_started"
++          else:
++              computed = "in_progress"
++          stages_data.append({
++              "id": stage_id,
++              "done": approved + in_progress + rejected,
++              "computed_status": computed,
++              "_scope": "unit",
++              "_approved_units": approved,
++              "_in_progress_units": in_progress,
++              "_not_started_units": not_started,
++              "_rejected_units": rejected,
++              "_total_units": total_units,
++          })
++      return stages_data
++
++  async def _compute_unit_scope_stage_statuses(db, project_tpl, floor_id, floor=None):
++      """Per-floor version. 2 DB queries (units + unit-runs).
++      Returns [] when the floor has no units (overlaps with Batch D's
++      empty-stage filter — both safe)."""
++      ...  # (queries floor->units, then unit-scope runs, then aggregate)
++
++  async def _compute_unit_scope_stage_statuses_batch(db, project_tpl, floor_ids):
++      """Batch version. 2 DB queries TOTAL regardless of N floors.
++      Replaces what would have been N*2 round trips inside the
++      per-floor loop in batch-status."""
++      ...  # (single $in on floor_id, single $in on unit_id, then aggregate per-floor)
++
++  def _build_stage_summary(floor_stages_data, unit_stages_data):
++      """Returns: {total_stages, approved_stages, in_progress_stages,
++      not_started_stages, pending_review_stages (rolls up
++      pending_review + submitted), rejected_stages}."""
++      all_stages = floor_stages_data + unit_stages_data
++      return {
++          "total_stages": len(all_stages),
++          "approved_stages": sum(1 for s in all_stages if s["computed_status"] == "approved"),
++          ...
 +      }
-+      return;
-+    }
-+    // FALLBACK: returnToPath empty (refresh wiped state, deep link, or
-+    // floor-scope stage). Original behavior — go to FloorDetailPage.
-+    // Refresh-tab recovery is a known limitation, deferred to future batch.
-     const url = `/projects/${projectId}/floors/${floorId}`;
-     const withFrom = fromParam === 'qc' ? `${url}?from=qc` : url;
-     navigate(withFrom);
-   };
-
-Why URL.searchParams.set() is the right tool:
-- `.set(key, value)` REPLACES existing key if present; never duplicates.
-- Compare with string-concat `${path}?stage_id=${new}` which would
-  produce `path?stage_id=old&stage_id=new` if path already had it
-  (pattern exists across codebase via ProjectControlPage.js:3897 and
-  ProjectTasksPage.js:528).
-- Browser-native, no dependencies, fully supported in all targets
-  (Capacitor WebView = iOS Safari).
-
-Why try/catch:
-- `new URL()` throws on malformed input (rare for our paths but cheap
-  insurance). console.warn for observability without breaking nav.
-
-KNOWN LIMITATION (documented, not fixed in this batch):
-If user refreshes browser tab on StageDetailPage, location.state is
-wiped → returnToPath empty → falls back to FloorDetailPage. Same as
-today's behavior. Future batch can add runData.scope + building_id
-support for refresh recovery.
 
 ================================================================================
-LOCATION 4.1 — FloorDetailPage.js:301 — single .filter() insertion
+LOCATION 2 — qc_router.py: get_or_create_floor_run endpoint (L685)
+================================================================================
+@@ backend/contractor_ops/qc_router.py (around the return at ~L800)
+   total_items = total_pass + total_fail + total_pending
+-  floor_badge = _compute_floor_badge(stages_out, stage_statuses)
++
++  # BATCH E (2026-05-11) — include unit-scope stages in floor badge
++  # and add stage_summary block. Existing `floor_badge` field becomes
++  # CORRECT for free; consumers reading it get the fix automatically.
++  floor_stages_data = [
++      {"id": s["id"], "done": s.get("done", 0),
++       "computed_status": s.get("computed_status", "draft"),
++       "_scope": "floor"}
++      for s in stages_out
++  ]
++  unit_stages_data = await _compute_unit_scope_stage_statuses(
++      db, tpl, floor_id, floor=floor
++  )
++  combined_stages_data = floor_stages_data + unit_stages_data
++  floor_badge = _compute_floor_badge(combined_stages_data, stage_statuses)
++  stage_summary = _build_stage_summary(floor_stages_data, unit_stages_data)
+
+   return {
+       ...
+       "summary": {...},
++      "stage_summary": stage_summary,
+       "floor_badge": floor_badge,
+   }
+
+================================================================================
+LOCATION 3 — qc_router.py: /qc/floors/batch-status endpoint (L1998)
+================================================================================
+@@ backend/contractor_ops/qc_router.py (the per-floor loop)
+   runs = await db.qc_runs.find(...).to_list(500)
+   runs_by_floor = {r["floor_id"]: r for r in runs}
+   project_tpl = await _get_template(db, project_id=project_id)
++
++  # BATCH E (2026-05-11) — pre-fetch unit-scope stage statuses for
++  # ALL floors in 2 DB queries (vs N*2 in the per-floor loop).
++  unit_stages_by_floor = await _compute_unit_scope_stage_statuses_batch(
++      db, project_tpl, ids
++  )
++
++  # BATCH E (2026-05-11) — pre-fetch qc_items for ALL floor-scope runs
++  # in a single $in query (vs N queries inside the per-floor loop).
++  run_ids = [r["id"] for r in runs]
++  items_by_run_and_stage = {}
++  if run_ids:
++      all_items = await db.qc_items.find(
++          {"run_id": {"$in": run_ids}},
++          {"_id": 0, "run_id": 1, "stage_id": 1, "status": 1, "photos": 1, "note": 1, "item_id": 1}
++      ).to_list(5000)
++      for it in all_items:
++          key = (it.get("run_id"), it.get("stage_id"))
++          items_by_run_and_stage.setdefault(key, []).append(it)
+
+   result = {}
+   for fid in ids:
+       run = runs_by_floor.get(fid)
++      unit_stages_data = unit_stages_by_floor.get(fid, [])
++
+       if not run:
+-          result[fid] = {"badge": "not_started", "pass_count": 0, "fail_count": 0, "total": 0}
++          # No floor-scope run yet — but unit-scope stages might still
++          # have progress. Compute badge from unit stages alone.
++          badge = _compute_floor_badge(unit_stages_data, {}) if unit_stages_data else "not_started"
++          stage_summary = _build_stage_summary([], unit_stages_data)
++          result[fid] = {
++              "badge": badge, "pass_count": 0, "fail_count": 0, "total": 0,
++              "stage_summary": stage_summary,
++          }
+           continue
+
+-      run_items = await db.qc_items.find({"run_id": run["id"]}, ...).to_list(500)
+-      items_by_stage = {}
+-      for it in run_items:
+-          items_by_stage.setdefault(it.get("stage_id"), []).append(it)
++      # Read pre-fetched items (no DB call inside loop).
++      items_by_stage = {}
++      for stage_id_iter in (s["id"] for s in project_tpl["stages"]):
++          items_by_stage[stage_id_iter] = items_by_run_and_stage.get(
++              (run["id"], stage_id_iter), []
++          )
+
+       stage_statuses = run.get("stage_statuses", {})
+       tpl = project_tpl
+       floor_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
+-      stages_data = []
++      floor_stages_data = []
+       ...
+       for stage in floor_stages:
+           ...
+-          stages_data.append({"id": stage["id"], "done": done_count, "computed_status": computed})
++          floor_stages_data.append({"id": stage["id"], "done": done_count,
++                                    "computed_status": computed, "_scope": "floor"})
+
+-      badge = _compute_floor_badge(stages_data, stage_statuses)
++      # Combine floor + unit stages_data so _compute_floor_badge sees
++      # the full picture. Rejected priority propagates from unit-stage
++      # rejection up to floor badge.
++      combined_stages_data = floor_stages_data + unit_stages_data
++      badge = _compute_floor_badge(combined_stages_data, stage_statuses)
++      stage_summary = _build_stage_summary(floor_stages_data, unit_stages_data)
+
+       result[fid] = {
+-          "badge": badge, "pass_count": total_pass, "fail_count": total_fail, "total": total_items,
++          "badge": badge, "pass_count": total_pass, "fail_count": total_fail,
++          "total": total_items, "stage_summary": stage_summary,
+       }
+
+================================================================================
+LOCATION 4 — FloorDetailPage.js (L212-214 derive + L258 display)
 ================================================================================
 @@ frontend/src/pages/FloorDetailPage.js
--  {... unitsStatus.stages.length > 0 && unitsStatus.stages.map(unitStage => {
-+  {... unitsStatus.stages.length > 0 && unitsStatus.stages.filter(s => (s.total_units || 0) > 0).map(unitStage => {
+-  const totalDone = stages.reduce((s, st) => s + st.done, 0);
+-  const totalItems = stages.reduce((s, st) => s + st.total, 0);
+-  const totalPct = totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
++  // BATCH E (2026-05-11) — count stages, not items, and include
++  // unit-scope stages via backend's stage_summary block. Old item-count
++  // display lied: floors with 100% of floor-scope items pass but 0/5
++  // units done on unit-scope stages still showed "100%".
++  // Fallback to floor-scope-only stage counts if backend hasn't been
++  // upgraded yet (rolling-deploy safety).
++  const stageSummary = data?.stage_summary || null;
++  const totalStages = stageSummary?.total_stages ?? stages.length;
++  const approvedStages = stageSummary?.approved_stages ?? stages.filter(s => s.computed_status === 'approved').length;
++  const totalPct = totalStages > 0 ? Math.round((approvedStages / totalStages) * 100) : 0;
+   const floorVisual = getFloorVisualStatus(stages);
 
-Effect:
-- Floor WITH units → filter passes → all stages render as before.
-- Floor with 0 units (e.g. floor -3 mechanical) → unit-scope stages
-  hidden entirely; only floor-scope stages visible.
+@@ (display, ~L258)
+-  <div className="text-[10px] text-slate-400">{totalDone}/{totalItems}</div>
++  <div className="text-[10px] text-slate-400">{approvedStages}/{totalStages} שלבים</div>
+
+The "100%" big number stays — driven by new totalPct (now stage-based).
+
+================================================================================
+LOCATION 5 — BuildingQCPage.js (L361-365)
+================================================================================
+@@ frontend/src/pages/BuildingQCPage.js
+   const qd = qcStatuses[floor.id];
+   const failCount = qd?.fail_count || 0;
+-  const floorTotal = qd?.total || 0;
+-  const floorPass = qd?.pass_count || 0;
++  // BATCH E (2026-05-11) — prefer stage_summary (includes unit-scope
++  // stages); fall back to legacy item counts if backend hasn't been
++  // upgraded (rolling-deploy safety). Display label at L400 already
++  // says "שלבים".
++  const stageSummary = qd?.stage_summary || null;
++  const floorTotal = stageSummary?.total_stages ?? (qd?.total || 0);
++  const floorPass = stageSummary?.approved_stages ?? (qd?.pass_count || 0);
+   const floorPct = floorTotal > 0 ? Math.round((floorPass / floorTotal) * 100) : 0;
+
+L400 display unchanged — already reads "{floorPass}/{floorTotal} שלבים".
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ Sort logic outside qc_router.py:1028 — backend hierarchy at
-     projects_router.py already sorts by sort_index correctly.
-- ❌ ExecutionMatrixPage.js / ProjectControlPage.js — use hierarchy
-     directly, no per-page sort issue.
-- ❌ Local _natural_sort_key duplicate in qc_router.py — re-uses
-     projects_router.py:112 per CLAUDE.md "no local duplicates".
-- ❌ Progress bar fill div, max-w-2xl, sticky header, status badge
-     colors in UnitQCSelectionPage.
-- ❌ navState.scope / unitName / isUnitMode in StageDetailPage —
-     unrelated, used for UI labels.
-- ❌ Error state UI at StageDetailPage L1622, L1633.
-- ❌ Floor-scope stages render at FloorDetailPage:284 — separate map,
-     unaffected by Location 4.1.
-- ❌ Backend `is_empty` flag — different concept (no template items),
-     stays. Different from "no units on floor".
+- ❌ _compute_floor_badge body (L568-608) — already shape-agnostic.
+     Spec L361-368 confirmed.
+- ❌ _compute_stage_status (L535) — works correctly for floor-scope
+     items, no change needed. Reused at L2074/2288 inside the loop.
+- ❌ SummaryCard component on FloorDetailPage. Uses summary.total/pass/
+     fail/pending — item-level counts. Different UI concept. Stays.
+- ❌ Stage cards on FloorDetailPage (each card shows "X/Y דירות
+     הושלמו" for unit-scope or item-level for floor-scope). Per-stage
+     UI unchanged.
+- ❌ getFloorVisualStatus / getFloorQualityBadge in qcVisualStatus.js.
+     Continue to operate on `stages` array. Where backend's
+     `floor_badge` is authoritative (BuildingQCPage), we prefer the
+     backend value via qcStatuses[id].badge.
+- ❌ getFloorRun signature / other response fields — additive only.
+- ❌ ProjectControlPage / QCFloorSelectionPage / ProjectDashboardPage
+     summary blocks (out of scope; their badges fix automatically).
+- ❌ StageDetailPage refresh-tab handling — separate deferred limitation.
+- ❌ Sort logic, trade-emoji map, navigation logic on FloorDetailPage.
+- ❌ Unit run creation/upgrade paths, _ensure_inline_prework_items,
+     _backfill_missing_items, _enrich_items.
 
 ================================================================================
 VERIFY 1 — Backend import sanity
 ================================================================================
-$ cd backend && python -c "from contractor_ops.qc_router import *"
+$ cd backend && python -c "from contractor_ops.qc_router import \\
+    _compute_unit_scope_stage_statuses, \\
+    _compute_unit_scope_stage_statuses_batch, \\
+    _aggregate_unit_stages_in_memory, \\
+    _build_stage_summary; print('ALL_HELPERS_IMPORTED_OK')"
+
    →  [SA_PHONES] count=2 source=SUPER_ADMIN_PHONES phones=****9991,****0001
+   →  ALL_HELPERS_IMPORTED_OK
    →  EXIT=0
-   ✓ No ImportError. Cross-router import works (qc_router →
-     projects_router → _natural_sort_key resolved cleanly, no circular
-     dependency triggered).
+   ✓ All 4 helpers exist, no syntax errors, no circular imports.
 
 ================================================================================
 VERIFY 2 — Frontend build
 ================================================================================
-$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
+$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \\
     REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
+
+   →  Done in 32.43s. Build folder ready.
    →  EXIT=0
-   →  "The build folder is ready to be deployed." (Done in 38.02s)
    →  Compiled with warnings — but ALL warnings are pre-existing
      source-map issues from @capacitor-community/apple-sign-in
      (definitions.ts, index.ts, web.ts not present in the published
      npm package). Same warnings as previous successful builds. Zero
-     new warnings introduced by batch-acd changes.
+     new warnings introduced by BATCH E changes.
    ✓ No new ESLint warnings, no new errors.
 
 ================================================================================
 VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
 ================================================================================
+Use the exact project Zahi screenshotted (מגרש 810, building, floor 0).
 
-Focus areas — 4 distinct flows:
+A. Before deploy: confirm FloorDetailPage shows "100% / 16/16" and
+   "תקין".
 
-(A) #28 unit sort:
-  - Open a project with floor that has units 7-11 (or mix of single +
-    two-digit numbers like the floor 0 from Zahi's screenshot).
-  - Navigate: בקרת ביצוע → building → floor → "לפי דירות".
-  - EXPECT: units appear in order 7, 8, 9, 10, 11 (NOT 10, 11, 7, 8, 9).
-  - EXPECT (Hebrew/mixed): units like ק-901, ק-1001 sort by trailing
-    number; A1, A2, A10 sort A1 < A2 < A10.
+B. After deploy: open the same floor.
+   EXPECT: percentage shows the correct ratio (e.g. "57% / 8/14 שלבים")
+   if 8 of 14 stages are approved (8 floor-scope + 0 of the 6 unit-
+   scope stages that have 0/5 דירות done).
+   EXPECT: badge no longer says "תקין" — should say "in_progress" or
+   "בעבודה".
 
-(B) #34 progress bar / overflow on iPhone:
-  - Same page as (A), on iPhone Capacitor app.
-  - EXPECT: NO horizontal page scroll. Try to swipe left-right on the
-    unit list — page is locked vertical only.
-  - EXPECT: Long unit names truncate with "...". Status badge + count
-    remain fully visible on the right.
-  - EXPECT: progress bar (below header) still spans full card width.
+C. Approve all units in all unit-scope stages of that floor.
+   EXPECT: percentage moves toward 100%, badge returns to "תקין"
+   ONCE all 14 stages are approved (including all 5 דירות in each of
+   the 6 unit-scope stages = 30 approvals total).
 
-(C) #31 stage back-nav:
-  - Open any unit-scope stage like "טיח דירתי":
-    - UnitQCSelectionPage at /qc/units?stage_id=stage_plaster
-    - Click on דירה 18 → StageDetailPage
-    - Click back arrow in header.
-  - EXPECT: returns to UnitQCSelectionPage with stage_id and from=qc
-    preserved. NOT to FloorDetailPage.
-  - Loop: open דירה 19, back, דירה 20, back. Should work for every unit.
-  - EXPECT URL HYGIENE: address bar after back should be exactly
-    `.../qc/units?stage_id=stage_plaster&from=qc` (single stage_id,
-    single from, no duplicates). If you see `?stage_id=X&stage_id=Y`
-    that's the bug case → URL.searchParams.set() didn't run.
+D. Open BuildingQCPage (parent of this floor).
+   EXPECT: that floor's card shows "8/14 שלבים" instead of "16/16
+   שלבים". EXPECT: badge color matches actual state.
 
-(D) #30 empty unit-scope stages:
-  - Open the project's floor -3 (mechanical, 0 דירות) — same floor
-    from Zahi's screenshot.
-  - EXPECT: floor-scope stages display (like "הצפה/אטימות").
-  - EXPECT: unit-scope stages (e.g. "ריצוף דירה" cards) DO NOT appear.
+E. **REJECTED PRIORITY TEST:**
+   On any unit-scope stage, intentionally reject 1 דירה.
+   EXPECT: that stage's badge becomes red/rejected.
+   EXPECT: floor badge becomes "rejected" (red) — propagates upward.
+   EXPECT: BuildingQCPage shows that floor with red accent border.
+   Approve the rejection → badges return to in_progress / approved.
 
-Regression sweep:
-  - Open a normal floor with units (e.g. floor 2 with 6 דירות).
-    Confirm full stage list still renders (floor + unit scope, with
-    proper progress per stage).
-  - Open a unit-scope stage from FloorDetailPage (NOT from
-    UnitQCSelectionPage) → click back.
-    EXPECT: goes to FloorDetailPage (fallback path, no regression).
-  - Refresh StageDetailPage browser tab → click back.
-    EXPECT: goes to FloorDetailPage (known limitation, same as today).
+F. **Performance smoke (manual visual):**
+   Open BuildingQCPage with 10+ floors. Should load in well under 2s
+   on mobile 4G. If observed > 3s, flag for optimization. (DB queries
+   should be 4 total, regardless of floor count.)
+
+G. Regression: floor with NO unit-scope stages (e.g. roof technical
+   floor with only floor-scope work).
+   EXPECT: behavior unchanged — shows correct stage count of
+   floor-scope only.
+
+H. Regression: floor with 0 units (e.g. floor -3 with no דירות).
+   EXPECT: unit-scope stages excluded (per Batch D + this batch's
+   no_units handling). Shows only floor-scope stages.
+
+I. Regression: ProjectControlPage / QCFloorSelectionPage /
+   ProjectDashboardPage. They consume getFloorsBatchStatus output.
+   Their summary blocks may still show item-level totals (out of
+   scope). Their FLOOR BADGES should now be accurate.
+
+================================================================================
+PERFORMANCE — addressed in this batch (NOT follow-up)
+================================================================================
+Net query count for batch-status:
+  - BEFORE: ~40 queries for 20-floor project (1 floor-runs query +
+    N qc_items queries inside loop).
+  - AFTER:   4 queries TOTAL — runs + qc_items + units + unit-runs.
+  - Dashboard / ControlPage / MapView calling batch-status in parallel
+    (3 callers): ~12 queries total instead of ~120.
+
+Per-floor endpoint /qc/floors/{floor_id}/run:
+  - BEFORE: existing N queries (run + items + ...).
+  - AFTER:  +2 queries (units + unit-runs). Per-floor only — fine.
+
+If we observe further slowness, future optimization:
+  - Single Redis cache for batch-status with 60s TTL keyed by project_id
+  - MongoDB aggregation pipeline for stage-level rollup
+Both out of scope; current 4-query design sufficient for typical
+project sizes (up to ~50 floors × ~10 units = 500 units).
 
 ================================================================================
 RISK
 ================================================================================
-Low across all 4 bugs.
+Medium. Backend logic change touching badge computation.
 
-#28: Pure sort change. localeCompare with numeric:true is well-supported
-     (all evergreen + Safari 10+). Backend re-uses existing helper.
-     Worst case: a unit_no with weird Unicode sorts unexpectedly — but
-     the same _natural_sort_key powers project hierarchy already, so
-     behavior is consistent across the app.
+- ⚠ **User-perceived "regression"** (intentional): Floors that
+  previously showed "תקין 100%" will now show their real state. For
+  many floors this means a sudden drop to "in_progress 50-70%". Some
+  may even flip to "rejected" (red) if any unit-stage was rejected
+  long ago and silently masked by the old buggy aggregation.
+  THIS IS THE BUG BEING FIXED. No in-app banner / release note (per
+  Zahi's call — closed beta, small user base, can answer 1:1).
 
-#30: Pure display filter on the frontend. Backend untouched. No data
-     mutation. Worst case: a backend response includes unit-scope
-     stages that legitimately should appear on a 0-unit floor (none
-     today by spec) — those would be hidden. Acceptable trade-off.
+- ⚠ Performance: addressed in this batch. 4 queries for batch-status
+  regardless of floor count. Per-floor endpoint adds 2 queries (units
+  + unit-runs) — acceptable for single-floor view.
 
-#31: Function-level change with original behavior preserved in the
-     fallback path. New behavior triggers ONLY when source page sent
-     returnTo via React Router state, which today only happens from
-     UnitQCSelectionPage. URL parse wrapped in try/catch with safe
-     fallback. Refresh-tab limitation explicitly documented.
+- ⚠ Edge case — floor with units but NO unit-scope runs yet:
+  Helper returns stages with `not_started` status. Combined with
+  approved floor-scope → badge "in_progress" (not "approved"). This
+  is correct behavior — there's unit work to do.
+  Side effect: floors that completed only floor-scope work years ago
+  will now correctly show as incomplete (assuming the project still
+  has unit-scope stages in template).
 
-#34: Additive CSS classes only. No removed classes. min-w-0 +
-     flex-shrink-0 + truncate are stable Tailwind utilities supported
-     in every target browser including iOS Safari + Capacitor WebView.
+- ⚠ **Rejected priority** — by design, ONE rejected unit on ONE
+  unit-stage flips the whole floor to "rejected" (red). May feel
+  aggressive for PMs who haven't noticed old rejections. If we
+  observe noise ("everything is red"), can soften by:
+    - Allow PMs to "acknowledge" a rejection (state field)
+    - Distinguish "old rejection" (>7d) visually from fresh
+  Out of scope for this batch. Document and observe.
 
-Bundle size impact: zero (no new dependencies).
-Backend code size impact: 2 LOC.
-No schema changes, no migrations, no env vars added.
+- ⚠ Backward compat: stage_summary is additive on the API. Frontend
+  falls back to legacy qd.pass_count/qd.total if absent. So if
+  backend deploy lags frontend (or vice versa), no broken UI — only
+  the metrics differ.
+
+Bundle size impact: zero on frontend (no new dependencies).
+Backend code size impact: ~165 LOC added.
+No schema changes. No migrations. No env vars. No new dependencies.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-(Reverts all 4 fixes in a single commit. No data state changes.
- Each fix can be partially un-reverted by editing the affected lines
- manually if needed — they live in 4 different files.)
+(Reverts to floor-scope-only badge computation. No data state changes.
+ Floors will go back to showing "100%" when in reality unit-scope work
+ is incomplete — i.e. back to the bug.)
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

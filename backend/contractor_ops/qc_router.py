@@ -605,6 +605,169 @@ def _compute_floor_badge(stages_data, stage_statuses):
     return "not_started"
 
 
+# ──────────────────────────────────────────────────────────────────────
+# BATCH E (2026-05-11) — Unit-scope stage aggregation helpers
+# Per-floor and batch helpers compute per-stage status by aggregating
+# across unit runs on a floor. Used by /qc/floors/{floor_id}/run and
+# /qc/floors/batch-status to include unit-scope stages in floor badge
+# computation.
+#
+# Status priority: rejected > approved > in_progress > not_started.
+# Rejected = work failed QC, NOT progress; ANY rejection on ANY unit
+# propagates to the stage's badge and from there to the floor badge
+# via _compute_floor_badge (which already treats "rejected" as winning).
+# ──────────────────────────────────────────────────────────────────────
+
+def _aggregate_unit_stages_in_memory(project_tpl, unit_ids, runs_by_unit):
+    """Pure function — given units and their unit-scope runs (already
+    fetched), compute per-stage aggregated status. No DB access.
+
+    Shared between per-floor and batch versions so the logic stays
+    single-sourced. Output shape mirrors floor-scope `stages_data` so
+    `_compute_floor_badge` can consume the combined list directly.
+    """
+    unit_stages = [s for s in project_tpl["stages"]
+                   if s.get("scope") == "unit"
+                   and len(s.get("items", [])) > 0]
+
+    total_units = len(unit_ids)
+    stages_data = []
+
+    for stage in unit_stages:
+        stage_id = stage["id"]
+        approved = 0
+        in_progress = 0
+        not_started = 0
+        rejected = 0
+
+        for unit_id in unit_ids:
+            run = runs_by_unit.get(unit_id)
+            if not run:
+                not_started += 1
+                continue
+            stage_status = run.get("stage_statuses", {}).get(stage_id, "draft")
+            if stage_status == "approved":
+                approved += 1
+            elif stage_status == "rejected":
+                rejected += 1
+            elif stage_status in ("draft", "not_started"):
+                not_started += 1
+            else:
+                # in_progress, ready, submitted, pending_review — actively in flight
+                in_progress += 1
+
+        if rejected > 0:
+            computed = "rejected"
+        elif approved == total_units and total_units > 0:
+            computed = "approved"
+        elif approved == 0 and in_progress == 0:
+            computed = "not_started"
+        else:
+            computed = "in_progress"
+
+        stages_data.append({
+            "id": stage_id,
+            "done": approved + in_progress + rejected,
+            "computed_status": computed,
+            "_scope": "unit",
+            "_approved_units": approved,
+            "_in_progress_units": in_progress,
+            "_not_started_units": not_started,
+            "_rejected_units": rejected,
+            "_total_units": total_units,
+        })
+
+    return stages_data
+
+
+async def _compute_unit_scope_stage_statuses(db, project_tpl, floor_id, floor=None):
+    """Per-floor version. 2 DB queries (units + unit-runs). Returns []
+    when the floor has no units (overlaps with Batch D's empty-stage
+    filter — both sides safe).
+    """
+    if floor is None:
+        floor = await db.floors.find_one(
+            {"id": floor_id, "archived": {"$ne": True}},
+            {"_id": 0}
+        )
+        if not floor:
+            return []
+
+    units = await db.units.find(
+        {"floor_id": floor_id, "archived": {"$ne": True}},
+        {"_id": 0, "id": 1}
+    ).to_list(500)
+    unit_ids = [u["id"] for u in units]
+
+    if not unit_ids:
+        return []
+
+    unit_runs = await db.qc_runs.find(
+        {"unit_id": {"$in": unit_ids}, "scope": "unit"},
+        {"_id": 0, "id": 1, "unit_id": 1, "stage_statuses": 1}
+    ).to_list(1000)
+    runs_by_unit = {r["unit_id"]: r for r in unit_runs}
+
+    return _aggregate_unit_stages_in_memory(project_tpl, unit_ids, runs_by_unit)
+
+
+async def _compute_unit_scope_stage_statuses_batch(db, project_tpl, floor_ids):
+    """Batch version. 2 DB queries TOTAL regardless of N floors:
+      1. All units across all floors via single $in.
+      2. All unit-scope runs for those units via single $in.
+    Then aggregate per-floor in memory. Replaces what would have been
+    N*2 round trips inside the per-floor loop in batch-status.
+    """
+    if not floor_ids:
+        return {}
+
+    all_units = await db.units.find(
+        {"floor_id": {"$in": floor_ids}, "archived": {"$ne": True}},
+        {"_id": 0, "id": 1, "floor_id": 1}
+    ).to_list(2000)
+
+    units_by_floor = {}
+    all_unit_ids = []
+    for u in all_units:
+        units_by_floor.setdefault(u["floor_id"], []).append(u["id"])
+        all_unit_ids.append(u["id"])
+
+    runs_by_unit = {}
+    if all_unit_ids:
+        all_runs = await db.qc_runs.find(
+            {"unit_id": {"$in": all_unit_ids}, "scope": "unit"},
+            {"_id": 0, "id": 1, "unit_id": 1, "stage_statuses": 1}
+        ).to_list(2000)
+        runs_by_unit = {r["unit_id"]: r for r in all_runs}
+
+    result = {}
+    for fid in floor_ids:
+        unit_ids = units_by_floor.get(fid, [])
+        if not unit_ids:
+            result[fid] = []
+            continue
+        result[fid] = _aggregate_unit_stages_in_memory(project_tpl, unit_ids, runs_by_unit)
+
+    return result
+
+
+def _build_stage_summary(floor_stages_data, unit_stages_data):
+    """Combine floor-scope + unit-scope stages_data into a single
+    summary dict for the frontend. Counts of each computed_status.
+    `pending_review_stages` rolls up both `pending_review` and
+    `submitted` (UI treats them as one bucket).
+    """
+    all_stages = floor_stages_data + unit_stages_data
+    return {
+        "total_stages": len(all_stages),
+        "approved_stages": sum(1 for s in all_stages if s["computed_status"] == "approved"),
+        "in_progress_stages": sum(1 for s in all_stages if s["computed_status"] == "in_progress"),
+        "not_started_stages": sum(1 for s in all_stages if s["computed_status"] == "not_started"),
+        "pending_review_stages": sum(1 for s in all_stages if s["computed_status"] in ("pending_review", "submitted")),
+        "rejected_stages": sum(1 for s in all_stages if s["computed_status"] == "rejected"),
+    }
+
+
 def _resolve_photo_url(raw_url):
     if raw_url and raw_url.startswith("s3://"):
         from services.object_storage import generate_url as obj_generate_url
@@ -799,7 +962,22 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
         stages_out.append(stage_out)
 
     total_items = total_pass + total_fail + total_pending
-    floor_badge = _compute_floor_badge(stages_out, stage_statuses)
+
+    # BATCH E (2026-05-11) — include unit-scope stages in floor badge
+    # and add stage_summary block. Existing `floor_badge` field becomes
+    # CORRECT for free; consumers reading it get the fix automatically.
+    floor_stages_data = [
+        {"id": s["id"], "done": s.get("done", 0),
+         "computed_status": s.get("computed_status", "draft"),
+         "_scope": "floor"}
+        for s in stages_out
+    ]
+    unit_stages_data = await _compute_unit_scope_stage_statuses(
+        db, tpl, floor_id, floor=floor
+    )
+    combined_stages_data = floor_stages_data + unit_stages_data
+    floor_badge = _compute_floor_badge(combined_stages_data, stage_statuses)
+    stage_summary = _build_stage_summary(floor_stages_data, unit_stages_data)
 
     return {
         "run": {
@@ -823,6 +1001,7 @@ async def get_or_create_floor_run(floor_id: str, user: dict = Depends(get_curren
             "fail": total_fail,
             "pending": total_pending,
         },
+        "stage_summary": stage_summary,
         "floor_badge": floor_badge,
     }
 
@@ -2045,26 +2224,58 @@ async def get_floors_qc_status(
 
     project_tpl = await _get_template(db, project_id=project_id)
 
+    # BATCH E (2026-05-11) — pre-fetch unit-scope stage statuses for
+    # ALL floors in 2 DB queries (vs N*2 in the per-floor loop). Returns
+    # {floor_id: stages_data}.
+    unit_stages_by_floor = await _compute_unit_scope_stage_statuses_batch(
+        db, project_tpl, ids
+    )
+
+    # BATCH E (2026-05-11) — pre-fetch qc_items for ALL floor-scope runs
+    # in a single $in query (vs N queries inside the per-floor loop).
+    # Same optimization pattern as unit_stages_by_floor above.
+    run_ids = [r["id"] for r in runs]
+    items_by_run_and_stage = {}
+    if run_ids:
+        all_items = await db.qc_items.find(
+            {"run_id": {"$in": run_ids}},
+            {"_id": 0, "run_id": 1, "stage_id": 1, "status": 1, "photos": 1, "note": 1, "item_id": 1}
+        ).to_list(5000)
+        for it in all_items:
+            key = (it.get("run_id"), it.get("stage_id"))
+            items_by_run_and_stage.setdefault(key, []).append(it)
+
     result = {}
     for fid in ids:
         run = runs_by_floor.get(fid)
+        unit_stages_data = unit_stages_by_floor.get(fid, [])
+
         if not run:
-            result[fid] = {"badge": "not_started", "pass_count": 0, "fail_count": 0, "total": 0}
+            # No floor-scope run yet — but unit-scope stages might still
+            # have progress (e.g. tile work started before any floor run
+            # was created). Compute badge from unit stages alone.
+            badge = _compute_floor_badge(unit_stages_data, {}) if unit_stages_data else "not_started"
+            stage_summary = _build_stage_summary([], unit_stages_data)
+            result[fid] = {
+                "badge": badge,
+                "pass_count": 0,
+                "fail_count": 0,
+                "total": 0,
+                "stage_summary": stage_summary,
+            }
             continue
 
-        run_items = await db.qc_items.find(
-            {"run_id": run["id"]},
-            {"_id": 0, "stage_id": 1, "status": 1, "photos": 1, "note": 1, "item_id": 1}
-        ).to_list(500)
-
+        # Read pre-fetched items (no DB call inside loop).
         items_by_stage = {}
-        for it in run_items:
-            items_by_stage.setdefault(it.get("stage_id"), []).append(it)
+        for stage_id_iter in (s["id"] for s in project_tpl["stages"]):
+            items_by_stage[stage_id_iter] = items_by_run_and_stage.get(
+                (run["id"], stage_id_iter), []
+            )
 
         stage_statuses = run.get("stage_statuses", {})
         tpl = project_tpl
         floor_stages = [s for s in tpl["stages"] if s.get("scope", "floor") == "floor"]
-        stages_data = []
+        floor_stages_data = []
         total_pass = 0
         total_fail = 0
         total_items = 0
@@ -2077,18 +2288,26 @@ async def get_floors_qc_status(
             total_pass += s_pass
             total_fail += s_fail
             total_items += len(stage_items)
-            stages_data.append({
+            floor_stages_data.append({
                 "id": stage["id"],
                 "done": done_count,
                 "computed_status": computed,
+                "_scope": "floor",
             })
 
-        badge = _compute_floor_badge(stages_data, stage_statuses)
+        # BATCH E (2026-05-11) — combine floor + unit stages_data so
+        # _compute_floor_badge sees the full picture. Rejected priority
+        # propagates from unit-stage rejection up to floor badge.
+        combined_stages_data = floor_stages_data + unit_stages_data
+        badge = _compute_floor_badge(combined_stages_data, stage_statuses)
+        stage_summary = _build_stage_summary(floor_stages_data, unit_stages_data)
+
         result[fid] = {
             "badge": badge,
             "pass_count": total_pass,
             "fail_count": total_fail,
             "total": total_items,
+            "stage_summary": stage_summary,
         }
 
     return result
