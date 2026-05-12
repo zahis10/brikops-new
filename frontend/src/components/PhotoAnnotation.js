@@ -23,6 +23,11 @@ const TEXT_PILL_RADIUS = 8;
 // with the same multiplier (already proportional to font size via
 // padX/padY math + metrics.width).
 const SIZE_MULTIPLIERS = { small: 0.7, medium: 1.0, large: 1.4 };
+// BATCH F.1b (2026-05-12) — drag threshold in canvas-space pixels.
+// Below this distance from start tap = treated as a tap (reserved
+// for F.1c edit). At or above = drag commits and mutates stroke
+// position. Matches CLAUDE.md drag-threshold rule.
+const DRAG_THRESHOLD_PX = 10;
 
 function loadImageFromFile(file) {
   return new Promise((resolve, reject) => {
@@ -66,6 +71,14 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   // so changing size while typing is reflected in the final render.
   const [textSize, setTextSize] = useState('medium');
   const textSizeRef = useRef('medium');
+  // BATCH F.1b (2026-05-12) — drag state for text labels.
+  // null = no drag interaction. Otherwise:
+  //   { strokeIndex, startTapX, startTapY,
+  //     origStrokeX, origStrokeY, hasMovedPastThreshold }
+  // strokeIndex points into strokesRef.current array.
+  // (start, orig) captured at tap. Drag delta = (currentPos - startTap).
+  // hasMovedPastThreshold: once true, stays true for this interaction.
+  const draggingTextRef = useRef(null);
 
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
@@ -223,6 +236,46 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     }
   }, [getLineWidth]);
 
+  // BATCH F.1b (2026-05-12) — hit-test against existing text labels.
+  // Given a canvas-space position, return the index of the topmost
+  // text stroke whose pill bbox contains the position, or -1 if none.
+  // Iterates strokesRef in REVERSE order — last drawn = topmost = first to hit.
+  // Math mirrors redraw's text-branch exactly (same scale, font, padding).
+  const hitTestText = useCallback((pos) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return -1;
+    const ctx = canvas.getContext('2d');
+    const scale = scaleRef.current || 1;
+
+    for (let i = strokesRef.current.length - 1; i >= 0; i--) {
+      const s = strokesRef.current[i];
+      if ((s.type || 'stroke') !== 'text') continue;
+
+      const sizeMultiplier = SIZE_MULTIPLIERS[s.size || 'medium'] || 1.0;
+      const fontSize = (TEXT_FONT_SIZE * sizeMultiplier) / scale;
+      const padX = TEXT_PADDING_X / scale;
+      const padY = TEXT_PADDING_Y / scale;
+
+      ctx.save();
+      ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
+      const metrics = ctx.measureText(s.text || '');
+      ctx.restore();
+
+      const rectWidth = metrics.width + padX * 2;
+      const rectHeight = fontSize + padY * 2;
+      const rectX = s.x - rectWidth / 2;
+      const rectY = s.y - rectHeight / 2;
+
+      if (
+        pos.x >= rectX && pos.x <= rectX + rectWidth &&
+        pos.y >= rectY && pos.y <= rectY + rectHeight
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }, []);
+
   const getPos = useCallback((clientX, clientY) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -247,6 +300,23 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       // "let me move it before saving". To start fresh, user must
       // tap "ביטול" first.
       if (toolRef.current === 'text') {
+        // BATCH F.1b — hit-test FIRST. If user tapped on an existing
+        // text label, start a drag interaction instead of opening
+        // pendingText. Drag commits only if movement >= threshold,
+        // otherwise it's a tap (reserved for F.1c edit — no-op for now).
+        const hitIndex = hitTestText(pos);
+        if (hitIndex >= 0) {
+          const s = strokesRef.current[hitIndex];
+          draggingTextRef.current = {
+            strokeIndex: hitIndex,
+            startTapX: pos.x,
+            startTapY: pos.y,
+            origStrokeX: s.x,
+            origStrokeY: s.y,
+            hasMovedPastThreshold: false,
+          };
+          return;
+        }
         setPendingText(prev =>
           prev
             ? { ...prev, x: pos.x, y: pos.y }
@@ -260,6 +330,30 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     };
 
     const moveStroke = (pos) => {
+      // BATCH F.1b — text drag branch (precedes the freehand path).
+      if (draggingTextRef.current) {
+        const drag = draggingTextRef.current;
+        const dx = pos.x - drag.startTapX;
+        const dy = pos.y - drag.startTapY;
+
+        if (!drag.hasMovedPastThreshold) {
+          // Squared distance check — avoids Math.sqrt per move event.
+          const threshSq = DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
+          if (dx * dx + dy * dy < threshSq) return;
+          drag.hasMovedPastThreshold = true;
+        }
+
+        // Mutate in place — avoids per-frame re-render (Mode B lesson
+        // from P1.1 pinch saga). Final state sync happens in endStroke.
+        const stroke = strokesRef.current[drag.strokeIndex];
+        if (stroke && (stroke.type || 'stroke') === 'text') {
+          stroke.x = drag.origStrokeX + dx;
+          stroke.y = drag.origStrokeY + dy;
+          redraw(strokesRef.current);
+        }
+        return;
+      }
+
       if (!drawingRef.current || !currentStrokeRef.current) return;
       currentStrokeRef.current = {
         ...currentStrokeRef.current,
@@ -272,6 +366,22 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     };
 
     const endStroke = () => {
+      // BATCH F.1b — text drag branch (precedes the freehand path).
+      if (draggingTextRef.current) {
+        const drag = draggingTextRef.current;
+        draggingTextRef.current = null;
+
+        // Only sync to state if user actually dragged. Pure taps
+        // (no movement past threshold) leave state untouched —
+        // reserved for F.1c edit, no-op here.
+        if (drag.hasMovedPastThreshold) {
+          // strokesRef was mutated in place — sync to React state so
+          // undo stack + parent re-renders see the new position.
+          setStrokes([...strokesRef.current]);
+        }
+        return;
+      }
+
       if (!drawingRef.current) return;
       drawingRef.current = false;
       const stroke = currentStrokeRef.current;
@@ -338,7 +448,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [loaded, getPos, redraw]);
+  }, [loaded, getPos, redraw, hitTestText]);
 
   const handleUndo = useCallback(() => {
     setStrokes(prev => {
@@ -462,7 +572,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       >
         <canvas
           ref={canvasRef}
-          style={{ touchAction: 'none', display: 'block' }}
+          style={{
+            touchAction: 'none',
+            display: 'block',
+            // BATCH F.1b — desktop cursor hint: grab in text mode,
+            // grabbing during active drag. Mobile has no hover so this
+            // only affects desktop preview. Note: ref doesn't trigger
+            // re-render so live grab→grabbing flip is best-effort.
+            cursor: tool === 'text'
+              ? (draggingTextRef.current?.hasMovedPastThreshold ? 'grabbing' : 'grab')
+              : 'crosshair',
+          }}
         />
       </div>
 
