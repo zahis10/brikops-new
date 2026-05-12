@@ -203,6 +203,12 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         const rectX = stroke.x - rectWidth / 2;
         const rectY = stroke.y - rectHeight / 2;
 
+        // BATCH F.1b-hotfix-1 (2026-05-12) — cache bbox on stroke object
+        // so hitTestText reads the EXACT same rect that was rendered.
+        // Avoids font/direction-sensitive measureText re-computation and
+        // any platform-specific WebKit drift.
+        stroke._bbox = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+
         ctx.fillStyle = '#ffffff';
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') {
@@ -242,33 +248,46 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   // Iterates strokesRef in REVERSE order — last drawn = topmost = first to hit.
   // Math mirrors redraw's text-branch exactly (same scale, font, padding).
   const hitTestText = useCallback((pos) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return -1;
-    const ctx = canvas.getContext('2d');
+    // BATCH F.1b-hotfix-1 (2026-05-12) — read cached bbox from the
+    // last redraw instead of re-measuring. Guarantees hit-test
+    // matches the visible pill exactly. Falls back to a 44-display-
+    // pixel minimum touch area around the stroke center for finger-
+    // friendly tap targets (CLAUDE.md touch-target rule).
     const scale = scaleRef.current || 1;
+    const minTouchCanvas = 44 / scale; // 44 display px → canvas px
 
     for (let i = strokesRef.current.length - 1; i >= 0; i--) {
       const s = strokesRef.current[i];
       if ((s.type || 'stroke') !== 'text') continue;
 
-      const sizeMultiplier = SIZE_MULTIPLIERS[s.size || 'medium'] || 1.0;
-      const fontSize = (TEXT_FONT_SIZE * sizeMultiplier) / scale;
-      const padX = TEXT_PADDING_X / scale;
-      const padY = TEXT_PADDING_Y / scale;
+      let bx, by, bw, bh;
+      if (s._bbox) {
+        bx = s._bbox.x;
+        by = s._bbox.y;
+        bw = s._bbox.width;
+        bh = s._bbox.height;
 
-      ctx.save();
-      ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
-      const metrics = ctx.measureText(s.text || '');
-      ctx.restore();
-
-      const rectWidth = metrics.width + padX * 2;
-      const rectHeight = fontSize + padY * 2;
-      const rectX = s.x - rectWidth / 2;
-      const rectY = s.y - rectHeight / 2;
+        // Expand to at least the minimum touch area if pill is small.
+        if (bw < minTouchCanvas) {
+          bx = s.x - minTouchCanvas / 2;
+          bw = minTouchCanvas;
+        }
+        if (bh < minTouchCanvas) {
+          by = s.y - minTouchCanvas / 2;
+          bh = minTouchCanvas;
+        }
+      } else {
+        // No cached bbox (shouldn't happen — redraw runs after every
+        // commit). Defensive fallback: 44×44 around stroke center.
+        bx = s.x - minTouchCanvas / 2;
+        by = s.y - minTouchCanvas / 2;
+        bw = minTouchCanvas;
+        bh = minTouchCanvas;
+      }
 
       if (
-        pos.x >= rectX && pos.x <= rectX + rectWidth &&
-        pos.y >= rectY && pos.y <= rectY + rectHeight
+        pos.x >= bx && pos.x <= bx + bw &&
+        pos.y >= by && pos.y <= by + bh
       ) {
         return i;
       }
