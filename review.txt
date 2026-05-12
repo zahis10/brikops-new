@@ -1,370 +1,251 @@
 ================================================================================
-BATCH I — Building defects contractor leak (P0 SECURITY hotfix)
+BATCH I.1 — Contractor landing page fix (P2 UX, follow-up to Batch I)
 ================================================================================
 Date:           2026-05-11
 Branch:         staging  (NOT main)
-Severity:       P0 — DATA LEAK / privacy violation.
-                Two-bug compound (caught by Zahi smoke during BATCH G):
-                1. Frontend (TaskDetailPסשage back nav): contractor entering
-                   via WhatsApp deep-link routes back to
-                   `/projects/{}/buildings/{}/defects` (BuildingDefectsPage).
-                2. Backend (`/buildings/{id}/defects-summary`): allows ANY
-                   project member, including contractors, via the
-                   permissive `_check_project_read_access` helper.
-                Combined: contractor sees all building defects across
-                companies — reportable under Israeli privacy law if
-                shipped to prod.
+Severity:       P2 — UX polish (no security implication).
+                Batch I (Task #504, shipped 2026-05-11 prod) successfully
+                blocked contractors from BuildingDefectsPage. Tests B/C/D
+                passed. But Test A (the reported back-nav flow) landed
+                contractors on `/projects` (the project LIST) instead of
+                their specific project dashboard.
 
-Approach:       Defense-in-depth (per Zahi 2026-05-11):
-                - Backend: 403 for non-management roles (canonical guard).
-                - Frontend: contractors never navigate to building defects
-                  page (deep-link safety branch + don't pre-set
-                  sessionStorage to it).
-                Either layer alone would prevent the leak; both together
-                protect against URL hand-crafting, bookmarks, cached FE,
-                future regressions, undiscovered entry points.
+                Real-world impact: contractor receives WA → clicks link
+                → views defect → clicks back → sees an unhelpful project
+                list. Should see THEIR project view with THEIR open
+                defects.
+
+Approach:       Replace `navigate('/')` with
+                `navigate('/projects/{task.project_id}?src=contractor')`.
+                The `?src=contractor` query param is the existing
+                escape-hatch (Stream A 2026-05-01) that routes
+                contractors to ContractorDashboard with the project
+                preselected, instead of the management dashboard.
+
+                Defensive fallback to `/projects` (the list) only if
+                `task.project_id` is somehow missing — extremely rare
+                edge case (Task schema requires project_id), but safe.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Backend:
-                  - backend/contractor_ops/projects_router.py
-                    (1 import edit + 1 management-role gate insertion;
-                     ~12 LOC incl. comments)
-                Frontend:
+Files changed:  Frontend only:
                   - frontend/src/pages/TaskDetailPage.js
-                    (2 surgical edits: useEffect contractor skip +
-                     onClick isContractor branch; ~15 LOC incl. comments)
-                Total: 2 files. No DB migrations. No env vars. No new
-                dependencies. No Meta WA template changes.
+                    (2 surgical edits — useEffect + onClick — ~13 LOC
+                     net change incl. updated comments)
+                Total: 1 file. No backend, no DB, no env vars.
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
 IN this batch:
-  ✅ Backend `building_defects_summary` (L1390): add MANAGEMENT_ROLES
-     gate via `_get_project_role`. Keep `_check_project_read_access`
-     above as first layer (validates membership / token freshness).
-  ✅ Backend import: add `MANAGEMENT_ROLES` to existing import block
-     from contractor_ops.router (already exports the symbol at L451).
-  ✅ Frontend useEffect (TaskDetailPage L288-295 → now L291-304):
-     externalEntry sessionStorage pre-set — contractors get '/'
-     instead of building-defects path.
-  ✅ Frontend back-button onClick (L856-868 → now L865-884): add
-     `else if (isContractor) navigate('/')` branch BEFORE the
-     `task?.building_id` default branch.
+  ✅ useEffect (Batch I L291-304 — externalEntry sessionStorage
+     pre-set): contractorBack URL changes from `'/'` to
+     `` `/projects/${task.project_id}?src=contractor` ``. The
+     surrounding `if (... task?.project_id ...)` guard ensures
+     project_id is truthy here, so no defensive ternary needed.
+  ✅ onClick (Batch I L865-884 — isContractor branch): same URL
+     change with defensive ternary fallback to `/projects` for the
+     impossible case where task.project_id is missing.
 
 OUT of this batch (deferred):
-  ❌ Audit batch for the 3 other `_check_project_read_access` call
-     sites in projects_router.py (L380, L1006, L1202). Each may need
-     the same gate. Schedule SEPARATE batch IMMEDIATELY after this
-     ships — each unaudited endpoint is a potential P0. Listed as
-     follow-up task proposal.
-  ❌ Other frontend entry points to BuildingDefectsPage (the page
-     itself, links from ProjectControlPage, etc.). Backend 403 is the
-     canonical guard; FE layer here is defense-in-depth.
-  ❌ TaskDetailPage L777-779 errorBackUrl — uses same building-defects
-     default but only fires on TaskDetailPage error states (not the
-     reported scenario). Will inherit benefit from backend 403 if
-     contractor hits the rendered BuildingDefectsPage anyway. Out of
-     immediate scope.
-  ❌ BATCH G WA-on-close removal — already shipped (Task #503),
-     unrelated but coincident. If both pending in same staging cycle,
-     deploy together (different files, no conflict). Verify
-     SEPARATELY in smoke (see "BATCH G + I sequencing" below).
+  ❌ BATCH J (scope-aware paywall) — separate batch, scheduled after
+     this stabilizes. The bug Zahi reported (contractor submitting
+     proof blocked because the user has expired org elsewhere) is
+     architectural and documented at ROADMAP L659.
+  ❌ Other "/" navigate calls in TaskDetailPage — none in our scope;
+     the only 2 are the Batch I ones we modified here.
+  ❌ Other contractor entry points (push notifications, etc.) — not
+     in scope for this UX fix.
+  ❌ Backend — no changes. Batch I 403 gate stays.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (5 PASS — actual line numbers verified)
+STEP 0 — PRE-FLIGHT (3 PASS — actual line numbers, post-Batch I state)
 ================================================================================
 
-1. Vulnerable backend endpoint:
-   $ grep -n "building_defects_summary\|_check_project_read_access" backend/contractor_ops/projects_router.py
-   →  L1390-1391: `@router.get("/buildings/{building_id}/defects-summary")`
-                  `async def building_defects_summary(...)`
-   →  L1397: `await _check_project_read_access(user, project_id)`
-   ✓ Confirmed — uses the permissive helper. No role gate today.
-
-2. `_get_project_role` already imported in projects_router:
-   $ sed -n '7,11p' backend/contractor_ops/projects_router.py
-   →  L7-11: `from contractor_ops.router import (... _get_project_role ...)`
-   ✓ Confirmed — no new import needed for the helper itself.
-
-3. `MANAGEMENT_ROLES` constant exists, NOT yet imported in projects_router:
-   $ rg -n "MANAGEMENT_ROLES\s*=" backend/contractor_ops/
-   →  router.py:451: `MANAGEMENT_ROLES = ('project_manager', 'management_team')`
-   →  plans_router.py:34, execution_matrix_router.py:31 — same tuple.
-   ✓ Single source of truth in router.py. Import adds it to existing block.
-
-4. Frontend defect detail with `isContractor` + WA back nav:
-   $ grep -n "isContractor\|externalEntry\|RETURN_TO_KEY\|/buildings/.*defects" frontend/src/pages/TaskDetailPage.js
+1. Confirm Batch I `isContractor` derivation:
+   $ grep -n "isContractor" frontend/src/pages/TaskDetailPage.js | head -3
    →  L234: `const isContractor = projectRole === 'contractor' || user?.role === 'contractor';`
-   →  L288-295: useEffect that pre-sets sessionStorage RETURN_TO_KEY to
-                building-defects path on externalEntry.
-   →  L856-868: back-button onClick chain (returnTo → building_id default
-                → project default → /projects).
-   ✓ Confirmed both touch points. Single new branch in onClick + one
-     contractor-skip in useEffect.
+   ✓ Unchanged from Batch I.
 
-5. Other endpoints using `_check_project_read_access` (audit candidates):
-   $ grep -n "_check_project_read_access" backend/contractor_ops/projects_router.py
-   →  L380, L1006, L1202, L1397 (we're fixing 1397 only)
-   ✓ 3 candidates noted. OUT of this batch — separate audit follow-up.
+2. Confirm Batch I useEffect contractorBack `'/'`:
+   $ grep -nC 3 "BATCH I.*P0 SECURITY: never deep-link" frontend/src/pages/TaskDetailPage.js
+   →  L293-303 (post-Batch I): useEffect with `isContractor ? '/' : ...`
+   ✓ Confirmed.
 
-   **Bonus — verified safety of management gate:**
-   - Per spec: org owner + super_admin go through `_get_project_role`
-     and effectively return `'project_manager'`, so they pass the new
-     check. Same pattern used elsewhere in the router (the existing
-     `_check_project_access` already relies on this).
+3. Confirm Batch I onClick `else if (isContractor) { navigate('/'); }`:
+   $ grep -nC 5 "else if (isContractor)" frontend/src/pages/TaskDetailPage.js
+   →  L870-876 (post-Batch I): onClick branch with `navigate('/')`
+   ✓ Confirmed.
 
-================================================================================
-LOCATION 1 — projects_router.py: import line (L7-11)
-================================================================================
-@@ backend/contractor_ops/projects_router.py
-   from contractor_ops.router import (
-       get_db, get_current_user, require_roles, require_super_admin,
-       _check_project_access, _check_project_read_access, _check_structure_admin,
-       _get_project_role, _audit, _now, _is_super_admin, _priority_sort_key, logger,
-+      MANAGEMENT_ROLES,
-   )
+   **Bonus pre-flight:**
+   - `?src=contractor` route already wired in App.js → ProjectsHome
+     reads `src` query param → opens ContractorDashboard with project
+     preselected (Stream A 2026-05-01 implementation, in prod, used
+     by reminder digests). No new route or component needed.
+   - `task.project_id` is a required Task schema field; defensive
+     ternary fallback to `/projects` covers the impossible case.
 
 ================================================================================
-LOCATION 2 — projects_router.py: building_defects_summary 403 gate (L1397+)
+LOCATION 1 — TaskDetailPage.js: useEffect contractorBack URL
 ================================================================================
-@@ backend/contractor_ops/projects_router.py
-   project_id = building['project_id']
-   await _check_project_read_access(user, project_id)
-+  # BATCH I (2026-05-11) — P0 SECURITY hotfix.
-+  # Building-level defect rollups expose cross-contractor data.
-+  # Restrict to management roles only. _check_project_read_access
-+  # above stays as the first defense layer (validates project
-+  # membership / token freshness); this layer narrows by role.
-+  # Per spec: org owner + super_admin return 'project_manager' from
-+  # _get_project_role, so they pass.
-+  project_role = await _get_project_role(user, project_id)
-+  if project_role not in MANAGEMENT_ROLES:
-+      raise HTTPException(status_code=403, detail='Insufficient role for building defects summary')
-   project = await db.projects.find_one({'id': project_id}, {'_id': 0})
+File: frontend/src/pages/TaskDetailPage.js
+Lines: ~291-307 (the useEffect added in Batch I)
 
-Edge cases preserved:
-- Project membership / token validity check unchanged
-  (_check_project_read_access still runs first).
-- 404 on missing building still fires before any role check.
-- Org owner / super_admin / project_manager / management_team — pass.
-- Contractor / client / unrelated user — 403.
-
-================================================================================
-LOCATION 3 — TaskDetailPage.js: useEffect contractor pre-set skip (L291-304)
-================================================================================
 @@ frontend/src/pages/TaskDetailPage.js
    useEffect(() => {
      if (externalEntry && task?.project_id && !location.state?.returnTo) {
--      const contractorBack = task.building_id
--        ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
--        : `/projects/${task.project_id}/control?tab=defects`;
+-      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
+-      // to the building-defects page (they'd see other companies' work).
+-      // Contractors land on their dashboard; management keeps the
+-      // existing building-default behavior.
+-      const contractorBack = isContractor
+-        ? '/'
+-        : (task.building_id
+-            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
+-            : `/projects/${task.project_id}/control?tab=defects`);
 +      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
 +      // to the building-defects page (they'd see other companies' work).
-+      // Contractors land on their dashboard; management keeps the
-+      // existing building-default behavior.
++      // Contractors land on their project-scoped dashboard via
++      // `/projects/{id}?src=contractor` (existing Stream A route);
++      // management keeps the existing building-default behavior.
++      // BATCH I.1 (2026-05-11) — fixed landing from `/` (project list)
++      // to project-scoped URL so contractor sees their own defects in
++      // the right project, not an unhelpful project list.
 +      const contractorBack = isContractor
-+        ? '/'
++        ? `/projects/${task.project_id}?src=contractor`
 +        : (task.building_id
 +            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
 +            : `/projects/${task.project_id}/control?tab=defects`);
        sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
      }
--  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo]);
-+  }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
+   }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
 
-Why this matters:
-- The original useEffect WROTE the building-defects path into
-  sessionStorage on externalEntry. Then the back-button onClick reads
-  sessionStorage as the highest-priority returnTo source. Without this
-  fix, the new isContractor branch in onClick (Location 4) NEVER
-  fires for the actual reported scenario — the populated sessionStorage
-  always wins.
-- Adding `isContractor` to the dep array keeps the effect honest.
+Changes:
+- Single string change: `'/'` → `` `/projects/${task.project_id}?src=contractor` ``.
+- Updated BATCH I comment to document the BATCH I.1 fix.
+- Dep array unchanged (already includes `isContractor` from Batch I).
+- No defensive ternary needed: outer `if (... task?.project_id ...)`
+  guarantees `task.project_id` is truthy.
 
 ================================================================================
-LOCATION 4 — TaskDetailPage.js: back-button onClick isContractor branch (L865-884)
+LOCATION 2 — TaskDetailPage.js: onClick isContractor branch
 ================================================================================
+File: frontend/src/pages/TaskDetailPage.js
+Lines: ~870-887 (the onClick branch added in Batch I)
+
 @@ frontend/src/pages/TaskDetailPage.js
-   onClick={() => {
-     const returnTo = location.state?.returnTo || sessionStorage.getItem(RETURN_TO_KEY);
-     if (returnTo) {
-       sessionStorage.removeItem(RETURN_TO_KEY);
-       navigate(returnTo);
-+    } else if (isContractor) {
-+      // BATCH I (2026-05-11) — P0 SECURITY: contractors never
-+      // land on the building-defects page (cross-contractor
-+      // data leak). Defense in depth: backend also returns
-+      // 403 if URL is hand-crafted. Order: explicit returnTo
-+      // > isContractor > building default > project default.
-+      navigate('/');
-     } else if (task?.building_id && task?.project_id) {
-       navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
-     } else if (task?.project_id) {
-       navigate(`/projects/${task.project_id}/control?tab=defects`);
-     } else {
-       navigate('/projects');
-     }
-   }}
+               } else if (isContractor) {
+                 // BATCH I (2026-05-11) — P0 SECURITY: contractors never
+                 // land on the building-defects page (cross-contractor
+                 // data leak). Defense in depth: backend also returns
+                 // 403 if URL is hand-crafted. Order: explicit returnTo
+                 // > isContractor > building default > project default.
+-                navigate('/');
++                // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
++                // list) to project-scoped URL so contractor sees their own
++                // defects in the right project, not an unhelpful project
++                // list. Defensive ternary for the impossible case where
++                // task.project_id is missing (Task schema requires it).
++                navigate(
++                  task?.project_id
++                    ? `/projects/${task.project_id}?src=contractor`
++                    : '/projects'
++                );
+               } else if (task?.building_id && task?.project_id) {
 
-Edge cases preserved:
-- Test C (PM regression): not contractor → falls through to building_id
-  default → navigates to BuildingDefectsPage. UNCHANGED.
-- Test D (returnTo regression): explicit `location.state?.returnTo`
-  from BuildingDefectsPage entry → uses that path → returns to
-  BuildingDefectsPage. UNCHANGED.
-- Bell label logic at L872-877 (now ~L888-893): still correct — the
-  "back to dashboard" string fires when returnTo includes /dashboard;
-  for our new '/' navigate, externalEntry contractors still see
-  "back_to_my_defects" label which is acceptable copy.
+Changes:
+- `navigate('/')` → defensive ternary navigate.
+- If `task.project_id` available → project-scoped contractor dashboard.
+- If somehow missing (Task schema requires it; should never happen) →
+  `/projects` (current fallback). Better than crashing or navigating
+  to `/projects/undefined?...`.
+- Updated BATCH I comment block to document the BATCH I.1 fix.
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ `_check_project_read_access` body / definition. Stays as the first
-     defense layer; we only add the role gate after it.
-- ❌ The 3 OTHER `_check_project_read_access` call sites in
-     projects_router.py (L380, L1006, L1202) — see follow-up task.
-- ❌ TaskDetailPage L777-779 errorBackUrl block — same default but
-     different code path; out of immediate scope.
-- ❌ L234 `isContractor` derivation — reused as-is.
-- ❌ Back-button label logic at L872-877 (now ~L888-893).
-- ❌ BuildingDefectsPage component / route — backend 403 is enough; FE
-     may render an empty page or error state if hand-crafted, OK.
-- ❌ All Bell / WA flows from BATCH G.
+- ❌ Other branches in onClick (returnTo, building_id default,
+     project_id default, /projects fallback). UNCHANGED.
+- ❌ useEffect dep array (already includes `isContractor` from Batch I).
+- ❌ L234 `isContractor` derivation. UNCHANGED.
+- ❌ All other "/" or "/projects" references in TaskDetailPage —
+     different code paths (error states, project_id missing fallbacks).
+- ❌ Backend (Batch I 403 gate stays — security guarantee preserved).
+- ❌ Bell notifications, WA flows, anything from Batches G/I.
 - ❌ Schemas, migrations, env vars, dependencies — none.
 
 ================================================================================
-VERIFY 1 — Backend import + gate sanity
-================================================================================
-$ cd backend && python -c "from contractor_ops.projects_router import building_defects_summary; from contractor_ops.router import MANAGEMENT_ROLES; print('IMPORT_OK', MANAGEMENT_ROLES)"
-
-   →  IMPORT_OK ('project_manager', 'management_team')
-   →  EXIT=0
-   ✓ No SyntaxError, no broken imports, MANAGEMENT_ROLES tuple matches expected.
-
-$ grep -nC 1 "MANAGEMENT_ROLES" backend/contractor_ops/projects_router.py
-   →  L13-15: import line includes MANAGEMENT_ROLES
-   →  L1409-1411: `project_role = await _get_project_role(...)`
-                   `if project_role not in MANAGEMENT_ROLES:`
-                   `raise HTTPException(status_code=403, ...)`
-   ✓ Confirmed — both import and gate present at correct locations.
-
-================================================================================
-VERIFY 2 — Frontend build
+VERIFY 1 — Frontend build
 ================================================================================
 $ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
                   REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
 
    →  EXIT=0
-   →  No NEW warnings or errors related to TaskDetailPage.
+   →  No NEW warnings or errors in TaskDetailPage.
    →  Pre-existing apple-sign-in source-map noise expected and unchanged.
 
-================================================================================
-VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
-================================================================================
-Per Zahi's commentary, all 4 must pass:
-
-A. THE REPORTED BUG (frontend deep-link safety):
-   - Login as a contractor.
-   - Tap a WA notification link → opens TaskDetailPage for one of
-     their assigned defects (externalEntry=true).
-   - Tap the back arrow.
-   EXPECT: lands on `/` (ContractorDashboard).
-   EXPECT NOT: `/projects/.../buildings/.../defects`.
-   ⚠ FAIL → frontend not deployed correctly.
-
-B. DEFENSE-IN-DEPTH (backend 403):
-   - Same contractor session as A.
-   - Manually paste `/projects/{pid}/buildings/{bid}/defects` in URL bar.
-   - Page loads; calls `GET /api/buildings/{bid}/defects-summary`.
-   EXPECT: 403 from backend.
-   EXPECT: page bounces to safe state (existing FE error handling) or
-   shows error UI; NEVER renders other contractors' defects.
-   ⚠ FAIL → backend not deployed correctly. Do NOT proceed to prod.
-
-C. MANAGEMENT REGRESSION:
-   - Login as PM (project_manager).
-   - Open a defect via TaskDetailPage (no returnTo state, no
-     externalEntry).
-   - Tap back arrow.
-   EXPECT: navigates to BuildingDefectsPage normally (existing
-   behavior). Renders all defects for the building.
-   ⚠ FAIL → management broken (regression).
-
-D. returnTo REGRESSION:
-   - Login as PM (or any management role).
-   - Open BuildingDefectsPage → click into a defect (passes
-     `location.state.returnTo` = building defects URL).
-   - On TaskDetailPage, tap back arrow.
-   EXPECT: returns to BuildingDefectsPage (the explicit returnTo wins
-   over the new isContractor branch — but the user isn't a contractor
-   anyway, so this is purely the explicit-state path).
-   ⚠ FAIL → returnTo logic broken (regression).
-
-Bonus regression sweep:
-- E. Org owner / super_admin opening WA link as themselves → backend
-  passes (returns project_manager-equivalent role); FE back nav works
-  per their actual role.
-- F. Contractor in two different projects with different roles
-  (rare) → per-project role lookup is correct (uses
-  `_get_project_role(user, project_id)`).
+(Backend not touched — no backend verify needed.)
 
 ================================================================================
-BATCH G + BATCH I SEQUENCING
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging)
 ================================================================================
-- BATCH G (Task #503) and BATCH I (Task #504) touch DIFFERENT files
-  (tasks_router.py vs projects_router.py + TaskDetailPage.js).
-  No merge conflict.
-- If both pending in same staging deploy: ship together.
-- VERIFY SEPARATELY in smoke — don't conflate the WA-noise tests
-  (BATCH G) with the building-defects access tests (BATCH I).
-- If BATCH G already in prod: deploy BATCH I alone, fast.
+Per spec, Tests A–D — only A should differ from Batch I results:
+
+**A — THE BUG WE'RE FIXING:**
+   1. Login as the SAME contractor user from Batch I test.
+   2. Receive WA notification for a defect.
+   3. Tap link → opens TaskDetailPage (externalEntry).
+   4. Tap back arrow.
+   EXPECT: lands on
+     `https://app.brikops.com/projects/{their_project_id}?src=contractor`
+   EXPECT: sees their own defect list in THAT project
+     (ContractorDashboard with project preselected).
+   EXPECT NOT: lands on `https://app.brikops.com/projects` (the bug)
+     or on `/` (Batch I behavior).
+
+**B — Batch I regression (defense-in-depth preserved):**
+   1. Same contractor types `/projects/X/buildings/Y/defects` in URL bar.
+   EXPECT: still 403 from backend → bounced.
+
+**C — Management regression:**
+   1. PM opens defect → click back.
+   EXPECT: still lands on BuildingDefectsPage (unchanged from Batch I).
+
+**D — returnTo regression:**
+   1. PM clicks defect from BuildingDefectsPage → click back.
+   EXPECT: returns to BuildingDefectsPage via returnTo (unchanged
+   from Batch I — explicit returnTo wins over isContractor branch
+   anyway, and PM isn't a contractor).
+
+Only Test A should differ from Batch I results.
 
 ================================================================================
 RISK
 ================================================================================
-Very low (defense-in-depth design):
-- ⚠ Deploy ordering — both orders are safe:
-  - FE first, BE later: contractors stop navigating to building-defects;
-    if anyone hand-crafts URL, BE still allows (no worse than today).
-  - BE first, FE later: contractors hand-crafting URL get 403 (good);
-    contractors via WA back-nav also get 403 when they land on
-    BuildingDefectsPage (BE call fails) — not a leak, just a worse
-    error UX for ~minutes.
-- ⚠ Role drift — `MANAGEMENT_ROLES = ('project_manager', 'management_team')`
-  is the same tuple in 4 places (router.py L451, plans_router.py L34,
-  execution_matrix_router.py, our import). Verified consistent.
-- ⚠ Mixed roles across projects — `_get_project_role(user, project_id)`
-  is per-project (correct scoping); a contractor on project A and PM
-  on project B will see project A's building-defects 403'd and
-  project B's allowed.
-- ⚠ Audit followups — 3 OTHER `_check_project_read_access` call sites
-  in projects_router.py (L380, L1006, L1202) may have the same
-  pattern. Each unaudited = potential P0. Follow-up task proposed.
+Very low. Single string change in 2 places. Frontend only.
 
-Bundle / perf impact: zero (one extra DB lookup in the management
-gate, but `_get_project_role` is already used everywhere).
+- ⚠ Edge case: defect without project_id (defensive ternary handles it
+  by routing to /projects). Should never happen in practice — Task
+  schema requires project_id — but the fallback is safe if it does.
+- ⚠ The src=contractor route depends on existing Stream A
+  implementation. Verified active in prod (used by reminder digests).
+  If that route handler ever changes, this batch is unaffected (we
+  just navigate to the URL).
+- ⚠ Batch I's security guarantee (backend 403, frontend defense in
+  depth) is fully preserved — we only change WHERE contractors land
+  AFTER they're correctly routed away from BuildingDefectsPage.
+
+Bundle size impact: zero (no new imports, no new logic).
+Performance impact: zero.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-- Reverts to permissive read-access (the leak returns).
-- If backend revert needed alone: comment out the gate block at
-  L1402-1411 and the import line addition at L14.
-- If frontend revert needed alone: revert TaskDetailPage.js diff.
-
-================================================================================
-FOLLOW-UP TASKS (proposed alongside this batch)
-================================================================================
-1. Audit `_check_project_read_access` call sites in projects_router.py
-   (L380, L1006, L1202). For each, decide whether contractor read is
-   acceptable or whether a similar MANAGEMENT_ROLES gate is needed.
-   Each one is a potential P0 if same leak pattern repeats. Schedule
-   IMMEDIATELY after this deploys.
+- Reverts contractor landing back to `/` (Batch I behavior).
+- Batch I's security fix (backend 403 + frontend deep-link safety
+  branches) is fully preserved — no security regression on rollback.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

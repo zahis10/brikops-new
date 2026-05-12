@@ -289,10 +289,14 @@ const TaskDetailPage = () => {
     if (externalEntry && task?.project_id && !location.state?.returnTo) {
       // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
       // to the building-defects page (they'd see other companies' work).
-      // Contractors land on their dashboard; management keeps the
-      // existing building-default behavior.
+      // Contractors land on their project-scoped dashboard via
+      // `/projects/{id}?src=contractor` (existing Stream A route);
+      // management keeps the existing building-default behavior.
+      // BATCH I.1 (2026-05-11) — fixed landing from `/` (project list)
+      // to project-scoped URL so contractor sees their own defects in
+      // the right project, not an unhelpful project list.
       const contractorBack = isContractor
-        ? '/'
+        ? `/projects/${task.project_id}?src=contractor`
         : (task.building_id
             ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
             : `/projects/${task.project_id}/control?tab=defects`);
@@ -870,7 +874,16 @@ const TaskDetailPage = () => {
                 // data leak). Defense in depth: backend also returns
                 // 403 if URL is hand-crafted. Order: explicit returnTo
                 // > isContractor > building default > project default.
-                navigate('/');
+                // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
+                // list) to project-scoped URL so contractor sees their own
+                // defects in the right project, not an unhelpful project
+                // list. Defensive ternary for the impossible case where
+                // task.project_id is missing (Task schema requires it).
+                navigate(
+                  task?.project_id
+                    ? `/projects/${task.project_id}?src=contractor`
+                    : '/projects'
+                );
               } else if (task?.building_id && task?.project_id) {
                 navigate(`/projects/${task.project_id}/buildings/${task.building_id}/defects`);
               } else if (task?.project_id) {
