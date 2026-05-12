@@ -1,577 +1,459 @@
 ================================================================================
-BATCH F.1 — Photo text labels: size picker + drag-to-move + tap-to-edit
+BATCH F — Photo annotation: text labels v1 (P3 feature)
 ================================================================================
 Date:           2026-05-12
 Branch:         staging  (NOT main)
-Severity:       P3 — UX enhancements to BATCH F (shipped 2026-05-12).
-                Field-driven by Zahi after testing v1 on staging:
-                "אני חייב שתהיה לי שליטה על הגודל של הטקסט,
-                ויותר חשוב על המיקום שלו, כרגע אין לי אפשרות
-                להזיז אותו בכלל".
+Severity:       P3 — feature request from field use (Zahi 2026-05-11).
 
-                v1 deferred size + edit/move; v1.5 brings them
-                back because real field use proved they're
-                essential, not luxury.
+                Currently `PhotoAnnotation.js` only supports freehand
+                strokes in 3 colors. PMs annotating defect photos in
+                the field want SHORT TEXT labels — defect numbers
+                ("5/27"), measurements, apartment/floor callouts —
+                in a clean white-pill style on top of the photo.
 
-Approach:       Three coordinated features in one batch (single
-                gesture handles all):
-                1. SIZE: 3-button picker in overlay (S=14 / M=18
-                   default / L=24 display px). Captured at commit
-                   time like color.
-                2. DRAG-TO-MOVE: in text mode, tap+hold+drag on
-                   an existing text label → label follows finger.
-                   Release commits new position.
-                3. TAP-TO-EDIT: in text mode, quick tap on an
-                   existing label (no drag) → opens overlay
-                   pre-filled with current text/size/color.
-                   Editing updates the existing stroke in place;
-                   "מחק" button removes it (window.confirm guard).
+                Reference: Zahi's screenshot 2026-05-11.
 
-                Tap vs drag distinguished by movement threshold:
-                Math.hypot(dx, dy) > DRAG_THRESHOLD_PX (10px in
-                canvas coords). Raised from 5px draft per pre-spec
-                review (Android budget jitter + field conditions).
+Approach:       Frontend-only. Extend `PhotoAnnotation.js` with a
+                tool toggle (draw/text). In text mode, tap canvas →
+                inline overlay input appears at bottom (NOT browser
+                `prompt()` — ugly on mobile). Type short text → tap
+                "אישור" → renders as white-bg rounded pill with
+                colored text at tap point.
+
+                Storage extends the existing `strokes` array with a
+                discriminator `type: 'stroke' | 'text'`. No backend,
+                no schema, no new dependencies — text rasterizes
+                into the JPEG blob that already gets uploaded.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
 Files changed:  Frontend only:
                   - frontend/src/components/PhotoAnnotation.js
-                    (+230 LOC; 519 → 749 lines)
+                    (+150 LOC; 358 → 522 lines)
                 Total: 1 file. No backend, no DB, no env vars, no
                 new npm dependencies.
 
 ================================================================================
-SCOPE — what's IN, what's OUT
+SCOPE — v1 (what's IN, what's OUT)
 ================================================================================
 
-IN this batch:
-  ✅ 3-button size picker (ק / ב / ג labels = S/M/L = 14/18/24
-     display px) in overlay between input and אישור. Default `M`
-     matches v1 exactly so v1 strokes without `size` field render
-     identically.
-  ✅ Drag-to-move existing text labels via tap+hold+drag (10px threshold).
-  ✅ Tap-to-edit existing text labels via quick tap (<10px movement).
-  ✅ Edit overlay: pre-filled with current text/size/color; size
-     picker reflects active size; color picker syncs to label color.
-  ✅ "מחק" button (red, far-right in RTL DOM order) ONLY in edit
-     mode, with `window.confirm('למחוק את התווית?')` guard.
-  ✅ `restoreSavedColor` helper: saves user's pre-edit global color
-     and restores it on commit/cancel/delete (no silent global
-     state mutation).
-  ✅ New `getTextBBox(ctx, stroke)` helper extracted from F's
-     redraw — DRY shared by render + hit test.
-  ✅ New `hitTestText(pos)` helper — returns top-most stroke index
-     containing point, or -1.
-  ✅ Backward compat: v1 strokes without `size` field default to
-     'M' on render and hit test.
+IN v1:
+  ✅ "T" tool button in top toolbar (next to color circles).
+     Toggles `tool: 'draw' | 'text'`.
+  ✅ In text mode: tap canvas → inline overlay input at bottom of
+     screen (NOT prompt()).
+  ✅ Overlay: input + "אישור" + "ביטול". Enter commits, Escape
+     cancels.
+  ✅ "אישור" → white-bg rounded-pill with colored text rendered at
+     tap point (canvas coordinates).
+  ✅ Text persists in `strokes` array → undo works (LIFO over both
+     types — already supported by existing `handleUndo`).
+  ✅ Hebrew font stack: `'Heebo', 'Arial Hebrew', 'Noto Sans Hebrew',
+     system-ui, sans-serif`.
+  ✅ `ctx.direction = 'rtl'` for Hebrew layout.
+  ✅ Reposition-while-typing: 2nd tap before commit moves
+     pendingText, preserves typed value (cancel for fresh start).
+  ✅ Color captured at COMMIT time, not tap time (final intent).
+  ✅ `roundRect` feature-detect with `ctx.rect` fallback.
+  ✅ Input: `font-size: 16px` (prevents iOS auto-zoom),
+     `maxLength=30`, `dir="auto"`.
+  ✅ `ctx.save()`/`ctx.restore()` around text rendering — keeps
+     canvas state changes (font/direction/baseline/align) from
+     leaking into subsequent freehand stroke draws.
 
-OUT of this batch (separate batches if requested):
-  ❌ Pinch-to-resize on selected text (gesture-based).
-  ❌ Multi-text selection (select multiple, batch move).
-  ❌ Free-form rotation.
-  ❌ Z-order (bring forward / send back).
-  ❌ Persistent vector storage post-save — text still rasterizes
-     into JPEG, like v1.
-  ❌ Richer undo-aware delete — confirmed delete is permanent
-     within session.
-
-================================================================================
-STEP 0 — PRE-FLIGHT (4 PASS)
-================================================================================
-
-1. BATCH F state in place: F shipped.
-   ✓ BATCH F markers (L13/53/55/150/228/337/421/451), TEXT_FONT_SIZE=18 (L17),
-     toolRef (L57), pendingText (L58), commitPendingText (L342).
-
-2. redraw uses ctx.measureText for pill width: spec L171.
-   ✓ L171 const metrics = ctx.measureText(stroke.text || ''); — extracted
-     into shared getTextBBox helper used by both rendering AND hit testing.
-
-3. Touch handlers in useEffect: spec ~L230.
-   ✓ startStroke L227, moveStroke L248, endStroke L260; handleTouchStart/Move/End
-     L274-294; handleMouseDown/Move/Up L295-308. F.1 extends startStroke to
-     hit-test text labels and adds drag tracking via dragRef.
-
-4. Overlay landmark: spec ~L454.
-   ✓ L451-495 {/* BATCH F (2026-05-12) — pending text input overlay */}
-     followed by {pendingText && ( ... input + אישור + ביטול ...)}.
-     F.1 extends with size buttons, "מחק" button when editing, cancelPendingText.
+OUT of v1 (separate batches if requested):
+  ❌ Edit/move/delete text labels AFTER placement (only undo LIFO).
+  ❌ Multi-line text, font-size picker, pill background colors.
+  ❌ Persistent vector storage — text rasterizes into JPEG, like
+     strokes. Not separately editable later.
+  ❌ Edge clipping when text extends past canvas bounds.
 
 ================================================================================
-LOCATION 1 — Size constants (replace existing constants block, ~L13-23)
+STEP 0 — PRE-FLIGHT (6 PASS)
 ================================================================================
+
+1. Strokes shape: L161 `const newStroke = { color: colorRef.current, points: [pos] };`
+   ✓ Today: `{color, points}`. Discriminator added: `{type: 'stroke', color, points}`
+     for new, defaults to `'stroke'` if absent (backward compat).
+
+2. `redraw` loop: L121-144 — `for (const stroke of allStrokes) { … ctx.stroke() }`.
+   ✓ Body branched on `stroke.type || 'stroke'`. Default path UNCHANGED.
+
+3. Top toolbar `COLORS.map`: L308-319 inside `<div className="flex items-center gap-2">`.
+   ✓ "T" button added as sibling AFTER color circles, same gap, same size.
+
+4. Bottom action bar (Save/Undo): L335-358 `<div className="flex items-center
+   justify-between px-4 py-3 bg-slate-900 ...">`.
+   ✓ Pending-text overlay sits ABOVE this row, conditional render on `pendingText`.
+
+5. Heebo loaded globally: `frontend/src/index.css:1` Google Fonts import +
+   `frontend/public/index.html:20` preconnect link.
+   ✓ Just reference in `ctx.font`.
+
+6. **CRITICAL — scaleRef direction:**
+   - L88-89: `displayScale = min(containerW/w, containerH/h, 1)`; `scaleRef.current = displayScale`
+   - L117-118 getLineWidth: `VISUAL_LINE_WIDTH / scale`
+   - L153-156 getPos: `(clientX - rect.left) / scale`
+   ✓ Convention: `scaleRef = display/canvas` (typically <1 on mobile when canvas > display).
+     `TEXT_FONT_SIZE / scaleRef.current` is correct — same convention as line width.
+     Visual sanity: render text on a large image (canvas resized to MAX=1280, scale ~0.3)
+     AND on a small image (no resize, scale=1.0). Text should look ~same visual size.
+     If huge-on-small / tiny-on-large → flag for follow-up.
+
+================================================================================
+LOCATION 1 — PhotoAnnotation.js: text rendering constants
+================================================================================
+Lines: 16-23 (added after existing top-of-file constants L5-14)
+
++  // BATCH F (2026-05-12) — text label rendering constants. Sizes are
++  // "visual" (display px) and divided by scaleRef before drawing on
++  // canvas, matching the convention used by getLineWidth/getPos.
++  const FONT_STACK = '"Heebo", "Arial Hebrew", "Noto Sans Hebrew", system-ui, sans-serif';
++  const TEXT_FONT_SIZE = 18;
++  const TEXT_PADDING_X = 10;
++  const TEXT_PADDING_Y = 6;
++  const TEXT_PILL_RADIUS = 8;
+
+================================================================================
+LOCATION 2 — PhotoAnnotation.js: tool/pendingText state
+================================================================================
+Lines: 56-61 + 66 (after color/strokes/scale/drawing refs at L52-54)
+
++  // BATCH F (2026-05-12) — tool mode + pending text input state.
++  // tool: 'draw' (existing freehand) | 'text' (new label).
++  // pendingText: null | { x, y, value } where (x,y) are CANVAS coords.
++  const [tool, setTool] = useState('draw');
++  const toolRef = useRef('draw');
++  const [pendingText, setPendingText] = useState(null);
++
+   useEffect(() => { colorRef.current = color; }, [color]);
+   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
++  useEffect(() => { toolRef.current = tool; }, [tool]);
+
+================================================================================
+LOCATION 3 — PhotoAnnotation.js: redraw branching for text
+================================================================================
+Lines: 151-212 (the `for (const stroke of allStrokes)` loop body)
 
 BEFORE:
-  // BATCH F (2026-05-12) — text label rendering constants. ...
-  const FONT_STACK = '"Heebo", ...';
-  const TEXT_FONT_SIZE = 18;
-  const TEXT_PADDING_X = 10;
-  const TEXT_PADDING_Y = 6;
-  const TEXT_PILL_RADIUS = 8;
+     for (const stroke of allStrokes) {
+       if (stroke.points.length < 2) continue;
+       ctx.beginPath();
+       ctx.strokeStyle = stroke.color;
+       …
+       ctx.stroke();
+     }
 
 AFTER:
-  // BATCH F (2026-05-12) — text label rendering constants. ...
-  const FONT_STACK = '"Heebo", ...';
-+ // BATCH F.1 (2026-05-12) — size picker: 3 fixed sizes mapped to
-+ // display px. Default 'M' matches v1's TEXT_FONT_SIZE=18 exactly so
-+ // v1 strokes without `size` field render identically.
-+ const TEXT_SIZE_PX = { S: 14, M: 18, L: 24 };
-+ const TEXT_SIZE_LABELS = { S: 'ק', M: 'ב', L: 'ג' };  // קטן/בינוני/גדול
-+ const TEXT_DEFAULT_SIZE = 'M';
-  const TEXT_PADDING_X = 10;
-  const TEXT_PADDING_Y = 6;
-  const TEXT_PILL_RADIUS = 8;
-+ // BATCH F.1 (2026-05-12) — drag threshold = 10px in canvas coords.
-+ // 5px was too sensitive: Android budget devices (~5-8px jitter) +
-+ // field conditions (gloves, dirty hands, ~10-15px jitter) would
-+ // turn every tap into a drag → user can't tap-to-edit.
-+ const DRAG_THRESHOLD_PX = 10;
-+ // BATCH F (kept for back-compat with stored strokes that pre-date F.1)
-- const TEXT_FONT_SIZE = 18;
-+ const TEXT_FONT_SIZE = TEXT_SIZE_PX[TEXT_DEFAULT_SIZE];
-
-Why removing single TEXT_FONT_SIZE was breaking-risk: didn't remove
-it, re-exported the default value so any in-file reference still
-works (no other files import this).
-
-================================================================================
-LOCATION 2 — New refs after pendingText state (~L58)
-================================================================================
-
-ADD after `const [pendingText, setPendingText] = useState(null);`:
-
-+ // BATCH F.1 (2026-05-12) — drag tracking + edit mode.
-+ // dragRef: { index, startPos, hasMoved } | null
-+ //   - index: which stroke in strokesRef is being dragged
-+ //   - startPos: tap start position (canvas coords) for threshold
-+ //   - hasMoved: true once movement exceeded DRAG_THRESHOLD_PX
-+ const dragRef = useRef(null);
-+ // BATCH F.1 (2026-05-12) — save the global color before edit-mode
-+ // syncs the picker to the target's color. Restored when overlay
-+ // commits/cancels/deletes so user's "current" color choice isn't
-+ // silently overwritten by editing a label of a different color.
-+ const savedColorRef = useRef(null);
-
-================================================================================
-LOCATION 3 — Hit-testing helpers BEFORE redraw useCallback (~L171-222)
-================================================================================
-
-ADD after getLineWidth:
-
-+ const getTextBBox = useCallback((ctx, stroke) => {
-+   const scale = scaleRef.current || 1;
-+   const sizeKey = stroke.size || TEXT_DEFAULT_SIZE;
-+   const fontSize = TEXT_SIZE_PX[sizeKey] / scale;
-+   const padX = TEXT_PADDING_X / scale;
-+   const padY = TEXT_PADDING_Y / scale;
-+   ctx.save();
-+   ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
-+   const textWidth = ctx.measureText(stroke.text || '').width;
-+   ctx.restore();
-+   const width = textWidth + padX * 2;
-+   const height = fontSize + padY * 2;
-+   return {
-+     x: stroke.x - width / 2,
-+     y: stroke.y - height / 2,
-+     width, height, fontSize, padX, padY,
-+   };
-+ }, []);
+     for (const stroke of allStrokes) {
++      // BATCH F — type discriminator. Default 'stroke' for backward
++      // compat with any in-memory strokes that pre-date the migration.
++      const strokeType = stroke.type || 'stroke';
 +
-+ const hitTestText = useCallback((pos) => {
-+   const canvas = canvasRef.current;
-+   if (!canvas) return -1;
-+   const ctx = canvas.getContext('2d');
-+   const all = strokesRef.current;
-+   for (let i = all.length - 1; i >= 0; i--) {  // top-most wins
-+     const s = all[i];
-+     if (s.type !== 'text') continue;
-+     const bbox = getTextBBox(ctx, s);
-+     if (pos.x >= bbox.x && pos.x <= bbox.x + bbox.width &&
-+         pos.y >= bbox.y && pos.y <= bbox.y + bbox.height) {
-+       return i;
-+     }
-+   }
-+   return -1;
-+ }, [getTextBBox]);
-
-================================================================================
-LOCATION 4 — redraw text branch refactored to use getTextBBox (~L240-270)
-================================================================================
-
-BEFORE (Batch F): inline width/height calc using ctx.measureText.
-AFTER: bbox sourced from getTextBBox(ctx, stroke). Reads stroke.size
-via helper. Pill rendering (white fill + slate-800 border + roundRect/
-rect fallback + colored fillText) UNCHANGED in behavior; just sourced
-from bbox. ctx.save/restore wrap preserved (already done in F).
-
-  if (strokeType === 'text') {
-+   // BATCH F.1 (2026-05-12) — bbox sourced from getTextBBox helper
-+   // (DRY shared with hitTestText). Reads stroke.size, default 'M'.
-+   const bbox = getTextBBox(ctx, stroke);
-    const scale = scaleRef.current || 1;
-    const radius = TEXT_PILL_RADIUS / scale;
-    ctx.save();
-+   ctx.font = `bold ${bbox.fontSize}px ${FONT_STACK}`;
-    ctx.direction = 'rtl';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-+     ctx.roundRect(bbox.x, bbox.y, bbox.width, bbox.height, radius);
-    } else {
-+     ctx.rect(bbox.x, bbox.y, bbox.width, bbox.height);
-    }
-    ctx.fill();
-    ctx.lineWidth = Math.max(1, 1.5 / scale);
-    ctx.strokeStyle = '#1f2937';
-    ctx.stroke();
-    ctx.fillStyle = stroke.color || '#000000';
-    ctx.fillText(stroke.text || '', stroke.x, stroke.y);
-    ctx.restore();
-    continue;
-  }
-
-Also: redraw useCallback deps updated `[getLineWidth]` →
-`[getLineWidth, getTextBBox]`.
-
-================================================================================
-LOCATION 5 — startStroke / moveStroke / endStroke rewrites (~L301-410)
-================================================================================
-
-startStroke: in text mode, FIRST hitTestText(pos). If hit ≥ 0 → set
-dragRef.current = {index, startPos, hasMoved: false} and return. If
-miss → existing F flow (setPendingText with new size: TEXT_DEFAULT_SIZE).
-
-  if (toolRef.current === 'text') {
-+   const hitIndex = hitTestText(pos);
-+   if (hitIndex >= 0) {
-+     dragRef.current = { index: hitIndex, startPos: { x: pos.x, y: pos.y }, hasMoved: false };
-+     return;
-+   }
-    setPendingText(prev =>
-      prev
-        ? { ...prev, x: pos.x, y: pos.y }
-+       : { x: pos.x, y: pos.y, value: '', size: TEXT_DEFAULT_SIZE }
-    );
-    return;
-  }
-
-moveStroke: if dragRef.current set, compute Math.hypot. Once over
-threshold, mark hasMoved=true and mutate target.x/y in place +
-redraw([...all]). Else fall through to existing freehand move
-(UNCHANGED).
-
-  if (dragRef.current) {
-+   const drag = dragRef.current;
-+   const dx = pos.x - drag.startPos.x;
-+   const dy = pos.y - drag.startPos.y;
-+   if (!drag.hasMoved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) drag.hasMoved = true;
-+   if (drag.hasMoved) {
-+     const all = strokesRef.current;
-+     const target = all[drag.index];
-+     if (target && target.type === 'text') {
-+       target.x = pos.x; target.y = pos.y;
-+       redraw([...all]);
-+     }
-+   }
-+   return;
-  }
-  if (!drawingRef.current || !currentStrokeRef.current) return;
-  /* ...existing freehand move logic UNCHANGED... */
-
-endStroke: if dragRef.current — was-drag → setStrokes([...]) to sync
-React state. No-move (quick tap) → setPendingText({x, y, value, size,
-editIndex}) AND savedColorRef.current = colorRef.current; setColor(
-target.color). Else fall through to existing freehand end (UNCHANGED).
-
-  if (dragRef.current) {
-+   const drag = dragRef.current;
-+   const targetIndex = drag.index;
-+   const wasDrag = drag.hasMoved;
-+   dragRef.current = null;
-+   if (wasDrag) { setStrokes([...strokesRef.current]); return; }
-+   const target = strokesRef.current[targetIndex];
-+   if (target && target.type === 'text') {
-+     setPendingText({ x: target.x, y: target.y, value: target.text || '',
-+                      size: target.size || TEXT_DEFAULT_SIZE, editIndex: targetIndex });
-+     if (target.color) {
-+       savedColorRef.current = colorRef.current;
-+       setColor(target.color);
-+     }
-+   }
-+   return;
-  }
-  /* ...existing freehand end logic UNCHANGED... */
-
-Also: useEffect deps updated `[loaded, getPos, redraw]` →
-`[loaded, getPos, redraw, hitTestText]`.
-
-Mutation perf note: drag mutates strokesRef.current[i] in place during
-60Hz move (avoids array re-creation). End-of-drag setStrokes creates
-fresh array to sync React state.
-
-================================================================================
-LOCATION 6 — restoreSavedColor + commitPendingText edit + cancel + delete
-================================================================================
-(~L477-546)
-
-+ const restoreSavedColor = useCallback(() => {
-+   if (savedColorRef.current !== null) {
-+     setColor(savedColorRef.current);
-+     savedColorRef.current = null;
-+   }
-+ }, []);
-
-  const commitPendingText = useCallback(() => {
-    setPendingText(curr => {
-+     if (!curr || !curr.value.trim()) {
-+       restoreSavedColor();  // cancel-like exit if value is empty
-+       return null;
-+     }
-      const textStroke = {
-        type: 'text',
-        color: colorRef.current,
-+       size: curr.size || TEXT_DEFAULT_SIZE,
-        x: curr.x, y: curr.y,
-        text: curr.value.trim(),
-      };
-+     // BATCH F.1 — edit-in-place vs append-new.
-+     if (Number.isInteger(curr.editIndex)) {
-+       const all = strokesRef.current.slice();
-+       all[curr.editIndex] = textStroke;
-+       strokesRef.current = all;
-+       setStrokes(all);
-+     } else {
-        strokesRef.current = [...strokesRef.current, textStroke];
-        setStrokes(prev => [...prev, textStroke]);
-+     }
-      redraw([...strokesRef.current]);
-+     restoreSavedColor();
-      return null;
-    });
-- }, [redraw]);
-+ }, [redraw, restoreSavedColor]);
-
-+ const cancelPendingText = useCallback(() => {
-+   setPendingText(null);
-+   restoreSavedColor();
-+ }, [restoreSavedColor]);
++      if (strokeType === 'text') {
++        // Render centered white-pill at (x,y) with colored text.
++        // Sizes are display-px values divided by scaleRef so visual
++        // size stays consistent across image-resize ratios.
++        const scale = scaleRef.current || 1;
++        const fontSize = TEXT_FONT_SIZE / scale;
++        const padX = TEXT_PADDING_X / scale;
++        const padY = TEXT_PADDING_Y / scale;
++        const radius = TEXT_PILL_RADIUS / scale;
 +
-+ const deletePendingText = useCallback(() => {
-+   setPendingText(curr => {
-+     if (!curr || !Number.isInteger(curr.editIndex)) return null;
-+     const all = strokesRef.current.filter((_, i) => i !== curr.editIndex);
-+     strokesRef.current = all;
-+     setStrokes(all);
-+     redraw([...all]);
-+     restoreSavedColor();
-+     return null;
-+   });
-+ }, [redraw, restoreSavedColor]);
++        ctx.save();
++        ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
++        ctx.direction = 'rtl';
++        ctx.textBaseline = 'middle';
++        ctx.textAlign = 'center';
++
++        const metrics = ctx.measureText(stroke.text || '');
++        const rectWidth = metrics.width + padX * 2;
++        const rectHeight = fontSize + padY * 2;
++        const rectX = stroke.x - rectWidth / 2;
++        const rectY = stroke.y - rectHeight / 2;
++
++        ctx.fillStyle = '#ffffff';
++        ctx.beginPath();
++        if (typeof ctx.roundRect === 'function') {
++          ctx.roundRect(rectX, rectY, rectWidth, rectHeight, radius);
++        } else {
++          ctx.rect(rectX, rectY, rectWidth, rectHeight);  // fallback
++        }
++        ctx.fill();
++
++        ctx.lineWidth = Math.max(1, 1.5 / scale);
++        ctx.strokeStyle = '#1f2937';  // slate-800 border for contrast
++        ctx.stroke();
++
++        ctx.fillStyle = stroke.color || '#000000';
++        ctx.fillText(stroke.text || '', stroke.x, stroke.y);
++        ctx.restore();
++        continue;
++      }
++
++      if (!stroke.points || stroke.points.length < 2) continue;
+       ctx.beginPath();
+       ctx.strokeStyle = stroke.color;
+       … (rest of freehand path UNCHANGED) …
+       ctx.stroke();
+     }
+
+Note: defensive `!stroke.points` check added (replaces unguarded
+`stroke.points.length`) — text strokes have no `points` field, so the
+safety guard prevents a TypeError if any code path ever passes a
+text-typed stroke through this branch (it shouldn't, due to the
+explicit `continue` above, but cheap insurance).
 
 ================================================================================
-LOCATION 7 — Overlay UI: size buttons + cancel/delete handlers
+LOCATION 4 — PhotoAnnotation.js: startStroke branches on tool
 ================================================================================
-(~L647-723)
+Lines: 230-249 (in handler useEffect)
 
-- onKeyDown: Escape → setPendingText(null)
-+ onKeyDown: Escape → cancelPendingText()
+BEFORE:
+     const startStroke = (pos) => {
+       const newStroke = { color: colorRef.current, points: [pos] };
+       currentStrokeRef.current = newStroke;
+       drawingRef.current = true;
+     };
 
-- ביטול onClick: setPendingText(null)
-+ ביטול onClick: cancelPendingText()
+AFTER:
+     const startStroke = (pos) => {
++      // BATCH F — branch on tool. Reposition-preserve pattern:
++      // 2nd tap before commit moves pendingText, preserves value.
++      // To start fresh, user must tap "ביטול" first.
++      if (toolRef.current === 'text') {
++        setPendingText(prev =>
++          prev
++            ? { ...prev, x: pos.x, y: pos.y }
++            : { x: pos.x, y: pos.y, value: '' }
++        );
++        return;
++      }
+-      const newStroke = { color: colorRef.current, points: [pos] };
++      const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
+       currentStrokeRef.current = newStroke;
+       drawingRef.current = true;
+     };
 
-INSERT size picker BETWEEN input and אישור:
+`moveStroke` and `endStroke` UNCHANGED — they only act when
+`drawingRef.current === true`, which the text branch never sets.
 
-+ {/* BATCH F.1 (2026-05-12) — size picker. 3 buttons. Active highlighted. */}
-+ <div className="flex items-center gap-1">
-+   {['S', 'M', 'L'].map(sz => {
-+     const isActive = (pendingText.size || TEXT_DEFAULT_SIZE) === sz;
-+     return (
-+       <button
-+         key={sz}
-+         onClick={(e) => { e.stopPropagation(); setPendingText(p => p ? { ...p, size: sz } : p); }}
-+         aria-label={`גודל ${TEXT_SIZE_LABELS[sz]}`}
-+         className={`w-9 h-9 rounded-lg text-sm font-bold transition-colors ${
-+           isActive ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-+         }`}
-+       >
-+         {TEXT_SIZE_LABELS[sz]}
-+       </button>
-+     );
-+   })}
-+ </div>
+================================================================================
+LOCATION 5 — PhotoAnnotation.js: commitPendingText callback
+================================================================================
+Lines: 340-360 (added after existing `handleUndo` useCallback)
 
-INSERT "מחק" button AFTER ביטול, ONLY in edit mode:
++  // BATCH F — DESIGN DECISION: color captured at COMMIT time
++  // (not tap time). User can change color while typing — the
++  // "אישור" press is their final intent. Avoids surprising
++  // "I selected red after I tapped!" behavior.
++  const commitPendingText = useCallback(() => {
++    setPendingText(curr => {
++      if (!curr || !curr.value.trim()) return null;
++      const textStroke = {
++        type: 'text',
++        color: colorRef.current,
++        x: curr.x,
++        y: curr.y,
++        text: curr.value.trim(),
++      };
++      strokesRef.current = [...strokesRef.current, textStroke];
++      setStrokes(prev => [...prev, textStroke]);
++      redraw([...strokesRef.current]);
++      return null;
++    });
++  }, [redraw]);
 
-+ {Number.isInteger(pendingText.editIndex) && (
-+   <button
-+     onClick={(e) => {
-+       e.stopPropagation();
-+       if (window.confirm('למחוק את התווית?')) {
-+         deletePendingText();
-+       }
-+     }}
-+     aria-label="מחק תווית"
-+     className="px-3 py-2 rounded-lg bg-red-700 text-white text-sm hover:bg-red-800"
-+   >
-+     מחק
-+   </button>
-+ )}
+================================================================================
+LOCATION 6 — PhotoAnnotation.js: top toolbar "T" button
+================================================================================
+Lines: 424-439 (added inside top toolbar `<div flex items-center gap-2>`,
+       AFTER the existing `COLORS.map(...)` block)
+
++          {/* BATCH F — text tool toggle. */}
++          <button
++            onClick={(e) => {
++              e.stopPropagation();
++              setTool(prev => (prev === 'text' ? 'draw' : 'text'));
++            }}
++            aria-label={tool === 'text' ? 'מצב ציור' : 'מצב טקסט'}
++            title={tool === 'text' ? 'מצב טקסט פעיל — לחץ למצב ציור' : 'הוסף תווית טקסט'}
++            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-transform ${
++              tool === 'text'
++                ? 'border-white bg-white text-slate-900 scale-110'
++                : 'border-slate-600 bg-slate-700 text-white'
++            }`}
++          >
++            T
++          </button>
+
+================================================================================
+LOCATION 7 — PhotoAnnotation.js: pending-text overlay
+================================================================================
+Lines: 454-495 (added BEFORE the bottom action bar `<div bg-slate-900 border-t>`)
+
++      {/* BATCH F — pending text input overlay. Renders above the
++          action bar when user has tapped in text mode. Input has
++          font-size >= 16px to prevent iOS auto-zoom. */}
++      {pendingText && (
++        <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 border-t border-slate-700 shrink-0"
++             style={{ position: 'relative', zIndex: 20 }}>
++          <input
++            type="text"
++            autoFocus
++            maxLength={30}
++            value={pendingText.value}
++            onChange={(e) => setPendingText(p => p ? { ...p, value: e.target.value } : p)}
++            onKeyDown={(e) => {
++              if (e.key === 'Enter' && pendingText.value.trim()) commitPendingText();
++              else if (e.key === 'Escape') setPendingText(null);
++            }}
++            placeholder="תווית קצרה (עד 30 תווים)"
++            dir="auto"
++            className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-slate-600 focus:border-amber-500 focus:outline-none"
++            style={{
++              fontSize: '16px',
++              fontFamily: 'Heebo, "Arial Hebrew", system-ui, sans-serif',
++            }}
++          />
++          <button onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
++                  disabled={!pendingText.value.trim()}
++                  className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium disabled:opacity-40">
++            אישור
++          </button>
++          <button onClick={(e) => { e.stopPropagation(); setPendingText(null); }}
++                  className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
++            ביטול
++          </button>
++        </div>
++      )}
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ Touch/mouse handler attachment (passive: false, separate touch
+- ❌ Touch/mouse handler attachment (`passive: false`, separate touch
      and mouse listeners) — preserved from cross-platform iteration.
-- ❌ Viewport lock useEffect (maximum-scale=1, user-scalable=no) —
+- ❌ Viewport lock useEffect (`maximum-scale=1, user-scalable=no`) —
      critical for iOS pinch suppression.
-- ❌ loadImageFromFile, MAX_CANVAS_SIZE=1280, getPos, scaleRef,
-     getLineWidth — coordinate math preserved.
-- ❌ Color picker UI (still 3 colors, still in top toolbar).
-- ❌ "T" toolbar button (added in F).
-- ❌ Save/Undo handlers (Undo still pops strokes; works for text/
-     drag/edit results too — drag = mutated stroke; edit = replaced
-     stroke; delete = filtered stroke; all are normal array entries).
-- ❌ Existing saved JPEG blobs on disk (rasterized; no migration).
+- ❌ `loadImageFromFile`, image scaling, `MAX_CANVAS_SIZE=1280`.
+- ❌ `getPos`, `scaleRef`, `getLineWidth` — coordinate math preserved.
+- ❌ `moveStroke`, `endStroke` — only act when drawingRef is true,
+     which text mode never sets.
+- ❌ Save/Undo handlers — undo already pops the `strokes` array, so
+     it works on text strokes too with no change. Save reads
+     `strokesRef.current` and rasterizes whole canvas, including
+     text pills.
+- ❌ Color picker UI — text reuses currently-selected color.
+- ❌ Existing saved JPEG blobs on disk — already rasterized, no
+     migration needed.
 - ❌ Backend, schema, env vars, dependencies (zero changes).
-- ❌ Freehand stroke rendering, freehand startStroke/moveStroke/
-     endStroke fallback paths — all reachable via the no-text-hit
-     and no-drag branches.
 
 ================================================================================
 VERIFY 1 — Frontend build (PASS)
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
    →  EXIT=0
-   →  Done in 31.54s.
-   →  Build folder ready. No new ESLint warnings related to BATCH F.1.
+   →  Build folder ready. No new ESLint warnings related to BATCH F.
    →  craco-config requires REACT_APP_BACKEND_URL env var (existing
-      project guard). Real value comes from CI/.env.production at
-      deploy time.
-   →  File total: 749 lines (519 → 749, +230 LOC). Slightly above
-      spec's ~670 estimate due to verbatim spec comments preserved
-      in code for traceability.
+      project guard, not introduced by this batch). Real value comes
+      from CI/.env.production at deploy time.
 
 ================================================================================
 VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or device)
 ================================================================================
 
-A — Size picker (NEW):
-  1. Tap T → tap canvas → type "ABC".
-  2. Tap "ג" (large) → "אישור".
-  EXPECT: text rendered in LARGE size (24px display).
-  3. Tap T → tap canvas → type "abc" (don't change size).
-  EXPECT: text rendered in MEDIUM (18px, default).
+**A — Draw mode regression (existing behavior preserved):**
+  1. Open PhotoAnnotation on any defect photo.
+  2. Default tool = draw. Freehand-draw an oval.
+  3. Tap Undo. Stroke disappears.
+  4. Tap Save. Photo with annotation uploads.
+  EXPECT: identical to today.
 
-B — Drag-to-move (NEW):
-  1. Place a text label.
-  2. Tap T → tap+hold on the existing text label, drag finger.
-  EXPECT: text follows finger smoothly.
-  3. Release.
-  EXPECT: text stays at new position. Save uploads with new position.
+**B — Text mode happy path:**
+  1. Open PhotoAnnotation. Tap "T" — it highlights (white bg).
+  2. Tap on photo. Bottom overlay appears with input + buttons.
+  3. Type "5/27" → tap "אישור".
+  4. White pill with "5/27" in black appears at tap location.
+  5. Tap Save. Photo uploads with pill (+ any prior strokes).
 
-C — Tap-to-edit (NEW):
-  1. Place a text label "old".
-  2. Tap T → quick tap on the label (no drag).
-  EXPECT: overlay opens with "old" pre-filled. Size button reflects
-  current size. Color picker reflects current color. "מחק" visible.
-  3. Change text to "new" → "אישור".
-  EXPECT: label updated to "new" at SAME position. No new label created.
+**C — Hebrew text rendering:**
+  1. Tap T → tap canvas → type "דירה 8" → אישור.
+  EXPECT: text in pill, no garbled chars.
+  CRITICAL: verify on iPhone (Capacitor) AND Android (Capacitor or
+  Chrome) — different rendering engines.
 
-D — Delete via edit overlay (with confirmation):
-  1. Edit a label (Test C steps 1-2).
-  2. Tap "מחק".
-  EXPECT: window.confirm dialog: "למחוק את התווית?"
-  3a. Tap OK/Confirm.
-  EXPECT: label removed. Overlay closes.
-  3b. Tap Cancel.
-  EXPECT: nothing happens. Overlay stays open. Label still present.
-  Note: confirmation guards against accidental click. v1.5: confirmed
-  delete is permanent within session (Undo doesn't restore).
+**D — Color affects text:**
+  1. Select red → T → tap canvas → type "X" → אישור.
+  EXPECT: "X" in RED inside white pill.
 
-E — Drag vs tap threshold (CRITICAL — verify on real Android budget):
-  1. Tap on existing label and INSTANTLY release (no movement).
-  EXPECT: edit overlay opens.
-  2. Tap on existing label and move >10px THEN release.
-  EXPECT: drag (label repositioned), no overlay.
-  ⚠ If users report "every tap becomes a drag" → bump threshold to
-  15px. Field-test on Android budget specifically (more finger jitter).
-  ⚠ If users report "can't move labels easily" → lower threshold
-  to 8px. Asymmetric: too-low is broken UX; too-high is friction.
+**E — Color-at-COMMIT design decision:**
+  1. Select black → T → tap canvas → start typing → CHANGE color to red →
+     tap "אישור".
+  EXPECT: text rendered in RED (final color at commit, not at tap).
 
-E.1 — Color picker restore after edit (NEW):
-  1. Color picker = blue.
-  2. Create text label A (blue).
-  3. Change color picker to red.
-  4. Create text label B (red).
-  5. Tap label A (quick tap, no drag) → edit overlay opens.
-  EXPECT: color picker syncs to BLUE (matches label A's color).
-  6. Tap "אישור" without changing color.
-  EXPECT: overlay closes, label A unchanged. Color picker reverts
-  to RED (user's pre-edit selection — preserved across the edit).
-  Same expectation for "ביטול" path AND for "מחק" path.
+**F — Reposition-preserve design decision:**
+  1. T → tap canvas at point A → type "abc" → tap canvas at point B
+     (without committing).
+  EXPECT: overlay still open, "abc" still in input, pendingText now
+  at point B. Pressing אישור renders "abc" at point B.
 
-F — Backward compat with v1 strokes:
-  1. (If you have a session where text labels were created in v1
-     before this batch) — verify they render at default M size.
+**G — Undo works on text (LIFO over both types):**
+  1. Add a freehand stroke. Add a text label. Tap Undo.
+  EXPECT: text disappears. Tap Undo again → stroke disappears.
 
-G — Regression: draw mode unchanged.
-  Default tool = draw. Freehand-draw. Undo. Save.
-  EXPECT: identical to v1.
+**H — Cancel without committing:**
+  1. T → tap canvas → type "x" → tap ביטול.
+  EXPECT: overlay closes, no text drawn, no entry in strokes.
 
-H — Regression: create new text in empty space.
-  T → tap on EMPTY space → create label (existing F flow).
-  EXPECT: unchanged.
+**I — Multiple text labels:**
+  1. Add 3 text labels in different positions and colors.
+  EXPECT: all 3 visible, all undoable in reverse order.
 
-I — Cross-platform check.
-  Verify B and C on iPhone AND Android. Drag responsiveness should
-  be smooth (no jank) at common screen sizes.
+**J — Cross-platform check (CRITICAL):**
+  - Verify B and C on iPhone (Capacitor) AND Android (Capacitor or
+    Chrome). Different rendering engines.
+  - If Hebrew looks different per platform → flag for follow-up font
+    tuning. v1 ship is acceptable if both render legibly.
 
-================================================================================
-KNOWN LIMITATIONS (documented, not fixed)
-================================================================================
-- Delete: window.confirm guards against accidental clicks, but
-  confirmed delete IS permanent within session (not added to undo
-  stack). Richer history model deferred. Pre-confirmation = no risk.
-- Drag during multi-touch (e.g. pinch while dragging text) — second
-  touch is ignored by existing event handlers. Acceptable.
-- If user starts dragging then tool changes to "draw" mid-drag —
-  edge case. Behavior: drag continues until release (tool captured
-  at drag start). Acceptable.
-- Hit testing is rectangular bbox. If two text labels overlap, the
-  one on top (last in strokes) wins. Acceptable.
-- Drag threshold = 10px in canvas coords. Tunable per field reports.
+**K — iOS keyboard popup behavior:**
+  - On iPhone, tap T → tap canvas → keyboard pops.
+  EXPECT: input visible above keyboard (position:fixed bottom). No
+  page zoom (16px font on input).
+
+**L — Tap near edge:**
+  - T → tap near right edge of canvas → type "edge" → אישור.
+  EXPECT: pill may extend past the canvas edge (acceptable for v1;
+  edge clipping is OUT of scope per spec).
 
 ================================================================================
 RISK
 ================================================================================
-Medium. Frontend-only but several state interactions:
+Low-medium. Frontend-only, additive feature.
 
-- ⚠ Drag mutates strokes array in place (perf trick at 60Hz redraws)
-  — must call setStrokes([...]) at end to sync React state. Verified
-  in endStroke handler.
-- ⚠ Movement threshold = 10px in CANVAS coords (raised from initial
-  5px draft per pre-spec review). High-DPI + Android budget + field
-  conditions (gloves, dirty hands) → 5px would turn every tap into
-  a drag, breaking tap-to-edit. 10px favors edit-friendly UX; tune
-  to 8 (looser drag) or 15 (looser tap) per field reports.
-- ⚠ Tap-to-edit on existing label might be unintuitive at first.
-  Document in field smoke. If users want a separate "Edit" tool,
-  add follow-up batch.
-- ⚠ Backward compat for v1 strokes: stroke.size default 'M' via
-  `||` chain in both getTextBBox (render+hit-test) and edit overlay.
-  Verified.
-- ⚠ Delete confirmation via window.confirm — native dialog. Different
-  visual on iOS vs Android vs desktop. Functional on all.
-- ⚠ Color picker restore via savedColorRef — single-level save
-  (no stack). Editing one label while another's edit was already
-  open shouldn't happen (overlay is modal), so single-level is sufficient.
-- ⚠ Performance: drag adds 60Hz redraws. On low-end Android, may
-  see slight lag for very dense canvases (many strokes). Acceptable
-  for v1.5.
+- ⚠ Hebrew rendering iOS vs Android — mitigated by explicit font
+  stack + ctx.direction='rtl'. Worst case: text visible but font
+  slightly different per platform. Acceptable for v1.
+- ⚠ iOS keyboard popping up shifts viewport — mitigated by
+  position-relative input row inside flex column + font-size>=16px
+  to prevent auto-zoom + existing viewport lock.
+- ⚠ roundRect() unsupported on very old browsers — fallback to
+  regular rect. Square pill instead of rounded, functional. Affects
+  <1% of users (Capacitor WebView matches device's modern Safari).
+- ⚠ Text overflowing image bounds at edge tap — text may extend
+  past canvas. Acceptable for v1; clipping is a follow-up.
+- ⚠ User taps multiple times in text mode before committing — only
+  one pendingText at a time; second tap REPOSITIONS pendingText
+  while PRESERVING typed value. Documented design decision.
+- ⚠ User changes color while typing — text uses color at COMMIT
+  time (final intent). Documented design decision.
+- ⚠ ctx.save()/restore() around text rendering — preserves canvas
+  state changes (font/direction/baseline/align/lineWidth/strokeStyle/
+  fillStyle) so they don't leak into subsequent freehand strokes
+  rendered after text in the same redraw pass.
 
 Bundle size impact: zero (no new imports, no new deps).
+Performance impact: negligible (text rendering is O(1) per entry).
 Backend / schema / env / payment / billing: zero touch.
 
 ================================================================================
@@ -579,8 +461,10 @@ ROLLBACK
 ================================================================================
 git revert <commit-sha>
 
-Reverts to v1 BATCH F behavior (size fixed at 18, no drag, no edit).
-Existing saved JPEG blobs unaffected (text rasterized into image).
+Reverts to freehand-only annotation. Any text labels already saved
+into existing JPEG blobs remain on the saved photos — they're
+rasterized into the image, not stored separately. No data loss
+either way.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

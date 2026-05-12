@@ -14,25 +14,10 @@ const COLORS = [
 // "visual" (display px) and divided by scaleRef before drawing on
 // canvas, matching the convention used by getLineWidth/getPos.
 const FONT_STACK = '"Heebo", "Arial Hebrew", "Noto Sans Hebrew", system-ui, sans-serif';
-// BATCH F.1 (2026-05-12) — size picker: 3 fixed sizes mapped to
-// display px. Default 'M' matches v1's TEXT_FONT_SIZE=18 exactly so
-// v1 strokes without `size` field render identically.
-const TEXT_SIZE_PX = { S: 14, M: 18, L: 24 };
-const TEXT_SIZE_LABELS = { S: 'ק', M: 'ב', L: 'ג' };  // קטן/בינוני/גדול
-const TEXT_DEFAULT_SIZE = 'M';
+const TEXT_FONT_SIZE = 18;
 const TEXT_PADDING_X = 10;
 const TEXT_PADDING_Y = 6;
 const TEXT_PILL_RADIUS = 8;
-// BATCH F.1 (2026-05-12) — drag threshold = 10px in canvas coords.
-// 5px was too sensitive: Android budget devices (~5-8px jitter) +
-// field conditions (gloves, dirty hands, ~10-15px jitter) would
-// turn every tap into a drag → user can't tap-to-edit. Asymmetric
-// risk favors edit-friendly threshold: too low = broken UX, too
-// high = slight friction. Tune down if field reports show users
-// can't move labels easily.
-const DRAG_THRESHOLD_PX = 10;
-// BATCH F (kept for back-compat with stored strokes that pre-date F.1)
-const TEXT_FONT_SIZE = TEXT_SIZE_PX[TEXT_DEFAULT_SIZE];
 
 function loadImageFromFile(file) {
   return new Promise((resolve, reject) => {
@@ -67,25 +52,10 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
   // BATCH F (2026-05-12) — tool mode + pending text input state.
   // tool: 'draw' (existing freehand) | 'text' (new label).
-  // pendingText: null | { x, y, value, size, editIndex? } where (x,y) are CANVAS coords.
-  //   - editIndex absent: creating new text (existing v1 flow)
-  //   - editIndex present: editing existing stroke; commit updates
-  //     instead of appending; "מחק" button visible.
+  // pendingText: null | { x, y, value } where (x,y) are CANVAS coords.
   const [tool, setTool] = useState('draw');
   const toolRef = useRef('draw');
   const [pendingText, setPendingText] = useState(null);
-
-  // BATCH F.1 (2026-05-12) — drag tracking + edit mode.
-  // dragRef: { index, startPos, hasMoved } | null
-  //   - index: which stroke in strokesRef is being dragged
-  //   - startPos: tap start position (canvas coords) for threshold
-  //   - hasMoved: true once movement exceeded DRAG_THRESHOLD_PX
-  const dragRef = useRef(null);
-  // BATCH F.1 (2026-05-12) — save the global color before edit-mode
-  // syncs the picker to the target's color. Restored when overlay
-  // commits/cancels/deletes so user's "current" color choice isn't
-  // silently overwritten by editing a label of a different color.
-  const savedColorRef = useRef(null);
 
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
@@ -166,58 +136,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     return scale > 0 ? VISUAL_LINE_WIDTH / scale : VISUAL_LINE_WIDTH;
   }, []);
 
-  // BATCH F.1 (2026-05-12) — compute text-pill bbox in canvas coords.
-  // Used by both redraw (rendering) and hit testing (tap on existing
-  // text). Mutates ctx font but always restores via save/restore.
-  // Reads `stroke.size` with default 'M' for backward compat with v1
-  // strokes that pre-date the size picker.
-  const getTextBBox = useCallback((ctx, stroke) => {
-    const scale = scaleRef.current || 1;
-    const sizeKey = stroke.size || TEXT_DEFAULT_SIZE;
-    const fontSize = TEXT_SIZE_PX[sizeKey] / scale;
-    const padX = TEXT_PADDING_X / scale;
-    const padY = TEXT_PADDING_Y / scale;
-
-    ctx.save();
-    ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
-    const textWidth = ctx.measureText(stroke.text || '').width;
-    ctx.restore();
-
-    const width = textWidth + padX * 2;
-    const height = fontSize + padY * 2;
-    return {
-      x: stroke.x - width / 2,
-      y: stroke.y - height / 2,
-      width,
-      height,
-      fontSize,
-      padX,
-      padY,
-    };
-  }, []);
-
-  // BATCH F.1 (2026-05-12) — hit test: returns stroke index of the
-  // top-most text label containing the point, or -1 if none. Iterates
-  // strokesRef in REVERSE so labels drawn on top win over earlier ones.
-  const hitTestText = useCallback((pos) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return -1;
-    const ctx = canvas.getContext('2d');
-    const all = strokesRef.current;
-    for (let i = all.length - 1; i >= 0; i--) {
-      const s = all[i];
-      if (s.type !== 'text') continue;
-      const bbox = getTextBBox(ctx, s);
-      if (
-        pos.x >= bbox.x && pos.x <= bbox.x + bbox.width &&
-        pos.y >= bbox.y && pos.y <= bbox.y + bbox.height
-      ) {
-        return i;
-      }
-    }
-    return -1;
-  }, [getTextBBox]);
-
   const redraw = useCallback((allStrokes) => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
@@ -235,24 +153,35 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       const strokeType = stroke.type || 'stroke';
 
       if (strokeType === 'text') {
-        // BATCH F.1 (2026-05-12) — bbox sourced from getTextBBox helper
-        // (DRY shared with hitTestText). Reads stroke.size, default 'M'.
-        const bbox = getTextBBox(ctx, stroke);
+        // Render centered white-pill at (x, y) with colored text.
+        // Sizes are display-px values divided by scaleRef so visual
+        // size stays consistent across image-resize ratios.
         const scale = scaleRef.current || 1;
+        const fontSize = TEXT_FONT_SIZE / scale;
+        const padX = TEXT_PADDING_X / scale;
+        const padY = TEXT_PADDING_Y / scale;
         const radius = TEXT_PILL_RADIUS / scale;
 
         ctx.save();
-        ctx.font = `bold ${bbox.fontSize}px ${FONT_STACK}`;
+        ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
         ctx.direction = 'rtl';
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'center';
 
+        const metrics = ctx.measureText(stroke.text || '');
+        const textWidth = metrics.width;
+        const textHeight = fontSize;
+        const rectWidth = textWidth + padX * 2;
+        const rectHeight = textHeight + padY * 2;
+        const rectX = stroke.x - rectWidth / 2;
+        const rectY = stroke.y - rectHeight / 2;
+
         ctx.fillStyle = '#ffffff';
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') {
-          ctx.roundRect(bbox.x, bbox.y, bbox.width, bbox.height, radius);
+          ctx.roundRect(rectX, rectY, rectWidth, rectHeight, radius);
         } else {
-          ctx.rect(bbox.x, bbox.y, bbox.width, bbox.height);
+          ctx.rect(rectX, rectY, rectWidth, rectHeight);
         }
         ctx.fill();
 
@@ -278,7 +207,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       }
       ctx.stroke();
     }
-  }, [getLineWidth, getTextBBox]);
+  }, [getLineWidth]);
 
   const getPos = useCallback((clientX, clientY) => {
     const canvas = canvasRef.current;
@@ -304,22 +233,10 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       // "let me move it before saving". To start fresh, user must
       // tap "ביטול" first.
       if (toolRef.current === 'text') {
-        // BATCH F.1 (2026-05-12) — first check if tap landed on an
-        // existing text label. If yes → enter "possible drag/edit"
-        // state. If no → continue F's create-new flow.
-        const hitIndex = hitTestText(pos);
-        if (hitIndex >= 0) {
-          dragRef.current = {
-            index: hitIndex,
-            startPos: { x: pos.x, y: pos.y },
-            hasMoved: false,
-          };
-          return;
-        }
         setPendingText(prev =>
           prev
             ? { ...prev, x: pos.x, y: pos.y }
-            : { x: pos.x, y: pos.y, value: '', size: TEXT_DEFAULT_SIZE }
+            : { x: pos.x, y: pos.y, value: '' }
         );
         return;
       }
@@ -329,26 +246,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     };
 
     const moveStroke = (pos) => {
-      // BATCH F.1 (2026-05-12) — if dragging an existing text, update
-      // its x/y in place (perf — avoids array re-creation at 60Hz).
-      if (dragRef.current) {
-        const drag = dragRef.current;
-        const dx = pos.x - drag.startPos.x;
-        const dy = pos.y - drag.startPos.y;
-        if (!drag.hasMoved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
-          drag.hasMoved = true;
-        }
-        if (drag.hasMoved) {
-          const all = strokesRef.current;
-          const target = all[drag.index];
-          if (target && target.type === 'text') {
-            target.x = pos.x;
-            target.y = pos.y;
-            redraw([...all]);
-          }
-        }
-        return;
-      }
       if (!drawingRef.current || !currentStrokeRef.current) return;
       currentStrokeRef.current = {
         ...currentStrokeRef.current,
@@ -361,40 +258,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     };
 
     const endStroke = () => {
-      // BATCH F.1 (2026-05-12) — drag/tap-edit handling for text mode.
-      if (dragRef.current) {
-        const drag = dragRef.current;
-        const targetIndex = drag.index;
-        const wasDrag = drag.hasMoved;
-        dragRef.current = null;
-
-        if (wasDrag) {
-          // Position already mutated in moveStroke. Sync React state.
-          setStrokes([...strokesRef.current]);
-          return;
-        }
-        // Quick tap (no movement) → open edit overlay for that stroke.
-        const target = strokesRef.current[targetIndex];
-        if (target && target.type === 'text') {
-          setPendingText({
-            x: target.x,
-            y: target.y,
-            value: target.text || '',
-            size: target.size || TEXT_DEFAULT_SIZE,
-            editIndex: targetIndex,
-          });
-          // BATCH F.1 — sync color picker to target's color so user
-          // sees which color is "current" while editing. SAVE the
-          // user's previously-selected color first so it can be
-          // restored on commit/cancel/delete (prevents silent global
-          // state mutation).
-          if (target.color) {
-            savedColorRef.current = colorRef.current;
-            setColor(target.color);
-          }
-        }
-        return;
-      }
       if (!drawingRef.current) return;
       drawingRef.current = false;
       const stroke = currentStrokeRef.current;
@@ -461,7 +324,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [loaded, getPos, redraw, hitTestText]);
+  }, [loaded, getPos, redraw]);
 
   const handleUndo = useCallback(() => {
     setStrokes(prev => {
@@ -471,76 +334,27 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     });
   }, [redraw]);
 
-  // BATCH F.1 (2026-05-12) — restore saved color after edit overlay
-  // closes. Called from commit, cancel, AND delete paths so the
-  // global picker returns to whatever the user had selected before
-  // tapping a label.
-  const restoreSavedColor = useCallback(() => {
-    if (savedColorRef.current !== null) {
-      setColor(savedColorRef.current);
-      savedColorRef.current = null;
-    }
-  }, []);
-
   // BATCH F (2026-05-12) — commit pending text label.
   // DESIGN DECISION: color is captured at COMMIT time (not at tap
   // time). User can change color while typing — the "אישור" press
   // is their final intent. Avoids surprising "I selected red after
   // I tapped!" behavior.
-  // BATCH F.1 — also handles edit-in-place (when curr.editIndex set)
-  // and restores the user's pre-edit global color.
   const commitPendingText = useCallback(() => {
     setPendingText(curr => {
-      if (!curr || !curr.value.trim()) {
-        restoreSavedColor();  // cancel-like exit if value is empty
-        return null;
-      }
+      if (!curr || !curr.value.trim()) return null;
       const textStroke = {
         type: 'text',
         color: colorRef.current,
-        size: curr.size || TEXT_DEFAULT_SIZE,
         x: curr.x,
         y: curr.y,
         text: curr.value.trim(),
       };
-      // BATCH F.1 — edit-in-place vs append-new.
-      if (Number.isInteger(curr.editIndex)) {
-        const all = strokesRef.current.slice();
-        all[curr.editIndex] = textStroke;
-        strokesRef.current = all;
-        setStrokes(all);
-      } else {
-        strokesRef.current = [...strokesRef.current, textStroke];
-        setStrokes(prev => [...prev, textStroke]);
-      }
+      strokesRef.current = [...strokesRef.current, textStroke];
+      setStrokes(prev => [...prev, textStroke]);
       redraw([...strokesRef.current]);
-      restoreSavedColor();  // BATCH F.1 — restore user's pre-edit color
       return null;
     });
-  }, [redraw, restoreSavedColor]);
-
-  // BATCH F.1 (2026-05-12) — cancel the overlay (ביטול button OR
-  // Escape key). Closes overlay, restores saved color, no stroke change.
-  const cancelPendingText = useCallback(() => {
-    setPendingText(null);
-    restoreSavedColor();
-  }, [restoreSavedColor]);
-
-  // BATCH F.1 (2026-05-12) — delete the currently-edited text stroke.
-  // Caller (delete button) wraps with window.confirm to prevent
-  // accidental clicks. Per Zahi's UX call 2026-05-12: confirmation
-  // is sufficient for v1.5; richer undo-aware delete deferred.
-  const deletePendingText = useCallback(() => {
-    setPendingText(curr => {
-      if (!curr || !Number.isInteger(curr.editIndex)) return null;
-      const all = strokesRef.current.filter((_, i) => i !== curr.editIndex);
-      strokesRef.current = all;
-      setStrokes(all);
-      redraw([...all]);
-      restoreSavedColor();  // BATCH F.1 — restore user's pre-edit color
-      return null;
-    });
-  }, [redraw, restoreSavedColor]);
+  }, [redraw]);
 
   const handleSave = useCallback(() => {
     if (currentStrokeRef.current && drawingRef.current) {
@@ -650,7 +464,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
               if (e.key === 'Enter' && pendingText.value.trim()) {
                 commitPendingText();
               } else if (e.key === 'Escape') {
-                cancelPendingText();
+                setPendingText(null);
               }
             }}
             placeholder="תווית קצרה (עד 30 תווים)"
@@ -661,31 +475,6 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
               fontFamily: 'Heebo, "Arial Hebrew", system-ui, sans-serif',
             }}
           />
-
-          {/* BATCH F.1 (2026-05-12) — size picker. 3 buttons. Active highlighted. */}
-          <div className="flex items-center gap-1">
-            {['S', 'M', 'L'].map(sz => {
-              const isActive = (pendingText.size || TEXT_DEFAULT_SIZE) === sz;
-              return (
-                <button
-                  key={sz}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPendingText(p => p ? { ...p, size: sz } : p);
-                  }}
-                  aria-label={`גודל ${TEXT_SIZE_LABELS[sz]}`}
-                  className={`w-9 h-9 rounded-lg text-sm font-bold transition-colors ${
-                    isActive
-                      ? 'bg-amber-500 text-white'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {TEXT_SIZE_LABELS[sz]}
-                </button>
-              );
-            })}
-          </div>
-
           <button
             onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
             disabled={!pendingText.value.trim()}
@@ -694,30 +483,11 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
             אישור
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); cancelPendingText(); }}
+            onClick={(e) => { e.stopPropagation(); setPendingText(null); }}
             className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm"
           >
             ביטול
           </button>
-
-          {/* BATCH F.1 (2026-05-12) — delete button, ONLY in edit mode.
-              window.confirm guards against accidental click (label has
-              user's full context: text + size + color + position — too
-              costly to lose to a mistap). */}
-          {Number.isInteger(pendingText.editIndex) && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm('למחוק את התווית?')) {
-                  deletePendingText();
-                }
-              }}
-              aria-label="מחק תווית"
-              className="px-3 py-2 rounded-lg bg-red-700 text-white text-sm hover:bg-red-800"
-            >
-              מחק
-            </button>
-          )}
         </div>
       )}
 
