@@ -481,14 +481,79 @@ async def _audit(entity_type: str, entity_id: str, action: str, actor_id: str, p
     })
 
 
-async def require_full_access(user: dict = Depends(get_current_user)):
-    access = await get_effective_access(user['id'])
-    if access != EffectiveAccess.FULL_ACCESS:
-        raise HTTPException(
-            status_code=402,
-            detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+# BATCH J (2026-05-11) — Scope-aware paywall helper.
+# Resolves the org_id this request is acting on by parsing the URL
+# path. Returns None if the path doesn't map to a known scope —
+# callers fall back to legacy get_user_org behavior (same as today).
+# Lazy: at most 2 DB queries (entity → project_id → org_id). Only
+# called when the legacy access check would otherwise block, so
+# happy-path users incur zero extra latency.
+_ORG_URL_PATTERNS = [
+    (_re.compile(r'^/api/projects/([^/]+)'),  'projects',  'org_id'),
+    (_re.compile(r'^/api/tasks/([^/]+)'),     'tasks',     'project_id'),
+    (_re.compile(r'^/api/buildings/([^/]+)'), 'buildings', 'project_id'),
+    (_re.compile(r'^/api/floors/([^/]+)'),    'floors',    'project_id'),
+    (_re.compile(r'^/api/units/([^/]+)'),     'units',     'project_id'),
+]
+
+
+async def _resolve_request_org_id(request_path: str, db) -> Optional[str]:
+    """Returns the org_id this request is acting on, or None if not
+    derivable from the URL. Lazy — only called when paywall would
+    otherwise block.
+    """
+    for pattern, collection, field in _ORG_URL_PATTERNS:
+        m = pattern.match(request_path)
+        if not m:
+            continue
+        entity_id = m.group(1)
+        entity = await db[collection].find_one(
+            {'id': entity_id}, {'_id': 0, field: 1}
         )
-    return user
+        if not entity:
+            return None
+        if field == 'org_id':
+            return entity.get('org_id')
+        project_id = entity.get('project_id')
+        if not project_id:
+            return None
+        project = await db.projects.find_one(
+            {'id': project_id}, {'_id': 0, 'org_id': 1}
+        )
+        return project.get('org_id') if project else None
+    return None
+
+
+async def require_full_access(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    # BATCH J (2026-05-11) — try legacy access first (fast path).
+    access = await get_effective_access(user['id'])
+    if access == EffectiveAccess.FULL_ACCESS:
+        return user
+
+    # Slow path: legacy check would block. Try scope-aware retry
+    # with the request's resolved org_id before issuing 402.
+    db = get_db()
+    resolved_org_id = await _resolve_request_org_id(request.url.path, db)
+    if resolved_org_id:
+        access = await get_effective_access(user['id'], resolved_org_id)
+        if access == EffectiveAccess.FULL_ACCESS:
+            logger.info(
+                f"[PAYWALL:SCOPED_OK] user={user['id']} path={request.url.path} "
+                f"resolved_org={resolved_org_id} decision=allow"
+            )
+            return user
+
+    logger.info(
+        f"[PAYWALL:BLOCKED] user={user['id']} path={request.url.path} "
+        f"resolved_org={resolved_org_id or 'none'} decision=block"
+    )
+    raise HTTPException(
+        status_code=402,
+        detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+    )
 
 
 PAYWALL_EXEMPT_PATHS = {
@@ -502,12 +567,31 @@ async def _check_paywall(request_method: str, request_path: str, user: dict):
     for exempt in PAYWALL_EXEMPT_PATHS:
         if request_path.startswith(exempt):
             return
+    # BATCH J (2026-05-11) — try legacy access first (fast path).
     access = await get_effective_access(user['id'])
-    if access != EffectiveAccess.FULL_ACCESS:
-        raise HTTPException(
-            status_code=402,
-            detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
-        )
+    if access == EffectiveAccess.FULL_ACCESS:
+        return
+
+    # Slow path: legacy check would block. Try scope-aware retry.
+    db = get_db()
+    resolved_org_id = await _resolve_request_org_id(request_path, db)
+    if resolved_org_id:
+        access = await get_effective_access(user['id'], resolved_org_id)
+        if access == EffectiveAccess.FULL_ACCESS:
+            logger.info(
+                f"[PAYWALL:SCOPED_OK] user={user['id']} path={request_path} "
+                f"resolved_org={resolved_org_id} decision=allow"
+            )
+            return
+
+    logger.info(
+        f"[PAYWALL:BLOCKED] user={user['id']} path={request_path} "
+        f"resolved_org={resolved_org_id or 'none'} decision=block"
+    )
+    raise HTTPException(
+        status_code=402,
+        detail={'detail': PAYWALL_DETAIL, 'code': PAYWALL_CODE},
+    )
 
 
 

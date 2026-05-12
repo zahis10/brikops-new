@@ -1402,9 +1402,26 @@ async def paywall_middleware(request: Request, call_next):
                             _sa_doc = await db.users.find_one({'id': user_id}, {'_id': 0, 'platform_role': 1})
                             _is_sa = _sa_doc and _sa_doc.get('platform_role') == 'super_admin'
                         if not _is_sa:
+                            # BATCH J (2026-05-11) — try legacy access first (fast path).
                             access = await get_effective_access(user_id)
                             if access != EffectiveAccess.FULL_ACCESS:
-                                paywall_block = True
+                                # Slow path: try scope-aware before blocking.
+                                # Nested import avoids circular at module load.
+                                from contractor_ops.router import _resolve_request_org_id
+                                resolved_org_id = await _resolve_request_org_id(request.url.path, db)
+                                if resolved_org_id:
+                                    access = await get_effective_access(user_id, resolved_org_id)
+                                if access == EffectiveAccess.FULL_ACCESS:
+                                    logger.info(
+                                        f"[PAYWALL:SCOPED_OK] user={user_id} path={request.url.path} "
+                                        f"resolved_org={resolved_org_id} decision=allow"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[PAYWALL:BLOCKED] user={user_id} path={request.url.path} "
+                                        f"resolved_org={resolved_org_id or 'none'} decision=block"
+                                    )
+                                    paywall_block = True
                 except _pyjwt.PyJWTError:
                     pass
     if paywall_block:

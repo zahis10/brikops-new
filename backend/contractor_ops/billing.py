@@ -314,6 +314,14 @@ async def get_effective_access(user_id: str, org_id: Optional[str] = None) -> Ef
         if sa_doc and sa_doc.get('platform_role') == 'super_admin':
             return EffectiveAccess.FULL_ACCESS
 
+    # BATCH J (2026-05-11) — feature flag for instant rollback.
+    # When 'false', ignore caller-provided org_id and use legacy
+    # get_user_org() fallback (scope-blind behavior). Flip via
+    # env var without redeploy.
+    import os
+    if os.environ.get('PAYWALL_SCOPE_AWARE_ENABLED', 'true').lower() != 'true':
+        org_id = None
+
     if not org_id:
         org = await get_user_org(user_id)
         if not org:

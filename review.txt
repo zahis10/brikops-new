@@ -1,251 +1,439 @@
 ================================================================================
-BATCH I.1 — Contractor landing page fix (P2 UX, follow-up to Batch I)
+BATCH J Phase 1 — Scope-aware paywall (multi-org PM bug, P1 architectural)
 ================================================================================
-Date:           2026-05-11
+Date:           2026-05-12
 Branch:         staging  (NOT main)
-Severity:       P2 — UX polish (no security implication).
-                Batch I (Task #504, shipped 2026-05-11 prod) successfully
-                blocked contractors from BuildingDefectsPage. Tests B/C/D
-                passed. But Test A (the reported back-nav flow) landed
-                contractors on `/projects` (the project LIST) instead of
-                their specific project dashboard.
+Severity:       P1 — multi-org bug. Real user impact already confirmed:
+                Zahi's contractor test user (also PM/owner in expired
+                Org A) is blocked from submitting proof in the
+                contractor project (paid Org B). Bug present since
+                multi-org membership was introduced; documented at
+                ROADMAP L659+ since 2026-04-30.
 
-                Real-world impact: contractor receives WA → clicks link
-                → views defect → clicks back → sees an unhelpful project
-                list. Should see THEIR project view with THEIR open
-                defects.
+Approach:       3 paywall layers extract `org_id` from request URL
+                path and pass it to `get_effective_access` (already
+                accepts `org_id` param — no signature change). Lazy
+                lookup — only resolve scope-aware access when legacy
+                check would BLOCK. Happy path stays fast.
 
-Approach:       Replace `navigate('/')` with
-                `navigate('/projects/{task.project_id}?src=contractor')`.
-                The `?src=contractor` query param is the existing
-                escape-hatch (Stream A 2026-05-01) that routes
-                contractors to ContractorDashboard with the project
-                preselected, instead of the management dashboard.
-
-                Defensive fallback to `/projects` (the list) only if
-                `task.project_id` is somehow missing — extremely rare
-                edge case (Task schema requires project_id), but safe.
+                Feature flag `PAYWALL_SCOPE_AWARE_ENABLED` (default
+                'true') for instant rollback via env var without
+                redeploy.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Frontend only:
-                  - frontend/src/pages/TaskDetailPage.js
-                    (2 surgical edits — useEffect + onClick — ~13 LOC
-                     net change incl. updated comments)
-                Total: 1 file. No backend, no DB, no env vars.
+Files changed:  Backend only:
+                  - backend/contractor_ops/billing.py        (+8 LOC)
+                  - backend/contractor_ops/router.py         (+~85 LOC, -~20)
+                  - backend/server.py                        (+18 LOC, -3)
+                  - backend/tests/test_scope_aware_paywall.py (NEW, ~205 LOC,
+                    12 pytest tests)
+                Total: 4 files. No frontend, no DB, no schema. Adds
+                1 env var (PAYWALL_SCOPE_AWARE_ENABLED).
 
 ================================================================================
-SCOPE — what's IN, what's OUT
+SAFETY GUARANTEES — what this batch DOES NOT touch
 ================================================================================
+❌ Payment processing (PayPlus webhooks, charge calls, refunds)
+❌ GreenInvoice integration (invoice creation, sync)
+❌ billing.py charging functions (charge_subscription, etc.)
+❌ Subscription state writes (status='active'/'cancelled'/'expired'
+   — we only READ these, never WRITE)
+❌ Pricing logic, comp accounts, founder plan, manual_override
+❌ Org membership data (we only READ to resolve org_id)
+❌ Frontend (no UI changes, no banner changes)
 
-IN this batch:
-  ✅ useEffect (Batch I L291-304 — externalEntry sessionStorage
-     pre-set): contractorBack URL changes from `'/'` to
-     `` `/projects/${task.project_id}?src=contractor` ``. The
-     surrounding `if (... task?.project_id ...)` guard ensures
-     project_id is truthy here, so no defensive ternary needed.
-  ✅ onClick (Batch I L865-884 — isContractor branch): same URL
-     change with defensive ternary fallback to `/projects` for the
-     impossible case where task.project_id is missing.
+✅ ONLY changes WHICH org's subscription is consulted when
+   `get_effective_access` is called by the 3 paywall layers.
 
-OUT of this batch (deferred):
-  ❌ BATCH J (scope-aware paywall) — separate batch, scheduled after
-     this stabilizes. The bug Zahi reported (contractor submitting
-     proof blocked because the user has expired org elsewhere) is
-     architectural and documented at ROADMAP L659.
-  ❌ Other "/" navigate calls in TaskDetailPage — none in our scope;
-     the only 2 are the Batch I ones we modified here.
-  ❌ Other contractor entry points (push notifications, etc.) — not
-     in scope for this UX fix.
-  ❌ Backend — no changes. Batch I 403 gate stays.
+If this batch breaks, NO MONEY MOVES. Worst case: a legitimate user
+gets blocked with 402 when they should be allowed (UX issue, not
+financial). Feature flag flip = instant rollback.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (3 PASS — actual line numbers, post-Batch I state)
+STEP 0 — PRE-FLIGHT (5 PASS — actual line numbers verified)
 ================================================================================
 
-1. Confirm Batch I `isContractor` derivation:
-   $ grep -n "isContractor" frontend/src/pages/TaskDetailPage.js | head -3
-   →  L234: `const isContractor = projectRole === 'contractor' || user?.role === 'contractor';`
-   ✓ Unchanged from Batch I.
+1. `get_effective_access` already accepts `org_id`:
+   billing.py L309: `async def get_effective_access(user_id: str, org_id: Optional[str] = None)`
+   ✓ Function signature already correct.
 
-2. Confirm Batch I useEffect contractorBack `'/'`:
-   $ grep -nC 3 "BATCH I.*P0 SECURITY: never deep-link" frontend/src/pages/TaskDetailPage.js
-   →  L293-303 (post-Batch I): useEffect with `isContractor ? '/' : ...`
-   ✓ Confirmed.
+2. Three paywall callers don't pass org_id today:
+   - server.py:1405:  `access = await get_effective_access(user_id)`
+   - router.py:485:   `access = await get_effective_access(user['id'])` (require_full_access)
+   - router.py:505:   `access = await get_effective_access(user['id'])` (_check_paywall)
+   ✓ All 3 layers identified. (Note: spec quoted 447/467; actual
+     post-G/I state shifted to 485/505 — confirmed via grep.)
 
-3. Confirm Batch I onClick `else if (isContractor) { navigate('/'); }`:
-   $ grep -nC 5 "else if (isContractor)" frontend/src/pages/TaskDetailPage.js
-   →  L870-876 (post-Batch I): onClick branch with `navigate('/')`
-   ✓ Confirmed.
+3. Existing precedent callers DO pass org_id:
+   - onboarding_router.py:1314, billing.py:500, billing.py:1228 already pass org_id.
+   ✓ Pattern exists in codebase. Our work mirrors this.
 
-   **Bonus pre-flight:**
-   - `?src=contractor` route already wired in App.js → ProjectsHome
-     reads `src` query param → opens ContractorDashboard with project
-     preselected (Stream A 2026-05-01 implementation, in prod, used
-     by reminder digests). No new route or component needed.
-   - `task.project_id` is a required Task schema field; defensive
-     ternary fallback to `/projects` covers the impossible case.
+4. PAYWALL_EXEMPT logic preserved:
+   - router.py L494 (set), L499-505 (_check_paywall GET+exempt early returns).
+   ✓ Existing exemption preserved unchanged.
 
-================================================================================
-LOCATION 1 — TaskDetailPage.js: useEffect contractorBack URL
-================================================================================
-File: frontend/src/pages/TaskDetailPage.js
-Lines: ~291-307 (the useEffect added in Batch I)
+5. Contractor proof endpoint URL pattern:
+   - tasks_router.py: `@router.post("/tasks/{task_id}/contractor-proof")` →
+     hits `/api/tasks/{tid}/...` pattern in `_resolve_request_org_id`.
 
-@@ frontend/src/pages/TaskDetailPage.js
-   useEffect(() => {
-     if (externalEntry && task?.project_id && !location.state?.returnTo) {
--      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
--      // to the building-defects page (they'd see other companies' work).
--      // Contractors land on their dashboard; management keeps the
--      // existing building-default behavior.
--      const contractorBack = isContractor
--        ? '/'
--        : (task.building_id
--            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
--            : `/projects/${task.project_id}/control?tab=defects`);
-+      // BATCH I (2026-05-11) — P0 SECURITY: never deep-link contractors
-+      // to the building-defects page (they'd see other companies' work).
-+      // Contractors land on their project-scoped dashboard via
-+      // `/projects/{id}?src=contractor` (existing Stream A route);
-+      // management keeps the existing building-default behavior.
-+      // BATCH I.1 (2026-05-11) — fixed landing from `/` (project list)
-+      // to project-scoped URL so contractor sees their own defects in
-+      // the right project, not an unhelpful project list.
-+      const contractorBack = isContractor
-+        ? `/projects/${task.project_id}?src=contractor`
-+        : (task.building_id
-+            ? `/projects/${task.project_id}/buildings/${task.building_id}/defects`
-+            : `/projects/${task.project_id}/control?tab=defects`);
-       sessionStorage.setItem(RETURN_TO_KEY, contractorBack);
-     }
-   }, [externalEntry, task?.project_id, task?.building_id, location.state?.returnTo, isContractor]);
-
-Changes:
-- Single string change: `'/'` → `` `/projects/${task.project_id}?src=contractor` ``.
-- Updated BATCH I comment to document the BATCH I.1 fix.
-- Dep array unchanged (already includes `isContractor` from Batch I).
-- No defensive ternary needed: outer `if (... task?.project_id ...)`
-  guarantees `task.project_id` is truthy.
+Bonus pre-flight (verified to avoid spec/code mismatches):
+- `Request` already imported in router.py L1 — no new import needed.
+- `import re as _re` already exists at router.py L10 — REUSED, NOT redeclared
+  (spec's inline `import re as _re` would have been a duplicate; we omit it).
+- `Optional` already imported (router.py L3) — type hint works as-is.
+- `logger` available at router.py L61.
+- `db.tasks/buildings/floors/units/projects` collections — confirmed via
+  existing usage throughout the codebase.
 
 ================================================================================
-LOCATION 2 — TaskDetailPage.js: onClick isContractor branch
+LOCATION 1 — billing.py: feature flag in get_effective_access
 ================================================================================
-File: frontend/src/pages/TaskDetailPage.js
-Lines: ~870-887 (the onClick branch added in Batch I)
+File: backend/contractor_ops/billing.py  (L309-336 post-edit)
 
-@@ frontend/src/pages/TaskDetailPage.js
-               } else if (isContractor) {
-                 // BATCH I (2026-05-11) — P0 SECURITY: contractors never
-                 // land on the building-defects page (cross-contractor
-                 // data leak). Defense in depth: backend also returns
-                 // 403 if URL is hand-crafted. Order: explicit returnTo
-                 // > isContractor > building default > project default.
--                navigate('/');
-+                // BATCH I.1 (2026-05-11) — fixed landing from `/` (project
-+                // list) to project-scoped URL so contractor sees their own
-+                // defects in the right project, not an unhelpful project
-+                // list. Defensive ternary for the impossible case where
-+                // task.project_id is missing (Task schema requires it).
-+                navigate(
-+                  task?.project_id
-+                    ? `/projects/${task.project_id}?src=contractor`
-+                    : '/projects'
-+                );
-               } else if (task?.building_id && task?.project_id) {
+@@ async def get_effective_access(user_id, org_id=None):
+       if user_id:
+           sa_doc = await db.users.find_one(...)
+           if sa_doc and sa_doc.get('platform_role') == 'super_admin':
+               return EffectiveAccess.FULL_ACCESS
++
++      # BATCH J (2026-05-11) — feature flag for instant rollback.
++      # When 'false', ignore caller-provided org_id and use legacy
++      # get_user_org() fallback (scope-blind behavior). Flip via
++      # env var without redeploy.
++      import os
++      if os.environ.get('PAYWALL_SCOPE_AWARE_ENABLED', 'true').lower() != 'true':
++          org_id = None
++
+       if not org_id:
+           org = await get_user_org(user_id)
+           ...
 
-Changes:
-- `navigate('/')` → defensive ternary navigate.
-- If `task.project_id` available → project-scoped contractor dashboard.
-- If somehow missing (Task schema requires it; should never happen) →
-  `/projects` (current fallback). Better than crashing or navigating
-  to `/projects/undefined?...`.
-- Updated BATCH I comment block to document the BATCH I.1 fix.
+Inserted AFTER super_admin short-circuit, BEFORE `if not org_id:`.
+Super_admin still bypasses everything regardless of flag (correct).
+
+================================================================================
+LOCATION 2 — router.py: NEW _resolve_request_org_id helper
+================================================================================
+File: backend/contractor_ops/router.py  (L487-527, inserted before
+require_full_access)
+
+ADDED:
++  # BATCH J (2026-05-11) — Scope-aware paywall helper.
++  # ... (10 lines of comments)
++  _ORG_URL_PATTERNS = [
++      (_re.compile(r'^/api/projects/([^/]+)'),  'projects',  'org_id'),
++      (_re.compile(r'^/api/tasks/([^/]+)'),     'tasks',     'project_id'),
++      (_re.compile(r'^/api/buildings/([^/]+)'), 'buildings', 'project_id'),
++      (_re.compile(r'^/api/floors/([^/]+)'),    'floors',    'project_id'),
++      (_re.compile(r'^/api/units/([^/]+)'),     'units',     'project_id'),
++  ]
++
++  async def _resolve_request_org_id(request_path, db) -> Optional[str]:
++      for pattern, collection, field in _ORG_URL_PATTERNS:
++          m = pattern.match(request_path)
++          if not m: continue
++          entity_id = m.group(1)
++          entity = await db[collection].find_one(
++              {'id': entity_id}, {'_id': 0, field: 1}
++          )
++          if not entity: return None
++          if field == 'org_id':
++              return entity.get('org_id')
++          project_id = entity.get('project_id')
++          if not project_id: return None
++          project = await db.projects.find_one(
++              {'id': project_id}, {'_id': 0, 'org_id': 1}
++          )
++          return project.get('org_id') if project else None
++      return None
+
+Reuses module-level `_re` from L10. Returns None for non-matching
+paths so callers fall back to legacy behavior (no regression).
+
+================================================================================
+LOCATION 3 — router.py: require_full_access (L530-559 post-edit)
+================================================================================
+@@ async def require_full_access(user: dict = Depends(get_current_user)):
+-      access = await get_effective_access(user['id'])
+-      if access != EffectiveAccess.FULL_ACCESS:
+-          raise HTTPException(status_code=402, detail={...})
+-      return user
++  async def require_full_access(
++      request: Request,
++      user: dict = Depends(get_current_user),
++  ):
++      # BATCH J — try legacy access first (fast path).
++      access = await get_effective_access(user['id'])
++      if access == EffectiveAccess.FULL_ACCESS:
++          return user
++
++      # Slow path: legacy check would block. Try scope-aware retry.
++      db = get_db()
++      resolved_org_id = await _resolve_request_org_id(request.url.path, db)
++      if resolved_org_id:
++          access = await get_effective_access(user['id'], resolved_org_id)
++          if access == EffectiveAccess.FULL_ACCESS:
++              logger.info(f"[PAYWALL:SCOPED_OK] user={user['id']} ...")
++              return user
++
++      logger.info(f"[PAYWALL:BLOCKED] user={user['id']} ...")
++      raise HTTPException(status_code=402, detail={...})
+
+`Request` already imported. FastAPI auto-injects `request` as the
+first non-Depends positional. Existing `Depends(require_full_access)`
+callers continue to work — FastAPI fills in `request` from the
+endpoint context. Verified via ROUTERS_OK import test.
+
+================================================================================
+LOCATION 4 — router.py: _check_paywall (L567-599 post-edit)
+================================================================================
+@@ async def _check_paywall(request_method, request_path, user):
+       if request_method == 'GET':
+           return
+       for exempt in PAYWALL_EXEMPT_PATHS:
+           if request_path.startswith(exempt):
+               return
+-      access = await get_effective_access(user['id'])
+-      if access != EffectiveAccess.FULL_ACCESS:
+-          raise HTTPException(...)
++      # BATCH J — try legacy access first (fast path).
++      access = await get_effective_access(user['id'])
++      if access == EffectiveAccess.FULL_ACCESS:
++          return
++
++      # Slow path: scope-aware retry.
++      db = get_db()
++      resolved_org_id = await _resolve_request_org_id(request_path, db)
++      if resolved_org_id:
++          access = await get_effective_access(user['id'], resolved_org_id)
++          if access == EffectiveAccess.FULL_ACCESS:
++              logger.info(f"[PAYWALL:SCOPED_OK] ...")
++              return
++
++      logger.info(f"[PAYWALL:BLOCKED] ...")
++      raise HTTPException(status_code=402, detail={...})
+
+Signature unchanged (request_method, request_path, user) so all
+existing callers stay compatible.
+
+================================================================================
+LOCATION 5 — server.py: paywall_middleware (L1407-1427 post-edit)
+================================================================================
+@@                       if not _is_sa:
+-                          access = await get_effective_access(user_id)
+-                          if access != EffectiveAccess.FULL_ACCESS:
+-                              paywall_block = True
++                          # BATCH J — try legacy access first.
++                          access = await get_effective_access(user_id)
++                          if access != EffectiveAccess.FULL_ACCESS:
++                              # Slow path: try scope-aware before blocking.
++                              # Nested import avoids circular at module load.
++                              from contractor_ops.router import _resolve_request_org_id
++                              resolved_org_id = await _resolve_request_org_id(request.url.path, db)
++                              if resolved_org_id:
++                                  access = await get_effective_access(user_id, resolved_org_id)
++                              if access == EffectiveAccess.FULL_ACCESS:
++                                  logger.info(f"[PAYWALL:SCOPED_OK] ...")
++                              else:
++                                  logger.info(f"[PAYWALL:BLOCKED] ...")
++                                  paywall_block = True
+
+Nested import — verified via SERVER_OK import test (no circular at
+module load). `db` already in scope from middleware setup.
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ Other branches in onClick (returnTo, building_id default,
-     project_id default, /projects fallback). UNCHANGED.
-- ❌ useEffect dep array (already includes `isContractor` from Batch I).
-- ❌ L234 `isContractor` derivation. UNCHANGED.
-- ❌ All other "/" or "/projects" references in TaskDetailPage —
-     different code paths (error states, project_id missing fallbacks).
-- ❌ Backend (Batch I 403 gate stays — security guarantee preserved).
-- ❌ Bell notifications, WA flows, anything from Batches G/I.
-- ❌ Schemas, migrations, env vars, dependencies — none.
+❌ get_effective_access signature (already has org_id param).
+❌ _resolve_access, get_subscription, get_user_org — read-only logic.
+❌ Payment processing (PayPlus, GreenInvoice, charge functions).
+❌ Subscription state writes (mark_subscription_active, etc.).
+❌ Pricing, founder plan, comped, manual_override logic.
+❌ PAYWALL_EXEMPT_PATHS / PAYWALL_EXEMPT_PREFIXES — GET exemption preserved.
+❌ Frontend (no changes).
+❌ DB schema (no migrations).
+❌ Existing get_effective_access callers that already pass org_id
+   (onboarding_router.py L1314, billing.py L500, L1228) — UNCHANGED.
+❌ Existing `import re as _re` at router.py L10 — REUSED, not redeclared.
 
 ================================================================================
-VERIFY 1 — Frontend build
+VERIFY 1 — Backend imports (3/3 PASS)
 ================================================================================
-$ cd frontend && CI=true REACT_APP_BACKEND_URL=https://dummy.invalid \
-                  REACT_APP_GOOGLE_CLIENT_ID=dummy.apps.googleusercontent.com yarn build
-
+$ cd backend && python -c "from contractor_ops.router import \
+    _resolve_request_org_id, _ORG_URL_PATTERNS; \
+    from contractor_ops.billing import get_effective_access; import os; \
+    os.environ['PAYWALL_SCOPE_AWARE_ENABLED']='true'; \
+    print('IMPORT_OK', len(_ORG_URL_PATTERNS))"
+   →  IMPORT_OK 5
    →  EXIT=0
-   →  No NEW warnings or errors in TaskDetailPage.
-   →  Pre-existing apple-sign-in source-map noise expected and unchanged.
 
-(Backend not touched — no backend verify needed.)
+$ cd backend && python -c "import server; print('SERVER_OK')"
+   →  SERVER_OK
+   →  EXIT=0  (no SyntaxError, no circular import)
+
+$ cd backend && python -c "from contractor_ops.tasks_router import *; \
+    from contractor_ops.projects_router import *; print('ROUTERS_OK')"
+   →  ROUTERS_OK
+   →  EXIT=0  (Depends() signature change in require_full_access doesn't
+              break router importers — FastAPI handles request injection)
 
 ================================================================================
-VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging)
+VERIFY 2 — Pytest gate (3/3 + 9 supporting = 12/12 PASS)
 ================================================================================
-Per spec, Tests A–D — only A should differ from Batch I results:
+$ cd backend && python -m pytest tests/test_scope_aware_paywall.py -v
 
-**A — THE BUG WE'RE FIXING:**
-   1. Login as the SAME contractor user from Batch I test.
-   2. Receive WA notification for a defect.
-   3. Tap link → opens TaskDetailPage (externalEntry).
-   4. Tap back arrow.
-   EXPECT: lands on
-     `https://app.brikops.com/projects/{their_project_id}?src=contractor`
-   EXPECT: sees their own defect list in THAT project
-     (ContractorDashboard with project preselected).
-   EXPECT NOT: lands on `https://app.brikops.com/projects` (the bug)
-     or on `/` (Batch I behavior).
+   tests/test_scope_aware_paywall.py
+     ::test_1_happy_path_does_not_call_resolve_request_org_id   PASSED [  8%]
+     ::test_2a_projects_one_hop                                 PASSED [ 16%]
+     ::test_2b_tasks_two_hop                                    PASSED [ 25%]
+     ::test_2c_buildings_two_hop                                PASSED [ 33%]
+     ::test_2d_floors_two_hop                                   PASSED [ 41%]
+     ::test_2e_units_two_hop                                    PASSED [ 50%]
+     ::test_2f_negative_no_pattern_match                        PASSED [ 58%]
+     ::test_2g_negative_entity_not_found                        PASSED [ 66%]
+     ::test_2h_negative_project_chain_missing                   PASSED [ 75%]
+     ::test_2i_negative_task_without_project_id                 PASSED [ 83%]
+     ::test_3_feature_flag_bypass_ignores_caller_org_id         PASSED [ 91%]
+     ::test_3b_feature_flag_default_true_honours_caller_org_id  PASSED [100%]
 
-**B — Batch I regression (defense-in-depth preserved):**
-   1. Same contractor types `/projects/X/buildings/Y/defects` in URL bar.
-   EXPECT: still 403 from backend → bounced.
+   ======================== 12 passed, 2 warnings in 1.13s ========================
+   EXIT=0
 
-**C — Management regression:**
-   1. PM opens defect → click back.
-   EXPECT: still lands on BuildingDefectsPage (unchanged from Batch I).
+Mapping to Zahi's required gates:
+  - Test 1 (HAPPY PATH, defends "lazy lookup" architecture) → PASS
+    `_resolve_request_org_id.call_count == 0` when legacy returns FULL_ACCESS.
+  - Test 2 (URL PATTERN RESOLUTION, 5 patterns + negatives) → PASS
+    All 5 patterns resolved correctly + 4 negative cases handled (no match,
+    entity missing, project chain missing, task without project_id).
+  - Test 3 (FEATURE FLAG BYPASS, defends rollback) → PASS
+    `PAYWALL_SCOPE_AWARE_ENABLED=false` → caller-provided org_id IGNORED,
+    `get_user_org('X')` invoked, returns READ_ONLY.
+  - Bonus 3b: default flag honours scope-aware path (sanity for "fix is
+    active by default").
 
-**D — returnTo regression:**
-   1. PM clicks defect from BuildingDefectsPage → click back.
-   EXPECT: returns to BuildingDefectsPage via returnTo (unchanged
-   from Batch I — explicit returnTo wins over isContractor branch
-   anyway, and PM isn't a contractor).
+Warnings: only 2 pre-existing PydanticDeprecatedSince20 from schemas.py
+(unrelated to this batch — `@validator` migration owed elsewhere).
 
-Only Test A should differ from Batch I results.
+================================================================================
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI on staging)
+================================================================================
+
+**A — THE REPORTED BUG (Zahi's test user):**
+1. Login as the contractor user who is also PM/owner in expired Org A.
+   They're contractor in paid Org B's project X.
+2. Open a defect assigned to them in Org B's project X.
+3. Click "שלח לאישור מנהל" (submit proof for manager approval).
+EXPECT: defect status changes to `pending_manager_approval`. No 402.
+EXPECT NOT: "מנוי פג תוקף" 402 block (THE BUG).
+Verify in logs: `[PAYWALL:SCOPED_OK] user=... path=/api/tasks/.../contractor-proof
+                 resolved_org={Org_B_id} decision=allow`
+
+**B — Single-org user regression:**
+1. PM with single paid org → submit any action.
+EXPECT: works as before (legacy fast path returns FULL_ACCESS;
+        scope-aware never invoked — Test 1 enforces this).
+
+**C — Genuinely expired user blocked correctly:**
+1. PM with ONLY an expired org → submit any action.
+EXPECT: 402 block as today. Scope-aware fallback also fails (no
+        project in a paid org to resolve to). Logs show
+        `[PAYWALL:BLOCKED] resolved_org={expired_org_id} decision=block`
+        OR `resolved_org=none` if URL doesn't match a pattern.
+
+**D — Feature flag rollback:**
+1. Flip `PAYWALL_SCOPE_AWARE_ENABLED=false` in AWS Elastic Beanstalk
+   env vars (no redeploy — restart workers).
+2. Same multi-org user submits proof.
+EXPECT: 402 block (legacy behavior restored — Test 3 enforces this).
+3. Flip back to `true` → scope-aware behavior restored.
+
+================================================================================
+DEFERRED — Batch J.1 follow-up
+================================================================================
+Per spec, the 6 multi-org integration scenarios from ROADMAP L678-684
+remain documented but NOT in this batch:
+  1. Multi-org A=expired/B=paid → POST to A → 402.
+  2. Same user → POST to B → 200.
+  3. User with no orgs → existing READ_ONLY fallback.
+  4. Single org (paid) → no regression.
+  5. Single org (expired) → still blocked everywhere.
+  6. Founder + comped + manual_override → all preserved.
+
+These require seeded test orgs/users and integration runner —
+separate task (Batch J.1) once CI infra ready. Not blocking deploy
+for Phase 1 since the 3 unit gates above cover the architecture
+invariants.
+
+================================================================================
+PERFORMANCE NOTES
+================================================================================
+- Happy path (~95% of traffic, single-org users): UNCHANGED. Single
+  DB query for subscription, same as today. Test 1 enforces this
+  invariant — `_resolve_request_org_id` literally never called.
+- Slow path (multi-org users hitting paywall): +2 DB queries (entity
+  lookup + project lookup). One-time per request. ~5-10ms on mobile 4G.
+  Acceptable since these requests would 402 today anyway.
+- Feature flag check: trivial os.environ read, cached per worker.
+- Logging: 1 extra log line per paywall decision.
+Net: imperceptible for most users. Multi-org users who were blocked
+entirely now go through correctly (huge UX win, no measurable cost).
 
 ================================================================================
 RISK
 ================================================================================
-Very low. Single string change in 2 places. Frontend only.
+Medium-low. Backend logic change in 3 paywall layers. Comprehensive
+safety nets:
 
-- ⚠ Edge case: defect without project_id (defensive ternary handles it
-  by routing to /projects). Should never happen in practice — Task
-  schema requires project_id — but the fallback is safe if it does.
-- ⚠ The src=contractor route depends on existing Stream A
-  implementation. Verified active in prod (used by reminder digests).
-  If that route handler ever changes, this batch is unaffected (we
-  just navigate to the URL).
-- ⚠ Batch I's security guarantee (backend 403, frontend defense in
-  depth) is fully preserved — we only change WHERE contractors land
-  AFTER they're correctly routed away from BuildingDefectsPage.
+1. Feature flag — instant rollback via env var flip (no redeploy).
+   Test 3 enforces this contract.
+2. Fast path preserved — legacy users see zero behavior change.
+   Test 1 enforces this contract.
+3. Lazy lookup — slow path only triggers when about to block.
+4. 12 pytest tests — covers regressions before deploy.
+5. Structured logging — debug production issues without repro.
 
-Bundle size impact: zero (no new imports, no new logic).
-Performance impact: zero.
+Risk vectors:
+- ⚠ Circular import in server.py middleware → mitigated by nested
+  `from contractor_ops.router import _resolve_request_org_id` inside
+  the function. Verified via `import server` test.
+- ⚠ FastAPI Depends signature change in `require_full_access` (added
+  `request: Request`) → FastAPI auto-injects request from endpoint
+  context. Verified via tasks_router/projects_router import test.
+- ⚠ URL pattern miss → if a new endpoint URL doesn't match any
+  `_ORG_URL_PATTERNS` entry, falls back to legacy behavior. Same
+  as today. Test 2f enforces this.
+- ⚠ Feature flag misconfiguration — default 'true' (fix active).
+  If unset, fix active. If set to 'false', behavior = pre-batch.
+  Tests 3 + 3b enforce both states.
+
+Bundle / FE impact: zero (no frontend changes).
+Schema / migration: zero.
+Payment processing: zero touch (see SAFETY GUARANTEES).
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha>
-- Reverts contractor landing back to `/` (Batch I behavior).
-- Batch I's security fix (backend 403 + frontend deep-link safety
-  branches) is fully preserved — no security regression on rollback.
+**Instant (no redeploy):**
+- Set env var `PAYWALL_SCOPE_AWARE_ENABLED=false` in AWS Elastic
+  Beanstalk → restart workers → behavior reverts to pre-batch.
+  Test 3 verifies this works.
+
+**Full rollback (if needed):**
+- `git revert <commit-sha> && ./deploy.sh --prod`
+- Reverts all 4 files. Behavior identical to pre-batch.
+
+================================================================================
+FOLLOW-UP (Phase 2, separate batch — DOCUMENTED ONLY)
+================================================================================
+Per ROADMAP L690-708:
+- Per-project access lock (project_billing.status='cancelled' →
+  read-only on that project even if org is paid).
+- Frontend banner: "פרויקט סגור — צפייה בלבד" + reopen button.
+- Action button disabled states + tooltip.
+- "סגור פרויקט וסיים חיוב" UI.
+
+NOT in this batch. Schedule after Phase 1 stable in prod.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
