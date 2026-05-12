@@ -10,6 +10,15 @@ const COLORS = [
   { value: '#000000', label: 'שחור' },
 ];
 
+// BATCH F (2026-05-12) — text label rendering constants. Sizes are
+// "visual" (display px) and divided by scaleRef before drawing on
+// canvas, matching the convention used by getLineWidth/getPos.
+const FONT_STACK = '"Heebo", "Arial Hebrew", "Noto Sans Hebrew", system-ui, sans-serif';
+const TEXT_FONT_SIZE = 18;
+const TEXT_PADDING_X = 10;
+const TEXT_PADDING_Y = 6;
+const TEXT_PILL_RADIUS = 8;
+
 function loadImageFromFile(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -41,9 +50,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   const drawingRef = useRef(false);
   const currentStrokeRef = useRef(null);
 
+  // BATCH F (2026-05-12) — tool mode + pending text input state.
+  // tool: 'draw' (existing freehand) | 'text' (new label).
+  // pendingText: null | { x, y, value } where (x,y) are CANVAS coords.
+  const [tool, setTool] = useState('draw');
+  const toolRef = useRef('draw');
+  const [pendingText, setPendingText] = useState(null);
+
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+  useEffect(() => { toolRef.current = tool; }, [tool]);
 
   const savingRef = useRef(false);
   useEffect(() => { savingRef.current = saving; }, [saving]);
@@ -130,7 +147,55 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
     const lw = getLineWidth();
     for (const stroke of allStrokes) {
-      if (stroke.points.length < 2) continue;
+      // BATCH F (2026-05-12) — type discriminator. Default 'stroke'
+      // for backward compat with any in-memory strokes that pre-date
+      // the migration (existing strokes have no `type` field).
+      const strokeType = stroke.type || 'stroke';
+
+      if (strokeType === 'text') {
+        // Render centered white-pill at (x, y) with colored text.
+        // Sizes are display-px values divided by scaleRef so visual
+        // size stays consistent across image-resize ratios.
+        const scale = scaleRef.current || 1;
+        const fontSize = TEXT_FONT_SIZE / scale;
+        const padX = TEXT_PADDING_X / scale;
+        const padY = TEXT_PADDING_Y / scale;
+        const radius = TEXT_PILL_RADIUS / scale;
+
+        ctx.save();
+        ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
+        ctx.direction = 'rtl';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+
+        const metrics = ctx.measureText(stroke.text || '');
+        const textWidth = metrics.width;
+        const textHeight = fontSize;
+        const rectWidth = textWidth + padX * 2;
+        const rectHeight = textHeight + padY * 2;
+        const rectX = stroke.x - rectWidth / 2;
+        const rectY = stroke.y - rectHeight / 2;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(rectX, rectY, rectWidth, rectHeight, radius);
+        } else {
+          ctx.rect(rectX, rectY, rectWidth, rectHeight);
+        }
+        ctx.fill();
+
+        ctx.lineWidth = Math.max(1, 1.5 / scale);
+        ctx.strokeStyle = '#1f2937';
+        ctx.stroke();
+
+        ctx.fillStyle = stroke.color || '#000000';
+        ctx.fillText(stroke.text || '', stroke.x, stroke.y);
+        ctx.restore();
+        continue;
+      }
+
+      if (!stroke.points || stroke.points.length < 2) continue;
       ctx.beginPath();
       ctx.strokeStyle = stroke.color;
       ctx.lineWidth = lw;
@@ -160,7 +225,22 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     if (!canvas || !loaded) return;
 
     const startStroke = (pos) => {
-      const newStroke = { color: colorRef.current, points: [pos] };
+      // BATCH F (2026-05-12) — branch on tool. In text mode, tap
+      // opens the inline overlay at the tap position. If a
+      // pendingText already exists (user tapped, started typing,
+      // then tapped a different spot before committing), preserve
+      // the typed value and only update position — intuitive
+      // "let me move it before saving". To start fresh, user must
+      // tap "ביטול" first.
+      if (toolRef.current === 'text') {
+        setPendingText(prev =>
+          prev
+            ? { ...prev, x: pos.x, y: pos.y }
+            : { x: pos.x, y: pos.y, value: '' }
+        );
+        return;
+      }
+      const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
       currentStrokeRef.current = newStroke;
       drawingRef.current = true;
     };
@@ -254,6 +334,28 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     });
   }, [redraw]);
 
+  // BATCH F (2026-05-12) — commit pending text label.
+  // DESIGN DECISION: color is captured at COMMIT time (not at tap
+  // time). User can change color while typing — the "אישור" press
+  // is their final intent. Avoids surprising "I selected red after
+  // I tapped!" behavior.
+  const commitPendingText = useCallback(() => {
+    setPendingText(curr => {
+      if (!curr || !curr.value.trim()) return null;
+      const textStroke = {
+        type: 'text',
+        color: colorRef.current,
+        x: curr.x,
+        y: curr.y,
+        text: curr.value.trim(),
+      };
+      strokesRef.current = [...strokesRef.current, textStroke];
+      setStrokes(prev => [...prev, textStroke]);
+      redraw([...strokesRef.current]);
+      return null;
+    });
+  }, [redraw]);
+
   const handleSave = useCallback(() => {
     if (currentStrokeRef.current && drawingRef.current) {
       const stroke = currentStrokeRef.current;
@@ -316,6 +418,22 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
               title={c.label}
             />
           ))}
+          {/* BATCH F (2026-05-12) — text tool toggle. */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setTool(prev => (prev === 'text' ? 'draw' : 'text'));
+            }}
+            aria-label={tool === 'text' ? 'מצב ציור' : 'מצב טקסט'}
+            title={tool === 'text' ? 'מצב טקסט פעיל — לחץ למצב ציור' : 'הוסף תווית טקסט'}
+            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-transform ${
+              tool === 'text'
+                ? 'border-white bg-white text-slate-900 scale-110'
+                : 'border-slate-600 bg-slate-700 text-white'
+            }`}
+          >
+            T
+          </button>
         </div>
       </div>
 
@@ -329,6 +447,49 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
           style={{ touchAction: 'none', display: 'block' }}
         />
       </div>
+
+      {/* BATCH F (2026-05-12) — pending text input overlay.
+          Renders above the action bar when user has tapped in text mode.
+          Input has font-size >= 16px to prevent iOS auto-zoom. */}
+      {pendingText && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 border-t border-slate-700 shrink-0"
+             style={{ position: 'relative', zIndex: 20 }}>
+          <input
+            type="text"
+            autoFocus
+            maxLength={30}
+            value={pendingText.value}
+            onChange={(e) => setPendingText(p => p ? { ...p, value: e.target.value } : p)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && pendingText.value.trim()) {
+                commitPendingText();
+              } else if (e.key === 'Escape') {
+                setPendingText(null);
+              }
+            }}
+            placeholder="תווית קצרה (עד 30 תווים)"
+            dir="auto"
+            className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-slate-600 focus:border-amber-500 focus:outline-none"
+            style={{
+              fontSize: '16px',
+              fontFamily: 'Heebo, "Arial Hebrew", system-ui, sans-serif',
+            }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
+            disabled={!pendingText.value.trim()}
+            className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium disabled:opacity-40"
+          >
+            אישור
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setPendingText(null); }}
+            className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm"
+          >
+            ביטול
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-t border-slate-700 shrink-0"
            style={{ position: 'relative', zIndex: 20 }}>

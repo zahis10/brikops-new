@@ -1,214 +1,470 @@
 ================================================================================
-BATCH K — Clearer error message on trade-mismatch in contractor-proof (P3 UX)
+BATCH F — Photo annotation: text labels v1 (P3 feature)
 ================================================================================
 Date:           2026-05-12
 Branch:         staging  (NOT main)
-Severity:       P3 — UX clarity only. No functional change to access
-                control. Discovered 2026-05-12 by Zahi during BATCH J
-                prod testing.
+Severity:       P3 — feature request from field use (Zahi 2026-05-11).
 
-                Scenario: contractor (trade=electrical) tries to
-                submit proof on an old defect with category=plumbing
-                where they were assigned BEFORE the trade-match rule
-                was enforced. Backend correctly blocks the
-                submission, but the message "הליקוי לא נמצא"
-                (defect not found) is misleading — the defect IS
-                visible and reachable; it's the trade rule that
-                blocks the action. Result: contractor sees an
-                impossible state — they're ON the defect page, but
-                the system says "not found" when they try to act.
+                Currently `PhotoAnnotation.js` only supports freehand
+                strokes in 3 colors. PMs annotating defect photos in
+                the field want SHORT TEXT labels — defect numbers
+                ("5/27"), measurements, apartment/floor callouts —
+                in a clean white-pill style on top of the photo.
 
-                Better message tells them WHY ("שייך לקטגוריה אחרת")
-                and what to do ("פנה למנהל").
+                Reference: Zahi's screenshot 2026-05-11.
 
-Approach:       Backend-only message + status-code change at the
-                trade-mismatch raise. Trade-match logic INTENTIONALLY
-                PRESERVED (architectural rule: company-bound
-                contractors only act on defects matching their trade).
-                The adjacent assignee-mismatch raise keeps 404 +
-                "not found" wording on purpose (security: don't leak
-                existence of defects the user isn't assigned to).
+Approach:       Frontend-only. Extend `PhotoAnnotation.js` with a
+                tool toggle (draw/text). In text mode, tap canvas →
+                inline overlay input appears at bottom (NOT browser
+                `prompt()` — ugly on mobile). Type short text → tap
+                "אישור" → renders as white-bg rounded pill with
+                colored text at tap point.
+
+                Storage extends the existing `strokes` array with a
+                discriminator `type: 'stroke' | 'text'`. No backend,
+                no schema, no new dependencies — text rasterizes
+                into the JPEG blob that already gets uploaded.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Backend only:
-                  - backend/contractor_ops/tasks_router.py
-                    (+12 LOC: 1 raise reworded + comment block)
-                Total: 1 file. No frontend, no DB, no env vars.
+Files changed:  Frontend only:
+                  - frontend/src/components/PhotoAnnotation.js
+                    (+150 LOC; 358 → 522 lines)
+                Total: 1 file. No backend, no DB, no env vars, no
+                new npm dependencies.
 
 ================================================================================
-SCOPE — what's IN, what's OUT
+SCOPE — v1 (what's IN, what's OUT)
 ================================================================================
 
-IN this batch:
-  ✅ tasks_router.py L939-952 (contractor-proof endpoint, trade-mismatch
-     check): change `HTTPException(status_code=404, detail='הליקוי לא
-     נמצא')` to `HTTPException(status_code=400, detail='לא ניתן לסגור
-     — הליקוי שייך לקטגוריה אחרת. פנה למנהל.')` + comment block.
+IN v1:
+  ✅ "T" tool button in top toolbar (next to color circles).
+     Toggles `tool: 'draw' | 'text'`.
+  ✅ In text mode: tap canvas → inline overlay input at bottom of
+     screen (NOT prompt()).
+  ✅ Overlay: input + "אישור" + "ביטול". Enter commits, Escape
+     cancels.
+  ✅ "אישור" → white-bg rounded-pill with colored text rendered at
+     tap point (canvas coordinates).
+  ✅ Text persists in `strokes` array → undo works (LIFO over both
+     types — already supported by existing `handleUndo`).
+  ✅ Hebrew font stack: `'Heebo', 'Arial Hebrew', 'Noto Sans Hebrew',
+     system-ui, sans-serif`.
+  ✅ `ctx.direction = 'rtl'` for Hebrew layout.
+  ✅ Reposition-while-typing: 2nd tap before commit moves
+     pendingText, preserves typed value (cancel for fresh start).
+  ✅ Color captured at COMMIT time, not tap time (final intent).
+  ✅ `roundRect` feature-detect with `ctx.rect` fallback.
+  ✅ Input: `font-size: 16px` (prevents iOS auto-zoom),
+     `maxLength=30`, `dir="auto"`.
+  ✅ `ctx.save()`/`ctx.restore()` around text rendering — keeps
+     canvas state changes (font/direction/baseline/align) from
+     leaking into subsequent freehand stroke draws.
 
-OUT of this batch (intentionally preserved):
-  ❌ tasks_router.py L937 (assignee-mismatch 404). Security wording —
-     don't leak that defects exist if user isn't assigned. UNCHANGED.
-  ❌ The trade-match logic itself (`_trades_match`,
-     `_get_contractor_trade_key`). UNCHANGED — enforces architectural
-     rule per Zahi's confirmation 2026-05-12.
-  ❌ Frontend (no UI changes — the error toast just shows whatever
-     backend returns).
-  ❌ Other 404 "הליקוי לא נמצא" raises in tasks_router.py (L519,
-     L1033) — different endpoints, separate concerns.
-  ❌ frontend/src/i18n/he.json key `not_found` — separate frontend
-     usage, not consumed by error-toast renderer.
-  ❌ Migration / grandfathering of legacy cross-trade defects. Zahi
-     handles the specific old defect via PM force-close manually.
-
-================================================================================
-STEP 0 — PRE-FLIGHT (3 PASS — actual line numbers; spec L864/867 stale)
-================================================================================
-
-1. Trade-match check location (spec quoted L863-867; actual post-G/I/J state):
-   $ sed -n '934,939p' backend/contractor_ops/tasks_router.py
-   →  L937: assignee-mismatch raise (preserve)
-        `raise HTTPException(status_code=404, detail='הליקוי לא נמצא')`
-   →  L939: trade-mismatch raise (the one we change, was at spec L867)
-        `raise HTTPException(status_code=404, detail='הליקוי לא נמצא')`
-   ✓ Two consecutive raises confirmed; we touch only the trade one.
-
-2. `_trades_match` and `_get_contractor_trade_key` exist and are imported:
-   $ grep -n "_trades_match\|_get_contractor_trade_key" backend/contractor_ops/tasks_router.py
-   →  L11: `_get_contractor_trade_key, _trades_match,` (imported from `.router`)
-   →  L938-939: usage in contractor_proof (unchanged).
-   ✓ Logic preserved as-is.
-
-3. "הליקוי לא נמצא" usage scope:
-   $ grep -rn "הליקוי לא נמצא" backend/contractor_ops/ frontend/src/
-   →  Backend tasks_router.py: 4 raises at L519, L934, L937 (now changed
-      to L937→preserved + L939→reworded post-edit), L1033.
-   →  Frontend: only `i18n/he.json:127 "not_found": "הליקוי לא נמצא"`
-      (a localization key, not consumed by the error-toast renderer).
-   ✓ Frontend reads `error.response.data.detail` and surfaces as toast
-     verbatim — no string matching, status-code differentiation rare.
-   ✓ Safe to change L939's wording (and only L939's).
-
-Bonus pre-flight:
-- contractor_proof endpoint: `@router.post("/tasks/{task_id}/contractor-proof")` at L913, def at L914.
-- New message "לא ניתן לסגור — הליקוי שייך לקטגוריה אחרת. פנה למנהל." = ~58 chars; well under iOS toast limit (~120 chars).
+OUT of v1 (separate batches if requested):
+  ❌ Edit/move/delete text labels AFTER placement (only undo LIFO).
+  ❌ Multi-line text, font-size picker, pill background colors.
+  ❌ Persistent vector storage — text rasterizes into JPEG, like
+     strokes. Not separately editable later.
+  ❌ Edge clipping when text extends past canvas bounds.
 
 ================================================================================
-LOCATION 1 — tasks_router.py: trade-mismatch error message
+STEP 0 — PRE-FLIGHT (6 PASS)
 ================================================================================
-File: backend/contractor_ops/tasks_router.py  (L938-952 post-edit)
 
-@@ contractor_proof endpoint
-       is_assignee = task.get('assignee_id') == user['id']
-       is_company_member = await _is_user_in_task_company(db, user['id'], task)
-       if not (is_assignee or is_company_member):
-           raise HTTPException(status_code=404, detail='הליקוי לא נמצא')   # L937 — UNCHANGED (security)
-       trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
-       if not _trades_match(task.get('category'), trade_key):
--          raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
-+          # BATCH K (2026-05-12) — clearer error than the misleading
-+          # "הליקוי לא נמצא" 404. The defect exists and is reachable;
-+          # the contractor's trade just doesn't match the defect's
-+          # category (architectural rule: company-bound contractors
-+          # only act on defects matching their trade). PM should
-+          # reassign or force-close. The adjacent assignee-mismatch
-+          # raise above keeps the 404 + "not found" wording on
-+          # purpose (security: don't leak existence of defects the
-+          # user isn't assigned to).
-+          raise HTTPException(
-+              status_code=400,
-+              detail='לא ניתן לסגור — הליקוי שייך לקטגוריה אחרת. פנה למנהל.'
-+          )
+1. Strokes shape: L161 `const newStroke = { color: colorRef.current, points: [pos] };`
+   ✓ Today: `{color, points}`. Discriminator added: `{type: 'stroke', color, points}`
+     for new, defaults to `'stroke'` if absent (backward compat).
 
-       current_status = task.get('status', '')
-       PROOF_ALLOWED_STATUSES = ('open', 'assigned', 'in_progress', ...)
+2. `redraw` loop: L121-144 — `for (const stroke of allStrokes) { … ctx.stroke() }`.
+   ✓ Body branched on `stroke.type || 'stroke'`. Default path UNCHANGED.
 
-Changes:
-- Status code 404 → 400 (Bad Request — the request can't be honored;
-  not "resource missing").
-- Hebrew message: clear about WHY ("שייך לקטגוריה אחרת") and what
-  to do ("פנה למנהל").
-- Comment block documents the WHY and explicitly notes the adjacent
-  L937 raise is preserved on purpose.
+3. Top toolbar `COLORS.map`: L308-319 inside `<div className="flex items-center gap-2">`.
+   ✓ "T" button added as sibling AFTER color circles, same gap, same size.
+
+4. Bottom action bar (Save/Undo): L335-358 `<div className="flex items-center
+   justify-between px-4 py-3 bg-slate-900 ...">`.
+   ✓ Pending-text overlay sits ABOVE this row, conditional render on `pendingText`.
+
+5. Heebo loaded globally: `frontend/src/index.css:1` Google Fonts import +
+   `frontend/public/index.html:20` preconnect link.
+   ✓ Just reference in `ctx.font`.
+
+6. **CRITICAL — scaleRef direction:**
+   - L88-89: `displayScale = min(containerW/w, containerH/h, 1)`; `scaleRef.current = displayScale`
+   - L117-118 getLineWidth: `VISUAL_LINE_WIDTH / scale`
+   - L153-156 getPos: `(clientX - rect.left) / scale`
+   ✓ Convention: `scaleRef = display/canvas` (typically <1 on mobile when canvas > display).
+     `TEXT_FONT_SIZE / scaleRef.current` is correct — same convention as line width.
+     Visual sanity: render text on a large image (canvas resized to MAX=1280, scale ~0.3)
+     AND on a small image (no resize, scale=1.0). Text should look ~same visual size.
+     If huge-on-small / tiny-on-large → flag for follow-up.
+
+================================================================================
+LOCATION 1 — PhotoAnnotation.js: text rendering constants
+================================================================================
+Lines: 16-23 (added after existing top-of-file constants L5-14)
+
++  // BATCH F (2026-05-12) — text label rendering constants. Sizes are
++  // "visual" (display px) and divided by scaleRef before drawing on
++  // canvas, matching the convention used by getLineWidth/getPos.
++  const FONT_STACK = '"Heebo", "Arial Hebrew", "Noto Sans Hebrew", system-ui, sans-serif';
++  const TEXT_FONT_SIZE = 18;
++  const TEXT_PADDING_X = 10;
++  const TEXT_PADDING_Y = 6;
++  const TEXT_PILL_RADIUS = 8;
+
+================================================================================
+LOCATION 2 — PhotoAnnotation.js: tool/pendingText state
+================================================================================
+Lines: 56-61 + 66 (after color/strokes/scale/drawing refs at L52-54)
+
++  // BATCH F (2026-05-12) — tool mode + pending text input state.
++  // tool: 'draw' (existing freehand) | 'text' (new label).
++  // pendingText: null | { x, y, value } where (x,y) are CANVAS coords.
++  const [tool, setTool] = useState('draw');
++  const toolRef = useRef('draw');
++  const [pendingText, setPendingText] = useState(null);
++
+   useEffect(() => { colorRef.current = color; }, [color]);
+   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
++  useEffect(() => { toolRef.current = tool; }, [tool]);
+
+================================================================================
+LOCATION 3 — PhotoAnnotation.js: redraw branching for text
+================================================================================
+Lines: 151-212 (the `for (const stroke of allStrokes)` loop body)
+
+BEFORE:
+     for (const stroke of allStrokes) {
+       if (stroke.points.length < 2) continue;
+       ctx.beginPath();
+       ctx.strokeStyle = stroke.color;
+       …
+       ctx.stroke();
+     }
+
+AFTER:
+     for (const stroke of allStrokes) {
++      // BATCH F — type discriminator. Default 'stroke' for backward
++      // compat with any in-memory strokes that pre-date the migration.
++      const strokeType = stroke.type || 'stroke';
++
++      if (strokeType === 'text') {
++        // Render centered white-pill at (x,y) with colored text.
++        // Sizes are display-px values divided by scaleRef so visual
++        // size stays consistent across image-resize ratios.
++        const scale = scaleRef.current || 1;
++        const fontSize = TEXT_FONT_SIZE / scale;
++        const padX = TEXT_PADDING_X / scale;
++        const padY = TEXT_PADDING_Y / scale;
++        const radius = TEXT_PILL_RADIUS / scale;
++
++        ctx.save();
++        ctx.font = `bold ${fontSize}px ${FONT_STACK}`;
++        ctx.direction = 'rtl';
++        ctx.textBaseline = 'middle';
++        ctx.textAlign = 'center';
++
++        const metrics = ctx.measureText(stroke.text || '');
++        const rectWidth = metrics.width + padX * 2;
++        const rectHeight = fontSize + padY * 2;
++        const rectX = stroke.x - rectWidth / 2;
++        const rectY = stroke.y - rectHeight / 2;
++
++        ctx.fillStyle = '#ffffff';
++        ctx.beginPath();
++        if (typeof ctx.roundRect === 'function') {
++          ctx.roundRect(rectX, rectY, rectWidth, rectHeight, radius);
++        } else {
++          ctx.rect(rectX, rectY, rectWidth, rectHeight);  // fallback
++        }
++        ctx.fill();
++
++        ctx.lineWidth = Math.max(1, 1.5 / scale);
++        ctx.strokeStyle = '#1f2937';  // slate-800 border for contrast
++        ctx.stroke();
++
++        ctx.fillStyle = stroke.color || '#000000';
++        ctx.fillText(stroke.text || '', stroke.x, stroke.y);
++        ctx.restore();
++        continue;
++      }
++
++      if (!stroke.points || stroke.points.length < 2) continue;
+       ctx.beginPath();
+       ctx.strokeStyle = stroke.color;
+       … (rest of freehand path UNCHANGED) …
+       ctx.stroke();
+     }
+
+Note: defensive `!stroke.points` check added (replaces unguarded
+`stroke.points.length`) — text strokes have no `points` field, so the
+safety guard prevents a TypeError if any code path ever passes a
+text-typed stroke through this branch (it shouldn't, due to the
+explicit `continue` above, but cheap insurance).
+
+================================================================================
+LOCATION 4 — PhotoAnnotation.js: startStroke branches on tool
+================================================================================
+Lines: 230-249 (in handler useEffect)
+
+BEFORE:
+     const startStroke = (pos) => {
+       const newStroke = { color: colorRef.current, points: [pos] };
+       currentStrokeRef.current = newStroke;
+       drawingRef.current = true;
+     };
+
+AFTER:
+     const startStroke = (pos) => {
++      // BATCH F — branch on tool. Reposition-preserve pattern:
++      // 2nd tap before commit moves pendingText, preserves value.
++      // To start fresh, user must tap "ביטול" first.
++      if (toolRef.current === 'text') {
++        setPendingText(prev =>
++          prev
++            ? { ...prev, x: pos.x, y: pos.y }
++            : { x: pos.x, y: pos.y, value: '' }
++        );
++        return;
++      }
+-      const newStroke = { color: colorRef.current, points: [pos] };
++      const newStroke = { type: 'stroke', color: colorRef.current, points: [pos] };
+       currentStrokeRef.current = newStroke;
+       drawingRef.current = true;
+     };
+
+`moveStroke` and `endStroke` UNCHANGED — they only act when
+`drawingRef.current === true`, which the text branch never sets.
+
+================================================================================
+LOCATION 5 — PhotoAnnotation.js: commitPendingText callback
+================================================================================
+Lines: 340-360 (added after existing `handleUndo` useCallback)
+
++  // BATCH F — DESIGN DECISION: color captured at COMMIT time
++  // (not tap time). User can change color while typing — the
++  // "אישור" press is their final intent. Avoids surprising
++  // "I selected red after I tapped!" behavior.
++  const commitPendingText = useCallback(() => {
++    setPendingText(curr => {
++      if (!curr || !curr.value.trim()) return null;
++      const textStroke = {
++        type: 'text',
++        color: colorRef.current,
++        x: curr.x,
++        y: curr.y,
++        text: curr.value.trim(),
++      };
++      strokesRef.current = [...strokesRef.current, textStroke];
++      setStrokes(prev => [...prev, textStroke]);
++      redraw([...strokesRef.current]);
++      return null;
++    });
++  }, [redraw]);
+
+================================================================================
+LOCATION 6 — PhotoAnnotation.js: top toolbar "T" button
+================================================================================
+Lines: 424-439 (added inside top toolbar `<div flex items-center gap-2>`,
+       AFTER the existing `COLORS.map(...)` block)
+
++          {/* BATCH F — text tool toggle. */}
++          <button
++            onClick={(e) => {
++              e.stopPropagation();
++              setTool(prev => (prev === 'text' ? 'draw' : 'text'));
++            }}
++            aria-label={tool === 'text' ? 'מצב ציור' : 'מצב טקסט'}
++            title={tool === 'text' ? 'מצב טקסט פעיל — לחץ למצב ציור' : 'הוסף תווית טקסט'}
++            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-transform ${
++              tool === 'text'
++                ? 'border-white bg-white text-slate-900 scale-110'
++                : 'border-slate-600 bg-slate-700 text-white'
++            }`}
++          >
++            T
++          </button>
+
+================================================================================
+LOCATION 7 — PhotoAnnotation.js: pending-text overlay
+================================================================================
+Lines: 454-495 (added BEFORE the bottom action bar `<div bg-slate-900 border-t>`)
+
++      {/* BATCH F — pending text input overlay. Renders above the
++          action bar when user has tapped in text mode. Input has
++          font-size >= 16px to prevent iOS auto-zoom. */}
++      {pendingText && (
++        <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 border-t border-slate-700 shrink-0"
++             style={{ position: 'relative', zIndex: 20 }}>
++          <input
++            type="text"
++            autoFocus
++            maxLength={30}
++            value={pendingText.value}
++            onChange={(e) => setPendingText(p => p ? { ...p, value: e.target.value } : p)}
++            onKeyDown={(e) => {
++              if (e.key === 'Enter' && pendingText.value.trim()) commitPendingText();
++              else if (e.key === 'Escape') setPendingText(null);
++            }}
++            placeholder="תווית קצרה (עד 30 תווים)"
++            dir="auto"
++            className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-slate-600 focus:border-amber-500 focus:outline-none"
++            style={{
++              fontSize: '16px',
++              fontFamily: 'Heebo, "Arial Hebrew", system-ui, sans-serif',
++            }}
++          />
++          <button onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
++                  disabled={!pendingText.value.trim()}
++                  className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium disabled:opacity-40">
++            אישור
++          </button>
++          <button onClick={(e) => { e.stopPropagation(); setPendingText(null); }}
++                  className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
++            ביטול
++          </button>
++        </div>
++      )}
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ L937 assignee-mismatch 404 — security wording preserved.
-- ❌ `_trades_match` helper logic.
-- ❌ `_get_contractor_trade_key` helper logic.
-- ❌ Other 404 cases in tasks_router.py (L519 status-change,
-     L1033 manager-decision/cleanup paths) — separate concerns.
-- ❌ Frontend toast handling, i18n keys, response shape (still
-     `{detail: '...'}`).
-- ❌ Other endpoints (close-task, manager-decision, etc.).
-- ❌ frontend/src/i18n/he.json key `not_found` — separate frontend
-     usage, not parsed from error-toast renderer.
+- ❌ Touch/mouse handler attachment (`passive: false`, separate touch
+     and mouse listeners) — preserved from cross-platform iteration.
+- ❌ Viewport lock useEffect (`maximum-scale=1, user-scalable=no`) —
+     critical for iOS pinch suppression.
+- ❌ `loadImageFromFile`, image scaling, `MAX_CANVAS_SIZE=1280`.
+- ❌ `getPos`, `scaleRef`, `getLineWidth` — coordinate math preserved.
+- ❌ `moveStroke`, `endStroke` — only act when drawingRef is true,
+     which text mode never sets.
+- ❌ Save/Undo handlers — undo already pops the `strokes` array, so
+     it works on text strokes too with no change. Save reads
+     `strokesRef.current` and rasterizes whole canvas, including
+     text pills.
+- ❌ Color picker UI — text reuses currently-selected color.
+- ❌ Existing saved JPEG blobs on disk — already rasterized, no
+     migration needed.
+- ❌ Backend, schema, env vars, dependencies (zero changes).
 
 ================================================================================
-VERIFY 1 — Backend imports (2/2 PASS)
+VERIFY 1 — Frontend build (PASS)
 ================================================================================
-$ cd backend && python -c "from contractor_ops.tasks_router import contractor_proof; print('OK')"
-   →  OK
-   →  EXIT=0  (no SyntaxError)
-
-$ cd backend && python -c "import server; print('SERVER_OK')"
-   →  SERVER_OK
-   →  EXIT=0  (no module-level breakage)
-
-No new pytest test required: string-only change; trade-match logic
-unchanged so existing behavior tests still apply.
+$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
+   →  EXIT=0
+   →  Build folder ready. No new ESLint warnings related to BATCH F.
+   →  craco-config requires REACT_APP_BACKEND_URL env var (existing
+      project guard, not introduced by this batch). Real value comes
+      from CI/.env.production at deploy time.
 
 ================================================================================
-VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or prod)
+VERIFY 2 — Manual smoke (DEFERRED TO ZAHI on staging or device)
 ================================================================================
 
-**A — Reproduce trade-mismatch with new wording:**
-1. Login as a contractor with trade=X (e.g. electrical).
-2. Open a defect where they're assignee BUT category=Y (e.g. plumbing).
-   (Easiest: the specific old defect from Zahi's testing today, or
-    manually assign a cross-trade defect for testing.)
-3. Try to submit proof.
-EXPECT: toast shows "לא ניתן לסגור — הליקוי שייך לקטגוריה אחרת.
-        פנה למנהל." (NOT "הליקוי לא נמצא").
-EXPECT: HTTP 400 (NOT 404).
+**A — Draw mode regression (existing behavior preserved):**
+  1. Open PhotoAnnotation on any defect photo.
+  2. Default tool = draw. Freehand-draw an oval.
+  3. Tap Undo. Stroke disappears.
+  4. Tap Save. Photo with annotation uploads.
+  EXPECT: identical to today.
 
-**B — Regression: assignee-mismatch case preserved:**
-1. Different contractor tries to access a defect they're not
-   assigned to via deep-link, or tries to submit proof on it.
-EXPECT: still 404 with "הליקוי לא נמצא" (security wording preserved).
+**B — Text mode happy path:**
+  1. Open PhotoAnnotation. Tap "T" — it highlights (white bg).
+  2. Tap on photo. Bottom overlay appears with input + buttons.
+  3. Type "5/27" → tap "אישור".
+  4. White pill with "5/27" in black appears at tap location.
+  5. Tap Save. Photo uploads with pill (+ any prior strokes).
 
-**C — Regression: happy path:**
-1. Contractor with matching trade submits proof.
-EXPECT: defect status → pending_manager_approval as before.
+**C — Hebrew text rendering:**
+  1. Tap T → tap canvas → type "דירה 8" → אישור.
+  EXPECT: text in pill, no garbled chars.
+  CRITICAL: verify on iPhone (Capacitor) AND Android (Capacitor or
+  Chrome) — different rendering engines.
+
+**D — Color affects text:**
+  1. Select red → T → tap canvas → type "X" → אישור.
+  EXPECT: "X" in RED inside white pill.
+
+**E — Color-at-COMMIT design decision:**
+  1. Select black → T → tap canvas → start typing → CHANGE color to red →
+     tap "אישור".
+  EXPECT: text rendered in RED (final color at commit, not at tap).
+
+**F — Reposition-preserve design decision:**
+  1. T → tap canvas at point A → type "abc" → tap canvas at point B
+     (without committing).
+  EXPECT: overlay still open, "abc" still in input, pendingText now
+  at point B. Pressing אישור renders "abc" at point B.
+
+**G — Undo works on text (LIFO over both types):**
+  1. Add a freehand stroke. Add a text label. Tap Undo.
+  EXPECT: text disappears. Tap Undo again → stroke disappears.
+
+**H — Cancel without committing:**
+  1. T → tap canvas → type "x" → tap ביטול.
+  EXPECT: overlay closes, no text drawn, no entry in strokes.
+
+**I — Multiple text labels:**
+  1. Add 3 text labels in different positions and colors.
+  EXPECT: all 3 visible, all undoable in reverse order.
+
+**J — Cross-platform check (CRITICAL):**
+  - Verify B and C on iPhone (Capacitor) AND Android (Capacitor or
+    Chrome). Different rendering engines.
+  - If Hebrew looks different per platform → flag for follow-up font
+    tuning. v1 ship is acceptable if both render legibly.
+
+**K — iOS keyboard popup behavior:**
+  - On iPhone, tap T → tap canvas → keyboard pops.
+  EXPECT: input visible above keyboard (position:fixed bottom). No
+  page zoom (16px font on input).
+
+**L — Tap near edge:**
+  - T → tap near right edge of canvas → type "edge" → אישור.
+  EXPECT: pill may extend past the canvas edge (acceptable for v1;
+  edge clipping is OUT of scope per spec).
 
 ================================================================================
 RISK
 ================================================================================
-Very low. Single string + status-code change in 1 file.
+Low-medium. Frontend-only, additive feature.
 
-- ⚠ Frontend may handle 400 vs 404 differently in some places.
-  Verified: frontend reads `error.response.data.detail` and shows it
-  as a toast (common pattern). Status-code differentiation is rare.
-  If any specific UI cares about 404 vs 400 for this endpoint, may
-  need a small follow-up — call out in B-test if observed.
-- ⚠ Other clients (mobile app via Capacitor) — same backend, same
-  response shape. Should handle identically.
-- ⚠ Toast length: new message ~58 chars; under iOS toast limit
-  (~120 chars). Hebrew rendering verified visually safe in spec.
+- ⚠ Hebrew rendering iOS vs Android — mitigated by explicit font
+  stack + ctx.direction='rtl'. Worst case: text visible but font
+  slightly different per platform. Acceptable for v1.
+- ⚠ iOS keyboard popping up shifts viewport — mitigated by
+  position-relative input row inside flex column + font-size>=16px
+  to prevent auto-zoom + existing viewport lock.
+- ⚠ roundRect() unsupported on very old browsers — fallback to
+  regular rect. Square pill instead of rounded, functional. Affects
+  <1% of users (Capacitor WebView matches device's modern Safari).
+- ⚠ Text overflowing image bounds at edge tap — text may extend
+  past canvas. Acceptable for v1; clipping is a follow-up.
+- ⚠ User taps multiple times in text mode before committing — only
+  one pendingText at a time; second tap REPOSITIONS pendingText
+  while PRESERVING typed value. Documented design decision.
+- ⚠ User changes color while typing — text uses color at COMMIT
+  time (final intent). Documented design decision.
+- ⚠ ctx.save()/restore() around text rendering — preserves canvas
+  state changes (font/direction/baseline/align/lineWidth/strokeStyle/
+  fillStyle) so they don't leak into subsequent freehand strokes
+  rendered after text in the same redraw pass.
 
-Bundle impact: zero (no FE).
-Backend code size: ~12 LOC net (incl. 9-line comment block).
-Schema / migration: zero.
-Payment / billing: zero touch.
+Bundle size impact: zero (no new imports, no new deps).
+Performance impact: negligible (text rendering is O(1) per entry).
+Backend / schema / env / payment / billing: zero touch.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-- Reverts message to "הליקוי לא נמצא" 404.
-- Trade-match rule logic unchanged either way.
-- Adjacent L937 assignee 404 unchanged either way.
+
+Reverts to freehand-only annotation. Any text labels already saved
+into existing JPEG blobs remain on the saved photos — they're
+rasterized into the image, not stored separately. No data loss
+either way.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
