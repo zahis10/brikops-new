@@ -390,13 +390,29 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         const drag = draggingTextRef.current;
         draggingTextRef.current = null;
 
-        // Only sync to state if user actually dragged. Pure taps
-        // (no movement past threshold) leave state untouched —
-        // reserved for F.1c edit, no-op here.
         if (drag.hasMovedPastThreshold) {
-          // strokesRef was mutated in place — sync to React state so
-          // undo stack + parent re-renders see the new position.
+          // BATCH F.1b — strokesRef was mutated in place — sync to React
+          // state so undo stack + parent re-renders see the new position.
           setStrokes([...strokesRef.current]);
+          return;
+        }
+
+        // BATCH F.1c (2026-05-12) — pure tap on an existing label (no
+        // movement past threshold) = open edit overlay prefilled with
+        // the label's current text/color/size. editingIndex tells
+        // commitPendingText to REPLACE (not append). Color/size set
+        // via state setters so the toolbar UI also reflects the
+        // edited label's properties.
+        const stroke = strokesRef.current[drag.strokeIndex];
+        if (stroke && (stroke.type || 'stroke') === 'text') {
+          setPendingText({
+            x: stroke.x,
+            y: stroke.y,
+            value: stroke.text || '',
+            editingIndex: drag.strokeIndex,
+          });
+          setColor(stroke.color || '#ef4444');
+          setTextSize(stroke.size || 'medium');
         }
         return;
       }
@@ -494,8 +510,21 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         y: curr.y,
         text: curr.value.trim(),
       };
-      strokesRef.current = [...strokesRef.current, textStroke];
-      setStrokes(prev => [...prev, textStroke]);
+
+      // BATCH F.1c (2026-05-12) — branch on editingIndex. If set,
+      // REPLACE the stroke at that index (preserves array order
+      // + undo stack semantics). Else APPEND (F behavior).
+      // _bbox is intentionally omitted from the new stroke — the
+      // next redraw populates it freshly with the updated dimensions.
+      if (typeof curr.editingIndex === 'number') {
+        strokesRef.current = strokesRef.current.map((s, i) =>
+          i === curr.editingIndex ? textStroke : s
+        );
+        setStrokes([...strokesRef.current]);
+      } else {
+        strokesRef.current = [...strokesRef.current, textStroke];
+        setStrokes(prev => [...prev, textStroke]);
+      }
       redraw([...strokesRef.current]);
       return null;
     });
@@ -667,9 +696,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
+              // BATCH F.1c — capture whether we were editing BEFORE
+              // clearing pendingText. If editing, don't reset picker
+              // state (user might still want to apply their selected
+              // color/size to the next interaction).
+              const wasEditing = typeof pendingText?.editingIndex === 'number';
               setPendingText(null);
-              // BATCH F.1a — reset size to default after cancel.
-              setTextSize('medium');
+              if (!wasEditing) {
+                // BATCH F.1a — reset size to default after cancel
+                // of a NEW label only.
+                setTextSize('medium');
+              }
             }}
             className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm"
           >
