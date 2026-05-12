@@ -125,17 +125,14 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
       imgRef.current = img;
 
-      const containerW = window.innerWidth;
-      const containerH = window.innerHeight - 120;
-      const displayScale = Math.min(containerW / w, containerH / h, 1);
-      scaleRef.current = displayScale;
-
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.width = w;
       canvas.height = h;
-      canvas.style.width = Math.round(w * displayScale) + 'px';
-      canvas.style.height = Math.round(h * displayScale) + 'px';
+
+      // BATCH F-keyboard — apply initial scale via the same callback
+      // that listens to viewport resize. Keeps the math in one place.
+      applyDisplayScale();
 
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
@@ -153,7 +150,11 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         urlRef.current = null;
       }
     };
-  }, [imageFile]);
+    // BATCH F-keyboard — applyDisplayScale identity is STABLE (deps
+    // [redraw], redraw deps [getLineWidth], getLineWidth deps []).
+    // Including it satisfies exhaustive-deps without re-decoding the
+    // image on render. Re-running doLoad is gated by imageFile change.
+  }, [imageFile, applyDisplayScale]);
 
   const getLineWidth = useCallback(() => {
     const scale = scaleRef.current;
@@ -241,6 +242,61 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       ctx.stroke();
     }
   }, [getLineWidth]);
+
+  // BATCH F-keyboard (2026-05-12) — recompute canvas display
+  // dimensions based on the current visual viewport. Called on
+  // image load AND on viewport resize (mobile keyboard pop). The
+  // intrinsic canvas resolution (canvas.width / canvas.height)
+  // stays fixed — we only update CSS display size + scaleRef.
+  // After resize, redraw refreshes the bbox cache for hit-testing.
+  const applyDisplayScale = useCallback(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    if (!w || !h) return;
+
+    // Prefer visualViewport (iOS Safari 13+ / Chromium) — gives
+    // visible area excluding the on-screen keyboard. Fall back to
+    // window.inner* for environments without the API.
+    const vv = window.visualViewport;
+    const containerW = vv ? vv.width : window.innerWidth;
+    const containerH = (vv ? vv.height : window.innerHeight) - 120;
+
+    const displayScale = Math.min(containerW / w, containerH / h, 1);
+    scaleRef.current = displayScale;
+
+    canvas.style.width = Math.round(w * displayScale) + 'px';
+    canvas.style.height = Math.round(h * displayScale) + 'px';
+
+    // Redraw at the new scale — recomputes text fontSize, pill
+    // dimensions, and refreshes the _bbox cache on each text stroke.
+    redraw(strokesRef.current);
+  }, [redraw]);
+
+  // BATCH F-keyboard (2026-05-12) — listen for viewport changes
+  // (mobile keyboard appearance is the primary use case) and
+  // recompute the canvas display scale. Without this, the canvas
+  // keeps its original dimensions and gets clipped behind the
+  // keyboard, appearing zoomed-in.
+  useEffect(() => {
+    if (!loaded) return; // wait until image loaded
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', applyDisplayScale);
+    }
+    window.addEventListener('resize', applyDisplayScale);
+
+    return () => {
+      if (vv) {
+        vv.removeEventListener('resize', applyDisplayScale);
+      }
+      window.removeEventListener('resize', applyDisplayScale);
+    };
+  }, [loaded, applyDisplayScale]);
 
   // BATCH F.1b (2026-05-12) — hit-test against existing text labels.
   // Given a canvas-space position, return the index of the topmost
