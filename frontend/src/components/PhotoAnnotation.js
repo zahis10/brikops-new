@@ -18,6 +18,11 @@ const TEXT_FONT_SIZE = 18;
 const TEXT_PADDING_X = 10;
 const TEXT_PADDING_Y = 6;
 const TEXT_PILL_RADIUS = 8;
+// BATCH F.1a (2026-05-12) — text size multipliers. Applied to
+// TEXT_FONT_SIZE in the redraw text branch. Pill padding scales
+// with the same multiplier (already proportional to font size via
+// padX/padY math + metrics.width).
+const SIZE_MULTIPLIERS = { small: 0.7, medium: 1.0, large: 1.4 };
 
 function loadImageFromFile(file) {
   return new Promise((resolve, reject) => {
@@ -56,11 +61,17 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   const [tool, setTool] = useState('draw');
   const toolRef = useRef('draw');
   const [pendingText, setPendingText] = useState(null);
+  // BATCH F.1a (2026-05-12) — text size state. Default 'medium'
+  // preserves F behavior. Captured at COMMIT time (same as color)
+  // so changing size while typing is reflected in the final render.
+  const [textSize, setTextSize] = useState('medium');
+  const textSizeRef = useRef('medium');
 
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
+  useEffect(() => { textSizeRef.current = textSize; }, [textSize]);
 
   const savingRef = useRef(false);
   useEffect(() => { savingRef.current = saving; }, [saving]);
@@ -157,7 +168,10 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
         // Sizes are display-px values divided by scaleRef so visual
         // size stays consistent across image-resize ratios.
         const scale = scaleRef.current || 1;
-        const fontSize = TEXT_FONT_SIZE / scale;
+        // BATCH F.1a — apply size multiplier. Default 'medium' for old
+        // text strokes that pre-date this batch (backward compat).
+        const sizeMultiplier = SIZE_MULTIPLIERS[stroke.size || 'medium'] || 1.0;
+        const fontSize = (TEXT_FONT_SIZE * sizeMultiplier) / scale;
         const padX = TEXT_PADDING_X / scale;
         const padY = TEXT_PADDING_Y / scale;
         const radius = TEXT_PILL_RADIUS / scale;
@@ -345,6 +359,8 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       const textStroke = {
         type: 'text',
         color: colorRef.current,
+        // BATCH F.1a — capture size at commit time (same pattern as color).
+        size: textSizeRef.current,
         x: curr.x,
         y: curr.y,
         text: curr.value.trim(),
@@ -354,6 +370,8 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
       redraw([...strokesRef.current]);
       return null;
     });
+    // BATCH F.1a — reset to default for next label.
+    setTextSize('medium');
   }, [redraw]);
 
   const handleSave = useCallback(() => {
@@ -475,6 +493,31 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
               fontFamily: 'Heebo, "Arial Hebrew", system-ui, sans-serif',
             }}
           />
+          {/* BATCH F.1a (2026-05-12) — text size picker. 3 discrete sizes;
+              capture at commit (same pattern as color). Each button shows
+              "א" at its actual relative size for visual preview. */}
+          <div className="flex items-center gap-1 shrink-0">
+            {[
+              { key: 'small',  fontPx: 12, label: 'קטן' },
+              { key: 'medium', fontPx: 16, label: 'בינוני' },
+              { key: 'large',  fontPx: 20, label: 'גדול' },
+            ].map(opt => (
+              <button
+                key={opt.key}
+                onClick={(e) => { e.stopPropagation(); setTextSize(opt.key); }}
+                aria-label={opt.label}
+                title={opt.label}
+                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold transition-transform ${
+                  textSize === opt.key
+                    ? 'border-white bg-white text-slate-900 scale-110'
+                    : 'border-slate-600 bg-slate-700 text-white'
+                }`}
+                style={{ fontSize: `${opt.fontPx}px`, lineHeight: 1 }}
+              >
+                א
+              </button>
+            ))}
+          </div>
           <button
             onClick={(e) => { e.stopPropagation(); commitPendingText(); }}
             disabled={!pendingText.value.trim()}
@@ -483,7 +526,12 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
             אישור
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); setPendingText(null); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPendingText(null);
+              // BATCH F.1a — reset size to default after cancel.
+              setTextSize('medium');
+            }}
             className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm"
           >
             ביטול
