@@ -934,7 +934,19 @@ async def contractor_proof(
         raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
     trade_key = await _get_contractor_trade_key(db, user['id'], task['project_id'])
     if not _trades_match(task.get('category'), trade_key):
-        raise HTTPException(status_code=404, detail='הליקוי לא נמצא')
+        # BATCH K (2026-05-12) — clearer error than the misleading
+        # "הליקוי לא נמצא" 404. The defect exists and is reachable;
+        # the contractor's trade just doesn't match the defect's
+        # category (architectural rule: company-bound contractors
+        # only act on defects matching their trade). PM should
+        # reassign or force-close. The adjacent assignee-mismatch
+        # raise above keeps the 404 + "not found" wording on
+        # purpose (security: don't leak existence of defects the
+        # user isn't assigned to).
+        raise HTTPException(
+            status_code=400,
+            detail='לא ניתן לסגור — הליקוי שייך לקטגוריה אחרת. פנה למנהל.'
+        )
 
     current_status = task.get('status', '')
     PROOF_ALLOWED_STATUSES = ('open', 'assigned', 'in_progress', 'pending_contractor_proof', 'returned_to_contractor')
