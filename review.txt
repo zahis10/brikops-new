@@ -1,456 +1,477 @@
 ================================================================================
-BATCH F-keyboard — PhotoAnnotation canvas resizes when mobile keyboard pops
+BATCH F.1c — Photo text labels: tap-to-edit existing labels (FINAL F.1)
 ================================================================================
 Date:           2026-05-12
 Branch:         staging  (NOT main)
-Severity:       P3 — UX annoyance on iPhone reported by Zahi during F.1c
-                testing. When on-screen keyboard appears (label create OR
-                edit), canvas appears to "zoom in" / clip. Root cause:
-                canvas display dimensions computed ONCE on image load
-                using `window.innerHeight - 120`, but visual viewport
-                shrinks when keyboard pops. Canvas style stays at original
-                dimensions → bottom of image hidden behind keyboard →
-                appears cropped.
+Severity:       P3 — third and FINAL of three F.1 micro-batches.
+                  - F.1a ✅ size picker (commit dee1879).
+                  - F.1b ✅ drag-to-move (commit 29c23c0).
+                  - F.1b-hotfix-1 ✅ bbox cache + 44×44 min touch (commit a410b29).
+                  - F.1c ← this batch — tap-to-edit (~+37 LOC).
 
-                Bug exists since F (shipped 2026-05-12) but only became
-                prominent with F.1c re-tap-to-edit on labels positioned
-                mid-image.
+                After F.1b-hotfix-1, pure tap (no drag past 10px
+                threshold) on an existing text label = no-op
+                (explicitly reserved for F.1c per the comment in
+                `endStroke` L395). F.1c repurposes this slot:
+                pure tap → opens edit overlay prefilled with the
+                label's text/color/size → commit REPLACES the
+                stroke in place; cancel leaves it unchanged.
 
-Approach:       Frontend-only. Listen to `window.visualViewport.resize`
-                events (iOS Safari 13+ / Chromium). On resize, recompute
-                display scale + canvas CSS dimensions, then redraw to
-                refresh _bbox cache for hit-test accuracy. Falls back
-                gracefully on browsers without visualViewport API.
+                F.1c is IN-SESSION edit only. After Save closes
+                the modal, the JPEG is rasterized and the strokes
+                array is destroyed. Re-opening the saved photo
+                shows a fresh modal with no strokes (re-edit-after-
+                save is a separate architectural batch — out of
+                scope here).
+
+Approach:       Frontend-only. Mirror the existing F commit pattern
+                exactly — same pendingText overlay, same input,
+                same אישור / ביטול buttons. Add an optional
+                `editingIndex` field on the pendingText state that
+                tells commitPendingText whether to REPLACE
+                (editingIndex set) or APPEND (editingIndex undefined,
+                F behavior). When entering edit, also call setColor +
+                setTextSize so the toolbar picker UI reflects the
+                current label's properties.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
 Files changed:  Frontend only:
                   - frontend/src/components/PhotoAnnotation.js
-                    (~+56 LOC: extract sizing into useCallback +
-                    add useEffect with resize listener + 4-line
-                    eslint-deps comment)
+                    (~+37 LOC: 1 setPendingText call in endStroke,
+                    1 branch in commitPendingText, optional reset
+                    suppression in cancel button.)
                 Total: 1 file. No backend, no DB, no env vars, no
                 new dependencies.
 
-Baseline:       origin/staging HEAD = b619a3c (F.1c, 743 LOC).
-                Post-F-keyboard: 799 LOC (+56). Spec scope-creep flag
-                at >830. Spec estimated +35; actual +56 because the
-                ESLint deps caveat required a 4-line comment, and the
-                LOCATION 1 callback ended up slightly more verbose
-                with the inline comments preserved verbatim from spec.
+Baseline:       origin/staging HEAD = a410b29 (F.1b-hotfix-1, 706 LOC).
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
-IN F-keyboard:
-  ✅ Extract canvas display-dimension computation from image-load
-     useEffect into standalone `applyDisplayScale` useCallback.
-     Reads canvasRef + imgRef, sets scaleRef.current, updates
-     canvas.style.width/height, calls redraw(strokesRef.current)
-     to refresh _bbox cache.
-  ✅ Image-load doLoad calls `applyDisplayScale()` AFTER setting
-     `canvas.width/height` (intrinsic resolution).
-  ✅ NEW useEffect attaches `visualViewport.resize` + `window.resize`
-     listeners (gated on `loaded`), cleanup on unmount.
-  ✅ Uses `window.visualViewport.height` when available (excludes
-     keyboard, system UI). Falls back to `window.innerHeight - 120`.
+IN F.1c:
+  ✅ Pure tap (no drag past threshold) on existing text label →
+     opens pendingText overlay prefilled with the label's:
+       - `text` (loaded into input.value)
+       - `color` (via setColor → updates toolbar color picker)
+       - `size` (via setTextSize → updates size picker)
+       - Anchor `x`, `y` (canvas-space, preserves position).
+  ✅ pendingText shape extended with optional `editingIndex: number`
+     field. Backward compat: missing field = create new (F behavior).
+  ✅ commitPendingText branches on `editingIndex`:
+       - If number → REPLACE strokesRef.current[editingIndex] with
+         new textStroke (preserves array index + undo stack ordering).
+       - Else → APPEND (existing F behavior).
+  ✅ The label stays visible on canvas during edit — user sees the
+     pill they're editing PLUS the overlay input. Intuitive.
+  ✅ Cancel button: if `editingIndex` was set, do NOT reset picker
+     to medium (user might want to keep that selection for next
+     interaction). Else (creating new) reset as today.
 
-OUT of F-keyboard:
-  ❌ Capacitor `@capacitor/keyboard` plugin (visualViewport already
-     supported in Capacitor WebView iOS 13+/Android Chromium).
-  ❌ Scroll-to-input-on-focus (browser-handled).
-  ❌ Toolbar/action-bar reflow (already flex-column with shrink-0/
-     flex-1 — auto-reflows).
-  ❌ RAF throttling (documented as future opt; v1 unnecessary for
-     typical ≤10 strokes — see "Future note" below).
-  ❌ Ref-stable wrapper (FALLBACK in spec L286-311) — pre-flight
-     confirmed redraw is stable.
+OUT of F.1c (separate batches):
+  ❌ Re-edit AFTER save (would require persisting strokes server-
+     side as JSON alongside the JPEG — architectural change).
+     Tracked as separate "re-editable annotations" backlog item.
+  ❌ Undo history per stroke (current undo pops the array LIFO;
+     edit done via F.1c is one-shot — no undo-to-previous-version).
+  ❌ Delete label (tap label → "X" delete button). Future polish.
+  ❌ Multi-tap protection / debouncing.
+  ❌ Long-press → context menu.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (5 PASS — VERIFIED)
 ================================================================================
 
-1. ✓ origin/staging HEAD = b619a3c (F.1c, 743 LOC).
+1. ✓ origin/staging HEAD = a410b29 (F.1b-hotfix-1, 706 LOC):
    $ git log origin/staging --oneline -3
-   →  b619a3c (F.1c) → f0c6467 → a410b29 (F.1b-hf-1).
+   →  a410b29 → 29c23c0 → dee1879
 
-2. ✓ doLoad inline sizing block matches spec anchor exactly:
-   $ grep -nA 4 "const containerW = window.innerWidth" \
-       frontend/src/components/PhotoAnnotation.js
-   →  L128-132 in pre-edit state (now removed).
+2. ✓ File at 706 LOC pre-edit.
 
-3. ✓ canvas.style set with px dimensions:
-   $ grep -n "canvas.style.width\|canvas.style.height" ...
-   →  Pre-edit: 2 hits @ L137-138. Post-edit: 2 hits inside
-     applyDisplayScale (LOCATION 1).
+3. ✓ "reserved for F.1c" comment present (slot to repurpose):
+   L325 (startStroke) + L395 (endStroke — this is where edit logic
+   plugs in).
 
-4. ✓ redraw callback @ L163, signature `(allStrokes) => {`.
+4. ✓ commitPendingText structure matches spec at L485-503:
+   setPendingText(curr=>{...}) wrapper with textStroke construction
+   + array append + setStrokes(prev=>[...prev, textStroke]) + redraw
+   + return null + setTextSize('medium') after.
 
-5. ✓ **redraw STABLE** — critical for resize useEffect listener
-   stability:
-   - redraw deps = `[getLineWidth]` @ L243.
-   - getLineWidth deps = `[]` @ L161.
-   → applyDisplayScale (deps [redraw]) is stable → resize useEffect
-     deps [loaded, applyDisplayScale] only change when `loaded`
-     flips false→true ONCE on mount. Listener attaches once,
-     stays attached. NO fallback wrapper needed.
+5. ✓ pendingText shape today = `{ x, y, value }` (3 fields):
+   L342: `: { x: pos.x, y: pos.y, value: '' }` — F.1c extends
+   with optional `editingIndex`.
 
 ================================================================================
-LOCATION 1 — Extract applyDisplayScale callback
+LOCATION 1 — endStroke pure-tap branch: open edit overlay
 ================================================================================
 File: frontend/src/components/PhotoAnnotation.js
-Inserted: AFTER `redraw` useCallback closing `}, [getLineWidth]);`
-          @ pre-edit L243 (post-edit L243-244).
+Modify: text drag branch inside `endStroke` (was L387-403, now L390-421).
 
-ADDED (post-edit L245-276):
+BEFORE:
+  const endStroke = () => {
+    // BATCH F.1b — text drag branch (precedes the freehand path).
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current;
+      draggingTextRef.current = null;
 
-  // BATCH F-keyboard (2026-05-12) — recompute canvas display
-  // dimensions based on the current visual viewport. Called on
-  // image load AND on viewport resize (mobile keyboard pop). The
-  // intrinsic canvas resolution (canvas.width / canvas.height)
-  // stays fixed — we only update CSS display size + scaleRef.
-  // After resize, redraw refreshes the bbox cache for hit-testing.
-  const applyDisplayScale = useCallback(() => {
-    const canvas = canvasRef.current;
-    const img = imgRef.current;
-    if (!canvas || !img) return;
-
-    const w = canvas.width;
-    const h = canvas.height;
-    if (!w || !h) return;
-
-    // Prefer visualViewport (iOS Safari 13+ / Chromium) — gives
-    // visible area excluding the on-screen keyboard. Fall back to
-    // window.inner* for environments without the API.
-    const vv = window.visualViewport;
-    const containerW = vv ? vv.width : window.innerWidth;
-    const containerH = (vv ? vv.height : window.innerHeight) - 120;
-
-    const displayScale = Math.min(containerW / w, containerH / h, 1);
-    scaleRef.current = displayScale;
-
-    canvas.style.width = Math.round(w * displayScale) + 'px';
-    canvas.style.height = Math.round(h * displayScale) + 'px';
-
-    // Redraw at the new scale — recomputes text fontSize, pill
-    // dimensions, and refreshes the _bbox cache on each text stroke.
-    redraw(strokesRef.current);
-  }, [redraw]);
-
-================================================================================
-LOCATION 2 — Image-load useEffect calls applyDisplayScale
-================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Modified: doLoad async function inside `useEffect(...,[imageFile])`
-          (was L107-156, now L105-160).
-
-BEFORE (L127-141):
-  imgRef.current = img;
-
-  const containerW = window.innerWidth;
-  const containerH = window.innerHeight - 120;
-  const displayScale = Math.min(containerW / w, containerH / h, 1);
-  scaleRef.current = displayScale;
-
-  const canvas = canvasRef.current;
-  if (!canvas) return;
-  canvas.width = w;
-  canvas.height = h;
-  canvas.style.width = Math.round(w * displayScale) + 'px';
-  canvas.style.height = Math.round(h * displayScale) + 'px';
-
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h);
-  setLoaded(true);
-
-AFTER (L129-143):
-  imgRef.current = img;
-
-  const canvas = canvasRef.current;
-  if (!canvas) return;
-  canvas.width = w;
-  canvas.height = h;
-
-  // BATCH F-keyboard — apply initial scale via the same callback
-  // that listens to viewport resize. Keeps the math in one place.
-  applyDisplayScale();
-
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h);
-  setLoaded(true);
-
-Notes:
-- 5 inline lines (containerW/H/displayScale/scaleRef.current/2x
-  canvas.style.*) replaced by 1 `applyDisplayScale()` call + 2
-  comment lines. Net -2 inside doLoad.
-- doLoad runs AFTER mount (inside useEffect callback), by which
-  time the const `applyDisplayScale` is already initialized in
-  the component scope.
-
-================================================================================
-LOCATION 2.5 — useEffect deps: include applyDisplayScale (Option B)
-================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Modified: deps array of the imageFile-keyed useEffect
-          (was `}, [imageFile]);`, now L156-160).
-
-DEPENDENCIES CAVEAT (per task plan): doLoad now references
-applyDisplayScale, so ESLint react-hooks/exhaustive-deps would
-warn with the original `[imageFile]` deps. Build verified the
-warning fires under CI=true (treats warnings as errors).
-
-CHOSEN: Option B — add applyDisplayScale to deps.
-
-Why safe: applyDisplayScale identity is STABLE (deps [redraw],
-redraw deps [getLineWidth], getLineWidth deps []), so adding it
-to the array does NOT cause the useEffect to re-fire and
-re-decode the image. The effective trigger remains imageFile.
-
-ADDED (L156-160):
-  // BATCH F-keyboard — applyDisplayScale identity is STABLE (deps
-  // [redraw], redraw deps [getLineWidth], getLineWidth deps []).
-  // Including it satisfies exhaustive-deps without re-decoding the
-  // image on render. Re-running doLoad is gated by imageFile change.
-}, [imageFile, applyDisplayScale]);
-
-Rationale vs Option A (eslint-disable-next-line):
-- Option B is cleaner — no suppression, exhaustive-deps stays
-  fully enforced for future maintainers.
-- Stability proof is documented inline so reviewers don't have
-  to chase the dependency chain.
-- Zero behavioral difference (proven by stability chain above).
-
-================================================================================
-LOCATION 3 — visualViewport.resize + window.resize listener useEffect
-================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Inserted: AFTER applyDisplayScale callback @ post-edit L277-298.
-
-ADDED:
-  // BATCH F-keyboard (2026-05-12) — listen for viewport changes
-  // (mobile keyboard appearance is the primary use case) and
-  // recompute the canvas display scale. Without this, the canvas
-  // keeps its original dimensions and gets clipped behind the
-  // keyboard, appearing zoomed-in.
-  useEffect(() => {
-    if (!loaded) return; // wait until image loaded
-
-    const vv = window.visualViewport;
-    if (vv) {
-      vv.addEventListener('resize', applyDisplayScale);
-    }
-    window.addEventListener('resize', applyDisplayScale);
-
-    return () => {
-      if (vv) {
-        vv.removeEventListener('resize', applyDisplayScale);
+      // Only sync to state if user actually dragged. Pure taps
+      // (no movement past threshold) leave state untouched —
+      // reserved for F.1c edit, no-op here.
+      if (drag.hasMovedPastThreshold) {
+        setStrokes([...strokesRef.current]);
       }
-      window.removeEventListener('resize', applyDisplayScale);
-    };
-  }, [loaded, applyDisplayScale]);
+      return;
+    }
+
+AFTER:
+  const endStroke = () => {
+    // BATCH F.1b — text drag branch (precedes the freehand path).
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current;
+      draggingTextRef.current = null;
+
+      if (drag.hasMovedPastThreshold) {
+        // BATCH F.1b — strokesRef was mutated in place — sync to React
+        // state so undo stack + parent re-renders see the new position.
+        setStrokes([...strokesRef.current]);
+        return;
+      }
+
+      // BATCH F.1c (2026-05-12) — pure tap on an existing label (no
+      // movement past threshold) = open edit overlay prefilled with
+      // the label's current text/color/size. editingIndex tells
+      // commitPendingText to REPLACE (not append). Color/size set
+      // via state setters so the toolbar UI also reflects the
+      // edited label's properties.
+      const stroke = strokesRef.current[drag.strokeIndex];
+      if (stroke && (stroke.type || 'stroke') === 'text') {
+        setPendingText({
+          x: stroke.x,
+          y: stroke.y,
+          value: stroke.text || '',
+          editingIndex: drag.strokeIndex,
+        });
+        setColor(stroke.color || '#ef4444');
+        setTextSize(stroke.size || 'medium');
+      }
+      return;
+    }
 
 Notes:
-- `loaded` gate prevents firing before canvas + image are ready
-  (intrinsic canvas.width/height not yet set → applyDisplayScale
-  no-ops anyway, but gate avoids unnecessary listener churn).
-- Both visualViewport AND window listeners registered for
-  defense-in-depth — most browsers fire one or the other; some
-  fire both. Handler is idempotent (computes desired state, not
-  delta).
-- Per pre-flight 5: redraw stable → applyDisplayScale stable →
-  deps [loaded, applyDisplayScale] only change when `loaded`
-  flips false→true on mount. Listener attaches ONCE, no
-  detach/reattach churn.
-- Placed AFTER `loaded` state declaration and after both
-  applyDisplayScale + redraw definitions — strict declaration
-  order satisfied.
+- Restructured: `setStrokes` is now INSIDE the hasMovedPastThreshold
+  block with its own `return;`. The pure-tap branch is BELOW.
+- Early-return inside the dragged branch keeps the flow tidy.
+- `setColor` + `setTextSize` propagate to `colorRef` / `textSizeRef`
+  via existing sync useEffects (L86, L96), so when user commits
+  the edit, the refs have the current (possibly user-modified) values.
+- The label stays visible on canvas during edit — F.1c doesn't
+  remove it. Commit replaces; cancel leaves untouched.
+- Type-guard `(stroke.type || 'stroke') === 'text'` mirrors the
+  hit-test guard exactly.
+
+================================================================================
+LOCATION 2 — commitPendingText: branch on editingIndex
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: body of `commitPendingText` useCallback (was L485-504, now L504-536).
+
+BEFORE (relevant fragment):
+      strokesRef.current = [...strokesRef.current, textStroke];
+      setStrokes(prev => [...prev, textStroke]);
+      redraw([...strokesRef.current]);
+      return null;
+
+AFTER:
+
+      // BATCH F.1c (2026-05-12) — branch on editingIndex. If set,
+      // REPLACE the stroke at that index (preserves array order
+      // + undo stack semantics). Else APPEND (F behavior).
+      // _bbox is intentionally omitted from the new stroke — the
+      // next redraw populates it freshly with the updated dimensions.
+      if (typeof curr.editingIndex === 'number') {
+        strokesRef.current = strokesRef.current.map((s, i) =>
+          i === curr.editingIndex ? textStroke : s
+        );
+        setStrokes([...strokesRef.current]);
+      } else {
+        strokesRef.current = [...strokesRef.current, textStroke];
+        setStrokes(prev => [...prev, textStroke]);
+      }
+      redraw([...strokesRef.current]);
+      return null;
+
+Notes:
+- textStroke construction unchanged (still uses colorRef.current +
+  textSizeRef.current at commit time — F.1a pattern preserved).
+- `.map()` creates a new array reference each commit — required
+  because React reconciles by reference.
+- `_bbox` intentionally omitted — next redraw populates it fresh
+  with the EDITED label's new dimensions, keeping hit-test accurate.
+- `setTextSize('medium')` reset AFTER the wrapper still fires for
+  BOTH commit-edit and commit-new (intentional — when editing, the
+  user already saw the picker reflect the label's size, so resetting
+  after commit is fine for next interaction).
+
+================================================================================
+LOCATION 3 — Cancel button: preserve picker state when canceling edit
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js
+Modify: ביטול button onClick (was L660-672, now L699-717).
+
+BEFORE:
+  <button onClick={(e) => {
+            e.stopPropagation();
+            setPendingText(null);
+            // BATCH F.1a — reset size to default after cancel.
+            setTextSize('medium');
+          }}
+          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
+    ביטול
+  </button>
+
+AFTER:
+  <button onClick={(e) => {
+            e.stopPropagation();
+            // BATCH F.1c — capture whether we were editing BEFORE
+            // clearing pendingText. If editing, don't reset picker
+            // state (user might still want to apply their selected
+            // color/size to the next interaction).
+            const wasEditing = typeof pendingText?.editingIndex === 'number';
+            setPendingText(null);
+            if (!wasEditing) {
+              // BATCH F.1a — reset size to default after cancel
+              // of a NEW label only.
+              setTextSize('medium');
+            }
+          }}
+          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 text-sm">
+    ביטול
+  </button>
+
+Note: `pendingText` is read directly (not via ref) — it's React
+state, captured by closure at render time. The button re-renders
+whenever pendingText changes, so the click handler always sees
+the FRESH value.
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ MAX_CANVAS_SIZE constant (1280) — image downscale threshold
-     before storage; unchanged.
-- ❌ Image scaling math (the ratio computation before
-     `canvas.width = w` at L120-124).
-- ❌ scaleRef itself — same ref, just updated by the new callback.
-- ❌ redraw callback body — text branch + freehand branch unchanged.
-     Bbox cache logic (F.1b-hotfix-1) continues to populate _bbox
-     fresh on every redraw, including post-resize.
-- ❌ Touch / mouse handlers — they read scaleRef.current via getPos,
-     so they automatically use the new scale after resize.
-- ❌ pendingText overlay, size picker, color picker, T button,
-     Save/Undo buttons.
-- ❌ Viewport-meta useEffect (L92-103).
-- ❌ Drag state (draggingTextRef).
-- ❌ F + F.1a + F.1b + hotfix-1 + F.1c logic — all preserved.
+- ❌ hitTestText logic — works correctly for both drag and edit
+     entry. No change needed.
+- ❌ startStroke text-branch — hit-test setup unchanged. F.1c only
+     repurposes the endStroke pure-tap branch.
+- ❌ moveStroke text-branch — drag threshold + in-place mutation.
+- ❌ Drag state (draggingTextRef) shape, threshold, sync logic.
+- ❌ Bbox cache (stroke._bbox) — populated by redraw, read by
+     hit-test. After edit commit, next redraw repopulates _bbox
+     on the replaced stroke automatically.
+- ❌ F.1a size picker JSX, sync useEffect, `setTextSize('medium')`
+     reset after the wrapper in commitPendingText.
+- ❌ F text labels storage shape — same `{ type, color, size, x,
+     y, text }` (NO new fields on stored textStroke; editingIndex
+     is on pendingText only, never persisted).
+- ❌ Constants (TEXT_FONT_SIZE, TEXT_PADDING_*, SIZE_MULTIPLIERS,
+     DRAG_THRESHOLD_PX, FONT_STACK).
+- ❌ Touch / mouse handlers — they call startStroke/moveStroke/
+     endStroke which now contain the new edit branch internally.
+- ❌ Save handler — reads strokesRef.current; edit-replaced
+     strokes are at the right index.
+- ❌ Undo handler — pops last array element; edit doesn't change
+     array length, so undo behavior unchanged.
+- ❌ Cursor affordance JSX (grab/crosshair logic).
 - ❌ Backend / parent contract / saved JPEGs.
 
 ================================================================================
 VERIFY 1 — Frontend build (PASS)
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
-   →  Initial run: EXIT=1, ESLint exhaustive-deps warning at L153
-      (the imageFile useEffect missing applyDisplayScale).
-   →  Resolution: applied LOCATION 2.5 — added applyDisplayScale
-      to deps with stability rationale comment.
-   →  Re-run: EXIT=0, Done in 32.70s, no ESLint warnings, no
-      treat-as-error failures.
+   →  EXIT=0
+   →  Done in 36.66s.
+   →  No new ESLint warnings.
 
 ================================================================================
 VERIFY 2 — File size sanity (PASS)
 ================================================================================
 $ wc -l frontend/src/components/PhotoAnnotation.js
-   →  799 lines (743 → 799, +56 LOC).
-   ✓ Within 830 scope-creep cap. Spec estimated +35, actual +56
-     because:
-       - LOCATION 1 callback preserves verbatim spec comments
-         (~32 lines instead of trimmed ~25).
-       - LOCATION 3 useEffect with full spec comments (~22 lines).
-       - LOCATION 2.5 ESLint stability comment (+4 lines, not
-         in original spec — added per task plan caveat).
-     Cleanly under cap, no scope creep.
+   →  743 lines (706 → 743, +37 LOC).
+   ✓ Within scope (spec estimate ~+55, actual +37 — slightly leaner
+     because the endStroke restructure reuses the existing if-block
+     rather than adding a brand-new outer branch). Well under the
+     790 scope-creep threshold.
 
 ================================================================================
 VERIFY 3 — grep sanity (PASS)
 ================================================================================
-$ grep -n "applyDisplayScale\|visualViewport" \
-    frontend/src/components/PhotoAnnotation.js
-   →  10 hits (spec expected ~6; extras come from the LOCATION 2.5
-      stability comment which mentions applyDisplayScale by name):
-     L135  applyDisplayScale();                          (LOC 2 doLoad call)
-     L156  // ... applyDisplayScale identity is STABLE   (LOC 2.5 comment)
-     L158  // ... satisfies exhaustive-deps              (LOC 2.5 comment)
-     L160  }, [imageFile, applyDisplayScale]);           (LOC 2.5 deps)
-     L251  const applyDisplayScale = useCallback(...)    (LOC 1 def)
-     L260  // Prefer visualViewport ...                  (LOC 1 comment)
-     L263  const vv = window.visualViewport;             (LOC 1 use)
-     L283  const vv = window.visualViewport;             (LOC 3 use)
-     L285  vv.addEventListener('resize', applyDisplayScale);
-     L287  window.addEventListener('resize', applyDisplayScale);
-     L291  vv.removeEventListener('resize', applyDisplayScale);
-     L293  window.removeEventListener('resize', applyDisplayScale);
-     L295  }, [loaded, applyDisplayScale]);              (LOC 3 deps)
+$ grep -n "editingIndex" frontend/src/components/PhotoAnnotation.js
+   →  6 hits across all 3 anchors:
+     L402  // ... editingIndex tells               (comment in endStroke)
+     L412  editingIndex: drag.strokeIndex,         (LOC 1 setPendingText)
+     L514  // BATCH F.1c — branch on editingIndex  (comment in commit)
+     L519  if (typeof curr.editingIndex === ...)   (LOC 2 typeof check)
+     L521  i === curr.editingIndex ? ...           (LOC 2 .map() match)
+     L703  const wasEditing = typeof pendingText?.editingIndex === 'number';
+                                                   (LOC 3 cancel check)
 
-   (Counter actually shows the 5 spec-target hits + 1 doLoad call
-   + 2 vv.add/remove + 2 window.add/remove + 1 def = exactly the
-   spec's "~6" core mechanism plus the verbose comments / deps
-   array references.)
-
-$ grep -c "window.innerHeight" frontend/src/components/PhotoAnnotation.js
-   →  1 (inside applyDisplayScale fallback @ L265 only).
-   ✓ Old doLoad occurrence at pre-edit L129 is GONE.
+$ grep -n "setColor(stroke" frontend/src/components/PhotoAnnotation.js
+   →  1 hit:
+     L414  setColor(stroke.color || '#ef4444');    (LOC 1 endStroke)
 
 ================================================================================
 VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
 ================================================================================
 
-A — Bug reproduction → fix (PRIMARY, iPhone):
-  1. Take a photo with tall portrait aspect ratio, open PhotoAnnotation.
-  2. Tap T → tap canvas at upper area → keyboard pops up.
-  EXPECT before fix: canvas appears cropped/zoomed — bottom of
-  image hidden, only upper portion visible.
-  EXPECT after fix: canvas shrinks to fit the area ABOVE the
-  keyboard. Entire image visible (smaller). Labels at bottom of
-  image still reachable when keyboard closes.
+A — Edit text content (PRIMARY):
+  1. T → tap canvas → type "5/27" → אישור. Label appears.
+  2. Tap directly on the label (no drag).
+  EXPECT: pendingText overlay opens with "5/27" in the input.
+  Toolbar color picker shows the original color (red).
+  3. Clear input, type "10/30" → אישור.
+  EXPECT: label updates IN PLACE to "10/30". No second label
+  created. Position unchanged. Color/size unchanged.
 
-B — Edit mode + keyboard (F.1c regression):
-  1. Create label at center of image, אישור.
-  2. Tap label to edit. Keyboard pops.
-  EXPECT: canvas shrinks, label still visible at its position
-  relative to image. After typing → אישור → keyboard closes →
-  canvas reverts to full size.
+B — Edit color:
+  1. Add red label "X". Tap it.
+  2. Click blue color in toolbar.
+  3. אישור.
+  EXPECT: label "X" now shown in BLUE. Position unchanged.
 
-C — Multiple keyboard show/hide cycles:
-  1. Tap T → tap canvas → keyboard up → ביטול → keyboard down.
-  2. Tap canvas again → keyboard up → אישור → down.
-  EXPECT: canvas resizes smoothly each cycle. No jank, no drift.
+C — Edit size:
+  1. Add medium label "TEST". Tap it.
+  2. Click "א" large in size picker.
+  3. אישור.
+  EXPECT: label "TEST" now LARGE. Position unchanged.
 
-D — Drag during keyboard (edge case):
-  1. Keyboard up, label visible in shrunken canvas.
-  2. Try to drag the label.
-  EXPECT: drag works because hit-test uses updated scaleRef +
-  refreshed bbox cache (refreshed by redraw inside applyDisplayScale).
+D — Edit text+color+size combined:
+  1. Add small red label "A". Tap it.
+  2. Change input to "B", color to black, size to large.
+  3. אישור.
+  EXPECT: "B" in BLACK at LARGE size, same position. Single label.
 
-E — Hit-test on labels created at different scales:
-  1. Create label at FULL canvas (no keyboard) → אישור.
-  2. Tap T → tap canvas → keyboard up (canvas shrinks).
-  3. Tap on the existing label.
-  EXPECT: hit-test works. Label's stored x/y are in canvas px
-  (intrinsic resolution), and bbox cache was refreshed by
-  resize-triggered redraw.
+E — Cancel edit (label unchanged):
+  1. Add red label "X". Tap it.
+  2. Change input to "Y", color to blue.
+  3. ביטול.
+  EXPECT: label remains "X" in RED. Picker state may show your
+  changes (blue selected, size unchanged) — user can continue
+  with those for a new label.
 
-F — Desktop (no visualViewport behavior change):
-  - Open on desktop browser.
-  EXPECT: no visible change. Canvas computed once at load,
-  redrawn if window resized. Standard behavior.
+F — Edit doesn't create duplicate:
+  1. Add 1 label. Tap it. אישור without changes.
+  EXPECT: still 1 label. Array length unchanged. Position unchanged.
 
-G — Save after keyboard cycle:
-  1. Create label with keyboard up. Save.
-  EXPECT: photo uploads at FULL intrinsic resolution
-  (canvas.toBlob reads canvas.width/height — NOT style). Label
-  rasterized at correct position.
+G — Edit then drag (independent operations):
+  1. Add label. Tap it. Change text → אישור.
+  2. NOW drag the (updated) label.
+  EXPECT: label drags as expected. F.1b still works.
 
-H — Cross-platform:
+H — Edit while pendingText open (in-progress new label discarded):
+  1. T → tap empty area → pendingText opens with empty input.
+  2. WITHOUT typing, tap an EXISTING label.
+  EXPECT: pure tap overwrites pendingText with edit data for the
+  existing label. In-progress new label (empty value) discarded.
+  Toolbar picker syncs to the EDITED label's values.
+
+I — Edit + Undo limitation (documented):
+  1. Add label "A". Edit "A" → "B" → אישור.
+  2. Undo.
+  EXPECT: "B" disappears (array element popped). Undo doesn't
+  restore "A". Same architectural behavior as F.1b drag + undo.
+  Undo enhancement is a future batch.
+
+J — Hit-test on edited label still works (regression check):
+  1. Add label "A". Edit "A" → "AA" → אישור.
+  2. Tap on the now-larger "AA" label.
+  EXPECT: edit overlay opens again with "AA" in input.
+  Verifies _bbox was repopulated by redraw after the edit
+  (since LOC 2 omits _bbox from the replacement, and redraw
+  populates it on the next pass).
+
+K — Stacked labels (edit topmost):
+  1. Add "X" → add "Y" on top of "X".
+  2. Tap overlap (no drag).
+  EXPECT: edit overlay opens with "Y" (topmost — reverse iter
+  in hit-test). "X" untouched.
+
+L — Edit + Save flow:
+  1. Add label "v1". Edit to "v2". Save.
+  EXPECT: photo uploads with "v2" rasterized. Modal closes.
+
+M — Cross-platform:
   - Test A + B + C on iPhone (Capacitor) AND Android.
-  EXPECT: both platforms benefit. visualViewport supported in both.
+  EXPECT: edit overlay opens reliably. Picker UI syncs.
 
 ================================================================================
 RISK
 ================================================================================
-Low. Pure additive — extracted logic + new listener. No changes
-to drawing, drag, edit, or save logic.
+Low. Pure additive feature; reuses existing pendingText overlay,
+commitPendingText callback structure, and the F.1b "pure tap" slot
+that was explicitly reserved for this batch.
 
-- ⚠ applyDisplayScale → redraw is O(n) over strokes; fired per
-  resize event. Negligible for typical ≤10 strokes. Future RAF
-  throttle if 50+ strokes shows jank (see Future note below).
-- ⚠ Android visualViewport.resize sometimes fires twice (outer
-  viewport + keyboard inset). Both calls idempotent.
-- ⚠ If user has zoomed page manually (pinch zoom — though
-  user-scalable=no prevents it), visualViewport.height could be
-  smaller than expected. Acceptable: canvas just gets smaller.
-- ⚠ Intrinsic canvas resolution (canvas.width / canvas.height)
-  NOT changed by resize — set once on image load. Only CSS
-  display dimensions change. Saved JPEGs still at full resolution.
-- ⚠ Existing label coords (x/y in canvas px) don't shift on
-  resize. Bbox cache recomputes with new scale → consistent
-  hit-test (smoke E verifies).
-- ⚠ Some browsers (very old) may not fire window.resize for
-  keyboard appearance. Those would lack visualViewport too →
-  fallback path is also a no-op there. No regression vs current.
-- ⚠ LOCATION 2.5 added applyDisplayScale to imageFile useEffect
-  deps. Stability proven (deps chain: getLineWidth[]→redraw
-  [getLineWidth]→applyDisplayScale[redraw]). Inline comment
-  documents the rationale for future maintainers.
+- ⚠ `editingIndex` is OPTIONAL on pendingText. Code checks
+  `typeof curr.editingIndex === 'number'` to differentiate edit
+  from new. Missing field = new (F default). Backward-compat-safe.
+- ⚠ `setColor` + `setTextSize` calls in endStroke trigger React
+  re-renders. Toolbar picker reflects new values before user even
+  sees the input — feels instant.
+- ⚠ Replace via `.map()` creates a new array reference each commit.
+  Necessary because React reconciles by reference; mutating in
+  place wouldn't trigger re-render of components depending on
+  strokes state.
+- ⚠ `_bbox` is intentionally NOT copied to the replacement stroke
+  (new textStroke object has fresh fields). The next redraw
+  populates _bbox with the EDITED label's actual dimensions —
+  hit-test stays accurate for subsequent taps (smoke J).
+- ⚠ Cancel suppression of size-reset only applies when EDITING.
+  Pure new-label cancel still resets to medium (F.1a behavior
+  preserved).
+- ⚠ Undo over edit removes the (edited) stroke entirely.
+  Architectural consistency with F.1b drag; not a new defect.
+- ⚠ Re-edit AFTER save (re-opening JPEG) is NOT addressed —
+  out of scope, separate backlog item.
+- ⚠ commitPendingText still calls `setTextSize('medium')` AFTER
+  commit-edit (intentional reset for next interaction). User saw
+  the picker reflect the EDITED label's size during the overlay,
+  so resetting AFTER they confirm is consistent UX.
 
 Bundle size: zero (no new imports).
-Performance: 1 extra redraw per keyboard show/hide. Negligible.
+Performance: 1 extra array `.map()` per commit-edit (O(n) over
+strokes). Negligible — typical photo has ≤10 strokes.
 Backend / schema / env / payment / billing: zero touch.
 
-Future note (do NOT implement now):
-visualViewport.resize can fire 10-15 events over 200ms during
-keyboard slide animations. For dense annotation (50+ strokes),
-this could cause slight jank. If reported in field testing, wrap
-applyDisplayScale in requestAnimationFrame coalescing (spec
-L313-342). Skip for v1.
+Comparison to broken F.1 (the original 286-LOC attempt):
+- F.1 tried size + drag + edit in ONE batch → bundle broke.
+- F.1c is +37 LOC of focused additive logic on top of green
+  F.1a + F.1b + hf-1 baseline. Edit reuses the same overlay +
+  commit pipeline as create. Only diff: branch on editingIndex.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-- Reverts ONLY this batch. F + F.1 series remain shipped.
-- Canvas reverts to fixed-on-load dimensions; keyboard zoom
-  annoyance returns (UX-only, no functional regression).
+- Reverts F.1c only. F + F.1a + F.1b + hf-1 remain shipped.
+- Edit feature gone, but tap-on-label remains no-op (the
+  reserved slot becomes inert again — same as F.1b-hotfix-1
+  pre-F.1c state).
+- No data loss — text strokes in existing JPEGs already
+  rasterized at save time.
 
 ================================================================================
-DEPLOY ORDERING
+DONE WITH F.1 SERIES
 ================================================================================
-F.1c shipped at b619a3c. This batch lands cleanly on top:
-- Anchors verified against actual F.1c head.
-- Locations touched (image-load useEffect L105-160, post-redraw
-  insertion L243+) do NOT overlap with F.1c (endStroke L390-421,
-  commitPendingText L504-536, cancel button L699-717).
-- Zero merge conflicts expected.
+After F.1c ships green, the F.1 micro-batch series is complete:
+  - F           ✅ text labels (white pill, 3 colors, fixed 18px).
+  - F.1a        ✅ size picker (small / medium / large).
+  - F.1b        ✅ drag-to-move.
+  - F.1b-hf-1   ✅ bbox cache + 44×44 min touch area.
+  - F.1c        ← this batch — tap-to-edit.
+
+Future related batches (backlog):
+  - F.2 (already spec'd) — discard "X" close button.
+  - Re-editable annotations — persist strokes server-side
+    (architectural, larger batch).
+  - Delete label — tap → "X" button on the pill.
+  - Undo history per stroke — preserve pre-edit/pre-drag versions.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
