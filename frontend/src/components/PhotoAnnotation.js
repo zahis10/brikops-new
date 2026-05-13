@@ -61,6 +61,12 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   const strokesRef = useRef([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  // BATCH F.2-polish-1 (2026-05-13) — custom Hebrew confirm modal
+  // for the discard action, replacing window.confirm (which shows
+  // "האתר אומר" prefix + tiny system buttons that don't match the
+  // BrikOps look). Modal renders inline inside the PhotoAnnotation
+  // portal, so it inherits z-index above the canvas.
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const scaleRef = useRef(1);
   const drawingRef = useRef(false);
   const currentStrokeRef = useRef(null);
@@ -560,10 +566,15 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   // callback (no upload); falls back to onSave(null, false) for
   // backward compat with any consumer that didn't wire onDiscard
   // (NOTE: as of this batch, all 7 known consumers do).
+  // BATCH F.2-polish-1 — if user made annotations, show the custom
+  // confirm modal instead of window.confirm. The modal's "אישור"
+  // button then calls confirmDiscard which does the actual close.
   const handleDiscard = useCallback(() => {
     if (strokesRef.current.length > 0) {
-      if (!window.confirm('לבטל את כל השינויים ולסגור?')) return;
+      setShowDiscardConfirm(true);
+      return;
     }
+    // No annotations → close immediately (no confirm needed).
     if (onDiscardRef.current) {
       onDiscardRef.current();
     } else {
@@ -571,6 +582,17 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
       // as "upload raw photo" — that's the v1 bug we're fixing here
       // by adding onDiscard to all known consumers. Future-proof
       // fallback only.
+      onSaveRef.current(null, false);
+    }
+  }, []);
+
+  // BATCH F.2-polish-1 — called by the modal's "אישור" button.
+  // Same close logic as handleDiscard's no-strokes path.
+  const confirmDiscard = useCallback(() => {
+    setShowDiscardConfirm(false);
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
       onSaveRef.current(null, false);
     }
   }, []);
@@ -829,6 +851,42 @@ const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
           בטל
         </button>
       </div>
+
+      {/* BATCH F.2-polish-1 (2026-05-13) — custom Hebrew confirm modal,
+          replaces window.confirm for the discard action. Inline inside
+          the PhotoAnnotation portal so z-index naturally sits above the
+          canvas. Click overlay or ביטול to dismiss. */}
+      {showDiscardConfirm && (
+        <div
+          className="absolute inset-0 bg-black/70 flex items-center justify-center px-6"
+          style={{ zIndex: 50 }}
+          onClick={() => setShowDiscardConfirm(false)}
+        >
+          <div
+            className="bg-slate-800 rounded-2xl p-5 max-w-sm w-full border border-slate-700 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            dir="rtl"
+          >
+            <div className="text-white text-base font-medium mb-5 text-center">
+              לבטל את כל השינויים ולסגור?
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowDiscardConfirm(false); }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-700 text-slate-200 text-sm font-medium hover:bg-slate-600 transition-colors"
+              >
+                ביטול
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); confirmDiscard(); }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+              >
+                אישור
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

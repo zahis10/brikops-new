@@ -1067,14 +1067,24 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
 
-    {annotatingIndex !== null && images[annotatingIndex] && (
+    {annotatingIndex !== null && images[annotatingIndex] &&
+     (images[annotatingIndex].file || images[annotatingIndex].originalFile) && (
       <Suspense fallback={
         <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center">
           <Loader2 className="w-8 h-8 text-white animate-spin" />
         </div>
       }>
         <PhotoAnnotation
-          imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
+          // BATCH F.2-polish-1 (2026-05-13) — load the annotated file
+          // first when re-editing. User sees their previous drawings
+          // as rasterized pixels on the canvas; can add new strokes
+          // on top. Old strokes can't be edited individually
+          // (rasterized — that's the "Re-editable annotations"
+          // backlog batch). originalFile fallback covers the edge
+          // case where file is missing (shouldn't happen but defensive).
+          // The gate above ALSO guards against both being null —
+          // prevents PhotoAnnotation receiving undefined imageFile.
+          imageFile={images[annotatingIndex].file || images[annotatingIndex].originalFile}
           onSave={handleAnnotationSave}
           onDiscard={() => setAnnotatingIndex(null)}
         />
