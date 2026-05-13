@@ -11,6 +11,7 @@ import {
   Image, Ruler, FileType, Maximize2
 } from 'lucide-react';
 import PlanViewer from '../components/PlanViewer';
+import BulkPlanUploadModal from '../components/BulkPlanUploadModal';
 
 const DEFAULT_DISCIPLINES = [
   'electrical', 'plumbing', 'architecture', 'construction', 'hvac', 'fire_protection'
@@ -79,6 +80,11 @@ const UnitPlansPage = () => {
   const [loadError, setLoadError] = useState(null);
   const [detailPlan, setDetailPlan] = useState(null);
   const [fullscreenPlan, setFullscreenPlan] = useState(null);
+
+  // BATCH H.1 (2026-05-13) — bulk upload state for unit plans.
+  // Internal file list / progress / results live in <BulkPlanUploadModal>.
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkDefaultDiscipline, setBulkDefaultDiscipline] = useState('');
 
   const myRole = unitData?.project?.my_role || user?.role;
   const canUpload = user && UPLOAD_ROLES.includes(myRole);
@@ -434,13 +440,23 @@ const UnitPlansPage = () => {
         </div>
 
         {canUpload && (
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            העלאת תוכנית
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              העלאת תוכנית
+            </button>
+            {/* BATCH H.1 (2026-05-13) — bulk upload entry for unit plans. */}
+            <button
+              onClick={() => setShowBulkModal(true)}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-sm transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              העלאה מרובה
+            </button>
+          </div>
         )}
 
         {plansLoading ? (
@@ -476,6 +492,24 @@ const UnitPlansPage = () => {
         >
           <Plus className="w-6 h-6" />
         </button>
+      )}
+
+      {/* BATCH H.1 — bulk upload modal for unit plans. Unit context
+          implies floor → showFloorField=false. */}
+      {canUpload && (
+        <BulkPlanUploadModal
+          open={showBulkModal}
+          onClose={() => setShowBulkModal(false)}
+          allDisciplines={allDisciplinesList}
+          getDisciplineLabel={getDisciplineLabel}
+          defaultDiscipline={bulkDefaultDiscipline}
+          onDefaultDisciplineChange={setBulkDefaultDiscipline}
+          showFloorField={false}
+          uploadFn={(file, discipline, opts) =>
+            unitPlanService.upload(projectId, unitId, file, discipline, opts)
+          }
+          onUploadComplete={loadPlans}
+        />
       )}
 
       {showUploadModal && canUpload && (

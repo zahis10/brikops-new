@@ -1,459 +1,434 @@
 ================================================================================
-BATCH F.2-polish-1 — Custom Hebrew confirm modal + re-edit preserves drawings
+BATCH H.1 — Multi-file plan upload: extract shared BulkPlanUploadModal + port to UnitPlansPage
 ================================================================================
 Date:           2026-05-13
 Branch:         staging  (NOT main)
-Severity:       P3 — two UX polish items reported by Zahi 2026-05-12
-                after F.2 v3 staging smoke:
+Severity:       P2 — field UX. PMs uploading sets of related plans
+                (architecture + electrical + plumbing) currently must
+                repeat the single-file modal 3+ times on
+                ProjectPlansPage and have NO bulk option at all on
+                UnitPlansPage. ProjectPlansPage already has a working
+                "העלאה מרובה" modal (Zahi 2026-05-13: "עובד מעולה לא
+                צריך שיפור"). UnitPlansPage is the gap.
 
-                **Issue 1:** Native `window.confirm` shows "האתר אומר"
-                prefix + tiny system-styled buttons. Doesn't match
-                BrikOps dark/professional look. F.2 v3 spec
-                pre-documented this as a future ~30-LOC follow-up.
-                Zahi confirmed jarring → ship now.
+                This batch: (1) EXTRACTS the existing bulk modal from
+                ProjectPlansPage into a shared
+                `<BulkPlanUploadModal>`, (2) REFACTORS
+                ProjectPlansPage to use the shared component (no
+                functional change — just delegation), (3) PORTS to
+                UnitPlansPage (adds bulk button + uses shared
+                component, scoped per-unit, no floor field).
 
-                **Issue 2:** "אחרי ששמרתי תמונה עם ציור למשל, אני
-                לוחץ על עריכה, זה מוחק את הציור ומשאיר לי תמונה
-                נקיה". Root cause: `NewDefectModal:1077` fed
-                `originalFile || file` to PhotoAnnotation on
-                re-annotate — `||` priority loaded RAW first when it
-                existed. Flipping to `file || originalFile` loads
-                the ANNOTATED JPEG → user sees rasterized drawings
-                → can paint over them.
-
-                **INTERMEDIATE FIX for Issue 2** — old strokes are
-                RASTERIZED (pixels). User can paint OVER but can't
-                edit/undo individual prior strokes. Full
-                architectural fix ("Re-editable annotations" —
-                persist strokes as JSON server-side) remains in
-                backlog (Option B, 1-2 day batch). Option A here
-                solves 80% of user pain.
+                Architectural benefit: ProjectPlansPage drops 223 LOC
+                (1,543→1,320). The bulk modal becomes reusable for
+                future pages (handover sub-plans? site plans?).
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Frontend only (2 files):
-                  - frontend/src/components/PhotoAnnotation.js
-                    (838 → 896, +58 LOC: state + handleDiscard
-                    refactor + confirmDiscard callback + inline
-                    modal JSX. Comments preserved verbatim from spec.)
-                  - frontend/src/components/NewDefectModal.js
-                    (1118 → 1125, +7 LOC: gate condition + priority
-                    flip + 9-line maintainer comment)
-                Total: 2 files, +65 LOC. No backend, no DB, no env vars,
-                no new dependencies (inline modal, no Radix needed).
+Files changed:  Frontend only (3 files):
+                  - frontend/src/components/BulkPlanUploadModal.jsx
+                    (NEW, 302 LOC — extracted + parameterized)
+                  - frontend/src/pages/ProjectPlansPage.js
+                    (1,543 → 1,320 LOC, -223)
+                  - frontend/src/pages/UnitPlansPage.js
+                    (692 → 726 LOC, +34)
+                Total: 3 files, net +113 LOC across codebase. NO
+                backend, NO DB, NO env vars, NO new dependencies.
 
-Baseline:       origin/staging HEAD = abfa7f2 "Add ability to discard
-                photo annotations without uploading them" (F.2 v3
-                shipped). PhotoAnnotation.js: 838 LOC. NewDefectModal.js:
-                1118 LOC.
+Baseline:       origin/staging HEAD = b402ff9 "Add a custom
+                confirmation modal and preserve drawings when editing
+                photos" (F.2-polish-1 shipped to staging+main).
+                Per-file state pre-edit:
+                  - ProjectPlansPage.js: 1,543 LOC.
+                  - UnitPlansPage.js: 692 LOC.
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
 IN this batch:
-  ✅ Replace `window.confirm` call in `handleDiscard` with a
-     custom inline modal.
-  ✅ Custom modal: dark BrikOps-styled, Hebrew text + Hebrew buttons
-     (אישור / ביטול), destructive (red) confirm action.
-  ✅ Click overlay or ביטול → dismiss without discarding.
-  ✅ Click אישור → invoke onDiscard (or fallback to onSave(null,
-     false)).
-  ✅ Flip imageFile priority in NewDefectModal Instance A re-annotate
-     render from `originalFile || file` to `file || originalFile`.
-  ✅ Extend JSX gate with defensive `(file || originalFile)` guard.
+  ✅ NEW `frontend/src/components/BulkPlanUploadModal.jsx` —
+     reusable, prop-configured. Internal state (file list, upload
+     progress, results) lives in the component. External state
+     (`open`, `defaultDiscipline`) controlled by parent.
+  ✅ ProjectPlansPage refactored to delegate. Existing functionality
+     1:1 preserved. Single-file upload modal UNTOUCHED.
+  ✅ UnitPlansPage gets a new "העלאה מרובה" button (sibling to
+     existing single-file trigger) + renders the shared modal scoped
+     to the current unit.
+  ✅ Per-file fields adapt to context via `showFloorField` prop.
+     ProjectPlansPage = true (with `floorsList`); UnitPlansPage =
+     false (unit context already implies floor).
+  ✅ Concurrency=3 upload loop preserved.
+  ✅ Existing 50MB / 20-file limits preserved (configurable via
+     `maxFileSizeMb` / `maxFiles` props).
 
 OUT of this batch:
-  ❌ Full re-editable annotations (architectural — persist strokes
-     as JSON server-side). Backlog Option B.
-  ❌ Migration of existing images saved with old priority — priority
-     flip applies forward; no data migration needed.
-  ❌ Use of Radix Dialog (`@radix-ui/react-dialog`). Inline modal is
-     simpler and avoids cross-portal z-index complexity.
-  ❌ Auto-blur of `document.activeElement` before showing modal (in
-     case modal sits behind keyboard) — not in this spec; defer to
-     follow-up only IF smoke test J reveals the bug.
-  ❌ Other 6 consumer render sites — only Instance A of
-     NewDefectModal has re-edit flow.
+  ❌ Single-file upload modal on either page — different code path,
+     stays as-is on both pages.
+  ❌ Backend changes — endpoints already accept single-file
+     uploads; the modal loops with concurrency=3.
+  ❌ NEW metadata fields (`name`, `note`) on bulk flow — current
+     behavior preserved (backend derives name from filename per
+     `plans_router.py:199`).
+  ❌ Validation rule changes (file size, ext list, count).
+  ❌ Other consumers of `projectPlanService.upload` /
+     `unitPlanService.upload` (single-file flow + version + replace
+     flows untouched).
+  ❌ Creation of a shared `PLAN_TYPES` constants file (component
+     uses internal default + accepts override prop). Keeps scope
+     tight.
+  ❌ Migration of inline `'standard'`/`'tenant_changes'` strings
+     elsewhere in ProjectPlansPage.
+  ❌ H.2 (iOS document scanner) — separate H.2-Bundle batch.
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (6/6 PASS)
+STEP 0 — PRE-FLIGHT (8/9 PASS, 1 deferred)
 ================================================================================
-1. ✓ HEAD = abfa7f2 (F.2 v3 on staging+main).
-2. ✓ handleDiscard exists @ L563 with window.confirm @ L565.
-3. ✓ NewDefect Instance A @ L1077 = `originalFile || file` (exact
-     pattern).
-4. ✓ showDiscardConfirm = 0 hits in PhotoAnnotation (clean baseline).
-5. ✓ createPortal @ L835 (single bottom call).
-6. ✓ Instance A JSX gate @ L1070 (will be extended).
-- ✓ [saving, setSaving] @ L63 (LOC 1 anchor).
-- ✓ PhotoAnnotation 838 LOC matches F.2 v3 baseline.
-
-================================================================================
-LOCATION 1 — Add showDiscardConfirm state
-================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Insert: AFTER `const [saving, setSaving] = useState(false);` @ L66.
-
-ADDED (post-edit L67-72):
-  // BATCH F.2-polish-1 (2026-05-13) — custom Hebrew confirm modal
-  // for the discard action, replacing window.confirm (which shows
-  // "האתר אומר" prefix + tiny system buttons that don't match the
-  // BrikOps look). Modal renders inline inside the PhotoAnnotation
-  // portal, so it inherits z-index above the canvas.
-  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+1. ✓ HEAD = b402ff9 (F.2-polish-1 on staging+main).
+2. ✓ ProjectPlansPage existing bulk modal: 16 hits across state
+     @L129-131 + handlers @L463-529 + JSX starting @L1324.
+3. ✓ ProjectPlansPage upload calls: 4 hits (single@L275,
+     version@L445, bulk@L504, retry@L529).
+4. ✓ UnitPlansPage clean baseline: 0 hits for
+     `bulkFiles`/`showBulkModal`.
+5. ✓ UnitPlansPage upload wrapper @L185 = `unitPlanService.upload(
+     projectId, unitId, uploadFile, uploadDiscipline, {...})`.
+6. ✓ Backend single-file confirmed: `plans_router.py` uses
+     `file: UploadFile = File(...)` — no `List[UploadFile]`. NO
+     backend work.
+7. ⏸ STEP 0.7 (pre-extraction screenshots) — DEFERRED to Zahi.
+     Cannot agent-capture authenticated staging UI.
+8. ✓ PLAN_TYPES constant does NOT exist anywhere in
+     `frontend/src/`. Component accepts `planTypes` as prop with
+     internal default `[{value:'standard',label:'כללית'},
+     {value:'tenant_changes',label:'שינויי דיירים'}]`.
+9. ✓ UnitPlansPage `disciplines`@L64 + `loadDisciplines`@L101 +
+     `allDisciplinesList`@L132. No new fetch needed; page passes
+     `allDisciplinesList` to component as `allDisciplines` prop.
 
 ================================================================================
-LOCATION 2 — Update handleDiscard + add confirmDiscard
+KEY SPEC DRIFT (acknowledged in plan + here)
 ================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Modify: handleDiscard (was L563-579).
-
-REPLACED (post-edit L572-601):
-  // BATCH F.2-polish-1 — if user made annotations, show the custom
-  // confirm modal instead of window.confirm. The modal's "אישור"
-  // button then calls confirmDiscard which does the actual close.
-  const handleDiscard = useCallback(() => {
-    if (strokesRef.current.length > 0) {
-      setShowDiscardConfirm(true);
-      return;
-    }
-    // No annotations → close immediately (no confirm needed).
-    if (onDiscardRef.current) {
-      onDiscardRef.current();
-    } else {
-      // Fallback: legacy abandonment signal. Consumer may interpret
-      // as "upload raw photo" — that's the v1 bug we're fixing here
-      // by adding onDiscard to all known consumers. Future-proof
-      // fallback only.
-      onSaveRef.current(null, false);
-    }
-  }, []);
-
-  // BATCH F.2-polish-1 — called by the modal's "אישור" button.
-  // Same close logic as handleDiscard's no-strokes path.
-  const confirmDiscard = useCallback(() => {
-    setShowDiscardConfirm(false);
-    if (onDiscardRef.current) {
-      onDiscardRef.current();
-    } else {
-      onSaveRef.current(null, false);
-    }
-  }, []);
-
-Change summary:
-- handleDiscard: when strokes > 0 → setShowDiscardConfirm(true).
-  When strokes === 0 → silent close (no confirm needed). The
-  fallback comment block from F.2 v3 is preserved.
-- confirmDiscard: NEW callback. Closes modal + invokes onDiscard
-  (or fallback to onSave(null, false)). Wired to אישור button.
+- Spec said ProjectPlansPage = 4,115 LOC. ACTUAL was 1,543. Spec's
+  "drops below CLAUDE.md 1,500-LOC concerning threshold faster"
+  framing is moot — file was already healthy. **Reusability win
+  stands** (shared component now consumable by UnitPlansPage and
+  any future plan-upload page).
+- Spec said UnitPlansPage = ~510 LOC. ACTUAL was 692. +34 LOC port
+  → 726 (within ±5 of spec estimate 730).
+- Spec estimate BulkPlanUploadModal ~280 LOC. Actual 302 (within
+  cap 350; within ±10% of estimate).
 
 ================================================================================
-LOCATION 3 — Inline custom modal JSX
+LOCATION 1 — NEW: frontend/src/components/BulkPlanUploadModal.jsx (302 LOC)
 ================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Insert: AFTER bottom action bar's closing `</div>` (L856), BEFORE
-        outermost wrapper closing `</div>` (now L893).
+PROP INTERFACE:
+  {
+    open: boolean,
+    onClose: () => void,
+    allDisciplines: Array<{key, label}>,
+    getDisciplineLabel: (key) => string,
+    defaultDiscipline: string,
+    onDefaultDisciplineChange: (val) => void,
+    showFloorField: boolean,
+    floorsList: Array<{id, name, ...}>,
+    planTypes: Array<{value, label}>  // default has standard +
+                                      // tenant_changes
+    uploadFn: async (file, discipline, opts) => any,
+    onUploadComplete: () => void,
+    maxFiles: number = 20,
+    maxFileSizeMb: number = 50,
+    acceptedExtensions: string = '.pdf,.jpg,.jpeg,.png,.dwg,.dxf'
+  }
 
-ADDED (post-edit L858-892):
-  {/* BATCH F.2-polish-1 (2026-05-13) — custom Hebrew confirm modal,
-      replaces window.confirm for the discard action. Inline inside
-      the PhotoAnnotation portal so z-index naturally sits above the
-      canvas. Click overlay or ביטול to dismiss. */}
-  {showDiscardConfirm && (
-    <div
-      className="absolute inset-0 bg-black/70 flex items-center justify-center px-6"
-      style={{ zIndex: 50 }}
-      onClick={() => setShowDiscardConfirm(false)}
-    >
-      <div
-        className="bg-slate-800 rounded-2xl p-5 max-w-sm w-full border border-slate-700 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-        dir="rtl"
-      >
-        <div className="text-white text-base font-medium mb-5 text-center">
-          לבטל את כל השינויים ולסגור?
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowDiscardConfirm(false); }}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-slate-700 text-slate-200 text-sm font-medium hover:bg-slate-600 transition-colors"
-          >
-            ביטול
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); confirmDiscard(); }}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
-          >
-            אישור
-          </button>
-        </div>
-      </div>
-    </div>
-  )}
+INTERNAL STATE:
+  - bulkFiles, bulkUploading, bulkResults — exact same shape as
+    pre-existing ProjectPlansPage state to keep behavior 1:1.
+  - bulkFileRef — for clearing the <input>.
+  - useEffect on `open` flips false→true → resets all internal
+    state. Matches existing closeBulkModal semantics.
 
-Notes:
-- `absolute inset-0` + `zIndex: 50` keeps modal pinned within
-  PhotoAnnotation's portal (root: `fixed inset-0 zIndex:10001`).
-  Naturally appears above canvas + toolbars.
-- Click overlay → dismiss. Click on inner panel → does NOT dismiss
-  (stopPropagation).
-- Buttons: ביטול = neutral slate; אישור = destructive red.
-- Hebrew preserved via `dir="rtl"`.
-- Body text 16px+ (`text-base`) prevents iOS auto-zoom (consistent).
-- No new dependencies — pure HTML/Tailwind.
+HANDLERS (verbatim ported from ProjectPlansPage L461-553):
+  - handleBulkFileSelect — appends with default discipline;
+    validates count + size.
+  - removeBulkFile, updateBulkFile.
+  - handleBulkUpload — concurrency=3 loop; calls `uploadFn`.
+  - retryBulkFile — single-file retry.
+  - closeBulkModal — guarded by `bulkUploading`; calls onClose.
+  - handleDefaultDisciplineChange — bubbles via
+    onDefaultDisciplineChange + applies to existing pending rows.
+
+JSX: identical structure to original (header + body + per-file row
++ footer + results screen). Backdrop click guarded by
+`bulkUploading` (matches original behavior). `dir="rtl"`
+preserved. Floor field conditionally rendered via
+`showFloorField`. PlanType dropdown options come from `planTypes`
+prop.
 
 ================================================================================
-LOCATION 4 — Flip imageFile priority + extend gate in NewDefectModal
+LOCATION 2 — Refactor ProjectPlansPage.js (1543 → 1320 LOC, -223)
 ================================================================================
-File: frontend/src/components/NewDefectModal.js
-Modify: Instance A re-annotate render @ L1070-1081 (post-edit
-        L1073-1095).
 
-REPLACED:
-  {annotatingIndex !== null && images[annotatingIndex] &&
-   (images[annotatingIndex].file || images[annotatingIndex].originalFile) && (
-    <Suspense fallback={...}>
-      <PhotoAnnotation
-        // BATCH F.2-polish-1 (2026-05-13) — load the annotated file
-        // first when re-editing. User sees their previous drawings
-        // as rasterized pixels on the canvas; can add new strokes
-        // on top. Old strokes can't be edited individually
-        // (rasterized — that's the "Re-editable annotations"
-        // backlog batch). originalFile fallback covers the edge
-        // case where file is missing (shouldn't happen but defensive).
-        // The gate above ALSO guards against both being null —
-        // prevents PhotoAnnotation receiving undefined imageFile.
-        imageFile={images[annotatingIndex].file || images[annotatingIndex].originalFile}
-        onSave={handleAnnotationSave}
-        onDiscard={() => setAnnotatingIndex(null)}
-      />
-    </Suspense>
-  )}
+ADDED:
+  - Import: `import BulkPlanUploadModal from
+    '../components/BulkPlanUploadModal';` @L13.
+  - Comment block @L133-135 documenting the page-level state split.
+  - `<BulkPlanUploadModal>` render @L1240-1255 (next to other
+    modals).
 
-Two changes:
-1. **CONDITION** (gate): added `(file || originalFile)` guard.
-   Prevents PhotoAnnotation rendering with `imageFile === undefined`.
-2. **CONTENT** (imageFile prop): flipped priority. Annotated JPEG
-   loads first → user sees rasterized drawings. originalFile
-   fallback for the theoretical edge case where file is missing.
+REMOVED:
+  - State: `bulkFiles`, `bulkUploading`, `bulkResults`, `bulkFileRef`
+    (4 lines @L130-134). KEPT `showBulkModal` + `bulkDefaultDiscipline`.
+  - Handlers: `handleBulkFileSelect`, `removeBulkFile`,
+    `updateBulkFile`, `handleBulkUpload`, `retryBulkFile`,
+    `closeBulkModal` (~96 lines @L461-553).
+  - JSX: full bulk modal block (~152 lines @L1324-1475).
 
-Plus 9-line comment block for future maintainers.
+PRESERVED (do not touch):
+  - Bulk button @L748 (just changed nothing — `setShowBulkModal(true)`
+    still works).
+  - All single-file modal logic + JSX.
+  - Version / replace flows.
+  - All other state / handlers / JSX.
+
+================================================================================
+LOCATION 3 — Port to UnitPlansPage.js (692 → 726 LOC, +34)
+================================================================================
+
+ADDED:
+  - Import: `import BulkPlanUploadModal from
+    '../components/BulkPlanUploadModal';` @L17.
+  - State: `showBulkModal` + `bulkDefaultDiscipline` @L87-90 with
+    comment.
+  - Bulk button JSX: wrapped existing single-file button in a
+    `flex gap-2` div + added sibling indigo "העלאה מרובה" button
+    @L445-463.
+  - `<BulkPlanUploadModal>` render @L500-516 with
+    `showFloorField={false}` (unit context implies floor) +
+    `uploadFn` calling `unitPlanService.upload(projectId, unitId,
+    ...)`.
+
+PRESERVED:
+  - Single-file upload modal + flow.
+  - FAB (floating + button @L496) — unchanged.
+  - All other page logic.
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ All other F.2 v3 logic (onDiscard prop, onDiscardRef, X button,
-     7 consumer wirings).
-- ❌ F + F.1 + F-keyboard logic.
-- ❌ Save / Undo buttons.
-- ❌ Color picker UI / T button.
-- ❌ Text tool overlay UI (size picker — different אישור).
-- ❌ Drag/edit/hit-testing (F.1b, F.1c).
-- ❌ Touch handlers, viewport lock, scaleRef math.
-- ❌ Other 6 consumer render sites (TaskDetailPage ×2,
-     StageDetailPage, NewDefectModal Instance B, HandoverSectionPage,
-     HandoverItemModal).
-- ❌ Save logic / handlers in any consumer.
-- ❌ Backend / parent contract / saved JPEGs / data shape.
+- ❌ Single-file upload modals on either page.
+- ❌ Backend endpoints (`POST /projects/{id}/plans`, `POST
+     /projects/{id}/units/{uid}/plans`).
+- ❌ `projectPlanService.upload` / `unitPlanService.upload`
+     signatures.
+- ❌ Plan listing / detail view UI on either page.
+- ❌ Plan version / replace flow.
+- ❌ File limits (50MB / 20 files / .pdf,.jpg,.jpeg,.png,.dwg,.dxf).
+- ❌ Concurrency=3 upload pattern.
+- ❌ Audit log behavior (1 entry per file).
+- ❌ Thumbnail generation background task.
+- ❌ PhotoAnnotation / F.x logic (separate track — 7 render sites
+     verified preserved).
 
 ================================================================================
 VERIFY 1 — Frontend build (PASS)
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
-   →  EXIT=0, Done in 34.80s.
+   →  EXIT=0, Done in 35.67s.
    ✓ NO new ESLint warnings.
    ✓ NO compile errors.
 
 ================================================================================
-VERIFY 2 — File size sanity (PASS w/ note)
+VERIFY 2 — File size sanity (PASS)
 ================================================================================
-$ wc -l frontend/src/components/PhotoAnnotation.js
-   →  896. Spec said ~876 (cap 890). 6 LOC over soft cap.
-   ⚠ MINOR DRIFT: extras are preserved comment blocks (not code
-     bloat). The old F.2 v3 5-line comment block above handleDiscard
-     was kept for context, and the new F.2-polish-1 3-line comment
-     was added. Net: 2 doubled-up comment headers ≈ +6 LOC vs spec
-     estimate. Functionally identical to spec.
-
-$ wc -l frontend/src/components/NewDefectModal.js
-   →  1125 (was 1118, +7). ✓ Matches spec estimate.
+$ wc -l frontend/src/components/BulkPlanUploadModal.jsx
+   →  302. Spec ~280 (cap 350). ✓ Within cap.
+$ wc -l frontend/src/pages/ProjectPlansPage.js
+   →  1320 (was 1543, -223). ✓ Spec target ~1323.
+$ wc -l frontend/src/pages/UnitPlansPage.js
+   →  726 (was 692, +34). ✓ Spec target ~730.
 
 ================================================================================
 VERIFY 3 — grep sanity (ALL PASS)
 ================================================================================
-$ grep -nc "window\.confirm(" frontend/src/components/PhotoAnnotation.js
-   →  **0** ✓ NO actual function calls remaining.
-   (Note: `grep -n "window.confirm"` returns 3 hits, but ALL THREE
-    are in COMMENTS documenting the change:
-     L65   // for the discard action, replacing window.confirm ...
-     L570  // confirm modal instead of window.confirm. The modal's ...
-     L856  // replaces window.confirm for the discard action. ...
-    The actual runtime call is gone.)
+$ grep -rn "BulkPlanUploadModal" frontend/src/
+   →  9 hits across 3 files:
+        - Component def (L17) + export (L302) in
+          BulkPlanUploadModal.jsx
+        - Import (L13) + 2 comment refs (L132, L462) + JSX usage
+          (L1238) in ProjectPlansPage.js
+        - Import (L14) + 1 comment ref (L85) + JSX usage (L500) in
+          UnitPlansPage.js
+   ✓ Required minimum (3 hits) far exceeded; structure correct
+     (1 def + 1 export + 2 imports + 2 JSX usages + 3 comment refs).
 
-$ grep -nc "showDiscardConfirm" frontend/src/components/PhotoAnnotation.js
-   →  2 hits (declaration + JSX gate)
-$ grep -nc "setShowDiscardConfirm" frontend/src/components/PhotoAnnotation.js
-   →  5 hits (declaration + handleDiscard + confirmDiscard + overlay
-       onClick + ביטול onClick) ✓
+$ grep -nc "showBulkModal\|setShowBulkModal" frontend/src/pages/ProjectPlansPage.js
+   →  4 hits (state @L136 + setter via close @L1243 + button @L748
+       + JSX gate via render @L1240). ✓ Spec said ~4.
 
-$ grep -nc "confirmDiscard" frontend/src/components/PhotoAnnotation.js
-   →  3 hits (useCallback def @ L591 + onClick @ L881 + comment @ L571).
-   Spec said exactly 2; the 3rd hit is in a preserved spec comment.
-   Functionally correct.
+$ grep -nc "showBulkModal\|setShowBulkModal" frontend/src/pages/UnitPlansPage.js
+   →  4 hits (state @L89 + setter via close @L505 + button @L456
+       + JSX render @L504). ✓ Spec said ~4.
 
-$ grep -n "images\[annotatingIndex\]\.file ||" frontend/src/components/NewDefectModal.js
-   →  L1071: gate condition `(images[annotatingIndex].file || ...)`
-   →  L1087: imageFile prop `imageFile={images[annotatingIndex].file || ...}`
-   ✓ New priority in 2 places (gate + prop).
+$ grep -nc "bulkFiles\|handleBulkUpload" frontend/src/pages/ProjectPlansPage.js
+   →  **0** ✓ Extraction clean. These names live ONLY inside the
+       new component now.
 
-$ grep -n "originalFile || images\[annotatingIndex\].file" frontend/src/components/NewDefectModal.js
-   →  (no output) ✓ Old priority is GONE.
+$ grep -nc "bulkFiles\|handleBulkUpload" frontend/src/components/BulkPlanUploadModal.jsx
+   →  13 hits (state + helper functions + JSX usage of bulkFiles
+       array + handleBulkUpload onClick). ✓ Spec required 5+.
 
 $ grep -rn "<PhotoAnnotation" frontend/src/ | wc -l
-   →  7 ✓ (no new render sites accidentally added).
-
-$ grep -rn "onDiscard=" frontend/src/ | wc -l
-   →  7 ✓ (F.2 v3 wiring preserved).
+   →  7 ✓ All F.2 v3 + F.2-polish-1 wirings preserved (sanity).
 
 ================================================================================
 VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
 ================================================================================
 
-A — Custom modal appears (PRIMARY for Issue 1):
-  1. Open PhotoAnnotation, draw an annotation.
-  2. Tap X.
-  EXPECT: custom Hebrew modal with title "לבטל את כל השינויים
-  ולסגור?", two buttons [ביטול] (slate) [אישור] (red), dark
-  BrikOps style. NO "האתר אומר" prefix. NO native iOS look.
+**A — ProjectPlansPage bulk regression — IDENTICAL TO BEFORE
+       (CRITICAL — NON-NEGOTIABLE):**
 
-B — Click overlay dismisses:
-  1. Same as A → modal open.
-  2. Tap OUTSIDE the panel.
-  EXPECT: modal closes silently. Annotations intact. NO discard.
+  PREREQUISITE (per STEP 0.7): Pre-extraction screenshots captured
+  on staging at the F.2-polish-1 HEAD (b402ff9) before this batch
+  deploys. Use them as the gold reference.
 
-C — Click ביטול dismisses:
-  1. Modal open → tap ביטול.
-  EXPECT: modal closes. Annotations intact. NO discard.
+  Run side-by-side check on 10 explicit points:
+   1. Modal opening speed + backdrop fade-in animation timing.
+   2. UI layout: header + file list + footer in same vertical
+      order; same panel width / corner radius / max-height; iOS
+      safe-area-inset-bottom padding preserved.
+   3. Per-file row fields visible: discipline dropdown, plan_type
+      toggle (כללית/שינויי דיירים), floor_id dropdown. Same
+      labels/order/styling.
+   4. Default values: new files get bulk-default discipline
+      pre-filled; plan_type defaults to 'standard'; floor_id
+      defaults to empty.
+   5. Hebrew labels and translations identical: header "העלאה
+      מרובה", buttons "העלה N קבצים" / "ביטול", per-file "הסר",
+      error messages, empty-state.
+   6. Button labels and styles: indigo primary, slate cancel, red
+      destructive remove.
+   7. Upload progress UX: per-file status pills cycle through
+      pending → uploading (spinner) → done (✓) → error (✗); same
+      colors, ~3 in-flight at a time.
+   8. Results screen: post-upload "X הצליחו, Y נכשלו" + per-file
+      retry buttons.
+   9. List refresh: main plans list refreshes after upload
+      completes; new entries appear per existing logic.
+  10. Modal close behavior: clicking X / overlay / completing
+      upload → modal closes the same way; state resets.
 
-D — Click אישור discards:
-  1. Modal open → tap אישור.
-  EXPECT: modal + PhotoAnnotation both close. No upload.
+  If ANY point differs → STOP and diagnose. This is an EXTRACTION,
+  not a refactor.
 
-E — No annotations + X = silent close (regression):
-  1. Open PhotoAnnotation, don't draw → tap X.
-  EXPECT: closes immediately. NO confirm modal. NO upload.
+  **Functional run after the visual check:**
+  1. Open bulk modal → select 3 files (PDF + JPG + DWG).
+  2. Set default discipline = "אדריכלות".
+  3. Override file #2 discipline = "חשמל".
+  4. Override file #3 floor_id = "קומה 2".
+  5. Tap "העלה 3 קבצים".
+  EXPECT: 3 successful uploads with correct per-file metadata.
+  List refreshes.
 
-F — Re-edit preserves drawings (PRIMARY for Issue 2):
-  1. Open new defect modal → take photo → annotate (red oval) → שמור.
-  2. Photo thumbnail appears in form's image list.
-  3. Tap pencil/edit icon on the thumbnail.
-  EXPECT: PhotoAnnotation re-opens with the RED OVAL visible
-  (rasterized into the image). Toolbar fresh (no strokes in array
-  — they're pixels). User can draw new strokes on top.
-  BEFORE this fix: canvas was clean (no oval).
+**B — UnitPlansPage bulk happy path (NEW):**
+  1. Open project → drill into a unit → תוכניות tab.
+  2. Tap "העלאה מרובה" (sibling to "העלאת תוכנית").
+  EXPECT: bulk modal opens. NO "קומה" override column (unit-scoped).
+  3. Select 2 files. Set discipline + plan_type per file.
+  4. Tap "העלה 2 קבצים".
+  EXPECT: both upload to the unit's plans. List refreshes.
 
-G — Re-edit + add new stroke + save:
-  1. Same as F → see rasterized oval.
-  2. Draw a blue line → tap שמור.
-  EXPECT: photo saves with BOTH red oval (from v1, rasterized) AND
-  new blue line (from v2, rasterized). Thumbnail updates.
+**C — Single-file regression (both pages):**
+  1. ProjectPlansPage → "+ תוכנית חדשה" (single).
+  2. UnitPlansPage → "העלאת תוכנית" (single).
+  EXPECT: both work as before. Single-file modals unchanged.
 
-H — Re-edit + X (discard) = no change to existing image:
-  1. Re-open photo for edit → see rasterized drawings.
-  2. Add a stroke (or don't) → tap X → אישור.
-  EXPECT: PhotoAnnotation closes. Image in `images[]` UNCHANGED.
-  Thumbnail still shows previous state. No upload.
+**D — Bulk limits enforcement:**
+  1. Try 21 files at once.
+  EXPECT: toast — "ניתן להעלות עד 20 קבצים".
+  2. Try a 51MB file.
+  EXPECT: row marked error — "קובץ גדול מדי (מקסימום 50MB)".
 
-J — Discard modal with keyboard up (F-keyboard interaction):
-  1. T → tap canvas → keyboard pops up.
-  2. Type something in pendingText overlay (DON'T tap אישור) OR
-     draw something on canvas before tapping T.
-  3. Tap X in top toolbar.
-  EXPECT: confirm modal appears (strokes exist OR text pending).
-  Modal FULLY VISIBLE — not behind keyboard. Both buttons reachable.
-  3a. Tap ביטול → modal closes, PhotoAnnotation stays open with
-      keyboard + pendingText intact.
-  3b. Tap אישור → PhotoAnnotation closes (keyboard auto-dismisses
-      with the unmount).
+**E — Bulk upload retry on failure:**
+  1. Trigger a partial failure (rate limit, offline toggle).
+  2. Result screen shows partial success.
+  3. Tap "נסה שוב" on failed row.
+  EXPECT: that single file retries; others not re-uploaded.
 
-  CRITICAL: if modal appears behind keyboard or buttons not
-  reachable → bug. Fallback: follow-up batch adds
-  `document.activeElement?.blur()` in handleDiscard. Not in this
-  spec — defer until smoke reveals the bug.
+**F — Cancel during upload:**
+  1. Start upload → click overlay or X mid-upload.
+  EXPECT: backdrop click is GUARDED by `bulkUploading` — modal
+  stays open until upload settles. Matches original behavior.
 
-K — Cross-platform:
-  - Test A + F + J on iPhone (Capacitor) AND Android.
-  EXPECT: identical behavior — no native iOS prefix, re-edit
-  preserves drawings, modal-with-keyboard works.
+**G — Cross-platform:**
+  - Test A + B on iPhone (Capacitor) AND Android.
+  EXPECT: native file picker. Multi-select works. Upload completes.
+
+**H — Modal state reset between opens:**
+  1. Open bulk modal → add files → close (don't upload).
+  2. Re-open.
+  EXPECT: file list EMPTY. defaultDiscipline RETAINED (lives in
+  page state, not modal).
 
 ================================================================================
 RISK
 ================================================================================
-Low. Pure UI polish + 1-line priority flip.
+Low-medium. Largest LOC change since F.x track but pure EXTRACTION.
 
-- ⚠ Modal absolute positioning relative to PhotoAnnotation's
-  stacking context. zIndex 50 within the portal's zIndex 10001
-  sits above canvas naturally.
-- ⚠ Click-outside dismisses (cancel-by-default semantics).
-- ⚠ Re-edit imageFile flip is FORWARD-ONLY. Existing images where
-  file === originalFile (took photo, didn't annotate) are no-op.
-  Images annotated AFTER this batch ships will preserve drawings
-  on re-edit.
-- ⚠ Old strokes after re-edit are RASTERIZED — user can paint OVER
-  but can't edit/undo individual prior strokes. Intermediate fix.
-  Full Option B (persist strokes as JSON server-side) remains in
-  backlog. Documented in commit message.
-- ⚠ Modal-behind-keyboard edge case (smoke J) — fallback identified
-  (auto-blur activeElement) but NOT in this spec. Defer until smoke
-  reveals the bug.
-- ⚠ NewDefectModal Instance A is the ONLY consumer with re-edit
-  flow. No need to flip priority in other 6 consumers.
-
-Bundle size: zero (no new imports).
-Performance: zero impact.
-Backend / DB / env / payment / billing: zero touch.
+- ⚠ **Extraction risk** — new component MUST behave 1:1 identical
+  to existing ProjectPlansPage bulk. Smoke A is the guard with 10
+  explicit checkpoints.
+- ⚠ Per-file state shape preserved verbatim: `{file, discipline,
+  plan_type, floor_id, status, error, id, progress}`.
+- ⚠ Rate limit (`check_upload_rate_limit` per
+  `plans_router.py:146`) — UnitPlansPage bulk now hits the same
+  limit. ProjectPlansPage bulk already operated under it; no NEW
+  exposure.
+- ⚠ `planTypes` as prop with internal default — if a third
+  consumer wants different options, easy. Trivial dedupe later if
+  needed.
+- ⚠ `availableDisciplines` calculation differs per page. Each
+  page passes its own `allDisciplinesList`.
+- ⚠ STEP 0.7 screenshots — Zahi's responsibility for Smoke A.
+- ⚠ CLAUDE.md size benefit smaller than spec claimed (file was
+  already healthy at 1,543, dropped to 1,320). Reusability win
+  stands.
+- Bundle size: zero (no new deps).
+- Performance: zero impact.
+- Backend / DB / env / payment / billing: zero touch.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-- Reverts custom modal → window.confirm returns.
-- Reverts re-edit priority → originalFile loads on re-annotate.
-- Does NOT affect F.2 v3 (X discard button still works, just with
-  the system confirm dialog).
-- F + F.1 + F-keyboard preserved.
+- Removes new component file.
+- Restores ProjectPlansPage inline bulk modal.
+- Removes UnitPlansPage bulk button + render.
+- ProjectPlansPage works as before.
+- UnitPlansPage loses bulk (back to single-file only).
+- No data lost — uploaded plans persist.
 
 ================================================================================
 DEPLOY ORDERING
 ================================================================================
-F.2 v3 at HEAD (abfa7f2). This batch lands cleanly on top:
-- LOC 1-3 (PhotoAnnotation): touches handleDiscard + adds state +
-  adds inline modal. No overlap with F/F.1/F-keyboard.
-- LOC 4 (NewDefectModal): 1-line content change + 1-line gate
-  change in Instance A. No overlap with F.2 v3's onDiscard wiring.
+F.2-polish-1 (b402ff9) at HEAD. This batch lands cleanly:
+- New component file: no overlap.
+- ProjectPlansPage: large refactor, isolated to bulk modal area.
+- UnitPlansPage: additive port, no overlap with single-file flow.
 - Zero merge conflicts expected.
 
 ================================================================================
 NEXT STEPS (after this batch ships green)
 ================================================================================
-PhotoAnnotation polish track essentially complete:
-  - F           ✅ Text labels
-  - F.1a/b/c    ✅ Size, drag, tap-to-edit
-  - F.1b-hf-1   ✅ Bbox cache + 44×44 min touch
-  - F-keyboard  ✅ Viewport-aware canvas
-  - F.2 v3      ✅ Discard X button + 7 consumer wirings
-  - F.2-polish-1 ← this batch — Hebrew modal + re-edit preserves
-
-Architectural / future work still in backlog:
-  - **Re-editable annotations** (persist strokes as JSON
-    server-side) → Option B. Real edit/undo/delete on previous
-    strokes. ~1-2 day batch. Decide based on field demand.
-  - Undo history per stroke (restore pre-edit/pre-drag values).
-  - Delete single label (tap label → X button on pill).
-  - Long-press → context menu.
-  - Auto-blur activeElement in handleDiscard (if modal-with-keyboard
-    smoke J reveals the bug).
+**Phase 2 — H.2-Bundle (native release):**
+Combined batch with all native-pending items to share one Apple/
+Android review cycle:
+  - H.2 — iOS document scanner (Capacitor plugin)
+  - Stream B1 — Universal Links (iOS) + App Links (Android)
+  - Stream B2 — Contact Picker (Capacitor plugin)
+Bundle total ~160-230 LOC frontend + 2 plugins + native config.
+Apple review ~1-3 days. Spec when H.1 ships green.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
