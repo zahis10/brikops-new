@@ -1,270 +1,120 @@
 ================================================================================
-BATCH H.2a — iOS/Android Document Scanner — READY FOR ZAHI
+BATCH H.2a-hotfix-1 — Scanner fetch fix (file:// → convertFileSrc)
 ================================================================================
 Date:           2026-05-13
-Branch:         staging  (NOT main)
-Plugin used:    @capgo/capacitor-document-scanner@^7.2.5
-                (replaces @capacitor-mlkit/document-scanner from
-                 first attempt — that one was Android-only stub on
-                 iOS, see history below.)
-Status:         ✓ Built. ✓ Synced. NOT committed, NOT deployed.
+Branch:         staging
+Severity:       BLOCKER for iOS scanner UX (toast "שגיאה בסריקת המסמך"
+                fired immediately after VisionKit save).
+Status:         ✓ Built. JS-only. NOT committed, NOT deployed.
+                Deployable via Capgo OTA — no native rebuild needed.
 
 ================================================================================
-HISTORY — why we switched plugins
+SYMPTOM (from iPhone TestFlight 1.0.12 build 12 smoke)
 ================================================================================
 
-First attempt (@capacitor-mlkit/document-scanner@7.5.0): STOPPED at STEP 0.9.
-Its iOS Swift file is a formal stub — `scanDocument` literally calls
-`call.reject("Not available on iOS")` and contains no VisionKit code.
-Plugin uninstalled, working tree restored. Reported in previous review.txt.
-
-Zahi switched directive to @capgo/capacitor-document-scanner@^7.2.5
-(same vendor as our existing @capgo/capacitor-updater). This second
-attempt is the one shipped in this review.
+VisionKit document scanner opens correctly, captures pages, "Save"
+returns to the app — then the wrapper throws and shows the Hebrew
+error toast. No images reach the defect's images[] array.
 
 ================================================================================
-PRE-FLIGHT — STEP 0.8 (version availability) for the new plugin
+ROOT CAUSE
 ================================================================================
 
-  $ npm view @capgo/capacitor-document-scanner versions
-  → ['7.0.0' … '7.2.5', '8.0.0' … '8.3.29']
-  $ npm view @capgo/capacitor-document-scanner@7.2.5 peerDependencies
-  → { '@capacitor/core': '>=7.0.0' }   ✓ compatible (we are on 7.6.1)
+The @capgo plugin's `ResponseType.ImageFilePath` (our default) returns
+URIs like `file:///var/mobile/Containers/Data/.../scan-1.jpg`. Direct
+`fetch(file://...)` is blocked by iOS WKWebView's security policy.
 
-  v8.x line is for Capacitor 8 — DO NOT use. Pinned: ^7.2.5
-  (latest in v7 line per Zahi's directive).
-
-Snapshots saved (for diff reference):
-  /tmp/podfile-before2.txt
-  /tmp/gradle-before2.txt
+Fix is the documented Capacitor pattern: `Capacitor.convertFileSrc(uri)`
+returns a `capacitor://localhost/_capacitor_file_/...` URL on iOS and a
+`http://localhost/_capacitor_file_/...` URL on Android — both readable
+by WebView fetch.
 
 ================================================================================
-PRE-FLIGHT — STEP 0.9 (API verification) for the new plugin
+FILES TOUCHED — exhaustive
 ================================================================================
 
-definitions.d.ts contents (verbatim, summarised):
+MODIFIED:
+  ~ frontend/src/components/DocumentScannerButton.jsx   (+5 LOC, 1 line edit)
 
-  scanDocument(options?: ScanDocumentOptions): Promise<ScanDocumentResponse>;
+      L19-28 (map block):
+        - const resp = await fetch(uri);
+        + const webViewUrl = Capacitor.convertFileSrc(uri);
+        + const resp = await fetch(webViewUrl);
+        + 4 lines of explanatory comment
 
-  ScanDocumentOptions {
-    croppedImageQuality?: number    // Android only, 0–100, default 100
-    letUserAdjustCrop?: boolean     // Android only, default true
-    maxNumDocuments?: number        // Android only, default 24
-    responseType?: ResponseType     // default ImageFilePath
-  }
+      L31 (catch block):
+        - console.error('DocumentScanner error:', err);
+        + console.error('DocumentScanner error:', err, 'stack:', err?.stack);
 
-  enum ResponseType {
-    Base64        = "base64"
-    ImageFilePath = "imageFilePath"
-  }
+NOT TOUCHED:
+  • Plugin version, native projects (Podfile/gradle) — unchanged.
+  • NewDefectModal.js integration — unchanged.
+  • images[] shape, PhotoAnnotation, camera/gallery flows — unchanged.
 
-  ScanDocumentResponse {
-    scannedImages?: string[]
-    status?: ScanDocumentResponseStatus   // 'success' | 'cancel'
-  }
-
-iOS Swift confirmed (verbatim excerpt from the installed pod):
-
-  ios/Sources/DocumentScannerPlugin/DocumentScannerPlugin.swift
-  @available(iOS 13.0, *)
-  @objc(DocumentScannerPlugin)
-  public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin {
-      private let pluginVersion: String = "7.2.5"
-      ...
-      // documentCameraViewController(_, didFinishWith scan: VNDocumentCameraScan)
-      // documentCameraViewControllerDidCancel(_)
-  }
-
-  → REAL VNDocumentCameraViewController (Apple VisionKit). Confirmed.
-
-Web fallback: web.js throws unimplemented('Document scanning is not
-supported on the web.') — wrapper hides the button on web via
-Capacitor.isNativePlatform() guard.
-
-================================================================================
-API DRIFT FROM ORIGINAL SPEC LOCATION 3 — adjustments made
-================================================================================
-
-The original H.2a spec (1778699005963_…txt) was written assuming the
-mlkit plugin's API. The shipped wrapper uses the @capgo plugin's
-slightly different shape:
-
-  Drift 1 — method name:
-    spec:    DocumentScanner.scan({ scannerMode: 'FULL', resultFormats: 'JPEG' })
-    actual:  DocumentScanner.scanDocument({ responseType: ResponseType.ImageFilePath })
-
-  Drift 2 — cancellation:
-    spec:    expects throw on cancel → wrapped in try/catch
-    actual:  CLEANER — returns { status: 'cancel' } as a normal resolution.
-             Wrapper checks `result.status === ScanDocumentResponseStatus.Cancel`
-             and silently returns. No error toast on cancel.
-
-  Drift 3 — return field:
-    spec:    result.scannedImages: string[]   ← URIs
-    actual:  result.scannedImages?: string[]  ← URIs (file:// paths or base64
-             depending on responseType). Same behavior; field name matches.
-
-  Drift 4 — Android Play Services check:
-    spec:    explicit isModuleAvailable / installModule guard required (mlkit).
-    actual:  @capgo plugin handles ML Kit module download internally via
-             the Google Play Services GMS lib. NO manual guard required.
-             First Android scan may show a brief "Preparing scanner…" splash
-             on devices that haven't yet downloaded the module. Acceptable.
-
-================================================================================
-FILES TOUCHED — exhaustive list
-================================================================================
-
-NEW:
-  + frontend/src/components/DocumentScannerButton.jsx        (36 LOC)
-
-MODIFIED (source):
-  ~ frontend/src/components/NewDefectModal.js                (+14 LOC, +1 import)
-      L19   added: import DocumentScannerButton from './DocumentScannerButton';
-      L1028 added: <DocumentScannerButton onScan={…} className=…/>
-                   as third sibling next to camera/gallery buttons.
-      onScan handler maps File → { file, preview, name, originalFile },
-      then setImages(prev => [...prev, ...newImages]) — matches the existing
-      shape used by camera/gallery (verified at L343, L400, L409).
-
-MODIFIED (deps):
-  ~ frontend/package.json   (+1 dep: @capgo/capacitor-document-scanner ^7.2.5)
-  ~ frontend/yarn.lock      (regenerated for the new dep)
-
-MODIFIED (auto by `npx cap sync`):
-  ~ frontend/ios/App/Podfile                  (+2 lines — see below)
-  ~ frontend/android/capacitor.settings.gradle (+6 lines — see below)
-  ~ frontend/android/app/capacitor.build.gradle (+2 lines — see below)
-
-NOT TOUCHED (verified by code review):
-  • 7 PhotoAnnotation call sites — untouched.
-  • Existing camera/gallery JSX (cameraInputRef/galleryInputRef) — untouched.
-  • images[] state shape — preserved (file/preview/name/originalFile).
-  • iOS NSCameraUsageDescription — already present from existing camera plugin.
-  • Android Manifest CAMERA permission — already present.
-  • Backend — untouched.
-
-================================================================================
-NATIVE SYNC DIFF — what `npx cap sync` actually changed
-================================================================================
-
-Podfile (+2 lines):
-  + pod 'CapacitorPreferences', :path => '../../node_modules/@capacitor/preferences'
-  + pod 'CapgoCapacitorDocumentScanner', :path => '../../node_modules/@capgo/capacitor-document-scanner'
-
-capacitor.settings.gradle (+6 lines):
-  + include ':capacitor-preferences'
-  + project(':capacitor-preferences').projectDir = …/preferences/android
-  + include ':capgo-capacitor-document-scanner'
-  + project(':capgo-capacitor-document-scanner').projectDir = …/capacitor-document-scanner/android
-
-capacitor.build.gradle (+2 lines):
-  + implementation project(':capacitor-preferences')
-  + implementation project(':capgo-capacitor-document-scanner')
-
-  ⚠ NOTE — UNEXPECTED-BUT-BENIGN: `capacitor-preferences` was added by
-  cap sync alongside the scanner. This is NOT a new dependency —
-  @capacitor/preferences@7.0.4 has been in package.json for a while
-  (reported by `npx cap sync` as "Found 9 Capacitor plugins"), but the
-  three native files above were missing its entries. Cap sync corrected
-  this latent gap when re-running. The preferences pod/gradle entries
-  are CORRECT and SAFE — they make the native projects match the JS
-  side. They may show up as part of this commit's diff; they are
-  unrelated to H.2a but harmless.
-
-  Net new H.2a-specific lines: +5 (1 Podfile, 2 settings.gradle, 1 build.gradle,
-  + 1 import line in NewDefectModal). All others are the preferences cleanup.
+`Capacitor` import was already present at the top of the file from
+the original H.2a wrapper (used by the existing `isNativePlatform()`
+guard) — no new import needed.
 
 ================================================================================
 VERIFY GATES — all PASS
 ================================================================================
 
-✓ yarn build           EXIT=0     ("The build folder is ready to be deployed.")
-✓ npx cap sync         EXIT=0     ("Sync finished in 2.676s")
-                                  Plugins detected on iOS=9, Android=9 — both
-                                  show @capgo/capacitor-document-scanner@7.2.5.
-✓ grep "DocumentScanner" frontend/src → 6 hits (target ≥5):
-    DocumentScannerButton.jsx:3, :7, :10, :23
-    NewDefectModal.js:19, :1026
-✓ grep "<DocumentScannerButton" → exactly 1 hit (target =1):
-    NewDefectModal.js:1026
-✓ grep "@capgo/capacitor-document-scanner" frontend/package.json → 1
-✓ git status: only expected files modified (see list above).
+✓ yarn build                            EXIT=0  (Done in 41.61s)
+✓ grep "convertFileSrc" wrapper         → 2 hits (1 in code, 1 in comment)
+✓ grep "Capacitor" wrapper              → 4 hits (import, isNativePlatform,
+                                                  convertFileSrc usage, comment)
+✓ git status: only DocumentScannerButton.jsx modified.
 
 ================================================================================
 HOW TO TEST (Zahi)
 ================================================================================
 
-Web (no native):
-  → DocumentScannerButton hidden via Capacitor.isNativePlatform() guard.
-  → Camera + gallery buttons unchanged. No visual change on web.
+After OTA deploy lands on the iPhone via Capgo:
+  1. Open NewDefectModal.
+  2. Tap green "סרוק מסמך" button → VisionKit opens.
+  3. Capture 1–3 pages → "Save".
+  4. Expect: returned to defect form, JPEGs visible in image list,
+     NO toast.
+  5. Cancel path: tap → cancel → returns silently, no toast.
 
-iOS (TestFlight after `cap copy` + Xcode build):
-  1. Open NewDefectModal (any project, "ליקוי חדש").
-  2. New green "סרוק מסמך" button appears alongside "צלם תמונה" + "בחר מגלריה".
-  3. Tap → Apple VisionKit document camera opens (full-screen).
-  4. Capture 1+ pages → "Save" → images appear in defect's image list.
-  5. Tap "Cancel" → returns silently, no error toast.
-
-Android (after `cap copy` + Android Studio build):
-  1. Same flow.
-  2. First-ever tap may show "Preparing scanner…" briefly while ML Kit
-     module downloads (one-time, ~5MB).
-  3. After download: ML Kit document scanner opens, supports multi-page,
-     auto-crop, perspective correction.
-  4. Save → images flow into defect.
+If any error STILL appears, open Safari DevTools (Mac connected to
+iPhone) and check the console — the enhanced log will now print
+`stack:` for fast diagnosis.
 
 ================================================================================
 DEPLOY (Zahi only)
 ================================================================================
 
-Standard staging push. NO native binary publish needed for this checkpoint
-— the JS guard means web users see no change. Native uptake happens at
-the next TestFlight / internal-track Android upload, which Zahi controls.
-
-If publishing iOS:
-  - Verify NSCameraUsageDescription in ios/App/App/Info.plist (already
-    present for existing camera plugin — VisionKit reuses the same key).
-  - Open Xcode → archive → upload.
-
-If publishing Android:
-  - Open Android Studio → build APK/AAB.
-  - GMS / Play Services already a transitive dep via existing plugins.
+JS-only patch. No native code changed, no plugin install, no cap sync.
+Pushable via standard prod OTA path (Capgo). The TestFlight binary on
+the iPhone (1.0.12 build 12) will pick up the new bundle within minutes
+of the OTA push — no Apple review cycle needed.
 
 ================================================================================
 RISK
 ================================================================================
 
 LOW.
-  • Web: feature gated off → zero behavioural change.
-  • iOS / Android: additive button. Existing camera + gallery flows
-    untouched (verified by reading the unchanged input refs and
-    setImages call sites).
-  • Plugin from same vendor as our existing @capgo/capacitor-updater
-    (Martin Donadieu) — known good supply chain.
+  • Single targeted change inside the scanner success path.
+  • `convertFileSrc` is a no-op on web (returns input unchanged), so
+    the web `isNativePlatform()` guard still applies — no web behaviour
+    change.
+  • Android: `convertFileSrc` also works; first scan should now
+    complete cleanly on Android too. (Not yet smoke-tested on Android
+    by Zahi — the iPhone failure would have hit Android the same way.)
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-  $ git revert <commit>
-  $ cd frontend && yarn install && npx cap sync
-
-Or surgically:
-  - Remove L19 + L1028-1040 from NewDefectModal.js
-  - Delete DocumentScannerButton.jsx
-  - yarn remove @capgo/capacitor-document-scanner
-  - npx cap sync
+Single-file revert:
+  git checkout HEAD -- frontend/src/components/DocumentScannerButton.jsx
 
 ================================================================================
 SUGGESTED COMMIT
 ================================================================================
 
-feat(mobile): add iOS/Android document scanner via @capgo/capacitor-document-scanner (BATCH H.2a)
-
-Files: 7 modified, 1 new.
-LOC delta: +60 net (incl. cap-sync side-effects for latent
-@capacitor/preferences entries).
+fix(mobile): convert file:// URIs via Capacitor.convertFileSrc in document scanner (H.2a-hotfix-1)
 
 ================================================================================
 STANDING RULE — STOPPING HERE
@@ -273,4 +123,4 @@ STANDING RULE — STOPPING HERE
 Per Zahi's standing rules: agent does not commit, does not deploy,
 does not run ship.sh, does not mark task complete.
 Handoff: review.txt + .local/.commit_message + present_asset → DONE.
-Zahi runs git/deploy.
+Zahi runs git/OTA push.

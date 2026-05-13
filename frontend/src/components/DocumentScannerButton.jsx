@@ -14,13 +14,18 @@ export default function DocumentScannerButton({ onScan, label = 'סרוק מסמ
       const uris = result?.scannedImages || [];
       if (uris.length === 0) return;
       const files = await Promise.all(uris.map(async (uri, i) => {
-        const resp = await fetch(uri);
+        // BATCH H.2a-hotfix-1 — convert file:// URI to WebView-readable URL.
+        // iOS WKWebView blocks direct fetch on file:// per security policy.
+        // Capacitor.convertFileSrc() returns a capacitor://... URL on iOS
+        // and a localhost-based URL on Android, both fetch-safe.
+        const webViewUrl = Capacitor.convertFileSrc(uri);
+        const resp = await fetch(webViewUrl);
         const blob = await resp.blob();
         return new File([blob], `scan-${Date.now()}-${i}.jpg`, { type: 'image/jpeg' });
       }));
       if (files.length > 0) onScan(files);
     } catch (err) {
-      console.error('DocumentScanner error:', err);
+      console.error('DocumentScanner error:', err, 'stack:', err?.stack);
       toast.error('שגיאה בסריקת המסמך');
     }
   }, [onScan]);
