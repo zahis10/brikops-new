@@ -1,434 +1,165 @@
 ================================================================================
-BATCH H.1 — Multi-file plan upload: extract shared BulkPlanUploadModal + port to UnitPlansPage
+PRIVACY POLICY UPDATE — Section 7א (mobile device permissions) + date bump
 ================================================================================
 Date:           2026-05-13
 Branch:         staging  (NOT main)
-Severity:       P2 — field UX. PMs uploading sets of related plans
-                (architecture + electrical + plumbing) currently must
-                repeat the single-file modal 3+ times on
-                ProjectPlansPage and have NO bulk option at all on
-                UnitPlansPage. ProjectPlansPage already has a working
-                "העלאה מרובה" modal (Zahi 2026-05-13: "עובד מעולה לא
-                צריך שיפור"). UnitPlansPage is the gap.
-
-                This batch: (1) EXTRACTS the existing bulk modal from
-                ProjectPlansPage into a shared
-                `<BulkPlanUploadModal>`, (2) REFACTORS
-                ProjectPlansPage to use the shared component (no
-                functional change — just delegation), (3) PORTS to
-                UnitPlansPage (adds bulk button + uses shared
-                component, scoped per-unit, no floor field).
-
-                Architectural benefit: ProjectPlansPage drops 223 LOC
-                (1,543→1,320). The bulk modal becomes reusable for
-                future pages (handover sub-plans? site plans?).
+Severity:       P1 — Apple App Store review compliance gate. Required
+                BEFORE the H.2-Bundle native release ships. App reviewers
+                cross-check NSContactsUsageDescription +
+                NSCameraUsageDescription + privacy policy + Privacy
+                Nutrition Labels for consistency. This update aligns the
+                public privacy policy with the data-minimization claim
+                that will appear in Info.plist + App Store Connect.
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Frontend only (3 files):
-                  - frontend/src/components/BulkPlanUploadModal.jsx
-                    (NEW, 302 LOC — extracted + parameterized)
-                  - frontend/src/pages/ProjectPlansPage.js
-                    (1,543 → 1,320 LOC, -223)
-                  - frontend/src/pages/UnitPlansPage.js
-                    (692 → 726 LOC, +34)
-                Total: 3 files, net +113 LOC across codebase. NO
-                backend, NO DB, NO env vars, NO new dependencies.
-
-Baseline:       origin/staging HEAD = b402ff9 "Add a custom
-                confirmation modal and preserve drawings when editing
-                photos" (F.2-polish-1 shipped to staging+main).
-                Per-file state pre-edit:
-                  - ProjectPlansPage.js: 1,543 LOC.
-                  - UnitPlansPage.js: 692 LOC.
+Files changed:  Pure HTML content, 1 file:
+                  - frontend/public/legal/privacy.html (115 → 153 LOC, +38)
+                NO backend, NO JS, NO build config, NO new dependencies,
+                NO React components touched. Privacy HTML is served as a
+                static asset from /public/legal/ — CRA copies it through
+                untouched at build time.
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
 IN this batch:
-  ✅ NEW `frontend/src/components/BulkPlanUploadModal.jsx` —
-     reusable, prop-configured. Internal state (file list, upload
-     progress, results) lives in the component. External state
-     (`open`, `defaultDiscipline`) controlled by parent.
-  ✅ ProjectPlansPage refactored to delegate. Existing functionality
-     1:1 preserved. Single-file upload modal UNTOUCHED.
-  ✅ UnitPlansPage gets a new "העלאה מרובה" button (sibling to
-     existing single-file trigger) + renders the shared modal scoped
-     to the current unit.
-  ✅ Per-file fields adapt to context via `showFloorField` prop.
-     ProjectPlansPage = true (with `floorsList`); UnitPlansPage =
-     false (unit context already implies floor).
-  ✅ Concurrency=3 upload loop preserved.
-  ✅ Existing 50MB / 20-file limits preserved (configurable via
-     `maxFileSizeMb` / `maxFiles` props).
+  ✅ CHANGE 1 — Line 25 date bump: "אפריל 2026" → "מאי 2026"
+  ✅ CHANGE 2 — Insert new section "7א. גישה לתכונות מכשיר נייד"
+     between section 7 (Cookies) and section 8 (Rights). Covers:
+       - Camera & photos (existing + new document scanner)
+       - Contacts (NEW — single-pick only, no full address-book read)
+       - Universal Links / App Links
+       - Permissions management (iOS Settings + Android settings)
 
 OUT of this batch:
-  ❌ Single-file upload modal on either page — different code path,
-     stays as-is on both pages.
-  ❌ Backend changes — endpoints already accept single-file
-     uploads; the modal loops with concurrency=3.
-  ❌ NEW metadata fields (`name`, `note`) on bulk flow — current
-     behavior preserved (backend derives name from filename per
-     `plans_router.py:199`).
-  ❌ Validation rule changes (file size, ext list, count).
-  ❌ Other consumers of `projectPlanService.upload` /
-     `unitPlanService.upload` (single-file flow + version + replace
-     flows untouched).
-  ❌ Creation of a shared `PLAN_TYPES` constants file (component
-     uses internal default + accepts override prop). Keeps scope
-     tight.
-  ❌ Migration of inline `'standard'`/`'tenant_changes'` strings
-     elsewhere in ProjectPlansPage.
-  ❌ H.2 (iOS document scanner) — separate H.2-Bundle batch.
+  ❌ Any other section of privacy.html (sections 1-7, 8-end untouched)
+  ❌ terms.html, security.html, data-deletion.html (untouched)
+  ❌ Backend (no API/DB/env)
+  ❌ Frontend code outside /public/legal/ (zero React component changes)
+  ❌ The actual H.2 (iOS document scanner) implementation — separate
+     H.2-Bundle batch
+  ❌ Info.plist / Android manifest entries — those land with H.2-Bundle
+  ❌ App Store Connect Privacy Nutrition Labels update — Zahi handles
+     in App Store Connect dashboard
 
 ================================================================================
-STEP 0 — PRE-FLIGHT (8/9 PASS, 1 deferred)
-================================================================================
-1. ✓ HEAD = b402ff9 (F.2-polish-1 on staging+main).
-2. ✓ ProjectPlansPage existing bulk modal: 16 hits across state
-     @L129-131 + handlers @L463-529 + JSX starting @L1324.
-3. ✓ ProjectPlansPage upload calls: 4 hits (single@L275,
-     version@L445, bulk@L504, retry@L529).
-4. ✓ UnitPlansPage clean baseline: 0 hits for
-     `bulkFiles`/`showBulkModal`.
-5. ✓ UnitPlansPage upload wrapper @L185 = `unitPlanService.upload(
-     projectId, unitId, uploadFile, uploadDiscipline, {...})`.
-6. ✓ Backend single-file confirmed: `plans_router.py` uses
-     `file: UploadFile = File(...)` — no `List[UploadFile]`. NO
-     backend work.
-7. ⏸ STEP 0.7 (pre-extraction screenshots) — DEFERRED to Zahi.
-     Cannot agent-capture authenticated staging UI.
-8. ✓ PLAN_TYPES constant does NOT exist anywhere in
-     `frontend/src/`. Component accepts `planTypes` as prop with
-     internal default `[{value:'standard',label:'כללית'},
-     {value:'tenant_changes',label:'שינויי דיירים'}]`.
-9. ✓ UnitPlansPage `disciplines`@L64 + `loadDisciplines`@L101 +
-     `allDisciplinesList`@L132. No new fetch needed; page passes
-     `allDisciplinesList` to component as `allDisciplines` prop.
-
-================================================================================
-KEY SPEC DRIFT (acknowledged in plan + here)
-================================================================================
-- Spec said ProjectPlansPage = 4,115 LOC. ACTUAL was 1,543. Spec's
-  "drops below CLAUDE.md 1,500-LOC concerning threshold faster"
-  framing is moot — file was already healthy. **Reusability win
-  stands** (shared component now consumable by UnitPlansPage and
-  any future plan-upload page).
-- Spec said UnitPlansPage = ~510 LOC. ACTUAL was 692. +34 LOC port
-  → 726 (within ±5 of spec estimate 730).
-- Spec estimate BulkPlanUploadModal ~280 LOC. Actual 302 (within
-  cap 350; within ±10% of estimate).
-
-================================================================================
-LOCATION 1 — NEW: frontend/src/components/BulkPlanUploadModal.jsx (302 LOC)
-================================================================================
-PROP INTERFACE:
-  {
-    open: boolean,
-    onClose: () => void,
-    allDisciplines: Array<{key, label}>,
-    getDisciplineLabel: (key) => string,
-    defaultDiscipline: string,
-    onDefaultDisciplineChange: (val) => void,
-    showFloorField: boolean,
-    floorsList: Array<{id, name, ...}>,
-    planTypes: Array<{value, label}>  // default has standard +
-                                      // tenant_changes
-    uploadFn: async (file, discipline, opts) => any,
-    onUploadComplete: () => void,
-    maxFiles: number = 20,
-    maxFileSizeMb: number = 50,
-    acceptedExtensions: string = '.pdf,.jpg,.jpeg,.png,.dwg,.dxf'
-  }
-
-INTERNAL STATE:
-  - bulkFiles, bulkUploading, bulkResults — exact same shape as
-    pre-existing ProjectPlansPage state to keep behavior 1:1.
-  - bulkFileRef — for clearing the <input>.
-  - useEffect on `open` flips false→true → resets all internal
-    state. Matches existing closeBulkModal semantics.
-
-HANDLERS (verbatim ported from ProjectPlansPage L461-553):
-  - handleBulkFileSelect — appends with default discipline;
-    validates count + size.
-  - removeBulkFile, updateBulkFile.
-  - handleBulkUpload — concurrency=3 loop; calls `uploadFn`.
-  - retryBulkFile — single-file retry.
-  - closeBulkModal — guarded by `bulkUploading`; calls onClose.
-  - handleDefaultDisciplineChange — bubbles via
-    onDefaultDisciplineChange + applies to existing pending rows.
-
-JSX: identical structure to original (header + body + per-file row
-+ footer + results screen). Backdrop click guarded by
-`bulkUploading` (matches original behavior). `dir="rtl"`
-preserved. Floor field conditionally rendered via
-`showFloorField`. PlanType dropdown options come from `planTypes`
-prop.
-
-================================================================================
-LOCATION 2 — Refactor ProjectPlansPage.js (1543 → 1320 LOC, -223)
+THE EDITS
 ================================================================================
 
-ADDED:
-  - Import: `import BulkPlanUploadModal from
-    '../components/BulkPlanUploadModal';` @L13.
-  - Comment block @L133-135 documenting the page-level state split.
-  - `<BulkPlanUploadModal>` render @L1240-1255 (next to other
-    modals).
+EDIT 1 — Line 25 date string (1 line touched):
+  - Before:  <p class="updated">עדכון אחרון: אפריל 2026</p>
+  - After:   <p class="updated">עדכון אחרון: מאי 2026</p>
 
-REMOVED:
-  - State: `bulkFiles`, `bulkUploading`, `bulkResults`, `bulkFileRef`
-    (4 lines @L130-134). KEPT `showBulkModal` + `bulkDefaultDiscipline`.
-  - Handlers: `handleBulkFileSelect`, `removeBulkFile`,
-    `updateBulkFile`, `handleBulkUpload`, `retryBulkFile`,
-    `closeBulkModal` (~96 lines @L461-553).
-  - JSX: full bulk modal block (~152 lines @L1324-1475).
+EDIT 2 — Insert section 7א AFTER L91 (the cookies-blocking
+paragraph) and BEFORE L93 (the existing <h2>8...</h2>). 38 lines
+added: 1 <h2>, 4 paragraph intros, 4 <ul> blocks (camera 3 items;
+contacts 5 items; universal links 2 items; permissions
+management 2 items).
 
-PRESERVED (do not touch):
-  - Bulk button @L748 (just changed nothing — `setShowBulkModal(true)`
-    still works).
-  - All single-file modal logic + JSX.
-  - Version / replace flows.
-  - All other state / handlers / JSX.
-
-================================================================================
-LOCATION 3 — Port to UnitPlansPage.js (692 → 726 LOC, +34)
-================================================================================
-
-ADDED:
-  - Import: `import BulkPlanUploadModal from
-    '../components/BulkPlanUploadModal';` @L17.
-  - State: `showBulkModal` + `bulkDefaultDiscipline` @L87-90 with
-    comment.
-  - Bulk button JSX: wrapped existing single-file button in a
-    `flex gap-2` div + added sibling indigo "העלאה מרובה" button
-    @L445-463.
-  - `<BulkPlanUploadModal>` render @L500-516 with
-    `showFloorField={false}` (unit context implies floor) +
-    `uploadFn` calling `unitPlanService.upload(projectId, unitId,
-    ...)`.
-
-PRESERVED:
-  - Single-file upload modal + flow.
-  - FAB (floating + button @L496) — unchanged.
-  - All other page logic.
+Key compliance phrasing preserved verbatim from the spec:
+  - "כל גישה מופעלת על ידכם בלבד" (consent gate)
+  - "אך ורק את השם ומספר הטלפון של איש הקשר שבחרתם" (single-pick)
+  - "אינה ניגשת לרשימת אנשי הקשר המלאה" (no full address-book)
+  - "BrikOps אינה מעתיקה, אינה משדרת ואינה שומרת את ספר אנשי
+     הקשר שלכם" (data-minimization claim)
+  - "הסריקה ועיבוד התמונה מתבצעים מקומית במכשיר" (on-device)
+  - "חסימת הרשאה לא תמנע מכם להשתמש באפליקציה" (graceful degrade)
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ Single-file upload modals on either page.
-- ❌ Backend endpoints (`POST /projects/{id}/plans`, `POST
-     /projects/{id}/units/{uid}/plans`).
-- ❌ `projectPlanService.upload` / `unitPlanService.upload`
-     signatures.
-- ❌ Plan listing / detail view UI on either page.
-- ❌ Plan version / replace flow.
-- ❌ File limits (50MB / 20 files / .pdf,.jpg,.jpeg,.png,.dwg,.dxf).
-- ❌ Concurrency=3 upload pattern.
-- ❌ Audit log behavior (1 entry per file).
-- ❌ Thumbnail generation background task.
-- ❌ PhotoAnnotation / F.x logic (separate track — 7 render sites
-     verified preserved).
+- ❌ Sections 1-7 of privacy.html (intro through cookies)
+- ❌ Sections 8-end of privacy.html (rights, deletion, etc.)
+- ❌ terms.html, security.html, data-deletion.html
+- ❌ All backend
+- ❌ All React components / pages / routes
+- ❌ Build / deploy config
 
 ================================================================================
 VERIFY 1 — Frontend build (PASS)
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
-   →  EXIT=0, Done in 35.67s.
-   ✓ NO new ESLint warnings.
-   ✓ NO compile errors.
+   →  EXIT=0, Done in 42.88s.
+   ✓ NO compile errors. Static HTML asset copied through untouched.
 
 ================================================================================
-VERIFY 2 — File size sanity (PASS)
+VERIFY 2 — grep sanity (ALL PASS)
 ================================================================================
-$ wc -l frontend/src/components/BulkPlanUploadModal.jsx
-   →  302. Spec ~280 (cap 350). ✓ Within cap.
-$ wc -l frontend/src/pages/ProjectPlansPage.js
-   →  1320 (was 1543, -223). ✓ Spec target ~1323.
-$ wc -l frontend/src/pages/UnitPlansPage.js
-   →  726 (was 692, +34). ✓ Spec target ~730.
+$ grep -c "7א. גישה לתכונות מכשיר נייד" frontend/public/legal/privacy.html
+   →  1  ✓ (spec required exactly 1)
 
-================================================================================
-VERIFY 3 — grep sanity (ALL PASS)
-================================================================================
-$ grep -rn "BulkPlanUploadModal" frontend/src/
-   →  9 hits across 3 files:
-        - Component def (L17) + export (L302) in
-          BulkPlanUploadModal.jsx
-        - Import (L13) + 2 comment refs (L132, L462) + JSX usage
-          (L1238) in ProjectPlansPage.js
-        - Import (L14) + 1 comment ref (L85) + JSX usage (L500) in
-          UnitPlansPage.js
-   ✓ Required minimum (3 hits) far exceeded; structure correct
-     (1 def + 1 export + 2 imports + 2 JSX usages + 3 comment refs).
+$ grep -c "מאי 2026" frontend/public/legal/privacy.html
+   →  1  ✓ (spec required exactly 1)
 
-$ grep -nc "showBulkModal\|setShowBulkModal" frontend/src/pages/ProjectPlansPage.js
-   →  4 hits (state @L136 + setter via close @L1243 + button @L748
-       + JSX gate via render @L1240). ✓ Spec said ~4.
+$ grep -c "אפריל 2026" frontend/public/legal/privacy.html
+   →  0  ✓ (old date fully replaced — no orphan)
 
-$ grep -nc "showBulkModal\|setShowBulkModal" frontend/src/pages/UnitPlansPage.js
-   →  4 hits (state @L89 + setter via close @L505 + button @L456
-       + JSX render @L504). ✓ Spec said ~4.
+$ grep -c "8. הזכויות שלכם" frontend/public/legal/privacy.html
+   →  1  ✓ (existing section 8 still present, intact)
 
-$ grep -nc "bulkFiles\|handleBulkUpload" frontend/src/pages/ProjectPlansPage.js
-   →  **0** ✓ Extraction clean. These names live ONLY inside the
-       new component now.
+$ wc -l frontend/public/legal/privacy.html
+   →  153  ✓ (was 115, +38 — matches insert size)
 
-$ grep -nc "bulkFiles\|handleBulkUpload" frontend/src/components/BulkPlanUploadModal.jsx
-   →  13 hits (state + helper functions + JSX usage of bulkFiles
-       array + handleBulkUpload onClick). ✓ Spec required 5+.
-
-$ grep -rn "<PhotoAnnotation" frontend/src/ | wc -l
-   →  7 ✓ All F.2 v3 + F.2-polish-1 wirings preserved (sanity).
+$ git status --short frontend/public/legal/
+   →  M frontend/public/legal/privacy.html
+   ✓ ONLY privacy.html modified. terms.html, security.html,
+     data-deletion.html untouched.
 
 ================================================================================
-VERIFY 4 — Manual smoke (DEFERRED TO ZAHI)
+VERIFY 3 — Manual smoke (DEFERRED TO ZAHI — post-deploy)
 ================================================================================
-
-**A — ProjectPlansPage bulk regression — IDENTICAL TO BEFORE
-       (CRITICAL — NON-NEGOTIABLE):**
-
-  PREREQUISITE (per STEP 0.7): Pre-extraction screenshots captured
-  on staging at the F.2-polish-1 HEAD (b402ff9) before this batch
-  deploys. Use them as the gold reference.
-
-  Run side-by-side check on 10 explicit points:
-   1. Modal opening speed + backdrop fade-in animation timing.
-   2. UI layout: header + file list + footer in same vertical
-      order; same panel width / corner radius / max-height; iOS
-      safe-area-inset-bottom padding preserved.
-   3. Per-file row fields visible: discipline dropdown, plan_type
-      toggle (כללית/שינויי דיירים), floor_id dropdown. Same
-      labels/order/styling.
-   4. Default values: new files get bulk-default discipline
-      pre-filled; plan_type defaults to 'standard'; floor_id
-      defaults to empty.
-   5. Hebrew labels and translations identical: header "העלאה
-      מרובה", buttons "העלה N קבצים" / "ביטול", per-file "הסר",
-      error messages, empty-state.
-   6. Button labels and styles: indigo primary, slate cancel, red
-      destructive remove.
-   7. Upload progress UX: per-file status pills cycle through
-      pending → uploading (spinner) → done (✓) → error (✗); same
-      colors, ~3 in-flight at a time.
-   8. Results screen: post-upload "X הצליחו, Y נכשלו" + per-file
-      retry buttons.
-   9. List refresh: main plans list refreshes after upload
-      completes; new entries appear per existing logic.
-  10. Modal close behavior: clicking X / overlay / completing
-      upload → modal closes the same way; state resets.
-
-  If ANY point differs → STOP and diagnose. This is an EXTRACTION,
-  not a refactor.
-
-  **Functional run after the visual check:**
-  1. Open bulk modal → select 3 files (PDF + JPG + DWG).
-  2. Set default discipline = "אדריכלות".
-  3. Override file #2 discipline = "חשמל".
-  4. Override file #3 floor_id = "קומה 2".
-  5. Tap "העלה 3 קבצים".
-  EXPECT: 3 successful uploads with correct per-file metadata.
-  List refreshes.
-
-**B — UnitPlansPage bulk happy path (NEW):**
-  1. Open project → drill into a unit → תוכניות tab.
-  2. Tap "העלאה מרובה" (sibling to "העלאת תוכנית").
-  EXPECT: bulk modal opens. NO "קומה" override column (unit-scoped).
-  3. Select 2 files. Set discipline + plan_type per file.
-  4. Tap "העלה 2 קבצים".
-  EXPECT: both upload to the unit's plans. List refreshes.
-
-**C — Single-file regression (both pages):**
-  1. ProjectPlansPage → "+ תוכנית חדשה" (single).
-  2. UnitPlansPage → "העלאת תוכנית" (single).
-  EXPECT: both work as before. Single-file modals unchanged.
-
-**D — Bulk limits enforcement:**
-  1. Try 21 files at once.
-  EXPECT: toast — "ניתן להעלות עד 20 קבצים".
-  2. Try a 51MB file.
-  EXPECT: row marked error — "קובץ גדול מדי (מקסימום 50MB)".
-
-**E — Bulk upload retry on failure:**
-  1. Trigger a partial failure (rate limit, offline toggle).
-  2. Result screen shows partial success.
-  3. Tap "נסה שוב" on failed row.
-  EXPECT: that single file retries; others not re-uploaded.
-
-**F — Cancel during upload:**
-  1. Start upload → click overlay or X mid-upload.
-  EXPECT: backdrop click is GUARDED by `bulkUploading` — modal
-  stays open until upload settles. Matches original behavior.
-
-**G — Cross-platform:**
-  - Test A + B on iPhone (Capacitor) AND Android.
-  EXPECT: native file picker. Multi-select works. Upload completes.
-
-**H — Modal state reset between opens:**
-  1. Open bulk modal → add files → close (don't upload).
-  2. Re-open.
-  EXPECT: file list EMPTY. defaultDiscipline RETAINED (lives in
-  page state, not modal).
+After deploy, open https://app.brikops.com/legal/privacy in a browser:
+  1. Header date reads "מאי 2026" (top of page).
+  2. New section "7א. גישה לתכונות מכשיר נייד" renders BETWEEN
+     section 7 (cookies) and section 8 (rights).
+  3. RTL layout intact — no broken Hebrew direction.
+  4. Bullet lists render (4 <ul> blocks: camera, contacts,
+     universal links, permissions).
+  5. <strong>, <em>, <code> tags style correctly.
+  6. Mobile responsive — test on iPhone Safari + Android Chrome.
 
 ================================================================================
 RISK
 ================================================================================
-Low-medium. Largest LOC change since F.x track but pure EXTRACTION.
+Negligible. Pure static HTML content change.
 
-- ⚠ **Extraction risk** — new component MUST behave 1:1 identical
-  to existing ProjectPlansPage bulk. Smoke A is the guard with 10
-  explicit checkpoints.
-- ⚠ Per-file state shape preserved verbatim: `{file, discipline,
-  plan_type, floor_id, status, error, id, progress}`.
-- ⚠ Rate limit (`check_upload_rate_limit` per
-  `plans_router.py:146`) — UnitPlansPage bulk now hits the same
-  limit. ProjectPlansPage bulk already operated under it; no NEW
-  exposure.
-- ⚠ `planTypes` as prop with internal default — if a third
-  consumer wants different options, easy. Trivial dedupe later if
-  needed.
-- ⚠ `availableDisciplines` calculation differs per page. Each
-  page passes its own `allDisciplinesList`.
-- ⚠ STEP 0.7 screenshots — Zahi's responsibility for Smoke A.
-- ⚠ CLAUDE.md size benefit smaller than spec claimed (file was
-  already healthy at 1,543, dropped to 1,320). Reusability win
-  stands.
-- Bundle size: zero (no new deps).
-- Performance: zero impact.
-- Backend / DB / env / payment / billing: zero touch.
+- ✓ No code execution path touched.
+- ✓ No bundler involvement (CRA copies /public/* verbatim).
+- ✓ Backwards-compatible — existing sections + URLs preserved.
+- ✓ No external links added (all URLs are internal app.brikops.com).
+- ⚠ Apple App Store review timing — once H.2-Bundle ships and goes
+  to review, this policy MUST be live so reviewers can fetch it.
+  Deploy ordering: this batch FIRST, then H.2-Bundle.
+- ⚠ Section numbering: introduced "7א" (rather than renumbering 8+
+  to 9+). Hebrew-conventional sub-section style; keeps existing
+  section anchors stable (any external links to "section 8" still
+  point to "הזכויות שלכם").
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-- Removes new component file.
-- Restores ProjectPlansPage inline bulk modal.
-- Removes UnitPlansPage bulk button + render.
-- ProjectPlansPage works as before.
-- UnitPlansPage loses bulk (back to single-file only).
-- No data lost — uploaded plans persist.
+- Restores old date "אפריל 2026"
+- Removes section 7א block
+- Section 8+ remains intact (was never touched)
+- Zero impact on app functionality
 
 ================================================================================
 DEPLOY ORDERING
 ================================================================================
-F.2-polish-1 (b402ff9) at HEAD. This batch lands cleanly:
-- New component file: no overlap.
-- ProjectPlansPage: large refactor, isolated to bulk modal area.
-- UnitPlansPage: additive port, no overlap with single-file flow.
-- Zero merge conflicts expected.
+Lands cleanly on top of H.1 (BulkPlanUploadModal extraction). Both
+are isolated:
+  - H.1: frontend/src/components/ + frontend/src/pages/ (React)
+  - This batch: frontend/public/legal/ (static HTML)
+Zero overlap, zero merge conflicts expected.
 
-================================================================================
-NEXT STEPS (after this batch ships green)
-================================================================================
-**Phase 2 — H.2-Bundle (native release):**
-Combined batch with all native-pending items to share one Apple/
-Android review cycle:
-  - H.2 — iOS document scanner (Capacitor plugin)
-  - Stream B1 — Universal Links (iOS) + App Links (Android)
-  - Stream B2 — Contact Picker (Capacitor plugin)
-Bundle total ~160-230 LOC frontend + 2 plugins + native config.
-Apple review ~1-3 days. Spec when H.1 ships green.
+Ship sequence:
+  1. THIS batch → staging → main → deploy to production.
+  2. Native H.2-Bundle → submit to Apple/Google review.
+  3. Apple reviewers fetch live https://app.brikops.com/legal/privacy
+     → cross-check against Info.plist usage descriptions.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY
