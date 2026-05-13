@@ -1,166 +1,223 @@
 ================================================================================
-PRIVACY POLICY UPDATE — Section 7א (mobile device permissions) + date bump
+BATCH H.2a — STOPPED at STEP 0.9 (Plugin API drift) — DECISION REQUIRED
 ================================================================================
 Date:           2026-05-13
 Branch:         staging  (NOT main)
-Severity:       P1 — Apple App Store review compliance gate. Required
-                BEFORE the H.2-Bundle native release ships. App reviewers
-                cross-check NSContactsUsageDescription +
-                NSCameraUsageDescription + privacy policy + Privacy
-                Nutrition Labels for consistency. This update aligns the
-                public privacy policy with the data-minimization claim
-                that will appear in Info.plist + App Store Connect.
+Severity:       BLOCKER — spec premise is invalid. Stopped per
+                spec STEP 0.9 ("ADJUST LOCATION 3 before
+                implementing... document any API drift in
+                review.txt") and STEP 0.8 escalation rule
+                ("escalate to Zahi for plugin choice decision").
 
-Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
-
-Files changed:  Pure HTML content, 1 file:
-                  - frontend/public/legal/privacy.html (115 → 153 LOC, +38)
-                NO backend, NO JS, NO build config, NO new dependencies,
-                NO React components touched. Privacy HTML is served as a
-                static asset from /public/legal/ — CRA copies it through
-                untouched at build time.
+Status:         AWAITING ZAHI DECISION — NOTHING SHIPPED
+                Working tree restored to clean state (verified).
 
 ================================================================================
-SCOPE — what's IN, what's OUT
+WHAT HAPPENED
 ================================================================================
 
-IN this batch:
-  ✅ CHANGE 1 — Line 25 date bump: "אפריל 2026" → "מאי 2026"
-  ✅ CHANGE 2 — Insert new section "7א. גישה לתכונות מכשיר נייד"
-     between section 7 (Cookies) and section 8 (Rights). Covers:
-       - Camera & photos (existing + new document scanner)
-       - Contacts (NEW — single-pick only, no full address-book read)
-       - Universal Links / App Links
-       - Permissions management (iOS Settings + Android settings)
+Pre-flight gates 0.1 → 0.7 all PASSED:
+  ✓ 0.1  baseline at a2721a2 (privacy + H.1 in place)
+  ✓ 0.2  @capacitor/core ^7.6.1 confirmed
+  ✓ 0.3  plugin not yet installed
+  ✓ 0.4  DocumentScannerButton.jsx does not exist
+  ✓ 0.5  anchor in NewDefectModal.js confirmed:
+           - L311  galleryInputRef = useRef(null)
+           - L312  cameraInputRef  = useRef(null)
+           - L1010 onClick={() => cameraInputRef.current?.click()}
+           - L1014 <span ...>צלם תמונה</span>
+           - L1018 onClick={() => galleryInputRef.current?.click()}
+           - L1022 <span ...>בחר מגלריה</span>
+  ✓ 0.6  setImages(prev => [...prev, ...newImages]) at L343 + 2 more
+  ✓ 0.7  git status clean
 
-OUT of this batch:
-  ❌ Any other section of privacy.html (sections 1-7, 8-end untouched)
-  ❌ terms.html, security.html, data-deletion.html (untouched)
-  ❌ Backend (no API/DB/env)
-  ❌ Frontend code outside /public/legal/ (zero React component changes)
-  ❌ The actual H.2 (iOS document scanner) implementation — separate
-     H.2-Bundle batch
-  ❌ Info.plist / Android manifest entries — those land with H.2-Bundle
-  ❌ App Store Connect Privacy Nutrition Labels update — Zahi handles
-     in App Store Connect dashboard
+Pre-flight 0.8 — Plugin version availability:
+  - npm view @capacitor-mlkit/document-scanner versions →
+    ['7.0.0-dev', '7.3.0', '7.4.0', '7.5.0', '8.0.0', '8.0.1', '8.1.0']
+  - v8.x peer dep: `@capacitor/core >=8.0.0` (incompatible — BrikOps
+    is on Capacitor 7).
+  - v7.5.0 peer dep: `@capacitor/core >=7.0.0` ✓ COMPATIBLE
+  - Pinned to ^7.5.0 (latest in v7 line).
 
-================================================================================
-THE EDITS
-================================================================================
+Step 1+2 — INSTALL (then UNDONE):
+  $ yarn add @capacitor-mlkit/document-scanner@^7.5.0
+  → success Saved 1 new dependency. @capacitor-mlkit/document-scanner@7.5.0
+  (Did NOT run `npx cap sync` yet — would have happened after STEP 0.9.)
 
-EDIT 1 — Line 25 date string (1 line touched):
-  - Before:  <p class="updated">עדכון אחרון: אפריל 2026</p>
-  - After:   <p class="updated">עדכון אחרון: מאי 2026</p>
-
-EDIT 2 — Insert section 7א AFTER L91 (the cookies-blocking
-paragraph) and BEFORE L93 (the existing <h2>8...</h2>). 38 lines
-added: 1 <h2>, 4 paragraph intros, 4 <ul> blocks (camera 3 items;
-contacts 5 items; universal links 2 items; permissions
-management 2 items).
-
-Key compliance phrasing preserved verbatim from the spec:
-  - "כל גישה מופעלת על ידכם בלבד" (consent gate)
-  - "אך ורק את השם ומספר הטלפון של איש הקשר שבחרתם" (single-pick)
-  - "אינה ניגשת לרשימת אנשי הקשר המלאה" (no full address-book)
-  - "BrikOps אינה מעתיקה, אינה משדרת ואינה שומרת את ספר אנשי
-     הקשר שלכם" (data-minimization claim)
-  - "הסריקה ועיבוד התמונה מתבצעים מקומית במכשיר" (on-device)
-  - "חסימת הרשאה לא תמנע מכם להשתמש באפליקציה" (graceful degrade)
+Pre-flight 0.9 — Plugin API verification → ❌ FATAL DRIFT FOUND:
 
 ================================================================================
-DO NOT TOUCH (preserved as-is)
+THE DRIFT — plugin is ANDROID-ONLY in practice
 ================================================================================
-- ❌ Sections 1-7 of privacy.html (intro through cookies)
-- ❌ Sections 8-end of privacy.html (rights, deletion, etc.)
-- ❌ terms.html, security.html, data-deletion.html
-- ❌ All backend
-- ❌ All React components / pages / routes
-- ❌ Build / deploy config
+
+The spec's premise (LOCATION top, "Plugin choice" section) states:
+  "iOS: uses Apple's native VNDocumentCameraViewController
+   (Vision Kit — already in iOS SDK, no extra pod weight)
+   Android: Google ML Kit Document Scanner (GMS module
+   auto-downloaded on first scan, minimal APK delta)"
+
+Reality from the installed v7.5.0:
+
+  1. definitions.d.ts comments mark `scanDocument()`,
+     `isGoogleDocumentScannerModuleAvailable()`,
+     `installGoogleDocumentScannerModule()` and the install-
+     progress listener ALL as "Only available on Android."
+
+  2. iOS folder DOES exist with a Swift file:
+     node_modules/@capacitor-mlkit/document-scanner/ios/Plugin/
+       - DocumentScannerPlugin.swift
+       - DocumentScanner.swift  (just an `echo` stub — no real impl)
+       - Info.plist
+
+  3. **The iOS implementation literally rejects the call:**
+
+     File: ios/Plugin/DocumentScannerPlugin.swift  (verbatim)
+
+       @objc(DocumentScannerPlugin)
+       public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin {
+           public let identifier = "DocumentScannerPlugin"
+           public let jsName = "DocumentScanner"
+           public let pluginMethods: [CAPPluginMethod] = [
+               CAPPluginMethod(name: "scanDocument", returnType: CAPPluginReturnPromise)
+           ]
+
+           @objc func scanDocument(_ call: CAPPluginCall) {
+               call.reject("Not available on iOS")
+           }
+       }
+
+     **There is NO VNDocumentCameraViewController code anywhere
+     in this plugin.** The spec was wrong: this plugin is the
+     ML Kit (Google) wrapper only. Its iOS Swift file is a
+     formal stub that refuses every call.
+
+  4. Web behavior (web.js):
+     `scanDocument()` throws ExceptionCode.Unimplemented.
+
+  5. **Other API differences from spec:**
+     - Method name: `scanDocument(options)` — NOT the spec's `scan()`.
+     - Required `options` param. Defaults: pageLimit=10,
+       resultFormats='JPEG_PDF', scannerMode='FULL',
+       galleryImportAllowed=false.
+     - Return shape: `{ scannedImages?: string[], pdf?: PdfInfo }`
+       — `scannedImages` is the right field name (spec was correct
+       on this), but only present if resultFormats includes 'JPEG'.
+     - Cancellation: docs don't say. The Web/iOS reject path uses
+       `ExceptionCode.Unimplemented` / "Not available on iOS"
+       respectively — so on iOS the user would always see an error
+       toast, not a clean cancel.
+
+  6. Other moving parts the spec didn't mention:
+     - Android needs Google Play Services. First scan triggers
+       a runtime module download — must be guarded with
+       `isGoogleDocumentScannerModuleAvailable()` +
+       `installGoogleDocumentScannerModule()` listener flow,
+       or the first tap will silently fail until the module
+       finishes downloading.
 
 ================================================================================
-VERIFY 1 — Frontend build (PASS)
+WHY I STOPPED INSTEAD OF SHIPPING
 ================================================================================
-$ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
-   →  EXIT=0, Done in 42.88s.
-   ✓ NO compile errors. Static HTML asset copied through untouched.
+
+Per spec STEP 0.9 (verbatim):
+  "DRIFT NOTE: the spec's LOCATION 3 code was written based on
+   the documented API as of 2026-05-13. If the actual installed
+   version differs, ADJUST LOCATION 3 before implementing.
+   Document any API drift in review.txt."
+
+Per spec STEP 0.8 fallback rule (verbatim):
+  "If neither v6 nor v7 supports Capacitor 7 → STOP. Try
+   `@capacitor-community/document-scanner` instead, OR escalate
+   to Zahi for plugin choice decision."
+
+The drift here isn't a small API rename — it's that **iOS doesn't
+work at all** with this plugin. Shipping `<DocumentScannerButton>`
+on iOS would either:
+  (a) show the button (Capacitor.isNativePlatform() returns true on
+      iOS too), then throw "Not available on iOS" on tap → broken
+      UX and a Hebrew error toast, OR
+  (b) require an iOS-platform guard (`Capacitor.getPlatform() ===
+      'android'`), which means we ship a feature that's
+      Android-only — directly contradicting the spec's headline
+      ("BATCH H.2a — iOS/Android Document Scanner") and the
+      App Store review compliance rationale that ties this to the
+      privacy 7א section we already shipped.
+
+This is a plugin-choice decision, not an implementation tweak.
+Per Zahi's standing rules (no commits, no deploy, no ship.sh —
+agent stops at review.txt + .local/.commit_message + present_asset),
+I'm handing it back to Zahi.
 
 ================================================================================
-VERIFY 2 — grep sanity (ALL PASS)
+RESTORE — working tree is clean
 ================================================================================
-$ grep -c "7א. גישה לתכונות מכשיר נייד" frontend/public/legal/privacy.html
-   →  1  ✓ (spec required exactly 1)
+$ yarn remove @capacitor-mlkit/document-scanner
+   → success Uninstalled packages.
+$ grep -c 'document-scanner' frontend/package.json
+   → 0
+$ git status --short
+   → (empty — fully clean)
 
-$ grep -c "מאי 2026" frontend/public/legal/privacy.html
-   →  1  ✓ (spec required exactly 1)
-
-$ grep -c "אפריל 2026" frontend/public/legal/privacy.html
-   →  0  ✓ (old date fully replaced — no orphan)
-
-$ grep -c "8. הזכויות שלכם" frontend/public/legal/privacy.html
-   →  1  ✓ (existing section 8 still present, intact)
-
-$ wc -l frontend/public/legal/privacy.html
-   →  153  ✓ (was 115, +38 — matches insert size)
-
-$ git status --short frontend/public/legal/
-   →  M frontend/public/legal/privacy.html
-   ✓ ONLY privacy.html modified. terms.html, security.html,
-     data-deletion.html untouched.
+NO files modified. NO native sync ran. NO DocumentScannerButton.jsx
+created. NO NewDefectModal.js touched. Baseline is identical to
+HEAD a2721a2 (post-privacy 7א).
 
 ================================================================================
-VERIFY 3 — Manual smoke (DEFERRED TO ZAHI — post-deploy)
+OPTIONS FOR ZAHI — pick one
 ================================================================================
-After deploy, open https://app.brikops.com/legal/privacy in a browser:
-  1. Header date reads "מאי 2026" (top of page).
-  2. New section "7א. גישה לתכונות מכשיר נייד" renders BETWEEN
-     section 7 (cookies) and section 8 (rights).
-  3. RTL layout intact — no broken Hebrew direction.
-  4. Bullet lists render (4 <ul> blocks: camera, contacts,
-     universal links, permissions).
-  5. <strong>, <em>, <code> tags style correctly.
-  6. Mobile responsive — test on iPhone Safari + Android Chrome.
+
+OPTION A — Android-first, ship H.2a as Android-only.
+  - Keep `@capacitor-mlkit/document-scanner@^7.5.0` (ML Kit).
+  - Wrapper guards on `Capacitor.getPlatform() === 'android'`
+    so the button is hidden on web AND iOS.
+  - Update spec scope: "BATCH H.2a — Android Document Scanner."
+  - Defer iOS scanner to a future H.2a-iOS batch using a separate
+    iOS-only plugin (e.g., a custom Capacitor plugin wrapping
+    VNDocumentCameraViewController, or a community VisionKit
+    plugin if one exists in v7-compatible form).
+  - Privacy 7א section still applies (camera reuse, on-device).
+  - Pro: ships immediately, validates the cap-sync flow on Android.
+  - Con: iOS users (likely the larger BrikOps audience) get nothing
+    until a follow-up batch.
+
+OPTION B — Hold H.2a until a true iOS+Android plugin is found.
+  - Investigate alternatives (none of these were verified to work
+    with Capacitor 7 — needs a fresh audit):
+      • `cordova-plugin-document-scanner` (Cordova bridge, older)
+      • Custom Capacitor plugin wrapping VNDocumentCameraViewController
+        on iOS + ML Kit on Android (~1-2 days of native work)
+      • Wait for `@capacitor-mlkit/document-scanner` to add iOS
+        VisionKit support (issue tracker check needed)
+  - Pro: ships consistent UX across platforms.
+  - Con: blocks H.2-Bundle. H.2b (Universal Links) and H.2c
+    (Contact Picker) can still proceed independently.
+
+OPTION C — Drop H.2a from the H.2-Bundle entirely.
+  - Skip directly to H.2b + H.2c.
+  - Privacy 7א scanner paragraph stays (forward-looking text;
+    no immediate compliance issue since the scanner isn't
+    actually present in the build).
+  - Pro: unblocks H.2-Bundle release timeline.
+  - Con: scanner feature deferred indefinitely.
+
+My recommendation if asked: **OPTION A** — ship Android-only now
+(real validation of cap-sync on Android, real PM usage data per
+the spec's "expand later, not now" rationale), and start a parallel
+spike on a true iOS plugin in the background. iOS gap can be
+disclosed in TestFlight release notes ("scanner currently
+Android-only — iOS coming in a future build").
 
 ================================================================================
 RISK
 ================================================================================
-Negligible. Pure static HTML content change.
-
-- ✓ No code execution path touched.
-- ✓ No bundler involvement (CRA copies /public/* verbatim).
-- ✓ Backwards-compatible — existing sections + URLs preserved.
-- ✓ No external links added (all URLs are internal app.brikops.com).
-- ⚠ Apple App Store review timing — once H.2-Bundle ships and goes
-  to review, this policy MUST be live so reviewers can fetch it.
-  Deploy ordering: this batch FIRST, then H.2-Bundle.
-- ⚠ Section numbering: introduced "7א" (rather than renumbering 8+
-  to 9+). Hebrew-conventional sub-section style; keeps existing
-  section anchors stable (any external links to "section 8" still
-  point to "הזכויות שלכם").
+Zero risk to current code — nothing was committed or modified.
+Working tree is clean. Plugin uninstalled. No native sync ran.
 
 ================================================================================
 ROLLBACK
 ================================================================================
-git revert <commit-sha>
-- Restores old date "אפריל 2026"
-- Removes section 7א block
-- Section 8+ remains intact (was never touched)
-- Zero impact on app functionality
+N/A. Nothing to roll back.
 
 ================================================================================
-DEPLOY ORDERING
-================================================================================
-Lands cleanly on top of H.1 (BulkPlanUploadModal extraction). Both
-are isolated:
-  - H.1: frontend/src/components/ + frontend/src/pages/ (React)
-  - This batch: frontend/public/legal/ (static HTML)
-Zero overlap, zero merge conflicts expected.
-
-Ship sequence:
-  1. THIS batch → staging → main → deploy to production.
-  2. Native H.2-Bundle → submit to Apple/Google review.
-  3. Apple reviewers fetch live https://app.brikops.com/legal/privacy
-     → cross-check against Info.plist usage descriptions.
-
-================================================================================
-AWAITING ZAHI APPROVAL — DO NOT DEPLOY
+NO COMMIT NEEDED — AWAITING ZAHI DECISION
 ================================================================================
