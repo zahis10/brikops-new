@@ -2452,6 +2452,10 @@ export default function StageDetailPage() {
           <PhotoAnnotation
             imageFile={pendingFile}
             onSave={handleAnnotationSave}
+            onDiscard={() => {
+              setPendingFile(null);
+              setPendingItemId(null);
+            }}
           />
         </Suspense>
       )}

@@ -1954,6 +1954,7 @@ const TaskDetailPage = () => {
           <PhotoAnnotation
             imageFile={pendingFile}
             onSave={handleAnnotationSave}
+            onDiscard={() => setPendingFile(null)}
           />
         </Suspense>
       )}
@@ -1967,6 +1968,7 @@ const TaskDetailPage = () => {
           <PhotoAnnotation
             imageFile={pendingProofFile}
             onSave={handleProofAnnotationSave}
+            onDiscard={() => setPendingProofFile(null)}
           />
         </Suspense>
       )}

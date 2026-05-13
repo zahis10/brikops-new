@@ -1,461 +1,444 @@
 ================================================================================
-BATCH F-keyboard v2 — PhotoAnnotation viewport-aware canvas (TDZ-SAFE)
+BATCH F.2 v3 — PhotoAnnotation discard X button (onDiscard callback)
 ================================================================================
-Date:           2026-05-12
+Date:           2026-05-13
 Branch:         staging  (NOT main)
-Severity:       P3 — UX annoyance on iPhone (keyboard zoom-in during label
-                create/edit). v1 BROKE staging with TDZ ReferenceError;
-                v2 fixes the deps-array choice. Reverted v1 stays in
-                git history at 0fbbd35 → reverted by a6ab26c.
+Severity:       P3 — UX gap from F.1 staging test (Zahi 2026-05-12):
+                "צילמתי תמונה אבל התחרטתי, אין אפשרות לבטל, חייב
+                ללחוץ רק שמור". Modal had Save + Undo only — user who
+                took a photo by mistake was forced to tap Save and
+                upload anyway.
 
-                v1 failure:
-                - v1 spec deferred ESLint choice to Build mode.
-                - Replit Agent chose Option B (add applyDisplayScale to
-                  imageFile useEffect deps array `[imageFile,
-                  applyDisplayScale]`).
-                - At render, the deps array is evaluated SYNCHRONOUSLY
-                  at L156. `applyDisplayScale` const is declared LATER
-                  at L245 → Temporal Dead Zone → ReferenceError on
-                  first render → Hebrew error boundary "משהו השתבש".
-                - Zahi reverted on staging.
+                v1+v2 prior specs would have used `onSave(null, false)`
+                as the discard signal — but that signal collides with
+                the existing "Save with no annotations" path: 6 of 7
+                consumers UPLOAD the raw photo on that signal. v1/v2
+                discard would have accidentally uploaded the unwanted
+                photo (the bug we're trying to fix).
 
-                v2 root-cause fix: keep `[imageFile]` deps with
-                `eslint-disable-next-line react-hooks/exhaustive-deps`.
-                The closure inside doLoad references applyDisplayScale
-                lexically — it does NOT throw at creation, only the
-                synchronous deps ARRAY did. By the time React commits
-                and runs the effect, all consts above are initialized.
+                v3 (this batch) introduces a NEW callback prop
+                `onDiscard` distinct from `onSave`. PhotoAnnotation's
+                X button calls `onDiscard` (with confirm guard if
+                strokes exist). All 7 consumer render sites wire
+                `onDiscard` to clear the gating state — no upload.
+
+                Architecturally cleaner: separate "save with no
+                annotations" (upload raw) from "discard entirely"
+                (don't upload).
 
 Status:         AWAITING ZAHI APPROVAL — DO NOT DEPLOY
 
-Files changed:  Frontend only:
+Files changed:  Frontend only (6 files):
                   - frontend/src/components/PhotoAnnotation.js
-                    (+56 LOC: extract sizing useCallback + new resize
-                    useEffect + 14-line eslint-disable warning block)
-                Total: 1 file. No backend, no DB, no env vars, no new
-                dependencies.
+                    (799 → 838, +39 LOC: import X + onDiscard prop +
+                    onDiscardRef + sync useEffect + handleDiscard
+                    callback + X button JSX)
+                  - frontend/src/pages/TaskDetailPage.js (+2 LOC, 2 sites)
+                  - frontend/src/pages/StageDetailPage.js (+5 LOC, 1 site
+                    with paired state cleanup)
+                  - frontend/src/components/NewDefectModal.js (+2 LOC, 2 sites)
+                  - frontend/src/pages/HandoverSectionPage.js (+1 LOC, 1 site)
+                  - frontend/src/components/handover/HandoverItemModal.js
+                    (+1 LOC, 1 site)
+                Total: 6 files, +50 LOC. No backend, no DB, no env vars,
+                no new dependencies (X icon already in lucide-react).
 
-Baseline:       origin/staging HEAD = a6ab26c (Revert "Fix canvas
-                clipping..."). Local matches. F.1c clean state at
-                743 LOC. Post-v2: 799 LOC (+56). Cleanly under the
-                830 scope-creep cap. Spec estimated +45; actual +56
-                because the eslint-disable warning block is more
-                verbose (14 lines vs spec's ~10) — preserved verbatim
-                from spec L113-127 to maximize warning visibility.
+Baseline:       origin/staging HEAD = 1aec4fc (F-keyboard v2, 799 LOC
+                PhotoAnnotation). Post-F.2: 838 LOC (+39). Spec
+                estimated +25; actual +39 because the inline comments
+                (LOCATION 2 = 5-line warning, LOCATION 3 = 5-line
+                docstring + 4-line fallback comment) were preserved
+                verbatim from spec for future-maintainer clarity.
+                Cleanly under the 850 scope-creep cap.
 
 ================================================================================
 SCOPE — what's IN, what's OUT
 ================================================================================
 
-IN F-keyboard v2:
-  ✅ Extract canvas display-dimension computation from image-load
-     useEffect into standalone `applyDisplayScale` useCallback.
-     (LOCATION 1 — identical to v1.)
-  ✅ Image-load doLoad calls `applyDisplayScale()` after setting
-     intrinsic canvas.width/height. (LOCATION 2 — identical to v1.)
-  ✅ imageFile useEffect deps stay `[imageFile]` with
-     eslint-disable-next-line + multi-line warning citing v1 revert
-     and proving stability of applyDisplayScale.
-     (LOCATION 3 — DIFFERENT from v1.)
-  ✅ NEW useEffect with visualViewport.resize + window.resize
-     listeners gated on `loaded`. Deps `[loaded, applyDisplayScale]`
-     SAFE here because declared AFTER applyDisplayScale.
-     (LOCATION 4 — identical to v1's LOC 3.)
+IN F.2 v3:
+  ✅ NEW `onDiscard` prop on PhotoAnnotation (OPTIONAL; backward-compat
+     fallback to `onSave(null, false)` for any future consumer that
+     forgets to wire it).
+  ✅ X button in top toolbar (visual LEFT in RTL via justify-between).
+  ✅ Confirm dialog (`window.confirm('לבטל את כל השינויים ולסגור?')`)
+     ONLY if `strokesRef.current.length > 0`.
+  ✅ All 7 known render sites updated with explicit `onDiscard`:
+     - TaskDetailPage Instance A → setPendingFile(null)
+     - TaskDetailPage Instance B → setPendingProofFile(null)
+     - StageDetailPage → setPendingFile(null) + setPendingItemId(null)
+     - NewDefectModal Instance A (re-annotate) → setAnnotatingIndex(null)
+     - NewDefectModal Instance B (first-capture) → setPendingFile(null)
+     - HandoverSectionPage → setPendingFile(null)
+     - HandoverItemModal → setPendingFile(null)
+  ✅ Each onDiscard handler clears the consumer's gating state — does
+     NOT trigger upload.
 
-OUT of F-keyboard v2:
-  ❌ Reordering getLineWidth + redraw + applyDisplayScale BEFORE
-     the imageFile useEffect (alternative TDZ-free fix that would
-     allow dropping the suppression). Moves ~120 LOC unnecessarily
-     → higher merge-conflict risk.
-  ❌ Option B (add applyDisplayScale to deps) — REJECTED, root cause
-     of v1 crash.
-  ❌ Capacitor @capacitor/keyboard plugin (visualViewport already
-     supported in WebView).
-  ❌ Scroll-to-input (browser-handled).
-  ❌ Toolbar reflow (already flex-auto).
-  ❌ RAF throttling (future opt for 50+ stroke density).
-  ❌ Ref-stable wrapper (not needed — redraw stable).
-
-================================================================================
-ROOT CAUSE OF v1 FAILURE — DEPS ARRAY TDZ
-================================================================================
-JavaScript `const` declarations are subject to TDZ — accessing the
-binding before its declaration line throws ReferenceError.
-
-In React render, declarations execute TOP-TO-BOTTOM:
-  L92-103:  viewport-meta useEffect
-  L105-167: imageFile useEffect with doLoad inside
-  L172:     getLineWidth = useCallback(..., [])
-  L174:     redraw = useCallback(..., [getLineWidth])
-  L262:     applyDisplayScale = useCallback(..., [redraw])   ← LATER
-  L287:     resize useEffect with deps [loaded, applyDisplayScale]
-
-v1's deps array `[imageFile, applyDisplayScale]` at L156 evaluated
-applyDisplayScale BEFORE its declaration at L262 → ReferenceError →
-Hebrew error boundary fires → entire app fallback page.
-
-The closure inside doLoad (`async function doLoad() { ...
-applyDisplayScale() ... }`) does NOT throw at function creation — it
-captures the binding name lexically. Only the deps ARRAY throws
-because it's a synchronous expression that reads the binding.
-
-Why the v2 eslint-disable is SAFE:
-  1. applyDisplayScale identity is STABLE — its useCallback deps are
-     `[redraw]`; redraw deps are `[getLineWidth]`; getLineWidth deps
-     are `[]`. So applyDisplayScale never changes identity across
-     renders.
-  2. The closure inside doLoad always references the latest stable
-     applyDisplayScale (no stale-closure issue because identity
-     doesn't change).
-  3. ESLint exhaustive-deps still enforces the chain on each
-     useCallback line. If a future maintainer makes redraw unstable
-     (adds an unstable dep), ESLint catches it on the redraw line —
-     not on the suppressed line.
-  4. By the time React COMMITS and runs the effect (post-render),
-     all consts above are initialized → no TDZ at the call site
-     inside doLoad.
-
-The 14-line warning comment in LOCATION 3 cites v1's revert and the
-TDZ trap explicitly so future maintainers don't "fix" it back.
+OUT of F.2 v3:
+  ❌ Hardware back-button handling on Android.
+  ❌ Swipe-down-to-dismiss gesture.
+  ❌ Visual differentiation between "discard" and "back" callbacks.
+  ❌ Refactor of "save with no annotations" semantics — Save with no
+     strokes still uploads raw photo (intentional preservation; X is
+     the new "true discard").
+  ❌ Custom Hebrew confirm modal — `window.confirm` accepted for v3
+     even though native button labels (Cancel/OK) may render in
+     English on iOS Safari/Capacitor. Spec L604-609 documents this
+     as a future ~30-LOC follow-up via Radix Dialog (TaskDetailPage
+     reopen pattern) IF real users complain. NOT blocking v3.
 
 ================================================================================
 STEP 0 — PRE-FLIGHT (5/5 PASS)
 ================================================================================
-
-1. ✓ origin/staging HEAD = a6ab26c (Revert "Fix canvas clipping...").
-   Local matches. v1 fully reverted; baseline restored.
-2. ✓ wc -l = 743 (matches F.1c clean state; no v1 remnants).
-3. ✓ `}, [imageFile]);` @ L156 — single hit, deps = `[imageFile]`.
-4. ✓ redraw STABLE — `redraw` @ L163 deps `[getLineWidth]` @ L243;
-     `getLineWidth` @ L158 deps `[]` @ L161.
-5. ✓ 0 hits for `applyDisplayScale|visualViewport` — clean.
-
-================================================================================
-LOCATION 1 — Extract applyDisplayScale callback
-================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Inserted: AFTER `redraw` useCallback closing `}, [getLineWidth]);`
-          @ pre-edit L243 (post-edit L257-280).
-
-ADDED (L259-280):
-  // BATCH F-keyboard (2026-05-12) — recompute canvas display
-  // dimensions based on the current visual viewport. Called on
-  // image load AND on viewport resize (mobile keyboard pop). The
-  // intrinsic canvas resolution (canvas.width / canvas.height)
-  // stays fixed — we only update CSS display size + scaleRef.
-  // After resize, redraw refreshes the bbox cache for hit-testing.
-  const applyDisplayScale = useCallback(() => {
-    const canvas = canvasRef.current;
-    const img = imgRef.current;
-    if (!canvas || !img) return;
-    const w = canvas.width;
-    const h = canvas.height;
-    if (!w || !h) return;
-    const vv = window.visualViewport;
-    const containerW = vv ? vv.width : window.innerWidth;
-    const containerH = (vv ? vv.height : window.innerHeight) - 120;
-    const displayScale = Math.min(containerW / w, containerH / h, 1);
-    scaleRef.current = displayScale;
-    canvas.style.width = Math.round(w * displayScale) + 'px';
-    canvas.style.height = Math.round(h * displayScale) + 'px';
-    redraw(strokesRef.current);
-  }, [redraw]);
+1. ✓ origin/staging HEAD = 1aec4fc (F-keyboard v2). Local matches.
+2. ✓ PhotoAnnotation 799 LOC pre-edit (matches F-keyboard v2 baseline).
+3. ✓ lucide-react import @ L3: `{ Undo2, Save, Loader2 }` (X NOT yet
+     imported — clean baseline).
+4. ✓ Component signature @ L47: `({ imageFile, onSave })`. Spec said
+     ~L28; file shifted post-F.1+F-keyboard, anchor content unchanged.
+5. ✓ 7 render sites across 5 files — exact match with spec:
+     TaskDetailPage L1954+L1967, StageDetailPage L2452,
+     NewDefectModal L1076+L1089, HandoverSectionPage L768,
+     HandoverItemModal L401.
 
 ================================================================================
-LOCATION 2 — doLoad calls applyDisplayScale
+LOCATION 1 — Import X icon
 ================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Modified: doLoad inside imageFile useEffect (post-edit L129-142).
+File: frontend/src/components/PhotoAnnotation.js, L3.
 
-BEFORE (5-line inline sizing block):
-  imgRef.current = img;
-
-  const containerW = window.innerWidth;
-  const containerH = window.innerHeight - 120;
-  const displayScale = Math.min(containerW / w, containerH / h, 1);
-  scaleRef.current = displayScale;
-
-  const canvas = canvasRef.current;
-  if (!canvas) return;
-  canvas.width = w;
-  canvas.height = h;
-  canvas.style.width = Math.round(w * displayScale) + 'px';
-  canvas.style.height = Math.round(h * displayScale) + 'px';
-
-AFTER:
-  imgRef.current = img;
-
-  const canvas = canvasRef.current;
-  if (!canvas) return;
-  canvas.width = w;
-  canvas.height = h;
-
-  // BATCH F-keyboard — apply initial scale via the same callback
-  // that listens to viewport resize. Keeps the math in one place.
-  applyDisplayScale();
+BEFORE: `import { Undo2, Save, Loader2 } from 'lucide-react';`
+AFTER:  `import { Undo2, Save, Loader2, X } from 'lucide-react';`
 
 ================================================================================
-LOCATION 3 — imageFile useEffect deps: KEEP [imageFile] + eslint-disable
+LOCATION 2 — onDiscard prop + ref + sync useEffect
 ================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Modified: closing line of imageFile useEffect (post-edit L156-167).
+File: frontend/src/components/PhotoAnnotation.js.
 
-🚨 CRITICAL — the deps array is `[imageFile]` ONLY. NEVER add
-applyDisplayScale here. v1 did and crashed staging with TDZ.
+LOC 2a — Component signature @ L47 (post-edit L50):
+  `const PhotoAnnotation = ({ imageFile, onSave }) => {`
+  → `const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {`
 
-ADDED (L156-167):
-    return () => {
-      cancelled = true;
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current);
-        urlRef.current = null;
-      }
-    };
-    // BATCH F-keyboard — DO NOT add applyDisplayScale to deps.
-    //
-    // doLoad uses applyDisplayScale, but the const is declared LATER
-    // in the file (after redraw, which is after this useEffect).
-    // Adding it to the deps array would evaluate the binding at this
-    // line, in TDZ → ReferenceError at first render. v1 of this
-    // batch tried that and crashed staging — reverted 2026-05-12.
-    //
-    // SAFE because: applyDisplayScale identity is STABLE
-    // (deps chain: getLineWidth[] → redraw[getLineWidth] →
-    // applyDisplayScale[redraw]). The closure inside doLoad captures
-    // it lexically; by commit phase all consts are initialized.
-    //
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageFile]);
+LOC 2b — Ref declaration @ post-edit L57-62 (after `onSaveRef`):
+  // BATCH F.2 (2026-05-13) — onDiscard is OPTIONAL. If provided,
+  // the X button calls it directly (no upload). If absent, the X
+  // button falls back to onSave(null, false) for backward compat
+  // — though all current 7 render sites pass onDiscard explicitly.
+  const onDiscardRef = useRef(onDiscard);
+
+LOC 2c — Sync useEffect @ post-edit L93 (after onSaveRef sync):
+  useEffect(() => { onDiscardRef.current = onDiscard; }, [onDiscard]);
 
 ================================================================================
-LOCATION 4 — visualViewport.resize + window.resize listener useEffect
+LOCATION 3 — handleDiscard callback
 ================================================================================
-File: frontend/src/components/PhotoAnnotation.js
-Inserted: AFTER applyDisplayScale (LOCATION 1) @ post-edit L282-302.
+File: frontend/src/components/PhotoAnnotation.js.
+Inserted: AFTER `handleUndo` useCallback (L544-550), BEFORE handleSave
+@ post-edit L561-579.
 
-ADDED (L282-302):
-  // BATCH F-keyboard (2026-05-12) — listen for viewport changes
-  // (mobile keyboard appearance is the primary use case) and
-  // recompute the canvas display scale. Without this, the canvas
-  // keeps its original dimensions and gets clipped behind the
-  // keyboard, appearing zoomed-in.
-  useEffect(() => {
-    if (!loaded) return;
-
-    const vv = window.visualViewport;
-    if (vv) {
-      vv.addEventListener('resize', applyDisplayScale);
+ADDED:
+  // BATCH F.2 (2026-05-13) — discard handler. Confirms before
+  // closing if user has made annotations. Prefers onDiscard
+  // callback (no upload); falls back to onSave(null, false) for
+  // backward compat with any consumer that didn't wire onDiscard
+  // (NOTE: as of this batch, all 7 known consumers do).
+  const handleDiscard = useCallback(() => {
+    if (strokesRef.current.length > 0) {
+      if (!window.confirm('לבטל את כל השינויים ולסגור?')) return;
     }
-    window.addEventListener('resize', applyDisplayScale);
-
-    return () => {
-      if (vv) {
-        vv.removeEventListener('resize', applyDisplayScale);
-      }
-      window.removeEventListener('resize', applyDisplayScale);
-    };
-  }, [loaded, applyDisplayScale]);
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
+      // Fallback: legacy abandonment signal. Consumer may interpret
+      // as "upload raw photo" — that's the v1 bug we're fixing here
+      // by adding onDiscard to all known consumers. Future-proof
+      // fallback only.
+      onSaveRef.current(null, false);
+    }
+  }, []);
 
 Notes:
-- Deps `[loaded, applyDisplayScale]` SAFE here — this useEffect is
-  declared AFTER applyDisplayScale in source order. No TDZ.
-- `loaded` gate prevents firing before canvas + image are ready.
-- Both visualViewport AND window listeners for defense-in-depth.
-  Handler idempotent (computes desired state, not delta).
-- Per pre-flight 4 stability chain: applyDisplayScale identity
-  stable → deps only change when `loaded` flips false→true once
-  on mount. Listener attaches ONCE.
+- Confirm threshold is `strokesRef.current.length > 0`. Text overlay
+  open without commit (pendingText set, but not committed) → strokes
+  still empty → silent discard. Acceptable per spec.
+- useCallback deps `[]` — both refs are stable (mutable .current
+  reads), no closure issues.
+
+================================================================================
+LOCATION 4 — X button in top toolbar
+================================================================================
+File: frontend/src/components/PhotoAnnotation.js.
+Modified: top toolbar (L639-670 → post-edit L639-712).
+
+The toolbar div uses `justify-between`. Existing color/T cluster is
+the LEFT child. Added a sibling `<button>` as the RIGHT child →
+`justify-between` pushes them to opposite edges. RTL flips visual
+order → X lands on the visual LEFT, opposite the color cluster.
+
+ADDED (post-edit L700-711):
+  {/* BATCH F.2 (2026-05-13) — discard button. Closes the modal
+      without saving. Confirmation only when user has drawn or
+      added text. RTL places this on the visual LEFT, opposite
+      the color/T cluster. */}
+  <button
+    onClick={(e) => { e.stopPropagation(); handleDiscard(); }}
+    aria-label="סגור ללא שמירה"
+    title="סגור ללא שמירה"
+    className="w-8 h-8 rounded-full flex items-center justify-center text-slate-300 hover:bg-slate-700 transition-colors"
+  >
+    <X className="w-5 h-5" />
+  </button>
+
+================================================================================
+LOCATION 5 — TaskDetailPage.js: 2 instances
+================================================================================
+Instance A @ L1957-1961 (task attachment, pendingFile):
+  + onDiscard={() => setPendingFile(null)}
+
+Instance B @ L1971-1975 (contractor proof, pendingProofFile):
+  + onDiscard={() => setPendingProofFile(null)}
+
+================================================================================
+LOCATION 6 — StageDetailPage.js: paired state cleanup
+================================================================================
+@ L2455-2462 (1 instance, pendingFile + pendingItemId paired state):
+  + onDiscard={() => {
+  +   setPendingFile(null);
+  +   setPendingItemId(null);
+  + }}
+
+🚨 Both must clear together — pendingItemId would be stale otherwise.
+
+================================================================================
+LOCATION 7 — NewDefectModal.js: 2 instances
+================================================================================
+Instance A @ L1079-1083 (re-annotate existing image, annotatingIndex):
+  + onDiscard={() => setAnnotatingIndex(null)}
+
+Instance B @ L1093-1097 (first-capture, pendingFile):
+  + onDiscard={() => setPendingFile(null)}
+
+Note: Instance A's existing `handleAnnotationSave` already
+early-returns on `(null, false)` — adding onDiscard is belt+suspenders
+for consistency (explicit > implicit).
+
+================================================================================
+LOCATION 8 — HandoverSectionPage.js: 1 instance
+================================================================================
+@ L771-775 (pendingFile):
+  + onDiscard={() => setPendingFile(null)}
+
+================================================================================
+LOCATION 9 — HandoverItemModal.js: 1 instance
+================================================================================
+@ L404-408 (pendingFile):
+  + onDiscard={() => setPendingFile(null)}
 
 ================================================================================
 DO NOT TOUCH (preserved as-is)
 ================================================================================
-- ❌ MAX_CANVAS_SIZE constant (1280) — image downscale unchanged.
-- ❌ Image scaling math (ratio before `canvas.width = w`).
-- ❌ scaleRef itself — same ref, just updated by new callback.
-- ❌ redraw callback body.
-- ❌ Touch / mouse handlers — read scaleRef.current via getPos,
-     auto-use new scale after resize.
-- ❌ pendingText overlay, size picker, color picker, T button,
-     Save/Undo buttons.
-- ❌ Viewport-meta useEffect (L92-103).
-- ❌ Drag state (draggingTextRef).
-- ❌ F + F.1a + F.1b + F.1b-hf-1 + F.1c logic — all preserved.
-- ❌ Backend / parent contract / saved JPEGs (canvas.toBlob reads
-     intrinsic canvas.width/height, NOT style — still full-res).
+- ❌ Save / Undo buttons (bottom toolbar).
+- ❌ Color picker UI / T button.
+- ❌ Text tool overlay UI (size picker, אישור / ביטול).
+- ❌ Drag/edit/hit-testing logic (F.1b, F.1c, F.1b-hf-1).
+- ❌ Touch handlers, viewport lock, scaleRef math.
+- ❌ F-keyboard `applyDisplayScale` + resize useEffect.
+- ❌ Existing `hasAnnotations` no-op path in handleSave — its
+     `onSave(null, false)` STAYS as-is. Save-with-no-strokes still
+     uploads raw photo. ONLY the X button uses onDiscard.
+- ❌ Backend / parent component contract for onSave — same
+     `onSave(file|null, hasAnnotations: bool)` signature.
+- ❌ Existing handleAnnotationSave / handlePendingAnnotationSave /
+     handleProofAnnotationSave handlers in consumers.
+- ❌ Upload logic in any consumer (taskService.uploadAttachment,
+     handleUploadPhotos, etc.).
+- ❌ Existing saved JPEG blobs.
 
 ================================================================================
 VERIFY 1 — Frontend build (PASS)
 ================================================================================
 $ cd frontend && REACT_APP_BACKEND_URL=https://placeholder.brikops.com CI=true yarn build
-   →  EXIT=0, Done in 34.61s.
-   ✓ NO ESLint warnings (suppression effective on the one line).
+   →  EXIT=0, Done in 39.09s.
+   ✓ NO new ESLint warnings.
    ✓ NO compile errors.
-   ✓ Build folder ready.
 
 ================================================================================
-VERIFY 2 — TDZ caveat (RUNTIME, manual smoke is Zahi's job)
-================================================================================
-TDZ is a RUNTIME error, not build-time. Build will succeed even if
-deps reference a TDZ const. curl can't catch it (returns pre-React
-HTML). The error boundary fires at React render in a browser.
-
-Agent confirms ONLY:
-- Build EXIT=0 (proves no syntax/import issue).
-- VERIFY 6 grep guardrail: deps array literally reads `[imageFile]`.
-
-Zahi browser smoke test is MANDATORY before staging deploy:
-1. Open the staging URL in iPhone Safari.
-2. Log in, navigate to a defect, open PhotoAnnotation with a photo.
-3. If the modal renders normally → TDZ-safe ✓.
-4. If "משהו השתבש" / "Something went wrong" fires → TDZ regression
-   → ABORT, revert, do not proceed to other smoke tests.
-
-This is the v1 failure repeat-check. DO NOT SKIP.
-
-================================================================================
-VERIFY 3 — File size sanity (PASS)
+VERIFY 2 — File size sanity (PASS)
 ================================================================================
 $ wc -l frontend/src/components/PhotoAnnotation.js
-   →  799 (743 + 56). Cap 830. ✓ Under cap.
-
-(Spec estimated ~788. Actual 799 because the eslint-disable comment
-block is 14 lines instead of ~10 — preserved verbatim from spec
-L113-127 to maximize visibility.)
+   →  838 (799 + 39). Cap 850. ✓ Under cap.
+   (Spec estimated ~824. Actual 838 because comments preserved
+   verbatim from spec for future-maintainer clarity.)
 
 ================================================================================
-VERIFY 4 — grep applyDisplayScale|visualViewport (PASS)
+VERIFY 3 — grep onDiscard in PhotoAnnotation (PASS)
 ================================================================================
-$ grep -nc "applyDisplayScale\|visualViewport" \
-    frontend/src/components/PhotoAnnotation.js
-   →  13 hits (spec expected ~9; extras come from the LOCATION 3
-      warning block which mentions applyDisplayScale 4 times in
-      explanatory comments):
-     L135  applyDisplayScale();                           (LOC 2 call)
-     L153  // ... DO NOT add applyDisplayScale ...        (LOC 3 warn)
-     L155  // doLoad uses applyDisplayScale ...           (LOC 3 warn)
-     L161  // SAFE because: applyDisplayScale identity ...(LOC 3 warn)
-     L163  // applyDisplayScale[redraw]). ...             (LOC 3 warn)
-     L262  const applyDisplayScale = useCallback(...)     (LOC 1 def)
-     L269  const vv = window.visualViewport;              (LOC 1 use)
-     L287  const vv = window.visualViewport;              (LOC 4 use)
-     L289  vv.addEventListener('resize', applyDisplayScale);
-     L291  window.addEventListener('resize', applyDisplayScale);
-     L295  vv.removeEventListener('resize', applyDisplayScale);
-     L297  window.removeEventListener('resize', applyDisplayScale);
-     L299  }, [loaded, applyDisplayScale]);               (LOC 4 deps)
+$ grep -nc "onDiscard" frontend/src/components/PhotoAnnotation.js
+   →  10 hits (spec expected ~5; extras come from preserved spec
+      comments mentioning onDiscard 4 extra times):
+     L47   const PhotoAnnotation = ({ imageFile, onSave, onDiscard })
+     L55   // BATCH F.2 ... onDiscard is OPTIONAL ...
+     L58   // ... 7 render sites pass onDiscard explicitly.
+     L59   const onDiscardRef = useRef(onDiscard);
+     L90   useEffect(() => { onDiscardRef.current = onDiscard; }, ...);
+     L559  // ... Prefers onDiscard
+     L561  // ... that didn't wire onDiscard
+     L567  if (onDiscardRef.current) {
+     L568  onDiscardRef.current();
+     L572  // by adding onDiscard to all known consumers.
 
 ================================================================================
-VERIFY 5 — eslint-disable count (PASS)
+VERIFY 4 — onDiscard= props in consumers (PASS — exact match)
 ================================================================================
-$ grep -nc "eslint-disable-next-line react-hooks/exhaustive-deps" \
-    frontend/src/components/PhotoAnnotation.js
-   →  1 hit (LOCATION 3 only). ✓
+$ grep -rn "onDiscard=" frontend/src/ | wc -l
+   →  7 hits. ✓ Matches the 7 <PhotoAnnotation render sites EXACTLY.
 
-================================================================================
-VERIFY 6 — TDZ guardrail (PASS — most important check)
-================================================================================
-$ grep -n "}, \[imageFile" frontend/src/components/PhotoAnnotation.js
-   →  L167  }, [imageFile]);
-   ✓ Single hit. Deps array = `[imageFile]` ONLY.
-   ✓ NOT `[imageFile, applyDisplayScale]` — v1 mistake NOT
-     re-introduced.
+Per-file breakdown:
+  frontend/src/components/handover/HandoverItemModal.js:    1
+  frontend/src/components/NewDefectModal.js:                2
+  frontend/src/pages/HandoverSectionPage.js:                1
+  frontend/src/pages/StageDetailPage.js:                    1
+  frontend/src/pages/TaskDetailPage.js:                     2
+                                                       Total: 7
 
 ================================================================================
-VERIFY 7 — window.innerHeight count (PASS)
+VERIFY 5 — <PhotoAnnotation render sites (PASS)
 ================================================================================
-$ grep -nc "window.innerHeight" frontend/src/components/PhotoAnnotation.js
-   →  1 (only inside applyDisplayScale fallback @ L271).
-   ✓ Old doLoad occurrence at pre-edit L129 is GONE.
-   ✓ Single source of truth for sizing math.
+$ grep -rn "<PhotoAnnotation" frontend/src/ | wc -l
+   →  7 ✓ (no new render sites accidentally added).
 
 ================================================================================
-VERIFY 8 — Manual smoke (DEFERRED TO ZAHI)
+VERIFY 6 — X icon import + JSX usage (PASS)
+================================================================================
+$ grep -n "X[ ,}]\|<X " frontend/src/components/PhotoAnnotation.js
+   →  L3   import { Undo2, Save, Loader2, X } from 'lucide-react';   ✓
+   →  L707 <X className="w-5 h-5" />                                  ✓
+
+================================================================================
+VERIFY 7 — Manual smoke (DEFERRED TO ZAHI)
 ================================================================================
 
-A — TDZ regression check (PRIMARY — NON-NEGOTIABLE):
-  1. Open the app on iPhone.
-  2. Navigate to a defect → tap "צלם תמונה" → take photo → tap
-     "שימוש בתמונה".
-  EXPECT: PhotoAnnotation modal opens normally. NO "משהו השתבש"
-  error boundary.
-  IF A FAILS → STOP IMMEDIATELY. Do NOT run B-G. Revert. v1's
-  exact failure mode.
+A — Discard from defect-creation flow (NewDefectModal Instance B, PRIMARY):
+  1. Open new defect modal → tap "צלם תמונה" → take photo.
+  2. PhotoAnnotation opens. Don't draw or add text.
+  3. Tap X (top-left in RTL).
+  EXPECT: modal closes immediately, no confirm, no upload, no image
+  added to images[]. Back at the form, ready to retake or cancel.
 
-B — Original zoom bug fix (run ONLY after A passes):
-  1. Inside the modal, T → tap canvas → keyboard pops.
-  EXPECT: canvas shrinks to fit visible area. Full image visible
-  (smaller), not cropped.
+B — Discard with annotations (PRIMARY — the v1 bug we're fixing):
+  1. New defect modal → take photo → PhotoAnnotation opens.
+  2. Draw an oval OR add a text label.
+  3. Tap X.
+  EXPECT: window.confirm dialog "לבטל את כל השינויים ולסגור?".
+  3a. Cancel → modal stays open, annotations intact.
+  3b. OK → modal closes, NO upload, NO image added.
 
-C — Keyboard cycle:
-  1. Open keyboard via overlay input.
-  2. Close (אישור / ביטול).
-  3. Re-open keyboard.
-  EXPECT: canvas resizes smoothly each cycle.
+C — Save still works (regression check):
+  1. Same flow → take photo → annotate (or not) → tap "שמור".
+  EXPECT: existing Save flow. Photo uploads with/without annotations.
 
-D — F.1c regression (re-tap-to-edit):
-  1. Add a label. Tap on it.
-  EXPECT: edit overlay opens (F.1c works).
+D — Save with no annotations still uploads raw (regression):
+  1. Take photo → don't draw → tap "שמור" (NOT X).
+  EXPECT: raw photo uploads as today. INTENTIONALLY PRESERVED.
+  X is the only "true discard" path.
 
-E — F.1b regression (drag):
-  1. Add a label. Drag it.
-  EXPECT: drag works (F.1b works).
+E — Task attachment flow (TaskDetailPage Instance A):
+  1. Open a task → tap photo button to attach → take photo.
+  2. Tap X → modal closes, no upload, pendingFile cleared.
 
-F — Save:
-  1. Add label, save.
-  EXPECT: JPEG uploads at full intrinsic resolution.
+F — Contractor proof flow (TaskDetailPage Instance B):
+  1. Open a task as contractor → tap "צלם הוכחה".
+  2. Tap X → modal closes, no upload, pendingProofFile cleared.
 
-G — Cross-platform:
+G — Stage QC flow (StageDetailPage):
+  1. Open a stage → tap photo button on a checklist item.
+  2. Tap X → modal closes, both pendingFile + pendingItemId cleared.
+     Checklist item stays in its previous state (not marked
+     "photographed").
+
+H — Handover section flow (HandoverSectionPage + HandoverItemModal):
+  1. Open a handover section → tap photo button on an item.
+  2. Tap X → modal closes, no upload, photos array unchanged.
+
+I — Re-annotate existing photo discard (NewDefectModal Instance A):
+  1. New defect modal with already-captured photo in thumbnails.
+  2. Tap pencil icon on a thumbnail → PhotoAnnotation opens with
+     EXISTING photo.
+  3. Tap X (whether or not new strokes added).
+  EXPECT: modal closes. Existing photo in images[] UNCHANGED.
+  annotatingIndex cleared.
+
+J — Discard with keyboard up (F-keyboard regression):
+  1. T → tap canvas → keyboard pops up.
+  2. Tap X in top toolbar (still visible above keyboard).
+  EXPECT: confirm only fires if strokesRef.current.length > 0. If
+  user typed but didn't commit, no confirm — silent close.
+
+K — Cross-platform:
   - Test A + B on iPhone (Capacitor) AND Android.
-  EXPECT: both work.
+  EXPECT: identical behavior.
 
 ================================================================================
 RISK
 ================================================================================
-Very low after v1 lesson.
+Low. Pure additive feature with explicit per-consumer opt-in.
 
-- ⚠ The eslint-disable is documented inline (14-line block) so future
-  maintainers don't "fix" it. Comment cites v1's revert as the
-  cautionary tale.
-- ⚠ Stability of applyDisplayScale relies on redraw + getLineWidth
-  keeping their current deps. If broken, ESLint catches it on those
-  lines (not on the suppressed line).
-- ⚠ applyDisplayScale → redraw is O(n) over strokes; fired per resize
-  event. Negligible for typical ≤10 strokes. Future RAF throttle if
-  50+ strokes shows jank.
-- ⚠ Android visualViewport.resize sometimes fires twice (outer
-  viewport + keyboard inset). Both calls idempotent.
-- ⚠ User pinch-zoom blocked by user-scalable=no — visualViewport.height
-  always reflects keyboard inset, not manual zoom.
-- ⚠ Intrinsic canvas resolution (canvas.width / canvas.height) NOT
-  changed by resize — only CSS display dimensions. Saved JPEGs still
-  full-res.
-- ⚠ Existing label coords (x/y in canvas px) don't shift on resize.
-  Bbox cache recomputes with new scale → consistent hit-test.
-- ⚠ Old browsers without visualViewport fall back to
-  window.innerHeight - 120 (same as pre-fix). No regression vs current.
+- ⚠ The `onDiscard` prop is OPTIONAL with backward-compat fallback
+  (`onSave(null, false)`). If a future consumer adds PhotoAnnotation
+  without passing onDiscard, X falls back to upload-raw (the v1 bug
+  behavior). Intentional: avoid silent breakage of new flows. Any
+  new render site MUST opt-in via onDiscard.
+- ⚠ Confirm threshold = `strokesRef.current.length > 0`. Text overlay
+  open without commit → strokes still empty → silent discard.
+  Acceptable per spec.
+- ⚠ NewDefectModal Instance A's existing onSave handler already
+  early-returns on `(null, false)`. The new onDiscard is redundant
+  safety but harmless.
+- ⚠ window.confirm Hebrew text + native English Cancel/OK button
+  labels on iOS Safari/Capacitor (depends on platform localization).
+  Acceptable for v3 shipping. Future ~30-LOC follow-up via Radix
+  Dialog if real users complain (NOT blocking).
+- ⚠ Save semantics unchanged. "Save with no annotations" still
+  uploads raw photo. Only X is the new escape hatch.
 
-Bundle size: zero (no new imports).
-Performance: 1 extra redraw per keyboard show/hide. Negligible.
-Backend / schema / env / payment / billing: zero touch.
+Bundle size: zero (X icon already in lucide-react tree).
+Performance: zero impact.
+Backend / DB / env / payment / billing: zero touch.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 git revert <commit-sha>
-- Reverts ONLY this batch. F + F.1 series remain shipped.
-- Canvas reverts to fixed-on-load dimensions; keyboard zoom
-  annoyance returns (UX-only, no functional regression).
+- Removes X button + onDiscard prop + 7 consumer props.
+- Modal back to Save+Undo only.
+- No data lost — existing saves unaffected.
+- F + F.1 + F-keyboard preserved.
 
 ================================================================================
 DEPLOY ORDERING
 ================================================================================
-- Baseline: a6ab26c (Revert v1) at HEAD of origin/staging.
-- This batch lands cleanly on top:
-  - Anchors verified against actual a6ab26c head.
-  - Locations touched (image-load useEffect L105-167, post-redraw
-    insertion L257+) do NOT overlap with F.1c (endStroke L390-421,
-    commitPendingText L504-536, cancel button L699-717).
-  - Zero merge conflicts expected.
+F-keyboard v2 at HEAD (1aec4fc). This batch lands cleanly on top:
+- PhotoAnnotation.js touches (new code, no overlap with F/F.1/
+  F-keyboard).
+- 5 consumer files — additive prop, no overlap.
+- Zero merge conflicts expected.
+
+================================================================================
+DONE WITH PHOTO ANNOTATION POLISH
+================================================================================
+After F.2 ships green, Photo annotation polish complete:
+  - F           ✅ Text labels (white pill, 3 colors, 18px).
+  - F.1a        ✅ Size picker.
+  - F.1b        ✅ Drag-to-move.
+  - F.1b-hf-1   ✅ Bbox cache + 44×44 min touch.
+  - F.1c        ✅ Tap-to-edit (in-session).
+  - F-keyboard  ✅ Viewport-aware canvas.
+  - F.2         ← this batch — discard X button (with proper
+                 consumer-level cleanup).
+
+Remaining backlog (architectural / lower-priority):
+  - Re-editable annotations (persist strokes server-side).
+  - Undo history per stroke.
+  - Delete single label (vs whole-modal discard).
+  - Long-press → context menu.
 
 ================================================================================
 AWAITING ZAHI APPROVAL — DO NOT DEPLOY

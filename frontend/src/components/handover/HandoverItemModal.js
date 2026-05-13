@@ -401,6 +401,7 @@ const HandoverItemModal = ({
           <PhotoAnnotation
             imageFile={pendingFile}
             onSave={handleAnnotationSave}
+            onDiscard={() => setPendingFile(null)}
           />
         </Suspense>
       )}

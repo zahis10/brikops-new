@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
-import { Undo2, Save, Loader2 } from 'lucide-react';
+import { Undo2, Save, Loader2, X } from 'lucide-react';
 
 const MAX_CANVAS_SIZE = 1280;
 const VISUAL_LINE_WIDTH = 4;
@@ -44,7 +44,7 @@ function loadImageFromFile(file) {
   });
 }
 
-const PhotoAnnotation = ({ imageFile, onSave }) => {
+const PhotoAnnotation = ({ imageFile, onSave, onDiscard }) => {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
   const urlRef = useRef(null);
@@ -52,6 +52,11 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
   const [color, setColor] = useState('#ef4444');
   const colorRef = useRef('#ef4444');
   const onSaveRef = useRef(onSave);
+  // BATCH F.2 (2026-05-13) — onDiscard is OPTIONAL. If provided,
+  // the X button calls it directly (no upload). If absent, the X
+  // button falls back to onSave(null, false) for backward compat
+  // — though all current 7 render sites pass onDiscard explicitly.
+  const onDiscardRef = useRef(onDiscard);
   const [strokes, setStrokes] = useState([]);
   const strokesRef = useRef([]);
   const [loaded, setLoaded] = useState(false);
@@ -82,6 +87,7 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
 
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  useEffect(() => { onDiscardRef.current = onDiscard; }, [onDiscard]);
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { textSizeRef.current = textSize; }, [textSize]);
@@ -549,6 +555,26 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
     });
   }, [redraw]);
 
+  // BATCH F.2 (2026-05-13) — discard handler. Confirms before
+  // closing if user has made annotations. Prefers onDiscard
+  // callback (no upload); falls back to onSave(null, false) for
+  // backward compat with any consumer that didn't wire onDiscard
+  // (NOTE: as of this batch, all 7 known consumers do).
+  const handleDiscard = useCallback(() => {
+    if (strokesRef.current.length > 0) {
+      if (!window.confirm('לבטל את כל השינויים ולסגור?')) return;
+    }
+    if (onDiscardRef.current) {
+      onDiscardRef.current();
+    } else {
+      // Fallback: legacy abandonment signal. Consumer may interpret
+      // as "upload raw photo" — that's the v1 bug we're fixing here
+      // by adding onDiscard to all known consumers. Future-proof
+      // fallback only.
+      onSaveRef.current(null, false);
+    }
+  }, []);
+
   // BATCH F (2026-05-12) — commit pending text label.
   // DESIGN DECISION: color is captured at COMMIT time (not at tap
   // time). User can change color while typing — the "אישור" press
@@ -667,6 +693,19 @@ const PhotoAnnotation = ({ imageFile, onSave }) => {
             T
           </button>
         </div>
+
+        {/* BATCH F.2 (2026-05-13) — discard button. Closes the modal
+            without saving. Confirmation only when user has drawn or
+            added text. RTL places this on the visual LEFT, opposite
+            the color/T cluster. */}
+        <button
+          onClick={(e) => { e.stopPropagation(); handleDiscard(); }}
+          aria-label="סגור ללא שמירה"
+          title="סגור ללא שמירה"
+          className="w-8 h-8 rounded-full flex items-center justify-center text-slate-300 hover:bg-slate-700 transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
       <div

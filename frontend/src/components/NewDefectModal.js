@@ -1076,6 +1076,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <PhotoAnnotation
           imageFile={images[annotatingIndex].originalFile || images[annotatingIndex].file}
           onSave={handleAnnotationSave}
+          onDiscard={() => setAnnotatingIndex(null)}
         />
       </Suspense>
     )}
@@ -1089,6 +1090,7 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
         <PhotoAnnotation
           imageFile={pendingFile}
           onSave={handlePendingAnnotationSave}
+          onDiscard={() => setPendingFile(null)}
         />
       </Suspense>
     )}

@@ -768,6 +768,7 @@ const HandoverSectionPage = () => {
           <PhotoAnnotation
             imageFile={pendingFile}
             onSave={handleAnnotationSave}
+            onDiscard={() => setPendingFile(null)}
           />
         </Suspense>
       )}
