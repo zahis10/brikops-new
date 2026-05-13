@@ -1182,6 +1182,11 @@
   resolved "https://registry.npmjs.org/@capacitor/synapse/-/synapse-1.0.4.tgz"
   integrity sha512-/C1FUo8/OkKuAT4nCIu/34ny9siNHr9qtFezu4kxm6GY1wNFxrCFWjfYx5C1tUhVGz3fxBABegupkpjXvjCHrw==
 
+"@capgo/capacitor-document-scanner@^7.2.5":
+  version "7.2.5"
+  resolved "https://registry.yarnpkg.com/@capgo/capacitor-document-scanner/-/capacitor-document-scanner-7.2.5.tgz#1b8f9acb12a1c4e5eca455cf0f7378d06bad5e56"
+  integrity sha512-ApgPaiVcWsrDzMJSOgPskUWQGPtU+t4W8er5+1E2CJb/roBqYQT6zdoznEvreGkCCHl62g2qSDKHsEVRZQBHhg==
+
 "@capgo/capacitor-updater@^7.43.3":
   version "7.43.3"
   resolved "https://registry.npmjs.org/@capgo/capacitor-updater/-/capacitor-updater-7.43.3.tgz"

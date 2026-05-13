@@ -16,6 +16,7 @@ import { Sheet, SheetPortal, SheetOverlay, SheetClose, SheetTitle, SheetDescript
 import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { SelectField } from './BottomSheetSelect';
 import QuickAddCompanyModal from './QuickAddCompanyModal';
+import DocumentScannerButton from './DocumentScannerButton';
 import { FEATURES } from '../config/features';
 import { saveDefectDraft, loadDefectDraft, clearDefectDraft } from '../utils/defectDraft';
 
@@ -1021,6 +1022,19 @@ const NewDefectModal = ({ isOpen, onClose, onSuccess, prefillData }) => {
                 <ImagePlus className="w-6 h-6 text-slate-400" />
                 <span className="text-xs font-medium text-slate-600">בחר מגלריה</span>
               </button>
+              {/* BATCH H.2a (2026-05-13) — native document scanner. Hidden on web. */}
+              <DocumentScannerButton
+                onScan={(files) => {
+                  const newImages = files.map(f => ({
+                    file: f,
+                    preview: URL.createObjectURL(f),
+                    name: f.name,
+                    originalFile: f,
+                  }));
+                  setImages(prev => [...prev, ...newImages]);
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer hover:bg-emerald-50 active:bg-emerald-100 ${errors.images ? 'border-red-400' : 'border-emerald-300'}`}
+              />
             </div>
             {errors.images && <p className="text-xs text-red-500">{errors.images}</p>}
           </div>
