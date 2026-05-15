@@ -40,6 +40,42 @@ cd ~/brikops-new
 - אם השתנו רק קבצים ב-`frontend/src/` או `public/` → **לא צריך native build**. Capgo מטפל.
 - אייקונים / capacitor plugins / גרסה → **כן native**.
 
+## 🔧 Helium Checkpoint quirk — deploy from Replit when on `main`
+
+הסוכן של Replit (Helium) לפעמים עושה commit ל-`main` במקום ל-`staging`,
+על אף שה-standing rule שלי אומר staging. כש-`./deploy.sh --stag` רץ ואני
+על main, הוא נופל עם:
+```
+ERROR: You are on branch 'main'. Switch to 'staging' to deploy to staging.
+```
+
+### הזרימה הנכונה (Replit terminal, `~/workspace$`)
+
+**1. Deploy to staging (כשהקומיטים נחתו על main):**
+```bash
+git checkout staging && git merge main && ./deploy.sh --stag
+```
+מושך את הקומיטים מ-main ל-staging, ואז דפלוי. **NOT** `git checkout staging`
+לבד — זה ישאיר את הקומיטים יתומים על main.
+
+**2. Smoke עבר על staging → Deploy to prod:**
+```bash
+git checkout main && git merge --ff-only staging && ./deploy.sh --prod
+```
+fast-forward merge חזרה ל-main (יעבוד רק אם main הוא ancestor של staging,
+מה שכן אחרי השלב הקודם), ואז דפלוי לפרוד.
+
+**3. חזרה ל-staging לבאטץ' הבא:**
+```bash
+git checkout staging
+```
+
+### כשלא צריך את quirk recovery
+אם הסוכן באמת עשה commit ל-staging (כפי שאמור), פשוט:
+```bash
+./deploy.sh --stag    # ואחר כך ./deploy.sh --prod
+```
+
 ---
 
 ## 🤖 Standing instructions for Cowork (read before every batch)
@@ -131,3 +167,51 @@ the most recent merged batch for the template.
   up frontend changes; native edits require Zahi's `./ship.sh`.
 
 When in doubt: **stop and ask.** Don't deploy.
+
+---
+
+# 🔒 Security Standard — Shannon-grade
+
+**Established:** 2026-04-26 after first Shannon (Keygraph) AI pentest scan revealed 2 CRIT + 4 HIGH that prior manual pentest missed.
+
+**Commitment:** BrikOps maintains **Shannon-grade security** — every release must pass the same rigor a real AI pentester would apply.
+
+## What this means in practice
+
+### Before every public-facing release
+1. ✅ All findings in [`security/pentest-regression-checklist.md`](security/pentest-regression-checklist.md) PASS
+2. ✅ All CRIT and HIGH findings from the latest pentest report are fixed
+3. ✅ No `WONTFIX` items at CRIT/HIGH severity without explicit Zahi sign-off
+4. ✅ Local `brikops-pen-tester` skill clean run on staging (covers regression patterns)
+
+### Quarterly (or before major release)
+1. Run real Shannon scan against staging (`~$50` in Anthropic API credits)
+2. Triage all NEW findings
+3. Update `security/pentest-regression-checklist.md` with new tests
+4. Fix CRIT/HIGH within 7 days, MEDIUM within 30 days
+
+### After every backend code change
+1. `./deploy.sh --stag` (never directly to prod)
+2. Test the specific area changed
+3. Run subset of regression checklist relevant to the change
+4. Only then `./deploy.sh --prod`
+
+### Code review red flags (hard rules — NEVER ship)
+- ❌ User-supplied `role` field in registration / profile-update endpoints
+- ❌ `require_roles(...)` without subsequent `_get_project_role()` check on per-resource endpoints
+- ❌ File upload without `validate_upload(file, ALLOWED_*)` call
+- ❌ Webhook auth check that depends on `User-Agent` header
+- ❌ Auth check inside `if SECRET:` (must fail-fast at startup if secret missing — see S5b pattern)
+- ❌ Authorization parsing that uses case-sensitive `startsWith('Bearer ')`
+- ❌ Different error messages for "user not found" vs "wrong password"
+- ❌ Static file mounts (`/uploads/*`, `/static/*`) accessible without auth
+- ❌ Any endpoint that returns PII without project-membership scope check
+
+### When in doubt
+Ask: **"Would Shannon find this and rate it CRIT/HIGH?"** If yes, fix before shipping.
+
+## Reference docs
+- [`security/pentest-report-2026-04-22.md`](security/pentest-report-2026-04-22.md) — Original manual pentest
+- [`security/pentest-regression-checklist.md`](security/pentest-regression-checklist.md) — All known regression tests
+- [`secrets/shannon-reports-2026-04-26/`](secrets/shannon-reports-2026-04-26/) — Latest Shannon scan (gitignored — contains exploit details + credentials)
+- [Shannon GitHub](https://github.com/KeygraphHQ/shannon) — Tool documentation
