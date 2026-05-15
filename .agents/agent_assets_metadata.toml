@@ -348,3 +348,9 @@ id = "7Rgjr36gecm_NBEjIGiNS"
 uri = "file://.local/h2b_plan.md"
 type = "text"
 title = "H.2b — תוכנית ביצוע (לאישור)"
+
+[[outputs]]
+id = "WdAv4xN91QcEN7yUVCGOf"
+uri = "file://.local/plans/H.2c-contact-picker-plan.md"
+type = "text"
+title = "H.2c Contact Picker — תוכנית ביצוע"
