@@ -1105,6 +1105,11 @@
     "@types/scriptjs" "0.0.2"
     scriptjs "^2.5.9"
 
+"@capacitor-community/contacts@^7.2.0":
+  version "7.2.0"
+  resolved "https://registry.yarnpkg.com/@capacitor-community/contacts/-/contacts-7.2.0.tgz#f9ff00e237c52c3ca6a6ea7fe5dc87c2b0f6875d"
+  integrity sha512-s/DVHuhMYbIbkSCuZyx6+ZDIho2wuUdtcb+cre4igo5Fz26lkBlayRSo+tBBfJsYxLlrQX21Jy8rMmUCdz2GTQ==
+
 "@capacitor/android@^7.6.1":
   version "7.6.1"
   resolved "https://registry.npmjs.org/@capacitor/android/-/android-7.6.1.tgz"

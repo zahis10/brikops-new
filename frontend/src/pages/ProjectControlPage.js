@@ -31,6 +31,7 @@ import { tTrade, tRole, tSubRole, t, tCategory } from '../i18n';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import NotificationBell from '../components/NotificationBell';
 import UserDrawer from '../components/UserDrawer';
+import ContactPickerButton from '../components/ContactPickerButton';
 import { MoreVertical } from 'lucide-react';
 import HamburgerMenu from '../components/HamburgerMenu';
 import OfflineState from '../components/OfflineState';
@@ -1159,6 +1160,7 @@ const AddCompanyForm = ({ projectId, onClose, onSuccess, onCreated }) => {
       )}
       <InputField label="שם איש קשר" value={contactName} onChange={setContactName} placeholder="שם מלא" />
       <InputField label="טלפון" value={contactPhone} onChange={setContactPhone} placeholder="050-1234567" dir="ltr" />
+      <ContactPickerButton onPhonePicked={setContactPhone} disabled={submitting} className="mt-1" />
       <Button onClick={handleSubmit} disabled={submitting || !allFilled} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg">
         {submitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'הוסף חברה'}
       </Button>
@@ -1214,6 +1216,7 @@ const EditCompanyForm = ({ projectId, company, onClose, onSuccess }) => {
       <SelectField label="תחום" value={trade} onChange={setTrade} options={tradeOptions} isLoading={tradesLoading} />
       <InputField label="שם איש קשר" value={contactName} onChange={setContactName} placeholder="שם מלא" />
       <InputField label="טלפון" value={contactPhone} onChange={setContactPhone} placeholder="050-1234567" dir="ltr" />
+      <ContactPickerButton onPhonePicked={setContactPhone} disabled={submitting} className="mt-1" />
       <Button onClick={handleSubmit} disabled={submitting || !name.trim()} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-medium py-2.5 rounded-lg">
         {submitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'שמור שינויים'}
       </Button>
@@ -1421,6 +1424,7 @@ const AddTeamMemberForm = ({ projectId, companies, onClose, onSuccess, prefillTr
   return (
     <BottomSheetModal open onClose={onClose} title="הוסף איש צוות">
       <InputField label="טלפון *" value={phone} onChange={setPhone} placeholder="05X-XXXXXXX" error={errors.phone} dir="ltr" type="tel" inputMode="tel" />
+      <ContactPickerButton onPhonePicked={setPhone} disabled={submitting} className="mt-1" />
       <InputField label="שם מלא *" value={fullName} onChange={setFullName} placeholder="שם מלא" error={errors.fullName} />
       <SelectField label="תפקיד *" value={role} onChange={(val) => { setRole(val); if (val !== 'management_team') setSubRole(''); if (val !== 'contractor') { setTradeKey(prefillTrade || ''); setCompanyId(''); } }} options={roleOptions} error={errors.role} />
       {role === 'management_team' && (

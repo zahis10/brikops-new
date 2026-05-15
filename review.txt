@@ -1,128 +1,323 @@
 ================================================================================
-BATCH H.2b-hotfix-1 — Force AASA Content-Type to application/json
+BATCH H.2c — Contact Picker (iOS + Android) — READY FOR ZAHI
 ================================================================================
 Date:           2026-05-15
 Branch:         staging  (NOT main)
-Baseline:       735b1ce (post-H.2b)
-Severity:       PREVENTIVE — fixes a Content-Type mismatch BEFORE
-                Apple's AASA CDN ever fetches the file. Apple Sign-In
-                already works with octet-stream, but iOS 14+ applinks
-                validation is stricter.
-Status:         ✓ Built. NOT committed, NOT deployed.
-                OTA-only — no native rebuild needed.
+Baseline:       30dc0a3 (post-H.2b + hotfix-1)
+Status:         ✓ Built. Plugin synced. JS+Native config in place.
+                NOT committed, NOT deployed.
 
-Discovery:
-  $ curl -sI https://staging.brikops-new.pages.dev/.well-known/apple-app-site-association
-  → content-type: application/octet-stream
-  (assetlinks.json was already correct — has the .json extension.)
+EXPANDED SCOPE (Zahi approval, 2026-05-15):
+  Original H.2c spec: 2 phone fields (AddTeamMember, QuickAddCompany).
+  Zahi expanded to:   4 phone fields (above 2 + AddCompanyForm L1161
+                      + EditCompanyForm L1216 in ProjectControlPage.js).
+  → 1 import + 3 usages in ProjectControlPage.js (V6a target =4)
+  → 1 import + 1 usage in QuickAddCompanyModal.js (V6b target =2)
+  Total: 4 picker buttons across 4 distinct invite/edit modals.
 
-Fix: one rule in `frontend/public/_headers` that overrides the
-Content-Type for the AASA path.
+When tapped on iOS/Android, opens system contact picker → user picks
+→ phone number auto-fills (NORMALIZED to Israeli `0501234567` style).
+Name is NOT auto-filled (deliberate — inviter names by role, not by
+contact list name). Web users see no button (returns null on web).
 
 ================================================================================
-PRE-FLIGHT (all pre-conditions confirmed by spec)
+PRE-FLIGHT — 10/10 PASS
 ================================================================================
 
-  ✓ 0.1  H.2b shipped to staging (HEAD = 735b1ce)
-  ✓ 0.2  Current AASA Content-Type = application/octet-stream (per spec curl)
-  ✓ 0.3  _headers existed and had no AASA rule
-         (grep "apple-app-site-association" frontend/public/_headers → 0)
-  ✓ 0.4  assetlinks.json already serves as application/json (per spec curl)
+  ✓ 0.1  HEAD = 30dc0a3 (post H.2b + hotfix-1)
+  ✓ 0.2  No contacts plugin previously installed
+  ✓ 0.3  Plugin Decision Tree → Option (a):
+         @capacitor-community/contacts@^7.2.0 (latest stable 7.x)
+         peerDependency: @capacitor/core >=7.0.0
+         Our @capacitor/core = ^7.6.1 → clean install, no
+         --force / --legacy-peer-deps needed
+  ✓ 0.4  AddTeamMemberForm phone @ ProjectControlPage.js:1423
+  ✓ 0.5  QuickAddCompanyModal phone @ L141-150 (drift: spec said
+         L142-151, real is L141-150 — content identical, edit-by-text
+         not by line number, no impact)
+  ✓ 0.6  Info.plist L48-53 had 3 usage descriptions; no
+         NSContactsUsageDescription
+  ✓ 0.7  AndroidManifest had CAMERA + INTERNET only;
+         autoVerify="true" preserved from H.2b; no READ_CONTACTS
+  ✓ 0.8  DocumentScannerButton pattern confirmed
+  ✓ 0.9  npx cap sync succeeded (iOS pod ref + Android Gradle artifact)
+  ✓ 0.10 prefillTrade / prefillCompanyId / returnToDefect props
+         untouched
+  ✓ +    EXTRA: API surface verified before component code —
+         @capacitor-community/contacts@7.2.0 exposes
+         pickContact(options), requestPermissions(),
+         Projection.{phones, name} as expected. Used real API.
 
 ================================================================================
 FILES TOUCHED — exhaustive
 ================================================================================
 
-MODIFIED:
-  ~ frontend/public/_headers   (+3 LOC at top)
+NEW:
+  + frontend/src/components/ContactPickerButton.jsx              (~60 LOC)
 
-       Inserted ABOVE the existing `/static/*` block:
+MODIFIED — code:
+  ~ frontend/package.json                                         (+1 dep)
+  ~ frontend/yarn.lock                                            (auto)
+  ~ frontend/ios/App/App/Info.plist                               (+2 LOC)
+       Added NSContactsUsageDescription with Hebrew text matching
+       Privacy Policy 7א.
+  ~ frontend/android/app/src/main/AndroidManifest.xml             (+3 LOC)
+       Added <!-- BATCH H.2c — Contact Picker --> + READ_CONTACTS
+       uses-permission, AFTER existing INTERNET, BEFORE </manifest>.
+       autoVerify="true" intent-filter from H.2b — preserved.
+  ~ frontend/src/pages/ProjectControlPage.js                      (+4 LOC)
+       L37:   import ContactPickerButton.
+       L1166: <ContactPickerButton onPhonePicked={setContactPhone}
+              disabled={submitting} … /> in AddCompanyForm
+              (contractor sub-form).
+       L1222: <ContactPickerButton onPhonePicked={setContactPhone}
+              disabled={submitting} … /> in EditCompanyForm
+              (company edit sub-form).
+       L1430: <ContactPickerButton onPhonePicked={setPhone}
+              disabled={submitting} … /> in AddTeamMemberForm.
+       Each form has its own scoped state (verified by reading
+       L1100-1222 + L1224+) — no setter collision, no shared state.
+       contactName/setContactName remain manual per Zahi's product
+       decision (phone-only autofill).
+  ~ frontend/src/components/QuickAddCompanyModal.js               (+2 LOC)
+       L9:    import ContactPickerButton.
+       L156:  <ContactPickerButton onPhonePicked={setContactPhone}
+              disabled={saving} … /> inside the phone-input wrapper
+              div, AFTER the <input> element.
 
-         /.well-known/apple-app-site-association
-           Content-Type: application/json
-
-         (+ blank separator line)
+MODIFIED — auto-generated by `npx cap sync`:
+  ~ frontend/android/app/capacitor.build.gradle    (plugin list)
+  ~ frontend/android/capacitor.settings.gradle     (gradle modules)
+  ~ frontend/ios/App/Podfile                       (pod entry —
+                                                    ContactsPlugin)
+       (Pods/ NOT generated — CocoaPods not installed in Replit env.
+       Zahi's `./ship.sh` runs `pod install` on Mac.)
 
 NOT TOUCHED:
-  • Body of apple-app-site-association — unchanged.
-  • assetlinks.json — Content-Type already correct via .json extension.
-  • All other _headers rules: /static/*, /index.html, /manifest.json,
-    /* (the security headers block) — preserved verbatim, in original
-    order.
-  • _redirects, capacitor.config.json, Info.plist, AndroidManifest,
-    App.entitlements, App.js, package.json — untouched.
-  • Backend / DB / env vars — zero touch.
+  • PhoneChangeModal.js, HandoverTenantForm.js, UserDrawer.js
+  • Backend / API / DB / env vars
+  • AASA, assetlinks.json, App.entitlements (H.2b — preserved)
+  • DocumentScannerButton.jsx (H.2a — preserved)
+  • DeepLinkHandler in App.js (H.2b — preserved)
+  • Native version bumps (Zahi bumps Xcode 1.0.14/14 +
+    Android 21/1.0.21 manually in ship.sh)
+  • Existing CSS / Tailwind config
+
+================================================================================
+ContactPickerButton component — implementation summary
+================================================================================
+
+File: frontend/src/components/ContactPickerButton.jsx (~60 LOC)
+
+  - Imports: React (useState, useCallback), Capacitor,
+             Contacts (from @capacitor-community/contacts), toast (sonner).
+  - normalizePhone(raw) helper:
+      strip non-digit (preserve +) → if +972: replace with 0
+      → if 972 (no +): replace with 0 → if + (foreign): strip +.
+  - Component:
+      • Web: returns null (after the hooks — hooks-rules safe).
+      • Native: renders a 📇 button with `aria-label="בחר מאנשי קשר"`.
+      • On click:
+          1. Contacts.requestPermissions()
+          2. If `granted` or `limited` → proceed; else toast
+             "אין הרשאה לאנשי קשר. ניתן להפעיל ב-Settings."
+          3. Contacts.pickContact({ projection: { phones: true,
+             name: true } })
+          4. If no phones → toast warning + bail.
+          5. Take phones[0].number → normalizePhone → onPhonePicked(phone).
+      • Errors caught, console.warn'd (non-blocking — form remains
+        usable manually).
+  - Props: onPhonePicked (required), disabled (default false),
+           className (default '').
+  - Hook ordering: useState + useCallback BEFORE the
+    isNativePlatform() early-return → React Hooks Rules satisfied
+    even though the early-return varies per platform.
+
+Phone normalization smoke (mental):
+   "+972-50-123-4567"  → "0501234567"
+   "972501234567"      → "0501234567"
+   "050-123-4567"      → "0501234567"
+   "050.123.4567"      → "0501234567"
+   "+1-555-0100"       → "15550100"
 
 ================================================================================
 VERIFY GATES — all PASS
 ================================================================================
 
-✓ V1  head -6 frontend/public/_headers shows the new rule at top:
-        /.well-known/apple-app-site-association
-          Content-Type: application/json
+✓ V1   yarn build (with REACT_APP_BACKEND_URL placeholder)   EXIT=0
+       (Done in 39.00s)
 
-        /static/*
-          Cache-Control: public, max-age=31536000, immutable
+✓ V2   grep '"@capacitor-community/contacts"' package.json   = 1
+       Version: ^7.2.0
 
-✓ V2  grep -c "apple-app-site-association" frontend/public/_headers   = 1
-✓ V3  grep -cE "/static/\*|/index.html|/manifest.json|^/\*" _headers  = 4
-       (same as before — /static/*, /index.html, /manifest.json, /*
-       all still present and untouched.)
-✓ V4  yarn build EXIT=0 (Done in 34.39s)
-✓     git status: only frontend/public/_headers modified.
+✓ V3a  grep -c 'NSContactsUsageDescription' Info.plist       = 1
+✓ V3b  grep -c 'NSCamera|NSPhotoLibrary' Info.plist          = 3
+       (existing 3 entries preserved verbatim)
 
-V5 (post-deploy, Zahi runs):
-  $ curl -sI https://staging.brikops-new.pages.dev/.well-known/apple-app-site-association | grep -i content-type
-  EXPECT: application/json
-  $ curl -sI https://staging.brikops-new.pages.dev/.well-known/assetlinks.json | grep -i content-type
-  EXPECT: application/json (unchanged)
+✓ V4a  grep -c 'READ_CONTACTS' AndroidManifest.xml           = 1
+✓ V4b  grep -cE 'CAMERA|INTERNET' AndroidManifest.xml        = 2
+       (existing CAMERA + INTERNET preserved)
+✓ V4c  grep -c 'autoVerify="true"' AndroidManifest.xml       = 1
+       (H.2b App Links intent-filter preserved)
+
+✓ V5a  ls ContactPickerButton.jsx                            exists, 1957B
+✓ V5b  grep -c 'isNativePlatform|normalizePhone|onPhonePicked'
+       in ContactPickerButton.jsx                            = 7 (≥3 target)
+
+✓ V6a  grep -c "ContactPickerButton" ProjectControlPage.js   = 4 ★ EXPANDED ★
+       Detail:
+         L34:   import ContactPickerButton from '../components/ContactPickerButton';
+         L1163: <ContactPickerButton onPhonePicked={setContactPhone} … /> (AddCompanyForm)
+         L1219: <ContactPickerButton onPhonePicked={setContactPhone} … /> (EditCompanyForm)
+         L1427: <ContactPickerButton onPhonePicked={setPhone} … /> (AddTeamMemberForm)
+       (Original H.2c spec target was =2; expanded to =4 per
+       Zahi 2026-05-15. Each setter is in a distinct React component
+       closure — no state collision.)
+
+✓ V6b  grep -c "ContactPickerButton" QuickAddCompanyModal.js = 2
+       Detail:
+         L6:   import ContactPickerButton from './ContactPickerButton';
+         L153: <ContactPickerButton onPhonePicked={setContactPhone} … />
+
+✓ V8   Capacitor iOS config  contains "ContactsPlugin"
+       (in ios/App/App/capacitor.config.json after `cap sync`)
+       Pods/ dir NOT generated — CocoaPods not installed in
+       Replit env (expected; Zahi's `./ship.sh` runs `pod install`
+       on Mac during build).
+
+git status (10 entries — all expected):
+   M frontend/android/app/capacitor.build.gradle      (cap sync)
+   M frontend/android/app/src/main/AndroidManifest.xml
+   M frontend/android/capacitor.settings.gradle       (cap sync)
+   M frontend/ios/App/App/Info.plist
+   M frontend/ios/App/Podfile                         (cap sync)
+   M frontend/package.json
+   M frontend/src/components/QuickAddCompanyModal.js
+   M frontend/src/pages/ProjectControlPage.js
+   M frontend/yarn.lock
+  ?? frontend/src/components/ContactPickerButton.jsx
 
 ================================================================================
 DEPLOY ORDERING (Zahi)
 ================================================================================
 
-OTA-only. No ./ship.sh.
+Mixed batch — JS = OTA, native (Info.plist + manifest + plugin
+native code) = ship.sh.
 
+PHASE A — OTA (JS only, web fallback safe):
   1. git checkout staging && git merge main && ./deploy.sh --stag
-  2. Smoke verify on staging:
-     $ curl -sI https://staging.brikops-new.pages.dev/.well-known/apple-app-site-association | grep -i content-type
-     → expect application/json
+  2. Smoke A on staging (web): open project → "הוסף איש צוות" modal,
+     "הוסף חברה" modal, "עריכת חברה" modal, contractor invite form →
+     verify NO 📇 button visible (Capacitor.isNativePlatform() = false
+     in browser → returns null) → form still works manually.
   3. ./deploy.sh --prod
-  4. Smoke verify on prod:
-     $ curl -sI https://app.brikops.com/.well-known/apple-app-site-association | grep -i content-type
-     → expect application/json
+  4. Smoke A on prod web (same check).
 
-After this lands on prod → continue with H.2b PHASE B (./ship.sh
-native build for iOS 1.0.13/13 + Android versionCode 20).
+PHASE B — Native build (./ship.sh on Mac):
+  5. ./ship.sh — opens Xcode + Android Studio.
+  6. Xcode: bump Version 1.0.14, Build 14 → Archive → App Store
+     Connect → TestFlight Internal.
+  7. Android Studio: bump versionCode 21, versionName "1.0.21" →
+     Generate Signed Bundle → Play Console Internal Testing.
+
+PHASE C — Install + Smoke (the real test):
+  8. iPhone: DELETE existing BrikOps app → reinstall via TestFlight
+     (NSContactsUsageDescription dialog only fires on fresh install /
+     first-time permission request).
+  9. Android: uninstall → reinstall via Internal Testing link.
+ 10. Smoke C — open EACH of 4 modals and verify:
+       a. AddTeamMemberForm — tap 📇 → iOS dialog with Hebrew text
+          → Allow → picker → choose contact with phone → phone field
+          fills with normalized number, name field stays empty.
+       b. AddCompanyForm (contractor sub-form) — same flow.
+       c. EditCompanyForm — same flow (overwrites existing phone).
+       d. QuickAddCompanyModal — same flow.
+       e. Each form submits correctly; invite goes out via existing
+          backend API.
+ 11. Smoke C — Android equivalent of all 4.
+
+PHASE D — Permission revocation:
+ 12. iOS: Settings → BrikOps → Contacts → OFF → tap 📇 → expect
+     graceful toast "אין הרשאה לאנשי קשר. ניתן להפעיל ב-Settings"
+     and form remains usable manually.
+ 13. Android: Settings → Apps → BrikOps → Permissions → Contacts →
+     Deny → repeat.
+
+PHASE E — Store Privacy Disclosures (BEFORE binary submission):
+
+  E.1 — Apple App Privacy Nutrition Labels (App Store Connect):
+    1. App Privacy → Edit → Add Data Type → Contacts
+    2. Used for: App Functionality (only)
+    3. Linked to user?: YES — "Linked to You"
+       (Picked phone IS sent to invites table tied to inviter
+       user_id — must declare honestly to avoid Apple follow-up.)
+    4. Used for tracking?: No
+    5. Save. Verify Privacy Policy URL still points to
+       https://app.brikops.com/legal/privacy.html (section 7א live).
+
+  E.2 — Google Play Data Safety:
+    1. App content → Data safety → Manage → Add data type → Contacts
+    2. Collected: Yes
+    3. Processed ephemerally: NO (we DO write to invites table)
+    4. Required or optional: Optional
+    5. Used for: App functionality (invite contacts to projects)
+    6. Shared with third parties: No
+    7. Save. Verify Privacy Policy URL.
+
+  E.3 — Pre-submit sanity:
+    $ curl -s https://app.brikops.com/legal/privacy.html | grep -c "אנשי קשר"
+    → expect ≥1.
 
 ================================================================================
 RISK
 ================================================================================
 
-TRIVIAL.
-  • Only response Content-Type header changes for ONE path.
-  • Body of the file is identical → no parser breakage.
-  • webcredentials currently works with octet-stream, so switching
-    to application/json cannot make Apple Sign-In WORSE — only
-    brings it into compliance with Apple's official spec.
-  • No native changes → no ship.sh required → OTA-only.
-  • Bundle size: 0. Performance: 0. Backend / DB / env: 0.
+LOW.
+  • Native-only — web is unaffected (button returns null on web).
+  • Phone-only autofill — no contact data leaves device until form
+    submit. The phone goes through the existing invite API path
+    (no new backend, no new endpoints).
+  • New plugin = new attack surface, but @capacitor-community is
+    well-maintained and the permission gate is OS-enforced. Plugin
+    install was clean (no peer-dep conflicts, no --force needed).
+  • Permission denied = graceful toast + form usable manually.
+    No crash, no broken UX.
+  • Apple App Review WILL inspect NSContactsUsageDescription. The
+    Hebrew text states (a) what we access, (b) why, (c) that we
+    don't upload contacts to server — matches Privacy Policy 7א.
+  • Bundle size delta: ~5-10 KB (plugin web stub + new component).
+  • Performance: zero runtime impact when modals not open.
+  • State collision: NONE. Each of the 4 setters
+    (setPhone in AddTeamMemberForm, setContactPhone × 3 in three
+    different React components — AddCompanyForm, EditCompanyForm,
+    QuickAddCompanyModal) is in its own component closure. Verified
+    by reading L1100-1222 + L1224+ in ProjectControlPage.js and
+    L1-30 in QuickAddCompanyModal.js.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-OTA-only revert:
-  $ git revert <H.2b-hotfix-1 sha> -- frontend/public/_headers
+OTA-only (recommended for any UX issue):
+  $ git revert <H.2c sha> -- frontend/src/pages/ProjectControlPage.js \
+                              frontend/src/components/QuickAddCompanyModal.js \
+                              frontend/src/components/ContactPickerButton.jsx
   $ ./deploy.sh --stag (or --prod)
-  → Restores prior _headers (no AASA rule). Content-Type reverts
-    to application/octet-stream — same state as before this hotfix.
+  → Buttons disappear from JS. Plugin stays installed but inert.
+    Native config (Info.plist + manifest) stays — no-op without JS.
+
+Full native revert (only if plugin causes app launch crash —
+sub-1% probability since well-maintained plugin + clean peer dep):
+  $ git revert <H.2c sha>
+  $ cd frontend && npx cap sync && ./ship.sh
+  → Plugin uninstalled, Info.plist + manifest reverted, version
+    bump rolled back.
 
 ================================================================================
 SUGGESTED COMMIT
 ================================================================================
 
-fix(mobile): serve AASA as application/json for stricter Universal Links validation (H.2b-hotfix-1)
+feat(mobile): contact picker for invite-by-phone modals (BATCH H.2c)
 
 ================================================================================
 STANDING RULE — STOPPING HERE
@@ -131,4 +326,34 @@ STANDING RULE — STOPPING HERE
 Per your standing rules: agent does not commit, does not deploy,
 does not run ./ship.sh, does not mark task complete.
 Handoff: review.txt + .local/.commit_message + present_asset → DONE.
-You run git/deploy.
+You run git/deploy/ship.
+
+================================================================================
+BUNDLE SUBMISSION CHECKLIST (after H.2c passes Smoke C on TestFlight + Internal)
+================================================================================
+
+☐ H.2a Document Scanner — verified working on TestFlight + Internal
+☐ H.2b Universal Links — verified working on iPhone (WhatsApp tap)
+☐ H.2b App Links — verified working on Android
+☐ H.2c Contact Picker — phone autofills, name stays empty:
+       ☐ AddTeamMemberForm        (Add Team Member modal)
+       ☐ AddCompanyForm           (contractor sub-form L1163)
+       ☐ EditCompanyForm          (company edit sub-form L1219)
+       ☐ QuickAddCompanyModal     (Add Contractor/Company modal)
+       ☐ Smoke D (revoked permission graceful) on iOS + Android
+☐ Privacy Nutrition Labels updated (PHASE E.1 — Contacts data type)
+☐ Data Safety form updated (PHASE E.2 — Contacts declared)
+☐ Privacy Policy URL accessible from BOTH consoles
+       (https://app.brikops.com/legal/privacy.html)
+☐ NSContactsUsageDescription Hebrew matches Privacy Policy 7א
+☐ NSCameraUsageDescription / NSPhotoLibrary* preserved in Info.plist
+       (no H.2a regression)
+☐ associated-domains entitlement still has BOTH webcredentials AND
+       applinks:app.brikops.com (no H.2b regression)
+☐ All native version bumps consistent
+       (iOS 1.0.14 build 14, Android versionCode 21 versionName 1.0.21)
+☐ Build uploaded to TestFlight Internal Testing group (group ON)
+☐ Test on 2+ real devices (iPhone 12+ and modern Android)
+
+→ ONE App Store + Play Console review cycle for H.2a + H.2b + H.2c
+  together.
