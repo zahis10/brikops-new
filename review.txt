@@ -1,126 +1,239 @@
 ================================================================================
-BATCH H.2a-hotfix-1 — Scanner fetch fix (file:// → convertFileSrc)
+BATCH H.2b — Universal Links (iOS) + App Links (Android) — READY FOR ZAHI
 ================================================================================
-Date:           2026-05-13
-Branch:         staging
-Severity:       BLOCKER for iOS scanner UX (toast "שגיאה בסריקת המסמך"
-                fired immediately after VisionKit save).
-Status:         ✓ Built. JS-only. NOT committed, NOT deployed.
-                Deployable via Capgo OTA — no native rebuild needed.
+Date:           2026-05-15
+Branch:         staging  (NOT main)
+Baseline:       8435ca7 (post-H.2a + hotfix-1)
+Status:         ✓ Built. JSON validated. Native config + JS handler in place.
+                NOT committed, NOT deployed.
+
+This is the fix for "WhatsApp link opens in browser instead of app"
+that you've been asking about. After OTA + ./ship.sh + Apple AASA
+CDN propagation (≤24h), tapping a `https://app.brikops.com/<path>`
+link from WhatsApp/SMS/email opens BrikOps directly to that route.
 
 ================================================================================
-SYMPTOM (from iPhone TestFlight 1.0.12 build 12 smoke)
+PRE-FLIGHT — 8/8 PASS
 ================================================================================
 
-VisionKit document scanner opens correctly, captures pages, "Save"
-returns to the app — then the wrapper throws and shows the Hebrew
-error toast. No images reach the defect's images[] array.
-
-================================================================================
-ROOT CAUSE
-================================================================================
-
-The @capgo plugin's `ResponseType.ImageFilePath` (our default) returns
-URIs like `file:///var/mobile/Containers/Data/.../scan-1.jpg`. Direct
-`fetch(file://...)` is blocked by iOS WKWebView's security policy.
-
-Fix is the documented Capacitor pattern: `Capacitor.convertFileSrc(uri)`
-returns a `capacitor://localhost/_capacitor_file_/...` URL on iOS and a
-`http://localhost/_capacitor_file_/...` URL on Android — both readable
-by WebView fetch.
+  ✓ 0.1  HEAD = 8435ca7 (H.2a + hotfix-1 in prod)
+  ✓ 0.2  AASA had `webcredentials` only — clean EXTEND target
+  ✓ 0.3  assetlinks.json did not exist — clean NEW
+  ✓ 0.4  App.entitlements had `webcredentials:app.brikops.com` only
+  ✓ 0.5  SHA-256 fingerprints (×2) provided verbatim by Zahi
+  ✓ 0.6  @capacitor/app ^7 already installed
+  ✓ 0.7  BrowserRouter @ L597, CapacitorApp imported @ L16,
+         useNavigate not yet imported
+  ✓ 0.8  <activity .MainActivity> with single MAIN/LAUNCHER
+         intent-filter — clean APPEND target
 
 ================================================================================
 FILES TOUCHED — exhaustive
 ================================================================================
 
+NEW:
+  + frontend/public/.well-known/assetlinks.json                 (14 LOC)
+
 MODIFIED:
-  ~ frontend/src/components/DocumentScannerButton.jsx   (+5 LOC, 1 line edit)
+  ~ frontend/public/.well-known/apple-app-site-association     (+10 LOC)
+       Added `applinks.details[0]` block.
+       PRESERVED `webcredentials` block verbatim (Apple Sign-In).
 
-      L19-28 (map block):
-        - const resp = await fetch(uri);
-        + const webViewUrl = Capacitor.convertFileSrc(uri);
-        + const resp = await fetch(webViewUrl);
-        + 4 lines of explanatory comment
+  ~ frontend/ios/App/App/App.entitlements                       (+1 LOC)
+       Added `<string>applinks:app.brikops.com</string>` as a
+       sibling inside the existing associated-domains array.
+       PRESERVED `webcredentials:app.brikops.com` and the
+       applesignin block.
 
-      L31 (catch block):
-        - console.error('DocumentScanner error:', err);
-        + console.error('DocumentScanner error:', err, 'stack:', err?.stack);
+  ~ frontend/android/app/src/main/AndroidManifest.xml           (+9 LOC)
+       Added new <intent-filter android:autoVerify="true"> as a
+       sibling inside the same <activity .MainActivity> block,
+       placed AFTER (not replacing) the MAIN/LAUNCHER intent-filter.
+       Includes a 1-line HTML comment for traceability.
+
+  ~ frontend/src/App.js                                         (+44 LOC)
+       L2:   added useNavigate to react-router-dom import.
+       L82:  added DeepLinkHandler component (renders null,
+             registers appUrlOpen listener via existing
+             CapacitorApp import). 11-line header comment +
+             33-line component body.
+       L646: <DeepLinkHandler /> mounted as direct sibling of the
+             div.App, INSIDE BrowserRouter (so useNavigate works).
 
 NOT TOUCHED:
-  • Plugin version, native projects (Podfile/gradle) — unchanged.
-  • NewDefectModal.js integration — unchanged.
-  • images[] shape, PhotoAnnotation, camera/gallery flows — unchanged.
-
-`Capacitor` import was already present at the top of the file from
-the original H.2a wrapper (used by the existing `isNativePlatform()`
-guard) — no new import needed.
+  • Existing webcredentials block in AASA — verified preserved.
+  • Existing webcredentials entitlement — extended, not replaced.
+  • Existing MAIN/LAUNCHER intent-filter — untouched.
+  • backButton listener (L573, outside BrowserRouter) — untouched.
+  • intendedPath / deepLinkSource sessionStorage pattern — works
+    automatically for logged-out auth-bounce.
+  • Backend, React Router routes, capacitor.config.json, Info.plist.
+  • H.2a Document Scanner code — untouched.
+  • No new dependencies. No `npx cap sync` needed (no plugin added).
 
 ================================================================================
 VERIFY GATES — all PASS
 ================================================================================
 
-✓ yarn build                            EXIT=0  (Done in 41.61s)
-✓ grep "convertFileSrc" wrapper         → 2 hits (1 in code, 1 in comment)
-✓ grep "Capacitor" wrapper              → 4 hits (import, isNativePlatform,
-                                                  convertFileSrc usage, comment)
-✓ git status: only DocumentScannerButton.jsx modified.
+✓ V1 yarn build                       EXIT=0   (Done in 36.90s)
+
+✓ V2a AASA JSON                       valid; webcredentials=True, applinks=True
+✓ V2b assetlinks.json                 valid; relation=delegate_permission/
+                                      common.handle_all_urls,
+                                      package_name=com.brikops.app,
+                                      sha256_cert_fingerprints=2 entries
+
+✓ V3a grep "applinks:app.brikops.com" entitlements           = 1
+✓ V3b grep "webcredentials:app.brikops.com" entitlements     = 1 (preserved)
+✓ V3c grep 'autoVerify="true"' AndroidManifest               = 1
+⚠ V3d grep "app.brikops.com" AndroidManifest                 = 2
+       Spec expected 1, got 2: 1 hit is the actual
+       <data android:host="app.brikops.com" />, the 2nd hit is the
+       traceability HTML comment "<!-- … Android App Links for
+       app.brikops.com -->". HARMLESS — comments are never parsed
+       by Android. Behaviour unchanged.
+
+✓ V4a grep "DeepLinkHandler|appUrlOpen|useNavigate" App.js   = 7 (≥4 target)
+       Hits: useNavigate import (L2), DeepLinkHandler component
+       comment (L83), const declaration (L93), useNavigate() call
+       (L94), 'appUrlOpen' in console.warn (L111),
+       CapacitorApp.addListener('appUrlOpen',…) (L115),
+       <DeepLinkHandler /> mount (L643).
+✓ V4b grep "<DeepLinkHandler" App.js                         = 1 (=1 target)
+
+git status:
+   M frontend/android/app/src/main/AndroidManifest.xml
+   M frontend/ios/App/App/App.entitlements
+   M frontend/public/.well-known/apple-app-site-association
+   M frontend/src/App.js
+   ?? frontend/public/.well-known/assetlinks.json
+   (4 modified + 1 new — exactly as specified.)
 
 ================================================================================
-HOW TO TEST (Zahi)
+DEPLOY ORDERING (Zahi)
 ================================================================================
 
-After OTA deploy lands on the iPhone via Capgo:
-  1. Open NewDefectModal.
-  2. Tap green "סרוק מסמך" button → VisionKit opens.
-  3. Capture 1–3 pages → "Save".
-  4. Expect: returned to defect form, JPEGs visible in image list,
-     NO toast.
-  5. Cancel path: tap → cancel → returns silently, no toast.
+Standard 2-phase deploy per your H.2-Bundle plan:
 
-If any error STILL appears, open Safari DevTools (Mac connected to
-iPhone) and check the console — the enhanced log will now print
-`stack:` for fast diagnosis.
+PHASE A — OTA (.well-known/* + App.js DeepLinkHandler):
+  1. git checkout staging && git merge main && ./deploy.sh --stag
+  2. Smoke A on staging:
+     $ curl -s https://staging.brikops-new.pages.dev/.well-known/apple-app-site-association
+     → JSON with both webcredentials and applinks.
+     $ curl -s https://staging.brikops-new.pages.dev/.well-known/assetlinks.json
+     → JSON array with delegate_permission and 2 fingerprints.
+  3. git checkout main && git merge --ff-only staging && ./deploy.sh --prod
+  4. Verify on prod:
+     $ curl -s https://app.brikops.com/.well-known/apple-app-site-association
+     $ curl -s https://app.brikops.com/.well-known/assetlinks.json
+     Both should serve as Content-Type: application/json (Cloudflare Pages
+     auto-handles for /.well-known/).
 
-================================================================================
-DEPLOY (Zahi only)
-================================================================================
+PHASE B — Native build (./ship.sh):
+  5. Standard ./ship.sh:
+     - Bumps versionCode/versionName (iOS 1.0.13 build 13,
+       Android versionCode 20).
+     - Xcode Archive → App Store Connect → TestFlight Internal.
+     - Android Studio Bundle → Play Console Internal Testing.
 
-JS-only patch. No native code changed, no plugin install, no cap sync.
-Pushable via standard prod OTA path (Capgo). The TestFlight binary on
-the iPhone (1.0.12 build 12) will pick up the new bundle within minutes
-of the OTA push — no Apple review cycle needed.
+PHASE C — Wait + Smoke (the WhatsApp test):
+  6. Wait ≤24h for Apple AASA CDN to propagate. Apple caches AASA
+     aggressively — first taps may still go to Safari for a few hours.
+  7. ⚠ INSTALL ORDER MATTERS:
+     - iPhone: DELETE the BrikOps app → reinstall via TestFlight.
+     - Android: UNINSTALL → reinstall via Internal Testing link.
+     iOS caches AASA at install time; Android caches assetlinks
+     verification at install time. If a previous build was installed
+     before the JSON files were live on prod, the cache holds
+     "no AASA" / "VERIFICATION_NEEDED" and links will keep falling
+     back to browser even after JSON is correct. 30 seconds of
+     uninstall saves 2 hours of "why isn't this working".
+  8. Smoke C — send yourself a WhatsApp message:
+       https://app.brikops.com/tasks/<id of a real defect in prod>
+     Tap → expect BrikOps to open directly on the task detail page.
+     - C.2: same on Android.
+     - C.3: on a device WITHOUT BrikOps, tap → browser opens
+       app.brikops.com/tasks/xyz (web fallback).
+     - C.4: log out → tap link → app opens → ProtectedRoute
+       redirects to /login → after login, lands on /tasks/<id>
+       (existing intendedPath bounce, no new code).
+     - C.5: tap https://example.com/tasks/123 → browser opens
+       (defense-in-depth hostname check in DeepLinkHandler).
+
+  Android verification check (optional):
+     adb shell pm get-app-links com.brikops.app
+     → expect "verified" for app.brikops.com.
+     → If "legacy_failure" or "verification_needed": uninstall +
+       reinstall.
 
 ================================================================================
 RISK
 ================================================================================
 
 LOW.
-  • Single targeted change inside the scanner success path.
-  • `convertFileSrc` is a no-op on web (returns input unchanged), so
-    the web `isNativePlatform()` guard still applies — no web behaviour
-    change.
-  • Android: `convertFileSrc` also works; first scan should now
-    complete cleanly on Android too. (Not yet smoke-tested on Android
-    by Zahi — the iPhone failure would have hit Android the same way.)
+  • AASA preserved webcredentials → Apple Sign-In unaffected.
+    Verified by V3b (grep =1) and the JSON test.
+  • assetlinks fingerprints copy-pasted verbatim from your
+    Play Console values. JSON validated.
+  • DeepLinkHandler mounted INSIDE BrowserRouter — useNavigate
+    will work. Mounted OUTSIDE the existing div.App so it
+    registers once at app top.
+  • Hostname guard (`u.hostname !== 'app.brikops.com'`) is
+    cheap defense-in-depth on top of OS-level autoVerify + AASA.
+  • CapacitorApp.addListener returns Promise<PluginListenerHandle>
+    in Capacitor 7.x — wrapper captures the handle and removes on
+    unmount. No leaks.
+  • Apple AASA propagation can take ≤24h — first night may show
+    browser fallback. By next morning links should resolve.
+  • New intent-filter coexists with MAIN/LAUNCHER — Android
+    dispatches based on incoming intent action.
+  • Bundle size delta: ~0 (no new imports beyond useNavigate).
+  • Performance: zero runtime impact.
+  • Backend / DB / env: zero touch.
 
 ================================================================================
 ROLLBACK
 ================================================================================
 
-Single-file revert:
-  git checkout HEAD -- frontend/src/components/DocumentScannerButton.jsx
+OTA-only (fast, recommended for any UX issue):
+  $ git revert <H.2b-sha> -- frontend/public/.well-known/ frontend/src/App.js
+  → AASA back to webcredentials-only (Apple Sign-In keeps working).
+  → assetlinks.json removed → Android App Links fall back to browser.
+  → DeepLinkHandler removed from JS bundle.
+  → Native config (entitlement + manifest) STAYS in installed app —
+    but it's a no-op without the JSON files.
+
+Full native revert (only if entitlement causes app-launch crash —
+very unlikely):
+  $ git revert <H.2b-sha>
+  $ npx cap sync
+  $ ./ship.sh
 
 ================================================================================
 SUGGESTED COMMIT
 ================================================================================
 
-fix(mobile): convert file:// URIs via Capacitor.convertFileSrc in document scanner (H.2a-hotfix-1)
+feat(mobile): Universal Links (iOS) + App Links (Android) for app.brikops.com (BATCH H.2b)
 
 ================================================================================
 STANDING RULE — STOPPING HERE
 ================================================================================
 
-Per Zahi's standing rules: agent does not commit, does not deploy,
-does not run ship.sh, does not mark task complete.
+Per your standing rules: agent does not commit, does not deploy,
+does not run ./ship.sh, does not mark task complete.
 Handoff: review.txt + .local/.commit_message + present_asset → DONE.
-Zahi runs git/OTA push.
+You run git/deploy/ship.
+
+================================================================================
+NEXT BATCH (after H.2b passes Smoke C on TestFlight + Internal Testing)
+================================================================================
+
+H.2c — Contact Picker:
+  - Install @capacitor-community/contacts@^7
+  - NSContactsUsageDescription (Info.plist) + READ_CONTACTS (manifest)
+  - <ContactPickerButton> wrapper (hidden on web, web fallback to manual)
+  - Integrate in Add Team Member modal + Add Contractor/Company modal
+  - ~80-120 LOC + 1 plugin + 2 native permissions + Hebrew strings
+
+After H.2c passes Internal Testing → submit ALL THREE (H.2a + H.2b + H.2c)
+in a single App Store / Play Console review cycle.

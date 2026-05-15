@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.brikops.app",
+      "sha256_cert_fingerprints": [
+        "90:9E:EA:05:AC:14:76:A1:FD:30:6A:65:91:28:C2:F2:20:DA:F1:A9:92:60:A1:D6:DC:6E:81:F9:6A:FD:5F:12",
+        "AF:1D:A1:C7:45:4D:3C:92:F5:F0:6A:5C:47:BD:EE:BF:2F:91:F4:DB:92:3B:D4:DB:B7:5B:34:C1:B0:F4:40:2F"
+      ]
+    }
+  }
+]

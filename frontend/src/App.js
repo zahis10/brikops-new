@@ -1,5 +1,5 @@
 import React, { useEffect, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BillingProvider, useBilling } from './contexts/BillingContext';
 import { IdentityProvider } from './contexts/IdentityContext';
@@ -79,6 +79,51 @@ const INTENDED_PATH_KEY = 'intendedPath';
 // non-splash gradient used ONLY for the rare network-error case inside
 // ProtectedRoute. z-index 9998 keeps it under BrikSplash (9999) and well
 // below Sonner toasts so error messages stay visible on top.
+// BATCH H.2b (2026-05-14) — Universal Links + App Links.
+// Lives INSIDE BrowserRouter so it can call useNavigate. When the OS
+// hands off https://app.brikops.com/<path> to the app (user tapped a
+// link from WhatsApp/SMS/email + app is installed), parses the path
+// and navigates via React Router. If app NOT installed, OS falls back
+// to browser automatically.
+//
+// Auth-bounce for logged-out users: protected routes already redirect
+// to /login while storing INTENDED_PATH_KEY + deepLinkSource='external'.
+// After login, the existing LoginPage/WaLoginPage/OnboardingPage logic
+// navigates back to the intended path. No new code needed for that flow.
+const DeepLinkHandler = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let listenerHandle;
+
+    const handler = ({ url }) => {
+      try {
+        const u = new URL(url);
+        // Defense in depth — only handle our own domain. (autoVerify
+        // should prevent foreign URLs, but cheap insurance against
+        // future intent-filter conflicts.)
+        if (u.hostname !== 'app.brikops.com') return;
+        const path = u.pathname + (u.search || '') + (u.hash || '');
+        if (!path || path === '/') return;
+        try { sessionStorage.setItem('deepLinkSource', 'external'); } catch {}
+        navigate(path);
+      } catch (err) {
+        console.warn('appUrlOpen parse failed:', err);
+      }
+    };
+
+    CapacitorApp.addListener('appUrlOpen', handler).then(h => {
+      listenerHandle = h;
+    });
+
+    return () => {
+      if (listenerHandle?.remove) listenerHandle.remove();
+    };
+  }, [navigate]);
+
+  return null;
+};
+
 const NetworkPlaceholder = ({ label }) => (
   <div style={{
     position: 'fixed', inset: 0, zIndex: 9998,
@@ -595,6 +640,7 @@ function App() {
         <BillingProvider>
           <IdentityProvider>
             <BrowserRouter>
+              <DeepLinkHandler />
               <div className="App">
                 <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:right-2 focus:z-[9999] focus:bg-amber-500 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:text-sm focus:font-medium">
                   דלג לתוכן הראשי

@@ -1,5 +1,15 @@
 {
   "webcredentials": {
     "apps": ["8FV5CZ886X.com.brikops.app"]
+  },
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["8FV5CZ886X.com.brikops.app"],
+        "components": [
+          { "/": "/*" }
+        ]
+      }
+    ]
   }
 }
