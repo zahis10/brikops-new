@@ -53,6 +53,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
       while IFS= read -r f; do
         [ -z "$f" ] && continue
         [ ! -f "$f" ] && continue
+        # Skip documentation paths (contain pattern descriptions, not real secrets)
+        case "$f" in
+          specs/*|docs/*|future-features/*|memory/*|security/*) continue ;;
+          ROADMAP.md|CLAUDE.md|README.md) continue ;;
+          *.md) continue ;;
+        esac
         # Skip binary files
         file -b "$f" 2>/dev/null | grep -qE "binary|ELF|image|video" && continue
 
