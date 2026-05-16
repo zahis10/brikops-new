@@ -354,3 +354,9 @@ id = "WdAv4xN91QcEN7yUVCGOf"
 uri = "file://.local/plans/H.2c-contact-picker-plan.md"
 type = "text"
 title = "H.2c Contact Picker — תוכנית ביצוע"
+
+[[outputs]]
+id = "J__1RJxM-WJD4UTT7thE5"
+uri = "file://.local/plans/ship-push-immediate-2026-05-16-plan.md"
+type = "text"
+title = "ship-push-immediate — תוכנית ביצוע"
