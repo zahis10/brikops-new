@@ -1,113 +1,132 @@
 ═══════════════════════════════════════════════════════════════
-BATCH ship-push-immediate-followup-1 — REVIEW
-2026-05-16 | Branch: staging | Baseline: c8d212e (post ship-push-immediate)
-Severity: P2 — false-positive fix
+BATCH reminder-rate-limit — REVIEW
+2026-05-16 | Branch: staging | Severity: HIGH (pentest HIGH-N1)
 ═══════════════════════════════════════════════════════════════
 
 PURPOSE
 ───────
-Discovery during V4 manual test (2026-05-16, Mac):
-The secret-scan in ship.sh correctly flagged `test-secret.yml` (real
-positive), but ALSO flagged the spec file
-`specs/batch-ship-push-immediate-2026-05-16.txt` because that file
-contains the SAME patterns as DOCUMENTATION (it describes what the
-scan looks for).
+Pentest 2026-05-16 (HIGH-N1): manual reminder endpoints had no
+rate-limit, allowing a compromised PM/management_team account to
+spam WhatsApp templates ($0.01-0.05/send + reputation risk).
 
-Core scan works correctly. This batch only narrows scope to avoid
-false positives on documentation paths.
+Endpoints affected (both call skip_cooldown=True legitimately):
+  - POST /api/projects/{id}/reminders/contractor/{company_id}
+  - POST /api/projects/{id}/reminders/digest
 
-FIX (1 location in ship.sh)
-───────────────────────────
-Added directory/extension skip in the scan loop, BEFORE the binary
-check, AFTER the `[ ! -f "$f" ] && continue` line:
+FIX
+───
+Per-user-per-project rate limit: 10 requests/hour, SHARED budget
+across both endpoints (kind="manual_reminder", key="{user_id}:{project_id}").
 
-  case "$f" in
-    specs/*|docs/*|future-features/*|memory/*|security/*) continue ;;
-    ROADMAP.md|CLAUDE.md|README.md) continue ;;
-    *.md) continue ;;
-  esac
+DECISIONS (Zahi-approved)
+─────────────────────────
+- Option B: copy helper into reminder_router.py with own collection
+  `reminder_rate_limits` (NOT the otp_rate_limits coupling).
+- Helper uses production-proven aggregation pipeline from wa_login
+  (NOT the simpler $inc/$setOnInsert from spec).
+- Unique index on (kind, key) added — race protection (Q2 approved).
+- max_requests=10/hour (Q1 — IN section was correct, "30" in spec
+  comment was typo).
+- TTL index on expires_at = self-cleaning collection.
+- Fail-open on infra errors → legitimate users never blocked on DB hiccups.
+- Fail-closed on persistent DuplicateKeyError race (2 retry attempts).
 
-POSIX-portable, fast (no subshell). Skips:
-- Anything under: specs/, docs/, future-features/, memory/, security/
-- Top-level docs: ROADMAP.md, CLAUDE.md, README.md
-- Any other .md file (assumed documentation)
-
-Documentation files CAN'T contain runtime secrets the app uses.
-Config files, source code, and JSON/YAML still scanned aggressively.
-External tooling (gitleaks, GitHub secret scanning) catches docs
-if needed.
-
-VERIFY GATES (passed in Replit, read-only)
-──────────────────────────────────────────
-V1   bash -n ship.sh ................... EXIT=0  ✓
-V2a  grep -c 'specs/\*|docs/\*' ship.sh ....... 1   ✓
-V2b  case/esac present ................... 1/1  ✓
-V3   ship.sh line count .............. 250    ✓ (was 244, +6)
-V4   Dry-run case logic with 5 sample paths:
-     specs/test.txt  → SKIP  ✓
-     docs/foo.md     → SKIP  ✓
-     README.md       → SKIP  ✓
-     src/config.yml  → SCAN  ✓
-     backend/server.py → SCAN ✓
-
-V5+V6 (Zahi manual on Mac — cannot run in Replit):
-  V5  Re-stage test-secret.yml + ./ship.sh →
-      expected: only test-secret.yml flagged (NOT spec file).
-  V6  Stage spec file alone + ./ship.sh →
-      expected: scan passes, no SECRETS DETECTED, proceeds.
+Q3 ANSWER — ensure_indexes() call-site:
+  ✓ `ensure_reminder_indexes()` is WIRED to FastAPI startup hook
+    (server.py:1184 inside @app.on_event("startup") at L1257-1258).
+  → New TTL + unique indexes will be created automatically on
+    BACKEND RESTART after deploy. No manual mongo command needed.
+  → If indexes fail (e.g. existing data has dup keys), startup logs
+    a warning but does NOT crash (existing pattern).
 
 FILES TOUCHED
 ─────────────
-ship.sh   — +6 LOC (single case/esac block at L59-64).
-            No other change.
+backend/contractor_ops/reminder_router.py    +60 LOC
+  - L1-4:  +3 imports (datetime, pymongo.ReturnDocument, DuplicateKeyError)
+  - L37-80: +44 helper _check_reminder_rate_limit (after _check_reminder_access)
+  - L95-102: +8 rate-limit check in manual_contractor_reminder
+  - L130-136: +7 rate-limit check in manual_pm_digest (shared budget)
+
+backend/contractor_ops/reminder_service.py    +12 LOC
+  - L772-783: +12 in ensure_indexes() — TTL on expires_at + unique
+    on (kind, key) for reminder_rate_limits collection.
+
+VERIFY GATES (5/5 PASS in Replit)
+──────────────────────────────────
+V1   python -m py_compile reminder_router.py ......... EXIT=0  ✓
+V1b  python -m py_compile reminder_service.py ........ EXIT=0  ✓
+V3   grep -c _check_reminder_rate_limit (1 def + 2 calls) = 3  ✓
+V4a  grep -c reminder_rate_limits in router .......... = 1  ✓
+V4b  grep -c reminder_rate_limits in service ......... = 3  ✓ (1 logger + 2 create_index)
+V5   grep -c status_code=429 in router ............... = 2  ✓
+V6   reminder_router.py LOC ........................ 251 (was 188, +63 net)
+V6b  reminder_service.py LOC ....................... 782 (was 772, +10 net)
+
+V7+V8 (Zahi staging — cannot run in Replit):
+  V7  After backend restart in staging:
+      mongo brikops_stag --eval "db.reminder_rate_limits.getIndexes()"
+      Expected: 2 indexes — TTL on expires_at + unique on (kind, key)
+  V8  Burst test:
+      TOKEN=<demo-pm-jwt>
+      for i in {1..15}; do
+        curl -sS -o /dev/null -w "%{http_code} " \
+          -H "Authorization: Bearer $TOKEN" \
+          -X POST "https://api-staging.brikops.com/api/projects/{pid}/reminders/digest"
+      done
+      Expected: ~10 codes of 200/400, then 429 repeating for last ~5.
 
 DO-NOT-TOUCH (preserved)
 ────────────────────────
-- Any of the 7 scan patterns (unchanged)
-- Override mechanism (SHIP_SKIP_SECRET_SCAN=1, unchanged)
-- Immediate-push block from previous batch (unchanged)
-- Pull-rebase branch fix from previous batch (unchanged)
-- Anything other than ship.sh
+- _check_reminder_access (role check, unchanged)
+- send_contractor_reminder / send_pm_digest in reminder_service (unchanged)
+- Cooldown logic (48h, unchanged)
+- skip_cooldown=True parameter (legitimate force-send, preserved)
+- Frontend (api.js — 429 handled by existing error toast)
+- Auto-reminder cron jobs (have own cooldown protection)
+- _check_rate_limit_mongo in wa_login.py (OTP-only, untouched)
 
 DEPLOY ORDERING (Zahi)
 ──────────────────────
-OTA-IRRELEVANT — zero JS/native change, only ship.sh.
+Backend-only. No frontend, no native.
 
-1. Merge & push:
-   git checkout staging && git add ship.sh && git commit -m "..."
-   (ship.sh's own immediate-push will handle the push.)
-
-2. Manual V5+V6 on Mac (one-shot verification):
-   # V5 — real positive
-   echo "MONGO_URL: mongodb+srv://u:p@example.com/db" > test-secret.yml
-   git add test-secret.yml
-   ./ship.sh   # expected: abort, ONLY test-secret.yml listed
-   rm test-secret.yml && git reset HEAD test-secret.yml
-
-   # V6 — doc file no longer triggers
-   git add specs/batch-ship-push-immediate-2026-05-16.txt
-   ./ship.sh   # expected: scan passes silently
+1. Commit + push (ship.sh handles auto-push + secret-scan).
+2. ./deploy.sh --stag
+3. ⚠️ Backend restart required — indexes created at startup hook.
+   Verify in staging logs:
+     "[REMINDER] Indexes created on reminder_log + reminder_rate_limits"
+4. V7 mongo: verify 2 indexes on reminder_rate_limits.
+5. V8 burst test in staging → expect 429 after ~10.
+6. ./deploy.sh --prod
+7. V7+V8 sanity in production.
 
 RISK
 ────
-VERY LOW.
-- 6-line addition, isolated case block, POSIX-portable.
-- Narrows scope only — doesn't change detection logic.
-- If a real secret somehow ends up in a doc file, gitleaks/GitHub
-  secret scanning still catches it post-push.
+LOW.
+- Only ADDS a new check; existing logic untouched.
+- Fail-open on infra errors → legitimate users never blocked.
+- 10/hour generous for real PM workflow (typically 1-3 per session).
+- TTL index → self-cleaning collection.
+- Unique (kind, key) index → no race-condition duplicates.
+- Hebrew 429 message → frontend toast already handles 4xx.
+- Startup hook is non-fatal (existing pattern) — if index creation
+  fails, backend boots normally, queries just slower.
 
 ROLLBACK
 ────────
-git revert HEAD -- ship.sh
-git commit -m "revert: ship.sh scan-scope changes"
+git revert <sha> -- backend/contractor_ops/reminder_router.py \
+                    backend/contractor_ops/reminder_service.py
 git push origin staging
+./deploy.sh --stag && ./deploy.sh --prod
+
+(Indexes survive revert harmlessly. To drop:
+ db.reminder_rate_limits.dropIndexes())
 
 SCOPE BOUNDARY (Standing Rule)
 ──────────────────────────────
-Agent does NOT: commit / push / deploy / run ship.sh / mark task complete.
+Agent does NOT: commit / push / deploy / restart backend / mark task complete.
 Handoff: review.txt + .local/.commit_message + present_asset → DONE.
-Zahi runs git/deploy/ship.
+Zahi runs git/deploy.
 
 ═══════════════════════════════════════════════════════════════
-STATUS: READY FOR ZAHI TO COMMIT + PUSH
+STATUS: READY FOR ZAHI TO COMMIT + PUSH + DEPLOY
 ═══════════════════════════════════════════════════════════════

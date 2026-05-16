@@ -766,6 +766,17 @@ async def ensure_indexes():
             ("sent_at", -1),
         ])
         await _db.reminder_log.create_index([("wa_message_id", 1)])
-        logger.info("[REMINDER] Indexes created on reminder_log")
+        # Rate-limit collection (pentest HIGH-N1 2026-05-16)
+        await _db.reminder_rate_limits.create_index(
+            "expires_at",
+            expireAfterSeconds=0,
+            background=True,
+        )
+        await _db.reminder_rate_limits.create_index(
+            [("kind", 1), ("key", 1)],
+            unique=True,
+            background=True,
+        )
+        logger.info("[REMINDER] Indexes created on reminder_log + reminder_rate_limits")
     except Exception as e:
         logger.warning(f"[REMINDER] Index creation issue: {e}")
