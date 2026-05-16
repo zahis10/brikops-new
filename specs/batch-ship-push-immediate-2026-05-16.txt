@@ -1,0 +1,240 @@
+================================================================================
+BATCH ship-push-immediate — ship.sh git push immediately after commit
+================================================================================
+Date:           2026-05-16
+Branch:         staging
+Severity:       P1 — preventive (root cause of today's secrets leak incident)
+Status:         AWAITING REPLIT IMPLEMENTATION
+
+Today (2026-05-16) we had a near-disaster:
+1. ship.sh on Mac created commit 1123d6c with 196 files including
+   sensitive .elasticbeanstalk/saved_configs/prod-baseline-2026-04-25.cfg.yml
+   (full env vars with credentials).
+2. The commit was NEVER pushed to origin — stayed local-only.
+3. Later, a `git reset --hard origin/main` orphaned the commit.
+4. Recovery rewrote files back into a new commit and pushed them all,
+   including the credentials → public leak on GitHub.
+5. All 9 secrets had to be rotated. ~3 hours of fire-fighting.
+
+The ROOT CAUSE is that ship.sh leaves commits local. If those commits
+had been pushed immediately, the reset would have been benign (origin
+already had everything).
+
+This batch fixes ship.sh to push immediately, plus adds two safety
+guardrails to make this class of bug impossible.
+
+================================================================================
+SCOPE — IN / OUT
+================================================================================
+
+IN:
+  ✅ Modify ship.sh on Mac:
+     - After every `git commit` step, do `git push origin <branch>`.
+     - If push fails (non-FF), HALT and prompt user to resolve.
+     - Never silently leave a commit local-only.
+  ✅ Add `.elasticbeanstalk/` to .gitignore (already done on staging,
+     ensure it's in HEAD).
+  ✅ Add safety gate to ship.sh: before any commit, run secret-scan
+     on staged files. If any pattern matches (mongodb+srv://, AKIA,
+     JWT_SECRET=, etc.), HALT and require explicit override flag.
+
+OUT:
+  ❌ Backend code, frontend code — unchanged
+  ❌ deploy.sh on Replit — separate concern, leave alone
+  ❌ Existing commits on origin — leave history alone
+  ❌ Backup branch (`backup-staging-pre-secret-purge-2026-05-16`) —
+     leave it as recovery point for a week, then can delete
+
+================================================================================
+STEP 0 — PRE-FLIGHT
+================================================================================
+
+0.1 Confirm ship.sh exists at repo root:
+    $ ls -la ship.sh
+    Expected: executable file with shebang #!/bin/bash or similar.
+
+0.2 Read current ship.sh and identify:
+    a) Where `git commit` is called
+    b) Where `git push` is called (if at all)
+    c) Whether there's already a secret-scan step
+
+0.3 Confirm .gitignore includes elasticbeanstalk:
+    $ grep elasticbeanstalk .gitignore
+    Expected: `.elasticbeanstalk/` present
+
+0.4 Confirm no current secrets in working tree:
+    $ git diff --cached --name-only | xargs -I{} grep -l "mongodb+srv://\|AKIA[A-Z0-9]" {} 2>/dev/null
+    Expected: no output
+
+================================================================================
+LOCATION 1 — ship.sh: push immediately after commit
+================================================================================
+File: ship.sh
+
+FIND every `git commit` call in the script. After each one, ADD:
+
+  # 🔒 Push immediately to prevent local-only commits (incident 2026-05-16)
+  echo "Pushing to origin..."
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
+  if ! git push origin "$current_branch"; then
+    echo ""
+    echo "🚨 git push FAILED — commit is now LOCAL-ONLY."
+    echo "   This is the root cause of the 2026-05-16 secrets leak."
+    echo "   You MUST resolve before continuing:"
+    echo "   - If non-FF: git pull --rebase origin $current_branch"
+    echo "   - Then re-run ship.sh"
+    exit 1
+  fi
+  echo "✓ Pushed to origin/$current_branch"
+
+DO NOT silently continue if push fails. Fail loud.
+
+================================================================================
+LOCATION 2 — ship.sh: secret-scan before commit
+================================================================================
+File: ship.sh
+
+BEFORE every `git commit`, ADD:
+
+  # 🔒 Secret-scan: refuse to commit files containing credentials
+  STAGED_FILES=$(git diff --cached --name-only)
+  if [ -n "$STAGED_FILES" ]; then
+    SECRETS_FOUND=""
+    for f in $STAGED_FILES; do
+      [ ! -f "$f" ] && continue
+      # Skip binary files
+      file -b "$f" 2>/dev/null | grep -qE "binary|ELF|image|video" && continue
+
+      if grep -qE "mongodb(\+srv)?://[^:/]+:[^@]+@" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: MongoDB credentials"
+      fi
+      if grep -qE "AKIA[A-Z0-9]{16}" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: AWS access key"
+      fi
+      if grep -qE "JWT_SECRET\s*[:=]\s*['\"]?[A-Za-z0-9+/=_-]{16,}" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: JWT_SECRET with real value"
+      fi
+      if grep -qE "EAA[A-Za-z0-9_-]{100,}" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: WhatsApp/Meta access token"
+      fi
+      if grep -qE "AC[a-f0-9]{32}" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: Twilio SID"
+      fi
+      if grep -qE "sk_(test|live)_[A-Za-z0-9]{20,}" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: Stripe key"
+      fi
+      if grep -q "BEGIN.*PRIVATE KEY\|BEGIN OPENSSH" "$f" 2>/dev/null; then
+        SECRETS_FOUND="$SECRETS_FOUND\n  $f: Private key (PEM)"
+      fi
+    done
+
+    if [ -n "$SECRETS_FOUND" ]; then
+      echo ""
+      echo "🚨 SECRETS DETECTED IN STAGED FILES — ABORTING COMMIT"
+      echo -e "$SECRETS_FOUND"
+      echo ""
+      echo "To override (e.g. false positive):"
+      echo "  SHIP_SKIP_SECRET_SCAN=1 ./ship.sh"
+      echo ""
+      exit 2
+    fi
+  fi
+
+This makes it IMPOSSIBLE for ship.sh to commit secrets without
+explicit override.
+
+================================================================================
+LOCATION 3 — Add to .gitignore if not present
+================================================================================
+File: .gitignore
+
+VERIFY these are in .gitignore (add if missing):
+  .elasticbeanstalk/
+  .env
+  .env.local
+  .env.*.local
+  secrets/
+
+(All except .elasticbeanstalk/ were already there. The
+.elasticbeanstalk/ entry was added in the 9b9ed13 commit.)
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- deploy.sh (Replit-side, separate concern)
+- Any backend / frontend code
+- Native config (ios/, android/)
+- CLAUDE.md (will get a separate spec for new safety rules)
+- backup-staging-pre-secret-purge-2026-05-16 branch (recovery point)
+
+================================================================================
+VERIFY GATES
+================================================================================
+
+V1 — ship.sh has push after every commit:
+  $ grep -c "git commit" ship.sh
+  $ grep -c "git push origin" ship.sh
+  Expected: push count = commit count (each commit followed by push)
+
+V2 — ship.sh has secret-scan before commit:
+  $ grep -c "SECRETS DETECTED\|secret-scan" ship.sh
+  Expected: ≥1
+
+V3 — .gitignore has .elasticbeanstalk:
+  $ grep ".elasticbeanstalk/" .gitignore
+  Expected: 1 match
+
+V4 — Manual test (Zahi runs):
+  a) Touch a fake file with fake mongo URL:
+     $ mkdir -p /tmp/sh && cd /tmp/sh
+     $ echo "MONGO_URL: mongodb+srv://test:fakepass@example.com/" > test.yml
+  b) Try to stage + commit:
+     $ cd ~/brikops-new
+     $ cp /tmp/sh/test.yml test-secret.yml
+     $ git add test-secret.yml
+  c) Run ship.sh — should ABORT at secret-scan with clear message
+  d) Cleanup: rm test-secret.yml, git reset HEAD test-secret.yml
+
+================================================================================
+ROLLBACK
+================================================================================
+If ship.sh breaks after this change:
+  $ git diff HEAD~1 ship.sh   # see the diff
+  $ git checkout HEAD~1 -- ship.sh   # revert to pre-batch version
+  $ git commit -m "revert: ship.sh changes" && git push origin staging
+
+If false-positive secret-scan blocks legitimate commit:
+  $ SHIP_SKIP_SECRET_SCAN=1 ./ship.sh
+
+================================================================================
+SUGGESTED COMMIT
+================================================================================
+fix(ship): push immediately after commit + secret-scan before commit
+
+Root cause of 2026-05-16 secrets leak: ship.sh created local commits
+that weren't pushed to origin. When subsequent git operations
+orphaned those commits, files were "lost"; recovery rewrote them
+back blindly, leaking secrets.
+
+This change makes the disaster impossible:
+1. Every `git commit` in ship.sh is followed by `git push`. If push
+   fails (non-FF), HALT and require user to resolve before continuing.
+2. Before every `git commit`, scan staged files for credentials
+   (MongoDB URL with password, AWS keys, JWT_SECRET, Meta WA token,
+   Twilio SID, Stripe key, private keys). If any found, ABORT with
+   clear instructions.
+3. .gitignore updated to exclude .elasticbeanstalk/ (which contains
+   AWS Elastic Beanstalk saved configs with prod env vars).
+
+Override for false positives: SHIP_SKIP_SECRET_SCAN=1 ./ship.sh
+
+================================================================================
+STANDING RULE — STOP HERE
+================================================================================
+Per standing rules: agent does NOT commit, deploy, ship.sh, or mark
+task complete. Handoff: review.txt + .local/.commit_message +
+present_asset → DONE. Zahi runs.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT IMPLEMENT
+================================================================================

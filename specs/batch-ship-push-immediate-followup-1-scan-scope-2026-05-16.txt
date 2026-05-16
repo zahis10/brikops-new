@@ -1,0 +1,165 @@
+================================================================================
+BATCH ship-push-immediate-followup-1 — Limit secret-scan to config files only
+================================================================================
+Date:           2026-05-16
+Branch:         staging
+Severity:       P2 — false-positive fix
+Status:         AWAITING REPLIT IMPLEMENTATION
+
+Discovery (V4 manual test 2026-05-16):
+The secret-scan in ship.sh (shipped in batch ship-push-immediate, commit
+c8d212e) correctly flagged a fake MongoDB URL in test-secret.yml, but
+ALSO flagged the spec file `specs/batch-ship-push-immediate-2026-05-16.txt`
+which contains the SAME patterns as DOCUMENTATION.
+
+Output reproduced:
+  🚨 SECRETS DETECTED IN STAGED FILES — ABORTING COMMIT
+    specs/batch-ship-push-immediate-2026-05-16.txt: MongoDB credentials
+    specs/batch-ship-push-immediate-2026-05-16.txt: Private key (PEM)
+    test-secret.yml: MongoDB credentials
+
+The first two are FALSE POSITIVES — the spec text describes the
+patterns being scanned for (e.g., "Pattern: mongodb+srv://...") as
+documentation. These are not actual secrets.
+
+The core scan WORKS (test-secret.yml correctly caught). This batch
+only narrows the scope.
+
+================================================================================
+SCOPE — IN / OUT
+================================================================================
+
+IN:
+  ✅ Add directory-based skip list to secret-scan loop in ship.sh.
+     Skip files under: specs/, docs/, future-features/, memory/,
+     security/, ROADMAP.md, CLAUDE.md, *.md
+     (i.e., documentation paths and markdown files)
+  ✅ Keep scanning: source code, configs, JSON/YAML, .env files.
+
+OUT:
+  ❌ Changing any of the 7 scan patterns
+  ❌ Adding new scan patterns
+  ❌ Touching anything other than ship.sh
+
+================================================================================
+STEP 0 — PRE-FLIGHT
+================================================================================
+
+0.1 Confirm ship.sh is the current version with secret-scan block:
+    $ wc -l ship.sh
+    Expected: 244 (or close, after this edit)
+    $ grep -c "SECRETS DETECTED" ship.sh
+    Expected: 1
+
+0.2 Confirm specs directory exists:
+    $ ls -d specs/ docs/ future-features/ memory/ security/
+    All should exist.
+
+================================================================================
+LOCATION 1 — Add directory/extension skip to secret-scan
+================================================================================
+File: ship.sh
+
+In the secret-scan loop (the `while IFS= read -r f` block), add a
+SKIP check BEFORE the binary file check. The current logic skips
+binaries; we need to also skip documentation paths.
+
+CURRENT (approximate, may differ slightly):
+  while IFS= read -r f; do
+    [ ! -f "$f" ] && continue
+    file -b "$f" 2>/dev/null | grep -qE "binary|ELF|image|video" && continue
+    # ... pattern checks ...
+  done <<< "$STAGED_FILES"
+
+ADD this skip immediately after the `[ ! -f "$f" ] && continue` line:
+
+  # Skip documentation paths (contain pattern descriptions, not real secrets)
+  case "$f" in
+    specs/*|docs/*|future-features/*|memory/*|security/*) continue ;;
+    ROADMAP.md|CLAUDE.md|README.md) continue ;;
+    *.md) continue ;;
+  esac
+
+This uses shell `case` which is POSIX-portable and fast. It skips:
+  - Any file under: specs/, docs/, future-features/, memory/, security/
+  - Three specific top-level docs: ROADMAP.md, CLAUDE.md, README.md
+  - Any other .md file (assumed documentation)
+
+Documentation files CAN'T contain runtime secrets that the app uses.
+If they have actual secrets (e.g., a leaked credential pasted into
+a notes doc), other tooling (gitleaks, GitHub secret scanning) catches
+them. ship.sh's job is to prevent ACCIDENTAL commits of config/source
+files with secrets.
+
+================================================================================
+DO NOT TOUCH
+================================================================================
+- Any pattern regex
+- Override mechanism (SHIP_SKIP_SECRET_SCAN=1)
+- Immediate-push block (LOC 2 from previous batch)
+- Pull-rebase branch fix (LOC 3 from previous batch)
+- Anything other than ship.sh
+
+================================================================================
+VERIFY GATES
+================================================================================
+
+V1 — bash syntax still valid:
+  $ bash -n ship.sh
+  Expected: EXIT=0
+
+V2 — Skip logic present:
+  $ grep -c "specs/\*|docs/\*" ship.sh
+  Expected: 1
+
+V3 — Manual scan: re-run the V4 test from previous batch:
+  $ echo "MONGO_URL: mongodb+srv://u:p@example.com/db" > test-secret.yml
+  $ git add test-secret.yml
+  $ ./ship.sh
+  Expected output:
+    🚨 SECRETS DETECTED IN STAGED FILES — ABORTING COMMIT
+      test-secret.yml: MongoDB credentials
+    (only test-secret.yml — NO spec files)
+
+  Cleanup:
+  $ git reset HEAD test-secret.yml && rm test-secret.yml
+
+V4 — Doc files don't trigger:
+  $ git add specs/batch-ship-push-immediate-2026-05-16.txt   # already in HEAD, no-op
+  $ ./ship.sh
+  Expected: scan passes (no SECRETS DETECTED), proceeds normally.
+
+================================================================================
+ROLLBACK
+================================================================================
+$ git revert HEAD -- ship.sh
+$ git commit -m "revert: ship.sh scan-scope changes"
+$ git push origin staging
+
+================================================================================
+SUGGESTED COMMIT
+================================================================================
+fix(ship): exclude docs/specs from secret-scan (false positive on pattern descriptions)
+
+The secret-scan in ship.sh (shipped 2026-05-16) flagged
+specs/batch-ship-push-immediate-2026-05-16.txt as containing
+MongoDB credentials and a Private Key. False positive — the spec
+file DESCRIBES the patterns being scanned for as documentation.
+
+Adds a directory/extension skip:
+  - specs/, docs/, future-features/, memory/, security/
+  - ROADMAP.md, CLAUDE.md, README.md
+  - *.md
+
+Documentation can't contain runtime secrets the app uses. Config
+files, source code, and YAML/JSON still scanned aggressively.
+
+================================================================================
+STANDING RULE — STOP HERE
+================================================================================
+Agent: review.txt + .local/.commit_message + present_asset → DONE.
+Zahi runs git/deploy.
+
+================================================================================
+AWAITING ZAHI APPROVAL — DO NOT IMPLEMENT
+================================================================================
