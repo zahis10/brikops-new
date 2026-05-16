@@ -360,3 +360,9 @@ id = "J__1RJxM-WJD4UTT7thE5"
 uri = "file://.local/plans/ship-push-immediate-2026-05-16-plan.md"
 type = "text"
 title = "ship-push-immediate — תוכנית ביצוע"
+
+[[outputs]]
+id = "Tmoouws_USflFbrqHCGmP"
+uri = "file://.local/plans/reminder-rate-limit-2026-05-16-plan.md"
+type = "text"
+title = "reminder-rate-limit — תוכנית ביצוע (5/5 pre-flight PASS, 3 open Qs)"
